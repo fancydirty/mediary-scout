@@ -74,6 +74,11 @@ Before any normal media workflow:
 1. Ensure the local Python environment exists:
    - create `.venv` if missing
    - install repository dependencies before attempting runtime checks
+   - if dependency installation fails due to network issues, retry with a PyPI mirror:
+     ```bash
+     python -m venv .venv
+     .venv/bin/pip install --index-url https://pypi.tuna.tsinghua.edu.cn/simple/ -r requirements.txt
+     ```
 2. Check `.env` (or process environment) for the three required values above.
 3. Classify the current state:
    - `ENV_NOT_READY`
