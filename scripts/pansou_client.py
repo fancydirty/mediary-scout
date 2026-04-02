@@ -1,9 +1,16 @@
+import json
 import os
 import re
+import tempfile
+from copy import deepcopy
 from hashlib import sha1
+from time import time
 from typing import Any, Callable, Dict, List, Optional
 
 import requests
+
+
+_SEARCH_CACHE: Dict[str, Dict[str, Any]] = {}
 
 
 class BoundTransferUrl(str):
@@ -22,6 +29,30 @@ class BoundTransferUrl(str):
         obj.title = title
         obj.link_type = link_type
         return obj
+
+
+class TransferPlan:
+    def __init__(
+        self,
+        *,
+        snapshot_id: str,
+        keyword: Optional[str],
+        urls: List[BoundTransferUrl],
+    ):
+        self.snapshot_id = snapshot_id
+        self.keyword = keyword
+        self._urls = tuple(urls)
+
+    def __len__(self):
+        return len(self._urls)
+
+    def __getitem__(self, key):
+        if isinstance(key, slice):
+            raise ValueError("Slicing is not allowed on TransferPlan.")
+        return self._urls[key]
+
+    def to_urls(self) -> List[BoundTransferUrl]:
+        return list(self._urls)
 
 
 class LinkCollection:
@@ -116,9 +147,24 @@ class LinkSnapshot:
             )
         return bound_urls
 
+    def create_transfer_plan(
+        self, indices: List[int], *, keyword: Optional[str] = None
+    ) -> TransferPlan:
+        return TransferPlan(
+            snapshot_id=self.snapshot_id,
+            keyword=keyword,
+            urls=self.bind_indices(indices),
+        )
+
 
 class PansouClient:
-    def __init__(self, base_url: Optional[str] = None, wait_time: int = 10):
+    def __init__(
+        self,
+        base_url: Optional[str] = None,
+        wait_time: int = 10,
+        cache_ttl_seconds: int = 3600,
+        cache_path: Optional[str] = None,
+    ):
         self.base_url = base_url or os.getenv("PANSOU_BASE_URL")
         if not self.base_url:
             raise ValueError(
@@ -126,6 +172,10 @@ class PansouClient:
             )
 
         self.wait_time = wait_time
+        self.cache_ttl_seconds = cache_ttl_seconds
+        self.cache_path = cache_path or os.path.join(
+            tempfile.gettempdir(), "clawd-media-track-pansou-cache.json"
+        )
         self.session = requests.Session()
         self.session.headers.update(
             {"Content-Type": "application/json", "User-Agent": "clawd-media-track/1.0"}
@@ -140,7 +190,7 @@ class PansouClient:
             return False
         return True
 
-    def search(self, keyword: str) -> Dict[str, Any]:
+    def _prepare_keyword(self, keyword: str) -> tuple[str, List[str]]:
         warnings = []
         effective_keyword = keyword
 
@@ -154,6 +204,38 @@ class PansouClient:
 
         if not re.search(r"[\u4e00-\u9fff]", effective_keyword):
             warnings.append("Keyword does not contain Chinese text; Chinese title usually works better.")
+
+        return effective_keyword, warnings
+
+    def _cache_key(self, effective_keyword: str) -> str:
+        return f"{self.base_url}|{effective_keyword}"
+
+    def _load_file_cache(self) -> Dict[str, Dict[str, Any]]:
+        if not os.path.exists(self.cache_path):
+            return {}
+        with open(self.cache_path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        if not isinstance(data, dict):
+            raise ValueError("pansou cache file must contain an object")
+        return data
+
+    def _save_file_cache(self) -> None:
+        with open(self.cache_path, "w", encoding="utf-8") as handle:
+            json.dump(_SEARCH_CACHE, handle, ensure_ascii=False)
+
+    def search(self, keyword: str) -> Dict[str, Any]:
+        effective_keyword, warnings = self._prepare_keyword(keyword)
+        cache_key = self._cache_key(effective_keyword)
+        if cache_key not in _SEARCH_CACHE:
+            _SEARCH_CACHE.update(self._load_file_cache())
+        cached = _SEARCH_CACHE.get(cache_key)
+        if cached and (time() - float(cached["cached_at"])) <= self.cache_ttl_seconds:
+            response_data = deepcopy(cached["payload"])
+            if warnings:
+                response_data["warnings"] = warnings
+                response_data["keyword_used"] = effective_keyword
+                response_data["keyword_original"] = keyword
+            return response_data
 
         search_data = {"kw": effective_keyword, "res": "all"}
         response = self.session.post(
@@ -193,6 +275,11 @@ class PansouClient:
                 magnet_results.append(item)
 
         response_data = {"115": results_115, "magnet": magnet_results}
+        _SEARCH_CACHE[cache_key] = {
+            "cached_at": time(),
+            "payload": deepcopy(response_data),
+        }
+        self._save_file_cache()
         if warnings:
             response_data["warnings"] = warnings
             response_data["keyword_used"] = effective_keyword

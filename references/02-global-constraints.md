@@ -107,15 +107,21 @@ If you cannot produce (1) + (2), you MUST NOT proceed.
 For transfer decisions, indices are evidence only; execution input must be stable identifiers.
 
 - Extract links exactly once into a `LinkSnapshot` for the current decision window.
-- After deciding, bind execution inputs immediately from that same snapshot: `chosen_urls=snapshot.bind_indices([...])` (or `chosen_url=...`).
-- Transfer step MUST use only those bound URL variable(s); do not execute via `all_links[i]` or raw re-extracted strings.
+- After deciding, create an immutable `TransferPlan` immediately from that same snapshot: `plan=snapshot.create_transfer_plan([...], keyword=...)`.
+- Transfer step MUST execute only that plan via `pan115.execute_transfer_plan(plan=plan, ...)`.
+- Do not execute via `all_links[i]`, raw re-extracted strings, or freshly rebound indices at execution time.
 - Between decision and transfer, do NOT re-extract/re-list/re-sort links.
 
 Forbidden patterns:
 - Re-running `extract_all_links(...).each(...)` between decision and transfer.
 - `pan115.transfer(url=all_links[i]["url"], ...)` in execution step.
 - `pan115.transfer(url="<raw string>", ...)` with an unbound URL.
+- Re-searching the same keyword and creating a fresh snapshot/plan after the decision step.
 - Any "decide on [i], then re-fetch and execute [i]" flow.
+
+Short-term search stability:
+- `pansou.search()` caches the same normalized keyword for a short TTL and returns the same result ordering during that window.
+- This is a stabilizer for repeated same-keyword searches, not a substitute for `TransferPlan`.
 
 #### Side-effect Verification (mandatory)
 

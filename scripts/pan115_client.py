@@ -6,7 +6,7 @@ from types import MappingProxyType
 from typing import Any, Callable, Dict, List, Optional
 
 from p115client import P115Client
-from pansou_client import BoundTransferUrl
+from pansou_client import BoundTransferUrl, TransferPlan
 
 
 class FileCollection:
@@ -478,6 +478,27 @@ class Pan115Client:
         if normalized_url.startswith("magnet:?xt=urn:btih:"):
             return self.transfer_magnet(url=normalized_url, save_dir_id=save_dir_id_str)
         raise ValueError(f"unrecognized url type: {normalized_url[:50]}...")
+
+    def execute_transfer_plan(
+        self, *, plan: TransferPlan, save_dir_id: str
+    ) -> List[Dict[str, Any]]:
+        if not isinstance(plan, TransferPlan):
+            raise ValueError("plan must be a TransferPlan")
+
+        results: List[Dict[str, Any]] = []
+        for url in plan.to_urls():
+            success, message = self.transfer(url=url, save_dir_id=save_dir_id)
+            results.append(
+                {
+                    "success": success,
+                    "message": message,
+                    "url": str(url),
+                    "title": getattr(url, "title", ""),
+                    "snapshot_id": getattr(url, "snapshot_id", ""),
+                    "link_index": getattr(url, "link_index", None),
+                }
+            )
+        return results
 
     def move_items(self, *, item_ids: List[str], target_dir_id: str) -> Dict[str, List[str]]:
         if not item_ids:

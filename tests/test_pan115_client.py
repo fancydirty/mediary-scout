@@ -531,6 +531,52 @@ class Pan115ClientWriteMethodTests(unittest.TestCase):
             {"url": "magnet:?xt=urn:btih:abcdef123456", "wp_path_id": "123"},
         )
 
+    def test_execute_transfer_plan_runs_bound_urls_without_rebinding(self):
+        pan115_client = load_pan115_module(self)
+        scripts_dir = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "scripts")
+        )
+        if scripts_dir not in sys.path:
+            sys.path.insert(0, scripts_dir)
+        import pansou_client  # type: ignore
+
+        with patch.dict(os.environ, {"PAN115_COOKIE": "env-cookie"}, clear=True):
+            with patch.object(pan115_client, "P115Client", FakeP115ClientWithFiles):
+                client = pan115_client.Pan115Client()
+
+        snapshot = pansou_client.LinkSnapshot(
+            [
+                {
+                    "title": "Plan Item A",
+                    "type": "115",
+                    "url": "https://115cdn.com/s/abc123?password=pass",
+                    "password": "pass",
+                    "datetime": "",
+                    "source": "demo",
+                },
+                {
+                    "title": "Plan Item B",
+                    "type": "magnet",
+                    "url": "magnet:?xt=urn:btih:abcdef123456",
+                    "password": "",
+                    "datetime": "",
+                    "source": "demo",
+                },
+            ]
+        )
+        plan = snapshot.create_transfer_plan([0, 1], keyword="白日提灯")
+
+        results = client.execute_transfer_plan(plan=plan, save_dir_id="123")
+
+        self.assertEqual(len(results), 2)
+        self.assertTrue(results[0]["success"])
+        self.assertTrue(results[1]["success"])
+        self.assertEqual(client.client.share_calls[0]["share_code"], "abc123")
+        self.assertEqual(
+            client.client.offline_calls[0][0],
+            {"url": "magnet:?xt=urn:btih:abcdef123456", "wp_path_id": "123"},
+        )
+
     def test_move_items_calls_fs_move(self):
         pan115_client = load_pan115_module(self)
 

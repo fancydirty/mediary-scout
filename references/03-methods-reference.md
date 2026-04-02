@@ -72,7 +72,7 @@ all_115 = []
 links_115.each(lambda i, link: all_115.append(link))
 # Output: ✅ Successfully processed all X links
 
-# Freeze the current decision window for later binding
+# Freeze the current decision window for later planning
 snapshot_115 = pansou.extract_link_snapshot(result["115"], link_type="115")
 
 # Extract magnet links
@@ -83,8 +83,11 @@ all_magnets = []
 links_magnet.each(lambda i, link: all_magnets.append(link))
 # Output: ✅ Successfully processed all X links
 
-# Freeze the current decision window for later binding
+# Freeze the current decision window for later planning
 snapshot_magnet = pansou.extract_link_snapshot(result["magnet"], link_type="magnet")
+
+# Same normalized keyword is cached briefly to stabilize result ordering
+same_result = pansou.search("太平年")
 ```
 
 `PansouClient()` reads `PANSOU_BASE_URL` from environment by default.
@@ -229,12 +232,11 @@ for i, link in enumerate(all_links):
 # - Explain WHY each chosen title matches (use common sense, not parsing code).
 # - Explain WHY each rejected title is wrong.
 
-# Step 4: Bind stable URLs once from the SAME snapshot, then transfer by URL variable
+# Step 4: Create an immutable transfer plan once from the SAME snapshot
 chosen_indices = []  # Filled after Step 3 decision (indices are evidence only)
 snapshot = pansou.extract_link_snapshot(result["magnet"], "magnet")
-chosen_urls = snapshot.bind_indices(chosen_indices)
-for url in chosen_urls:
-    pan115.transfer(url=url, save_dir_id=folder_id)
+plan = snapshot.create_transfer_plan(chosen_indices, keyword="太平年")
+results = pan115.execute_transfer_plan(plan=plan, save_dir_id=folder_id)
 ```
 
 ### Real Example - What Went Wrong

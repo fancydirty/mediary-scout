@@ -53,7 +53,7 @@ For scheduled monitoring (sub-agent cron job):
       └── **VERIFY: Missing episodes are {show.missing}, confirm selected links cover EXACTLY these**
       └── If ANY link's episode cannot be determined from title → SKIP that link
       └── If missing episode not found in any link → Report "No covering resource found"
-      └── Output `chosen_indices=[...]` and `chosen_urls=[...]` (bind once from SAME snapshot for Step 7)
+      └── Output `chosen_indices=[...]` and `plan.snapshot_id=<id>` (create exactly one plan from SAME snapshot for Step 7)
   └── Selection safety (Type 3):
       └── If multiple resources cover the missing episodes, prefer the one with LESS overlap
       └── Avoid transferring massive full-season packs when a smaller exact-range resource exists
@@ -69,11 +69,11 @@ For scheduled monitoring (sub-agent cron job):
       └── Continue to Step 7
 
 □ Step 7: Transfer
-  └── Use only URL variables bound in Step 5 (`chosen_url` / `chosen_urls`)
+  └── Execute only the `TransferPlan` created in Step 5
   └── Forbidden: re-extract links then `all_links[i]` lookup at execution time
-  └── `pan115.transfer()` rejects unbound raw URLs
-  └── pan115.transfer(url=url, save_dir_id=show.save_dir_id)
-  └── ⚠️ STOP - Output `success=<bool>, msg=<text>` from transfer result
+  └── Forbidden: re-search same keyword and create a fresh plan after the decision step
+  └── `pan115.execute_transfer_plan(plan=plan, save_dir_id=show.save_dir_id)`
+  └── ⚠️ STOP - Output per-item `success/msg` from transfer result
 
 □ Step 8: Flatten Directory
   └── Safety check before flatten:
