@@ -166,6 +166,14 @@ Only the commit path should start expensive or side-effectful work:
 This keeps the UI from accidentally becoming a Douban/TMDB clone.
 TMDB is a metadata confirmation tool, not the live dependency behind every page.
 
+In the TypeScript kernel, `prepareTrackingTarget()` is the first server-side
+commit-path step. It takes a selected TMDB tv id, season number, quality
+preference, and storage directory id, then produces the typed `MediaTitle`,
+`TrackedSeason`, and search keyword consumed by `requestTrackingInitialization`.
+It uses TMDB details and season metadata, including `last_episode_to_air` when
+it belongs to the selected season, but it remains a prepare step rather than a
+browser render dependency.
+
 ## Product Surface Boundary
 
 The first product surface should be small and practical:
