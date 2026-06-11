@@ -81,6 +81,87 @@ describe("episode state semantics", () => {
     });
   });
 
+  it("sorts reconciled episodes by numeric season and episode", () => {
+    const season: TrackedSeason = {
+      id: "season_1",
+      mediaTitleId: "title_1",
+      seasonNumber: 1,
+      status: "active",
+      qualityPreference: "4K",
+      storageDirectoryId: "dir_1",
+      totalEpisodes: 0,
+      latestAiredEpisode: 100,
+      latestAiredSource: "metadata",
+    };
+    const files: VerifiedFile[] = [
+      {
+        id: "file_100",
+        storageDirectoryId: "dir_1",
+        name: "Show.S01E100.mkv",
+        sizeBytes: 100,
+        episodeCode: "S01E100",
+        providerFileId: "provider_100",
+      },
+      {
+        id: "file_99",
+        storageDirectoryId: "dir_1",
+        name: "Show.S01E99.mkv",
+        sizeBytes: 99,
+        episodeCode: "S01E99",
+        providerFileId: "provider_99",
+      },
+    ];
+
+    const reconciled = reconcileVerifiedFiles({
+      season,
+      episodes: [],
+      files,
+    });
+
+    expect(reconciled.map((episode) => episode.episodeCode)).toEqual(["S01E99", "S01E100"]);
+  });
+
+  it("ignores verified files from other storage directories", () => {
+    const season: TrackedSeason = {
+      id: "season_1",
+      mediaTitleId: "title_1",
+      seasonNumber: 1,
+      status: "active",
+      qualityPreference: "4K",
+      storageDirectoryId: "dir_1",
+      totalEpisodes: 24,
+      latestAiredEpisode: 20,
+      latestAiredSource: "metadata",
+    };
+    const episodes = createEpisodeStates({
+      trackedSeasonId: season.id,
+      seasonNumber: season.seasonNumber,
+      totalEpisodes: season.totalEpisodes,
+      latestAiredEpisode: season.latestAiredEpisode,
+    });
+    const files: VerifiedFile[] = [
+      {
+        id: "file_05",
+        storageDirectoryId: "dir_2",
+        name: "Show.S01E05.mkv",
+        sizeBytes: 100,
+        episodeCode: "S01E05",
+        providerFileId: "provider_05",
+      },
+    ];
+
+    const reconciled = reconcileVerifiedFiles({
+      season,
+      episodes,
+      files,
+    });
+
+    expect(reconciled.find((episode) => episode.episodeCode === "S01E05")).toMatchObject({
+      obtained: false,
+      verifiedFileIds: [],
+    });
+  });
+
   it("formats episode codes consistently", () => {
     expect(episodeCode(1, 1)).toBe("S01E01");
     expect(episodeCode(12, 34)).toBe("S12E34");

@@ -128,6 +128,17 @@ export function episodeNumberFromCode(code: string): number {
   return Number(match[1]);
 }
 
+function episodePartsFromCode(code: string): { seasonNumber: number; episodeNumber: number } {
+  const match = /^S(\d{2,})E(\d{2,})$/.exec(code);
+  if (!match) {
+    throw new Error(`Invalid episode code: ${code}`);
+  }
+  return {
+    seasonNumber: Number(match[1]),
+    episodeNumber: Number(match[2]),
+  };
+}
+
 export function createEpisodeStates(input: {
   trackedSeasonId: string;
   seasonNumber: number;
@@ -157,6 +168,10 @@ export function reconcileVerifiedFiles(input: {
   const byCode = new Map(input.episodes.map((episode) => [episode.episodeCode, { ...episode }]));
 
   for (const file of input.files) {
+    if (file.storageDirectoryId !== input.season.storageDirectoryId) {
+      continue;
+    }
+
     const existing = byCode.get(file.episodeCode);
     const episodeNumber = episodeNumberFromCode(file.episodeCode);
     const metadataStatus: MetadataStatus =
@@ -180,5 +195,9 @@ export function reconcileVerifiedFiles(input: {
     });
   }
 
-  return Array.from(byCode.values()).sort((a, b) => a.episodeCode.localeCompare(b.episodeCode));
+  return Array.from(byCode.values()).sort((a, b) => {
+    const aParts = episodePartsFromCode(a.episodeCode);
+    const bParts = episodePartsFromCode(b.episodeCode);
+    return aParts.seasonNumber - bParts.seasonNumber || aParts.episodeNumber - bParts.episodeNumber;
+  });
 }
