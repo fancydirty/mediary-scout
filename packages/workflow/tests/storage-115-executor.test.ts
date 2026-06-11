@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  Pan115ApiGuard,
+  Pan115RiskControlError,
   Storage115Executor,
   type Pan115ActionResult,
   type Pan115DirectoryInfo,
@@ -183,6 +185,135 @@ describe("Storage115Executor", () => {
       removed: ["nested_1"],
     });
   });
+
+  it("spaces 115 API calls through the configured guard", async () => {
+    const api = new FakePan115Api({
+      shareFiles: {
+        abc123: [
+          {
+            fid: "file_1",
+            n: "Show.S01E01.mkv",
+            s: "1000000000",
+          },
+        ],
+      },
+    });
+    let now = 0;
+    const sleeps: number[] = [];
+    const guard = new Pan115ApiGuard({
+      minDelayMs: 750,
+      now: () => now,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+        now += ms;
+      },
+    });
+    const executor = new Storage115Executor({ api, apiGuard: guard });
+
+    await executor.transfer({
+      workflowRunId: "run_1",
+      directoryId: "123",
+      candidate: candidateFixture({
+        type: "115",
+        providerPayload: {
+          url: "https://115.com/s/abc123?password=pw",
+          rawType: "115",
+        },
+      }),
+    });
+
+    expect(api.listCalls).toEqual(["123", "123"]);
+    expect(api.receivedShares).toHaveLength(1);
+    expect(sleeps).toEqual([750, 750]);
+  });
+
+  it("opens a circuit breaker when 115 returns a risk-control signal", async () => {
+    const api = new FakePan115Api({
+      receiveShareResults: {
+        abc123: {
+          ok: false,
+          message: "请求过于频繁，请稍后再试",
+          code: 429,
+        },
+      },
+    });
+    const events: string[] = [];
+    const guard = new Pan115ApiGuard({
+      onEvent: (event) => events.push(event.kind),
+    });
+    const executor = new Storage115Executor({ api, apiGuard: guard });
+
+    await expect(
+      executor.transfer({
+        workflowRunId: "run_1",
+        directoryId: "123",
+        candidate: candidateFixture({
+          type: "115",
+          providerPayload: {
+            url: "https://115.com/s/abc123?password=pw",
+            rawType: "115",
+          },
+        }),
+      }),
+    ).rejects.toBeInstanceOf(Pan115RiskControlError);
+
+    await expect(executor.listVideoFiles("123")).rejects.toThrow("circuit breaker open");
+    expect(api.listCalls).toEqual(["123"]);
+    expect(events).toContain("risk_detected");
+    expect(events).toContain("circuit_open");
+  });
+
+  it("stops before exceeding the configured 115 API call budget", async () => {
+    const api = new FakePan115Api({
+      shareFiles: {
+        abc123: [
+          {
+            fid: "file_1",
+            n: "Show.S01E01.mkv",
+            s: "1000000000",
+          },
+        ],
+      },
+    });
+    const guard = new Pan115ApiGuard({ maxCallsPerOperation: 2 });
+    const executor = new Storage115Executor({ api, apiGuard: guard });
+
+    await expect(
+      executor.transfer({
+        workflowRunId: "run_1",
+        directoryId: "123",
+        candidate: candidateFixture({
+          type: "115",
+          providerPayload: {
+            url: "https://115.com/s/abc123?password=pw",
+            rawType: "115",
+          },
+        }),
+      }),
+    ).rejects.toThrow("API call budget exhausted");
+    expect(api.listCalls).toEqual(["123"]);
+    expect(api.receivedShares).toHaveLength(1);
+  });
+
+  it("stops scanning when a list response is too large for the guard policy", async () => {
+    const api = new FakePan115Api({
+      directories: {
+        big: Array.from({ length: 231 }, (_, index) => ({
+          fid: `file_${index}`,
+          n: `NonVideo.${index}.txt`,
+          s: "100",
+        })),
+      },
+    });
+    const guard = new Pan115ApiGuard({ maxListItemsPerResponse: 230 });
+    const executor = new Storage115Executor({ api, apiGuard: guard });
+
+    await expect(executor.listVideoFiles("big")).rejects.toThrow(
+      "listItems returned 231 items, above maxListItemsPerResponse=230",
+    );
+    await expect(executor.listVideoFiles("big")).rejects.toThrow("circuit breaker open");
+    expect(api.listCalls).toEqual(["big"]);
+  });
 });
 
 class FakePan115Api implements Pan115StorageApi {
@@ -194,6 +325,7 @@ class FakePan115Api implements Pan115StorageApi {
   readonly offlineTasks: Array<{ url: string; directoryId: string }> = [];
   readonly moves: Array<{ fileIds: string[]; targetDirectoryId: string }> = [];
   readonly deletes: Array<{ fileIds: string[] }> = [];
+  readonly listCalls: string[] = [];
   private nextFolder = 1;
 
   constructor(input: {
@@ -216,6 +348,7 @@ class FakePan115Api implements Pan115StorageApi {
   }
 
   async listItems(input: { directoryId: string }): Promise<Pan115Item[]> {
+    this.listCalls.push(input.directoryId);
     return [...(this.directories[input.directoryId] ?? [])];
   }
 

@@ -21,6 +21,19 @@ const DEFAULT_VIDEO_EXTENSIONS = [
   ".m2ts",
 ];
 
+const DEFAULT_PAN115_RISK_PATTERNS = [
+  /请求.*频繁/,
+  /访问.*阻断/,
+  /安全威胁/,
+  /风控/,
+  /频控/,
+  /rate\s*limit/i,
+  /too\s*many\s*requests/i,
+  /throttl/i,
+];
+
+type Pan115Operation = keyof Pan115StorageApi;
+
 export interface Pan115Item {
   id?: string | number;
   fid?: string | number;
@@ -65,10 +78,174 @@ export interface Pan115StorageApi {
 
 export interface Storage115ExecutorOptions {
   api: Pan115StorageApi;
+  apiGuard?: Pan115ApiGuard;
+  apiGuardOptions?: Pan115ApiGuardOptions;
   protectedDirectoryIds?: string[];
   moviesDirectoryId?: string;
   minVideoSizeBytes?: number;
   videoExtensions?: string[];
+}
+
+export type Pan115ApiGuardEventKind =
+  | "delay"
+  | "budget_exhausted"
+  | "risk_detected"
+  | "large_list"
+  | "circuit_open";
+
+export interface Pan115ApiGuardEvent {
+  kind: Pan115ApiGuardEventKind;
+  operation: Pan115Operation;
+  message: string;
+  delayMs?: number;
+  callCount?: number;
+}
+
+export interface Pan115ApiGuardOptions {
+  minDelayMs?: number;
+  maxCallsPerOperation?: number;
+  maxListItemsPerResponse?: number;
+  riskMessagePatterns?: RegExp[];
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+  onEvent?: (event: Pan115ApiGuardEvent) => void;
+}
+
+export class Pan115RiskControlError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "Pan115RiskControlError";
+  }
+}
+
+export class Pan115ApiGuard {
+  private readonly minDelayMs: number;
+  private readonly maxCallsPerOperation: number;
+  private readonly maxListItemsPerResponse: number;
+  private readonly riskMessagePatterns: RegExp[];
+  private readonly now: () => number;
+  private readonly sleep: (ms: number) => Promise<void>;
+  private readonly onEvent: (event: Pan115ApiGuardEvent) => void;
+  private lastCallAt: number | null = null;
+  private callCount = 0;
+  private circuitOpenReason: string | null = null;
+
+  constructor(options: Pan115ApiGuardOptions = {}) {
+    this.minDelayMs = options.minDelayMs ?? 0;
+    this.maxCallsPerOperation = options.maxCallsPerOperation ?? 80;
+    this.maxListItemsPerResponse = options.maxListItemsPerResponse ?? 230;
+    this.riskMessagePatterns = options.riskMessagePatterns ?? DEFAULT_PAN115_RISK_PATTERNS;
+    this.now = options.now ?? Date.now;
+    this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.onEvent = options.onEvent ?? (() => undefined);
+  }
+
+  async run<T>(operation: Pan115Operation, call: () => Promise<T>): Promise<T> {
+    this.assertCircuitClosed(operation);
+    await this.applyDelay(operation);
+    this.assertBudget(operation);
+    this.callCount += 1;
+    this.lastCallAt = this.now();
+
+    try {
+      const result = await call();
+      this.inspectResult(operation, result);
+      return result;
+    } catch (error) {
+      if (error instanceof Pan115RiskControlError) {
+        throw error;
+      }
+      const message = errorMessage(error);
+      if (isPan115RiskControlSignal(message, this.riskMessagePatterns)) {
+        this.openCircuit(operation, message);
+      }
+      throw error;
+    }
+  }
+
+  private assertCircuitClosed(operation: Pan115Operation): void {
+    if (!this.circuitOpenReason) {
+      return;
+    }
+    throw new Pan115RiskControlError(
+      `PAN115_RATE_LIMIT: circuit breaker open before ${operation}: ${this.circuitOpenReason}`,
+    );
+  }
+
+  private async applyDelay(operation: Pan115Operation): Promise<void> {
+    if (this.minDelayMs <= 0 || this.lastCallAt === null) {
+      return;
+    }
+    const elapsedMs = this.now() - this.lastCallAt;
+    const delayMs = Math.max(0, this.minDelayMs - elapsedMs);
+    if (delayMs <= 0) {
+      return;
+    }
+    this.onEvent({
+      kind: "delay",
+      operation,
+      delayMs,
+      message: `waiting ${delayMs}ms before ${operation}`,
+    });
+    await this.sleep(delayMs);
+  }
+
+  private assertBudget(operation: Pan115Operation): void {
+    if (this.callCount < this.maxCallsPerOperation) {
+      return;
+    }
+    const message = `PAN115_RATE_LIMIT: API call budget exhausted before ${operation}; ` +
+      `maxCallsPerOperation=${this.maxCallsPerOperation}`;
+    this.onEvent({
+      kind: "budget_exhausted",
+      operation,
+      callCount: this.callCount,
+      message,
+    });
+    throw new Pan115RiskControlError(message);
+  }
+
+  private inspectResult(operation: Pan115Operation, result: unknown): void {
+    if (operation === "listItems" && Array.isArray(result) && result.length > this.maxListItemsPerResponse) {
+      this.openCircuit(
+        operation,
+        `listItems returned ${result.length} items, above maxListItemsPerResponse=${this.maxListItemsPerResponse}`,
+        "large_list",
+      );
+    }
+
+    const actionResult = pan115ActionResultLike(result);
+    if (!actionResult) {
+      return;
+    }
+    if (
+      actionResult.code === 429 ||
+      isPan115RiskControlSignal(actionResult.message, this.riskMessagePatterns)
+    ) {
+      this.openCircuit(operation, actionResult.message || `115 returned code ${actionResult.code}`);
+    }
+  }
+
+  private openCircuit(
+    operation: Pan115Operation,
+    reason: string,
+    kind: Pan115ApiGuardEventKind = "risk_detected",
+  ): never {
+    this.circuitOpenReason = reason;
+    this.onEvent({
+      kind,
+      operation,
+      message: reason,
+      callCount: this.callCount,
+    });
+    this.onEvent({
+      kind: "circuit_open",
+      operation,
+      message: reason,
+      callCount: this.callCount,
+    });
+    throw new Pan115RiskControlError(`PAN115_RATE_LIMIT: ${reason}`);
+  }
 }
 
 interface VideoFact {
@@ -83,10 +260,12 @@ export class Storage115Executor implements StorageExecutor {
   private readonly moviesDirectoryId: string | null;
   private readonly minVideoSizeBytes: number;
   private readonly videoExtensions: Set<string>;
+  private readonly apiGuard: Pan115ApiGuard;
   private nextTransferNumber = 1;
 
   constructor(options: Storage115ExecutorOptions) {
     this.api = options.api;
+    this.apiGuard = options.apiGuard ?? new Pan115ApiGuard(options.apiGuardOptions);
     this.protectedDirectoryIds = new Set(["0", ...(options.protectedDirectoryIds ?? [])]);
     this.moviesDirectoryId = options.moviesDirectoryId ?? null;
     this.minVideoSizeBytes = options.minVideoSizeBytes ?? 10 * 1024 * 1024;
@@ -96,7 +275,7 @@ export class Storage115Executor implements StorageExecutor {
   }
 
   async createDirectory(input: { name: string; parentId: string }): Promise<string> {
-    return this.api.createFolder(input);
+    return this.callApi("createFolder", () => this.api.createFolder(input));
   }
 
   async listVideoFiles(directoryId: string): Promise<VerifiedFile[]> {
@@ -138,16 +317,18 @@ export class Storage115Executor implements StorageExecutor {
     );
     const moved = moveCandidates.map((video) => video.file.providerFileId);
     if (moved.length > 0) {
-      const result = await this.api.moveItems({
-        fileIds: moved,
-        targetDirectoryId: safeDirectoryId,
-      });
+      const result = await this.callApi("moveItems", () =>
+        this.api.moveItems({
+          fileIds: moved,
+          targetDirectoryId: safeDirectoryId,
+        }),
+      );
       if (!result.ok) {
         return { moved: [], removed: [] };
       }
     }
 
-    const rootItems = await this.api.listItems({ directoryId: safeDirectoryId });
+    const rootItems = await this.callApi("listItems", () => this.api.listItems({ directoryId: safeDirectoryId }));
     const removableDirectoryIds: string[] = [];
     for (const item of rootItems) {
       if (!isDirectory(item)) {
@@ -162,7 +343,9 @@ export class Storage115Executor implements StorageExecutor {
       }
     }
     if (removableDirectoryIds.length > 0) {
-      const result = await this.api.deleteItems({ fileIds: removableDirectoryIds });
+      const result = await this.callApi("deleteItems", () =>
+        this.api.deleteItems({ fileIds: removableDirectoryIds }),
+      );
       if (!result.ok) {
         return { moved, removed: [] };
       }
@@ -175,7 +358,7 @@ export class Storage115Executor implements StorageExecutor {
     if (input.fileIds.length === 0) {
       return { deleted: [] };
     }
-    const result = await this.api.deleteItems({ fileIds: input.fileIds });
+    const result = await this.callApi("deleteItems", () => this.api.deleteItems({ fileIds: input.fileIds }));
     return { deleted: result.ok ? input.fileIds : [] };
   }
 
@@ -189,7 +372,7 @@ export class Storage115Executor implements StorageExecutor {
     }
 
     if (url.startsWith("magnet:?xt=urn:btih:")) {
-      return this.api.addOfflineTask({ url, directoryId });
+      return this.callApi("addOfflineTask", () => this.api.addOfflineTask({ url, directoryId }));
     }
 
     if (url.startsWith("https://115.com/s/") || url.startsWith("https://115cdn.com/s/")) {
@@ -198,11 +381,13 @@ export class Storage115Executor implements StorageExecutor {
         return { ok: false, message: "invalid 115 share link" };
       }
       const payloadPassword = stringValue(candidate.providerPayload["password"]);
-      return this.api.receiveShare({
-        shareCode: parsed.shareCode,
-        receiveCode: payloadPassword || parsed.receiveCode,
-        directoryId,
-      });
+      return this.callApi("receiveShare", () =>
+        this.api.receiveShare({
+          shareCode: parsed.shareCode,
+          receiveCode: payloadPassword || parsed.receiveCode,
+          directoryId,
+        }),
+      );
     }
 
     return { ok: false, message: `unsupported 115 transfer url: ${url.slice(0, 50)}` };
@@ -214,7 +399,7 @@ export class Storage115Executor implements StorageExecutor {
       throw new Error(`SAFETY_VIOLATION: refusing to flatten protected directory cid=${normalized}`);
     }
 
-    const info = await this.api.getDirectoryInfo({ directoryId: normalized });
+    const info = await this.callApi("getDirectoryInfo", () => this.api.getDirectoryInfo({ directoryId: normalized }));
     if (!info?.state) {
       throw new Error(`SAFETY_VIOLATION: unable to verify flatten target cid=${normalized}`);
     }
@@ -255,7 +440,7 @@ export class Storage115Executor implements StorageExecutor {
   }
 
   private async collectVideos(rootDirectoryId: string, currentDirectoryId: string): Promise<VideoFact[]> {
-    const items = await this.api.listItems({ directoryId: currentDirectoryId });
+    const items = await this.callApi("listItems", () => this.api.listItems({ directoryId: currentDirectoryId }));
     const videos: VideoFact[] = [];
     for (const item of items) {
       if (isDirectory(item)) {
@@ -277,6 +462,45 @@ export class Storage115Executor implements StorageExecutor {
     }
     return videos;
   }
+
+  private async callApi<T>(operation: Pan115Operation, call: () => Promise<T>): Promise<T> {
+    return this.apiGuard.run(operation, call);
+  }
+}
+
+export function isPan115RiskControlSignal(message: string, patterns = DEFAULT_PAN115_RISK_PATTERNS): boolean {
+  return patterns.some((pattern) => pattern.test(message));
+}
+
+function pan115ActionResultLike(value: unknown): Pan115ActionResult | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const maybeResult = value as Partial<Pan115ActionResult>;
+  if (typeof maybeResult.ok !== "boolean") {
+    return null;
+  }
+  const result: Pan115ActionResult = {
+    ok: maybeResult.ok,
+    message: typeof maybeResult.message === "string" ? maybeResult.message : "",
+  };
+  if (maybeResult.alreadyTransferred !== undefined) {
+    result.alreadyTransferred = maybeResult.alreadyTransferred;
+  }
+  if (maybeResult.code !== undefined) {
+    result.code = maybeResult.code;
+  }
+  return result;
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  return "";
 }
 
 function transferStatus(action: Pan115ActionResult, materializedFileIds: string[]): TransferStatus {
