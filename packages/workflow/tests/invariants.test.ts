@@ -17,6 +17,8 @@ describe("episode state semantics", () => {
     });
 
     expect(episodes).toHaveLength(24);
+    expect(episodes.every((episode) => episode.obtained === false)).toBe(true);
+    expect(episodes.every((episode) => episode.metadataStatus === "confirmed")).toBe(true);
     expect(episodes[0]).toMatchObject({
       episodeCode: "S01E01",
       airStatus: "aired",
