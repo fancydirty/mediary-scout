@@ -101,7 +101,7 @@ export class Pan115CookieClient implements Pan115StorageApi {
     }
     return {
       state: true,
-      path: directoryPathFromResponse(response),
+      path: directoryPathFromResponse(response, input.directoryId),
     };
   }
 
@@ -238,7 +238,10 @@ function responseMessage(response: unknown): string {
   );
 }
 
-function directoryPathFromResponse(response: unknown): Pan115DirectoryInfo["path"] {
+function directoryPathFromResponse(
+  response: unknown,
+  requestedDirectoryId: string,
+): Pan115DirectoryInfo["path"] {
   const pathItems = arrayValue(
     recordValue(response, "paths") ?? recordValue(recordValue(response, "data"), "paths"),
   ).filter(isRecord);
@@ -249,8 +252,14 @@ function directoryPathFromResponse(response: unknown): Pan115DirectoryInfo["path
     }))
     .filter((item) => item.cid || item.name);
 
+  // category/get returns `paths` as ancestors only and does not always echo
+  // the queried directory's own id back, so fall back to the requested cid.
+  // Safety checks (e.g. the flatten season-leaf rule) rely on the leaf being
+  // present as the last path element.
   const current = {
-    cid: stringValue(recordValue(response, "cid") ?? recordValue(response, "file_id")),
+    cid:
+      stringValue(recordValue(response, "cid") ?? recordValue(response, "file_id")) ||
+      requestedDirectoryId,
     name: stringValue(recordValue(response, "name") ?? recordValue(response, "file_name")),
   };
   if (current.cid && !path.some((item) => item.cid === current.cid)) {

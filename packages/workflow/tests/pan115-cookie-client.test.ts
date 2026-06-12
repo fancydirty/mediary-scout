@@ -112,6 +112,34 @@ describe("Pan115CookieClient", () => {
     expect(requests[0]?.method).toBe("GET");
   });
 
+  it("appends the requested directory as path leaf when category/get omits its id", async () => {
+    const requests: RecordedRequest[] = [];
+    const client = new Pan115CookieClient({
+      cookie: "cookie",
+      fetchJson: recordFetch(requests, {
+        "https://webapi.115.com/category/get?cid=season_1": {
+          state: true,
+          paths: [
+            { file_id: 0, file_name: "根目录" },
+            { file_id: 100, file_name: "test" },
+            { file_id: 101, file_name: "翘楚 (2026)" },
+          ],
+          file_name: "Season 1",
+        },
+      }),
+    });
+
+    await expect(client.getDirectoryInfo({ directoryId: "season_1" })).resolves.toEqual({
+      state: true,
+      path: [
+        { cid: "0", name: "根目录" },
+        { cid: "100", name: "test" },
+        { cid: "101", name: "翘楚 (2026)" },
+        { cid: "season_1", name: "Season 1" },
+      ],
+    });
+  });
+
   it("receives 115 share links into the target directory", async () => {
     const requests: RecordedRequest[] = [];
     const client = new Pan115CookieClient({

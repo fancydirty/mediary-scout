@@ -30,6 +30,13 @@ describe("VercelAiAgentNodes", () => {
     expect(AGENT_NODE_SPECS.PackageRecognitionAgent.system).toContain("multi-season");
   });
 
+  it("teaches coverage-first selection: overlap for initialization, packs over gaps", () => {
+    const system = AGENT_NODE_SPECS.AcquisitionPlanningAgent.system;
+    expect(system).toContain("coverage completeness ALWAYS beats pack-size preference");
+    expect(system).toContain("Overlap is safe");
+    expect(system).toContain("Never sacrifice coverage to avoid a big pack");
+  });
+
   it("runs a node with read-only tools, maxSteps, and audit trace", async () => {
     const result = await runAgentNode({
       spec: AGENT_NODE_SPECS.AcquisitionPlanningAgent,
