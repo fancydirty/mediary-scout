@@ -1,5 +1,5 @@
 import { createOpenAICompatible, type OpenAICompatibleProviderSettings } from "@ai-sdk/openai-compatible";
-import { generateText, Output, stepCountIs, type ToolSet } from "ai";
+import { generateText, stepCountIs, type ToolSet } from "ai";
 import { z } from "zod";
 import { AGENT_NODE_SPECS } from "./agent-node-specs.js";
 import {
@@ -200,6 +200,15 @@ export function createXiaomiMimoProviderConfig(options: VercelAiAgentNodesOption
   };
 }
 
+/**
+ * Structured output without `response_format` support. The Mimo
+ * OpenAI-compatible endpoint rejects JSON-schema response formats, so
+ * `Output.object()` cannot enforce the contract. Instead the JSON schema is
+ * embedded in the system prompt, the tool loop runs normally, and the final
+ * text is parsed manually with zod — with one repair round when the first
+ * reply is not valid JSON. Validation still happens at this boundary either
+ * way; a plan that fails the schema never reaches the workflow.
+ */
 function createAiSdkStructuredGenerator(options: VercelAiAgentNodesOptions): GenerateStructuredOutput {
   const { providerSettings, modelId } = createXiaomiMimoProviderConfig(options);
   const provider = createOpenAICompatible(providerSettings);
@@ -208,19 +217,73 @@ function createAiSdkStructuredGenerator(options: VercelAiAgentNodesOptions): Gen
   return async (request) => {
     const schema = schemaFor(request.schemaName);
     const tools = request.tools === undefined ? undefined : toAiSdkTools(request.tools);
-    const { output } = await generateText({
+    const system = `${request.system}
+
+Final answer format (hard requirement):
+Reply with ONLY one JSON object matching this JSON Schema — no markdown fences, no commentary before or after it:
+${JSON.stringify(z.toJSONSchema(schema))}`;
+
+    const first = await generateText({
       model,
-      system: request.system,
+      system,
       prompt: request.prompt,
-      output: Output.object({
-        schema: schema as any,
-        name: request.schemaName,
-      }),
       stopWhen: stepCountIs(request.maxSteps),
       ...(tools === undefined ? {} : { tools }),
     });
-    return output as StructuredOutput;
+    const firstParsed = parseStructuredText(schema, first.text);
+    if (firstParsed.success) {
+      return firstParsed.data as StructuredOutput;
+    }
+
+    const repair = await generateText({
+      model,
+      system,
+      messages: [
+        { role: "user", content: request.prompt },
+        ...first.response.messages,
+        {
+          role: "user",
+          content: `Your previous reply was not a valid JSON object for the required schema (${firstParsed.error}). Reply now with ONLY the JSON object. Do not call tools. Do not add any text around it.`,
+        },
+      ],
+    });
+    const repaired = parseStructuredText(schema, repair.text);
+    if (repaired.success) {
+      return repaired.data as StructuredOutput;
+    }
+    throw new Error(
+      `Model did not return a valid ${request.schemaName} object after one repair round: ${repaired.error}`,
+    );
   };
+}
+
+export function extractJsonText(text: string): string {
+  const trimmed = text.trim();
+  const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(trimmed);
+  const body = (fenced?.[1] ?? trimmed).trim();
+  const start = body.indexOf("{");
+  const end = body.lastIndexOf("}");
+  if (start === -1 || end <= start) {
+    throw new Error("No JSON object found in model reply");
+  }
+  return body.slice(start, end + 1);
+}
+
+function parseStructuredText(
+  schema: ReturnType<typeof schemaFor>,
+  text: string,
+): { success: true; data: unknown } | { success: false; error: string } {
+  let candidate: unknown;
+  try {
+    candidate = JSON.parse(extractJsonText(text));
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+  const result = schema.safeParse(candidate);
+  if (!result.success) {
+    return { success: false, error: result.error.message };
+  }
+  return { success: true, data: result.data };
 }
 
 function schemaFor(schemaName: StructuredOutputRequest["schemaName"]) {

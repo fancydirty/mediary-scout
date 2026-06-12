@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AGENT_NODE_SPECS,
+  extractJsonText,
   createXiaomiMimoProviderConfig,
   runAgentNode,
   VercelAiAgentNodes,
@@ -229,5 +230,23 @@ describe("VercelAiAgentNodes", () => {
       confidence: "medium",
       reason: "One ambiguous package file was mapped.",
     });
+  });
+});
+
+describe("extractJsonText", () => {
+  it("returns a bare JSON object unchanged", () => {
+    expect(extractJsonText('{"a":1}')).toBe('{"a":1}');
+  });
+
+  it("strips markdown fences", () => {
+    expect(extractJsonText('```json\n{"a":1}\n```')).toBe('{"a":1}');
+  });
+
+  it("extracts the object from surrounding commentary", () => {
+    expect(extractJsonText('Here is my plan:\n{"a":{"b":2}}\nDone.')).toBe('{"a":{"b":2}}');
+  });
+
+  it("throws when no JSON object is present", () => {
+    expect(() => extractJsonText("no json here")).toThrowError(/No JSON object/);
   });
 });
