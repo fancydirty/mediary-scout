@@ -184,10 +184,17 @@ export function buildPackageNormalizationPlan(input: PackageNormalizationInput):
       );
     });
 
+  // Unmapped video files do NOT block the cleanly parsed ones: real packs
+  // legitimately contain documentaries, bundled movies, and extras that must
+  // stay in staging as rejected files. Low confidence keeps the agent
+  // recognition pass in the loop so misnamed episodes get a chance to be
+  // mapped; whatever the agent does not claim remains rejected, never moved.
+  // (Duplicate episode mappings still fail closed above — a duplicate may be
+  // a parser misidentification and needs agent resolution before any action.)
   return {
     coverage: rejectedFiles.length > 0 ? "unknown" : classifyCoverage(actions, input.totalSeasons),
-    confidence: planConfidence(actions, rejectedFiles),
-    actions: rejectedFiles.length > 0 ? [] : actions,
+    confidence: rejectedFiles.length > 0 ? "low" : planConfidence(actions, rejectedFiles),
+    actions,
     rejectedFiles,
     warnings: rejectedFiles.length > 0 ? ["some video files could not be mapped to season/episode identity"] : [],
   };
