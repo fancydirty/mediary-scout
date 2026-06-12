@@ -69,6 +69,12 @@ export default async function Page({
                 媒体库
               </Link>
             </li>
+            <li>
+              <Link className="nav-item" href="/notifications">
+                <Bell size={16} aria-hidden />
+                通知
+              </Link>
+            </li>
           </ul>
         </nav>
 

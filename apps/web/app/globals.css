@@ -947,3 +947,109 @@ p {
     transform: rotate(360deg);
   }
 }
+
+/* ---------- notifications feed (Linear changelog patterns) ---------- */
+
+.feed {
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+  max-width: 760px;
+}
+
+.feed-day-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.feed-day-label {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.6px;
+  color: var(--text-muted);
+}
+
+.feed-day-summary {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.feed-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  background: var(--bg-surface);
+  border-radius: var(--radius-card);
+}
+
+.feed-item {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  padding: 16px 18px;
+}
+
+.feed-item + .feed-item {
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.feed-icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  border-radius: 50%;
+  background: var(--bg-raised);
+}
+
+.feed-icon.tone-green { color: var(--accent); background: rgba(30, 215, 96, 0.12); }
+.feed-icon.tone-blue { color: var(--info); background: rgba(83, 157, 245, 0.12); }
+.feed-icon.tone-amber { color: var(--warning); background: rgba(255, 164, 43, 0.12); }
+.feed-icon.tone-muted { color: var(--text-muted); }
+
+.feed-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.feed-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.feed-title-row strong {
+  font-size: 14px;
+}
+
+.feed-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-raised);
+  color: var(--text-muted);
+}
+
+.feed-badge.tone-green { color: var(--accent); }
+.feed-badge.tone-blue { color: var(--info); }
+.feed-badge.tone-amber { color: var(--warning); }
+
+.feed-text {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.feed-time {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
