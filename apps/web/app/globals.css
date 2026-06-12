@@ -917,3 +917,33 @@ p {
     flex-direction: column;
   }
 }
+
+.candidate-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.series-button {
+  height: 34px;
+  padding: 0 16px;
+  font-size: 11px;
+  background: var(--bg-raised);
+  color: var(--text);
+}
+
+.series-button:hover {
+  background: var(--bg-card);
+  transform: none;
+}
+
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

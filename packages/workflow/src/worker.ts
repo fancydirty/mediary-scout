@@ -1,7 +1,12 @@
 import type { WorkflowStatus } from "./domain.js";
 import type { AgentNodes, ResourceProvider, StorageExecutor } from "./ports.js";
 import type { PersistedWorkflowRunSnapshot, WorkflowRepository } from "./repository.js";
-import { runType2InitializationAndPersist, runType3MonitoringAndPersist } from "./runner.js";
+import {
+  runSeriesInitializationAndPersist,
+  runType2InitializationAndPersist,
+  runType3MonitoringAndPersist,
+} from "./runner.js";
+import type { AcquisitionSeasonScope } from "./workflow.js";
 
 export type QueuedType2WorkerResult =
   | {
@@ -245,4 +250,94 @@ function keywordFromQueuedRun(snapshot: PersistedWorkflowRunSnapshot): string {
     return queuedEvent.data["keyword"];
   }
   return `${snapshot.title.title} ${snapshot.season.qualityPreference}`.trim();
+}
+
+export async function runQueuedSeriesInitialization(input: {
+  repository: WorkflowRepository;
+  resourceProvider: ResourceProvider;
+  storage: StorageExecutor;
+  agents: AgentNodes;
+  storageParentDirectoryId: string;
+  now?: () => string;
+}): Promise<QueuedType2WorkerResult> {
+  const now = input.now ?? (() => new Date().toISOString());
+  const claimed = await input.repository.claimNextQueuedWorkflowRun({
+    kind: "type1_package_init",
+    now: now(),
+  });
+  if (!claimed) {
+    return { status: "idle" };
+  }
+
+  const queuedEvent = claimed.workflowRun.auditEvents.find((event) => event.type === "series_init_queued");
+  const seasons = (queuedEvent?.data?.["seasons"] ?? []) as AcquisitionSeasonScope[];
+  const keyword =
+    typeof queuedEvent?.data?.["keyword"] === "string"
+      ? queuedEvent.data["keyword"]
+      : `${claimed.title.title} ${claimed.season.qualityPreference}`.trim();
+
+  try {
+    if (seasons.length === 0) {
+      throw new Error("Queued series initialization run is missing its season metadata");
+    }
+    const result = await runSeriesInitializationAndPersist({
+      title: claimed.title,
+      seasons,
+      keyword,
+      storageParentDirectoryId: input.storageParentDirectoryId,
+      resourceProvider: input.resourceProvider,
+      storage: input.storage,
+      agents: input.agents,
+      repository: input.repository,
+      workflowRun: {
+        id: claimed.workflowRun.id,
+        startedAt: claimed.workflowRun.startedAt,
+        finishedAt: now(),
+      },
+    });
+    // Finalize the claimed lock run itself; it doubles as season 1's summary
+    // record (same tracked season and episode state as the persisted _s1 run).
+    const firstSeason = result.seasons[0];
+    await input.repository.saveWorkflowRunSnapshot({
+      title: claimed.title,
+      season: firstSeason?.season ?? claimed.season,
+      workflowRun: {
+        ...claimed.workflowRun,
+        status: result.status,
+        finishedAt: now(),
+        auditEvents: [...claimed.workflowRun.auditEvents, ...result.auditEvents],
+      },
+      episodes: firstSeason?.episodes ?? [],
+      resourceSnapshots: [],
+      decisions: [],
+      transferAttempts: [],
+      notifications: [],
+    });
+    return {
+      status: "ran",
+      workflowRunId: claimed.workflowRun.id,
+      workflowStatus: result.status,
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Workflow failed";
+    await input.repository.saveWorkflowRunSnapshot({
+      title: claimed.title,
+      season: claimed.season,
+      workflowRun: {
+        ...claimed.workflowRun,
+        status: "failed",
+        finishedAt: now(),
+        auditEvents: [
+          ...claimed.workflowRun.auditEvents,
+          { type: "workflow_failed", message: errorMessage },
+        ],
+      },
+      episodes: [],
+      resourceSnapshots: [],
+      decisions: [],
+      transferAttempts: [],
+      notifications: [],
+    });
+    return { status: "failed", workflowRunId: claimed.workflowRun.id, errorMessage };
+  }
 }

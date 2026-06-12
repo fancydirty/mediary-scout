@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   TriangleAlert,
 } from "lucide-react";
+import { RequestSeriesButton } from "../components/request-series-button";
 import { RequestTrackButton } from "../components/request-track-button";
 import { getLibraryDashboard, getSearchView } from "../lib/search-page";
 import type { SearchCandidateCard } from "@media-track/workflow";
@@ -185,12 +186,15 @@ function CandidateCard({ candidate }: { candidate: SearchCandidateCard }) {
               {candidate.year} · {candidate.mediaType === "tv" ? `第 ${candidate.selectedSeasonNumber} 季` : "电影"}
             </p>
           </div>
-          <RequestTrackButton
-            candidateId={candidate.id}
-            actionState={candidate.action.state}
-            disabled={candidate.action.disabled}
-            label={candidate.action.label}
-          />
+          <div className="candidate-actions">
+            <RequestTrackButton
+              candidateId={candidate.id}
+              actionState={candidate.action.state}
+              disabled={candidate.action.disabled}
+              label={candidate.action.label}
+            />
+            {candidate.mediaType === "tv" ? <RequestSeriesButton candidateId={candidate.id} /> : null}
+          </div>
         </div>
         <p className="candidate-overview">{candidate.overview}</p>
         <div className="candidate-meta">

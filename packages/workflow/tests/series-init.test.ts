@@ -4,6 +4,8 @@ import {
   FakeResourceProvider,
   FakeStorageExecutor,
   InMemoryWorkflowRepository,
+  queueSeriesInitialization,
+  runQueuedSeriesInitialization,
   runSeriesInitialization,
   runSeriesInitializationAndPersist,
   type MediaTitle,
@@ -167,5 +169,68 @@ describe("runSeriesInitialization", () => {
     const s2 = result.seasons.find((entry) => entry.season.seasonNumber === 2)!;
     expect(s2.obtainedEpisodes).toEqual([]);
     expect(s2.season.storageDirectoryId).not.toBe("");
+  });
+});
+
+describe("queueSeriesInitialization + runQueuedSeriesInitialization", () => {
+  it("queues once, runs the whole series, and dedupes repeat requests", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const queued = await queueSeriesInitialization({
+      title: theBoys,
+      seasons,
+      keyword: "黑袍纠察队 4K",
+      repository,
+      createWorkflowRunId: () => "run_series_q",
+      now: () => "2026-06-13T00:00:00.000Z",
+    });
+    expect(queued).toEqual({ status: "queued", titleId: theBoys.id, workflowRunId: "run_series_q" });
+
+    const again = await queueSeriesInitialization({
+      title: theBoys,
+      seasons,
+      keyword: "黑袍纠察队 4K",
+      repository,
+      createWorkflowRunId: () => "run_series_dup",
+      now: () => "2026-06-13T00:00:01.000Z",
+    });
+    expect(again.status).toBe("already_running");
+
+    const storage = new FakeStorageExecutor({
+      transferOutcomes: {
+        snapshot_1_candidate_1: {
+          status: "succeeded",
+          providerMessage: "",
+          files: [file("f_s1e1", "S01E01"), file("f_s1e2", "S01E02"), file("f_s2e1", "S02E01"), file("f_s2e2", "S02E02")],
+        },
+      },
+    });
+    const workerResult = await runQueuedSeriesInitialization({
+      repository,
+      resourceProvider: new FakeResourceProvider({
+        keywordResults: {
+          "黑袍纠察队 4K": [
+            { title: "黑袍纠察队 S1-S2 混合包", episodeHints: ["S01E01", "S01E02", "S02E01", "S02E02"] },
+          ],
+        },
+      }),
+      storage,
+      agents: new FakeAgentNodes(),
+      storageParentDirectoryId: "library_root",
+      now: () => "2026-06-13T00:05:00.000Z",
+    });
+
+    expect(workerResult).toMatchObject({ status: "ran", workflowStatus: "succeeded" });
+    const states = await repository.listTrackedSeasonStates();
+    expect(states).toHaveLength(2);
+
+    const afterRun = await queueSeriesInitialization({
+      title: theBoys,
+      seasons,
+      keyword: "黑袍纠察队 4K",
+      repository,
+      createWorkflowRunId: () => "run_series_again",
+      now: () => "2026-06-13T01:00:00.000Z",
+    });
+    expect(afterRun.status).toBe("already_tracked");
   });
 });

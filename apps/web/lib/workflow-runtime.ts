@@ -10,8 +10,11 @@ import {
   createXiaomiMimoAgentNodesFromEnv,
   getTrackedSeasonStatusView,
   assertWorkflowAgentAdapterPolicy,
+  prepareSeriesTarget,
   prepareTrackingTarget,
+  queueSeriesInitialization,
   queueTrackingInitialization,
+  runQueuedSeriesInitialization,
   runQueuedType2Workflow,
   runScheduledType3Monitoring,
   SQLiteWorkflowRepository,
@@ -108,13 +111,77 @@ export async function queueCandidateTracking(candidateId: string): Promise<Candi
 
 export async function runNextQueuedWorkflow() {
   const repository = getWorkflowRepository();
-  return runQueuedType2Workflow({
+  const type2 = await runQueuedType2Workflow({
     repository,
     resourceProvider: getWorkerResourceProvider(),
     storage: getWorkerStorageExecutor(),
     agents: getAgentNodes(),
     storageParentDirectoryId: storageParentDirectoryId(),
   });
+  if (type2.status !== "idle") {
+    return type2;
+  }
+  return runQueuedSeriesInitialization({
+    repository,
+    resourceProvider: getWorkerResourceProvider(),
+    storage: getWorkerStorageExecutor(),
+    agents: getAgentNodes(),
+    storageParentDirectoryId: storageParentDirectoryId(),
+  });
+}
+
+export async function queueCandidateSeries(candidateId: string): Promise<CandidateTrackingRequestResult> {
+  const parsed = parseTvCandidateId(candidateId);
+  if (!parsed) {
+    return { status: "unsupported", message: "暂时只支持剧集的全剧获取。" };
+  }
+  if (process.env.MEDIA_TRACK_SEARCH_PROVIDER === "tmdb" && process.env.TMDB_READ_TOKEN) {
+    const target = await prepareSeriesTarget({
+      tmdbId: parsed.tmdbId,
+      qualityPreference: defaultQuality(),
+      metadataProvider: createTmdbMetadataProviderFromEnv(),
+    });
+    const request = await queueSeriesInitialization({
+      title: target.title,
+      seasons: target.seasons,
+      keyword: target.keyword,
+      repository: getWorkflowRepository(),
+    });
+    return {
+      status: request.status === "queued" ? "queued" : request.status,
+      workflowRunId: request.workflowRunId,
+      trackedSeasonId: `${target.title.id}_s${target.seasons[0]?.seasonNumber ?? 1}`,
+    };
+  }
+
+  const candidate = findDemoCandidateById(candidateId);
+  if (!candidate || candidate.mediaType !== "tv") {
+    return { status: "unsupported", message: "暂时只支持剧集的全剧获取。" };
+  }
+  const request = await queueSeriesInitialization({
+    title: {
+      id: `tmdb_tv_${candidate.tmdbId}`,
+      tmdbId: candidate.tmdbId,
+      type: "tv",
+      title: candidate.title,
+      originalTitle: candidate.originalTitle,
+      year: candidate.year,
+      aliases:
+        candidate.originalTitle && candidate.originalTitle !== candidate.title ? [candidate.originalTitle] : [],
+    },
+    seasons: candidate.seasons.map((season) => ({
+      seasonNumber: season.seasonNumber,
+      totalEpisodes: season.episodeCount,
+      latestAiredEpisode: season.latestAiredEpisode,
+    })),
+    keyword: `${candidate.title} ${defaultQuality()}`.trim(),
+    repository: getWorkflowRepository(),
+  });
+  return {
+    status: request.status === "queued" ? "queued" : request.status,
+    workflowRunId: request.workflowRunId,
+    trackedSeasonId: `tmdb_tv_${candidate.tmdbId}_s1`,
+  };
 }
 
 export async function runScheduledType3() {

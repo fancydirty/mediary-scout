@@ -9,6 +9,7 @@ import {
 import type { AgentNodes, ResourceProvider, StorageExecutor } from "./ports.js";
 import type { WorkflowRepository } from "./repository.js";
 import { runType2InitializationAndPersist } from "./runner.js";
+import type { AcquisitionSeasonScope } from "./workflow.js";
 import {
   prepareTrackingTarget,
   type PreparedTrackingTarget,
@@ -348,4 +349,86 @@ function summarizeEpisodeProgress(season: TrackedSeason, episodes: EpisodeState[
       .filter((episode) => episode.airStatus === "aired" && !episode.obtained)
       .map((episode) => episode.episodeCode),
   };
+}
+
+export interface SeriesInitializationRequestResult {
+  status: "queued" | "already_running" | "already_tracked";
+  titleId: string;
+  workflowRunId: string | null;
+}
+
+/**
+ * "获取全剧" entrypoint. Reserves one queued type1_package_init run keyed on
+ * season 1 (idempotency lock for the whole title) carrying the series need
+ * set in its audit data; the worker claims it and runs title-level
+ * initialization for every season.
+ */
+export async function queueSeriesInitialization(input: {
+  title: MediaTitle;
+  seasons: AcquisitionSeasonScope[];
+  keyword: string;
+  repository: WorkflowRepository;
+  createWorkflowRunId?: () => string;
+  now?: () => string;
+  staleActiveRunTimeoutMs?: number;
+}): Promise<SeriesInitializationRequestResult> {
+  const now = input.now ?? (() => new Date().toISOString());
+  const workflowRunId = input.createWorkflowRunId?.() ?? crypto.randomUUID();
+  const queuedAt = now();
+  const staleActiveRunStartedBefore = staleStartedBefore(queuedAt, input.staleActiveRunTimeoutMs);
+  const firstSeason = input.seasons[0];
+  if (firstSeason === undefined) {
+    throw new Error("Series initialization needs at least one season");
+  }
+  const lockSeason: TrackedSeason = {
+    id: `${input.title.id}_s${firstSeason.seasonNumber}`,
+    mediaTitleId: input.title.id,
+    seasonNumber: firstSeason.seasonNumber,
+    status: firstSeason.latestAiredEpisode >= firstSeason.totalEpisodes ? "completed" : "active",
+    qualityPreference: "4K",
+    storageDirectoryId: "",
+    totalEpisodes: firstSeason.totalEpisodes,
+    latestAiredEpisode: firstSeason.latestAiredEpisode,
+    latestAiredSource: "metadata",
+  };
+
+  const reservation = await input.repository.reserveWorkflowRun({
+    title: input.title,
+    season: lockSeason,
+    workflowRun: {
+      id: workflowRunId,
+      kind: "type1_package_init",
+      status: "queued",
+      trackedSeasonId: lockSeason.id,
+      startedAt: queuedAt,
+      finishedAt: null,
+      auditEvents: [
+        {
+          type: "series_init_queued",
+          message: `Queued series initialization workflow ${workflowRunId}`,
+          data: { keyword: input.keyword, seasons: input.seasons },
+        },
+      ],
+    },
+    episodes: [],
+    resourceSnapshots: [],
+    decisions: [],
+    transferAttempts: [],
+    notifications: [],
+    blockIfEpisodeStatesExist: true,
+    ...(staleActiveRunStartedBefore
+      ? { staleActiveRunStartedBefore, staleFinishedAt: queuedAt }
+      : {}),
+  });
+  if (reservation.status === "already_active") {
+    return {
+      status: "already_running",
+      titleId: input.title.id,
+      workflowRunId: reservation.snapshot.workflowRun.id,
+    };
+  }
+  if (reservation.status === "already_has_episode_state") {
+    return { status: "already_tracked", titleId: input.title.id, workflowRunId: null };
+  }
+  return { status: "queued", titleId: input.title.id, workflowRunId };
 }

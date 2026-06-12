@@ -228,6 +228,64 @@ export async function prepareTrackingTarget(input: TvTrackingTargetInput): Promi
   };
 }
 
+export interface PreparedSeriesTarget {
+  title: MediaTitle;
+  seasons: Array<{ seasonNumber: number; totalEpisodes: number; latestAiredEpisode: number }>;
+  keyword: string;
+}
+
+/**
+ * Title-level prepare step for "获取全剧": one TMDB details call yields every
+ * season's shape and the latest-aired cursor. Specials (season 0) are
+ * excluded; seasons after the cursor's season have zero aired episodes.
+ */
+export async function prepareSeriesTarget(input: {
+  tmdbId: number;
+  qualityPreference: string;
+  metadataProvider: TmdbMetadataProvider;
+}): Promise<PreparedSeriesTarget> {
+  const details = await input.metadataProvider.getTvDetails(input.tmdbId);
+  const titleId = `tmdb_tv_${details.id}`;
+  const title = normalizeTitle(details.name);
+  const lastAiredSeason = details.last_episode_to_air?.season_number ?? 0;
+  const lastAiredEpisode = details.last_episode_to_air?.episode_number ?? 0;
+
+  const seasons = (details.seasons ?? [])
+    .map((season) => ({
+      seasonNumber: season.season_number ?? 0,
+      totalEpisodes: season.episode_count ?? 0,
+    }))
+    .filter((season) => season.seasonNumber > 0 && season.totalEpisodes > 0)
+    .sort((left, right) => left.seasonNumber - right.seasonNumber)
+    .map((season) => ({
+      seasonNumber: season.seasonNumber,
+      totalEpisodes: season.totalEpisodes,
+      latestAiredEpisode:
+        season.seasonNumber < lastAiredSeason
+          ? season.totalEpisodes
+          : season.seasonNumber === lastAiredSeason
+            ? lastAiredEpisode
+            : 0,
+    }));
+  if (seasons.length === 0) {
+    throw new Error(`TMDB tv/${input.tmdbId} exposes no seasons with episodes`);
+  }
+
+  return {
+    title: {
+      id: titleId,
+      tmdbId: details.id,
+      type: "tv",
+      title,
+      originalTitle: normalizeTitle(details.original_name) || title,
+      year: yearFromDate(details.first_air_date),
+      aliases: aliasList(title, details.original_name),
+    },
+    seasons,
+    keyword: `${title} ${input.qualityPreference}`.trim(),
+  };
+}
+
 async function defaultFetchJson(url: string, init: TmdbFetchInit): Promise<unknown> {
   const response = await fetch(url, {
     method: init.method,
