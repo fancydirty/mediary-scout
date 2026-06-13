@@ -372,4 +372,54 @@ describe("queueSeriesInitialization + runQueuedSeriesInitialization", () => {
     });
     expect(afterRun.status).toBe("already_tracked");
   });
+
+  it("lands an anime title under the separate anime parent, not the TV parent", async () => {
+    const anime: MediaTitle = {
+      id: "tmdb_tv_240411",
+      tmdbId: 240411,
+      type: "anime",
+      title: "躲在超市后门吸烟的两人",
+      originalTitle: "スーパーの裏でヤニ吸うふたり",
+      year: 2025,
+      aliases: ["スーパーの裏でヤニ吸うふたり"],
+    };
+    const repository = new InMemoryWorkflowRepository();
+    await queueSeriesInitialization({
+      title: anime,
+      seasons: [{ seasonNumber: 1, totalEpisodes: 1, latestAiredEpisode: 1 }],
+      keyword: "躲在超市后门吸烟的两人 4K",
+      repository,
+      createWorkflowRunId: () => "run_anime",
+      now: () => "2026-06-13T00:00:00.000Z",
+    });
+
+    const storage = new FakeStorageExecutor({
+      transferOutcomes: {
+        snapshot_1_candidate_1: {
+          status: "succeeded",
+          providerMessage: "",
+          files: [file("anime_s1e1", "S01E01")],
+        },
+      },
+    });
+    await runQueuedSeriesInitialization({
+      repository,
+      resourceProvider: new FakeResourceProvider({
+        keywordResults: {
+          "躲在超市后门吸烟的两人 4K": [{ title: "躲在超市后门吸烟的两人 全集", episodeHints: ["S01E01"] }],
+        },
+      }),
+      storage,
+      agents: new FakeAgentNodes(),
+      storageParentDirectoryId: "tv_root",
+      animeStorageParentDirectoryId: "anime_root",
+      now: () => "2026-06-13T00:05:00.000Z",
+    });
+
+    // The show/season directory was created under the anime parent, never the
+    // TV parent — the 动漫 shelf is a physically separate tree on 115.
+    const [state] = await repository.listTrackedSeasonStates();
+    expect(state?.season.storageDirectoryId.startsWith("anime_root_")).toBe(true);
+    expect(state?.season.storageDirectoryId.includes("tv_root")).toBe(false);
+  });
 });

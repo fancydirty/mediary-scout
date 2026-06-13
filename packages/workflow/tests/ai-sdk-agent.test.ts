@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AGENT_NODE_SPECS,
   extractJsonText,
-  createXiaomiMimoProviderConfig,
+  createAgentProviderConfig,
   runAgentNode,
   VercelAiAgentNodes,
   type ResourceSnapshot,
@@ -10,7 +10,7 @@ import {
 
 describe("VercelAiAgentNodes", () => {
   it("uses the Singapore Token Plan model id and api-key header by default", () => {
-    const config = createXiaomiMimoProviderConfig({ apiKey: "secret" });
+    const config = createAgentProviderConfig({ apiKey: "secret" });
 
     expect(config.modelId).toBe("mimo-v2.5-pro");
     expect(config.providerSettings).toMatchObject({
@@ -26,6 +26,7 @@ describe("VercelAiAgentNodes", () => {
     expect(Object.keys(AGENT_NODE_SPECS)).toEqual([
       "AcquisitionPlanningAgent",
       "MoviePlanningAgent",
+      "MovieMasterSelectionAgent",
       "PackageRecognitionAgent",
     ]);
     expect(AGENT_NODE_SPECS.AcquisitionPlanningAgent.system).toContain("No just-in-case");
@@ -147,6 +148,41 @@ describe("VercelAiAgentNodes", () => {
     expect(result.plan.node).toBe("vercel_ai_acquisition_planning");
     expect(result.plan.selectedSnapshotId).toBe("snapshot_1");
     expect(result.snapshots).toEqual([snapshot]);
+  });
+
+  it("injects the agent's preferred language into every planning prompt (TV included)", async () => {
+    let capturedPrompt = "";
+    const agent = new VercelAiAgentNodes({
+      preferredLanguage: "中文",
+      generateStructuredOutput: async (request) => {
+        capturedPrompt = request.prompt;
+        return {
+          selectedSnapshotId: null,
+          searchedKeywords: [],
+          candidateDispositions: [],
+          confidence: "low",
+          reason: "no search needed for this test",
+        };
+      },
+    });
+
+    await agent.planAcquisition({
+      title: "进击的巨人",
+      aliases: ["Attack on Titan"],
+      seasons: [{ seasonNumber: 1, totalEpisodes: 25, latestAiredEpisode: 25 }],
+      qualityPreference: "4K",
+      missingEpisodes: ["S01E01"],
+      initialKeyword: "进击的巨人",
+      failureEvidence: [],
+      searchResources: async () => {
+        throw new Error("should not be called");
+      },
+    });
+
+    // The standing language preference rides on the agent instance, so it lands
+    // in the prompt without any per-workflow plumbing.
+    expect(capturedPrompt).toContain("preferredLanguage");
+    expect(capturedPrompt).toContain("中文");
   });
 
   it("surfaces provider errors to the model as tool results instead of throwing", async () => {

@@ -44,7 +44,9 @@ export async function buildConfirmedDedupPlan(input: {
       sizeBytes: file.sizeBytes,
     })),
     parserEvidence: suspectFiles.map((file) => {
-      const parts = episodePartsFromCode(file.episodeCode);
+      // Suspects only come from non-null episode groups (buildDedupPlan skips
+      // null codes), so the code is guaranteed present here.
+      const parts = episodePartsFromCode(file.episodeCode ?? "S00E00");
       return {
         providerFileId: file.id,
         path: file.name,
@@ -121,6 +123,11 @@ export async function buildConfirmedDedupPlan(input: {
 export function buildDedupPlan(input: { files: VerifiedFile[] }): DedupPlan {
   const byEpisode = new Map<string, VerifiedFile[]>();
   for (const file of input.files) {
+    // Episode-less videos (movies, unparsed names) have no episode to duplicate
+    // against — keep them untouched, never a deletion candidate.
+    if (file.episodeCode === null) {
+      continue;
+    }
     const group = byEpisode.get(file.episodeCode) ?? [];
     group.push(file);
     byEpisode.set(file.episodeCode, group);

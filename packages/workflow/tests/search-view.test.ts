@@ -93,6 +93,69 @@ describe("getSearchPageView", () => {
     });
   });
 
+  it("marks an already-acquired movie as tracked so it cannot be re-requested in search", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const title: MediaTitle = {
+      id: "tmdb_movie_872585",
+      tmdbId: 872585,
+      type: "movie",
+      title: "奥本海默",
+      originalTitle: "Oppenheimer",
+      year: 2023,
+      aliases: [],
+    };
+    const season: TrackedSeason = {
+      id: "tmdb_movie_872585_movie",
+      mediaTitleId: title.id,
+      seasonNumber: 1,
+      status: "active",
+      qualityPreference: "4K",
+      storageDirectoryId: "115_dir_movie",
+      totalEpisodes: 1,
+      latestAiredEpisode: 1,
+      latestAiredSource: "metadata",
+    };
+    await repository.saveWorkflowRunSnapshot({
+      title,
+      season,
+      workflowRun: {
+        id: "run_movie",
+        kind: "movie_init",
+        status: "succeeded",
+        trackedSeasonId: season.id,
+        startedAt: "2026-06-12T00:00:00.000Z",
+        finishedAt: "2026-06-12T00:02:00.000Z",
+        auditEvents: [],
+      },
+      // An acquired movie: its single anchor episode is obtained.
+      episodes: createEpisodeStates({
+        trackedSeasonId: season.id,
+        seasonNumber: 1,
+        totalEpisodes: 1,
+        latestAiredEpisode: 1,
+      }).map((episode) => ({ ...episode, obtained: true })),
+      resourceSnapshots: [],
+      decisions: [],
+      transferAttempts: [],
+      notifications: [],
+    });
+
+    const view = await getSearchPageView({
+      query: "奥本海默",
+      provider: countingSearchProvider([oppenheimerCandidate()]),
+      cache: new InMemoryMediaSearchCache(),
+      repository,
+    });
+
+    // A finished, fully-obtained film reads as 已获取 (not 已追踪) — and is still
+    // disabled so it can't be re-requested.
+    expect(view.candidates[0]).toMatchObject({
+      id: "tmdb_movie_872585",
+      mediaType: "movie",
+      action: { state: "already_tracked", label: "已获取", disabled: true },
+    });
+  });
+
   it("returns active workflow state before allowing duplicate requests", async () => {
     const repository = new InMemoryWorkflowRepository();
     const { title, season } = trackedFixture();
@@ -174,6 +237,20 @@ function qiaochuCandidate(): MediaSearchCandidate {
         latestAiredEpisode: 14,
       },
     ],
+  };
+}
+
+function oppenheimerCandidate(): MediaSearchCandidate {
+  return {
+    tmdbId: 872585,
+    mediaType: "movie",
+    title: "奥本海默",
+    originalTitle: "Oppenheimer",
+    year: 2023,
+    overview: "原子弹之父的传记片。",
+    posterPath: "/oppenheimer.jpg",
+    backdropPath: "/oppenheimer-backdrop.jpg",
+    seasons: [],
   };
 }
 

@@ -507,7 +507,6 @@ export async function queueMovieAcquisition(input: {
 export interface ForeignWorkImportResult {
   movieDirectoryId: string;
   movedFileIds: string[];
-  renamedTo: string | null;
 }
 
 /**
@@ -515,8 +514,9 @@ export interface ForeignWorkImportResult {
  * recognition agent only FLAGS a file as belonging to a different title;
  * naming the destination and pulling the trigger is the user's decision.
  * Deterministic execution: find-or-create `Title (Year)` under the movies
- * parent, move the files, and when exactly one video landed rename it to
- * the canonical movie filename so library scrapers can identify it.
+ * parent and move the files in. The video's ORIGINAL name is kept untouched —
+ * the identity is the `Title (Year)` wrapper directory, not the filename, so
+ * there is no need to rename (and renaming only invites `(1)` collisions).
  */
 export async function importForeignWorkAsMovie(input: {
   storage: StorageExecutor;
@@ -541,32 +541,5 @@ export async function importForeignWorkAsMovie(input: {
     throw new Error("FOREIGN_WORK_IMPORT_NOTHING_MOVED: none of the requested files could be moved");
   }
 
-  let renamedTo: string | null = null;
-  if (moved.length === 1) {
-    const movedId = moved[0]!;
-    const landed = [
-      ...(await input.storage.listUnparsedVideoFiles(movieDirectoryId)).map((file) => ({
-        id: file.providerFileId,
-        name: file.name,
-      })),
-      ...(await input.storage.listVideoFiles(movieDirectoryId)).map((file) => ({
-        id: file.id,
-        name: file.name,
-      })),
-    ].find((file) => file.id === movedId);
-    if (landed !== undefined) {
-      const extensionMatch = /\.[A-Za-z0-9]+$/.exec(landed.name);
-      const newName = `${movieName}${extensionMatch?.[0] ?? ""}`;
-      if (newName !== landed.name) {
-        await input.storage.renameFile({
-          directoryId: movieDirectoryId,
-          fileId: movedId,
-          newName,
-        });
-        renamedTo = newName;
-      }
-    }
-  }
-
-  return { movieDirectoryId, movedFileIds: moved, renamedTo };
+  return { movieDirectoryId, movedFileIds: moved };
 }

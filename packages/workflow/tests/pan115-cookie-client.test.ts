@@ -237,6 +237,85 @@ describe("Pan115CookieClient", () => {
     expect(capturedBody).not.toContain("season_1");
   });
 
+  it("cancels offline tasks by info_hash via an RSA-encrypted lixianssp request", async () => {
+    let capturedUrl = "";
+    let capturedBody = "";
+    const client = new Pan115CookieClient({
+      cookie: "cookie",
+      fetchJson: async (url, init) => {
+        capturedUrl = url;
+        capturedBody = String(init.body ?? "");
+        return { state: true };
+      },
+    });
+
+    const result = await client.removeOfflineTask({
+      infoHashes: ["57e6d442793c87d7f81eecc675ab4eb3b4925bd3"],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(capturedUrl).toBe("https://lixian.115.com/lixianssp/");
+    // The body is the encrypted payload — never the raw info_hash or ac.
+    expect(capturedBody.startsWith("data=")).toBe(true);
+    expect(capturedBody).not.toContain("57e6d442");
+    expect(capturedBody).not.toContain("task_del");
+  });
+
+  it("lists offline tasks via the plain cookie-authed web endpoint", async () => {
+    let capturedUrl = "";
+    const client = new Pan115CookieClient({
+      cookie: "cookie",
+      fetchJson: async (url) => {
+        capturedUrl = url;
+        return {
+          page: 1,
+          count: 2,
+          tasks: [
+            {
+              info_hash: "19dbce42e41c0e41236f4149c8b3e828ceb2dcff",
+              name: "奥本海默.2023.4K.mp4",
+              percentDone: 0,
+              status: 1,
+              status_text: "等待中",
+              url: "magnet:?xt=urn:btih:19dbce42e41c0e41236f4149c8b3e828ceb2dcff",
+            },
+            {
+              info_hash: "abc",
+              name: "done.mkv",
+              percentDone: 100,
+              status: 2,
+              status_text: "已完成",
+              url: "magnet:?xt=urn:btih:abc",
+            },
+          ],
+        };
+      },
+    });
+
+    const tasks = await client.listOfflineTasks({ page: 1 });
+
+    expect(capturedUrl).toContain("https://lixian.115.com/lixian/?");
+    expect(capturedUrl).toContain("ac=task_lists");
+    expect(tasks).toEqual([
+      {
+        infoHash: "19dbce42e41c0e41236f4149c8b3e828ceb2dcff",
+        name: "奥本海默.2023.4K.mp4",
+        percentDone: 0,
+        status: 1,
+        statusText: "等待中",
+        url: "magnet:?xt=urn:btih:19dbce42e41c0e41236f4149c8b3e828ceb2dcff",
+      },
+      {
+        infoHash: "abc",
+        name: "done.mkv",
+        percentDone: 100,
+        status: 2,
+        statusText: "已完成",
+        url: "magnet:?xt=urn:btih:abc",
+      },
+    ]);
+  });
+
   it("creates a client from PAN115_COOKIE", () => {
     expect(() => createPan115CookieClientFromEnv({})).toThrow("PAN115_COOKIE is required");
     expect(

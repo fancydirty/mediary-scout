@@ -6,9 +6,21 @@ import type {
   Pan115StorageApi,
 } from "./storage-115-executor.js";
 
+export interface Pan115OfflineTask {
+  infoHash: string;
+  name: string;
+  /** 0–100; 0 with status "waiting"/"downloading" is a non-秒传 in-flight task. */
+  percentDone: number;
+  /** 115 status code (1=waiting, 2=downloading, 5/-1=failed, ...). */
+  status: number;
+  statusText: string;
+  url: string;
+}
+
 const PAN115_WEBAPI_BASE_URL = "https://webapi.115.com";
 const PAN115_CDN_WEBAPI_BASE_URL = "https://115cdn.com/webapi";
 const PAN115_LIXIAN_SSP_URL = "https://lixian.115.com/lixianssp/";
+const PAN115_LIXIAN_WEB_URL = "https://lixian.115.com/lixian/";
 // 115 requires its android client UA for the lixianssp offline endpoint.
 const PAN115_ANDROID_USER_AGENT =
   "Mozilla/5.0 115disk/99.99.99.99 115Browser/99.99.99.99 115wangpan_android/99.99.99.99";
@@ -146,7 +158,56 @@ export class Pan115CookieClient implements Pan115StorageApi {
       [["data", encrypted]],
       { "User-Agent": PAN115_ANDROID_USER_AGENT },
     );
+    // errcode 10008 ("任务已存在") is 115 REFUSING a duplicate: this infohash was
+    // already submitted on a prior transfer. It is NOT a junk/dead resource — it
+    // may well be in our cloud already from that earlier task. Flag it as
+    // alreadyTransferred so the caller does NOT cancel it (canceling would kill
+    // the prior good task) and instead just moves to the next candidate.
+    if (isOfflineTaskAlreadyExists(response)) {
+      return {
+        ok: true,
+        alreadyTransferred: true,
+        message: responseMessage(response) || "任务已存在",
+      };
+    }
     return actionResultFromResponse(response);
+  }
+
+  async removeOfflineTask(input: { infoHashes: string[] }): Promise<Pan115ActionResult> {
+    // Cancel queued cloud-download tasks (`ac=task_del`) by info_hash. Same
+    // RSA-encrypted lixianssp channel as addOfflineTask. Used to drop a magnet
+    // that did NOT 秒传: 115 had no cached copy and queued a real download we
+    // don't want — removing it frees the offline quota and avoids junk tasks.
+    const payload: Record<string, string> = { ac: "task_del", app_ver: "99.99.99.99" };
+    input.infoHashes.forEach((hash, index) => {
+      payload[`hash[${index}]`] = hash;
+    });
+    const encrypted = lixianRsaEncrypt(new TextEncoder().encode(JSON.stringify(payload)));
+    const response = await this.postForm(
+      PAN115_LIXIAN_SSP_URL,
+      [["data", encrypted]],
+      { "User-Agent": PAN115_ANDROID_USER_AGENT },
+    );
+    return actionResultFromResponse(response);
+  }
+
+  /** List the account's cloud-download (offline) tasks. Plain cookie-authed web
+   *  GET — no sign, plaintext JSON. Used to find junk/stuck tasks to cancel. */
+  async listOfflineTasks(input?: { page?: number }): Promise<Pan115OfflineTask[]> {
+    const response = await this.getJson(PAN115_LIXIAN_WEB_URL, [
+      ["ac", "task_lists"],
+      ["page", String(input?.page ?? 1)],
+    ]);
+    return arrayValue(recordValue(response, "tasks"))
+      .filter(isRecord)
+      .map((task) => ({
+        infoHash: stringValue(recordValue(task, "info_hash")),
+        name: stringValue(recordValue(task, "name")),
+        percentDone: numberValue(recordValue(task, "percentDone")),
+        status: numberValue(recordValue(task, "status")),
+        statusText: stringValue(recordValue(task, "status_text")),
+        url: stringValue(recordValue(task, "url")),
+      }));
   }
 
   async moveItems(input: { fileIds: string[]; targetDirectoryId: string }): Promise<Pan115ActionResult> {
@@ -235,6 +296,19 @@ function actionResultFromResponse(response: unknown): Pan115ActionResult {
   };
 }
 
+/** lixianssp returns errcode 10008 / error_msg "任务已存在" when the infohash is
+ *  already queued. 115 recognized the resource, so we count it as accepted. */
+function isOfflineTaskAlreadyExists(response: unknown): boolean {
+  if (!isRecord(response)) {
+    return false;
+  }
+  const errcode = response["errcode"] ?? response["errno"] ?? response["code"];
+  if (errcode === 10008 || errcode === "10008") {
+    return true;
+  }
+  return responseMessage(response).includes("已存在");
+}
+
 function responseState(response: unknown): boolean {
   if (!isRecord(response)) {
     return false;
@@ -253,9 +327,12 @@ function responseState(response: unknown): boolean {
 }
 
 function responseMessage(response: unknown): string {
+  // Prefer the human-readable fields. lixianssp failures carry the real reason
+  // in `error_msg` ("任务已存在") while `errtype` is only a coarse class ("war").
   return stringValue(
     recordValue(response, "msg") ??
       recordValue(response, "message") ??
+      recordValue(response, "error_msg") ??
       recordValue(response, "error") ??
       recordValue(response, "errtype"),
   );

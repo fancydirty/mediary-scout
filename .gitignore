@@ -21,3 +21,6 @@ dist/
 .next/
 apps/**/.next/
 coverage/
+
+# macOS
+.DS_Store

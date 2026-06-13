@@ -1,4 +1,4 @@
-import type { WorkflowStatus } from "./domain.js";
+import type { MediaType, WorkflowStatus } from "./domain.js";
 import type { AgentNodes, ResourceProvider, StorageExecutor } from "./ports.js";
 import type { PersistedWorkflowRunSnapshot, WorkflowRepository } from "./repository.js";
 import {
@@ -9,6 +9,22 @@ import {
 } from "./runner.js";
 import { syncSeasonAgainstMetadata } from "./season-sync.js";
 import type { AcquisitionSeasonScope } from "./workflow.js";
+
+/**
+ * Pick the 115 landing parent for a title. Anime lands under its own parent
+ * (when configured) so the 动漫 library shelf is a physically separate tree,
+ * never intermixed with TV shows; everything else uses the default parent.
+ */
+function storageParentForTitle(
+  title: { type: MediaType },
+  storageParentDirectoryId: string | undefined,
+  animeStorageParentDirectoryId: string | undefined,
+): string | undefined {
+  if (title.type === "anime" && animeStorageParentDirectoryId !== undefined) {
+    return animeStorageParentDirectoryId;
+  }
+  return storageParentDirectoryId;
+}
 
 /**
  * Refresh a tracked season's aired/total counts from TMDB. Returning null (or
@@ -42,6 +58,8 @@ export async function runQueuedType2Workflow(input: {
   agents: AgentNodes;
   now?: () => string;
   storageParentDirectoryId?: string;
+  /** Separate landing parent for anime (see runQueuedSeriesInitialization). */
+  animeStorageParentDirectoryId?: string;
 }): Promise<QueuedType2WorkerResult> {
   const now = input.now ?? (() => new Date().toISOString());
   const claimed = await input.repository.claimNextQueuedWorkflowRun({
@@ -62,9 +80,14 @@ export async function runQueuedType2Workflow(input: {
       storage: input.storage,
       agents: input.agents,
       repository: input.repository,
-      ...(input.storageParentDirectoryId === undefined
-        ? {}
-        : { storageParentDirectoryId: input.storageParentDirectoryId }),
+      ...((): { storageParentDirectoryId: string } | Record<string, never> => {
+        const parent = storageParentForTitle(
+          claimed.title,
+          input.storageParentDirectoryId,
+          input.animeStorageParentDirectoryId,
+        );
+        return parent === undefined ? {} : { storageParentDirectoryId: parent };
+      })(),
       workflowRun: {
         id: claimed.workflowRun.id,
         startedAt: claimed.workflowRun.startedAt,
@@ -354,6 +377,9 @@ export async function runQueuedSeriesInitialization(input: {
   storage: StorageExecutor;
   agents: AgentNodes;
   storageParentDirectoryId: string;
+  /** Separate landing parent for anime, so the 动漫 shelf is physically its own
+   *  tree on 115 and never mixed into the TV shows directory. */
+  animeStorageParentDirectoryId?: string;
   now?: () => string;
 }): Promise<QueuedType2WorkerResult> {
   const now = input.now ?? (() => new Date().toISOString());
@@ -380,7 +406,11 @@ export async function runQueuedSeriesInitialization(input: {
       title: claimed.title,
       seasons,
       keyword,
-      storageParentDirectoryId: input.storageParentDirectoryId,
+      storageParentDirectoryId: storageParentForTitle(
+        claimed.title,
+        input.storageParentDirectoryId,
+        input.animeStorageParentDirectoryId,
+      )!,
       resourceProvider: input.resourceProvider,
       storage: input.storage,
       agents: input.agents,

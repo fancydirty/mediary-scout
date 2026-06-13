@@ -14,7 +14,7 @@ import {
   type WorkflowStatus,
 } from "./domain.js";
 import { validateMoviePlan } from "./movie-plan-validation.js";
-import { buildMovieReport, formatReportPushText } from "./notification-report.js";
+import { buildMovieReport, dominantQuality, formatReportPushText } from "./notification-report.js";
 import type { AgentNodes, ResourceProvider, StorageExecutor } from "./ports.js";
 
 const VIDEO_EXTENSION = /\.(mkv|mp4|avi|mov|ts|m2ts|wmv|flv|webm|rmvb|iso)$/i;
@@ -70,6 +70,7 @@ export async function runMovieAcquisition(input: {
   const resourceSnapshots: ResourceSnapshot[] = [];
   const transferAttempts: TransferAttempt[] = [];
   const failureEvidence: AcquisitionFailureEvidence[] = [];
+  const stagingDirectoryIds: string[] = [];
 
   const anchor = (storageDirectoryId: string): { season: TrackedSeason; episodes: EpisodeState[] } => {
     const season = movieAnchorSeason({
@@ -88,17 +89,29 @@ export async function runMovieAcquisition(input: {
     };
   };
 
-  const finish = (input2: {
+  const finish = async (input2: {
     status: WorkflowStatus;
     kind: string;
     storageDirectoryId: string;
     obtained: boolean;
     reportLines?: string[];
     reportStatus?: "acquired" | "no_coverage";
-  }): MovieWorkflowResult => {
+    quality?: string;
+  }): Promise<MovieWorkflowResult> => {
+    // The chosen video has already been moved into Movies/Title (Year); every
+    // staging dir now holds only junk (samples, the wrapping folder, unchosen
+    // lower-quality dupes). Remove them so the library parent stays clean and we
+    // don't hoard duplicates. Best-effort — never fail acquisition over cleanup.
+    for (const stagingId of stagingDirectoryIds) {
+      try {
+        await input.storage.removeDirectory(stagingId);
+      } catch {
+        // ignore — cleanup is best-effort
+      }
+    }
     const { season, episodes } = anchor(input2.storageDirectoryId);
     const finalEpisodes = episodes.map((episode) => ({ ...episode, obtained: input2.obtained }));
-    const baseReport = buildMovieReport(input.title.title);
+    const baseReport = buildMovieReport(input.title.title, input2.quality);
     const report =
       input2.reportStatus === "no_coverage"
         ? { ...baseReport, status: "no_coverage" as const, lines: input2.reportLines ?? baseReport.lines }
@@ -150,7 +163,7 @@ export async function runMovieAcquisition(input: {
         type: "acquisition_no_coverage",
         message: `No covering movie resource for ${input.title.title} (pass ${pass + 1})`,
       });
-      return finish({
+      return await finish({
         status: "no_coverage",
         kind: "no_coverage",
         storageDirectoryId: "",
@@ -165,6 +178,7 @@ export async function runMovieAcquisition(input: {
       name: `staging-${workflowRunId}-movie-p${pass + 1}`,
       parentId: input.stagingParentDirectoryId,
     });
+    stagingDirectoryIds.push(stagingDirectoryId);
     const attempt = await input.storage.transfer({
       workflowRunId,
       directoryId: stagingDirectoryId,
@@ -195,23 +209,62 @@ export async function runMovieAcquisition(input: {
       continue;
     }
 
+    // A resource may flatten into several videos (feature + 花絮/特典/版本/sample).
+    // Exactly one is the film. "Largest" is a poor proxy, so when there is more
+    // than one, the AGENT picks the main feature at the best quality; the
+    // workflow keeps that file and DELETES the rest (no leftover junk, no
+    // wasted space — converge on a single highest-quality master).
+    let master = videos[0]!;
+    let extras: string[] = [];
+    let masterReason = "";
+    if (videos.length > 1) {
+      const selection = await input.agents.selectMovieMasterFile({
+        title: input.title.title,
+        year: input.title.year,
+        candidates: videos.map((video) => ({
+          providerFileId: video.providerFileId,
+          name: video.path,
+          sizeBytes: video.sizeBytes,
+        })),
+      });
+      const chosen = videos.find((video) => video.providerFileId === selection.keepFileId);
+      // Degrade gracefully if the agent returns an id not among the staged
+      // videos (hallucination/typo): keep the largest rather than aborting an
+      // acquisition whose resource DID transfer.
+      master = chosen ?? videos[0]!;
+      masterReason = chosen ? selection.reason : `selection id not staged; kept largest`;
+      extras = videos.filter((video) => video.providerFileId !== master.providerFileId).map((v) => v.providerFileId);
+    }
+
+    const masterQuality = dominantQuality([master.path]);
+    // Import (move the master OUT of staging) FIRST, then prune extras — so a
+    // failed import never deletes extras and orphans the master.
     const imported = await importForeignWorkAsMovie({
       storage: input.storage,
-      providerFileIds: [videos[0]!.providerFileId],
+      providerFileIds: [master.providerFileId],
       movieTitle: input.title.title,
       year: input.title.year,
       moviesParentDirectoryId: input.moviesParentDirectoryId,
     });
+    if (extras.length > 0) {
+      await input.storage.deleteFiles({ directoryId: stagingDirectoryId, fileIds: extras });
+      auditEvents.push({
+        type: "movie_master_selected",
+        message: `Kept main feature (${masterReason}); deleted ${extras.length} extra file(s)`,
+        data: { keepFileId: master.providerFileId, deletedFileIds: extras, reason: masterReason },
+      });
+    }
     auditEvents.push({
       type: "movie_landed",
-      message: `${input.title.title} (${input.title.year}) landed${imported.renamedTo ? ` as ${imported.renamedTo}` : ""}`,
+      message: `${input.title.title} (${input.title.year}) landed`,
       data: { movieDirectoryId: imported.movieDirectoryId, movedFileIds: imported.movedFileIds },
     });
-    return finish({
+    return await finish({
       status: "succeeded",
       kind: "package_initialized",
       storageDirectoryId: imported.movieDirectoryId,
       obtained: true,
+      ...(masterQuality ? { quality: masterQuality } : {}),
     });
   }
 
@@ -220,7 +273,7 @@ export async function runMovieAcquisition(input: {
     type: "acquisition_no_coverage",
     message: `All ${maxPasses} movie acquisition passes failed for ${input.title.title}`,
   });
-  return finish({
+  return await finish({
     status: "no_coverage",
     kind: "no_coverage",
     storageDirectoryId: "",

@@ -4,6 +4,7 @@ import {
   buildSeasonReport,
   buildSeriesReport,
   createEpisodeStates,
+  dominantQuality,
   episodeCode,
   formatDailyDigestPushText,
   formatReportPushText,
@@ -79,6 +80,21 @@ function codes(seasonNumber: number, from: number, to: number): string[] {
   return result;
 }
 
+describe("resource quality in notifications", () => {
+  it("picks the highest quality tier present across file names", () => {
+    expect(dominantQuality(["Off.Campus.S01E01.2160p.AMZN.WEB-DL.mkv"])).toBe("2160p");
+    expect(dominantQuality(["Show.S01E01.1080p.mkv", "Show.S01E02.720p.mkv"])).toBe("1080p");
+    expect(dominantQuality(["Movie.4K.UHD.BluRay.mkv"])).toBe("2160p");
+    expect(dominantQuality(["plain.mkv"])).toBeUndefined();
+  });
+
+  it("surfaces the acquired quality in the push so the message isn't bare", () => {
+    const movie = buildMovieReport("周处除三害", "2160p");
+    expect(movie.quality).toBe("2160p");
+    expect(formatReportPushText(movie)).toContain("🎞 画质：2160p");
+  });
+});
+
 describe("buildSeasonReport", () => {
   it("reads as airing when all AIRED episodes are obtained but unaired remain", () => {
     const s = season({ totalEpisodes: 16, latestAiredEpisode: 12 });
@@ -91,6 +107,21 @@ describe("buildSeasonReport", () => {
     // The 4 unaired episodes are NOT a gap.
     expect(report.realMissing).toEqual([]);
     expect(report.lines[0]).toContain("已获取至最新第 12 集");
+  });
+
+  it("reports what we hold, not the aired cursor, when the resource is ahead of TMDB (资源超前)", () => {
+    // TMDB says only 1 episode aired, but a full-season resource landed all 12.
+    const s = season({ totalEpisodes: 12, latestAiredEpisode: 1 });
+    const report = buildSeasonReport({
+      titleName: "躲在超市后门抽烟的两人",
+      season: s,
+      episodes: episodes({ season: s, obtained: codes(1, 1, 12) }),
+    });
+    expect(report.status).toBe("airing");
+    expect(report.realMissing).toEqual([]);
+    // NOT "已获取至最新第 1 集" — it must surface the 12 episodes actually in hand.
+    expect(report.lines[0]).toContain("已获取至第 12 集");
+    expect(report.lines[0]).toContain("资源超前");
   });
 
   it("lists only aired-but-not-obtained episodes as missing", () => {
@@ -196,9 +227,8 @@ describe("formatDailyDigestPushText", () => {
     expect(text).toContain("灿烂的她 第 2 季");
     expect(text).toContain("E05");
     expect(text).toContain("庆余年 第 2 季");
-    // The single unchanged show collapses into a tail count, not its own line.
-    expect(text).toContain("其余 1 部");
-    expect(text).not.toContain("迷雾追踪");
+    // Unchanged shows are NAMED, not just counted, so the digest is informative.
+    expect(text).toContain("其余已是最新：迷雾追踪");
   });
 
   it("reports no updates when nothing changed", () => {

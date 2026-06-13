@@ -135,7 +135,12 @@ export interface VerifiedFile {
   storageDirectoryId: string;
   name: string;
   sizeBytes: number;
-  episodeCode: string;
+  /**
+   * The parsed episode code, or null for videos whose name exposes none (e.g.
+   * movies). A file is a video by virtue of its media EXTENSION; the episode
+   * code is optional metadata layered on top — TV coverage/dedup ignore nulls.
+   */
+  episodeCode: string | null;
   providerFileId: string;
 }
 
@@ -170,6 +175,8 @@ export interface NotificationReport {
   newlyObtained: string[];
   /** Aired-but-not-obtained genuine gaps. Never includes unaired episodes. */
   realMissing: string[];
+  /** Dominant quality of what actually landed (e.g. "2160p"), for richer pushes. */
+  quality?: string;
 }
 
 export interface NotificationEvent {
@@ -261,6 +268,11 @@ export function reconcileVerifiedFiles(input: {
 
   for (const file of input.files) {
     if (file.storageDirectoryId !== input.season.storageDirectoryId) {
+      continue;
+    }
+    // Episode-less videos (movies, unparsed names) are real files but cannot map
+    // to a TV episode — coverage tracking ignores them.
+    if (file.episodeCode === null) {
       continue;
     }
 

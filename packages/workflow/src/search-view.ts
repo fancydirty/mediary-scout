@@ -1,4 +1,4 @@
-import type { MediaType } from "./domain.js";
+import type { EpisodeState, MediaType, TrackedSeason, WorkflowKind } from "./domain.js";
 import type { WorkflowRepository } from "./repository.js";
 
 export type SearchPageState = "empty" | "ready";
@@ -138,19 +138,29 @@ async function toCandidateCard(
       candidate.mediaType === "tv"
         ? candidate.seasons.map((season) => season.seasonNumber).sort((a, b) => a - b)
         : [],
-    action: selectedSeason
-      ? await actionForTrackedSeason(repository, trackedSeasonId(candidate.tmdbId, selectedSeason.seasonNumber))
-      : canRequestAction(),
+    action:
+      candidate.mediaType === "movie"
+        ? // A movie tracks as a degenerate one-"episode" anchor season; once it
+          // is acquired (or acquiring) it must NOT be re-requestable in search.
+          await actionForTrackedSeason(repository, movieTrackedSeasonId(candidate.tmdbId), "movie_init")
+        : selectedSeason
+          ? await actionForTrackedSeason(
+              repository,
+              trackedSeasonId(candidate.tmdbId, selectedSeason.seasonNumber),
+              "type2_init",
+            )
+          : canRequestAction(),
   };
 }
 
 async function actionForTrackedSeason(
   repository: WorkflowRepository,
   trackedSeasonIdValue: string,
+  kind: WorkflowKind,
 ): Promise<SearchCandidateAction> {
   const activeRun = await repository.findActiveWorkflowRun({
     trackedSeasonId: trackedSeasonIdValue,
-    kind: "type2_init",
+    kind,
   });
   if (activeRun) {
     return {
@@ -161,17 +171,28 @@ async function actionForTrackedSeason(
     };
   }
 
-  const episodes = await repository.listEpisodeStates(trackedSeasonIdValue);
-  if (episodes.length > 0) {
-    return {
-      state: "already_tracked",
-      label: "已追踪",
-      disabled: true,
-      workflowRunId: null,
-    };
+  const state = await repository.getTrackedSeasonState(trackedSeasonIdValue);
+  if (!state || state.episodes.length === 0) {
+    return canRequestAction();
   }
+  // Situation-aware wording: a one-off film and a finished season with every
+  // aired episode in hand are DONE → "已获取". Only a still-airing season or one
+  // with real gaps is "已追踪" (we keep watching it). The same rule covers both,
+  // since a movie tracks as a finished one-"episode" anchor.
+  return {
+    state: "already_tracked",
+    label: isFullyAcquired(state) ? "已获取" : "已追踪",
+    disabled: true,
+    workflowRunId: null,
+  };
+}
 
-  return canRequestAction();
+function isFullyAcquired(state: { season: TrackedSeason; episodes: EpisodeState[] }): boolean {
+  const finished = state.season.latestAiredEpisode >= state.season.totalEpisodes;
+  const airedMissing = state.episodes.some(
+    (episode) => episode.airStatus === "aired" && !episode.obtained,
+  );
+  return finished && !airedMissing;
 }
 
 function canRequestAction(): SearchCandidateAction {
@@ -189,4 +210,8 @@ function mediaTitleId(mediaType: MediaSearchCandidate["mediaType"], tmdbId: numb
 
 function trackedSeasonId(tmdbId: number, seasonNumber: number): string {
   return `${mediaTitleId("tv", tmdbId)}_s${seasonNumber}`;
+}
+
+function movieTrackedSeasonId(tmdbId: number): string {
+  return `${mediaTitleId("movie", tmdbId)}_movie`;
 }

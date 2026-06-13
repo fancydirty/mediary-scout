@@ -39,19 +39,30 @@ function formatSeasonRange(seasons: number[]): string {
   return groups.join("、");
 }
 
+function episodeNumberOf(code: string): number {
+  const match = /E(\d+)/i.exec(code);
+  return match ? Number(match[1]) : 0;
+}
+
 interface SeasonFacts {
   realMissing: string[]; // aired-but-not-obtained, short codes
   seasonFinished: boolean;
   fullyObtained: boolean;
+  /** Highest obtained episode number (may exceed the aired cursor → provider-ahead). */
+  maxObtainedEpisode: number;
+  /** A resource ran ahead of TMDB: we hold episodes past the latest-aired cursor. */
+  providerAhead: boolean;
 }
 
 function seasonFacts(season: TrackedSeason, episodes: EpisodeState[]): SeasonFacts {
   const aired = episodes.filter((episode) => episode.airStatus === "aired");
   const realMissing = aired.filter((episode) => !episode.obtained).map((episode) => shortCode(episode.episodeCode));
-  const obtainedCount = episodes.filter((episode) => episode.obtained).length;
+  const obtained = episodes.filter((episode) => episode.obtained);
   const seasonFinished = season.latestAiredEpisode >= season.totalEpisodes;
-  const fullyObtained = seasonFinished && realMissing.length === 0 && obtainedCount >= season.totalEpisodes;
-  return { realMissing, seasonFinished, fullyObtained };
+  const fullyObtained = seasonFinished && realMissing.length === 0 && obtained.length >= season.totalEpisodes;
+  const maxObtainedEpisode = obtained.reduce((max, episode) => Math.max(max, episodeNumberOf(episode.episodeCode)), 0);
+  const providerAhead = maxObtainedEpisode > season.latestAiredEpisode;
+  return { realMissing, seasonFinished, fullyObtained, maxObtainedEpisode, providerAhead };
 }
 
 export interface SeasonReportInput {
@@ -62,6 +73,8 @@ export interface SeasonReportInput {
   newlyObtained?: string[];
   /** Force the no-coverage shape regardless of episode facts. */
   noCoverage?: boolean;
+  /** Dominant quality of the landed files (e.g. "2160p"), surfaced in pushes. */
+  quality?: string;
 }
 
 /**
@@ -70,7 +83,10 @@ export interface SeasonReportInput {
  * episodes reads as a clean "airing", not as a perpetual gap.
  */
 export function buildSeasonReport(input: SeasonReportInput): NotificationReport {
-  const { realMissing, fullyObtained } = seasonFacts(input.season, input.episodes);
+  const { realMissing, fullyObtained, maxObtainedEpisode, providerAhead } = seasonFacts(
+    input.season,
+    input.episodes,
+  );
   const newlyObtained = (input.newlyObtained ?? []).map(shortCode);
   const label = seasonLabel(input.season.seasonNumber);
 
@@ -93,6 +109,11 @@ export function buildSeasonReport(input: SeasonReportInput): NotificationReport 
   } else if (realMissing.length > 0) {
     status = "partial";
     lines = newlyObtained.length > 0 ? ["本次有新增，仍有已播集数待补"] : ["已获取部分已播集，仍有缺集待补"];
+  } else if (providerAhead) {
+    // 资源超前: a full/ahead-of-schedule resource landed episodes past TMDB's
+    // latest-aired cursor. Report what we actually hold, not the aired count.
+    status = "airing";
+    lines = [`已获取至第 ${maxObtainedEpisode} 集 · 资源超前于已播，后续更新自动追踪`];
   } else {
     status = "airing";
     lines =
@@ -101,7 +122,15 @@ export function buildSeasonReport(input: SeasonReportInput): NotificationReport 
         : [`已获取至最新第 ${input.season.latestAiredEpisode} 集 · 后续更新自动追踪`];
   }
 
-  return { titleName: input.titleName, seasonLabel: label, status, lines, newlyObtained, realMissing };
+  return {
+    titleName: input.titleName,
+    seasonLabel: label,
+    status,
+    lines,
+    newlyObtained,
+    realMissing,
+    ...(input.quality ? { quality: input.quality } : {}),
+  };
 }
 
 export interface SeriesReportSeasonInput {
@@ -178,7 +207,7 @@ export function buildSeriesReport(input: {
 }
 
 /** Movie / one-off: nothing to track, just acquired. */
-export function buildMovieReport(titleName: string): NotificationReport {
+export function buildMovieReport(titleName: string, quality?: string): NotificationReport {
   return {
     titleName,
     seasonLabel: null,
@@ -186,6 +215,7 @@ export function buildMovieReport(titleName: string): NotificationReport {
     lines: ["已获取入库"],
     newlyObtained: [],
     realMissing: [],
+    ...(quality ? { quality } : {}),
   };
 }
 
@@ -214,7 +244,29 @@ export function formatReportPushText(report: NotificationReport): string {
   if (report.realMissing.length > 0) {
     parts.push(`🔴 缺集：${report.realMissing.join("、")}`);
   }
+  if (report.quality) {
+    parts.push(`🎞 画质：${report.quality}`);
+  }
   return parts.join("\n");
+}
+
+/**
+ * The dominant quality across landed files, for notifications. Picks the
+ * highest tier present (4K/2160p > 1080p > 720p …); empty when none is stated.
+ */
+export function dominantQuality(fileNames: string[]): string | undefined {
+  const tiers = [
+    { label: "2160p", re: /\b(2160p|4k|uhd)\b/i },
+    { label: "1080p", re: /\b1080p\b/i },
+    { label: "720p", re: /\b720p\b/i },
+    { label: "480p", re: /\b480p\b/i },
+  ];
+  for (const tier of tiers) {
+    if (fileNames.some((name) => tier.re.test(name))) {
+      return tier.label;
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -239,13 +291,17 @@ export function formatDailyDigestPushText(notifications: NotificationEvent[]): s
       continue;
     }
     const head = report.seasonLabel ? `${report.titleName} ${report.seasonLabel}` : report.titleName;
+    const quality = report.quality ? ` · ${report.quality}` : "";
     let detail: string;
     if (notification.kind === "tracking_completed") {
-      detail = "🎉 追完，全部获取";
+      // Even a finale should say WHICH episodes were the last to land + quality,
+      // so a single push carries real information, not just "追完".
+      const gained = report.newlyObtained.length > 0 ? `（补齐 ${report.newlyObtained.join("、")}）` : "";
+      detail = `🎉 追完，全部获取${gained}${quality}`;
     } else {
       const segments: string[] = [];
       if (report.newlyObtained.length > 0) {
-        segments.push(`新增 ${report.newlyObtained.join("、")}`);
+        segments.push(`新增 ${report.newlyObtained.join("、")}${quality}`);
       }
       if (report.realMissing.length > 0) {
         segments.push(`缺 ${report.realMissing.join("、")}`);
@@ -256,8 +312,15 @@ export function formatDailyDigestPushText(notifications: NotificationEvent[]): s
   }
 
   if (unchanged > 0) {
+    // Name the shows checked-with-nothing-to-do, don't just count them.
+    const names = withReport
+      .filter((notification) => notification.kind === "already_current")
+      .map((notification) => notification.report?.titleName)
+      .filter((name): name is string => Boolean(name));
     lines.push("");
-    lines.push(`其余 ${unchanged} 部已是最新。`);
+    lines.push(
+      names.length > 0 ? `其余已是最新：${names.join("、")}` : `其余 ${unchanged} 部已是最新。`,
+    );
   }
   return lines.join("\n");
 }

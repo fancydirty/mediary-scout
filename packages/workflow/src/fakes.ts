@@ -17,6 +17,8 @@ import type {
   MoviePlanningInput,
   AcquisitionPlanningResult,
   AgentNodes,
+  MovieMasterSelectionDecision,
+  MovieMasterSelectionInput,
   ResourceProvider,
   StorageExecutor,
   UnparsedVideoFile,
@@ -42,6 +44,8 @@ export interface TransferOutcome {
 
 export interface FakeAgentNodesOptions {
   packageRecognition?: PackageRecognitionDecision;
+  /** Force the movie master selection to keep a specific providerFileId. */
+  movieMasterKeepFileId?: string;
 }
 
 export class FakeResourceProvider implements ResourceProvider {
@@ -232,6 +236,22 @@ export class FakeStorageExecutor implements StorageExecutor {
     return { deleted };
   }
 
+  async removeDirectory(directoryId: string): Promise<{ removed: boolean }> {
+    const existed =
+      this.directories.has(directoryId) ||
+      this.unparsedFiles.has(directoryId) ||
+      this.packageTrees.has(directoryId);
+    this.directories.delete(directoryId);
+    this.unparsedFiles.delete(directoryId);
+    this.packageTrees.delete(directoryId);
+    for (const [nameKey, id] of this.directoryIdsByName) {
+      if (id === directoryId) {
+        this.directoryIdsByName.delete(nameKey);
+      }
+    }
+    return { removed: existed };
+  }
+
   async listTree(input: { directoryId: string; maxDepth?: number }): Promise<PackageTreeFile[]> {
     const configured = (this.packageTrees.get(input.directoryId) ?? []).map(
       ({ episodeCode: _episodeCode, ...file }) => ({ ...file }),
@@ -331,9 +351,32 @@ export class FakeStorageExecutor implements StorageExecutor {
 
 export class FakeAgentNodes implements AgentNodes {
   private readonly packageRecognition: PackageRecognitionDecision | undefined;
+  private readonly movieMasterKeepFileId: string | undefined;
 
   constructor(options: FakeAgentNodesOptions = {}) {
     this.packageRecognition = options.packageRecognition;
+    this.movieMasterKeepFileId = options.movieMasterKeepFileId;
+  }
+
+  async selectMovieMasterFile(
+    input: MovieMasterSelectionInput,
+  ): Promise<MovieMasterSelectionDecision> {
+    // Default heuristic for tests: keep the largest candidate, unless a specific
+    // keeper is configured (to assert the workflow honors the agent's pick).
+    const configured = this.movieMasterKeepFileId
+      ? input.candidates.find((candidate) => candidate.providerFileId === this.movieMasterKeepFileId)
+      : undefined;
+    const keeper =
+      configured ??
+      [...input.candidates].sort((left, right) => right.sizeBytes - left.sizeBytes)[0];
+    if (!keeper) {
+      throw new Error("FakeAgentNodes.selectMovieMasterFile: no candidates");
+    }
+    return {
+      node: "fake_movie_master_selection",
+      keepFileId: keeper.providerFileId,
+      reason: configured ? "configured keeper" : "largest candidate",
+    };
   }
 
   async planAcquisition(input: AcquisitionPlanningInput): Promise<AcquisitionPlanningResult> {

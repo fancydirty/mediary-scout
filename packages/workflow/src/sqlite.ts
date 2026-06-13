@@ -441,8 +441,11 @@ export class SQLiteWorkflowRepository implements WorkflowRepository {
   }
 
   private insertResourceSnapshots(workflowRunId: string, snapshots: ResourceSnapshot[]): void {
+    // Snapshot ids are content-addressed, so the SAME id can legitimately recur
+    // across runs (and within a batch). `OR IGNORE` keeps persistence idempotent
+    // on the id instead of crashing the whole run on a duplicate.
     const insert = this.database.prepare(
-      "INSERT INTO resource_snapshots (id, workflow_run_id, ordinal, payload) VALUES (?, ?, ?, ?)",
+      "INSERT OR IGNORE INTO resource_snapshots (id, workflow_run_id, ordinal, payload) VALUES (?, ?, ?, ?)",
     );
     snapshots.forEach((snapshot, ordinal) => {
       insert.run(snapshot.id, workflowRunId, ordinal, toJson(snapshot));

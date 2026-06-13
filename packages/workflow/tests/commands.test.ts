@@ -414,7 +414,7 @@ function verifiedFile(season: TrackedSeason, id: string, code: string): Verified
 }
 
 describe("importForeignWorkAsMovie", () => {
-  it("moves user-confirmed foreign files into a canonical movie directory and renames a single video", async () => {
+  it("moves user-confirmed foreign files into the Title (Year) directory keeping their original name", async () => {
     const storage = new FakeStorageExecutor({
       unparsedFiles: {
         staging_pack: [
@@ -432,12 +432,12 @@ describe("importForeignWorkAsMovie", () => {
     });
 
     expect(result.movedFileIds).toEqual(["el_camino"]);
-    expect(result.renamedTo).toBe("续命之徒：绝命毒师电影 (2019).mkv");
-    // the canonical rename makes the file a verified (parseable-name) movie file
+    // No rename — the identity is the `Title (Year)` wrapper directory, so the
+    // video keeps its original filename (and avoids `(1)` collisions).
     const stagingLeft = await storage.listUnparsedVideoFiles("staging_pack");
     expect(stagingLeft).toEqual([]);
     const landedUnparsed = await storage.listUnparsedVideoFiles(result.movieDirectoryId);
-    expect(landedUnparsed.map((file) => file.name)).toEqual(["续命之徒：绝命毒师电影 (2019).mkv"]);
+    expect(landedUnparsed.map((file) => file.name)).toEqual(["El.Camino.2019.2160p.mkv"]);
   });
 
   it("throws when no files were given", async () => {

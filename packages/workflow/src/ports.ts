@@ -38,6 +38,10 @@ export interface StorageExecutor {
   }): Promise<TransferAttempt>;
   flattenDirectory(directoryId: string): Promise<{ moved: string[]; removed: string[] }>;
   deleteFiles(input: { directoryId: string; fileIds: string[] }): Promise<{ deleted: string[] }>;
+  /** Remove an ephemeral directory (e.g. a staging dir) and everything under it.
+   *  Refuses protected/root/parent directories — only sub-directories inside the
+   *  write scope may be removed. */
+  removeDirectory(directoryId: string): Promise<{ removed: boolean }>;
   /** Path-preserving recursive snapshot of a staging directory (all files, not just videos). */
   listTree(input: { directoryId: string; maxDepth?: number }): Promise<PackageTreeFile[]>;
   /** Move files (by provider file id) into a target directory inside the write scope. */
@@ -84,14 +88,40 @@ export interface MoviePlanningInput {
   searchResources(input: { keyword: string }): Promise<ResourceSnapshot>;
 }
 
+export interface MovieMasterSelectionCandidate {
+  providerFileId: string;
+  name: string;
+  sizeBytes: number;
+}
+
+/**
+ * Picking the one main-feature file when a transferred movie resource flattened
+ * into several videos (feature + extras/samples/duplicate versions). Pure
+ * judgment over names+sizes; no tools, no side effects.
+ */
+export interface MovieMasterSelectionInput {
+  title: string;
+  year: number;
+  candidates: MovieMasterSelectionCandidate[];
+}
+
+export interface MovieMasterSelectionDecision {
+  node: string;
+  /** The providerFileId of the single file to keep (the main feature). */
+  keepFileId: string;
+  reason: string;
+}
+
 /**
  * The agent boundary. One node owns the whole acquisition judgment
  * (search strategy, target matching, episode mapping, selection) through
- * read-only tools; one node maps ambiguous package files. Neither can
+ * read-only tools; one node maps ambiguous package files; one node picks the
+ * main-feature file among a movie's flattened videos. None can
  * create directories, transfer, delete, or mutate workflow state.
  */
 export interface AgentNodes {
   planAcquisition(input: AcquisitionPlanningInput): Promise<AcquisitionPlanningResult>;
   planMovieAcquisition(input: MoviePlanningInput): Promise<AcquisitionPlanningResult>;
+  selectMovieMasterFile(input: MovieMasterSelectionInput): Promise<MovieMasterSelectionDecision>;
   recognizePackage(input: PackageRecognitionInput): Promise<PackageRecognitionDecision>;
 }

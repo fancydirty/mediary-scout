@@ -428,6 +428,42 @@ describe("runType3Monitoring", () => {
     });
   });
 
+  it("graduates a finished, fully-obtained season to completed so it stops 追更", async () => {
+    const { title, season } = qiaochuFixture();
+    const finished = { ...season, totalEpisodes: 13, latestAiredEpisode: 13, status: "active" as const };
+    const currentFiles = obtainedFiles(13, finished.storageDirectoryId);
+    const episodes = reconcileVerifiedFiles({
+      season: finished,
+      episodes: createEpisodeStates({
+        trackedSeasonId: finished.id,
+        seasonNumber: finished.seasonNumber,
+        totalEpisodes: 13,
+        latestAiredEpisode: 13,
+      }),
+      files: currentFiles,
+    });
+    const storage = new FakeStorageExecutor({
+      directories: { [finished.storageDirectoryId]: currentFiles },
+    });
+
+    const result = await runType3Monitoring({
+      title,
+      season: finished,
+      episodes,
+      keyword: "翘楚 4K",
+      storageParentDirectoryId: "library_root",
+      resourceProvider: new FakeResourceProvider({ keywordResults: {} }),
+      storage,
+      agents: new FakeAgentNodes(),
+    });
+
+    expect(result.transferAttempts).toEqual([]);
+    // It graduated: status flips to completed (next sweep won't monitor it) and
+    // the finale is announced.
+    expect(result.season.status).toBe("completed");
+    expect(result.notification.kind).toBe("tracking_completed");
+  });
+
   it("returns no_coverage with an honest notification when nothing covers the gap", async () => {
     const { title, season } = qiaochuFixture();
     const existingFiles = obtainedFiles(12, season.storageDirectoryId);

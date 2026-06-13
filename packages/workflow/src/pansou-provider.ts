@@ -18,6 +18,12 @@ export interface PanSouResourceProviderOptions {
   baseURL: string;
   fetchJson?: PanSouFetchJson;
   now?: () => string;
+  /** How many times to re-query before treating the result set as complete. */
+  maxSearchAttempts?: number;
+  /** Delay between completeness polls (ms). */
+  searchPollMs?: number;
+  /** Injectable sleep (tests pass a no-op). */
+  wait?: (ms: number) => Promise<void>;
 }
 
 interface PanSouLinkFact {
@@ -34,23 +40,54 @@ export class PanSouResourceProvider implements ResourceProvider {
   private readonly baseURL: string;
   private readonly fetchJson: PanSouFetchJson;
   private readonly now: () => string;
+  private readonly maxSearchAttempts: number;
+  private readonly searchPollMs: number;
+  private readonly wait: (ms: number) => Promise<void>;
 
   constructor(options: PanSouResourceProviderOptions) {
     this.baseURL = options.baseURL.replace(/\/+$/, "");
     this.fetchJson = options.fetchJson ?? defaultFetchJson;
     this.now = options.now ?? (() => new Date().toISOString());
+    this.maxSearchAttempts = options.maxSearchAttempts ?? 4;
+    this.searchPollMs = options.searchPollMs ?? 2500;
+    this.wait = options.wait ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
 
-  async search(input: { keyword: string }): Promise<ResourceSnapshot> {
+  private async fetchFacts(keyword: string): Promise<PanSouLinkFact[]> {
     const response = await this.fetchJson(`${this.baseURL}/api/search`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "User-Agent": "clawd-media-track/1.0",
       },
-      body: JSON.stringify({ kw: input.keyword, res: "all" }),
+      body: JSON.stringify({ kw: keyword, res: "all" }),
     });
-    const facts = isPanSouSuccessResponse(response) ? collectLinkFacts(response.data.results) : [];
+    return isPanSouSuccessResponse(response) ? collectLinkFacts(response.data.results) : [];
+  }
+
+  async search(input: { keyword: string }): Promise<ResourceSnapshot> {
+    // PanSou is async/streaming: the first call returns quick cached results and
+    // async-plugin results land on LATER calls (5 → 35 115-links, 0 → 419
+    // magnets). Poll until the link count stops growing so the agent always
+    // judges the COMPLETE evidence — never a partial slice (no 抢跑). Speed comes
+    // from the agent issuing FEWER searches, not from cutting this short.
+    let facts: PanSouLinkFact[] = [];
+    for (let attempt = 0; attempt < this.maxSearchAttempts; attempt += 1) {
+      let next: PanSouLinkFact[];
+      try {
+        next = await this.fetchFacts(input.keyword);
+      } catch {
+        break; // network/parse error mid-poll — keep the most complete set so far
+      }
+      if (next.length > facts.length) {
+        facts = next;
+      } else if (attempt > 0) {
+        break; // stabilized: no new links since the previous poll
+      }
+      if (attempt < this.maxSearchAttempts - 1) {
+        await this.wait(this.searchPollMs);
+      }
+    }
     const snapshotId = createSnapshotId(input.keyword, facts);
     const candidates: ResourceCandidate[] = facts.map((fact, index) => ({
       id: `${snapshotId}_candidate_${index + 1}`,
@@ -202,9 +239,13 @@ function extractQualityHints(text: string): string[] {
 }
 
 function createSnapshotId(keyword: string, facts: PanSouLinkFact[]): string {
-  const material = JSON.stringify(
-    facts.map((fact) => ({
-      keyword,
+  // The keyword is part of the top-level material (not only embedded per-fact),
+  // so an EMPTY result set still yields a keyword-specific id. Otherwise every
+  // empty search hashes the same `[]` → one shared id that collides across
+  // keywords AND across runs (resource_snapshots.id is a global primary key).
+  const material = JSON.stringify({
+    keyword,
+    facts: facts.map((fact) => ({
       title: fact.title,
       type: fact.type,
       rawType: fact.rawType,
@@ -213,7 +254,7 @@ function createSnapshotId(keyword: string, facts: PanSouLinkFact[]): string {
       datetime: fact.datetime,
       source: fact.source,
     })),
-  );
+  });
   return `pansou_${createHash("sha1").update(material).digest("hex").slice(0, 12)}`;
 }
 

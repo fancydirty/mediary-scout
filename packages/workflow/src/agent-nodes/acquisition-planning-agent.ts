@@ -14,6 +14,7 @@ Search strategy:
 - Start from the provided initialKeyword, then try alternates when results are missing, empty, or noisy: aliases, original titles, traditional/simplified variants, source-material names, quality suffixes like "4K", media-type prefixes like "电视剧".
 - A provider error or empty result for one keyword is evidence, not the end. The searchResources tool returns {keyword, error} on failure; read it and adapt.
 - Do not assume provider ordering is stable. Judge only ids observed in this run.
+- LANGUAGE PREFERENCE: when the input carries a preferredLanguage (the user's subtitle language), search preferred-language-named keywords FIRST and prefer candidates titled in that language — a release named in a language is far more likely to ship that language's subtitles. Treat an original/foreign-language-named rip the user cannot read as weak coverage: fall back to it only when no preferred-language resource covers the need, and say so in the reason.
 
 Judgment rules (apply simultaneously over the full candidate evidence):
 - Wrong-target rejection: a candidate must clearly refer to the target title; reject lookalikes that only matched keyword noise.
@@ -49,11 +50,12 @@ export const MOVIE_PLANNING_AGENT_SPEC = {
   system: `${SHARED_AGENT_NODE_BOUNDARY}
 You are choosing ONE resource that is exactly the target movie. There are no seasons or episodes — a movie is a single video file.
 
-Search strategy (searching MULTIPLE varied keywords is YOUR job — the workflow does not do it for you):
-- The initialKeyword is only a starting point (the bare title). You MUST issue several searches with different keywords to maximize coverage; never settle for a single search.
-- At minimum try, as needed: the bare title ("奥本海默"); title + year to disambiguate remakes/同名作品 ("奥本海默 2023"); title + quality variants ("奥本海默 4K", "奥本海默 1080p"); the original/foreign title; traditional/simplified variants.
-- Quality is a PREFERENCE, not a filter. Prefer the requested qualityPreference / 4K / 1080p, but a correct single-file match at a lower quality beats no match. Never let a quality suffix shrink your search to zero — drop it and search the bare title.
-- A provider error or empty result for one keyword is evidence, not the end. searchResources returns {keyword, error} on failure; read it and pick a different keyword.
+Search strategy (YOU choose the keywords; the workflow only runs the query you give it. Each search is SLOW — be economical, don't search for its own sake):
+- Search the bare title (initialKeyword) FIRST, then JUDGE the results. If they already contain a confident covering candidate (this exact film + year, a transferable single video), SELECT IT AND STOP — do NOT issue more searches just to be thorough. Every redundant search costs ~10-20s.
+- Issue ANOTHER keyword ONLY when the current evidence is genuinely insufficient: zero/too-few results, all noise, or none clearly this film. Then vary purposefully — title + year (disambiguate remakes/同名), the original/foreign title, traditional/simplified — ONE at a time, re-judging after each, and stop the moment you have a confident pick.
+- Do NOT speculatively append quality suffixes like "4K"/"1080p" as search terms — they usually return nothing. Quality is a PREFERENCE applied when RANKING candidates, never a search keyword. A correct lower-quality single-file match still beats no match.
+- A provider error or empty result is just noise from one keyword, not a verdict — if you still lack coverage, try a different keyword; if you already have a confident pick, ignore it and proceed.
+- LANGUAGE PREFERENCE: when the input carries a preferredLanguage (the user's subtitle language), search preferred-language-named keywords FIRST (e.g. the Chinese title for 中文) and prefer candidates titled in that language — a release named in a language is far more likely to ship that language's subtitles. An original/foreign-title rip the user cannot read is weak coverage: try foreign-title searches only when no preferred-language candidate is the film, and note it in the reason.
 - Judge only ids observed in this run; do not assume provider ordering is stable.
 
 Judgment rules (apply simultaneously over the full candidate evidence):

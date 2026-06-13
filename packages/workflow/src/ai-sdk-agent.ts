@@ -16,12 +16,24 @@ import type {
   AcquisitionPlanningInput,
   AcquisitionPlanningResult,
   AgentNodes,
+  MovieMasterSelectionDecision,
+  MovieMasterSelectionInput,
   MoviePlanningInput,
 } from "./ports.js";
 
-const DEFAULT_PROVIDER_NAME = "xiaomi-mimo";
+// The shipped default model — any OpenAI-compatible endpoint works; override
+// with AGENT_MODEL_BASE_URL / AGENT_MODEL_ID / AGENT_MODEL_API_KEY.
+const DEFAULT_PROVIDER_NAME = "agent-model";
 const DEFAULT_BASE_URL = "https://token-plan-sgp.xiaomimimo.com/v1";
 const DEFAULT_MODEL_ID = "mimo-v2.5-pro";
+
+/** Per-step latency telemetry. Off unless MEDIA_TRACK_PERF_LOG is set, so it
+ *  never spams production but stays available for diagnosing slow runs. */
+function perfLog(message: string): void {
+  if (process.env.MEDIA_TRACK_PERF_LOG) {
+    console.error(`[perf] ${message}`);
+  }
+}
 
 const acquisitionPlanningSchema = z.object({
   selectedSnapshotId: z.string().nullable(),
@@ -54,9 +66,18 @@ const packageRecognitionSchema = z.object({
   reason: z.string(),
 });
 
+const movieMasterSelectionSchema = z.object({
+  keepFileId: z.string(),
+  reason: z.string(),
+});
+
 type AcquisitionPlanningOutput = z.infer<typeof acquisitionPlanningSchema>;
 type PackageRecognitionOutput = z.infer<typeof packageRecognitionSchema>;
-type StructuredOutput = AcquisitionPlanningOutput | PackageRecognitionOutput;
+type MovieMasterSelectionOutput = z.infer<typeof movieMasterSelectionSchema>;
+type StructuredOutput =
+  | AcquisitionPlanningOutput
+  | PackageRecognitionOutput
+  | MovieMasterSelectionOutput;
 
 export interface StructuredOutputRequest extends AgentNodeExecutionRequest {}
 
@@ -68,14 +89,27 @@ export interface VercelAiAgentNodesOptions {
   modelId?: string;
   providerName?: string;
   generateStructuredOutput?: GenerateStructuredOutput;
+  /**
+   * The user's preferred subtitle language (e.g. "中文"). Injected into every
+   * planning agent's input as standing context — a release named in a language
+   * is far more likely to ship that language's subtitles. This lives on the
+   * agent (a global user preference), not threaded through each workflow call.
+   */
+  preferredLanguage?: string;
 }
 
 export class VercelAiAgentNodes implements AgentNodes {
   private readonly generateStructuredOutput: GenerateStructuredOutput;
+  private readonly preferredLanguage: string | undefined;
 
   constructor(options: VercelAiAgentNodesOptions = {}) {
     this.generateStructuredOutput =
       options.generateStructuredOutput ?? createAiSdkStructuredGenerator(options);
+    this.preferredLanguage = options.preferredLanguage;
+  }
+
+  private get languageContext(): { preferredLanguage: string } | Record<string, never> {
+    return this.preferredLanguage === undefined ? {} : { preferredLanguage: this.preferredLanguage };
   }
 
   async planAcquisition(input: AcquisitionPlanningInput): Promise<AcquisitionPlanningResult> {
@@ -89,6 +123,7 @@ export class VercelAiAgentNodes implements AgentNodes {
         qualityPreference: input.qualityPreference,
         missingEpisodes: input.missingEpisodes,
         initialKeyword: input.initialKeyword,
+        ...this.languageContext,
         failureEvidence: input.failureEvidence,
       },
       tools: {
@@ -149,6 +184,7 @@ export class VercelAiAgentNodes implements AgentNodes {
         year: input.year,
         qualityPreference: input.qualityPreference,
         initialKeyword: input.initialKeyword,
+        ...this.languageContext,
         failureEvidence: input.failureEvidence,
       },
       tools: {
@@ -158,8 +194,10 @@ export class VercelAiAgentNodes implements AgentNodes {
             "Search the resource provider with one keyword. Read-only. Returns the full persisted ResourceSnapshot; judge from this complete evidence. Returns {keyword, error} when the provider fails.",
           inputSchema: AGENT_NODE_SPECS.MoviePlanningAgent.toolInputSchemas.searchResources,
           execute: async ({ keyword }) => {
+            const ts = Date.now();
             try {
               const snapshot = await input.searchResources({ keyword });
+              perfLog(`pansou search "${keyword}" ${Date.now() - ts}ms → ${snapshot.candidates.length} candidates`);
               snapshots.push(snapshot);
               return {
                 snapshotId: snapshot.id,
@@ -176,6 +214,7 @@ export class VercelAiAgentNodes implements AgentNodes {
                 })),
               };
             } catch (error) {
+              perfLog(`pansou search "${keyword}" ${Date.now() - ts}ms → ERROR`);
               return { keyword, error: error instanceof Error ? error.message : String(error) };
             }
           },
@@ -196,6 +235,30 @@ export class VercelAiAgentNodes implements AgentNodes {
       },
       snapshots,
       trace: result.trace,
+    };
+  }
+
+  async selectMovieMasterFile(
+    input: MovieMasterSelectionInput,
+  ): Promise<MovieMasterSelectionDecision> {
+    const result = await runAgentNode({
+      spec: AGENT_NODE_SPECS.MovieMasterSelectionAgent,
+      input: {
+        title: input.title,
+        year: input.year,
+        candidates: input.candidates.map((candidate) => ({
+          providerFileId: candidate.providerFileId,
+          name: candidate.name,
+          sizeBytes: candidate.sizeBytes,
+        })),
+      },
+      executor: this.generateStructuredOutput,
+    });
+    const output = movieMasterSelectionSchema.parse(result.output);
+    return {
+      node: "vercel_ai_movie_master_selection",
+      keepFileId: output.keepFileId,
+      reason: output.reason,
     };
   }
 
@@ -232,23 +295,37 @@ export class VercelAiAgentNodes implements AgentNodes {
   }
 }
 
-export function createXiaomiMimoAgentNodesFromEnv(
+/**
+ * Build the agent nodes from environment config. The model is just an
+ * OpenAI-compatible endpoint — swapping providers is only the three params
+ * api key / base url / model id, so the env keys are model-agnostic
+ * (`AGENT_MODEL_API_KEY` / `_BASE_URL` / `_ID`). The legacy `XIAOMI_MIMO_*`
+ * keys are still read as a fallback so existing configs keep working.
+ */
+export function createAgentNodesFromEnv(
   env: NodeJS.ProcessEnv = process.env,
+  preferredLanguage?: string,
 ): VercelAiAgentNodes {
   const options: VercelAiAgentNodesOptions = {};
-  if (env.XIAOMI_MIMO_API_KEY !== undefined) {
-    options.apiKey = env.XIAOMI_MIMO_API_KEY;
+  const apiKey = env.AGENT_MODEL_API_KEY ?? env.XIAOMI_MIMO_API_KEY;
+  const baseURL = env.AGENT_MODEL_BASE_URL ?? env.XIAOMI_MIMO_BASE_URL;
+  const modelId = env.AGENT_MODEL_ID ?? env.XIAOMI_MIMO_MODEL_ID;
+  if (apiKey !== undefined) {
+    options.apiKey = apiKey;
   }
-  if (env.XIAOMI_MIMO_BASE_URL !== undefined) {
-    options.baseURL = env.XIAOMI_MIMO_BASE_URL;
+  if (baseURL !== undefined) {
+    options.baseURL = baseURL;
   }
-  if (env.XIAOMI_MIMO_MODEL_ID !== undefined) {
-    options.modelId = env.XIAOMI_MIMO_MODEL_ID;
+  if (modelId !== undefined) {
+    options.modelId = modelId;
+  }
+  if (preferredLanguage !== undefined) {
+    options.preferredLanguage = preferredLanguage;
   }
   return new VercelAiAgentNodes(options);
 }
 
-export function createXiaomiMimoProviderConfig(options: VercelAiAgentNodesOptions = {}): {
+export function createAgentProviderConfig(options: VercelAiAgentNodesOptions = {}): {
   providerSettings: OpenAICompatibleProviderSettings;
   modelId: string;
 } {
@@ -274,7 +351,7 @@ export function createXiaomiMimoProviderConfig(options: VercelAiAgentNodesOption
  * way; a plan that fails the schema never reaches the workflow.
  */
 function createAiSdkStructuredGenerator(options: VercelAiAgentNodesOptions): GenerateStructuredOutput {
-  const { providerSettings, modelId } = createXiaomiMimoProviderConfig(options);
+  const { providerSettings, modelId } = createAgentProviderConfig(options);
   const provider = createOpenAICompatible(providerSettings);
   const model = provider(modelId);
 
@@ -287,6 +364,7 @@ Final answer format (hard requirement):
 Reply with ONLY one JSON object matching this JSON Schema — no markdown fences, no commentary before or after it:
 ${JSON.stringify(z.toJSONSchema(schema))}`;
 
+    const t0 = Date.now();
     const first = await generateText({
       model,
       system,
@@ -294,6 +372,13 @@ ${JSON.stringify(z.toJSONSchema(schema))}`;
       stopWhen: stepCountIs(request.maxSteps),
       ...(tools === undefined ? {} : { tools }),
     });
+    const steps = first.steps?.length ?? 0;
+    const toolCalls = (first.steps ?? []).reduce((n, s) => n + (s.toolCalls?.length ?? 0), 0);
+    // Per-call latency breakdown — the model loop (reasoning + tool round-trips)
+    // is the dominant cost; this exposes how many steps it burned and how long.
+    perfLog(
+      `${request.nodeName}: model loop ${Date.now() - t0}ms, steps=${steps}, toolCalls=${toolCalls}, finish=${first.finishReason}`,
+    );
     const firstParsed = parseStructuredText(schema, first.text);
     if (firstParsed.success) {
       return firstParsed.data as StructuredOutput;
@@ -356,6 +441,8 @@ function schemaFor(schemaName: StructuredOutputRequest["schemaName"]) {
     case "movie_planning":
       // Same output shape; the movie agent maps its single pick to ["S01E01"].
       return acquisitionPlanningSchema;
+    case "movie_master_selection":
+      return movieMasterSelectionSchema;
     case "package_recognition":
       return packageRecognitionSchema;
     default:

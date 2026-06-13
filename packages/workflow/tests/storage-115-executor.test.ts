@@ -155,6 +155,9 @@ describe("Storage115Executor", () => {
       },
     ]);
     expect(attempt).toMatchObject({
+      // Run-scoped id so it can't collide across runs/process restarts on the
+      // global transfer_attempts.id primary key.
+      id: "run_1_transfer_1",
       workflowRunId: "run_1",
       candidateId: "candidate_1",
       status: "succeeded",
@@ -169,6 +172,42 @@ describe("Storage115Executor", () => {
         sizeBytes: 1_000_000_000,
         episodeCode: "S01E01",
         providerFileId: "file_1",
+      },
+    ]);
+  });
+
+  it("lists video files by media extension, not by episode wildcard", async () => {
+    // A movie file has no SxxExx/第N集 code but is still a real video. Detection
+    // must key off the media extension; the episode code is optional metadata.
+    const api = new FakePan115Api({
+      directories: {
+        movie_dir: [
+          { fid: "movie_v", n: "奥本海默 (2023).mkv", s: "28000000000" },
+          { fid: "ep_v", n: "Show.S01E03.mkv", s: "1000000000" },
+          { fid: "note_f", n: "readme.txt", s: "1024" },
+        ],
+      },
+    });
+    const executor = new Storage115Executor({ api });
+
+    const files = await executor.listVideoFiles("movie_dir");
+
+    expect(files).toEqual([
+      {
+        id: "movie_v",
+        storageDirectoryId: "movie_dir",
+        name: "奥本海默 (2023).mkv",
+        sizeBytes: 28_000_000_000,
+        episodeCode: null,
+        providerFileId: "movie_v",
+      },
+      {
+        id: "ep_v",
+        storageDirectoryId: "movie_dir",
+        name: "Show.S01E03.mkv",
+        sizeBytes: 1_000_000_000,
+        episodeCode: "S01E03",
+        providerFileId: "ep_v",
       },
     ]);
   });
@@ -205,9 +244,27 @@ describe("Storage115Executor", () => {
     });
   });
 
+  it("removes an ephemeral sub-directory (e.g. staging) via 115 delete", async () => {
+    const api = new FakePan115Api();
+    const executor = new Storage115Executor({ api, writeScopeDirectoryIds: [] });
+
+    const result = await executor.removeDirectory("staging_run_movie_p1");
+
+    expect(result).toEqual({ removed: true });
+    expect(api.deletes).toEqual([{ fileIds: ["staging_run_movie_p1"] }]);
+  });
+
+  it("refuses to remove a protected/root directory", async () => {
+    const api = new FakePan115Api();
+    const executor = new Storage115Executor({ api, protectedDirectoryIds: ["tv_root"] });
+
+    await expect(executor.removeDirectory("tv_root")).rejects.toThrow("SAFETY_VIOLATION");
+    expect(api.deletes).toEqual([]);
+  });
+
   it("adds magnet candidates as offline tasks through 115", async () => {
     const api = new FakePan115Api();
-    const executor = new Storage115Executor({ api });
+    const executor = new Storage115Executor({ api, offlineMaterializeAttempts: 0 });
 
     const attempt = await executor.transfer({
       workflowRunId: "run_1",
@@ -232,6 +289,101 @@ describe("Storage115Executor", () => {
       providerMessage: "offline task accepted; no target video materialized yet",
       materializedFileIds: [],
     });
+  });
+
+  it("briefly confirms an offline task's 秒传 before judging it materialized", async () => {
+    const api = new FakePan115Api();
+    // A 秒传 hit (115 already has the resource cached) reflects a beat after the
+    // task is accepted — the video appears on the second list. The short
+    // confirmation window catches it without waiting on a real download.
+    let graceWaits = 0;
+    const executor = new Storage115Executor({
+      api,
+      apiGuardOptions: { minDelayMs: 0 },
+      offlineMaterializeAttempts: 3,
+      offlineMaterializePollMs: 25,
+      sleep: async () => {
+        graceWaits += 1;
+        if (graceWaits === 2) {
+          api.directories["123"] = [
+            { fid: "magnet_v", n: "Movie.2023.2160p.mkv", s: "8000000000" },
+          ];
+        }
+      },
+    });
+
+    await executor.transfer({
+      workflowRunId: "run_magnet",
+      directoryId: "123",
+      candidate: candidateFixture({
+        type: "magnet",
+        providerPayload: {
+          url: "magnet:?xt=urn:btih:abcdef",
+          rawType: "magnet",
+        },
+      }),
+    });
+
+    // It confirmed across the short window — did not give up on the first
+    // (empty) check, and stopped as soon as the 秒传'd video appeared.
+    expect(graceWaits).toBe(2);
+    // The video is now in the staging tree, so the workflow's subsequent
+    // listTree scan finds it (a movie file has no episode code, so the probe is
+    // extension-based, not episode-based).
+    const tree = await executor.listTree({ directoryId: "123" });
+    expect(tree.map((file) => file.path)).toContain("Movie.2023.2160p.mkv");
+    // It 秒传'd, so the queued task is real — do NOT cancel it.
+    expect(api.removedOfflineHashes).toEqual([]);
+  });
+
+  it("cancels a non-秒传 offline task so it does not drain the quota", async () => {
+    const api = new FakePan115Api();
+    // Nothing materializes in the grace window → 115 has no cached copy → the
+    // queued download is junk and must be canceled by its info_hash.
+    const executor = new Storage115Executor({ api, offlineMaterializeAttempts: 0 });
+
+    const attempt = await executor.transfer({
+      workflowRunId: "run_junk",
+      directoryId: "123",
+      candidate: candidateFixture({
+        type: "magnet",
+        providerPayload: {
+          url: "magnet:?xt=urn:btih:57E6D442793C87D7F81EECC675AB4EB3B4925BD3&dn=junk",
+          rawType: "magnet",
+        },
+      }),
+    });
+
+    expect(attempt.status).toBe("no_target_change");
+    expect(api.removedOfflineHashes).toEqual([
+      "57e6d442793c87d7f81eecc675ab4eb3b4925bd3",
+    ]);
+  });
+
+  it("does NOT cancel an offline task 115 refused as a duplicate (任务已存在)", async () => {
+    const api = new FakePan115Api();
+    // 115 rejecting a duplicate ("任务已存在") is anti-spam, not a junk resource —
+    // it may be a prior good task we must not kill.
+    api.addOfflineTask = async (input) => {
+      api.offlineTasks.push({ ...input });
+      return { ok: true, alreadyTransferred: true, message: "任务已存在" };
+    };
+    const executor = new Storage115Executor({ api, offlineMaterializeAttempts: 0 });
+
+    const attempt = await executor.transfer({
+      workflowRunId: "run_dup",
+      directoryId: "123",
+      candidate: candidateFixture({
+        type: "magnet",
+        providerPayload: {
+          url: "magnet:?xt=urn:btih:57E6D442793C87D7F81EECC675AB4EB3B4925BD3",
+          rawType: "magnet",
+        },
+      }),
+    });
+
+    expect(attempt.status).toBe("no_target_change");
+    expect(api.removedOfflineHashes).toEqual([]);
   });
 
   it("rejects flattening protected directories", async () => {
@@ -627,6 +779,7 @@ class FakePan115Api implements Pan115StorageApi {
   readonly directoryInfo: Record<string, Pan115DirectoryInfo>;
   readonly receivedShares: Array<{ shareCode: string; receiveCode: string; directoryId: string }> = [];
   readonly offlineTasks: Array<{ url: string; directoryId: string }> = [];
+  readonly removedOfflineHashes: string[] = [];
   readonly moves: Array<{ fileIds: string[]; targetDirectoryId: string }> = [];
   readonly deletes: Array<{ fileIds: string[] }> = [];
   readonly renames: Array<{ fileId: string; newName: string }> = [];
@@ -685,6 +838,11 @@ class FakePan115Api implements Pan115StorageApi {
   async addOfflineTask(input: { url: string; directoryId: string }): Promise<Pan115ActionResult> {
     this.offlineTasks.push({ ...input });
     return { ok: true, message: "offline task accepted" };
+  }
+
+  async removeOfflineTask(input: { infoHashes: string[] }): Promise<Pan115ActionResult> {
+    this.removedOfflineHashes.push(...input.infoHashes);
+    return { ok: true, message: "" };
   }
 
   async moveItems(input: { fileIds: string[]; targetDirectoryId: string }): Promise<Pan115ActionResult> {

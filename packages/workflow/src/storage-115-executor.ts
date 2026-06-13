@@ -74,6 +74,7 @@ export interface Pan115StorageApi {
     directoryId: string;
   }): Promise<Pan115ActionResult>;
   addOfflineTask(input: { url: string; directoryId: string }): Promise<Pan115ActionResult>;
+  removeOfflineTask(input: { infoHashes: string[] }): Promise<Pan115ActionResult>;
   moveItems(input: { fileIds: string[]; targetDirectoryId: string }): Promise<Pan115ActionResult>;
   deleteItems(input: { fileIds: string[] }): Promise<Pan115ActionResult>;
   renameFile(input: { fileId: string; newName: string }): Promise<Pan115ActionResult>;
@@ -88,6 +89,12 @@ export interface Storage115ExecutorOptions {
   moviesDirectoryId?: string;
   minVideoSizeBytes?: number;
   videoExtensions?: string[];
+  /** How many times to re-check the staging dir for an offline task's video. */
+  offlineMaterializeAttempts?: number;
+  /** Delay between offline-task materialization checks (ms). */
+  offlineMaterializePollMs?: number;
+  /** Injectable sleep (tests pass a fast/no-op). */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export interface ProtectedStorage115ExecutorOptions {
@@ -97,6 +104,9 @@ export interface ProtectedStorage115ExecutorOptions {
   apiGuardOptions?: Pan115ApiGuardOptions;
   minVideoSizeBytes?: number;
   videoExtensions?: string[];
+  offlineMaterializeAttempts?: number;
+  offlineMaterializePollMs?: number;
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export type Pan115ApiGuardEventKind =
@@ -275,6 +285,9 @@ export class Storage115Executor implements StorageExecutor {
   private readonly minVideoSizeBytes: number;
   private readonly videoExtensions: Set<string>;
   private readonly apiGuard: Pan115ApiGuard;
+  private readonly offlineMaterializeAttempts: number;
+  private readonly offlineMaterializePollMs: number;
+  private readonly sleep: (ms: number) => Promise<void>;
   private nextTransferNumber = 1;
 
   constructor(options: Storage115ExecutorOptions) {
@@ -287,6 +300,13 @@ export class Storage115Executor implements StorageExecutor {
     this.videoExtensions = new Set(
       (options.videoExtensions ?? DEFAULT_VIDEO_EXTENSIONS).map((extension) => extension.toLowerCase()),
     );
+    // A 秒传 hit (115 already has the resource cached) reflects in the target
+    // dir within a second or two. This window only confirms that — it is NOT a
+    // wait for an actual offline download. If nothing lands in this short span,
+    // 115 doesn't have the resource cached and the caller switches candidates.
+    this.offlineMaterializeAttempts = options.offlineMaterializeAttempts ?? 2;
+    this.offlineMaterializePollMs = options.offlineMaterializePollMs ?? 2000;
+    this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
 
   async createDirectory(input: { name: string; parentId: string }): Promise<string> {
@@ -335,15 +355,57 @@ export class Storage115Executor implements StorageExecutor {
     const safeDirectoryId = await this.assertWithinWriteScope(input.directoryId, "transfer");
     const before = new Set((await this.listVideoFiles(safeDirectoryId)).map((file) => file.id));
     const action = await this.executeCandidateTransfer(input.candidate, safeDirectoryId);
+
+    // Offline tasks (magnets/ed2k): a 秒传 hit means 115 ALREADY has the
+    // resource cached, so it reflects in the staging dir within a second or two
+    // of acceptance. Briefly confirm that — probing the tree by video EXTENSION
+    // (movies have no SxxExx). If nothing lands in this short window, 115 has no
+    // cached copy and would have to truly download it; we do NOT wait for that —
+    // transferStatus stays no_target_change and the workflow switches to the
+    // next candidate, hunting for one that can 秒传. (115 share receives are
+    // synchronous, so this only applies to offline tasks.)
+    if (action.ok && isOfflineTaskCandidate(input.candidate)) {
+      let attempts = 0;
+      while (
+        attempts < this.offlineMaterializeAttempts &&
+        !(await this.stagingTreeHasVideo(safeDirectoryId))
+      ) {
+        await this.sleep(this.offlineMaterializePollMs);
+        attempts += 1;
+      }
+    }
+
     const after = await this.listVideoFiles(safeDirectoryId);
     const materializedFileIds = after
       .filter((file) => !before.has(file.id))
       .map((file) => file.id);
     const status = transferStatus(action, materializedFileIds);
+
+    // Non-秒传 offline task: 115 had no cached copy, so it queued a real
+    // download we never wait for. Cancel it (`task_del`) to free the offline
+    // quota and not leave junk tasks behind. Best-effort — never fail the
+    // transfer over cleanup. NEVER cancel an `alreadyTransferred` result
+    // ("任务已存在"): that is 115 refusing a duplicate of a PRIOR task, which may
+    // be a good download/秒传 we must not kill.
+    if (status !== "succeeded" && !action.alreadyTransferred && isOfflineTaskCandidate(input.candidate)) {
+      const infoHash = infoHashFromMagnet(stringValue(input.candidate.providerPayload["url"]));
+      if (infoHash) {
+        try {
+          await this.callApi("removeOfflineTask", () =>
+            this.api.removeOfflineTask({ infoHashes: [infoHash] }),
+          );
+        } catch {
+          // Cleanup is best-effort; the transfer outcome stands regardless.
+        }
+      }
+    }
     const providerMessage = transferMessage(input.candidate, action, status);
 
     const attempt: TransferAttempt = {
-      id: `transfer_${this.nextTransferNumber}`,
+      // Scope the id to the run: the per-executor counter resets when the worker
+      // process restarts, so a bare `transfer_N` collides across runs on the
+      // global transfer_attempts.id primary key. The run id makes it unique.
+      id: `${input.workflowRunId}_transfer_${this.nextTransferNumber}`,
       workflowRunId: input.workflowRunId,
       candidateId: input.candidate.id,
       status,
@@ -400,6 +462,22 @@ export class Storage115Executor implements StorageExecutor {
     return { moved, removed: removableDirectoryIds };
   }
 
+  async removeDirectory(directoryId: string): Promise<{ removed: boolean }> {
+    const safe = await this.assertWithinWriteScope(directoryId, "remove directory");
+    // Only ephemeral sub-directories may be removed. Refuse the write-scope
+    // roots, any protected directory, and the movies parent — deleting one of
+    // those would wipe a whole library tree.
+    if (
+      this.protectedDirectoryIds.has(safe) ||
+      this.writeScopeDirectoryIds.has(safe) ||
+      (this.moviesDirectoryId !== null && safe === this.moviesDirectoryId)
+    ) {
+      throw new Error(`SAFETY_VIOLATION: refusing to remove protected/root directory cid=${safe}`);
+    }
+    const result = await this.callApi("deleteItems", () => this.api.deleteItems({ fileIds: [safe] }));
+    return { removed: result.ok };
+  }
+
   async listTree(input: { directoryId: string; maxDepth?: number }): Promise<PackageTreeFile[]> {
     const safeRoot = this.assertSafeRecursiveListTarget(input.directoryId, "walk the tree of");
     const maxDepth = input.maxDepth ?? 6;
@@ -454,6 +532,14 @@ export class Storage115Executor implements StorageExecutor {
     return { deleted: result.ok ? input.fileIds : [] };
   }
 
+  /** Has any video-extension file landed in the staging tree yet? Used to wait
+   *  out an offline task's asynchronous materialization (episode-agnostic, so it
+   *  works for movies too). */
+  private async stagingTreeHasVideo(directoryId: string): Promise<boolean> {
+    const tree = await this.listTree({ directoryId });
+    return tree.some((file) => isVideoName(file.path, this.videoExtensions));
+  }
+
   private async executeCandidateTransfer(
     candidate: ResourceCandidate,
     directoryId: string,
@@ -463,7 +549,7 @@ export class Storage115Executor implements StorageExecutor {
       return { ok: false, message: "candidate providerPayload.url is required" };
     }
 
-    if (url.startsWith("magnet:?xt=urn:btih:")) {
+    if (isOfflineTaskUrl(url)) {
       return this.callApi("addOfflineTask", () => this.api.addOfflineTask({ url, directoryId }));
     }
 
@@ -715,6 +801,15 @@ function optionalExecutorOptions(
   if (options.videoExtensions !== undefined) {
     executorOptions.videoExtensions = options.videoExtensions;
   }
+  if (options.offlineMaterializeAttempts !== undefined) {
+    executorOptions.offlineMaterializeAttempts = options.offlineMaterializeAttempts;
+  }
+  if (options.offlineMaterializePollMs !== undefined) {
+    executorOptions.offlineMaterializePollMs = options.offlineMaterializePollMs;
+  }
+  if (options.sleep !== undefined) {
+    executorOptions.sleep = options.sleep;
+  }
   return executorOptions;
 }
 
@@ -787,6 +882,23 @@ function transferStatus(action: Pan115ActionResult, materializedFileIds: string[
   return materializedFileIds.length > 0 ? "succeeded" : "no_target_change";
 }
 
+/** Offline-task (cloud-download) urls — magnets land asynchronously, unlike a
+ *  synchronous 115 share receive, so they get a materialization grace window. */
+function isOfflineTaskUrl(url: string): boolean {
+  return url.startsWith("magnet:?xt=urn:btih:");
+}
+
+function isOfflineTaskCandidate(candidate: ResourceCandidate): boolean {
+  return isOfflineTaskUrl(stringValue(candidate.providerPayload["url"]));
+}
+
+/** The btih info_hash from a magnet uri — 115 keys offline tasks by it, so it is
+ *  what `task_del` needs to cancel one. Null for non-magnet/base32-only links. */
+function infoHashFromMagnet(url: string): string | null {
+  const match = /xt=urn:btih:([A-Fa-f0-9]{40})/.exec(url);
+  return match?.[1] ? match[1].toLowerCase() : null;
+}
+
 function transferMessage(
   candidate: ResourceCandidate,
   action: Pan115ActionResult,
@@ -825,11 +937,10 @@ function verifiedFileFromItem(
   videoExtensions: Set<string>,
 ): VerifiedFile | null {
   const name = itemName(item);
+  // A file is a video by its media EXTENSION alone — not by exposing an episode
+  // code. Movies carry no SxxExx; they are still videos. The episode code is
+  // optional metadata (null when the name reveals none).
   if (!isVideoName(name, videoExtensions)) {
-    return null;
-  }
-  const episodeCode = episodeCodeFromFileName(name);
-  if (!episodeCode) {
     return null;
   }
   const providerFileId = fileIdFromItem(item);
@@ -841,7 +952,7 @@ function verifiedFileFromItem(
     storageDirectoryId,
     name,
     sizeBytes: numberValue(item.size ?? item.s),
-    episodeCode,
+    episodeCode: episodeCodeFromFileName(name),
     providerFileId,
   };
 }

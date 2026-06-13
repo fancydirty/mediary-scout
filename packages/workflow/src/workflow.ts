@@ -23,6 +23,7 @@ import {
 import {
   buildSeasonReport,
   buildSeriesReport,
+  dominantQuality,
   formatReportPushText,
 } from "./notification-report.js";
 import {
@@ -165,11 +166,13 @@ export async function runType2Initialization(input: {
     missingBefore: missingEpisodes,
     stillMissingAfter: actionableMissingEpisodes(reconciledEpisodes),
   });
+  const initQuality = dominantQuality(verifiedFiles.map((file) => file.name));
   const report = buildSeasonReport({
     titleName: input.title.title,
     season,
     episodes: reconciledEpisodes,
     noCoverage: status === "no_coverage",
+    ...(initQuality ? { quality: initQuality } : {}),
   });
   const notification: NotificationEvent = {
     id: `notification_${workflowRunId}`,
@@ -286,17 +289,25 @@ export async function runType3Monitoring(input: {
   const missingBefore = actionableMissingEpisodes(episodes);
 
   if (missingBefore.length === 0) {
+    const noopQuality = dominantQuality(currentFiles.map((file) => file.name));
     const report = buildSeasonReport({
       titleName: input.title.title,
       season: input.season,
       episodes,
+      ...(noopQuality ? { quality: noopQuality } : {}),
     });
+    // A finished, fully-obtained season GRADUATES to Type 1: flip its status to
+    // "completed" so the next sweep stops monitoring it and the library/search
+    // read it as 已获取 instead of perpetually 追更中. (Provider-ahead seasons
+    // stay active — more episodes are coming.)
+    const graduated = report.status === "complete";
+    const finalSeason = graduated
+      ? { ...input.season, status: "completed" as const }
+      : input.season;
     const notification: NotificationEvent = {
       id: `notification_${workflowRunId}_noop`,
       workflowRunId,
-      // A no-op sweep that finds a finished, fully-obtained season is the
-      // moment it graduates to Type 1 — announce the finale, not "已是最新".
-      kind: report.status === "complete" ? "tracking_completed" : "already_current",
+      kind: graduated ? "tracking_completed" : "already_current",
       title: `${report.titleName} ${report.seasonLabel}`,
       body: formatReportPushText(report),
       createdAt: now(),
@@ -305,7 +316,7 @@ export async function runType3Monitoring(input: {
     };
     return {
       status: "succeeded",
-      season: input.season,
+      season: finalSeason,
       episodes,
       obtainedEpisodes: obtainedEpisodeCodes(episodes),
       providerAheadEpisodes: collectProviderAheadEpisodes(episodes),
@@ -373,12 +384,14 @@ export async function runType3Monitoring(input: {
   const missingBeforeCodes = new Set(missingBefore);
   const newlyObtained = episodes.filter((ep) => ep.obtained && missingBeforeCodes.has(ep.episodeCode));
   const status = resolveAcquisitionStatus({ missingBefore, stillMissingAfter });
+  const sweepQuality = dominantQuality(finalFiles.map((file) => file.name));
   const report = buildSeasonReport({
     titleName: input.title.title,
     season: input.season,
     episodes,
     newlyObtained: newlyObtained.map((ep) => ep.episodeCode),
     noCoverage: status === "no_coverage",
+    ...(sweepQuality ? { quality: sweepQuality } : {}),
   });
   const notification: NotificationEvent = {
     id: `notification_${workflowRunId}`,
@@ -763,6 +776,17 @@ async function acquireMissingEpisodes(input: {
         agents: input.agents,
         auditEvents: input.auditEvents,
       });
+      // Remove the staging dir only when normalization left it empty. A staging
+      // dir that still holds files is quarantined foreign-work awaiting user
+      // review (see importForeignWorkAsMovie) — never delete that.
+      try {
+        const leftover = await input.storage.listTree({ directoryId: stagingDirectoryId });
+        if (leftover.length === 0) {
+          await input.storage.removeDirectory(stagingDirectoryId);
+        }
+      } catch {
+        // best-effort cleanup
+      }
     }
 
     stillMissing = await stillMissingAcrossSeasons({
@@ -1040,7 +1064,9 @@ async function stillMissingAcrossSeasons(input: {
   const obtained = new Set<string>();
   for (const directoryId of Object.values(input.seasonDirectoryIds)) {
     for (const file of await input.storage.listVideoFiles(directoryId)) {
-      obtained.add(file.episodeCode);
+      if (file.episodeCode !== null) {
+        obtained.add(file.episodeCode);
+      }
     }
   }
   return input.missingEpisodes.filter((code) => !obtained.has(code));
