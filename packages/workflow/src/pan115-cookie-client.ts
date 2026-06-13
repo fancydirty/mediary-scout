@@ -1,3 +1,4 @@
+import { lixianRsaEncrypt } from "./pan115-lixian-cipher.js";
 import type {
   Pan115ActionResult,
   Pan115DirectoryInfo,
@@ -7,6 +8,10 @@ import type {
 
 const PAN115_WEBAPI_BASE_URL = "https://webapi.115.com";
 const PAN115_CDN_WEBAPI_BASE_URL = "https://115cdn.com/webapi";
+const PAN115_LIXIAN_SSP_URL = "https://lixian.115.com/lixianssp/";
+// 115 requires its android client UA for the lixianssp offline endpoint.
+const PAN115_ANDROID_USER_AGENT =
+  "Mozilla/5.0 115disk/99.99.99.99 115Browser/99.99.99.99 115wangpan_android/99.99.99.99";
 const DEFAULT_LIST_LIMIT = 200;
 const DEFAULT_USER_AGENT = "media-track/0.1";
 
@@ -126,11 +131,22 @@ export class Pan115CookieClient implements Pan115StorageApi {
   }
 
   async addOfflineTask(input: { url: string; directoryId: string }): Promise<Pan115ActionResult> {
-    return {
-      ok: false,
-      message:
-        "PAN115_OFFLINE_TASK_UNIMPLEMENTED: cookie client requires encrypted 115 offline-task payload support",
-    };
+    // 115's selling point: magnet (and http/ed2k) links land via cloud download
+    // just like a 115 share receive — immediate for healthy resources. The
+    // lixianssp endpoint takes an RSA-encrypted JSON body; auth is the cookie.
+    const payload = JSON.stringify({
+      url: input.url,
+      wp_path_id: input.directoryId,
+      ac: "add_task_url",
+      app_ver: "99.99.99.99",
+    });
+    const encrypted = lixianRsaEncrypt(new TextEncoder().encode(payload));
+    const response = await this.postForm(
+      PAN115_LIXIAN_SSP_URL,
+      [["data", encrypted]],
+      { "User-Agent": PAN115_ANDROID_USER_AGENT },
+    );
+    return actionResultFromResponse(response);
   }
 
   async moveItems(input: { fileIds: string[]; targetDirectoryId: string }): Promise<Pan115ActionResult> {

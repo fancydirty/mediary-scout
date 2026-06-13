@@ -212,24 +212,29 @@ describe("Pan115CookieClient", () => {
     expect(requests[0]?.body).toBe("files_new_name%5Bfile_1%5D=Show.S01E01.mkv");
   });
 
-  it("fails magnet offline tasks explicitly until encrypted 115 payload support is added", async () => {
+  it("adds a magnet offline task via an RSA-encrypted lixianssp request", async () => {
+    let capturedUrl = "";
+    let capturedBody = "";
     const client = new Pan115CookieClient({
       cookie: "cookie",
-      fetchJson: async () => {
-        throw new Error("fetch should not be called");
+      fetchJson: async (url, init) => {
+        capturedUrl = url;
+        capturedBody = String(init.body ?? "");
+        return { state: true };
       },
     });
 
-    await expect(
-      client.addOfflineTask({
-        url: "magnet:?xt=urn:btih:abcdef",
-        directoryId: "season_1",
-      }),
-    ).resolves.toEqual({
-      ok: false,
-      message:
-        "PAN115_OFFLINE_TASK_UNIMPLEMENTED: cookie client requires encrypted 115 offline-task payload support",
+    const result = await client.addOfflineTask({
+      url: "magnet:?xt=urn:btih:abcdef",
+      directoryId: "season_1",
     });
+
+    expect(result.ok).toBe(true);
+    expect(capturedUrl).toBe("https://lixian.115.com/lixianssp/");
+    // The body is the encrypted payload — never the raw magnet url or cid.
+    expect(capturedBody.startsWith("data=")).toBe(true);
+    expect(capturedBody).not.toContain("magnet");
+    expect(capturedBody).not.toContain("season_1");
   });
 
   it("creates a client from PAN115_COOKIE", () => {
