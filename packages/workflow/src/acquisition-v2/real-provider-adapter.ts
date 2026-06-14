@@ -1,3 +1,4 @@
+import type { ResourceSnapshot } from "../domain.js";
 import type { ResourceProvider } from "../ports.js";
 import type { CandidateRegistry } from "./candidate-registry.js";
 import type { ResourceProviderV2, ResourceSnapshotV2 } from "./fake-provider.js";
@@ -19,6 +20,7 @@ export class RealResourceProviderV2 implements ResourceProviderV2 {
   private readonly provider: ResourceProvider;
   private readonly registry: CandidateRegistry;
   private readonly workflowRunId: string;
+  private readonly observedSnapshots = new Map<string, ResourceSnapshot>();
 
   constructor(options: RealResourceProviderV2Options) {
     this.provider = options.provider;
@@ -26,8 +28,17 @@ export class RealResourceProviderV2 implements ResourceProviderV2 {
     this.workflowRunId = options.workflowRunId;
   }
 
+  /** The domain snapshots observed this run (deduped by id — content-addressed
+   *  providers repeat ids across keywords), for the workflow to persist. */
+  snapshots(): ResourceSnapshot[] {
+    return [...this.observedSnapshots.values()];
+  }
+
   async search(keyword: string): Promise<ResourceSnapshotV2> {
     const snapshot = await this.provider.search({ keyword, workflowRunId: this.workflowRunId });
+    if (!this.observedSnapshots.has(snapshot.id)) {
+      this.observedSnapshots.set(snapshot.id, snapshot);
+    }
     for (const candidate of snapshot.candidates) {
       this.registry.record(candidate);
     }

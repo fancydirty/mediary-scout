@@ -1,3 +1,4 @@
+import type { TransferAttempt } from "../domain.js";
 import type { StorageExecutor } from "../ports.js";
 import type { CandidateRegistry } from "./candidate-registry.js";
 import type { SimTreeFile, StorageV2, TransferAttemptResult } from "./storage-115-simulator.js";
@@ -20,11 +21,17 @@ export class RealStorageV2 implements StorageV2 {
   private readonly executor: StorageExecutor;
   private readonly registry: CandidateRegistry;
   private readonly workflowRunId: string;
+  private readonly recordedAttempts: TransferAttempt[] = [];
 
   constructor(options: RealStorageV2Options) {
     this.executor = options.executor;
     this.registry = options.registry;
     this.workflowRunId = options.workflowRunId;
+  }
+
+  /** Every transfer attempt this run, for the workflow to persist. */
+  attempts(): TransferAttempt[] {
+    return [...this.recordedAttempts];
   }
 
   async createDirectory(input: { name: string; parentId: string }): Promise<string> {
@@ -46,6 +53,7 @@ export class RealStorageV2 implements StorageV2 {
       directoryId: input.intoDirectoryId,
       candidate,
     });
+    this.recordedAttempts.push(attempt);
     // Only a real materialization counts as success; no_target_change (115 has no
     // cached copy) is a miss the agent must recover from, surfaced as failed +
     // an empty reread.

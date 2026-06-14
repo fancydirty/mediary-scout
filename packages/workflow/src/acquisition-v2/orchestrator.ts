@@ -1,4 +1,5 @@
 import type { LanguageModel } from "ai";
+import type { AgentDecision, ResourceSnapshot, TransferAttempt } from "../domain.js";
 import type { ResourceProvider, StorageExecutor } from "../ports.js";
 import type { AcquisitionAgentResult } from "./agent-loop.js";
 import { CandidateRegistry } from "./candidate-registry.js";
@@ -41,7 +42,19 @@ export interface RunAcquisitionV2Request {
   preferredLanguage?: string;
 }
 
-export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promise<AcquisitionAgentResult> {
+/** The persistable trace of a V2 run, in the same shape the old serial path
+ *  produced — so the workflow records snapshots/decisions/attempts unchanged. */
+export interface AcquisitionV2Outcome {
+  resourceSnapshots: ResourceSnapshot[];
+  decisions: AgentDecision[];
+  transferAttempts: TransferAttempt[];
+}
+
+export interface RunAcquisitionV2Result extends AcquisitionAgentResult {
+  outcome: AcquisitionV2Outcome;
+}
+
+export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promise<RunAcquisitionV2Result> {
   const registry = new CandidateRegistry();
   const provider = new RealResourceProviderV2({
     provider: request.provider,
@@ -70,10 +83,38 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     ...(request.preferredLanguage === undefined ? {} : { preferredLanguage: request.preferredLanguage }),
   };
 
-  if (request.target.kind === "tv") {
-    const { kind: _kind, ...target } = request.target;
-    return runTvAnimeTaskAgent({ ...common, target });
-  }
-  const { kind: _kind, ...target } = request.target;
-  return runMovieTaskAgent({ ...common, target });
+  const result =
+    request.target.kind === "tv"
+      ? await runTvAnimeTaskAgent({ ...common, target: stripKind(request.target) })
+      : await runMovieTaskAgent({ ...common, target: stripKind(request.target) });
+
+  // The agent transferred candidates by id; the storage adapter recorded the
+  // domain attempts and the provider adapter the domain snapshots. Assemble the
+  // same AcquisitionOutcome shape the old serial path persisted. No episode
+  // mapping (§1.13): the decision records what was selected/observed, not a
+  // fileId↔episode map.
+  const transferAttempts = storage.attempts();
+  const resourceSnapshots = provider.snapshots();
+  const selectedCandidateIds = [...new Set(transferAttempts.map((attempt) => attempt.candidateId))];
+  const decisions: AgentDecision[] =
+    selectedCandidateIds.length === 0
+      ? []
+      : [
+          {
+            node: "acquisition_v2_sandbox_agent",
+            snapshotId: resourceSnapshots[0]?.id ?? "",
+            selectedCandidateIds,
+            episodeMapping: {},
+            providerAheadEpisodeMapping: {},
+            rejectedCandidateIds: [],
+            confidence: result.coverage.coverageMet ? "high" : "low",
+            reason: result.text.slice(0, 2000),
+          },
+        ];
+  return { ...result, outcome: { resourceSnapshots, decisions, transferAttempts } };
+}
+
+function stripKind<T extends { kind: unknown }>(target: T): Omit<T, "kind"> {
+  const { kind: _kind, ...rest } = target;
+  return rest;
 }

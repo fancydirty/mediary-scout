@@ -57,6 +57,11 @@ describe("runAcquisitionV2 — composition root wiring real adapters + sandbox +
     // The need came from the missing episodes; nothing landed → honestly unmet.
     expect(result.coverage.missing).toEqual(["S01E01", "S01E02"]);
     expect(searched).toEqual(["nothing here"]); // the real provider was driven through the adapter
+    // The persistable trace is assembled from the adapters: one (empty) snapshot
+    // observed, no transfers, so no decisions.
+    expect(result.outcome.resourceSnapshots.map((s) => s.id)).toEqual(["snap_empty"]);
+    expect(result.outcome.transferAttempts).toEqual([]);
+    expect(result.outcome.decisions).toEqual([]);
   });
 
   it("seeds a movie task with the MOVIE need", async () => {
