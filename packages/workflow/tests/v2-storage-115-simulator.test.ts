@@ -98,3 +98,29 @@ describe("Storage115Simulator — move + name collision", () => {
     expect((await sim.listTree({ directoryId: dir })).map((f) => f.path)).toEqual(["b.mkv"]);
   });
 });
+
+describe("Storage115Simulator — API budget (the 逆鳞)", () => {
+  it("fails loud with PAN115_RATE_LIMIT when the per-task API budget is exhausted", async () => {
+    // A transfer costs ~1 + one call per file, so a 10-file pack overruns a tiny
+    // budget — modelling 链锯人, where over-selecting packs blew the 240-call guard.
+    const sim = new Storage115Simulator({
+      apiBudget: 4,
+      packs: { big: { files: Array.from({ length: 10 }, (_, i) => ({ path: `e${i}.mkv`, sizeBytes: 1 })) } },
+    });
+    const dir = await sim.createDirectory({ name: "d", parentId: "root" });
+
+    await expect(sim.transferCandidate({ candidateId: "big", intoDirectoryId: dir })).rejects.toThrow(
+      "PAN115_RATE_LIMIT",
+    );
+  });
+
+  it("stays within budget for a modest acquisition", async () => {
+    const sim = new Storage115Simulator({
+      apiBudget: 50,
+      packs: { ok: { files: [{ path: "a.mkv", sizeBytes: 1 }, { path: "b.mkv", sizeBytes: 1 }] } },
+    });
+    const dir = await sim.createDirectory({ name: "d", parentId: "root" });
+    const attempt = await sim.transferCandidate({ candidateId: "ok", intoDirectoryId: dir });
+    expect(attempt.status).toBe("succeeded");
+  });
+});

@@ -47,15 +47,31 @@ export class Storage115Simulator {
   private readonly dirs = new Map<string, Dir>();
   private readonly files = new Map<string, File>();
   private readonly packs: Map<string, PackSpec>;
+  private readonly apiBudget: number;
   private sequence = 0;
+  private callsSpent = 0;
 
-  constructor(options: { packs?: Record<string, PackSpec>; rootId?: string } = {}) {
+  constructor(options: { packs?: Record<string, PackSpec>; rootId?: string; apiBudget?: number } = {}) {
     const rootId = options.rootId ?? "root";
     this.dirs.set(rootId, { id: rootId, name: "root", parentId: null });
     this.packs = new Map(Object.entries(options.packs ?? {}));
+    this.apiBudget = options.apiBudget ?? Number.POSITIVE_INFINITY;
+  }
+
+  /** Per-task API-call budget (the 逆鳞). Each operation costs roughly one call
+   *  per file it touches; overrunning fails loud rather than silently degrading,
+   *  the same guard that caught the 链锯人 over-selection. */
+  private spendBudget(cost: number): void {
+    this.callsSpent += cost;
+    if (this.callsSpent > this.apiBudget) {
+      throw new Error(
+        `PAN115_RATE_LIMIT: API call budget exhausted (${this.callsSpent}/${this.apiBudget})`,
+      );
+    }
   }
 
   async createDirectory(input: { name: string; parentId: string }): Promise<string> {
+    this.spendBudget(1);
     if (!this.dirs.has(input.parentId)) {
       throw new Error(`SIM_DIR_NOT_FOUND: parent ${input.parentId}`);
     }
@@ -75,6 +91,7 @@ export class Storage115Simulator {
       throw new Error(`SIM_DIR_NOT_FOUND: target ${input.intoDirectoryId}`);
     }
     const pack = this.packs.get(input.candidateId);
+    this.spendBudget(1 + (pack?.files.length ?? 0));
     if (!pack) {
       return { status: "failed", materializedFileIds: [] };
     }
@@ -95,6 +112,7 @@ export class Storage115Simulator {
     if (!this.dirs.has(input.directoryId)) {
       throw new Error(`SIM_DIR_NOT_FOUND: ${input.directoryId}`);
     }
+    this.spendBudget(1);
     const out: SimTreeFile[] = [];
     const walk = (dirId: string, prefix: string): void => {
       for (const file of this.files.values()) {
@@ -124,6 +142,7 @@ export class Storage115Simulator {
     if (!this.dirs.has(input.targetDirectoryId)) {
       throw new Error(`SIM_DIR_NOT_FOUND: ${input.targetDirectoryId}`);
     }
+    this.spendBudget(input.fileIds.length);
     const moved: string[] = [];
     for (const fileId of input.fileIds) {
       const file = this.files.get(fileId);
@@ -138,6 +157,7 @@ export class Storage115Simulator {
   }
 
   async deleteFiles(input: { fileIds: string[] }): Promise<{ deleted: string[] }> {
+    this.spendBudget(input.fileIds.length);
     const deleted: string[] = [];
     for (const fileId of input.fileIds) {
       if (this.files.delete(fileId)) {
