@@ -117,6 +117,54 @@ export class Storage115Simulator {
     return out.sort((a, b) => a.path.localeCompare(b.path));
   }
 
+  /** Move files (by id) into a target directory. 115 never overwrites: a name
+   *  already present in the target is materialized as `base (1).ext` — the very
+   *  collision that turns overlapping packs into duplicate episodes. */
+  async moveFiles(input: { fileIds: string[]; targetDirectoryId: string }): Promise<{ moved: string[] }> {
+    if (!this.dirs.has(input.targetDirectoryId)) {
+      throw new Error(`SIM_DIR_NOT_FOUND: ${input.targetDirectoryId}`);
+    }
+    const moved: string[] = [];
+    for (const fileId of input.fileIds) {
+      const file = this.files.get(fileId);
+      if (!file) {
+        throw new Error(`SIM_FILE_NOT_FOUND: ${fileId}`);
+      }
+      file.name = this.collisionFreeName(input.targetDirectoryId, file.name);
+      file.parentId = input.targetDirectoryId;
+      moved.push(fileId);
+    }
+    return { moved };
+  }
+
+  async deleteFiles(input: { fileIds: string[] }): Promise<{ deleted: string[] }> {
+    const deleted: string[] = [];
+    for (const fileId of input.fileIds) {
+      if (this.files.delete(fileId)) {
+        deleted.push(fileId);
+      }
+    }
+    return { deleted };
+  }
+
+  private collisionFreeName(directoryId: string, name: string): string {
+    const taken = new Set(
+      [...this.files.values()].filter((file) => file.parentId === directoryId).map((file) => file.name),
+    );
+    if (!taken.has(name)) {
+      return name;
+    }
+    const dot = name.lastIndexOf(".");
+    const base = dot > 0 ? name.slice(0, dot) : name;
+    const ext = dot > 0 ? name.slice(dot) : "";
+    for (let suffix = 1; ; suffix += 1) {
+      const candidate = `${base} (${suffix})${ext}`;
+      if (!taken.has(candidate)) {
+        return candidate;
+      }
+    }
+  }
+
   private ensurePath(parentId: string, segments: string[]): string {
     let current = parentId;
     for (const segment of segments) {

@@ -42,3 +42,59 @@ describe("Storage115Simulator — transfer materialization", () => {
     expect((await sim.listTree({ directoryId: staging })).length).toBe(0);
   });
 });
+
+describe("Storage115Simulator — move + name collision", () => {
+  it("renames a colliding file to '(1)' when overlapping packs land the same episode", async () => {
+    // Two overlapping 分集 packs (no full-season pack exists): both carry E02
+    // under the same filename. Moving both into Season 1 collides -> a "(1)"
+    // duplicate, which the dedup step (agent, keep-larger) later resolves.
+    const sim = new Storage115Simulator({
+      packs: {
+        cand_a: { files: [
+          { path: "Show - 01.mkv", sizeBytes: 100 },
+          { path: "Show - 02.mkv", sizeBytes: 200 },
+        ] },
+        cand_b: { files: [
+          { path: "Show - 02.mkv", sizeBytes: 210 },
+          { path: "Show - 03.mkv", sizeBytes: 300 },
+        ] },
+      },
+    });
+    const season = await sim.createDirectory({ name: "Season 1", parentId: "root" });
+    const stagingA = await sim.createDirectory({ name: "staging-a", parentId: "root" });
+    const stagingB = await sim.createDirectory({ name: "staging-b", parentId: "root" });
+    await sim.transferCandidate({ candidateId: "cand_a", intoDirectoryId: stagingA });
+    await sim.transferCandidate({ candidateId: "cand_b", intoDirectoryId: stagingB });
+
+    await sim.moveFiles({
+      fileIds: (await sim.listTree({ directoryId: stagingA })).map((f) => f.id),
+      targetDirectoryId: season,
+    });
+    await sim.moveFiles({
+      fileIds: (await sim.listTree({ directoryId: stagingB })).map((f) => f.id),
+      targetDirectoryId: season,
+    });
+
+    const names = (await sim.listTree({ directoryId: season })).map((f) => f.path).sort();
+    expect(names).toEqual([
+      "Show - 01.mkv",
+      "Show - 02 (1).mkv",
+      "Show - 02.mkv",
+      "Show - 03.mkv",
+    ]);
+    // Staging dirs are emptied of the moved files.
+    expect(await sim.listTree({ directoryId: stagingA })).toHaveLength(0);
+  });
+
+  it("deletes files by id", async () => {
+    const sim = new Storage115Simulator({
+      packs: { cand_a: { files: [{ path: "a.mkv", sizeBytes: 1 }, { path: "b.mkv", sizeBytes: 2 }] } },
+    });
+    const dir = await sim.createDirectory({ name: "d", parentId: "root" });
+    await sim.transferCandidate({ candidateId: "cand_a", intoDirectoryId: dir });
+    const files = await sim.listTree({ directoryId: dir });
+    const result = await sim.deleteFiles({ fileIds: [files[0]!.id] });
+    expect(result.deleted).toEqual([files[0]!.id]);
+    expect((await sim.listTree({ directoryId: dir })).map((f) => f.path)).toEqual(["b.mkv"]);
+  });
+});
