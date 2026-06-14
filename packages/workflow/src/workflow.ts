@@ -16,6 +16,7 @@ import {
 } from "./domain.js";
 import { buildConfirmedDedupPlan } from "./dedup.js";
 import { canonicalEpisodeFileName, episodeCodeFromFileName } from "./episode-code.js";
+import { trimToMinimalCoveringCandidates } from "./minimal-cover.js";
 import {
   buildAgentAssistedPackageNormalizationPlan,
   type PackageMoveAction,
@@ -754,8 +755,28 @@ async function acquireMissingEpisodes(input: {
       }),
     );
 
+    // The agent may over-select overlapping packs ("overlap is safe, dedup
+    // later") — but every pack is transferred BEFORE dedup, and a freshly
+    // finished show selecting ~11 redundant complete packs blew the 115
+    // per-operation API budget and failed the whole run. Trim to the fewest
+    // packs that still cover the union of intended episodes; the budget is a
+    // hard constraint, lost redundancy recovers on the next pass.
+    const coveringCandidates = trimToMinimalCoveringCandidates(validated.selectedCandidates);
+    if (coveringCandidates.length < validated.selectedCandidates.length) {
+      input.auditEvents.push({
+        type: "selection_trimmed",
+        message: `Pass ${pass}: trimmed ${validated.selectedCandidates.length} selected packs to ${coveringCandidates.length} covering pack(s) to stay within the 115 API budget`,
+        data: {
+          pass,
+          selectedCount: validated.selectedCandidates.length,
+          transferredCount: coveringCandidates.length,
+          transferredCandidateIds: coveringCandidates.map((selected) => selected.candidate.id),
+        },
+      });
+    }
+
     const passAttempts: TransferAttempt[] = [];
-    for (const [index, selected] of validated.selectedCandidates.entries()) {
+    for (const [index, selected] of coveringCandidates.entries()) {
       const stagingDirectoryId = await input.storage.createDirectory({
         name: `staging-${input.workflowRunId}-p${pass}-c${index + 1}`,
         parentId: input.stagingParentDirectoryId,
@@ -798,7 +819,7 @@ async function acquireMissingEpisodes(input: {
 
     if (stillMissing.length > 0) {
       failureEvidence = buildFailureEvidence({
-        selectedCandidates: validated.selectedCandidates,
+        selectedCandidates: coveringCandidates,
         attempts: passAttempts,
         stillMissing,
       });

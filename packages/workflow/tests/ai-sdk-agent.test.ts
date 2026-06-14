@@ -36,10 +36,14 @@ describe("VercelAiAgentNodes", () => {
     expect(AGENT_NODE_SPECS.PackageRecognitionAgent.system).toContain("multi-season");
   });
 
-  it("teaches coverage-first selection: overlap for initialization, packs over gaps", () => {
+  it("teaches coverage-first selection while minimizing pack count (115 budget)", () => {
     const system = AGENT_NODE_SPECS.AcquisitionPlanningAgent.system;
     expect(system).toContain("coverage completeness ALWAYS beats pack-size preference");
-    expect(system).toContain("Overlap is safe");
+    // Prefer ONE complete pack and minimize the number of packs — each pack is
+    // a real transfer cost; redundant overlapping packs are dropped before
+    // transfer (see trimToMinimalCoveringCandidates).
+    expect(system).toContain("MINIMIZE the number of packs");
+    expect(system).toContain("redundant packs are dropped before transfer");
     expect(system).toContain("Never sacrifice coverage to avoid a big pack");
   });
 
