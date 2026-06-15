@@ -103,23 +103,54 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
   // fileId↔episode map.
   const transferAttempts = storage.attempts();
   const resourceSnapshots = provider.snapshots();
-  const selectedCandidateIds = [...new Set(transferAttempts.map((attempt) => attempt.candidateId))];
-  const decisions: AgentDecision[] =
-    selectedCandidateIds.length === 0
-      ? []
-      : [
-          {
-            node: "acquisition_v2_sandbox_agent",
-            snapshotId: resourceSnapshots[0]?.id ?? "",
-            selectedCandidateIds,
-            episodeMapping: {},
-            providerAheadEpisodeMapping: {},
-            rejectedCandidateIds: [],
-            confidence: result.coverage.coverageMet ? "high" : "low",
-            reason: result.text.slice(0, 2000),
-          },
-        ];
+  const decisions = buildAgentDecisions({
+    transferAttempts,
+    resourceSnapshots,
+    coverageMet: result.coverage.coverageMet,
+    reason: result.text,
+  });
   return { ...result, outcome: { resourceSnapshots, decisions, transferAttempts } };
+}
+
+/**
+ * Assemble the persistable AgentDecision[] from the run's transfers + observed
+ * snapshots. The agent may search SEVERAL times and transfer a candidate from a
+ * LATER snapshot; persist validation (repository.ts) requires each decision's
+ * selected candidates to belong to THAT decision's snapshot — so we group the
+ * selected candidates by their REAL snapshot and emit one decision per snapshot.
+ * (Tagging a single decision with resourceSnapshots[0] failed live e2e when the
+ * agent transferred from a non-first search.)
+ */
+export function buildAgentDecisions(input: {
+  transferAttempts: TransferAttempt[];
+  resourceSnapshots: ResourceSnapshot[];
+  coverageMet: boolean;
+  reason: string;
+}): AgentDecision[] {
+  const snapshotByCandidate = new Map<string, string>();
+  for (const snapshot of input.resourceSnapshots) {
+    for (const candidate of snapshot.candidates) {
+      snapshotByCandidate.set(candidate.id, snapshot.id);
+    }
+  }
+  const selectedBySnapshot = new Map<string, string[]>();
+  for (const candidateId of new Set(input.transferAttempts.map((attempt) => attempt.candidateId))) {
+    const snapshotId = snapshotByCandidate.get(candidateId);
+    if (snapshotId === undefined) continue; // unknown candidate — the transferAttempts validation catches it
+    const selected = selectedBySnapshot.get(snapshotId) ?? [];
+    selected.push(candidateId);
+    selectedBySnapshot.set(snapshotId, selected);
+  }
+  return [...selectedBySnapshot.entries()].map(([snapshotId, selectedCandidateIds]) => ({
+    node: "acquisition_v2_sandbox_agent",
+    snapshotId,
+    selectedCandidateIds,
+    episodeMapping: {},
+    providerAheadEpisodeMapping: {},
+    rejectedCandidateIds: [],
+    confidence: input.coverageMet ? "high" : "low",
+    reason: input.reason.slice(0, 2000),
+  }));
 }
 
 function stripKind<T extends { kind: unknown }>(target: T): Omit<T, "kind"> {
