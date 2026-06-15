@@ -207,6 +207,71 @@ export class TaskSandbox {
     return { attempt, staging };
   }
 
+  /** MOVIE-ONLY: transfer an AGENT-ORDERED list of candidates the agent judged to
+   *  be the SAME target film (best → next-best by resource name), stopping at the
+   *  FIRST that 秒传-lands; the rest are abandoned. The candidate SET is the agent's
+   *  semantic choice (a wildcard search returns same-named DIFFERENT works — never
+   *  iterate the raw result set); the system only burns through the dead links in
+   *  that vetted, ordered set. 115 SHARE LINKS ONLY: only a 115 share fails loud
+   *  (链接已过期/错误的链接/分享已取消 come back at once), so iterate-on-failure is
+   *  sound; a magnet's success is only knowable via the landing point, so magnets
+   *  are rejected — use transferCandidate + inspectStaging for those. TV/anime
+   *  never gets this tool (it must not be confused with multi-resource season
+   *  coverage). Refused once coverage is met. Force-rereads staging. */
+  async transferUntilLanded(input: { candidateIds: string[] }): Promise<{
+    landed: SimTreeFile[];
+    transferredCandidateId: string | null;
+    attempts: Array<{ candidateId: string; status: "succeeded" | "failed" }>;
+  }> {
+    if (!this.storage || !this.stagingDirectoryId) {
+      throw new Error("SANDBOX: no storage/staging handle configured for transfers");
+    }
+    if (this.movieDir === undefined || this.seasonDirs.size > 0) {
+      throw new Error(
+        "SANDBOX_TRANSFER_UNTIL_LANDED_MOVIE_ONLY: only a movie task may iterate alternative links for one film",
+      );
+    }
+    if (this.isCoverageMet()) {
+      throw new Error(
+        `SANDBOX_COVERAGE_ALREADY_MET: every needed item (${this.need.join(",")}) is obtained; no further transfers`,
+      );
+    }
+    if (input.candidateIds.length === 0) {
+      throw new Error("SANDBOX_NO_CANDIDATES: transferUntilLanded needs at least one candidate");
+    }
+    for (const candidateId of input.candidateIds) {
+      const observed = [...this.observedSnapshots.values()].some((snapshot) =>
+        snapshot.candidates.some((candidate) => candidate.id === candidateId),
+      );
+      if (!observed) {
+        throw new Error(`SANDBOX_CANDIDATE_NOT_OBSERVED: ${candidateId} was not seen in a search this task`);
+      }
+    }
+    for (const candidateId of input.candidateIds) {
+      if (this.storage.candidateLinkKind(candidateId) !== "pan115") {
+        throw new Error(
+          `SANDBOX_TRANSFER_UNTIL_LANDED_REQUIRES_PAN115: ${candidateId} is not a 115 share link ` +
+            "(use transferCandidate for magnets and verify via the landing point)",
+        );
+      }
+    }
+    const attempts: Array<{ candidateId: string; status: "succeeded" | "failed" }> = [];
+    let transferredCandidateId: string | null = null;
+    for (const candidateId of input.candidateIds) {
+      const attempt = await this.storage.transferCandidate({
+        candidateId,
+        intoDirectoryId: this.stagingDirectoryId,
+      });
+      attempts.push({ candidateId, status: attempt.status });
+      if (attempt.status === "succeeded") {
+        transferredCandidateId = candidateId;
+        break;
+      }
+    }
+    const landed = await this.storage.listTree({ directoryId: this.stagingDirectoryId });
+    return { landed, transferredCandidateId, attempts };
+  }
+
   /** Batch distribution plan (挖取/extract): the agent submits the WHOLE
    *  "files → season" mapping at once — each video's SUBTITLES ride in the same
    *  season's fileIds (§1.14). The system runs every move and force-rereads,

@@ -45,7 +45,7 @@ const DEAD_LINKS_BLACK_BOX = `# Dead links, magnets, and black-box resources
 ## What "landed" means
 transferCandidate returns the TRUE materialized files (the system rereads for you). Trust THAT, not your prediction.
 - A 115 share that transfers without error has landed.
-- "已过期 / 访问码错误 / 已取消分享" = dead. Switch to another covering candidate — a dead link is normal, never a reason to give up; try the next resource that covers the need.
+- A 115 share fails LOUD with a clear reason — the real ones you will see: "链接已过期" (expired), "分享已取消" (cancelled), "访问码错误" (wrong access code), "错误的链接" (bad/malformed link). All = dead. Switch to another covering candidate — a dead link is the NORM, never a reason to give up; try the next resource that covers the need. (For a movie, transferUntilLanded over your ranked 115 shares burns through these dead ones automatically.)
 - A magnet can SILENTLY fail: no error, yet nothing materializes. Trust the staging reread — if nothing landed, it is dead; move on to a 秒传-able candidate instead of waiting (the account's value is instant transfer, not a slow download).
 
 ## Black-box gate (this is exactly where the 奥本海默 run failed)
@@ -70,7 +70,7 @@ The season dir already holds E01-E12 at ~1.2GB each (high quality). A new pack l
 
 const MOVIE = `# Movie acquisition playbook
 
-A movie is ONE video file. There are no seasons or episodes; its single coverage token is "MOVIE". The landing directory is just "Title (Year)/" and the file goes DIRECTLY in it — there is NO Season folder for a movie (a movie move is one plan with no season: moveToSeason({moves:[{fileIds}]}); the file lands in the movie directory).
+A movie is ONE video file. There are no seasons or episodes; its single coverage token is "MOVIE". The landing directory is just "Title (Year)/" and the file goes DIRECTLY in it — there is NO Season folder, NO season distribution, and NO separate staging to discard. You do NOT moveToSeason and you do NOT discardStaging for a movie: the film lands in the movie directory and flattenMovie cleans its wrapper IN PLACE. (Those are TV/anime tools.)
 
 ## Identity is the hard part (apply protocol's Evidence → Facts → Decision)
 The candidate must be THIS film — not a remake, sequel, prequel, or same-IP different film. Cross-check BOTH title AND year.
@@ -79,13 +79,21 @@ The candidate must be THIS film — not a remake, sequel, prequel, or same-IP di
 - When identity is unclear, do NOT transfer speculatively.
 Reject packs / collections / box sets / multi-part / anything structured like seasons — a movie is a single film. Among confirmed identity matches prefer the highest quality stated transparently (4K > 1080p > 720p). Magnets and 115 shares both transfer instantly — judge on identity/quality, never on link type.
 
+## Two transfer tools — pick by the situation
+- transferCandidate(snapshotId, candidateId): ONE candidate at a time. Use it for a single obvious share, or for a MAGNET (a magnet does NOT fail loud — only the landing point in inspectStaging tells you whether it 秒传'd; so transfer, then inspect).
+- transferUntilLanded({candidateIds:[...]}): MOVIE-ONLY. You RANK several 115-share candidates that are all the SAME film (best resource first) and hand the ordered list over; the system tries them in your order and STOPS at the first that 秒传-lands, abandoning the rest. 115 SHARE LINKS ONLY (it relies on the share's loud failure). Why it exists: many 115 shares are dead (链接已过期 / 分享已取消 / 错误的链接 — you will see these constantly), so this burns through the dead ones for you without spending a turn per link.
+  - The SET is YOUR semantic choice. A keyword search is a WILDCARD — it mixes in same-named DIFFERENT works (e.g. under "抓娃娃" the movie sits among a 综艺/variety show "姐姐妹妹抓娃娃" and even an unrelated cartoon). NEVER hand it the raw result list — first read every title and include ONLY the ones that are genuinely this film+year. Handing it everything = transferring a wrong work.
+
 ## The collapsed loop
-search (re-keyword if weak) → decide the ONE correct film (Evidence → Facts → Decision) → transferCandidate it → inspectStaging to read the TRUE files → flattenMovie() AUTOMATICALLY pulls the film AND its subtitles up into the movie directory and removes the wrapper (one call, no per-file selection — a movie is one film, take it all; subtitles MUST land beside the video so the scraper finds them) → delete any extras (trailers / 花絮 / a bundled different work) with deleteFiles → markObtained(["MOVIE"]) as the LAST step, once the film is in place → finish().
+search (re-keyword if weak) → decide the ONE correct film and RANK its candidate links (Evidence → Facts → Decision) → transfer it (transferUntilLanded over your ranked 115 shares, or transferCandidate for one share / a magnet) → inspectStaging to read the TRUE files → flattenMovie() AUTOMATICALLY pulls the film AND its subtitles up into the movie directory and removes the wrapper (one call, no per-file selection — a movie is one film, take it all; subtitles MUST land beside the video so the scraper finds them; the wrapper's covers/poster/nfo are discarded with it) → delete any extras (trailers / 花絮 / a bundled different work) with deleteFiles → markObtained(["MOVIE"]) as the LAST step, once the film is in place → finish().
 
 ## Worked example — 奥本海默 (the live failure to NOT repeat)
-Searching "奥本海默" returns ~5 results, all OPAQUE black-box titles; ~4 are dead links and 1 is a good resource.
-- RIGHT: no transparent candidate exists, so fall back to the black-box ones; transfer the one that actually lands; THEN inspectStaging to verify it contains the film; it does → move the main file in, markObtained MOVIE, finish. A couple of searches, the covering transfer(s), one inspect, done.
-- WRONG (what actually happened): after the good black-box resource ALREADY landed, kept searching "奥本海默 2023 mkv" / "Oppenheimer 2023 4K" and transferring more candidates WITHOUT inspecting — over-search, over-transfer, hammering 115. Once a transfer has landed, inspectStaging to verify BEFORE anything else; if it covers, finish.`;
+Searching "奥本海默" returns mixed links: a few 115 shares (some 链接已过期 / 分享已取消) and several magnets (some malformed → 错误的链接), most with OPAQUE black-box titles, ~4 dead and 1 good.
+- RIGHT: read the titles, keep only the ones that are genuinely this film (drop unrelated same-keyword junk); rank the 115 shares best-first and transferUntilLanded over them — it skips the dead ones and lands the live one; THEN inspectStaging to verify it contains the film; it does → flattenMovie, markObtained MOVIE, finish. A couple of searches, one iterate-transfer, one inspect, done.
+- WRONG (what actually happened): after the good resource ALREADY landed, kept searching "奥本海默 2023 mkv" / "Oppenheimer 2023 4K" and transferring more candidates WITHOUT inspecting — over-search, over-transfer, hammering 115. Once a transfer has landed, inspectStaging to verify BEFORE anything else; if it covers, finish.
+
+## Keyword reality (lived)
+The provider matches keywords loosely. Best practice: search the BARE title first; adding the year on the first pass is usually NOT best (it can over-narrow — "抓娃娃 2024" returned ZERO here while "抓娃娃" returned dozens, though the year does not always zero results). Add the year, the original/English name, or "全集" only if the first bare-title pass is weak.`;
 
 const TV = `# TV / anime acquisition playbook
 

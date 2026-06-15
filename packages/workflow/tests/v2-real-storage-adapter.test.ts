@@ -133,4 +133,18 @@ describe("RealStorageV2 — StorageExecutor → StorageV2 adapter", () => {
     await storage.deleteFiles({ directoryId: "season", fileIds: ["f1"] });
     expect(executor.deletes).toEqual([{ directoryId: "season", fileIds: ["f1"] }]);
   });
+
+  it("classifies candidate link kind from the recorded url (115 share / magnet / unknown)", async () => {
+    const { storage, registry } = adapter(new RecordingExecutor());
+    registry.record({ ...candidate("share"), providerPayload: { url: "https://115cdn.com/s/abc?password=x" } });
+    registry.record({ ...candidate("share2"), providerPayload: { url: "https://115.com/s/def" } });
+    registry.record({ ...candidate("mag"), providerPayload: { url: "magnet:?xt=urn:btih:deadbeef" } });
+    registry.record({ ...candidate("weird"), providerPayload: { url: "https://pan.quark.cn/s/zzz" } });
+
+    expect(storage.candidateLinkKind("share")).toBe("pan115");
+    expect(storage.candidateLinkKind("share2")).toBe("pan115");
+    expect(storage.candidateLinkKind("mag")).toBe("magnet");
+    expect(storage.candidateLinkKind("weird")).toBe("unknown"); // non-115 share host
+    expect(storage.candidateLinkKind("ghost")).toBe("unknown"); // never recorded
+  });
 });

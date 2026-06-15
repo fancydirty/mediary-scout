@@ -52,6 +52,11 @@ const SUBTITLE_EXTENSIONS = /\.(srt|ass|ssa|sub|idx|vtt|sup|smi)$/i;
 export interface StorageV2 {
   createDirectory(input: { name: string; parentId: string }): Promise<string>;
   transferCandidate(input: { candidateId: string; intoDirectoryId: string }): Promise<TransferAttemptResult>;
+  /** A candidate's link kind. Only a 115 share fails LOUD (链接已过期/错误的链接/
+   *  分享已取消 come back immediately); a magnet's success is only knowable by the
+   *  landing point appearing. So `transferUntilLanded` (which iterates on failure)
+   *  is 115-only and uses this to reject magnets up front. */
+  candidateLinkKind(candidateId: string): "pan115" | "magnet" | "unknown";
   listTree(input: { directoryId: string }): Promise<SimTreeFile[]>;
   /** Recursive list of subdirectories under a directory (path relative to it) —
    *  the source of the wrapper-dir handle flatten removes. */
@@ -68,15 +73,30 @@ export class Storage115Simulator implements StorageV2 {
   private readonly dirs = new Map<string, Dir>();
   private readonly files = new Map<string, File>();
   private readonly packs: Map<string, PackSpec>;
+  private readonly linkKinds: Map<string, "pan115" | "magnet">;
   private readonly apiBudget: number;
   private sequence = 0;
   private callsSpent = 0;
 
-  constructor(options: { packs?: Record<string, PackSpec>; rootId?: string; apiBudget?: number } = {}) {
+  constructor(
+    options: {
+      packs?: Record<string, PackSpec>;
+      /** Per-candidate link kind (default "unknown"). Only matters for the 115-only
+       *  transferUntilLanded; ordinary transferCandidate ignores it. */
+      linkKinds?: Record<string, "pan115" | "magnet">;
+      rootId?: string;
+      apiBudget?: number;
+    } = {},
+  ) {
     const rootId = options.rootId ?? "root";
     this.dirs.set(rootId, { id: rootId, name: "root", parentId: null });
     this.packs = new Map(Object.entries(options.packs ?? {}));
+    this.linkKinds = new Map(Object.entries(options.linkKinds ?? {}));
     this.apiBudget = options.apiBudget ?? Number.POSITIVE_INFINITY;
+  }
+
+  candidateLinkKind(candidateId: string): "pan115" | "magnet" | "unknown" {
+    return this.linkKinds.get(candidateId) ?? "unknown";
   }
 
   /** Per-task API-call budget (the 逆鳞). Each operation costs roughly one call

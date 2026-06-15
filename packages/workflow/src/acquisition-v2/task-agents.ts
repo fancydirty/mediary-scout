@@ -92,11 +92,19 @@ You own the COMPLETE acquisition judgment for ONE movie: target正片 identifica
 
 Identity (the hard part): the candidate must be THIS film, not a remake, sequel, prequel, or same-IP different film. Reject "蝙蝠侠：黑暗骑士崛起" when the target is "蝙蝠侠：黑暗骑士"; reject a 1990 version when the target is a later remake. When identity is unclear, do not transfer speculatively.
 Single video: reject packs, collections, multi-part, box sets, or anything structured like seasons/episodes. Among confirmed identity matches prefer the highest quality stated transparently (4K > 1080p > 720p). Magnets and 115 shares both transfer directly — judge on identity/quality, never on link type.
+
+Dead links are the norm — many 115 shares are expired/cancelled (链接已过期 / 分享已取消 / 错误的链接). When you have RANKED several 115-share candidates that are all the SAME target film (best resource first), hand that ORDERED list to transferUntilLanded({candidateIds:[...]}): it tries them in your order and stops at the first that 秒传-lands, abandoning the rest — so you don't spend a turn per dead link. It is 115-shares ONLY and the SET must be your vetted choice (a keyword search mixes in same-named DIFFERENT works — e.g. a variety show or an unrelated cartoon — which you must exclude FIRST). For a magnet, or a single obvious share, use transferCandidate and verify via inspectStaging (a magnet does not fail loud — only the landing point tells you).
 ${languageLine(options)}
 
-${LOOP_GUIDANCE}
-
-For a movie the loop collapses: search → transfer the one chosen film → inspect staging to verify it IS the film → flattenMovie() AUTOMATICALLY pulls the film AND its subtitles up into the movie directory and removes the wrapper (one call, no per-file selection — a movie is one film, take it all; subtitles land beside the video) → deleteFiles any extras (trailers / 花絮 / a bundled other work) → markObtained(["MOVIE"]) as the LAST step, once the film is in place → finish().`;
+Your loop (you drive it; the system only orchestrates the tool calls). A MOVIE is simple — there is NO season distribution and NO separate staging to discard (the film lands in the movie directory and flattenMovie cleans the wrapper in place). At EVERY decision point lay out Evidence → Facts → Decision (read your skill's "protocol" section); once a transfer has LANDED, do NOT keep searching/transferring — verify and finish.
+1. searchResources — bare title first; re-keyword (add the original/English name or "全集") only if weak. Stop the moment you can identify the one correct film.
+2. Decide the ONE correct film (right title AND year, not a remake / same-IP other film / a same-keyword different work) and RANK its candidate links best-first.
+3. Transfer it: transferUntilLanded over your ranked 115 shares (it burns through the dead ones), or transferCandidate for a single share / a magnet.
+4. inspectStaging — read the TRUE landed files and confirm it IS the film.
+5. flattenMovie() — AUTOMATIC: pulls the film AND its subtitles up into the movie directory and removes the wrapper (one call, no per-file selection — a movie is one film, take it all; subtitles land beside the video; covers/nfo are discarded with the wrapper).
+6. deleteFiles any extras (trailers / 花絮 / a bundled other work) that landed beside the film.
+7. markObtained(["MOVIE"]) — the LAST step, only once the film is in place.
+8. finish() — done. A movie has no separate staging to wipe; flattenMovie already cleaned the wrapper. If a real search shows no resource is this film, reportNoCoverage(reason) honestly.`;
 }
 
 /** Coverage tokens for a TV/anime task — exactly the missing episode codes. */
@@ -168,6 +176,7 @@ Find the one correct film, transfer it, keep the directory clean, mark it presen
     model,
     system: buildMovieSystemPrompt(promptOptions),
     prompt,
+    movie: true,
     ...(maxSteps === undefined ? {} : { maxSteps }),
   });
 }

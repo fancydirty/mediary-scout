@@ -100,8 +100,17 @@ describe("Movie system prompt carries movie-specific invariants", () => {
     [/remake|same work|identity|year/i, "identity / year / no remake"],
     [/single (video )?file|one file|not a pack|reject.*pack/i, "single video file"],
     [/LAST (action|step)|never mark before|in place|only after/i, "mark is the LAST step, only after the film is in place"],
+    [/flattenMovie/, "flattenMovie is the movie extraction"],
+    [/transferUntilLanded/, "transferUntilLanded for ranked 115 shares / dead links"],
   ])("mentions %s (%s)", (re) => {
     expect(prompt).toMatch(re);
+  });
+
+  it("does NOT hand the movie agent TV-only machinery (discardStaging / season distribution)", () => {
+    // A movie has no separate staging to discard and no seasons; embedding the
+    // TV loop made the agent plan discardStaging() for a film (interrogation caught it).
+    expect(prompt).not.toMatch(/discardStaging/);
+    expect(prompt).not.toMatch(/moveToSeason/);
   });
 });
 

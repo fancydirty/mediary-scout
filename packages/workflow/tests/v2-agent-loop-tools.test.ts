@@ -50,6 +50,12 @@ describe("buildSandboxToolSet — the agent's tool surface over the cage", () =>
     );
   });
 
+  it("adds the movie-only transferUntilLanded tool ONLY for a movie task (TV/anime never gets it)", async () => {
+    const { sandbox } = await setup();
+    expect(Object.keys(buildSandboxToolSet(sandbox))).not.toContain("transferUntilLanded");
+    expect(Object.keys(buildSandboxToolSet(sandbox, { movie: true }))).toContain("transferUntilLanded");
+  });
+
   it("readSkill returns the requested manual section on demand (progressive disclosure)", async () => {
     const { sandbox } = await setup();
     const tools = buildSandboxToolSet(sandbox);

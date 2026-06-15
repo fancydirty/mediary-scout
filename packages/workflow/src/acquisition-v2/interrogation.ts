@@ -24,14 +24,14 @@ export const INTERROGATION_QUESTIONS: readonly InterrogationQuestion[] = [
   {
     id: "open_movie_walkthrough",
     prompt:
-      "你现在的任务:获取电影《奥本海默》(2023)。从零开始,完整走一遍——你每一步会调用哪个工具、为什么,直到这部电影入库。不要省略任何步骤。",
+      "你现在的任务:获取电影《奥本海默》(2023)。请只用【中文文字】描述你的完整打算——从零开始按 1. 2. 3. 列出你会【依次调用哪个工具、为什么】,直到这部电影入库,不要省略任何步骤。⚠️ 这是问询不是执行:绝对不要真的调用工具、不要输出任何 tool_call 或函数调用语法,就用文字把你的计划讲清楚。",
     expectation:
-      "主动先 readSkill(movie + protocol);再 search→证据先行选对片(对年份、防翻拍)→transferCandidate→inspectStaging 验是正片→flattenMovie(自动挖视频+字幕、删壳)→deleteFiles 清花絮→markObtained([\"MOVIE\"])(最后一步)→finish。重点看:是否真去读 skill、是否用 flattenMovie 而不是手动 moveToSeason。",
+      "主动先 readSkill(movie + protocol);再 search(裸标题优先、别一上来带年份)→证据先行选对片(对年份、防翻拍、剔除同名不同作品)→对多个同片 115 分享按最优排序用 transferUntilLanded(只 115、第一个秒传即停),或单个/磁力用 transferCandidate→inspectStaging 验是正片→flattenMovie(自动挖视频+字幕、删壳)→deleteFiles 清花絮→markObtained([\"MOVIE\"])(最后一步)→finish。重点看:是否真去读 skill、是否用 flattenMovie、面对多个黑盒死链是否会用 transferUntilLanded 让系统替它穿透死链(而不是一个个手动试)。",
   },
   {
     id: "open_tv_walkthrough",
     prompt:
-      "你现在的任务:用户要获取《绝命毒师》全 5 季,缺集横跨多个季,PanSou 只有一个『全五季』嵌套全集包。从零开始,完整走一遍——每一步调什么工具、为什么,直到入库。不要省略任何步骤。",
+      "你现在的任务:用户要获取《绝命毒师》全 5 季,缺集横跨多个季,PanSou 只有一个『全五季』嵌套全集包。请只用【中文文字】描述你的完整打算——从零开始按 1. 2. 3. 列出你会【依次调用哪个工具、为什么】,直到入库,不要省略任何步骤。⚠️ 这是问询不是执行:绝对不要真的调用工具、不要输出任何 tool_call 或函数调用语法,就用文字把你的计划讲清楚。",
     expectation:
       "主动先 readSkill(tv + protocol);再 search→认出全集包只转一次→inspectStaging 看嵌套→先把整盘分发计划想好(Evidence→Facts→Decision:每个缺集→对应文件+字幕→哪个季)→一次 moveToSeason({moves:[每季一条]}) 只搬缺集、字幕同季、已有季不复制→inspectTargetDir 验收→markObtained→discardStaging→finish。重点看:是否真读 skill、是否先规划再一次性批量分发。",
   },
@@ -124,6 +124,8 @@ export interface RunInterrogationRequest {
   systemPrompt: string;
   /** A short scenario framing (target title / season / missing episodes). */
   scenario: string;
+  /** Optional: ask only these question ids (e.g. just the movie walkthrough). */
+  only?: string[];
 }
 
 /**
@@ -142,7 +144,10 @@ export async function runInterrogation(
     },
   ];
   const transcript: InterrogationEntry[] = [];
-  for (const question of INTERROGATION_QUESTIONS) {
+  const questions = request.only
+    ? INTERROGATION_QUESTIONS.filter((q) => request.only!.includes(q.id))
+    : INTERROGATION_QUESTIONS;
+  for (const question of questions) {
     messages.push({ role: "user", content: question.prompt });
     const result = await generateText({
       model: request.model,

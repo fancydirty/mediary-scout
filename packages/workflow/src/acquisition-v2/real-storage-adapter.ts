@@ -11,6 +11,7 @@ import type { SimTreeFile, StorageV2, TransferAttemptResult } from "./storage-11
  */
 const VIDEO_EXTENSIONS = /\.(mkv|mp4|avi|ts|m2ts|mov|flv|wmv)$/i;
 const SUBTITLE_EXTENSIONS = /\.(srt|ass|ssa|sub|idx|vtt|sup|smi)$/i;
+const PAN115_SHARE_URL = /^https?:\/\/(115\.com|115cdn\.com|anxia\.com)\/s\//i;
 
 export interface RealStorageV2Options {
   executor: StorageExecutor;
@@ -33,6 +34,16 @@ export class RealStorageV2 implements StorageV2 {
   /** Every transfer attempt this run, for the workflow to persist. */
   attempts(): TransferAttempt[] {
     return [...this.recordedAttempts];
+  }
+
+  /** Classify a candidate's link from its recorded payload url: a 115 share (fails
+   *  loud) vs a magnet (silent — success only via the landing point) vs unknown.
+   *  transferUntilLanded uses this to stay 115-only. */
+  candidateLinkKind(candidateId: string): "pan115" | "magnet" | "unknown" {
+    const url = String(this.registry.get(candidateId)?.providerPayload?.["url"] ?? "");
+    if (PAN115_SHARE_URL.test(url)) return "pan115";
+    if (/^magnet:/i.test(url)) return "magnet";
+    return "unknown";
   }
 
   async createDirectory(input: { name: string; parentId: string }): Promise<string> {

@@ -49,9 +49,12 @@ function wrapWithLogging(tools: ToolSet): ToolSet {
 }
 
 /** Build the AI SDK ToolSet that exposes the sandbox to the model. Each tool's
- *  execute drives the sandbox and returns its (already reread) evidence. */
-export function buildSandboxToolSet(sandbox: TaskSandbox): ToolSet {
-  const tools = {
+ *  execute drives the sandbox and returns its (already reread) evidence. The
+ *  movie-only `transferUntilLanded` is included only when `options.movie` — the
+ *  TV/anime agent must NOT get it (it would confuse with multi-resource season
+ *  coverage). */
+export function buildSandboxToolSet(sandbox: TaskSandbox, options: { movie?: boolean } = {}): ToolSet {
+  const tools: Record<string, unknown> = {
     readSkill: {
       description:
         "Read a section of your domain skill manual ON DEMAND — the hard-won playbook for HOW to act. Sections: protocol, dead-links-black-box, dedup, movie, tv, mistakes. Read your sections before you act, and re-read the relevant one the moment its situation arises. Acting from memory instead of the skill is how the old agent hammered 115 and corrupted libraries.",
@@ -143,8 +146,17 @@ export function buildSandboxToolSet(sandbox: TaskSandbox): ToolSet {
       inputSchema: z.object({ reason: z.string() }),
       execute: (args: { reason: string }) => asEvidence(() => sandbox.reportNoCoverage(args.reason)),
     },
-  } satisfies ToolSet;
-  return process.env.MEDIA_TRACK_AGENT_LOG === "1" ? wrapWithLogging(tools) : tools;
+  };
+  if (options.movie) {
+    tools["transferUntilLanded"] = {
+      description:
+        'Movie only. Transfer a PRIORITY-ORDERED list of candidates you judged to be the SAME target film (best resource first), stopping at the FIRST that 秒传-lands; the rest are abandoned. 115 SHARE LINKS ONLY — magnets do NOT fail loud, so for a magnet use transferCandidate and verify via inspectStaging. YOU pick the set (a keyword search returns same-named DIFFERENT works — never hand it everything); the system just burns through the dead links for you (链接已过期/分享已取消/错误的链接 are common). Returns {landed, transferredCandidateId, attempts}. Use this when several 115 shares for the one film may be dead/black-box; for a single obvious share, transferCandidate is fine.',
+      inputSchema: z.object({ candidateIds: z.array(z.string()) }),
+      execute: (args: { candidateIds: string[] }) => asEvidence(() => sandbox.transferUntilLanded(args)),
+    };
+  }
+  const toolSet = tools as ToolSet;
+  return process.env.MEDIA_TRACK_AGENT_LOG === "1" ? wrapWithLogging(toolSet) : toolSet;
 }
 
 export interface AcquisitionAgentRequest {
@@ -154,6 +166,8 @@ export interface AcquisitionAgentRequest {
   prompt: string;
   /** Hard ceiling on tool-loop steps (the model still terminates earlier via finish/reportNoCoverage). */
   maxSteps?: number;
+  /** Movie task → expose the movie-only transferUntilLanded tool. */
+  movie?: boolean;
 }
 
 export interface AcquisitionAgentResult {
@@ -169,7 +183,7 @@ export interface AcquisitionAgentResult {
 export async function runAcquisitionAgent(
   request: AcquisitionAgentRequest,
 ): Promise<AcquisitionAgentResult> {
-  const tools = buildSandboxToolSet(request.sandbox);
+  const tools = buildSandboxToolSet(request.sandbox, { movie: request.movie ?? false });
   const result = await generateText({
     model: request.model,
     system: request.system,
