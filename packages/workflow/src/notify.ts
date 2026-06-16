@@ -1,4 +1,5 @@
-import type { NotificationEvent } from "./domain.js";
+import type { NotificationEvent, NotificationReport } from "./domain.js";
+import { formatReportPushText } from "./notification-report.js";
 
 /**
  * Outbound push: the in-app feed is the source of truth; these channels are
@@ -11,6 +12,79 @@ export interface NotifyMessage {
   text: string;
   markdown?: string;
   url?: string;
+  /** A poster/cover image — rendered inline (Server酱 markdown), as the icon
+   *  (Bark), or the card thumbnail (企微 news). Absent → text-only. */
+  imageUrl?: string;
+}
+
+/** TMDB's own CDN serves posters from the stored posterPath — no self-hosting. */
+const TMDB_POSTER_BASE = "https://image.tmdb.org/t/p/w500";
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
+  if (bytes >= 1e6) return `${Math.round(bytes / 1e6)} MB`;
+  return `${Math.round(bytes / 1e3)} KB`;
+}
+
+/**
+ * Render a notification report into one rich push message (L2): a poster image, a
+ * structured Markdown body, and a tap-through link — each channel then uses what
+ * it can (Server酱 markdown, Bark icon+url, 企微 news card, webhook full JSON),
+ * degrading gracefully. The plain `text` stays the universal fallback. A poster
+ * works without any domain (TMDB CDN); the link only appears when a public
+ * `webBaseUrl` is configured (local dev has none → no link, poster stays).
+ */
+export function buildNotifyMessage(
+  report: NotificationReport,
+  opts?: { posterBaseUrl?: string; webBaseUrl?: string },
+): NotifyMessage {
+  const posterBase = (opts?.posterBaseUrl ?? TMDB_POSTER_BASE).replace(/\/$/, "");
+  const head = report.seasonLabel
+    ? `${report.titleName} ${report.seasonLabel}`
+    : report.year
+      ? `${report.titleName} (${report.year})`
+      : report.titleName;
+  const imageUrl = report.posterPath ? `${posterBase}${report.posterPath}` : undefined;
+  const webBase = opts?.webBaseUrl?.replace(/\/$/, "");
+  const url = webBase && report.tmdbId !== undefined ? `${webBase}/show/${report.tmdbId}` : undefined;
+
+  const md: string[] = [];
+  if (imageUrl) {
+    md.push(`![](${imageUrl})`, "");
+  }
+  md.push(`**${head}**`, "");
+  for (const line of report.lines) {
+    md.push(`- ${line}`);
+  }
+  if (report.quality) {
+    md.push(`- 画质：${report.quality}`);
+  }
+  if (report.fileCount !== undefined || report.totalBytes !== undefined) {
+    const bits: string[] = [];
+    if (report.fileCount !== undefined) bits.push(`${report.fileCount} 文件`);
+    if (report.totalBytes !== undefined) bits.push(formatBytes(report.totalBytes));
+    md.push(`- ${bits.join(" · ")}`);
+  }
+  if (report.landingDir) {
+    md.push(`- 落盘：${report.landingDir}`);
+  }
+  if (report.newlyObtained.length > 0) {
+    md.push(`- 本次新增：${report.newlyObtained.join("、")}`);
+  }
+  if (report.realMissing.length > 0) {
+    md.push(`- 缺集：${report.realMissing.join("、")}`);
+  }
+  if (url) {
+    md.push("", `[查看详情 →](${url})`);
+  }
+
+  return {
+    title: head,
+    text: formatReportPushText(report),
+    markdown: md.join("\n"),
+    ...(imageUrl ? { imageUrl } : {}),
+    ...(url ? { url } : {}),
+  };
 }
 
 export interface NotifyChannel {
@@ -53,6 +127,7 @@ export function createBarkChannel(options: {
           body: message.text,
           group: "media-track",
           ...(message.url === undefined ? {} : { url: message.url }),
+          ...(message.imageUrl === undefined ? {} : { icon: message.imageUrl }),
         }),
       });
       assertDelivered("bark", result);
@@ -93,9 +168,19 @@ export function createWeComChannel(options: {
     id: "wecom",
     async send(message) {
       const payload =
-        message.markdown !== undefined
-          ? { msgtype: "markdown", markdown: { content: `**${message.title}**\n${message.markdown}` } }
-          : { msgtype: "text", text: { content: `${message.title}\n${message.text}` } };
+        // A poster + tap-through link → a 图文 (news) card: thumbnail + title + link.
+        message.imageUrl !== undefined && message.url !== undefined
+          ? {
+              msgtype: "news",
+              news: {
+                articles: [
+                  { title: message.title, description: message.text, url: message.url, picurl: message.imageUrl },
+                ],
+              },
+            }
+          : message.markdown !== undefined
+            ? { msgtype: "markdown", markdown: { content: `**${message.title}**\n${message.markdown}` } }
+            : { msgtype: "text", text: { content: `${message.title}\n${message.text}` } };
       const result = await fetchImpl(options.webhookUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -164,14 +249,17 @@ export interface NotifyDispatchResult {
 export async function dispatchNotifications(input: {
   channels: NotifyChannel[];
   notifications: NotificationEvent[];
+  /** Public base URL for the tap-through link (absent → no link, e.g. local dev). */
+  opts?: { posterBaseUrl?: string; webBaseUrl?: string };
 }): Promise<NotifyDispatchResult> {
   let sent = 0;
   const failures: NotifyDispatchResult["failures"] = [];
   for (const notification of input.notifications) {
-    const message: NotifyMessage = {
-      title: notification.title,
-      text: notification.body,
-    };
+    // A report → the rich L2 message (poster + markdown + link); otherwise the
+    // legacy plain {title, text} (foreign-work / legacy events have no report).
+    const message: NotifyMessage = notification.report
+      ? buildNotifyMessage(notification.report, input.opts)
+      : { title: notification.title, text: notification.body };
     let delivered = false;
     for (const channel of input.channels) {
       try {
@@ -240,7 +328,12 @@ export async function sendPushNotifications(input: {
     return [];
   }
 
-  const result = await dispatchNotifications({ channels, notifications: [input.notification] });
+  const webBaseUrl = process.env.MEDIA_TRACK_PUBLIC_BASE_URL?.trim();
+  const result = await dispatchNotifications({
+    channels,
+    notifications: [input.notification],
+    ...(webBaseUrl ? { opts: { webBaseUrl } } : {}),
+  });
   const sentChannels = channels
     .filter((ch) => !result.failures.some((f) => f.channelId === ch.id))
     .map((ch) => ch.id);

@@ -1,6 +1,7 @@
 import { episodeNumberFromCode } from "./domain.js";
 import type {
   EpisodeState,
+  MediaType,
   NotificationEvent,
   NotificationReport,
   NotificationReportStatus,
@@ -74,6 +75,8 @@ export interface SeasonReportInput {
   noCoverage?: boolean;
   /** Dominant quality of the landed files (e.g. "2160p"), surfaced in pushes. */
   quality?: string;
+  /** Poster/tmdbId/year for richer pushes. */
+  meta?: NotificationTitleMeta;
 }
 
 /**
@@ -97,6 +100,7 @@ export function buildSeasonReport(input: SeasonReportInput): NotificationReport 
       lines: ["暂未找到可用资源 · 将持续尝试"],
       newlyObtained: [],
       realMissing,
+      ...(input.meta ?? {}),
     };
   }
 
@@ -129,6 +133,7 @@ export function buildSeasonReport(input: SeasonReportInput): NotificationReport 
     newlyObtained,
     realMissing,
     ...(input.quality ? { quality: input.quality } : {}),
+    ...(input.meta ?? {}),
   };
 }
 
@@ -146,6 +151,7 @@ export function buildSeriesReport(input: {
   titleName: string;
   seasons: SeriesReportSeasonInput[];
   noCoverage?: boolean;
+  meta?: NotificationTitleMeta;
 }): NotificationReport {
   if (input.noCoverage) {
     return {
@@ -155,6 +161,7 @@ export function buildSeriesReport(input: {
       lines: ["暂未找到可用资源 · 将持续尝试"],
       newlyObtained: [],
       realMissing: [],
+      ...(input.meta ?? {}),
     };
   }
 
@@ -202,11 +209,20 @@ export function buildSeriesReport(input: {
     lines,
     newlyObtained: [],
     realMissing: partial.flatMap((entry) => entry.missing),
+    ...(input.meta ?? {}),
   };
 }
 
+/** Title metadata for richer pushes (poster image + tap-through link). */
+export interface NotificationTitleMeta {
+  posterPath?: string | null;
+  tmdbId?: number;
+  mediaType?: MediaType;
+  year?: number;
+}
+
 /** Movie / one-off: nothing to track, just acquired. */
-export function buildMovieReport(titleName: string, quality?: string): NotificationReport {
+export function buildMovieReport(titleName: string, quality?: string, meta?: NotificationTitleMeta): NotificationReport {
   return {
     titleName,
     seasonLabel: null,
@@ -215,6 +231,7 @@ export function buildMovieReport(titleName: string, quality?: string): Notificat
     newlyObtained: [],
     realMissing: [],
     ...(quality ? { quality } : {}),
+    ...(meta ?? {}),
   };
 }
 

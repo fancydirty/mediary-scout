@@ -191,6 +191,19 @@ export interface NotificationReport {
   realMissing: string[];
   /** Dominant quality of what actually landed (e.g. "2160p"), for richer pushes. */
   quality?: string;
+  /** TMDB poster path (e.g. "/abc.jpg"); rendered as an image in rich pushes via
+   *  the TMDB CDN — no self-hosting. Null/absent → no poster. */
+  posterPath?: string | null;
+  /** For the tap-through link `{webBaseUrl}/show/{tmdbId}` (only when a public
+   *  base URL is configured). */
+  tmdbId?: number;
+  mediaType?: MediaType;
+  /** Movie release year, shown in the title as "标题 (年份)". */
+  year?: number;
+  /** Optional landing facts, shown when readily available. */
+  fileCount?: number;
+  totalBytes?: number;
+  landingDir?: string;
 }
 
 export interface NotificationEvent {

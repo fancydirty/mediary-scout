@@ -93,6 +93,18 @@ describe("resource quality in notifications", () => {
     expect(movie.quality).toBe("2160p");
     expect(formatReportPushText(movie)).toContain("🎞 画质：2160p");
   });
+
+  it("carries title meta (poster/tmdbId/year) into the report for rich pushes", () => {
+    const movie = buildMovieReport("周处除三害", "2160p", { posterPath: "/p.jpg", tmdbId: 996154, mediaType: "movie", year: 2024 });
+    expect(movie).toMatchObject({ posterPath: "/p.jpg", tmdbId: 996154, mediaType: "movie", year: 2024 });
+    const season = buildSeasonReport({
+      titleName: "迷雾追踪",
+      season: { id: "s", mediaTitleId: "t", seasonNumber: 1, status: "active", qualityPreference: "1080p", storageDirectoryId: "d", totalEpisodes: 12, latestAiredEpisode: 6, latestAiredSource: "metadata" },
+      episodes: [],
+      meta: { posterPath: "/q.jpg", tmdbId: 222, mediaType: "tv" },
+    });
+    expect(season).toMatchObject({ posterPath: "/q.jpg", tmdbId: 222, mediaType: "tv" });
+  });
 });
 
 describe("buildSeasonReport", () => {

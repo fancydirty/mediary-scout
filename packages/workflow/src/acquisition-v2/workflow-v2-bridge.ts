@@ -188,12 +188,14 @@ function buildNotification(input: {
 }): NotificationEvent {
   const { title, mode, seasons, status, workflowRunId } = input;
   const noCoverage = status === "no_coverage";
+  const titleMeta = { posterPath: title.posterPath ?? null, tmdbId: title.tmdbId, mediaType: title.type, year: title.year };
 
   if (mode === "series") {
     const report = buildSeriesReport({
       titleName: title.title,
       seasons: seasons.map((entry) => ({ season: entry.season, episodes: entry.episodes })),
       noCoverage,
+      meta: titleMeta,
     });
     return {
       id: `notification_${workflowRunId}`,
@@ -219,6 +221,7 @@ function buildNotification(input: {
     episodes: entry.episodes,
     newlyObtained,
     noCoverage,
+    meta: titleMeta,
   });
 
   if (mode === "type3") {

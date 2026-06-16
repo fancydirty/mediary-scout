@@ -118,7 +118,13 @@ function buildResult(input: {
     latestAiredEpisode: 1,
   }).map((episode) => ({ ...episode, obtained: input.obtained }));
 
-  const baseReport = buildMovieReport(input.request.title.title);
+  const t = input.request.title;
+  const baseReport = buildMovieReport(t.title, undefined, {
+    posterPath: t.posterPath ?? null,
+    tmdbId: t.tmdbId,
+    mediaType: t.type,
+    year: t.year,
+  });
   const report = input.obtained
     ? baseReport
     : { ...baseReport, status: "no_coverage" as const, lines: ["暂未找到可用资源 · 将持续尝试"] };
