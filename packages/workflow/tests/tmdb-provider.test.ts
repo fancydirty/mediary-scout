@@ -347,7 +347,7 @@ describe("TmdbSearchProvider", () => {
     expect(target.title.id).toBe("tmdb_tv_240411");
   });
 
-  it("prepares a movie target and classifies a Japanese animated film as anime", async () => {
+  it("prepares a movie target and keeps a Japanese animated film as a movie (a film is a film)", async () => {
     const provider = new TmdbMetadataProvider({
       readToken: "token",
       fetchJson: async (url) => {
@@ -370,7 +370,8 @@ describe("TmdbSearchProvider", () => {
 
     const target = await prepareMovieTarget({ tmdbId: 129, qualityPreference: "4K", metadataProvider: provider });
     expect(target.title.id).toBe("tmdb_movie_129");
-    expect(target.title.type).toBe("anime");
+    expect(target.title.type).toBe("movie"); // an animated film stays a movie — 电影 shelf + movie agent
+
     expect(target.title.year).toBe(2001);
     expect(target.title.releaseDate).toBe("2001-07-20"); // full date kept for the reserve air-time gate
     expect(target.keyword).toContain("千与千寻");
