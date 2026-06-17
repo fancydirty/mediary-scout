@@ -6,6 +6,17 @@ import {
   Storage115Executor,
 } from "../src/index.js";
 
+/** A /files mock that pages a synthetic dataset by the URL's offset/limit. */
+function paginatedFetch(totalCount: number, cid = "dir_big") {
+  const dataset = Array.from({ length: totalCount }, (_, i) => ({ fid: `file_${i}`, n: `E${i}.mkv`, s: "1" }));
+  return async (url: string) => {
+    const params = new URL(url).searchParams;
+    const offset = Number(params.get("offset") ?? "0");
+    const limit = Number(params.get("limit") ?? "200");
+    return { state: true, cid, count: totalCount, offset, data: dataset.slice(offset, offset + limit) };
+  };
+}
+
 describe("Pan115CookieClient", () => {
   it("creates folders with the authenticated 115 web API", async () => {
     const requests: RecordedRequest[] = [];
@@ -64,22 +75,30 @@ describe("Pan115CookieClient", () => {
     expect(requests.map((request) => request.method)).toEqual(["GET"]);
   });
 
-  it("fails closed when a directory list would require pagination", async () => {
+  it("paginates a directory larger than one page (so a 335-file pack is listable)", async () => {
+    const requests: RecordedRequest[] = [];
     const client = new Pan115CookieClient({
       cookie: "cookie",
-      listLimit: 2,
-      fetchJson: async () => ({
-        state: true,
-        cid: "dir_1",
-        count: 3,
-        offset: 0,
-        data: [{ fid: "file_1", n: "a.mkv", s: "1" }],
-      }),
+      listLimit: 200, // page size
+      listPageDelayMs: 0, // no inter-page sleep in tests
+      fetchJson: recordFetchFn(requests, paginatedFetch(335, "dir_1")),
     });
 
-    await expect(client.listItems({ directoryId: "dir_1" })).rejects.toThrow(
-      "PAN115_LIST_TOO_LARGE",
-    );
+    const items = await client.listItems({ directoryId: "dir_1" });
+
+    expect(items).toHaveLength(335); // all pages stitched
+    expect(requests.map((r) => r.method)).toEqual(["GET", "GET"]); // 335 → 2 pages
+  });
+
+  it("fails closed ONLY when the count exceeds the hard cap (1000), not at 200", async () => {
+    const client = new Pan115CookieClient({
+      cookie: "cookie",
+      listLimit: 200,
+      listPageDelayMs: 0,
+      fetchJson: paginatedFetch(1500, "dir_1"),
+    });
+
+    await expect(client.listItems({ directoryId: "dir_1" })).rejects.toThrow("PAN115_LIST_TOO_LARGE");
   });
 
   it("returns the ancestor breadcrumb from a single /files call (incl. the dir itself as leaf)", async () => {
@@ -421,5 +440,16 @@ function recordFetch(
       throw new Error(`Unexpected URL ${url}`);
     }
     return responses[url];
+  };
+}
+
+/** Like recordFetch but backed by a handler function (for offset-aware mocks). */
+function recordFetchFn(
+  requests: RecordedRequest[],
+  handler: (url: string) => Promise<unknown>,
+): (url: string, init: { method: "GET" | "POST"; headers: Record<string, string>; body?: string }) => Promise<unknown> {
+  return async (url, init) => {
+    requests.push({ url, method: init.method, headers: init.headers, body: init.body ?? "" });
+    return handler(url);
   };
 }

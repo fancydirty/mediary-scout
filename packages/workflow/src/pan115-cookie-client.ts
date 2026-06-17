@@ -16,8 +16,12 @@ const PAN115_LIXIAN_WEB_URL = "https://lixian.115.com/lixian/";
 // 115 requires its android client UA for the lixianssp offline endpoint.
 const PAN115_ANDROID_USER_AGENT =
   "Mozilla/5.0 115disk/99.99.99.99 115Browser/99.99.99.99 115wangpan_android/99.99.99.99";
-const DEFAULT_LIST_LIMIT = 200;
+const DEFAULT_LIST_LIMIT = 200; // 115's per-page cap for /files
+const DEFAULT_MAX_LIST_TOTAL = 1000; // stitch up to this across pages; beyond it, fail loud
+const DEFAULT_LIST_PAGE_DELAY_MS = 1_200; // 逆鳞 spacing between page fetches (matches the guard)
 const DEFAULT_USER_AGENT = "media-track/0.1";
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 export interface Pan115HttpInit {
   method: "GET" | "POST";
@@ -31,6 +35,10 @@ export interface Pan115CookieClientOptions {
   cookie: string;
   fetchJson?: Pan115FetchJson;
   listLimit?: number;
+  /** Stitch pages up to this total; beyond it, fail loud (default 1000). */
+  maxListTotal?: number;
+  /** Delay between page fetches (逆鳞 spacing); 0 in tests (default 1200ms). */
+  listPageDelayMs?: number;
   userAgent?: string;
 }
 
@@ -38,6 +46,8 @@ export class Pan115CookieClient implements Pan115StorageApi {
   private readonly cookie: string;
   private readonly fetchJson: Pan115FetchJson;
   private readonly listLimit: number;
+  private readonly maxListTotal: number;
+  private readonly listPageDelayMs: number;
   private readonly userAgent: string;
 
   constructor(options: Pan115CookieClientOptions) {
@@ -48,6 +58,8 @@ export class Pan115CookieClient implements Pan115StorageApi {
     this.cookie = cookie;
     this.fetchJson = options.fetchJson ?? defaultFetchJson;
     this.listLimit = options.listLimit ?? DEFAULT_LIST_LIMIT;
+    this.maxListTotal = options.maxListTotal ?? DEFAULT_MAX_LIST_TOTAL;
+    this.listPageDelayMs = options.listPageDelayMs ?? DEFAULT_LIST_PAGE_DELAY_MS;
     this.userAgent = options.userAgent ?? DEFAULT_USER_AGENT;
   }
 
@@ -70,13 +82,13 @@ export class Pan115CookieClient implements Pan115StorageApi {
     return directoryId;
   }
 
-  async listItems(input: { directoryId: string }): Promise<Pan115Item[]> {
+  private async listPage(directoryId: string, offset: number): Promise<unknown> {
     const response = await this.getJson(`${PAN115_WEBAPI_BASE_URL}/files`, [
       ["aid", "1"],
-      ["cid", input.directoryId],
+      ["cid", directoryId],
       ["o", "user_ptime"],
       ["asc", "1"],
-      ["offset", "0"],
+      ["offset", String(offset)],
       ["show_dir", "1"],
       ["limit", String(this.listLimit)],
       ["snap", "0"],
@@ -88,24 +100,43 @@ export class Pan115CookieClient implements Pan115StorageApi {
     if (!responseState(response)) {
       throw new Error(`PAN115_LIST_ITEMS_FAILED: ${responseMessage(response)}`);
     }
+    return response;
+  }
+
+  async listItems(input: { directoryId: string }): Promise<Pan115Item[]> {
+    const first = await this.listPage(input.directoryId, 0);
     // 115 silently treats a deleted/invalid cid as the account ROOT and returns
     // root's children. The /files response echoes the cid it actually resolved;
-    // if that is not the cid we asked for, the directory is gone — refuse, do
-    // NOT hand back the fallback root's contents (enumerating then deleting them
-    // would wipe the user's library). Fail loud, never fall back to root.
-    if (!this.listResolvedToRequested(response, input.directoryId)) {
+    // a mismatch means the directory is gone — refuse, never hand back root's
+    // contents (enumerating then deleting them would wipe the user's library).
+    if (!this.listResolvedToRequested(first, input.directoryId)) {
       throw new Error(
         `PAN115_DIRECTORY_NOT_FOUND: requested cid=${input.directoryId} but 115 resolved to ` +
-          `${stringValue(recordValue(response, "cid"))}. The directory was likely deleted; ` +
+          `${stringValue(recordValue(first, "cid"))}. The directory was likely deleted; ` +
           `refusing to operate on the fallback (root) directory.`,
       );
     }
-    const items = arrayValue(recordValue(response, "data")).filter(isRecord) as Pan115Item[];
-    const totalCount = numberValue(recordValue(response, "count"));
-    if (totalCount > this.listLimit) {
+    const totalCount = numberValue(recordValue(first, "count"));
+    // Hard cap: a directory bigger than this is a real outlier — fail loud rather
+    // than paginate forever (and re-fetch it every step). 335-file donghua packs
+    // sit comfortably under 1000; this only stops pathological dirs.
+    if (totalCount > this.maxListTotal) {
       throw new Error(
-        `PAN115_LIST_TOO_LARGE: cid=${input.directoryId}; count=${totalCount}; limit=${this.listLimit}`,
+        `PAN115_LIST_TOO_LARGE: cid=${input.directoryId}; count=${totalCount}; limit=${this.maxListTotal}`,
       );
+    }
+    const items = arrayValue(recordValue(first, "data")).filter(isRecord) as Pan115Item[];
+    // Stitch the remaining pages (each is one /files call, 逆鳞-spaced).
+    while (items.length < totalCount) {
+      if (this.listPageDelayMs > 0) {
+        await sleep(this.listPageDelayMs);
+      }
+      const page = await this.listPage(input.directoryId, items.length);
+      const pageItems = arrayValue(recordValue(page, "data")).filter(isRecord) as Pan115Item[];
+      if (pageItems.length === 0) {
+        break; // safety: a lying count must not loop forever
+      }
+      items.push(...pageItems);
     }
     return items;
   }

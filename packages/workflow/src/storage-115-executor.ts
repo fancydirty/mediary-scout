@@ -179,7 +179,9 @@ export class Pan115ApiGuard {
   constructor(options: Pan115ApiGuardOptions = {}) {
     this.minDelayMs = options.minDelayMs ?? 0;
     this.maxCallsPerOperation = options.maxCallsPerOperation ?? 80;
-    this.maxListItemsPerResponse = options.maxListItemsPerResponse ?? 230;
+    // Matches the client's paginated stitch cap (DEFAULT_MAX_LIST_TOTAL=1000): the
+    // client refuses dirs bigger than that, so a result above it is a real anomaly.
+    this.maxListItemsPerResponse = options.maxListItemsPerResponse ?? 1000;
     this.riskMessagePatterns = options.riskMessagePatterns ?? DEFAULT_PAN115_RISK_PATTERNS;
     this.now = options.now ?? Date.now;
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -889,7 +891,7 @@ export function createProtectedStorage115Executor(
     executorOptions.apiGuardOptions = {
       minDelayMs: positiveIntFromEnv(env["MEDIA_TRACK_115_MIN_DELAY_MS"]) ?? 1_200,
       maxCallsPerOperation: positiveIntFromEnv(env["MEDIA_TRACK_115_MAX_API_CALLS"]) ?? 240,
-      maxListItemsPerResponse: 200,
+      maxListItemsPerResponse: 1000,
       ...options.apiGuardOptions,
     };
   }
