@@ -255,6 +255,21 @@ export async function savePreferredLanguageAction(
   }
 }
 
+export async function saveQualityPreferenceAction(
+  quality: string,
+): Promise<PushSettingsActionResult> {
+  try {
+    const { getWorkflowRepository, QUALITY_PREFERENCE_SETTING_KEY } = await import(
+      "../lib/workflow-runtime"
+    );
+    const repository = getWorkflowRepository();
+    await repository.setSetting(QUALITY_PREFERENCE_SETTING_KEY, quality.trim());
+    return { success: true };
+  } catch (error) {
+    return { success: false, message: `保存失败：${String(error)}` };
+  }
+}
+
 export async function testPushNotificationAction(
   settings: Record<string, string>,
 ): Promise<PushSettingsActionResult> {

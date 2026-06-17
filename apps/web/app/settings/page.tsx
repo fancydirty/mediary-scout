@@ -1,16 +1,18 @@
 import { connection } from "next/server";
 import { Suspense } from "react";
-import { Bell, Cable, CalendarClock, Languages, ShieldCheck, TriangleAlert } from "lucide-react";
+import { Bell, Cable, CalendarClock, Gauge, Languages, ShieldCheck, TriangleAlert } from "lucide-react";
 import { AppSidebar } from "../../components/app-sidebar";
 import { Pan115QrConnect } from "../../components/pan115-qr-connect";
 import { PushNotificationForm } from "../../components/push-notification-form";
 import { PreferredLanguageForm } from "../../components/preferred-language-form";
+import { QualityPreferenceForm } from "../../components/quality-preference-form";
 import { DailySweepForm } from "../../components/daily-sweep-form";
 import {
   getDailySweepTime,
   getPan115ConnectionStatus,
   getWorkflowRepository,
   PREFERRED_LANGUAGE_SETTING_KEY,
+  QUALITY_PREFERENCE_SETTING_KEY,
 } from "../../lib/workflow-runtime";
 
 export default function SettingsPage() {
@@ -29,6 +31,9 @@ export default function SettingsPage() {
         </Suspense>
         <Suspense fallback={<div className="skeleton skeleton-heading" />}>
           <PreferredLanguageSection />
+        </Suspense>
+        <Suspense fallback={<div className="skeleton skeleton-heading" />}>
+          <QualityPreferenceSection />
         </Suspense>
         <Suspense fallback={<div className="skeleton skeleton-heading" />}>
           <DailySweepSection />
@@ -58,6 +63,27 @@ async function PreferredLanguageSection() {
         </div>
       </div>
       <PreferredLanguageForm initial={initial} />
+    </section>
+  );
+}
+
+async function QualityPreferenceSection() {
+  await connection();
+  const repository = getWorkflowRepository();
+  const initial = (await repository.getSetting(QUALITY_PREFERENCE_SETTING_KEY)) ?? "any";
+
+  return (
+    <section className="panel" style={{ maxWidth: 720, marginTop: 24 }}>
+      <div className="panel-header">
+        <div>
+          <h2 className="panel-title">
+            <Gauge size={16} aria-hidden style={{ verticalAlign: "-2px", marginRight: 8 }} />
+            偏好画质
+          </h2>
+          <p className="panel-note">优先获取的画质档位（覆盖优先，找不到不留缺）</p>
+        </div>
+      </div>
+      <QualityPreferenceForm initial={initial} />
     </section>
   );
 }
