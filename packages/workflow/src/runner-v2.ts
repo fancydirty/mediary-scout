@@ -35,6 +35,8 @@ interface TvV2Common {
   searchBudget?: number;
   maxSteps?: number;
   preferredLanguage?: string;
+  /** Global quality preference ("high"/"medium"); undefined = 不限 (no guidance). */
+  qualityPreference?: "high" | "medium";
   /**
    * Wall clock for the run. Drives the engine's timestamps (including the
    * terminal notification's `createdAt`) AND the persisted `finishedAt`, which
@@ -54,11 +56,13 @@ function passthrough(input: TvV2Common): {
   searchBudget?: number;
   maxSteps?: number;
   preferredLanguage?: string;
+  qualityPreference?: "high" | "medium";
 } {
   return {
     ...(input.searchBudget === undefined ? {} : { searchBudget: input.searchBudget }),
     ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
     ...(input.preferredLanguage === undefined ? {} : { preferredLanguage: input.preferredLanguage }),
+    ...(input.qualityPreference === undefined ? {} : { qualityPreference: input.qualityPreference }),
   };
 }
 
@@ -177,9 +181,13 @@ export async function runType3MonitoringV2AndPersist(
 }
 
 export async function runSeriesInitializationV2AndPersist(
-  input: TvV2Common & { seasons: AcquisitionSeasonScope[]; qualityPreference?: string },
+  // `seasonQualityRecord` is the LEGACY per-season record string (e.g. "4K"),
+  // distinct from TvV2Common.qualityPreference (the new high/medium agent
+  // preference that drives qualityGuidance via passthrough). Renamed to avoid a
+  // key collision on the intersection type.
+  input: TvV2Common & { seasons: AcquisitionSeasonScope[]; seasonQualityRecord?: string },
 ): Promise<BridgedV2Result> {
-  const quality = input.qualityPreference ?? "4K";
+  const quality = input.seasonQualityRecord ?? "4K";
   const now = resolveNow(input);
   const bridged = await runTvAcquisitionV2({
     title: input.title,
@@ -259,6 +267,8 @@ export async function runMovieAcquisitionV2AndPersist(input: {
   searchBudget?: number;
   maxSteps?: number;
   preferredLanguage?: string;
+  /** Global quality preference ("high"/"medium"); undefined = 不限 (no guidance). */
+  qualityPreference?: "high" | "medium";
   /** See TvV2Common.now — finishedAt is stamped post-run from this clock. */
   now?: () => string;
 }): Promise<MovieWorkflowResult> {
@@ -280,6 +290,7 @@ export async function runMovieAcquisitionV2AndPersist(input: {
     ...(input.searchBudget === undefined ? {} : { searchBudget: input.searchBudget }),
     ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
     ...(input.preferredLanguage === undefined ? {} : { preferredLanguage: input.preferredLanguage }),
+    ...(input.qualityPreference === undefined ? {} : { qualityPreference: input.qualityPreference }),
   });
 
   await input.repository.saveWorkflowRunSnapshot({

@@ -65,6 +65,7 @@ export async function runQueuedType2Workflow(input: {
   storage: StorageExecutor;
   model: LanguageModel;
   preferredLanguage?: string;
+  qualityPreference?: "high" | "medium";
   now?: () => string;
   storageParentDirectoryId?: string;
   /** Separate landing parent for anime (see runQueuedSeriesInitialization). */
@@ -91,6 +92,7 @@ export async function runQueuedType2Workflow(input: {
       model: input.model,
       repository: input.repository,
       ...(input.preferredLanguage === undefined ? {} : { preferredLanguage: input.preferredLanguage }),
+      ...(input.qualityPreference === undefined ? {} : { qualityPreference: input.qualityPreference }),
       // finishedAt is stamped post-run inside the persist step (see runner-v2),
       // so it reflects actual completion, not the claim time.
       workflowRun: {
@@ -168,6 +170,7 @@ export async function runScheduledType3Monitoring(input: {
   storage: StorageExecutor;
   model: LanguageModel;
   preferredLanguage?: string;
+  qualityPreference?: "high" | "medium";
   storageParentDirectoryId: string;
   /** Separate landing parent for anime, so anime patrol verify-or-creates under
    *  its own tree (see runQueuedSeriesInitialization). */
@@ -274,6 +277,7 @@ export async function runScheduledType3Monitoring(input: {
         model: input.model,
         repository: input.repository,
         ...(input.preferredLanguage === undefined ? {} : { preferredLanguage: input.preferredLanguage }),
+        ...(input.qualityPreference === undefined ? {} : { qualityPreference: input.qualityPreference }),
         workflowRun: { id: workflowRunId, startedAt, finishedAt: null },
         now,
       });
@@ -330,6 +334,7 @@ async function patrolMovie(args: {
     storage: StorageExecutor;
     model: LanguageModel;
     preferredLanguage?: string;
+    qualityPreference?: "high" | "medium";
     moviesParentDirectoryId?: string;
     createWorkflowRunId?: () => string;
     staleActiveRunTimeoutMs?: number;
@@ -390,6 +395,7 @@ async function patrolMovie(args: {
       model: input.model,
       repository: input.repository,
       ...(input.preferredLanguage === undefined ? {} : { preferredLanguage: input.preferredLanguage }),
+      ...(input.qualityPreference === undefined ? {} : { qualityPreference: input.qualityPreference }),
       workflowRun: { id: workflowRunId, startedAt, finishedAt: null },
       now,
     });
@@ -455,6 +461,7 @@ export async function runQueuedMovieAcquisition(input: {
   storage: StorageExecutor;
   model: LanguageModel;
   preferredLanguage?: string;
+  qualityPreference?: "high" | "medium";
   moviesParentDirectoryId: string;
   now?: () => string;
 }): Promise<QueuedType2WorkerResult> {
@@ -473,6 +480,7 @@ export async function runQueuedMovieAcquisition(input: {
       model: input.model,
       repository: input.repository,
       ...(input.preferredLanguage === undefined ? {} : { preferredLanguage: input.preferredLanguage }),
+      ...(input.qualityPreference === undefined ? {} : { qualityPreference: input.qualityPreference }),
       workflowRun: { id: claimed.workflowRun.id, startedAt: claimed.workflowRun.startedAt, finishedAt: null },
       now,
     });
@@ -504,6 +512,7 @@ export async function runQueuedSeriesInitialization(input: {
   storage: StorageExecutor;
   model: LanguageModel;
   preferredLanguage?: string;
+  qualityPreference?: "high" | "medium";
   storageParentDirectoryId: string;
   /** Separate landing parent for anime, so the 动漫 shelf is physically its own
    *  tree on 115 and never mixed into the TV shows directory. */
@@ -532,12 +541,13 @@ export async function runQueuedSeriesInitialization(input: {
       categoryParentId: requireCategoryParent(
         storageParentForTitle(claimed.title, input.storageParentDirectoryId, input.animeStorageParentDirectoryId),
       ),
-      qualityPreference: claimed.season.qualityPreference,
+      seasonQualityRecord: claimed.season.qualityPreference,
       resourceProvider: input.resourceProvider,
       storage: input.storage,
       model: input.model,
       repository: input.repository,
       ...(input.preferredLanguage === undefined ? {} : { preferredLanguage: input.preferredLanguage }),
+      ...(input.qualityPreference === undefined ? {} : { qualityPreference: input.qualityPreference }),
       workflowRun: {
         id: claimed.workflowRun.id,
         startedAt: claimed.workflowRun.startedAt,

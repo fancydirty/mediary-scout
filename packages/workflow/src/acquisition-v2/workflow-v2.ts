@@ -43,6 +43,7 @@ export interface RunAcquisitionV2WorkflowRequest {
   maxSteps?: number;
   preferredLanguage?: string;
   searchHints?: string;
+  qualityGuidance?: string;
   deadLinkStore?: DeadLinkStore;
   onProgress?: (event: AgentToolEvent) => void;
 }
@@ -126,6 +127,7 @@ export async function runAcquisitionV2Workflow(
     ...(request.maxSteps === undefined ? {} : { maxSteps: request.maxSteps }),
     ...(request.preferredLanguage === undefined ? {} : { preferredLanguage: request.preferredLanguage }),
     ...(request.searchHints === undefined ? {} : { searchHints: request.searchHints }),
+    ...(request.qualityGuidance === undefined ? {} : { qualityGuidance: request.qualityGuidance }),
     ...(request.deadLinkStore ? { deadLinkStore: request.deadLinkStore } : {}),
     ...(request.onProgress ? { onProgress: request.onProgress } : {}),
   });

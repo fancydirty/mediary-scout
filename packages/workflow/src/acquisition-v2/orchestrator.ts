@@ -47,6 +47,8 @@ export interface RunAcquisitionV2Request {
   preferredLanguage?: string;
   /** This title's per-media-type PanSou keyword recipe, injected into the prompt. */
   searchHints?: string;
+  /** Rendered quality-preference guidance (召回后选片优先级), injected into the prompt. */
+  qualityGuidance?: string;
   /** Filters known-dead candidates from search results before the agent sees them,
    *  and records newly-proven-dead links from failed transfers (#15). */
   deadLinkStore?: DeadLinkStore;
@@ -101,6 +103,7 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     ...(request.maxSteps === undefined ? {} : { maxSteps: request.maxSteps }),
     ...(request.preferredLanguage === undefined ? {} : { preferredLanguage: request.preferredLanguage }),
     ...(request.searchHints === undefined ? {} : { searchHints: request.searchHints }),
+    ...(request.qualityGuidance === undefined ? {} : { qualityGuidance: request.qualityGuidance }),
     ...(request.onProgress ? { onProgress: request.onProgress } : {}),
   };
 

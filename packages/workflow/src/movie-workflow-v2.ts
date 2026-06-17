@@ -19,7 +19,7 @@ import type { DeadLinkStore } from "./acquisition-v2/dead-links.js";
 import { readLandedSize, type LandedSize } from "./acquisition-v2/landed-size.js";
 import type { AgentToolEvent } from "./acquisition-v2/activity.js";
 import { runAcquisitionV2 } from "./acquisition-v2/orchestrator.js";
-import { getSearchRecipe } from "./acquisition-v2/search-profile.js";
+import { getQualityGuidance, getSearchRecipe } from "./acquisition-v2/search-profile.js";
 
 function defaultNowIso(): string {
   return new Date().toISOString();
@@ -42,6 +42,8 @@ export interface RunMovieAcquisitionV2Request {
   searchBudget?: number;
   maxSteps?: number;
   preferredLanguage?: string;
+  /** Global quality preference ("high"/"medium"); undefined = 不限 (no guidance). */
+  qualityPreference?: "high" | "medium";
   deadLinkStore?: DeadLinkStore;
   onProgress?: (event: AgentToolEvent) => void;
   now?: () => string;
@@ -76,6 +78,9 @@ export async function runMovieAcquisitionV2(
     stagingDirectoryId: movieDirectoryId,
     targetMovieDirectoryId: movieDirectoryId,
     searchHints: getSearchRecipe("movie"), // movie search is origin-independent
+    ...(getQualityGuidance("movie", request.qualityPreference) === ""
+      ? {}
+      : { qualityGuidance: getQualityGuidance("movie", request.qualityPreference) }),
     ...(request.searchBudget === undefined ? {} : { searchBudget: request.searchBudget }),
     ...(request.maxSteps === undefined ? {} : { maxSteps: request.maxSteps }),
     ...(request.preferredLanguage === undefined ? {} : { preferredLanguage: request.preferredLanguage }),

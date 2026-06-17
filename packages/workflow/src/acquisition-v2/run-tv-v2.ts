@@ -9,7 +9,7 @@ import {
 } from "./workflow-v2-bridge.js";
 import type { DeadLinkStore } from "./dead-links.js";
 import { runAcquisitionV2Workflow } from "./workflow-v2.js";
-import { getSearchRecipe, searchProfile } from "./search-profile.js";
+import { getQualityGuidance, getSearchRecipe, searchProfile } from "./search-profile.js";
 import type { AgentToolEvent } from "./activity.js";
 
 function defaultNowIso(): string {
@@ -39,6 +39,8 @@ export interface RunTvAcquisitionV2Request {
   searchBudget?: number;
   maxSteps?: number;
   preferredLanguage?: string;
+  /** Global quality preference ("high"/"medium"); undefined = 不限 (no guidance). */
+  qualityPreference?: "high" | "medium";
   deadLinkStore?: DeadLinkStore;
   onProgress?: (event: AgentToolEvent) => void;
   now?: () => string;
@@ -48,6 +50,13 @@ export async function runTvAcquisitionV2(request: RunTvAcquisitionV2Request): Pr
   if (request.seasons.length === 0) {
     throw new Error("runTvAcquisitionV2 requires at least one season in scope");
   }
+  // The fine-grained profile drives BOTH the keyword recipe and the quality
+  // guidance (e.g. anime → "4K is scarce, don't over-search for it").
+  const profile = searchProfile({
+    type: request.title.type,
+    originCountries: request.title.originCountries ?? [],
+  });
+  const qualityGuidance = getQualityGuidance(profile, request.qualityPreference);
   const v2 = await runAcquisitionV2Workflow({
     provider: request.resourceProvider,
     executor: request.storage,
@@ -64,9 +73,8 @@ export async function runTvAcquisitionV2(request: RunTvAcquisitionV2Request): Pr
       latestAiredEpisode: season.latestAiredEpisode,
     })),
     qualityPreference: request.seasons[0]!.qualityPreference,
-    searchHints: getSearchRecipe(
-      searchProfile({ type: request.title.type, originCountries: request.title.originCountries ?? [] }),
-    ),
+    searchHints: getSearchRecipe(profile),
+    ...(qualityGuidance === "" ? {} : { qualityGuidance }),
     ...(request.priorObtained === undefined ? {} : { priorObtained: request.priorObtained }),
     ...(request.searchBudget === undefined ? {} : { searchBudget: request.searchBudget }),
     ...(request.maxSteps === undefined ? {} : { maxSteps: request.maxSteps }),

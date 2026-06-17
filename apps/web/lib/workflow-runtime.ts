@@ -158,8 +158,9 @@ export async function runNextQueuedWorkflow() {
   // The user's language preference is standing context baked into the agent
   // instance (one global preference), so every workflow — movie, series, type2,
   // anime — searches with it. No per-workflow plumbing.
-  const { model, preferredLanguage } = await getAgentModel(repository);
+  const { model, preferredLanguage, qualityPreference } = await getAgentModel(repository);
   const language = preferredLanguage === undefined ? {} : { preferredLanguage };
+  const quality = qualityPreference === undefined ? {} : { qualityPreference };
   const startedAt = new Date().toISOString();
   const type2 = await runQueuedType2Workflow({
     repository,
@@ -167,6 +168,7 @@ export async function runNextQueuedWorkflow() {
     storage: getWorkerStorageExecutor(),
     model,
     ...language,
+    ...quality,
     storageParentDirectoryId: storageParentDirectoryId(),
     animeStorageParentDirectoryId: animeParentDirectoryId(),
   });
@@ -180,6 +182,7 @@ export async function runNextQueuedWorkflow() {
     storage: getWorkerStorageExecutor(),
     model,
     ...language,
+    ...quality,
     storageParentDirectoryId: storageParentDirectoryId(),
     animeStorageParentDirectoryId: animeParentDirectoryId(),
   });
@@ -193,6 +196,7 @@ export async function runNextQueuedWorkflow() {
     storage: getWorkerStorageExecutor(),
     model,
     ...language,
+    ...quality,
     moviesParentDirectoryId: moviesParentDirectoryId(),
   });
   if (movie.status !== "idle") {
@@ -466,13 +470,14 @@ export async function runScheduledType3(options?: { force?: boolean }): Promise<
   try {
     await hydratePan115CookieFromDb();
     const sync = tmdbSeasonMetadataSync();
-    const { model, preferredLanguage } = await getAgentModel(repository);
+    const { model, preferredLanguage, qualityPreference } = await getAgentModel(repository);
     result = await runScheduledType3Monitoring({
       repository,
       resourceProvider: getWorkerResourceProvider(),
       storage: getWorkerStorageExecutor(),
       model,
       ...(preferredLanguage === undefined ? {} : { preferredLanguage }),
+      ...(qualityPreference === undefined ? {} : { qualityPreference }),
       storageParentDirectoryId: storageParentDirectoryId(),
       animeStorageParentDirectoryId: animeParentDirectoryId(),
       moviesParentDirectoryId: moviesParentDirectoryId(),
