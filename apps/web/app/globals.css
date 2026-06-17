@@ -2509,15 +2509,15 @@ select.setting-control {
 }
 
 .act-poster {
-  width: 38px;
-  height: 54px;
-  border-radius: 6px;
+  width: 52px;
+  height: 78px;
+  border-radius: 8px;
   object-fit: cover;
   flex: none;
   background: var(--bg-card);
   display: grid;
   place-items: center;
-  font-size: 13px;
+  font-size: 15px;
   color: var(--text-muted);
 }
 

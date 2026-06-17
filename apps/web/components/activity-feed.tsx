@@ -6,7 +6,7 @@ import { CheckCircle2, ChevronDown, ChevronRight, Clock3, Loader2, TriangleAlert
 import type { ActivityActiveRun, ActivityCompletedItem, ActivityView } from "../lib/activity-view";
 
 const POLL_MS = 2600;
-const POSTER = "https://image.tmdb.org/t/p/w154";
+const POSTER = "https://image.tmdb.org/t/p/w185";
 
 export function ActivityFeed() {
   // 已完成 is session-scoped by OBSERVATION: the runIds this browser saw active.
