@@ -35,10 +35,19 @@ interface TvV2Common {
   searchBudget?: number;
   maxSteps?: number;
   preferredLanguage?: string;
+  /**
+   * Wall clock for the run. Drives the engine's timestamps (including the
+   * terminal notification's `createdAt`) AND the persisted `finishedAt`, which
+   * is stamped *after* the acquisition awaits — so completion time reflects when
+   * the run actually ended, not when it was claimed. Defaults to live time;
+   * tests inject a deterministic clock. (See worker.ts: passing a precomputed
+   * `finishedAt` as a call argument used to freeze it at run-start.)
+   */
+  now?: () => string;
 }
 
-function nowFromRun(run: WorkflowRunMetadata): () => string {
-  return () => run.finishedAt ?? new Date().toISOString();
+function resolveNow(input: { now?: () => string }): () => string {
+  return input.now ?? (() => new Date().toISOString());
 }
 
 function passthrough(input: TvV2Common): {
@@ -84,6 +93,7 @@ async function persistSingleSeason(input: {
 export async function runType2InitializationV2AndPersist(
   input: TvV2Common & { season: TrackedSeason },
 ): Promise<BridgedV2Result> {
+  const now = resolveNow(input);
   const bridged = await runTvAcquisitionV2({
     title: input.title,
     mode: "type2",
@@ -102,7 +112,7 @@ export async function runType2InitializationV2AndPersist(
     deadLinkStore: input.repository,
     model: input.model,
     workflowRunId: input.workflowRun.id,
-    now: nowFromRun(input.workflowRun),
+    now,
     onProgress: makeProgressSink({
       repository: input.repository,
       workflowRunId: input.workflowRun.id,
@@ -115,7 +125,9 @@ export async function runType2InitializationV2AndPersist(
     kind: "type2_init",
     title: input.title,
     bridged,
-    workflowRun: input.workflowRun,
+    // Stamp finishedAt AFTER the run — it (and the notification createdAt) must
+    // be the real completion time, not the claim time.
+    workflowRun: { ...input.workflowRun, finishedAt: now() },
     repository: input.repository,
   });
   return bridged;
@@ -124,6 +136,7 @@ export async function runType2InitializationV2AndPersist(
 export async function runType3MonitoringV2AndPersist(
   input: TvV2Common & { season: TrackedSeason; episodes: EpisodeState[] },
 ): Promise<BridgedV2Result> {
+  const now = resolveNow(input);
   const bridged = await runTvAcquisitionV2({
     title: input.title,
     mode: "type3",
@@ -144,7 +157,7 @@ export async function runType3MonitoringV2AndPersist(
     workflowRunId: input.workflowRun.id,
     // 实有 = the DB obtained marks; the need is aired − these (NOT a 115 scan).
     priorObtained: input.episodes.filter((episode) => episode.obtained).map((episode) => episode.episodeCode),
-    now: nowFromRun(input.workflowRun),
+    now,
     onProgress: makeProgressSink({
       repository: input.repository,
       workflowRunId: input.workflowRun.id,
@@ -157,7 +170,7 @@ export async function runType3MonitoringV2AndPersist(
     kind: "type3_monitor",
     title: input.title,
     bridged,
-    workflowRun: input.workflowRun,
+    workflowRun: { ...input.workflowRun, finishedAt: now() },
     repository: input.repository,
   });
   return bridged;
@@ -167,6 +180,7 @@ export async function runSeriesInitializationV2AndPersist(
   input: TvV2Common & { seasons: AcquisitionSeasonScope[]; qualityPreference?: string },
 ): Promise<BridgedV2Result> {
   const quality = input.qualityPreference ?? "4K";
+  const now = resolveNow(input);
   const bridged = await runTvAcquisitionV2({
     title: input.title,
     mode: "series",
@@ -182,7 +196,7 @@ export async function runSeriesInitializationV2AndPersist(
     deadLinkStore: input.repository,
     model: input.model,
     workflowRunId: input.workflowRun.id,
-    now: nowFromRun(input.workflowRun),
+    now,
     onProgress: makeProgressSink({
       repository: input.repository,
       workflowRunId: input.workflowRun.id,
@@ -194,6 +208,9 @@ export async function runSeriesInitializationV2AndPersist(
     ...passthrough(input),
   });
 
+  // Stamp completion AFTER the run; one finishedAt shared across all season
+  // records (the title-level run finished once).
+  const finishedAt = now();
   // One record per season under `${runId}_s${n}`, mirroring the old series
   // persistence: resource evidence + notifications ride on the first season
   // only (title-level), not duplicated across N season records.
@@ -208,7 +225,7 @@ export async function runSeriesInitializationV2AndPersist(
         status: bridged.status,
         trackedSeasonId: seasonResult.season.id,
         startedAt: input.workflowRun.startedAt,
-        finishedAt: input.workflowRun.finishedAt,
+        finishedAt,
         auditEvents: index === 0 ? bridged.auditEvents : [],
       },
       episodes: seasonResult.episodes,
@@ -242,7 +259,10 @@ export async function runMovieAcquisitionV2AndPersist(input: {
   searchBudget?: number;
   maxSteps?: number;
   preferredLanguage?: string;
+  /** See TvV2Common.now — finishedAt is stamped post-run from this clock. */
+  now?: () => string;
 }): Promise<MovieWorkflowResult> {
+  const now = resolveNow(input);
   const result = await runMovieAcquisitionV2({
     title: input.title,
     resourceProvider: input.resourceProvider,
@@ -250,7 +270,7 @@ export async function runMovieAcquisitionV2AndPersist(input: {
     model: input.model,
     workflowRunId: input.workflowRun.id,
     moviesParentDirectoryId: input.categoryParentId,
-    now: nowFromRun(input.workflowRun),
+    now,
     deadLinkStore: input.repository,
     onProgress: makeProgressSink({
       repository: input.repository,
@@ -271,7 +291,7 @@ export async function runMovieAcquisitionV2AndPersist(input: {
       status: result.status,
       trackedSeasonId: result.season.id,
       startedAt: input.workflowRun.startedAt,
-      finishedAt: input.workflowRun.finishedAt,
+      finishedAt: now(),
       auditEvents: result.auditEvents,
     },
     episodes: result.episodes,

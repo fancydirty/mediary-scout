@@ -84,6 +84,44 @@ describe("runQueuedType2Workflow (V2 engine)", () => {
     expect(snapshot!.workflowRun.status).toBe("no_coverage");
   });
 
+  it("stamps finishedAt at completion (after the run), so it is never before the notification createdAt", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const { title, season } = trackedFixture();
+    await queueTrackingInitialization({
+      title,
+      season,
+      keyword: "Show 4K",
+      repository,
+      createWorkflowRunId: () => "run_timing_type2",
+      now: fixedNow,
+    });
+
+    // A clock that advances on every read. The acquisition reads it mid-run for
+    // the notification createdAt; finishedAt must be stamped from a LATER read
+    // (post-run), not pre-computed as a call argument before the run executes.
+    const now = monotonicNow();
+    await runQueuedType2Workflow({
+      repository,
+      resourceProvider: emptyProvider(),
+      storage: new FakeStorageExecutor(),
+      model: noCoverageModel(),
+      storageParentDirectoryId: "library_root",
+      now,
+    });
+
+    const snapshot = await repository.getWorkflowRunSnapshot("run_timing_type2");
+    const finishedAt = snapshot!.workflowRun.finishedAt;
+    expect(finishedAt).not.toBeNull();
+    // finishedAt reflects completion, strictly after the run's startedAt.
+    expect(finishedAt! > snapshot!.workflowRun.startedAt).toBe(true);
+    // The notification createdAt is read DURING the run; finishedAt is stamped
+    // from a strictly later read AFTER it. The pre-fix bug froze the engine clock
+    // to a precomputed finishedAt, making createdAt === finishedAt (no progress).
+    const [notification] = await repository.listNotifications();
+    expect(notification).toBeDefined();
+    expect(finishedAt! > notification!.createdAt).toBe(true);
+  });
+
   it("marks a claimed run failed and clears initial episode state when the agent model dies mid-run", async () => {
     const repository = new InMemoryWorkflowRepository();
     const { title, season } = trackedFixture();
@@ -158,4 +196,13 @@ function trackedFixture(): { title: MediaTitle; season: TrackedSeason } {
 
 function fixedNow(): string {
   return "2026-06-11T00:00:00.000Z";
+}
+
+/** A wall clock that advances one second per read, for ordering assertions. */
+function monotonicNow(): () => string {
+  let tick = 0;
+  return () => {
+    tick += 1;
+    return new Date(Date.UTC(2026, 5, 11, 0, 0, tick)).toISOString();
+  };
 }

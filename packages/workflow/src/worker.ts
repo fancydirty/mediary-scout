@@ -91,11 +91,14 @@ export async function runQueuedType2Workflow(input: {
       model: input.model,
       repository: input.repository,
       ...(input.preferredLanguage === undefined ? {} : { preferredLanguage: input.preferredLanguage }),
+      // finishedAt is stamped post-run inside the persist step (see runner-v2),
+      // so it reflects actual completion, not the claim time.
       workflowRun: {
         id: claimed.workflowRun.id,
         startedAt: claimed.workflowRun.startedAt,
-        finishedAt: now(),
+        finishedAt: null,
       },
+      now,
     });
 
     return {
@@ -271,7 +274,8 @@ export async function runScheduledType3Monitoring(input: {
         model: input.model,
         repository: input.repository,
         ...(input.preferredLanguage === undefined ? {} : { preferredLanguage: input.preferredLanguage }),
-        workflowRun: { id: workflowRunId, startedAt, finishedAt: now() },
+        workflowRun: { id: workflowRunId, startedAt, finishedAt: null },
+        now,
       });
       outcomes.push({
         trackedSeasonId: state.season.id,
@@ -386,7 +390,8 @@ async function patrolMovie(args: {
       model: input.model,
       repository: input.repository,
       ...(input.preferredLanguage === undefined ? {} : { preferredLanguage: input.preferredLanguage }),
-      workflowRun: { id: workflowRunId, startedAt, finishedAt: now() },
+      workflowRun: { id: workflowRunId, startedAt, finishedAt: null },
+      now,
     });
     return { trackedSeasonId: state.season.id, status: "ran", workflowRunId, workflowStatus: result.status };
   } catch (error) {
@@ -468,7 +473,8 @@ export async function runQueuedMovieAcquisition(input: {
       model: input.model,
       repository: input.repository,
       ...(input.preferredLanguage === undefined ? {} : { preferredLanguage: input.preferredLanguage }),
-      workflowRun: { id: claimed.workflowRun.id, startedAt: claimed.workflowRun.startedAt, finishedAt: now() },
+      workflowRun: { id: claimed.workflowRun.id, startedAt: claimed.workflowRun.startedAt, finishedAt: null },
+      now,
     });
     return { status: "ran", workflowRunId: claimed.workflowRun.id, workflowStatus: result.status };
   } catch (error) {
@@ -535,8 +541,9 @@ export async function runQueuedSeriesInitialization(input: {
       workflowRun: {
         id: claimed.workflowRun.id,
         startedAt: claimed.workflowRun.startedAt,
-        finishedAt: now(),
+        finishedAt: null,
       },
+      now,
     });
     // Finalize the claimed lock run itself; it doubles as season 1's summary
     // record (same tracked season and episode state as the persisted _s1 run).
