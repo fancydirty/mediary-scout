@@ -216,6 +216,10 @@ async function Pan115Section() {
       )}
 
       <Pan115QrConnect />
+
+      <p className="panel-note" style={{ marginTop: 12 }}>
+        ⚠️ 请勿在多个账号或多个实例上绑定同一个 115 账号，易触发 115 风控。每个 115 账号在本实例内只能归属一个用户。
+      </p>
     </section>
   );
 }
