@@ -68,3 +68,58 @@ describe("handleTmdbProxy — proxy & guards", () => {
     expect(kv.puts).toHaveLength(0);
   });
 });
+
+describe("handleTmdbProxy — KV cache", () => {
+  it("caches a 2xx body and serves the second call from KV without hitting origin", async () => {
+    const kv = fakeKv();
+    let originCalls = 0;
+    const call = () =>
+      handleTmdbProxy({
+        request: new Request("https://w.example/movie/278?language=zh-CN"),
+        kv,
+        token: "authorkey",
+        originFetch: async () => {
+          originCalls += 1;
+          return new Response(JSON.stringify({ id: 278 }), { status: 200 });
+        },
+      });
+
+    const first = await call();
+    expect(first.headers.get("X-Cache")).toBe("MISS");
+    const second = await call();
+    expect(second.headers.get("X-Cache")).toBe("HIT");
+    expect(await second.json()).toEqual({ id: 278 });
+    expect(originCalls).toBe(1);
+  });
+
+  it("uses a long TTL for movie paths and a short TTL for tv paths", async () => {
+    const movieKv = fakeKv();
+    await handleTmdbProxy({
+      request: new Request("https://w.example/movie/278"),
+      kv: movieKv,
+      token: "k",
+      originFetch: async () => new Response("{}", { status: 200 }),
+    });
+    const tvKv = fakeKv();
+    await handleTmdbProxy({
+      request: new Request("https://w.example/tv/1399/season/1"),
+      kv: tvKv,
+      token: "k",
+      originFetch: async () => new Response("{}", { status: 200 }),
+    });
+    expect(movieKv.puts[0]?.ttl).toBe(7 * 24 * 60 * 60);
+    expect(tvKv.puts[0]?.ttl).toBe(60 * 60);
+  });
+
+  it("normalizes query order so the cache key is stable", async () => {
+    const kv = fakeKv();
+    let originCalls = 0;
+    const fetchOnce: typeof fetch = async () => {
+      originCalls += 1;
+      return new Response("{}", { status: 200 });
+    };
+    await handleTmdbProxy({ request: new Request("https://w.example/movie/1?a=1&b=2"), kv, token: "k", originFetch: fetchOnce });
+    await handleTmdbProxy({ request: new Request("https://w.example/movie/1?b=2&a=1"), kv, token: "k", originFetch: fetchOnce });
+    expect(originCalls).toBe(1);
+  });
+});
