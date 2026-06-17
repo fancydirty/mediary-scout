@@ -14,14 +14,17 @@ describe("getSearchRecipe", () => {
 
   it("encodes the profile-specific lead strategy", () => {
     expect(getSearchRecipe("movie")).toContain("裸中文名");
-    expect(getSearchRecipe("us-tv")).toContain("Complete"); // 英文名+Complete = 合集王
-    expect(getSearchRecipe("cn-anime")).toContain("国漫"); // +国漫 万能键
-    expect(getSearchRecipe("jp-anime")).toContain("1080"); // +1080P 非 4K
+    expect(getSearchRecipe("us-tv")).toContain("裸中文译名"); // 2026-06-17 纠偏:中文名先行(带中字),非英文名
+    expect(getSearchRecipe("cn-anime")).toContain("国漫"); // +国漫 同名消歧
+    expect(getSearchRecipe("jp-anime")).toContain("1080"); // 要画质用 +1080P 非 4K
     expect(getSearchRecipe("kr-tv")).toContain("译名");
     expect(getSearchRecipe("us-anime")).toContain("英文名");
   });
 
-  it("warns US-show profiles against bare-name searches (the relevance gate)", () => {
-    expect(getSearchRecipe("us-tv")).toMatch(/裸|gate|闸门|别裸|token/);
+  it("us-tv now LEADS with bare 中文译名 (not the old 别裸搜) and forbids +美剧", () => {
+    const r = getSearchRecipe("us-tv");
+    expect(r).not.toContain("别裸搜");
+    expect(r).toMatch(/首搜[^。]*中文译名/);
+    expect(r).toMatch(/美剧[^。]*(有害|0 胜 7|0-for-7)|避免[^]*美剧/);
   });
 });
