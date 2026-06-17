@@ -8,15 +8,19 @@ import type { ActivityActiveRun, ActivityCompletedItem, ActivityView } from "../
 const POLL_MS = 2600;
 const POSTER = "https://image.tmdb.org/t/p/w154";
 
-export function ActivityFeed({ initialView, initialSince }: { initialView: ActivityView; initialSince: string }) {
-  const since = useRef(initialSince);
-  const [view, setView] = useState<ActivityView>(initialView);
+export function ActivityFeed() {
+  // since is fixed at mount → 已完成 is session-scoped (a fresh open sees none).
+  const since = useRef<string | null>(null);
+  const [view, setView] = useState<ActivityView>({ active: [], justCompleted: [] });
 
   useEffect(() => {
+    if (since.current === null) {
+      since.current = new Date().toISOString();
+    }
     let alive = true;
     const poll = async () => {
       try {
-        const res = await fetch(`/api/activity?since=${encodeURIComponent(since.current)}`, { cache: "no-store" });
+        const res = await fetch(`/api/activity?since=${encodeURIComponent(since.current!)}`, { cache: "no-store" });
         if (!res.ok) return;
         const data = (await res.json()) as ActivityView;
         if (alive) setView(data);
@@ -24,6 +28,7 @@ export function ActivityFeed({ initialView, initialSince }: { initialView: Activ
         // transient — keep the last view, retry next tick
       }
     };
+    poll(); // immediate first load (the page renders this client component in the static shell)
     const id = setInterval(poll, POLL_MS);
     return () => {
       alive = false;
