@@ -2793,3 +2793,22 @@ select.setting-control {
   margin-left: auto;
   color: #f59e0b;
 }
+
+/* Small secondary button (e.g. settings 测试连接). */
+.ghost-button {
+  padding: 5px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.8);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.ghost-button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+}
+.ghost-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
