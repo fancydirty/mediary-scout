@@ -69,7 +69,7 @@ export class Pan115CookieClient implements Pan115StorageApi {
       ["cname", input.name],
     ]);
     if (!responseState(response)) {
-      throw new Error(`PAN115_CREATE_FOLDER_FAILED: ${responseMessage(response)}`);
+      throwResponseFailure(response, `PAN115_CREATE_FOLDER_FAILED: ${responseMessage(response)}`);
     }
     const directoryId = stringValue(
       recordValue(response, "cid") ??
@@ -98,7 +98,7 @@ export class Pan115CookieClient implements Pan115StorageApi {
       ["fc_mix", "0"],
     ]);
     if (!responseState(response)) {
-      throw new Error(`PAN115_LIST_ITEMS_FAILED: ${responseMessage(response)}`);
+      throwResponseFailure(response, `PAN115_LIST_ITEMS_FAILED: ${responseMessage(response)}`);
     }
     return response;
   }
@@ -156,6 +156,11 @@ export class Pan115CookieClient implements Pan115StorageApi {
       ["show_dir", "1"],
       ["format", "json"],
     ]);
+    // A dead cookie is an auth failure, NOT "this directory is gone" — surface it
+    // distinctly so callers (e.g. testConnection / the worker) can freeze the drive.
+    if (isAuthFailure(response)) {
+      throwResponseFailure(response, `PAN115_DIR_INFO_FAILED: ${responseMessage(response)}`);
+    }
     if (!responseState(response) || !this.listResolvedToRequested(response, input.directoryId)) {
       return { state: false, path: [] };
     }
@@ -390,6 +395,54 @@ function responseMessage(response: unknown): string {
       recordValue(response, "error") ??
       recordValue(response, "errtype"),
   );
+}
+
+/**
+ * The cookie is dead (e.g. the user logged in elsewhere, changed password, or it
+ * expired). 115 signals this as HTTP 200 + `{state:false, errno:990001,
+ * error:"登录超时，请重新登录。"}` (captured live). Distinct from a transient
+ * `state:false` jitter or a bad-param error — so the worker can FREEZE the drive
+ * on this specifically, not on every failure. Detect, don't predict.
+ */
+export class Pan115AuthError extends Error {
+  readonly errno: number | null;
+  constructor(message: string, errno: number | null = null) {
+    super(message);
+    this.name = "Pan115AuthError";
+    this.errno = errno;
+  }
+}
+
+export function isPan115AuthError(error: unknown): error is Pan115AuthError {
+  return error instanceof Pan115AuthError;
+}
+
+/** The 115 auth-failure errno, captured live. */
+const PAN115_AUTH_ERRNO = 990001;
+
+/** True only for a CONFIRMED authentication failure (cookie dead) — keyed on the
+ *  real errno 990001, with a message fallback for robustness against API drift.
+ *  NOT true for transient jitter or non-auth errors. */
+function isAuthFailure(response: unknown): boolean {
+  if (responseState(response)) {
+    return false;
+  }
+  const errno = isRecord(response) ? (response["errno"] ?? response["errNo"] ?? response["errcode"]) : undefined;
+  if (errno === PAN115_AUTH_ERRNO || errno === String(PAN115_AUTH_ERRNO)) {
+    return true;
+  }
+  return /登录|登陆|未登录|重新登录|relogin|not.?login/i.test(responseMessage(response));
+}
+
+/** Throw a Pan115AuthError when the failure is a dead cookie, else the generic
+ *  Error the caller specifies. Centralizes the auth-vs-other decision. */
+function throwResponseFailure(response: unknown, genericMessage: string): never {
+  if (isAuthFailure(response)) {
+    const errnoRaw = isRecord(response) ? (response["errno"] ?? response["errNo"]) : null;
+    const errno = typeof errnoRaw === "number" ? errnoRaw : null;
+    throw new Pan115AuthError(`PAN115_AUTH_FAILED: ${responseMessage(response)}`, errno);
+  }
+  throw new Error(genericMessage);
 }
 
 // The 115 /files response carries the full ancestor breadcrumb in `path`,
