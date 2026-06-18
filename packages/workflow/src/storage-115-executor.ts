@@ -597,6 +597,24 @@ export class Storage115Executor implements StorageExecutor {
     return results;
   }
 
+  async listChildDirectories(directoryId: string): Promise<Array<{ id: string; name: string }>> {
+    // ONE non-recursive /files listing of the immediate children — safe on the
+    // account root/parent dirs (no recursive fan-out, so not subject to the
+    // assertSafeRecursiveListTarget guard). Used by find-or-create provisioning.
+    const items = await this.callApi("listItems", () => this.api.listItems({ directoryId }));
+    const dirs: Array<{ id: string; name: string }> = [];
+    for (const item of items) {
+      if (!isDirectory(item)) {
+        continue;
+      }
+      const id = directoryIdFromItem(item);
+      if (id) {
+        dirs.push({ id, name: itemName(item) });
+      }
+    }
+    return dirs;
+  }
+
   async moveFiles(input: { fileIds: string[]; targetDirectoryId: string }): Promise<{ moved: string[] }> {
     if (input.fileIds.length === 0) {
       return { moved: [] };

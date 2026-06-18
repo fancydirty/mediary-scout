@@ -1084,8 +1084,21 @@ async function getWorkerStorageExecutor(
   const adapter = process.env.MEDIA_TRACK_STORAGE_ADAPTER ?? "fake";
   if (adapter === "115") {
     const creds = await getAccountStorageCredentials(accountId);
-    const env = creds ? { ...process.env, PAN115_COOKIE: creds.cookie } : process.env;
-    return createProtectedPan115CookieStorageExecutorFromEnv({ env });
+    if (creds) {
+      // Scope writes to THIS account's own provisioned dirs — not the global env
+      // CIDs (which belong to the default account's drive). Without this, a
+      // non-default account's worker would violate the write scope on its drive.
+      const scopeCids = [creds.rootCid, creds.moviesCid, creds.tvCid, creds.animeCid].filter(
+        (cid): cid is string => Boolean(cid),
+      );
+      const env = {
+        ...process.env,
+        PAN115_COOKIE: creds.cookie,
+        ...(scopeCids.length > 0 ? { MEDIA_TRACK_115_WRITE_SCOPE_CIDS: scopeCids.join(",") } : {}),
+      };
+      return createProtectedPan115CookieStorageExecutorFromEnv({ env });
+    }
+    return createProtectedPan115CookieStorageExecutorFromEnv({ env: process.env });
   }
   if (adapter !== "fake") {
     throw new Error(`MEDIA_TRACK_STORAGE_ADAPTER_UNSUPPORTED: ${adapter}`);
@@ -1425,10 +1438,9 @@ async function bindPan115ConnectedStorage(input: {
       const provisioned = await provisionCategoryDirs({
         baseParentId: "0", // 115 account root
         storage: {
-          async listChildDirs(parentId: string) {
-            const subs = await executor.listSubdirectories({ directoryId: parentId, maxDepth: 1 });
-            return subs.map((dir) => ({ name: dir.path, id: dir.id }));
-          },
+          // listChildDirectories = single-level, root-safe (find-or-create reads
+          // the account root's children; recursive listSubdirectories is guarded).
+          listChildDirs: (parentId: string) => executor.listChildDirectories(parentId),
           createDirectory: (dir) => executor.createDirectory(dir),
         },
       });

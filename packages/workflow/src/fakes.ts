@@ -286,6 +286,18 @@ export class FakeStorageExecutor implements StorageExecutor {
     return out;
   }
 
+  async listChildDirectories(directoryId: string): Promise<Array<{ id: string; name: string }>> {
+    // Immediate child dirs created under this parent (keyed "parentId::name").
+    const out: Array<{ id: string; name: string }> = [];
+    for (const [key, id] of this.directoryIdsByName) {
+      const sep = key.indexOf("::");
+      if (sep !== -1 && key.slice(0, sep) === directoryId) {
+        out.push({ id, name: key.slice(sep + 2) });
+      }
+    }
+    return out;
+  }
+
   async moveFiles(input: { fileIds: string[]; targetDirectoryId: string }): Promise<{ moved: string[] }> {
     const wanted = new Set(input.fileIds);
     const moved: string[] = [];

@@ -47,6 +47,10 @@ export interface StorageExecutor {
   /** Recursive subdirectories under a directory (path relative to it) — the source
    *  of the wrapper-dir handle the flatten step removes. */
   listSubdirectories(input: { directoryId: string; maxDepth?: number }): Promise<Array<{ id: string; path: string }>>;
+  /** Immediate child directories (one level, NOT recursive) — safe on root/parent
+   *  dirs (single listing, no rate-limit fan-out). Used by find-or-create dir
+   *  provisioning, which must read the children of an account root. */
+  listChildDirectories(directoryId: string): Promise<Array<{ id: string; name: string }>>;
   /** Move files (by provider file id) into a target directory inside the write scope. */
   moveFiles(input: { fileIds: string[]; targetDirectoryId: string }): Promise<{ moved: string[] }>;
 }

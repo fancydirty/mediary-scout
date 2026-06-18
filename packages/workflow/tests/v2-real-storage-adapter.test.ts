@@ -45,6 +45,9 @@ class RecordingExecutor implements StorageExecutor {
   async listSubdirectories(): Promise<Array<{ id: string; path: string }>> {
     return [{ id: "wrap", path: "Pack" }];
   }
+  async listChildDirectories(): Promise<Array<{ id: string; name: string }>> {
+    return [{ id: "wrap", name: "Pack" }];
+  }
   async moveFiles(input: { fileIds: string[]; targetDirectoryId: string }): Promise<{ moved: string[] }> {
     return { moved: input.fileIds };
   }
