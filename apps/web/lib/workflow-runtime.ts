@@ -307,7 +307,15 @@ export async function getWorkflowStatusView(
   });
 }
 
-export async function queueCandidateTracking(candidateId: string): Promise<CandidateTrackingRequestResult> {
+export async function queueCandidateTracking(
+  candidateId: string,
+  connectedStorageId?: string | null,
+): Promise<CandidateTrackingRequestResult> {
+  const accountId = await getCurrentAccountId();
+  const workspace = await resolveQueueStorage(accountId, connectedStorageId);
+  if (workspace.frozen) {
+    return { status: "unsupported", message: "该网盘已掉线，请重新扫码绑定同一个 115 后再获取。" };
+  }
   const movieTmdbId = parseMovieCandidateId(candidateId);
   if (movieTmdbId !== null) {
     const movie = await movieTargetFromTmdbId(movieTmdbId);
@@ -318,7 +326,8 @@ export async function queueCandidateTracking(candidateId: string): Promise<Candi
       title: movie.title,
       keyword: movie.keyword,
       repository: getWorkflowRepository(),
-      accountId: await getCurrentAccountId(),
+      accountId,
+      connectedStorageId: workspace.id,
     });
     return {
       status: request.status === "queued" ? "queued" : request.status,
@@ -340,7 +349,8 @@ export async function queueCandidateTracking(candidateId: string): Promise<Candi
     season: target.season,
     keyword: target.keyword,
     repository: getWorkflowRepository(),
-    accountId: await getCurrentAccountId(),
+    accountId,
+    connectedStorageId: workspace.id,
   });
   const status = request.status === "completed" ? "queued" : request.status;
 
@@ -665,7 +675,10 @@ export type CandidateReserveRequestResult =
  * the agent. The daily patrol's air-time gate acquires it once it releases.
  * Movies only (TV/anime have no reserve concept).
  */
-export async function reserveCandidate(candidateId: string): Promise<CandidateReserveRequestResult> {
+export async function reserveCandidate(
+  candidateId: string,
+  connectedStorageId?: string | null,
+): Promise<CandidateReserveRequestResult> {
   const movieTmdbId = parseMovieCandidateId(candidateId);
   if (movieTmdbId === null) {
     return { status: "unsupported", message: "只有电影可以预定。" };
@@ -674,10 +687,16 @@ export async function reserveCandidate(candidateId: string): Promise<CandidateRe
   if (!movie) {
     return { status: "unsupported", message: "无法获取该电影的信息。" };
   }
+  const accountId = await getCurrentAccountId();
+  const workspace = await resolveQueueStorage(accountId, connectedStorageId);
+  if (workspace.frozen) {
+    return { status: "unsupported", message: "该网盘已掉线，请重新扫码绑定同一个 115 后再预定。" };
+  }
   const request = await reserveMovie({
     title: movie.title,
     repository: getWorkflowRepository(),
-    accountId: await getCurrentAccountId(),
+    accountId,
+    connectedStorageId: workspace.id,
   });
   return { status: request.status, trackedSeasonId: `${movie.title.id}_movie` };
 }
@@ -750,23 +769,32 @@ async function pushNotificationsSince(
   }
 }
 
-export async function queueCandidateSeries(candidateId: string): Promise<CandidateTrackingRequestResult> {
+export async function queueCandidateSeries(
+  candidateId: string,
+  connectedStorageId?: string | null,
+): Promise<CandidateTrackingRequestResult> {
   const parsed = parseTvCandidateId(candidateId);
   if (!parsed) {
     return { status: "unsupported", message: "暂时只支持剧集的全剧获取。" };
+  }
+  const accountId = await getCurrentAccountId();
+  const workspace = await resolveQueueStorage(accountId, connectedStorageId);
+  if (workspace.frozen) {
+    return { status: "unsupported", message: "该网盘已掉线，请重新扫码绑定同一个 115 后再获取。" };
   }
   if (process.env.MEDIA_TRACK_SEARCH_PROVIDER === "tmdb") {
     const target = await prepareSeriesTarget({
       tmdbId: parsed.tmdbId,
       qualityPreference: defaultQuality(),
-      metadataProvider: createTmdbMetadataProvider(await getTmdbAccesses(getAccountScopedSettings(await getCurrentAccountId()))),
+      metadataProvider: createTmdbMetadataProvider(await getTmdbAccesses(getAccountScopedSettings(accountId))),
     });
     const request = await queueSeriesInitialization({
       title: target.title,
       seasons: target.seasons,
       keyword: target.keyword,
       repository: getWorkflowRepository(),
-      accountId: await getCurrentAccountId(),
+      accountId,
+      connectedStorageId: workspace.id,
     });
     return {
       status: request.status === "queued" ? "queued" : request.status,
@@ -797,7 +825,8 @@ export async function queueCandidateSeries(candidateId: string): Promise<Candida
     })),
     keyword: candidate.title.trim(), // quality NEVER in the keyword (search-methodology law)
     repository: getWorkflowRepository(),
-    accountId: await getCurrentAccountId(),
+    accountId,
+    connectedStorageId: workspace.id,
   });
   return {
     status: request.status === "queued" ? "queued" : request.status,
@@ -1097,6 +1126,79 @@ async function getAccountStorageCredentials(
  * env one. Falls back to the env cookie when the account has no 115 connection
  * (fresh deploy before QR connect, or the legacy env-only path).
  */
+/**
+ * Resolve the drive a queued acquisition lands on (the active workspace): the
+ * explicit storage when given (the page's /w/<id> workspace), else the account's
+ * earliest (primary) drive. Also reports whether that drive is frozen so the
+ * queue entrypoints can refuse — a frozen drive (cookie died) must not accept
+ * acquisition until re-bound. id is null when the account has no 115 drive yet.
+ */
+async function resolveQueueStorage(
+  accountId: string,
+  explicitConnectedStorageId?: string | null,
+): Promise<{ id: string | null; frozen: boolean }> {
+  try {
+    const storages = (await getWorkflowRepository().listConnectedStorages(accountId))
+      .filter((storage) => storage.provider === "pan115")
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    const chosen = explicitConnectedStorageId
+      ? storages.find((storage) => storage.id === explicitConnectedStorageId)
+      : storages[0];
+    if (!chosen) {
+      return { id: explicitConnectedStorageId ?? null, frozen: false };
+    }
+    return { id: chosen.id, frozen: chosen.status === "frozen" };
+  } catch {
+    return { id: explicitConnectedStorageId ?? null, frozen: false };
+  }
+}
+
+/** Marks a drive frozen — its cookie died. Called when a worker/probe hits a
+ *  Pan115AuthError. Resolves the run/drive's owning connected_storage id. */
+async function freezeConnectedStorage(storageId: string, reason: string): Promise<void> {
+  try {
+    await getWorkflowRepository().setConnectedStorageStatus(
+      storageId,
+      "frozen",
+      reason,
+      new Date().toISOString(),
+    );
+    console.warn(`[media-track] froze connected_storage ${storageId}: ${reason}`);
+  } catch (error) {
+    console.error(`[media-track] failed to freeze ${storageId}: ${String(error)}`);
+  }
+}
+
+/**
+ * Probe a connected drive's cookie with a cheap root listing. A dead cookie
+ * (Pan115AuthError) freezes the drive; a healthy one (re-)activates it. This is
+ * the explicit "测试连接" trigger and the deterministic freeze/unfreeze hook the
+ * e2e drives — independent of waiting for the next acquisition/patrol.
+ */
+export async function testConnection(
+  accountId: string,
+  connectedStorageId: string,
+): Promise<{ ok: boolean; status: "active" | "frozen"; message: string }> {
+  const creds = await getAccountStorageCredentials(accountId, connectedStorageId);
+  if (!creds) {
+    return { ok: false, status: "frozen", message: "找不到该网盘的凭证。" };
+  }
+  const { Pan115CookieClient, isPan115AuthError } = await import("@media-track/workflow");
+  const client = new Pan115CookieClient({ cookie: creds.cookie, listPageDelayMs: 0 });
+  try {
+    await client.getDirectoryInfo({ directoryId: creds.rootCid ?? "0" });
+    await getWorkflowRepository().setConnectedStorageStatus(creds.id, "active", null, null);
+    return { ok: true, status: "active", message: "连接正常。" };
+  } catch (error) {
+    if (isPan115AuthError(error)) {
+      await freezeConnectedStorage(creds.id, error.message);
+      return { ok: false, status: "frozen", message: "网盘登录已失效，请重新扫码绑定同一个 115。" };
+    }
+    // A non-auth error (network/transient) is NOT a reason to freeze.
+    return { ok: false, status: creds.status, message: `连接检测失败：${String(error)}` };
+  }
+}
+
 async function getWorkerStorageExecutor(
   accountId: string = DEFAULT_ACCOUNT_ID,
   connectedStorageId?: string | null,

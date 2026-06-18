@@ -38,6 +38,8 @@ export async function queueTrackingInitialization(input: {
   repository: WorkflowRepository;
   /** Owning account (§7). Omitted → default account (single-user). */
   accountId?: string;
+  /** Owning connected storage (tree model). Omitted → null (single-drive). */
+  connectedStorageId?: string | null;
   createWorkflowRunId?: () => string;
   now?: () => string;
   staleActiveRunTimeoutMs?: number;
@@ -55,6 +57,7 @@ export async function queueTrackingInitialization(input: {
 
   const reservation = await input.repository.reserveWorkflowRun({
     ...(input.accountId ? { accountId: input.accountId } : {}),
+    ...(input.connectedStorageId != null ? { connectedStorageId: input.connectedStorageId } : {}),
     title: input.title,
     season: input.season,
     workflowRun: {
@@ -174,6 +177,8 @@ export async function queueSeriesInitialization(input: {
   repository: WorkflowRepository;
   /** Owning account (§7). Omitted → default account (single-user). */
   accountId?: string;
+  /** Owning connected storage (tree model). Omitted → null (single-drive). */
+  connectedStorageId?: string | null;
   createWorkflowRunId?: () => string;
   now?: () => string;
   staleActiveRunTimeoutMs?: number;
@@ -200,6 +205,7 @@ export async function queueSeriesInitialization(input: {
 
   const reservation = await input.repository.reserveWorkflowRun({
     ...(input.accountId ? { accountId: input.accountId } : {}),
+    ...(input.connectedStorageId != null ? { connectedStorageId: input.connectedStorageId } : {}),
     title: input.title,
     season: lockSeason,
     workflowRun: {
@@ -258,6 +264,8 @@ export async function queueMovieAcquisition(input: {
   repository: WorkflowRepository;
   /** Owning account (§7). Omitted → default account (single-user). */
   accountId?: string;
+  /** Owning connected storage (tree model). Omitted → null (single-drive). */
+  connectedStorageId?: string | null;
   createWorkflowRunId?: () => string;
   now?: () => string;
   staleActiveRunTimeoutMs?: number;
@@ -274,6 +282,7 @@ export async function queueMovieAcquisition(input: {
 
   const reservation = await input.repository.reserveWorkflowRun({
     ...(input.accountId ? { accountId: input.accountId } : {}),
+    ...(input.connectedStorageId != null ? { connectedStorageId: input.connectedStorageId } : {}),
     title: input.title,
     season,
     workflowRun: {
@@ -330,6 +339,8 @@ export async function reserveMovie(input: {
   repository: WorkflowRepository;
   /** Owning account (§7). Omitted → default account (single-user). */
   accountId?: string;
+  /** Owning connected storage (tree model). Omitted → null (single-drive). */
+  connectedStorageId?: string | null;
   createWorkflowRunId?: () => string;
   now?: () => string;
 }): Promise<MovieReservationResult> {
@@ -352,6 +363,7 @@ export async function reserveMovie(input: {
 
   const reservation = await input.repository.reserveWorkflowRun({
     ...(input.accountId ? { accountId: input.accountId } : {}),
+    ...(input.connectedStorageId != null ? { connectedStorageId: input.connectedStorageId } : {}),
     title: input.title,
     season,
     workflowRun: {
