@@ -22,6 +22,7 @@
         "MEDIA_TRACK_POSTGRES_URL=postgresql://mediatrack:mediatrack@localhost:5432/media_track_demo",
         "MEDIA_TRACK_DEMO_MODE=1",
         "NEXT_PUBLIC_MEDIA_TRACK_DEMO_MODE=1",
+        "MEDIA_TRACK_SEARCH_PROVIDER=tmdb",
         "npm",
         "run",
         "dev:web"
