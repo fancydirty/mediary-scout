@@ -8,6 +8,7 @@ import type { SearchActionState } from "@media-track/workflow";
 import { RequestedBadge } from "./request-state";
 import { isDemoModeClient } from "../lib/demo-mode";
 import { DemoAcquirePlayback } from "./demo-acquire-playback";
+import type { DemoAcquisitionEntry } from "../lib/demo-session";
 
 /**
  * Acquire control for a movie candidate. Visual states, kept consistent with
@@ -26,6 +27,7 @@ export function RequestTrackButton({
   label = "获取",
   disabled = false,
   storageId,
+  demoEntry,
 }: {
   candidateId?: string;
   actionState?: SearchActionState;
@@ -33,6 +35,9 @@ export function RequestTrackButton({
   disabled?: boolean;
   /** Tree model: the active workspace drive — acquisition lands HERE, not the primary. */
   storageId?: string | undefined;
+  /** Demo only: the candidate's display fields, recorded to the session library
+   *  when the scripted playback finishes so the visitor sees it "land". */
+  demoEntry?: DemoAcquisitionEntry;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -63,7 +68,7 @@ export function RequestTrackButton({
     (disabled || actionState === "already_tracked" || result?.status === "already_tracked");
 
   if (demo && demoPlaying) {
-    return <DemoAcquirePlayback />;
+    return <DemoAcquirePlayback entry={demoEntry} />;
   }
 
   if (inProgress) {
