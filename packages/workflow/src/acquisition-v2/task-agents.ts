@@ -70,9 +70,21 @@ function transferModelLine(options: TaskAgentPromptOptions): string {
 }
 
 function languageLine(options: TaskAgentPromptOptions): string {
-  return options.preferredLanguage === undefined
-    ? ""
-    : `\nLANGUAGE PREFERENCE: the user reads ${options.preferredLanguage} subtitles. Prefer candidates titled in that language (a release named in a language is far likelier to ship it); treat a foreign-language rip the user cannot read as weak coverage.`;
+  const lang = options.preferredLanguage;
+  if (lang === undefined) {
+    return "";
+  }
+  // 中文 subtitle preference: judge Chinese subs from the RELEASE NATURE, not from
+  // "the title contains Chinese chars" (PanSou prepends the show's 中文片名 to English
+  // scene filenames, which fools that). The 中字 resource MUST win when reachable.
+  if (lang.includes("中")) {
+    return `\nLANGUAGE PREFERENCE: the user reads 中文 subtitles — a HARD requirement, not a nice-to-have. Judge Chinese subs from the RELEASE, NOT from "the title contains Chinese characters": PanSou often prepends the show's 中文片名 to an English scene filename (中文片名-Name.Year.1080p.WEB-DL.Codec-GROUP) — mentally STRIP that prefix and judge what remains.
+- English scene release (Name.Year.Resolution.Source.Codec-GROUP — dotted ASCII + a scene group like EaZy/RARBG/Guyute/NTb/FLUX/CMCT) → assume NO 中文 subs (foreign-only) = weak coverage for this user.
+- Chinese-community release (a real 中文 release name; or 国语/中字/中英/简繁/双语 markers; or a Chinese release group; bracketed/spaced formatting) → ships 中文 subs. Do NOT require the literal "中字" token — a genuine Chinese-community release carries them.
+- NEVER infer 中文 subs from "it has a subtitle file" or "it's an .mkv": an mkv embeds subtitles that are usually NOT 中文; only the release naming tells you.
+Among reachable candidates a 中文-subbed one MUST win; take an English-scene rip ONLY when no 中文-subbed candidate is reachable, and treat it as weak coverage.`;
+  }
+  return `\nLANGUAGE PREFERENCE: the user reads ${lang} subtitles. Prefer candidates whose RELEASE is named/built in that language (a release named in a language is far likelier to ship it); treat a foreign-language rip the user cannot read as weak coverage.`;
 }
 
 function searchHintsBlock(options: TaskAgentPromptOptions): string {
