@@ -119,7 +119,7 @@ export async function provisionCategoryDirs(input: {
   baseParentId: string;
   rootName?: string;
 }): Promise<ProvisionedCids> {
-  const rootName = input.rootName ?? "media-track";
+  const rootName = input.rootName ?? "Mediary Scout";
   const findOrCreate = async (name: string, parentId: string): Promise<string> => {
     const existing = (await input.storage.listChildDirs(parentId)).find((dir) => dir.name === name);
     return existing ? existing.id : input.storage.createDirectory({ name, parentId });

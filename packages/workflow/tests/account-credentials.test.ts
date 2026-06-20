@@ -28,12 +28,12 @@ describe("resolveStorageBinding", () => {
 });
 
 describe("provisionCategoryDirs (find-or-create, idempotent)", () => {
-  it("reuses existing same-name dirs, creates missing ones", async () => {
+  it("default root name is the brand 'Mediary Scout'; reuses same-name, creates missing", async () => {
     const created: string[] = [];
     const fakeStorage = {
       async listChildDirs(parentId: string) {
         return parentId === "ROOT"
-          ? [{ name: "media-track", id: "rootcid" }]
+          ? [{ name: "Mediary Scout", id: "rootcid" }]
           : [{ name: "Movies", id: "moviescid" }];
       },
       async createDirectory({ name, parentId }: { name: string; parentId: string }) {
@@ -43,11 +43,26 @@ describe("provisionCategoryDirs (find-or-create, idempotent)", () => {
       },
     };
     const cids = await provisionCategoryDirs({ storage: fakeStorage, baseParentId: "ROOT" });
-    expect(cids.rootCid).toBe("rootcid"); // reused
+    expect(cids.rootCid).toBe("rootcid"); // reused the brand-named root
     expect(cids.moviesCid).toBe("moviescid"); // reused under root
     expect(cids.tvCid).toBe("new_TV"); // created
     expect(cids.animeCid).toBe("new_Anime"); // created
     expect(created).toEqual(["TV@rootcid", "Anime@rootcid"]);
+  });
+
+  it("honors an explicit rootName override (regression)", async () => {
+    const created: string[] = [];
+    const fakeStorage = {
+      async listChildDirs() {
+        return [] as Array<{ name: string; id: string }>;
+      },
+      async createDirectory({ name }: { name: string; parentId: string }) {
+        created.push(name);
+        return `new_${name}`;
+      },
+    };
+    await provisionCategoryDirs({ storage: fakeStorage, baseParentId: "ROOT", rootName: "media-track-test" });
+    expect(created[0]).toBe("media-track-test"); // explicit value still wins
   });
 });
 
