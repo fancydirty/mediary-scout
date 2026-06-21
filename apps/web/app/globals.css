@@ -2987,3 +2987,21 @@ select.setting-control {
   opacity: 0.6;
   cursor: default;
 }
+/* Untrack: a destructive ghost button + its inline two-step confirm. */
+.ghost-button.danger {
+  color: #f2a5a5;
+  border-color: rgba(229, 72, 77, 0.35);
+}
+.ghost-button.danger:hover:not(:disabled) {
+  background: rgba(229, 72, 77, 0.14);
+}
+.untrack-confirm {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.untrack-note {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+}
