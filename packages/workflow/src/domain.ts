@@ -206,7 +206,9 @@ export type NotificationReportStatus =
   | "acquired" // movie / one-off fully acquired
   | "airing" // still airing; obtained up to the latest aired episode, future auto-tracked
   | "partial" // a genuine aired gap remains
-  | "no_coverage"; // nothing found yet
+  | "no_coverage" // nothing found yet
+  | "failed" // acquisition failed terminally (transient retries exhausted, or a hard error)
+  | "retrying"; // transient failure; an automatic retry is scheduled
 
 /**
  * Structured acquisition report. The single source of wording: the web feed

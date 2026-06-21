@@ -261,6 +261,8 @@ const STATUS_EMOJI: Record<NotificationReportStatus, string> = {
   airing: "📈",
   partial: "🟡",
   no_coverage: "🔍",
+  failed: "❌",
+  retrying: "⚠️",
 };
 
 /**
