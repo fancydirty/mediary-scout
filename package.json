@@ -24,7 +24,8 @@
     "@types/react-dom": "^19.2.3",
     "playwright": "^1.60.0",
     "typescript": "^5.9.0",
-    "vitest": "^4.0.0"
+    "vitest": "^4.0.0",
+    "yaml": "^2.9.0"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^2.0.48",

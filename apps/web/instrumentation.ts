@@ -8,6 +8,12 @@ export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME !== "nodejs") {
     return;
   }
+  // Fail fast + loud on a runtime misconfig (e.g. MEDIA_TRACK_AGENT_ADAPTER=real)
+  // instead of booting a worker that can never drain the queue. Throwing here
+  // aborts startup with a clear reason.
+  const { validateRuntimeConfig } = await import("@media-track/workflow");
+  validateRuntimeConfig(process.env);
+
   console.log("[instrumentation] register() — running startup migrations + worker");
   const { runStartupMigrations } = await import("./lib/workflow-runtime");
   await runStartupMigrations();
