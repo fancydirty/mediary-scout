@@ -125,4 +125,15 @@ describe("untrackTitle (InMemory)", () => {
     const result = await repo.untrackTitle(999, scope(STORAGE_A));
     expect(result).toEqual({ status: "not_found", removedSeasons: 0 });
   });
+
+  it("取消后不再进巡检候选(listAllTrackedSeasonStates 不含)", async () => {
+    const repo = await seed([
+      tvSnapshot({ tmdbId: 100, seasonNumber: 1, storageId: STORAGE_A, status: "succeeded" }),
+    ]);
+    expect(await repo.listAllTrackedSeasonStates()).toHaveLength(1);
+
+    await repo.untrackTitle(100, scope(STORAGE_A));
+
+    expect(await repo.listAllTrackedSeasonStates()).toHaveLength(0);
+  });
 });
