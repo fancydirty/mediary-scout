@@ -31,6 +31,30 @@ export function normalizeSearchKeyword(keyword: string): string {
   return keyword.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
+/** Normalize for title-substring matching: lowercase + drop whitespace and the
+ *  common separators that differ between a title and a search keyword, so
+ *  "Citizen Vigilante 2026" contains "citizen vigilante" and "公民义警 电影"
+ *  contains "公民义警". */
+function normalizeForTitleMatch(value: string): string {
+  return value.toLowerCase().replace(/[\s·:：\-_.,，、。]/g, "");
+}
+
+/**
+ * A search keyword MUST reference the title — it has to contain the title, its
+ * original title, or an alias (after normalization). Blocks the agent's
+ * desperate genre/year-only fallbacks ("2026 电影", "电影") that can never find a
+ * specific film and only return noise. Fails OPEN when no usable title terms are
+ * known (tests / unscoped sandboxes) so it never wrongly blocks a real search.
+ */
+export function keywordReferencesTitle(keyword: string, titleTerms: readonly string[]): boolean {
+  const terms = titleTerms.map(normalizeForTitleMatch).filter((term) => term.length > 0);
+  if (terms.length === 0) {
+    return true;
+  }
+  const normalizedKeyword = normalizeForTitleMatch(keyword);
+  return terms.some((term) => normalizedKeyword.includes(term));
+}
+
 export function decideSearchGate(args: {
   normalizedKeyword: string;
   seenKeywords: ReadonlySet<string>;

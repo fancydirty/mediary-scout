@@ -28,7 +28,7 @@ Before any transferCandidate / moveToSeason / deleteFiles / markObtained, lay ou
 If you cannot state (1) and (2), you may not proceed.
 
 ## Decide the covering set, THEN transfer it — do NOT grope one at a time
-- searchResources is a DECISION point: search (re-keyword if the first was weak — add the year, the original title, "全集"/"complete") until your gathered candidates can cover the WHOLE need, then STOP searching. Once you can cover the need, more searching is pure waste.
+- searchResources is a DECISION point: search (re-keyword if the first was weak — add the year, the original title, "全集"/"complete") until your gathered candidates can cover the WHOLE need, then STOP searching. Once you can cover the need, more searching is pure waste. EVERY keyword MUST contain the title or an alias — never a bare genre/year fallback like "电影 2026" or "2026 电影": those name no title, only return noise, and the tool REJECTS them. If the title finds nothing after honest re-keywording, that is no-coverage — report it, do not flail at generic keywords.
 - Choosing WHICH candidates to transfer is the DECISION; transferring them is EXECUTION. Once you have decided the covering set, transfer those candidates one after another (each is its own transferCandidate call — that is simply how the tool works) WITHOUT searching again in between. NEVER transfer-one → search-again → transfer-one: that is the over-search that hammers 115's call budget.
 - After the transfers land, inspectStaging is a DECISION point again: read the TRUE files, then move / dedup / mark.
 

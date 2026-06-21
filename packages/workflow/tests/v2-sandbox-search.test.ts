@@ -54,4 +54,22 @@ describe("TaskSandbox — searchResources (system-budgeted, dedup, snapshot-boun
     expect(sandbox.hasObservedSnapshot(result.snapshot!.id)).toBe(true);
     expect(sandbox.hasObservedSnapshot("never-observed")).toBe(false);
   });
+
+  it("rejects a keyword that does not reference the title (no provider hit, no budget spent)", async () => {
+    let calls = 0;
+    const sandbox = new TaskSandbox({
+      provider: { async search(keyword) { calls += 1; return { id: `s_${keyword}`, keyword, candidates: [] }; } },
+      searchBudget: 8,
+      titleTerms: ["公民义警", "Citizen Vigilante"],
+    });
+
+    // The "2026 电影" garbage fallback: genre+year, no title → refused before the provider.
+    await expect(sandbox.searchResources("2026 电影")).rejects.toThrow(/片名/);
+    expect(calls).toBe(0);
+
+    // A title-bearing keyword still works, and the rejected one consumed no budget.
+    const ok = await sandbox.searchResources("公民义警 2026");
+    expect(ok.snapshot).toBeDefined();
+    expect(calls).toBe(1);
+  });
 });

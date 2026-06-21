@@ -26,7 +26,8 @@ function searchThenReportModel() {
   return new MockLanguageModelV3({
     doGenerate: async () => {
       i += 1;
-      if (i === 1) return tool("searchResources", { keyword: "nothing here" });
+      // Keyword must reference the title (the new title-guard); "Show" is the target.
+      if (i === 1) return tool("searchResources", { keyword: "Show" });
       if (i === 2) return tool("reportNoCoverage", { reason: "no candidates" });
       return { content: [{ type: "text" as const, text: "done" }], finishReason: { unified: "stop" as const, raw: "stop" as const }, usage: USAGE, warnings: [] };
     },
@@ -56,7 +57,7 @@ describe("runAcquisitionV2 — composition root wiring real adapters + sandbox +
 
     // The need came from the missing episodes; nothing landed → honestly unmet.
     expect(result.coverage.missing).toEqual(["S01E01", "S01E02"]);
-    expect(searched).toEqual(["nothing here"]); // the real provider was driven through the adapter
+    expect(searched).toEqual(["Show"]); // the real provider was driven through the adapter
     // The persistable trace is assembled from the adapters: one (empty) snapshot
     // observed, no transfers, so no decisions.
     expect(result.outcome.resourceSnapshots.map((s) => s.id)).toEqual(["snap_empty"]);

@@ -1,6 +1,7 @@
 import {
   MAX_DISTINCT_PLANNING_SEARCHES,
   decideSearchGate,
+  keywordReferencesTitle,
   normalizeSearchKeyword,
 } from "../planning-search-gate.js";
 import type { ResourceProviderV2, ResourceSnapshotV2 } from "./fake-provider.js";
@@ -35,6 +36,10 @@ export interface TaskSandboxOptions {
    *  has a markObtained-confirmed entry. Drives the §3 "no more side effects once
    *  satisfied" gate. The need is just "what's still missing"; sync computes it. */
   need?: string[];
+  /** Title + aliases + original title. A search keyword that references NONE of
+   *  these is rejected at the tool boundary (the agent's "2026 电影" genre/year
+   *  fallback only returns noise). Empty/omitted → no title check (fail open). */
+  titleTerms?: string[];
 }
 
 export interface SearchToolResult {
@@ -63,6 +68,7 @@ export class TaskSandbox {
   /** A movie task's one target directory (movies have no seasons). */
   private readonly movieDir: string | undefined;
   private readonly need: readonly string[];
+  private readonly titleTerms: readonly string[];
   private readonly seenKeywords = new Set<string>();
   private readonly snapshotByKeyword = new Map<string, ResourceSnapshotV2>();
   private readonly observedSnapshots = new Map<string, ResourceSnapshotV2>();
@@ -78,6 +84,7 @@ export class TaskSandbox {
     );
     this.movieDir = options.targetMovieDirectoryId;
     this.need = options.need ?? [];
+    this.titleTerms = options.titleTerms ?? [];
   }
 
   /** Every scoped target directory (all seasons + the movie) — the union used for
@@ -111,6 +118,15 @@ export class TaskSandbox {
    *  searches are capped by the budget. Every observed snapshot is recorded so a
    *  later transferCandidate can be bound to a snapshot seen in THIS task. */
   async searchResources(keyword: string): Promise<SearchToolResult> {
+    // Hard guard: a keyword that names no title term is a genre/year-only
+    // fallback ("2026 电影") — it can only return noise. Reject it BEFORE the
+    // budget/provider so it costs nothing and the agent must re-keyword with the
+    // real title. (asEvidence turns this throw into the {error} the agent reads.)
+    if (!keywordReferencesTitle(keyword, this.titleTerms)) {
+      throw new Error(
+        `搜索关键词必须包含片名(片名/原名/别名)。"${keyword}" 不含片名,只会返回噪音,已拒绝。请用包含片名的关键词(可附加年份/原名/4K/全集 等),不要用纯类型或纯年份(如 "电影"、"2026 电影")。`,
+      );
+    }
     const normalized = normalizeSearchKeyword(keyword);
     const decision = decideSearchGate({
       normalizedKeyword: normalized,

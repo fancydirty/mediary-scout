@@ -96,6 +96,9 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
       ? {}
       : { targetMovieDirectoryId: request.targetMovieDirectoryId }),
     need,
+    // The agent's search keywords must reference the title — reject genre/year-only
+    // fallbacks ("2026 电影") at the tool boundary so they never burn a search.
+    titleTerms: [request.target.title, ...request.target.aliases],
     ...(request.searchBudget === undefined ? {} : { searchBudget: request.searchBudget }),
   });
 
