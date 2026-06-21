@@ -34,7 +34,16 @@ export function SearchForm({
       <input type="hidden" name="tab" value="search" />
       <label className="search-box search-box-large">
         <Search size={18} aria-hidden />
-        <input name="q" aria-label="搜索媒体" placeholder="片名 / 剧名" defaultValue={defaultQuery} />
+        {/* key forces a remount when the URL query changes (back/forward, or a
+            restored remembered query) so the uncontrolled input reflects it,
+            while staying uncontrolled (no re-render churn) during typing. */}
+        <input
+          key={defaultQuery}
+          name="q"
+          aria-label="搜索媒体"
+          placeholder="片名 / 剧名"
+          defaultValue={defaultQuery}
+        />
       </label>
       <button className="primary-button" type="submit">
         <Search size={16} aria-hidden />

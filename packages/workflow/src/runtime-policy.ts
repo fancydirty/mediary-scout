@@ -7,6 +7,7 @@ export interface WorkflowRuntimeEnv extends Record<string, string | undefined> {
 /** The only valid agent adapters. `real` (a past compose typo) is NOT one — it
  *  passes silently then the worker can never drain the queue. */
 export const VALID_AGENT_ADAPTERS = ["vercel-ai", "fake"] as const;
+const VALID_AGENT_ADAPTER_SET: ReadonlySet<string> = new Set(VALID_AGENT_ADAPTERS);
 
 /**
  * Boot-time + config-time runtime validation. Fail FAST and LOUD on a misconfig
@@ -16,7 +17,7 @@ export const VALID_AGENT_ADAPTERS = ["vercel-ai", "fake"] as const;
  */
 export function validateRuntimeConfig(env: WorkflowRuntimeEnv): void {
   const agent = env.MEDIA_TRACK_AGENT_ADAPTER;
-  if (agent !== undefined && agent !== "" && !VALID_AGENT_ADAPTERS.includes(agent as never)) {
+  if (agent !== undefined && agent !== "" && !VALID_AGENT_ADAPTER_SET.has(agent)) {
     throw new Error(
       `MEDIA_TRACK_AGENT_ADAPTER_INVALID: "${agent}" — must be one of ${VALID_AGENT_ADAPTERS.join(", ")}.`,
     );

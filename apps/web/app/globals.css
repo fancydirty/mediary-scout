@@ -1146,8 +1146,11 @@ p {
     z-index: 50;
     background: var(--bg-surface);
     border-top: 1px solid var(--border);
-    /* Honour the iPhone home-indicator safe area. */
-    padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
+    /* Honour the safe area on all sides (home indicator + landscape notch). The
+       `, 0px` fallback is required — env() with no fallback invalidates the WHOLE
+       padding declaration on browsers without env() support. */
+    padding: 6px calc(4px + env(safe-area-inset-right, 0px))
+      calc(6px + env(safe-area-inset-bottom, 0px)) calc(4px + env(safe-area-inset-left, 0px));
   }
 
   .nav-list {
@@ -1201,7 +1204,7 @@ p {
   .main {
     /* Bottom padding clears the fixed bottom tab bar (~56px + safe area) so the
        last content isn't hidden behind it. */
-    padding: 20px 16px calc(72px + env(safe-area-inset-bottom));
+    padding: 20px 16px calc(72px + env(safe-area-inset-bottom, 0px));
   }
 
   .title-stage {

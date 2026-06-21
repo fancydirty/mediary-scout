@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
-import { validateRuntimeConfig } from "../src/runtime-policy.js";
+import { validateRuntimeConfig } from "../src/index.js";
 
 describe("validateRuntimeConfig", () => {
   it("accepts the live trio (pansou + 115 + vercel-ai)", () => {
@@ -41,8 +42,10 @@ describe("validateRuntimeConfig", () => {
 });
 
 describe("docker-compose.yml web service config", () => {
-  it("ships a valid runtime config (regression guard for the AGENT_ADAPTER=real outage)", () => {
-    const composePath = resolve(process.cwd(), "docker-compose.yml");
+  it("ships a valid runtime config (regression guard for the MEDIA_TRACK_AGENT_ADAPTER=real outage)", () => {
+    // Resolve relative to THIS test file so it works regardless of the vitest
+    // working directory (process.cwd() would require running from the repo root).
+    const composePath = resolve(dirname(fileURLToPath(import.meta.url)), "../../../docker-compose.yml");
     const compose = parse(readFileSync(composePath, "utf8")) as {
       services: { web: { environment: Record<string, string> } };
     };

@@ -16,7 +16,7 @@
     "lint": "eslint . --max-warnings 0"
   },
   "engines": {
-    "node": ">=22.12.0"
+    "node": ">=22.13.0"
   },
   "devDependencies": {
     "@next/eslint-plugin-next": "^16.2.9",
