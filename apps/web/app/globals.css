@@ -1112,53 +1112,81 @@ p {
     align-content: start;
   }
 
+  /* Top bar now holds only the brand + drive switcher (nav moved to a fixed
+     bottom tab bar below), so they sit at each end. */
   .sidebar {
     position: static;
     height: auto;
     flex-direction: row;
     align-items: center;
-    /* Compact top bar on narrow screens — the desktop 20px column padding made
-       the horizontal nav far too tall. */
-    padding: 8px 10px;
+    justify-content: space-between;
+    padding: 10px 14px;
     gap: 8px;
   }
 
-  /* The brand wordmark eats the width four nav items need; keep just the logo
-     mark on the mobile bar so 搜索/媒体库/通知/设置 all fit without wrapping. */
+  /* Room is no longer tight in the top bar (nav left it) — show the wordmark. */
   .brand {
     padding: 0;
-    gap: 0;
+    gap: 10px;
   }
 
-  .brand-copy {
-    display: none;
-  }
-
-  /* Push the nav to the right and let it scroll if a device is very narrow,
-     rather than wrapping item labels vertically (搜 索). */
-  .sidebar nav {
-    flex: 1;
-    min-width: 0;
-    overflow-x: auto;
-  }
-
-  .nav-list {
-    justify-content: flex-end;
-    gap: 2px;
-  }
-
-  .nav-item {
-    white-space: nowrap;
-    gap: 6px;
-    padding: 8px 10px;
-  }
-
-  .sidebar-footer {
-    display: none;
+  /* Mobile primary navigation = a fixed bottom tab bar (Material/HIG pattern for
+     3–5 sections: thumb-reachable, highest discoverability vs a hidden hamburger).
+     The main `<nav>` is pulled out of the top bar and pinned to the viewport
+     bottom, so logo + drive switcher and the nav no longer fight for top-bar
+     width (the switcher used to overlap 搜索/媒体库/通知).
+     IMPORTANT: `.sidebar > nav` (direct child), NOT `.sidebar nav` — the drive
+     switcher's dropdown is `<nav class="ws-menu">` nested inside `.sidebar`, and a
+     descendant selector would turn THAT into a bottom sheet too (it did). */
+  .sidebar > nav {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 50;
+    background: var(--bg-surface);
+    border-top: 1px solid var(--border);
+    /* Honour the iPhone home-indicator safe area. */
+    padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
   }
 
   .nav-list {
     flex-direction: row;
+    justify-content: space-around;
+    align-items: stretch;
+    gap: 0;
+  }
+
+  /* Each tab: icon over a small label, generous touch target (≥44px). */
+  .nav-item {
+    flex-direction: column;
+    gap: 3px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 6px;
+    min-width: 56px;
+    min-height: 44px;
+    justify-content: center;
+    white-space: nowrap;
+    position: relative;
+    border-radius: 10px;
+  }
+
+  /* Count badge overlays the icon (top-right) instead of dropping below the label
+     and stretching the tab. */
+  .nav-item .nav-badge {
+    position: absolute;
+    top: 2px;
+    right: 10px;
+  }
+
+  .nav-item.is-active {
+    color: var(--accent);
+    background: none;
+  }
+
+  .sidebar-footer {
+    display: none;
   }
 
   /* The footer's 设置/活动 links are hidden on mobile — show the nav-item versions. */
@@ -1171,7 +1199,9 @@ p {
   }
 
   .main {
-    padding: 20px 16px 40px;
+    /* Bottom padding clears the fixed bottom tab bar (~56px + safe area) so the
+       last content isn't hidden behind it. */
+    padding: 20px 16px calc(72px + env(safe-area-inset-bottom));
   }
 
   .title-stage {
