@@ -40,7 +40,7 @@ import type {
   Session,
   UpsertConnectedStorageInput,
 } from "./account-credentials.js";
-import { normalizeScope, type ScopeArg } from "./workflow-scope.js";
+import { normalizeScope, type ScopeArg, type WorkflowScope } from "./workflow-scope.js";
 import { MAGNET_DEAD_LINK_TTL_MS } from "./acquisition-v2/dead-links.js";
 
 type Queryable = Pool | PoolClient;
@@ -500,30 +500,100 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
         [seasonId, storageValue],
       );
       if (others.rowCount === 0) {
-        await client.query(
-          "DELETE FROM episode_states WHERE tracked_season_id = $1 AND connected_storage_id = $2",
-          [seasonId, storageValue],
-        );
-        const season = await this.selectOne<TrackedSeason>(
-          client,
-          "SELECT payload FROM tracked_seasons WHERE id = $1 AND connected_storage_id = $2",
-          [seasonId, storageValue],
-        );
-        await client.query("DELETE FROM tracked_seasons WHERE id = $1 AND connected_storage_id = $2", [
+        await this.teardownSeasonScoped(client, seasonId, storageValue);
+      }
+      return { status: "cancelled" as const };
+    });
+  }
+
+  /** Tear down one (season, drive): delete its episodes + tracked_seasons row, then
+   *  delete the global media_titles row only when NO tracked_seasons reference that
+   *  title anywhere (another drive tracking the same show must survive). Shared by
+   *  cancelQueuedWorkflowRun and untrackTitle. */
+  private async teardownSeasonScoped(
+    client: PoolClient,
+    seasonId: string,
+    storageValue: string,
+  ): Promise<void> {
+    await client.query(
+      "DELETE FROM episode_states WHERE tracked_season_id = $1 AND connected_storage_id = $2",
+      [seasonId, storageValue],
+    );
+    const season = await this.selectOne<TrackedSeason>(
+      client,
+      "SELECT payload FROM tracked_seasons WHERE id = $1 AND connected_storage_id = $2",
+      [seasonId, storageValue],
+    );
+    await client.query("DELETE FROM tracked_seasons WHERE id = $1 AND connected_storage_id = $2", [
+      seasonId,
+      storageValue,
+    ]);
+    if (season) {
+      const siblingSeasons = await client.query(
+        "SELECT 1 FROM tracked_seasons WHERE media_title_id = $1 LIMIT 1",
+        [season.mediaTitleId],
+      );
+      if (siblingSeasons.rowCount === 0) {
+        await client.query("DELETE FROM media_titles WHERE id = $1", [season.mediaTitleId]);
+      }
+    }
+  }
+
+  async untrackTitle(
+    tmdbId: number,
+    scope: WorkflowScope,
+    seasonNumber?: number,
+  ): Promise<{ status: "untracked" | "not_found" | "in_flight"; removedSeasons: number }> {
+    // Enumerate this drive's target seasons for the title (reuse scoped read).
+    const states = (await this.listTrackedSeasonStates(scope)).filter(
+      (state) =>
+        state.title.tmdbId === tmdbId &&
+        (seasonNumber === undefined || state.season.seasonNumber === seasonNumber),
+    );
+    if (states.length === 0) {
+      return { status: "not_found", removedSeasons: 0 };
+    }
+    const targetSeasonIds = states.map((state) => state.season.id);
+    const storageValue = scope.connectedStorageId ?? UNSCOPED_STORAGE;
+
+    return this.withTransaction(async (client) => {
+      await this.ensureSchema();
+      // In-flight guard: a running run on any target season → refuse, delete nothing.
+      const running = await client.query(
+        "SELECT 1 FROM workflow_runs WHERE tracked_season_id = ANY($1) AND connected_storage_id = $2 " +
+          "AND payload->>'status' = 'running' LIMIT 1",
+        [targetSeasonIds, storageValue],
+      );
+      if ((running.rowCount ?? 0) > 0) {
+        return { status: "in_flight" as const, removedSeasons: 0 };
+      }
+      // For each season: delete all run children + runs, then tear down the season.
+      for (const seasonId of targetSeasonIds) {
+        const runIdsSub =
+          "(SELECT id FROM workflow_runs WHERE tracked_season_id = $1 AND connected_storage_id = $2)";
+        await client.query(`DELETE FROM notifications WHERE workflow_run_id IN ${runIdsSub}`, [
           seasonId,
           storageValue,
         ]);
-        if (season) {
-          const siblingSeasons = await client.query(
-            "SELECT 1 FROM tracked_seasons WHERE media_title_id = $1 LIMIT 1",
-            [season.mediaTitleId],
-          );
-          if (siblingSeasons.rowCount === 0) {
-            await client.query("DELETE FROM media_titles WHERE id = $1", [season.mediaTitleId]);
-          }
-        }
+        await client.query(`DELETE FROM transfer_attempts WHERE workflow_run_id IN ${runIdsSub}`, [
+          seasonId,
+          storageValue,
+        ]);
+        await client.query(`DELETE FROM agent_decisions WHERE workflow_run_id IN ${runIdsSub}`, [
+          seasonId,
+          storageValue,
+        ]);
+        await client.query(`DELETE FROM resource_snapshots WHERE workflow_run_id IN ${runIdsSub}`, [
+          seasonId,
+          storageValue,
+        ]);
+        await client.query(
+          "DELETE FROM workflow_runs WHERE tracked_season_id = $1 AND connected_storage_id = $2",
+          [seasonId, storageValue],
+        );
+        await this.teardownSeasonScoped(client, seasonId, storageValue);
       }
-      return { status: "cancelled" as const };
+      return { status: "untracked" as const, removedSeasons: targetSeasonIds.length };
     });
   }
 
