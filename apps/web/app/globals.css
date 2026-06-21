@@ -1196,18 +1196,21 @@ p {
   }
 
   /* The candidate result grid forces a 380px minimum column (minmax(380px,1fr)),
-     which overflows a ~358px-wide mobile content column. One card per row on
-     phones. */
+     which overflows a narrow mobile content column. One card per row on phones —
+     minmax(0, …) (not bare 1fr) so the track pins to the container and the card
+     (fixed 96px poster + min-width:0 body) shrinks with it instead of forcing a
+     ~364px min-content track that overflows sub-390px phones. */
   .candidate-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
-  /* The title backdrop full-bleeds with left/right:-32px to extend under the
-     desktop column padding. Mobile .main padding is only 16px, so -32px overshot
-     the viewport (~16px of horizontal scroll). Match the mobile padding. */
-  .hub-backdrop {
-    left: -16px;
-    right: -16px;
+  /* On phones the wide 获取 action column crushes the title/meta into a sliver
+     ("1966 · 剧集" wrapping one char per line). Stack the title block above a
+     full-width action area so both read cleanly. */
+  .candidate-title-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
   }
 }
 
@@ -1893,6 +1896,18 @@ p {
   -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.5), transparent);
   mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.5), transparent);
   pointer-events: none;
+}
+
+/* Mobile: the desktop full-bleed (left/right:-32px) overshoots the viewport
+   because .main padding shrinks to 16px on phones (~16px of horizontal scroll).
+   Match the mobile padding so the backdrop bleeds to the edge, not past it.
+   NOTE: this lives AFTER the base rule (and intentionally not in the earlier
+   @media block) so source order wins — both selectors are `.hub-backdrop`. */
+@media (max-width: 860px) {
+  .hub-backdrop {
+    left: -16px;
+    right: -16px;
+  }
 }
 
 .hub-header {
