@@ -204,16 +204,24 @@ export async function handleWorkflowRunFailure(input: {
     trigger: "user",
     report,
   };
+  // saveWorkflowRunSnapshot DELETES the season's episode bucket then re-inserts
+  // only what we pass. The two branches need OPPOSITE handling:
+  //  - auto-requeue: the run is going BACK to queued (still in flight) → preserve
+  //    the claimed snapshot's children, else a TV/series run loses its reserved
+  //    episode bucket mid-retry (Copilot review #1).
+  //  - terminal failure: a failed Type 2 init intentionally clears its initial
+  //    episode state so a fresh, never-acquired season doesn't linger as tracked
+  //    (see worker.test "clears initial episode state when the agent model dies").
   await repository.saveWorkflowRunSnapshot({
     accountId: claimed.accountId,
     connectedStorageId: claimed.connectedStorageId,
     title: claimed.title,
     season: claimed.season,
     workflowRun,
-    episodes: [],
-    resourceSnapshots: [],
-    decisions: [],
-    transferAttempts: [],
+    episodes: willRetry ? claimed.episodes : [],
+    resourceSnapshots: willRetry ? claimed.resourceSnapshots : [],
+    decisions: willRetry ? claimed.decisions : [],
+    transferAttempts: willRetry ? claimed.transferAttempts : [],
     notifications: [notification],
   });
   return {

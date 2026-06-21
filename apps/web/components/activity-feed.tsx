@@ -232,6 +232,9 @@ function RetryButton({ runId, title }: { runId: string; title: string }) {
       // The next poll reconciles: the run re-appears in 排队中/获取中.
     } catch {
       window.alert("重试失败，请稍后再试。");
+    } finally {
+      // Always release the spinner — a "not_retriable" (or any non-error) response
+      // must not leave the button stuck busy until a full page refresh.
       setBusy(false);
     }
   };
