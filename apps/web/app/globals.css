@@ -2679,6 +2679,27 @@ select.setting-control {
   border-color: var(--negative);
 }
 
+.act-retry {
+  flex: none;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.act-retry:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 .act-confirm {
   display: inline-flex;
   gap: 6px;

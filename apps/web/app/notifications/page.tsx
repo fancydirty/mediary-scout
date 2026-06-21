@@ -12,7 +12,9 @@ import {
   Film,
   Layers,
   PartyPopper,
+  RotateCcw,
   TriangleAlert,
+  XCircle,
 } from "lucide-react";
 import type { NotificationEvent, NotificationReportStatus } from "@media-track/workflow";
 import { landedSize } from "@media-track/workflow";
@@ -49,6 +51,8 @@ const statusMeta: Record<NotificationReportStatus, { label: string; tone: string
   airing: { label: "追更中", tone: "indigo", icon: Clock3 },
   partial: { label: "有缺集", tone: "amber", icon: TriangleAlert },
   no_coverage: { label: "暂无资源", tone: "amber", icon: CircleSlash },
+  failed: { label: "获取失败", tone: "amber", icon: XCircle },
+  retrying: { label: "重试中", tone: "indigo", icon: RotateCcw },
 };
 
 // `searchParams` (the active drive `?w`) is a dynamic input + a DB read; reading it

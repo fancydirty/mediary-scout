@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { CheckCircle2, ChevronDown, ChevronRight, Clock3, Loader2, TriangleAlert, X } from "lucide-react";
+import { CheckCircle2, ChevronDown, ChevronRight, Clock3, Loader2, RotateCcw, TriangleAlert, X } from "lucide-react";
 import { showHref } from "@media-track/workflow/scope";
 import type { ActivityActiveRun, ActivityCompletedItem, ActivityView } from "../lib/activity-view";
 import { isDemoModeClient } from "../lib/demo-mode";
@@ -179,8 +179,24 @@ function QueuedRow({ run }: { run: ActivityActiveRun }) {
   );
 }
 
+function completedPillLabel(status: ActivityCompletedItem["status"]): string {
+  switch (status) {
+    case "no_coverage":
+      return "暂无资源";
+    case "partial":
+      return "部分入库";
+    case "failed":
+      return "获取失败";
+    case "retrying":
+      return "重试中…";
+    default:
+      return "已入库";
+  }
+}
+
 function CompletedRow({ item }: { item: ActivityCompletedItem }) {
   const ok = item.status === "complete" || item.status === "acquired" || item.status === "airing";
+  const failed = item.status === "failed";
   return (
     <div className="act-row act-row-done">
       {poster(item.posterPath, item.title, ok ? "success" : "warn")}
@@ -189,11 +205,48 @@ function CompletedRow({ item }: { item: ActivityCompletedItem }) {
         {item.seasonLabel ? <span className="act-sub">{item.seasonLabel}</span> : null}
         <span className={`act-pill ${ok ? "tone-success" : "tone-warn"}`}>
           {ok ? <CheckCircle2 size={12} aria-hidden /> : <TriangleAlert size={12} aria-hidden />}
-          {item.status === "no_coverage" ? "暂无资源" : item.status === "partial" ? "部分入库" : "已入库"}
+          {completedPillLabel(item.status)}
         </span>
         {item.sizeText ? <span className="act-sub">{item.sizeText}</span> : null}
+        {failed ? <RetryButton runId={item.workflowRunId} title={item.title} /> : null}
       </div>
     </div>
+  );
+}
+
+function RetryButton({ runId, title }: { runId: string; title: string }) {
+  const [busy, setBusy] = useState(false);
+
+  const retry = async () => {
+    setBusy(true);
+    try {
+      const res = await fetch("/api/activity/retry", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ runId }),
+      });
+      const result = (await res.json()) as { status?: string };
+      if (result.status !== "retried") {
+        window.alert(`「${title}」无法重试（可能已在处理）。`);
+      }
+      // The next poll reconciles: the run re-appears in 排队中/获取中.
+    } catch {
+      window.alert("重试失败，请稍后再试。");
+      setBusy(false);
+    }
+  };
+
+  if (busy) {
+    return (
+      <span className="act-cancel act-cancel-busy">
+        <Loader2 size={14} className="act-spin" aria-hidden />
+      </span>
+    );
+  }
+  return (
+    <button type="button" className="act-retry" aria-label={`重试获取 ${title}`} onClick={retry}>
+      <RotateCcw size={13} aria-hidden /> 重试
+    </button>
   );
 }
 
