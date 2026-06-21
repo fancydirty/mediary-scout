@@ -9,6 +9,7 @@ import {
   RequestRemainingButton,
   RequestSeasonButton,
 } from "../../../components/title-action-buttons";
+import { UntrackButton } from "../../../components/untrack-button";
 import type { DemoAcquisitionEntry } from "../../../lib/demo-session";
 import {
   getDetailView,
@@ -122,9 +123,9 @@ async function ShowContent({
     >
       {view ? (
         view.kind === "movie" ? (
-          <MovieHub view={view} />
+          <MovieHub view={view} storageId={workspace.activeStorageId} basePath={workspace.basePath} />
         ) : (
-          <TvHub view={view} storageId={workspace.activeStorageId} />
+          <TvHub view={view} storageId={workspace.activeStorageId} basePath={workspace.basePath} />
         )
       ) : (
         <div className="quiet-state">
@@ -137,7 +138,15 @@ async function ShowContent({
   );
 }
 
-function TvHub({ view, storageId }: { view: TitleHubView; storageId: string | undefined }) {
+function TvHub({
+  view,
+  storageId,
+  basePath,
+}: {
+  view: TitleHubView;
+  storageId: string | undefined;
+  basePath: string;
+}) {
   const badge = aggregateBadge[view.aggregate];
   return (
     <AcquisitionLockProvider>
@@ -206,6 +215,9 @@ function TvHub({ view, storageId }: { view: TitleHubView; storageId: string | un
                 }}
               />
             ) : null}
+            {view.aggregate !== "untracked" ? (
+              <UntrackButton tmdbId={view.tmdbId} storageId={storageId} basePath={basePath} />
+            ) : null}
           </div>
         </div>
       </header>
@@ -224,6 +236,7 @@ function TvHub({ view, storageId }: { view: TitleHubView; storageId: string | un
               season={season}
               tmdbId={view.tmdbId}
               storageId={storageId}
+              basePath={basePath}
               acquiring={view.acquiring}
               demoEntry={{
                 tmdbId: view.tmdbId,
@@ -250,7 +263,15 @@ const movieStateMeta = {
 } as const;
 
 /** A movie's detail page: a single status, no season grid. */
-function MovieHub({ view }: { view: MovieHubView }) {
+function MovieHub({
+  view,
+  storageId,
+  basePath,
+}: {
+  view: MovieHubView;
+  storageId: string | undefined;
+  basePath: string;
+}) {
   const meta = movieStateMeta[view.state];
   const releaseLine =
     view.state === "reserved" && view.releaseDate ? `${formatMovieDate(view.releaseDate)} 上映` : null;
@@ -285,6 +306,11 @@ function MovieHub({ view }: { view: MovieHubView }) {
               {releaseLine ? ` · ${releaseLine}` : ""}
             </p>
             {view.overview ? <p className="hub-overview">{view.overview}</p> : null}
+            {view.state !== "untracked" ? (
+              <div className="hub-actions">
+                <UntrackButton tmdbId={view.tmdbId} storageId={storageId} basePath={basePath} />
+              </div>
+            ) : null}
           </div>
         </header>
       </section>
@@ -331,6 +357,7 @@ function SeasonRow({
   season,
   tmdbId,
   storageId,
+  basePath,
   acquiring,
   demoEntry,
 }: {
@@ -338,6 +365,8 @@ function SeasonRow({
   tmdbId: number;
   /** Tree model: the active workspace drive — acquisition lands HERE. */
   storageId: string | undefined;
+  /** Library path to return to after a whole-show untrack. */
+  basePath: string;
   acquiring: boolean;
   demoEntry?: DemoAcquisitionEntry | undefined;
 }) {
@@ -413,6 +442,15 @@ function SeasonRow({
               </span>
             </div>
           ))}
+        </div>
+        <div className="season-untrack-row">
+          <UntrackButton
+            tmdbId={tmdbId}
+            storageId={storageId}
+            seasonNumber={season.seasonNumber}
+            basePath={basePath}
+            label={`取消第 ${season.seasonNumber} 季追踪`}
+          />
         </div>
       </details>
     </li>

@@ -3005,3 +3005,8 @@ select.setting-control {
   font-size: 12px;
   color: rgba(255, 255, 255, 0.55);
 }
+.season-untrack-row {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+}
