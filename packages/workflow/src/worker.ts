@@ -4,11 +4,21 @@ import type {
   EpisodeState,
   MediaTitle,
   MediaType,
+  NotificationEvent,
+  NotificationReport,
   TrackedSeason,
   WorkflowStatus,
 } from "./domain.js";
 import type { ResourceProvider, StorageExecutor } from "./ports.js";
-import type { WorkflowRepository } from "./repository.js";
+import type { PersistedWorkflowRunSnapshot, WorkflowRepository } from "./repository.js";
+import {
+  AUTO_REQUEUE_BACKOFF_MS,
+  AUTO_REQUEUE_MAX,
+  failWorkflowRun,
+  requeueWorkflowRunForRetry,
+} from "./repository.js";
+import { isTransientAcquisitionError } from "./acquisition-v2/transient-error.js";
+import { formatReportPushText } from "./notification-report.js";
 import { isMovieUnreleased } from "./domain.js";
 import {
   runMovieAcquisitionV2AndPersist,
@@ -127,6 +137,92 @@ export type QueuedType2WorkerResult =
       errorMessage: string;
     };
 
+function failureReport(
+  claimed: PersistedWorkflowRunSnapshot,
+  status: "failed" | "retrying",
+  lines: string[],
+): NotificationReport {
+  return {
+    titleName: claimed.title.title,
+    seasonLabel:
+      claimed.title.type !== "movie" && claimed.season.seasonNumber
+        ? `第 ${claimed.season.seasonNumber} 季`
+        : null,
+    status,
+    lines,
+    newlyObtained: [],
+    realMissing: [],
+    posterPath: claimed.title.posterPath ?? null,
+    tmdbId: claimed.title.tmdbId,
+    mediaType: claimed.title.type,
+    year: claimed.title.year,
+  };
+}
+
+/**
+ * Single failure path for every interactive queued acquisition (type2/series/
+ * movie). A TRANSIENT error (network/TLS/socket — see isTransientAcquisitionError)
+ * under the retry cap → back to `queued` with backoff (the worker re-claims it
+ * after nextAttemptAt) plus a `retrying` notification. Otherwise → terminal
+ * `failed` plus a `failed` notification — no longer the old silent `notifications:[]`.
+ */
+export async function handleWorkflowRunFailure(input: {
+  claimed: PersistedWorkflowRunSnapshot;
+  error: unknown;
+  repository: Pick<WorkflowRepository, "saveWorkflowRunSnapshot">;
+  now: () => string;
+}): Promise<{ status: "auto_requeued" | "failed"; workflowRunId: string; errorMessage: string }> {
+  const { claimed, error, repository } = input;
+  const nowIso = input.now();
+  const errorMessage = error instanceof Error ? error.message : "Workflow failed";
+  const priorCount = claimed.workflowRun.autoRequeueCount ?? 0;
+  const transient = isTransientAcquisitionError(error);
+  const willRetry = transient && priorCount < AUTO_REQUEUE_MAX;
+
+  let report: NotificationReport;
+  let workflowRun;
+  if (willRetry) {
+    workflowRun = requeueWorkflowRunForRetry(claimed.workflowRun, errorMessage, nowIso);
+    const minutes = Math.round((AUTO_REQUEUE_BACKOFF_MS[priorCount] ?? 0) / 60_000);
+    report = failureReport(claimed, "retrying", [
+      `网络波动 · 第 ${priorCount + 1} 次自动重试,约 ${minutes} 分钟后`,
+    ]);
+  } else {
+    workflowRun = failWorkflowRun(claimed.workflowRun, errorMessage, nowIso);
+    report = failureReport(claimed, "failed", [
+      transient ? `网络中断,已自动重试 ${priorCount} 次仍失败` : "获取失败",
+      errorMessage,
+    ]);
+  }
+  const notification: NotificationEvent = {
+    id: `notification_${claimed.workflowRun.id}_${willRetry ? `retry${priorCount + 1}` : "failed"}`,
+    workflowRunId: claimed.workflowRun.id,
+    kind: claimed.workflowRun.kind,
+    title: claimed.title.title,
+    body: formatReportPushText(report),
+    createdAt: nowIso,
+    trigger: "user",
+    report,
+  };
+  await repository.saveWorkflowRunSnapshot({
+    accountId: claimed.accountId,
+    connectedStorageId: claimed.connectedStorageId,
+    title: claimed.title,
+    season: claimed.season,
+    workflowRun,
+    episodes: [],
+    resourceSnapshots: [],
+    decisions: [],
+    transferAttempts: [],
+    notifications: [notification],
+  });
+  return {
+    status: willRetry ? "auto_requeued" : "failed",
+    workflowRunId: claimed.workflowRun.id,
+    errorMessage,
+  };
+}
+
 export async function runQueuedType2Workflow(input: {
   repository: WorkflowRepository;
   resourceProvider: ResourceProvider;
@@ -198,37 +294,15 @@ export async function runQueuedType2Workflow(input: {
       workflowStatus: result.status,
     };
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : "Workflow failed";
-    await input.repository.saveWorkflowRunSnapshot({
-      accountId: claimed.accountId,
-      connectedStorageId: claimed.connectedStorageId,
-      title: claimed.title,
-      season: claimed.season,
-      workflowRun: {
-        ...claimed.workflowRun,
-        status: "failed",
-        finishedAt: now(),
-        auditEvents: [
-          ...claimed.workflowRun.auditEvents,
-          {
-            type: "workflow_failed",
-            message: errorMessage,
-          },
-        ],
-      },
-      episodes: [],
-      resourceSnapshots: [],
-      decisions: [],
-      transferAttempts: [],
-      notifications: [],
+    const handled = await handleWorkflowRunFailure({
+      claimed,
+      error,
+      repository: input.repository,
+      now,
     });
-
-    return {
-      status: "failed",
-      workflowRunId: claimed.workflowRun.id,
-      errorMessage,
-    };
+    return handled.status === "auto_requeued"
+      ? { status: "ran", workflowRunId: handled.workflowRunId, workflowStatus: "queued" }
+      : { status: "failed", workflowRunId: handled.workflowRunId, errorMessage: handled.errorMessage };
   }
 }
 
@@ -688,33 +762,15 @@ export async function runQueuedMovieAcquisition(input: {
       workflowStatus: result.status,
     };
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : "Workflow failed";
-    await input.repository.saveWorkflowRunSnapshot({
-      accountId: claimed.accountId,
-      connectedStorageId: claimed.connectedStorageId,
-      title: claimed.title,
-      season: claimed.season,
-      workflowRun: {
-        ...claimed.workflowRun,
-        status: "failed",
-        finishedAt: now(),
-        auditEvents: [
-          ...claimed.workflowRun.auditEvents,
-          { type: "workflow_failed", message: errorMessage },
-        ],
-      },
-      episodes: [],
-      resourceSnapshots: [],
-      decisions: [],
-      transferAttempts: [],
-      notifications: [],
+    const handled = await handleWorkflowRunFailure({
+      claimed,
+      error,
+      repository: input.repository,
+      now,
     });
-    return {
-      status: "failed",
-      workflowRunId: claimed.workflowRun.id,
-      errorMessage,
-    };
+    return handled.status === "auto_requeued"
+      ? { status: "ran", workflowRunId: handled.workflowRunId, workflowStatus: "queued" }
+      : { status: "failed", workflowRunId: handled.workflowRunId, errorMessage: handled.errorMessage };
   }
 }
 
@@ -822,32 +878,14 @@ export async function runQueuedSeriesInitialization(input: {
       workflowStatus: result.status,
     };
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : "Workflow failed";
-    await input.repository.saveWorkflowRunSnapshot({
-      accountId: claimed.accountId,
-      connectedStorageId: claimed.connectedStorageId,
-      title: claimed.title,
-      season: claimed.season,
-      workflowRun: {
-        ...claimed.workflowRun,
-        status: "failed",
-        finishedAt: now(),
-        auditEvents: [
-          ...claimed.workflowRun.auditEvents,
-          { type: "workflow_failed", message: errorMessage },
-        ],
-      },
-      episodes: [],
-      resourceSnapshots: [],
-      decisions: [],
-      transferAttempts: [],
-      notifications: [],
+    const handled = await handleWorkflowRunFailure({
+      claimed,
+      error,
+      repository: input.repository,
+      now,
     });
-    return {
-      status: "failed",
-      workflowRunId: claimed.workflowRun.id,
-      errorMessage,
-    };
+    return handled.status === "auto_requeued"
+      ? { status: "ran", workflowRunId: handled.workflowRunId, workflowStatus: "queued" }
+      : { status: "failed", workflowRunId: handled.workflowRunId, errorMessage: handled.errorMessage };
   }
 }
