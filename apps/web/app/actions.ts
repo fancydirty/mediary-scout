@@ -265,6 +265,27 @@ export async function requestRemainingAction(input: {
   return { status: "requested", message: "剩余季已加入后台队列。" };
 }
 
+export async function untrackTitleAction(input: {
+  tmdbId: number;
+  // Tree model: REQUIRED (value may be undefined = primary) so the active
+  // workspace is always threaded — untrack must act on the drive being viewed.
+  storageId: string | undefined;
+  seasonNumber?: number;
+}): Promise<{ status: "untracked" | "not_found" | "in_flight"; message: string }> {
+  assertNotDemo();
+  const { untrackTrackedTitle } = await import("../lib/workflow-runtime");
+  const result = await untrackTrackedTitle(input.tmdbId, input.storageId, input.seasonNumber);
+  revalidatePath("/");
+  revalidatePath(`/show/${input.tmdbId}`);
+  if (result.status === "in_flight") {
+    return { status: "in_flight", message: "获取进行中，完成或在活动页取消后再取消追踪。" };
+  }
+  if (result.status === "not_found") {
+    return { status: "not_found", message: "该剧未在当前网盘追踪。" };
+  }
+  return { status: "untracked", message: "已取消追踪（网盘文件已保留）。" };
+}
+
 export interface PushSettingsActionResult {
   success: boolean;
   message?: string;
