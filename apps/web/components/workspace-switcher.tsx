@@ -22,6 +22,7 @@ function BrandMark({ provider, frozen }: { provider?: string | undefined; frozen
     return <span className={`ws-dot${frozen ? " is-frozen" : ""}`} aria-hidden />;
   }
   return (
+    // eslint-disable-next-line @next/next/no-img-element
     <img
       className="ws-icon"
       src={`/brands/${provider}.svg`}

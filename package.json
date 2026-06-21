@@ -12,18 +12,22 @@
     "build:web": "npm run build:workflow && next build apps/web",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --max-warnings 0"
   },
   "engines": {
     "node": ">=22.12.0"
   },
   "devDependencies": {
+    "@next/eslint-plugin-next": "^16.2.9",
     "@types/node": "^22.12.0",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
+    "eslint": "^10.5.0",
     "playwright": "^1.60.0",
     "typescript": "^5.9.0",
+    "typescript-eslint": "^8.61.1",
     "vitest": "^4.0.0",
     "yaml": "^2.9.0"
   },

@@ -35,8 +35,8 @@ export function ActivityFeed({ storageId }: { storageId?: string | undefined }) 
         // transient — keep the last view, retry next tick
       }
     };
-    poll(); // immediate first load (the page renders this client component in the static shell)
-    const id = setInterval(poll, POLL_MS);
+    void poll(); // immediate first load (the page renders this client component in the static shell)
+    const id = setInterval(() => void poll(), POLL_MS);
     return () => {
       alive = false;
       clearInterval(id);

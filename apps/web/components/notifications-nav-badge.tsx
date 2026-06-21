@@ -25,8 +25,8 @@ export function NotificationsNavBadge({ storageId }: { storageId?: string | unde
         // transient
       }
     };
-    poll();
-    const id = setInterval(poll, 8000);
+    void poll();
+    const id = setInterval(() => void poll(), 8000);
     return () => {
       alive = false;
       clearInterval(id);

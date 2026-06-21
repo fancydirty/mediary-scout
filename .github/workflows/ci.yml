@@ -34,6 +34,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build:workflow
+      - run: npm run lint
       - run: npm run typecheck
       - run: npx tsc -p apps/web/tsconfig.json --noEmit
       # Production build with NO database — mirrors `docker compose build` (no .env

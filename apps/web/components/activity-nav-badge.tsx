@@ -21,8 +21,8 @@ export function ActivityNavBadge({ storageId }: { storageId?: string | undefined
         // transient — keep the last count
       }
     };
-    poll();
-    const id = setInterval(poll, 5000);
+    void poll();
+    const id = setInterval(() => void poll(), 5000);
     return () => {
       alive = false;
       clearInterval(id);
