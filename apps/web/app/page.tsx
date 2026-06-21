@@ -6,6 +6,7 @@ import { AppSidebar } from "../components/app-sidebar";
 import { RequestTrackButton } from "../components/request-track-button";
 import { DemoSessionLibrary } from "../components/demo-session-library";
 import { RememberQuery } from "../components/search-memory";
+import { SearchForm } from "../components/search-form";
 import { SeasonRequestMenu } from "../components/season-request-menu";
 import { getSearchView } from "../lib/search-page";
 import {
@@ -94,17 +95,7 @@ async function HomeSurface({
                 <h1>搜索</h1>
                 <p>找到目标后发起获取，后台会处理资源判断、转存和验证。</p>
               </div>
-              <form className="search-form" action={basePath} role="search">
-                <input type="hidden" name="tab" value="search" />
-                <label className="search-box search-box-large">
-                  <Search size={18} aria-hidden />
-                  <input name="q" aria-label="搜索媒体" placeholder="片名 / 剧名" defaultValue={query} />
-                </label>
-                <button className="primary-button" type="submit">
-                  <Search size={16} aria-hidden />
-                  搜索
-                </button>
-              </form>
+              <SearchForm basePath={basePath} defaultQuery={query} />
             </div>
             {driveCount >= 2 ? (
               <p className="panel-note" style={{ marginTop: -4, marginBottom: 4 }}>
