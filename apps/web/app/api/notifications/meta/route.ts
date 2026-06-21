@@ -1,5 +1,10 @@
 import { connection, NextResponse, type NextRequest } from "next/server";
-import { ensureDemoSeeded, getWorkflowRepository, resolveGlobalWorkspace } from "../../../../lib/workflow-runtime";
+import {
+  ensureDemoSeeded,
+  getWorkflowRepository,
+  notificationWindowSince,
+  resolveGlobalWorkspace,
+} from "../../../../lib/workflow-runtime";
 
 /**
  * Lightweight feed metadata for the 通知 nav unread badge: the recent notification
@@ -15,6 +20,13 @@ export async function GET(request: NextRequest) {
   const { accountId, connectedStorageId } = await resolveGlobalWorkspace(
     request.nextUrl.searchParams.get("w") ?? undefined,
   );
-  const notifications = await repository.listNotifications({ limit: 50, accountId, connectedStorageId });
+  // Mirror the 通知 page's 7-day window so the unread badge can't count items the
+  // page won't show (otherwise the badge would be unclearable).
+  const notifications = await repository.listNotifications({
+    limit: 50,
+    accountId,
+    connectedStorageId,
+    since: notificationWindowSince(),
+  });
   return NextResponse.json({ createdAts: notifications.map((notification) => notification.createdAt) });
 }

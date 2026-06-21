@@ -24,6 +24,7 @@ import {
   ensureDemoSeeded,
   getCurrentAccountId,
   getWorkflowRepository,
+  notificationWindowSince,
   resolveGlobalWorkspace,
 } from "../../lib/workflow-runtime";
 
@@ -108,7 +109,13 @@ async function NotificationFeed({ connectedStorageId }: { connectedStorageId: st
   const repository = getWorkflowRepository();
   const accountId = await getCurrentAccountId();
   await ensureDemoSeeded(repository);
-  const notifications = await repository.listNotifications({ limit: 100, accountId, connectedStorageId });
+  const notifications = await repository.listNotifications({
+    limit: 100,
+    accountId,
+    connectedStorageId,
+    // Only the last 7 days — old notifications shouldn't pile up forever.
+    since: notificationWindowSince(),
+  });
 
   // Poster backfill: older notifications predate report.posterPath. Source the
   // poster from the still-tracked title (by tmdbId, then name) so cards show a

@@ -291,6 +291,14 @@ export async function getActiveWorkspaceScope(storageId?: string): Promise<Workf
   return { accountId, connectedStorageId };
 }
 
+/** 通知页/角标只展示最近 N 天 —— 旧通知不再无限堆积。 */
+export const NOTIFICATION_WINDOW_DAYS = 7;
+
+/** ISO cutoff for the notification window (now − NOTIFICATION_WINDOW_DAYS). */
+export function notificationWindowSince(): string {
+  return new Date(Date.now() - NOTIFICATION_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
+}
+
 /** 取消追踪:解析当前工作区 scope 后委派仓库删除该剧/季的追踪记录(不碰网盘文件)。
  *  mediaKind 区分 movie/tv 命名空间(同一数字 id 可同时是电影和剧集)。 */
 export async function untrackTrackedTitle(

@@ -724,18 +724,22 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     limit?: number;
     accountId?: string;
     connectedStorageId?: string | null;
+    since?: string;
   }): Promise<NotificationEvent[]> {
     const scope = normalizeScope(
       input?.accountId === undefined
         ? undefined
         : { accountId: input.accountId, connectedStorageId: input.connectedStorageId ?? null },
     );
+    // ISO-8601 UTC timestamps sort lexicographically = chronologically, so a string
+    // `>=` on payload->>'createdAt' is a correct (and indexable) recency cutoff.
     const all = await this.selectMany<NotificationEvent>(
       this.pool,
       "SELECT n.payload AS payload FROM notifications n " +
         "JOIN workflow_runs wr ON n.workflow_run_id = wr.id " +
-        "WHERE wr.account_id = $1 AND ($2::text IS NULL OR wr.connected_storage_id = $2)",
-      [scope.accountId, scope.connectedStorageId],
+        "WHERE wr.account_id = $1 AND ($2::text IS NULL OR wr.connected_storage_id = $2) " +
+        "AND ($3::text IS NULL OR (n.payload->>'createdAt') >= $3)",
+      [scope.accountId, scope.connectedStorageId, input?.since ?? null],
     );
     all.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
     return all.slice(0, input?.limit ?? 100);
