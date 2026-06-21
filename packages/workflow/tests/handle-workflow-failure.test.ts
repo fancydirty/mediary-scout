@@ -85,6 +85,32 @@ describe("handleWorkflowRunFailure", () => {
     expect(saved.notifications[0]?.report?.status).toBe("failed");
   });
 
+  it("preserves the claimed snapshot's episode bucket across auto-requeue (does NOT wipe it)", async () => {
+    const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
+    const episodes = [
+      {
+        trackedSeasonId: "tmdb_movie_1_movie",
+        episodeCode: "S01E01",
+        airDate: null,
+        airStatus: "aired" as const,
+        obtained: false,
+      },
+    ];
+    const claimed = { ...snapshot(), episodes } as PersistedWorkflowRunSnapshot;
+    await handleWorkflowRunFailure({
+      claimed,
+      error: new Error("read ECONNRESET"),
+      repository: { saveWorkflowRunSnapshot: save },
+      now,
+    });
+    const saved = save.mock.calls[0]![0];
+    // Bug (Copilot): saving with episodes:[] deletes the season's reserved bucket
+    // (replaceWorkflowRunSnapshot wipes by season then re-inserts) — losing tracked
+    // state on a run that is going BACK to queued. Must round-trip claimed.episodes.
+    expect(saved.episodes).toHaveLength(1);
+    expect(saved.episodes[0]?.episodeCode).toBe("S01E01");
+  });
+
   it("terminally fails a NON-transient error immediately (count=0)", async () => {
     const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
     const out = await handleWorkflowRunFailure({
