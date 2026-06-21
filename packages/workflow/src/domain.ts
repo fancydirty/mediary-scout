@@ -97,6 +97,12 @@ export interface WorkflowRun {
   finishedAt: string | null;
   auditEvents: AuditEvent[];
   progress?: WorkflowRunProgress;
+  /** Count of automatic retries already performed for a transient failure.
+   *  Absent/0 = never auto-requeued. Capped at AUTO_REQUEUE_MAX. */
+  autoRequeueCount?: number;
+  /** Earliest ISO time the worker may re-claim this run. Set when auto-requeued
+   *  (backoff); absent = immediately claimable. */
+  nextAttemptAt?: string;
 }
 
 export interface AuditEvent {

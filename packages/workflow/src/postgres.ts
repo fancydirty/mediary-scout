@@ -16,9 +16,11 @@ import {
 } from "./domain.js";
 import {
   claimWorkflowRun,
+  claimableQueuedRuns,
   cloneWorkflowValue,
   compareTrackedSeasonStates,
   expireWorkflowRun,
+  retriedWorkflowRun,
   isActiveWorkflowStatus,
   type PersistedWorkflowRunSnapshot,
   type PersistWorkflowRunSnapshotInput,
@@ -370,9 +372,11 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     now: string;
   }): Promise<PersistedWorkflowRunSnapshot | null> {
     const claimedRunId = await this.withTransaction(async (client) => {
-      const queuedRun = (await this.allWorkflowRuns(client))
-        .filter((workflowRun) => workflowRun.kind === input.kind && workflowRun.status === "queued")
-        .sort((a, b) => a.startedAt.localeCompare(b.startedAt))[0];
+      const queuedRun = claimableQueuedRuns(
+        await this.allWorkflowRuns(client),
+        input.kind,
+        input.now,
+      )[0];
       if (!queuedRun) {
         return null;
       }
@@ -520,6 +524,34 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
         }
       }
       return { status: "cancelled" as const };
+    });
+  }
+
+  async retryFailedWorkflowRun(
+    workflowRunId: string,
+    scopeArg: ScopeArg = undefined,
+  ): Promise<{ status: "retried" | "not_retriable" }> {
+    const scope = normalizeScope(scopeArg);
+    return this.withTransaction(async (client) => {
+      await this.ensureSchema();
+      const row = await client.query(
+        "SELECT payload, account_id, connected_storage_id FROM workflow_runs WHERE id = $1",
+        [workflowRunId],
+      );
+      const run = (row.rows[0]?.payload as WorkflowRun | undefined) ?? null;
+      const owner = (row.rows[0]?.account_id as string | undefined) ?? DEFAULT_ACCOUNT_ID;
+      const ownerStorage = (row.rows[0]?.connected_storage_id as string | null | undefined) ?? null;
+      if (
+        !run ||
+        owner !== scope.accountId ||
+        (scope.connectedStorageId != null && ownerStorage !== scope.connectedStorageId) ||
+        run.status !== "failed"
+      ) {
+        return { status: "not_retriable" as const };
+      }
+      // account_id / connected_storage_id are preserved on conflict by upsert.
+      await this.upsertWorkflowRun(client, retriedWorkflowRun(run, new Date().toISOString()));
+      return { status: "retried" as const };
     });
   }
 
