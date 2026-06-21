@@ -14,13 +14,13 @@
   <img src="https://img.shields.io/badge/Postgres-4169E1?logo=postgresql&logoColor=white" alt="Postgres">
   <img src="https://img.shields.io/badge/self--hosted-only-success" alt="self-hosted only">
   <a href="https://github.com/fancydirty/mediary-scout/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen" alt="PRs welcome"></a>
-  <a href="https://mediary-scout.vercel.app"><img src="https://img.shields.io/badge/demo-live-1ED760?logo=vercel&logoColor=white" alt="live demo"></a>
+  <a href="https://mediary.dirtyfancy.sbs"><img src="https://img.shields.io/badge/demo-live-1ED760?logo=vercel&logoColor=white" alt="live demo"></a>
 </p>
 
 <p align="center">
   <a href="#快速开始">快速开始</a> ·
   <a href="docs/deploy.md">部署指南</a> ·
-  <a href="https://mediary-scout.vercel.app">在线 Demo ↗</a> ·
+  <a href="https://mediary.dirtyfancy.sbs">在线 Demo ↗</a> ·
   <a href="README.md">English</a>
 </p>
 
@@ -110,7 +110,7 @@ docker compose up -d
 
 ## Demo
 
-**🔭 在线体验:[mediary-scout.vercel.app](https://mediary-scout.vercel.app)**
+**🔭 在线体验:[mediary.dirtyfancy.sbs](https://mediary.dirtyfancy.sbs)**
 
 公开的**只读** demo —— mock 网盘、真实 TMDB 全库搜索、点「获取」看一次脚本化获取落进媒体库。不连真盘、不转存、什么都不持久。由本仓库构建。
 

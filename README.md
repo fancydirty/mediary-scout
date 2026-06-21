@@ -14,13 +14,13 @@
   <img src="https://img.shields.io/badge/Postgres-4169E1?logo=postgresql&logoColor=white" alt="Postgres">
   <img src="https://img.shields.io/badge/self--hosted-only-success" alt="self-hosted only">
   <a href="https://github.com/fancydirty/mediary-scout/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen" alt="PRs welcome"></a>
-  <a href="https://mediary-scout.vercel.app"><img src="https://img.shields.io/badge/demo-live-1ED760?logo=vercel&logoColor=white" alt="live demo"></a>
+  <a href="https://mediary.dirtyfancy.sbs"><img src="https://img.shields.io/badge/demo-live-1ED760?logo=vercel&logoColor=white" alt="live demo"></a>
 </p>
 
 <p align="center">
   <a href="#quick-start">Quick start</a> ·
   <a href="docs/deploy.md">Deploy guide</a> ·
-  <a href="https://mediary-scout.vercel.app">Live demo ↗</a> ·
+  <a href="https://mediary.dirtyfancy.sbs">Live demo ↗</a> ·
   <a href="README.zh-CN.md">中文文档</a>
 </p>
 
@@ -110,7 +110,7 @@ Self-host on a NAS, a router (软路由), a spare PC, or a VPS — and reach it 
 
 ## Demo
 
-**🔭 Try it live: [mediary-scout.vercel.app](https://mediary-scout.vercel.app)**
+**🔭 Try it live: [mediary.dirtyfancy.sbs](https://mediary.dirtyfancy.sbs)**
 
 A public, **read-only** demo — mock drives, real TMDB search across the whole catalog, and a scripted acquisition you can watch land in the library. No drive connect, no transfers, nothing persists. Built from this repo.
 
