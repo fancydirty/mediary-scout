@@ -158,7 +158,10 @@ export async function requestTrackingAction(input?: {
 
 export async function requestSeriesAction(input: {
   candidateId: string;
-  storageId?: string;
+  // Tree model: the active workspace drive — REQUIRED (value may be undefined =
+  // primary) so a non-primary acquisition can't silently mis-route. See note on
+  // requestSeasonAction.
+  storageId: string | undefined;
 }): Promise<RequestTrackingActionResult> {
   assertNotDemo();
   const request = await queueCandidateSeries(input.candidateId, input.storageId);
@@ -214,7 +217,12 @@ export async function importForeignWorkAction(input: {
 export async function requestSeasonAction(input: {
   tmdbId: number;
   seasonNumber: number;
-  storageId?: string;
+  // Tree model: the active workspace drive — acquisition lands HERE, not the
+  // primary. REQUIRED (value may be undefined = primary) so every call site must
+  // consciously thread the workspace; an omitted storageId silently mis-routes a
+  // non-primary (e.g. quark) acquisition to the primary drive and the run never
+  // shows on the workspace the user is looking at.
+  storageId: string | undefined;
 }): Promise<RequestTrackingActionResult> {
   assertNotDemo();
   const { queueSeasonTracking } = await import("../lib/title-hub");
@@ -235,7 +243,10 @@ export async function requestSeasonAction(input: {
 
 export async function requestRemainingAction(input: {
   tmdbId: number;
-  storageId?: string;
+  // Tree model: the active workspace drive — REQUIRED (value may be undefined =
+  // primary) so a non-primary acquisition can't silently mis-route. See note on
+  // requestSeasonAction.
+  storageId: string | undefined;
 }): Promise<RequestTrackingActionResult> {
   assertNotDemo();
   const { queueRemainingSeasons } = await import("../lib/title-hub");

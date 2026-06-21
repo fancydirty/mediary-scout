@@ -11,9 +11,13 @@ import { useDemoAcquiredTmdbIds } from "../lib/use-demo-session";
 
 export function RequestSeriesButton({
   candidateId,
+  storageId,
   demoEntry,
 }: {
   candidateId: string;
+  /** Tree model: the active workspace drive — acquisition lands HERE. REQUIRED
+   *  (value may be undefined = primary) so the workspace is always threaded. */
+  storageId: string | undefined;
   /** Demo only: recorded to the session library when the scripted playback ends. */
   demoEntry?: DemoAcquisitionEntry | undefined;
 }) {
@@ -50,7 +54,7 @@ export function RequestSeriesButton({
           return;
         }
         startTransition(async () => {
-          setResult(await requestSeriesAction({ candidateId }));
+          setResult(await requestSeriesAction({ candidateId, storageId }));
         });
       }}
     >

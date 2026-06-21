@@ -38,8 +38,9 @@ export function SeasonRequestMenu({
   totalSeasonCount: number;
   /** Pill label for the all-remaining scope. */
   allLabel?: string;
-  /** Tree model: the active workspace drive — acquisition lands HERE. */
-  storageId?: string | undefined;
+  /** Tree model: the active workspace drive — acquisition lands HERE. REQUIRED
+   *  (value may be undefined = primary) so the workspace is always threaded. */
+  storageId: string | undefined;
   /** Demo only: recorded to the session library when the scripted playback ends. */
   demoEntry?: DemoAcquisitionEntry | undefined;
 }) {
@@ -80,8 +81,8 @@ export function SeasonRequestMenu({
       setOpen(false);
       setResult(
         selected === "all"
-          ? await requestRemainingAction({ tmdbId, ...(storageId ? { storageId } : {}) })
-          : await requestSeasonAction({ tmdbId, seasonNumber: selected, ...(storageId ? { storageId } : {}) }),
+          ? await requestRemainingAction({ tmdbId, storageId })
+          : await requestSeasonAction({ tmdbId, seasonNumber: selected, storageId }),
       );
       // Re-fetch so the queued run mounts the AcquiringPoller; once it finishes,
       // the acquired season leaves untrackedSeasons and this menu unmounts.
@@ -106,7 +107,7 @@ export function SeasonRequestMenu({
             return;
           }
           startTransition(async () => {
-            setResult(await requestSeasonAction({ tmdbId, seasonNumber: onlySeason }));
+            setResult(await requestSeasonAction({ tmdbId, seasonNumber: onlySeason, storageId }));
             router.refresh();
           });
         }}

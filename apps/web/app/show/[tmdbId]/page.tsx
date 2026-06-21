@@ -121,7 +121,11 @@ async function ShowContent({
       activeStorageId={workspace.activeStorageId}
     >
       {view ? (
-        view.kind === "movie" ? <MovieHub view={view} /> : <TvHub view={view} />
+        view.kind === "movie" ? (
+          <MovieHub view={view} />
+        ) : (
+          <TvHub view={view} storageId={workspace.activeStorageId} />
+        )
       ) : (
         <div className="quiet-state">
           <TriangleAlert size={24} aria-hidden />
@@ -133,7 +137,7 @@ async function ShowContent({
   );
 }
 
-function TvHub({ view }: { view: TitleHubView }) {
+function TvHub({ view, storageId }: { view: TitleHubView; storageId: string | undefined }) {
   const badge = aggregateBadge[view.aggregate];
   return (
     <AcquisitionLockProvider>
@@ -186,6 +190,7 @@ function TvHub({ view }: { view: TitleHubView }) {
             {view.untrackedSeasonNumbers.length > 0 && view.seasons.length > 1 ? (
               <RequestRemainingButton
                 tmdbId={view.tmdbId}
+                storageId={storageId}
                 titleAcquiring={view.acquiring}
                 label={
                   view.aggregate === "untracked"
@@ -218,6 +223,7 @@ function TvHub({ view }: { view: TitleHubView }) {
               key={season.seasonNumber}
               season={season}
               tmdbId={view.tmdbId}
+              storageId={storageId}
               acquiring={view.acquiring}
               demoEntry={{
                 tmdbId: view.tmdbId,
@@ -324,11 +330,14 @@ function HubSkeleton() {
 function SeasonRow({
   season,
   tmdbId,
+  storageId,
   acquiring,
   demoEntry,
 }: {
   season: TitleHubSeason;
   tmdbId: number;
+  /** Tree model: the active workspace drive — acquisition lands HERE. */
+  storageId: string | undefined;
   acquiring: boolean;
   demoEntry?: DemoAcquisitionEntry | undefined;
 }) {
@@ -372,6 +381,7 @@ function SeasonRow({
         <RequestSeasonButton
           tmdbId={tmdbId}
           seasonNumber={season.seasonNumber}
+          storageId={storageId}
           titleAcquiring={acquiring}
           demoEntry={demoEntry}
         />

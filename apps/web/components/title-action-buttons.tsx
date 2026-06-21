@@ -18,11 +18,15 @@ import { useDemoAcquiredTmdbIds } from "../lib/use-demo-session";
 export function RequestSeasonButton({
   tmdbId,
   seasonNumber,
+  storageId,
   titleAcquiring = false,
   demoEntry,
 }: {
   tmdbId: number;
   seasonNumber: number;
+  /** Tree model: the active workspace drive — acquisition lands HERE. REQUIRED
+   *  (value may be undefined = primary) so the workspace is always threaded. */
+  storageId: string | undefined;
   /** Server truth: this title already has an acquisition run in flight. */
   titleAcquiring?: boolean;
   /** Demo only: recorded to the session library when the scripted playback ends. */
@@ -69,7 +73,7 @@ export function RequestSeasonButton({
         }
         lock?.lock(scope);
         startTransition(async () => {
-          setResult(await requestSeasonAction({ tmdbId, seasonNumber }));
+          setResult(await requestSeasonAction({ tmdbId, seasonNumber, storageId }));
           router.refresh();
         });
       }}
@@ -89,11 +93,15 @@ export function RequestSeasonButton({
 export function RequestRemainingButton({
   tmdbId,
   label,
+  storageId,
   titleAcquiring = false,
   demoEntry,
 }: {
   tmdbId: number;
   label: string;
+  /** Tree model: the active workspace drive — acquisition lands HERE. REQUIRED
+   *  (value may be undefined = primary) so the workspace is always threaded. */
+  storageId: string | undefined;
   /** Server truth: this title already has an acquisition run in flight. */
   titleAcquiring?: boolean;
   /** Demo only: recorded to the session library when the scripted playback ends. */
@@ -138,7 +146,7 @@ export function RequestRemainingButton({
         }
         lock?.lock(scope);
         startTransition(async () => {
-          setResult(await requestRemainingAction({ tmdbId }));
+          setResult(await requestRemainingAction({ tmdbId, storageId }));
           router.refresh();
         });
       }}
