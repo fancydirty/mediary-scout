@@ -1100,7 +1100,12 @@ p {
 
 @media (max-width: 860px) {
   .app-shell {
-    grid-template-columns: 1fr;
+    /* minmax(0, 1fr) — NOT bare `1fr` (= minmax(auto, 1fr)). A bare 1fr track
+       grows to its content's min-content, so a wide child (search form, candidate
+       card) pushed the single column to ~600px and the whole page overflowed the
+       viewport on mobile. minmax(0, …) pins the track to the container width and
+       lets inner content wrap/shrink instead. */
+    grid-template-columns: minmax(0, 1fr);
     /* Pack rows to the top. Without this, a short page (e.g. one search result)
        lets the grid distribute the leftover min-height:100vh space INTO the
        rows, stretching the top nav row tall. */
@@ -1171,6 +1176,38 @@ p {
 
   .title-stage {
     flex-direction: column;
+  }
+
+  /* The search box has a fixed 320px input (+ the 搜索 button) → ~500px, wider
+     than a phone. Let the form take the full row and the box flex/shrink so the
+     input fills whatever space is left instead of overflowing. */
+  .search-form {
+    width: 100%;
+  }
+
+  .search-box {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .search-box input,
+  .search-box-large input {
+    width: 100%;
+  }
+
+  /* The candidate result grid forces a 380px minimum column (minmax(380px,1fr)),
+     which overflows a ~358px-wide mobile content column. One card per row on
+     phones. */
+  .candidate-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* The title backdrop full-bleeds with left/right:-32px to extend under the
+     desktop column padding. Mobile .main padding is only 16px, so -32px overshot
+     the viewport (~16px of horizontal scroll). Match the mobile padding. */
+  .hub-backdrop {
+    left: -16px;
+    right: -16px;
   }
 }
 
