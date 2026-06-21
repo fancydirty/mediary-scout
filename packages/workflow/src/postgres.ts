@@ -542,12 +542,18 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
   async untrackTitle(
     tmdbId: number,
     scope: WorkflowScope,
+    mediaKind: "movie" | "tv",
     seasonNumber?: number,
   ): Promise<{ status: "untracked" | "not_found" | "in_flight"; removedSeasons: number }> {
     // Enumerate this drive's target seasons for the title (reuse scoped read).
+    // Match mediaKind too: TMDB movie/tv id namespaces collide (movie 278 ≠ tv 278),
+    // so filtering by numeric tmdbId alone would untrack the wrong title. "tv"
+    // covers both tv and anime (same tv namespace).
+    const wantMovie = mediaKind === "movie";
     const states = (await this.listTrackedSeasonStates(scope)).filter(
       (state) =>
         state.title.tmdbId === tmdbId &&
+        (state.title.type === "movie") === wantMovie &&
         (seasonNumber === undefined || state.season.seasonNumber === seasonNumber),
     );
     if (states.length === 0) {

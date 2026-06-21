@@ -270,11 +270,19 @@ export async function untrackTitleAction(input: {
   // Tree model: REQUIRED (value may be undefined = primary) so the active
   // workspace is always threaded — untrack must act on the drive being viewed.
   storageId: string | undefined;
+  // Disambiguates TMDB's movie/tv id namespaces (same number can be both) so
+  // untracking a series never deletes a movie with the same id, and vice versa.
+  mediaKind: "movie" | "tv";
   seasonNumber?: number;
 }): Promise<{ status: "untracked" | "not_found" | "in_flight"; message: string }> {
   assertNotDemo();
   const { untrackTrackedTitle } = await import("../lib/workflow-runtime");
-  const result = await untrackTrackedTitle(input.tmdbId, input.storageId, input.seasonNumber);
+  const result = await untrackTrackedTitle(
+    input.tmdbId,
+    input.storageId,
+    input.mediaKind,
+    input.seasonNumber,
+  );
   revalidatePath("/");
   revalidatePath(`/show/${input.tmdbId}`);
   if (result.status === "in_flight") {

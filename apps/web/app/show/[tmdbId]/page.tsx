@@ -216,7 +216,7 @@ function TvHub({
               />
             ) : null}
             {view.aggregate !== "untracked" ? (
-              <UntrackButton tmdbId={view.tmdbId} storageId={storageId} basePath={basePath} />
+              <UntrackButton tmdbId={view.tmdbId} storageId={storageId} mediaKind="tv" basePath={basePath} />
             ) : null}
           </div>
         </div>
@@ -308,7 +308,7 @@ function MovieHub({
             {view.overview ? <p className="hub-overview">{view.overview}</p> : null}
             {view.state !== "untracked" ? (
               <div className="hub-actions">
-                <UntrackButton tmdbId={view.tmdbId} storageId={storageId} basePath={basePath} />
+                <UntrackButton tmdbId={view.tmdbId} storageId={storageId} mediaKind="movie" basePath={basePath} />
               </div>
             ) : null}
           </div>
@@ -447,6 +447,7 @@ function SeasonRow({
           <UntrackButton
             tmdbId={tmdbId}
             storageId={storageId}
+            mediaKind="tv"
             seasonNumber={season.seasonNumber}
             basePath={basePath}
             label={`取消第 ${season.seasonNumber} 季追踪`}

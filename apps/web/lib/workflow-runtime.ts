@@ -291,14 +291,16 @@ export async function getActiveWorkspaceScope(storageId?: string): Promise<Workf
   return { accountId, connectedStorageId };
 }
 
-/** 取消追踪:解析当前工作区 scope 后委派仓库删除该剧/季的追踪记录(不碰网盘文件)。 */
+/** 取消追踪:解析当前工作区 scope 后委派仓库删除该剧/季的追踪记录(不碰网盘文件)。
+ *  mediaKind 区分 movie/tv 命名空间(同一数字 id 可同时是电影和剧集)。 */
 export async function untrackTrackedTitle(
   tmdbId: number,
   storageId: string | undefined,
+  mediaKind: "movie" | "tv",
   seasonNumber?: number,
 ): Promise<{ status: "untracked" | "not_found" | "in_flight"; removedSeasons: number }> {
   const scope = await getActiveWorkspaceScope(storageId);
-  return getWorkflowRepository().untrackTitle(tmdbId, scope, seasonNumber);
+  return getWorkflowRepository().untrackTitle(tmdbId, scope, mediaKind, seasonNumber);
 }
 
 /** Resolve a global page's (通知/活动/设置) active workspace from its `?w` param.

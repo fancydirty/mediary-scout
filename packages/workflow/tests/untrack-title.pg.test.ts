@@ -74,13 +74,66 @@ async function seedSeason(
   });
 }
 
+async function seedMovie(repo: PostgresWorkflowRepository, tmdbId: number, storageId: string): Promise<void> {
+  const seasonId = `tmdb_movie_${tmdbId}_movie`;
+  await repo.saveWorkflowRunSnapshot({
+    accountId: ACCOUNT,
+    connectedStorageId: storageId,
+    title: {
+      id: `tmdb_movie_${tmdbId}`,
+      tmdbId,
+      type: "movie",
+      title: `Movie ${tmdbId}`,
+      originalTitle: `Movie ${tmdbId}`,
+      year: 2026,
+      aliases: [],
+    },
+    season: {
+      id: seasonId,
+      mediaTitleId: `tmdb_movie_${tmdbId}`,
+      seasonNumber: 1,
+      status: "completed",
+      qualityPreference: "4K",
+      storageDirectoryId: "dir",
+      totalEpisodes: 1,
+      latestAiredEpisode: 1,
+      latestAiredSource: "metadata",
+    },
+    workflowRun: {
+      id: `run_${seasonId}_${storageId}`,
+      kind: "movie_init",
+      status: "succeeded",
+      trackedSeasonId: seasonId,
+      startedAt: "2026-06-21T00:00:00.000Z",
+      finishedAt: "2026-06-21T00:01:00.000Z",
+      auditEvents: [],
+    },
+    episodes: createEpisodeStates({ trackedSeasonId: seasonId, seasonNumber: 1, totalEpisodes: 1, latestAiredEpisode: 1 }).map(
+      (e) => ({ ...e, obtained: true }),
+    ),
+    resourceSnapshots: [],
+    decisions: [],
+    transferAttempts: [],
+    notifications: [],
+  });
+}
+
 async function cleanup(pool: pg.Pool): Promise<void> {
-  for (const id of ["tmdb_tv_500_s1", "tmdb_tv_500_s2", "tmdb_tv_501_s1", "tmdb_tv_502_s1"]) {
+  for (const id of [
+    "tmdb_tv_500_s1",
+    "tmdb_tv_500_s2",
+    "tmdb_tv_501_s1",
+    "tmdb_tv_502_s1",
+    "tmdb_tv_600_s1",
+    "tmdb_movie_600_movie",
+  ]) {
     await pool.query("DELETE FROM episode_states WHERE tracked_season_id = $1", [id]);
     await pool.query("DELETE FROM workflow_runs WHERE tracked_season_id = $1", [id]);
     await pool.query("DELETE FROM tracked_seasons WHERE id = $1", [id]);
   }
-  await pool.query("DELETE FROM media_titles WHERE id IN ('tmdb_tv_500','tmdb_tv_501','tmdb_tv_502')");
+  await pool.query(
+    "DELETE FROM media_titles WHERE id IN ('tmdb_tv_500','tmdb_tv_501','tmdb_tv_502','tmdb_tv_600','tmdb_movie_600')",
+  );
   await pool.query("DELETE FROM connected_storages WHERE id IN ($1,$2)", [DRIVE_A, DRIVE_B]);
 }
 
@@ -103,7 +156,7 @@ d("untrackTitle (Postgres)", () => {
       await seedSeason(repo, { tmdbId: 500, seasonNumber: 1, storageId: DRIVE_B });
       await seedSeason(repo, { tmdbId: 501, seasonNumber: 1, storageId: DRIVE_A });
 
-      const result = await repo.untrackTitle(500, { accountId: ACCOUNT, connectedStorageId: DRIVE_A });
+      const result = await repo.untrackTitle(500, { accountId: ACCOUNT, connectedStorageId: DRIVE_A }, "tv");
       expect(result).toEqual({ status: "untracked", removedSeasons: 2 });
 
       // A-drive rows for 500 cleared.
@@ -133,7 +186,7 @@ d("untrackTitle (Postgres)", () => {
       expect((await pool.query("SELECT 1 FROM media_titles WHERE id = 'tmdb_tv_501'")).rowCount).toBe(1);
 
       // Now untrack the last reference (B drive) → global title finally deleted.
-      const second = await repo.untrackTitle(500, { accountId: ACCOUNT, connectedStorageId: DRIVE_B });
+      const second = await repo.untrackTitle(500, { accountId: ACCOUNT, connectedStorageId: DRIVE_B }, "tv");
       expect(second.status).toBe("untracked");
       expect((await pool.query("SELECT 1 FROM media_titles WHERE id = 'tmdb_tv_500'")).rowCount).toBe(0);
     } finally {
@@ -155,10 +208,39 @@ d("untrackTitle (Postgres)", () => {
       );
       await seedSeason(repo, { tmdbId: 502, seasonNumber: 1, storageId: DRIVE_A, status: "running" });
 
-      const result = await repo.untrackTitle(502, { accountId: ACCOUNT, connectedStorageId: DRIVE_A });
+      const result = await repo.untrackTitle(502, { accountId: ACCOUNT, connectedStorageId: DRIVE_A }, "tv");
       expect(result).toEqual({ status: "in_flight", removedSeasons: 0 });
       expect(
         (await pool.query("SELECT 1 FROM tracked_seasons WHERE id = 'tmdb_tv_502_s1'")).rowCount,
+      ).toBe(1);
+    } finally {
+      await cleanup(pool);
+      await pool.end();
+    }
+  });
+
+  it("跨类型隔离:取消同 id 的剧集不删同 id 的电影", async () => {
+    const pool = new pg.Pool({ connectionString: URL });
+    const repo = new PostgresWorkflowRepository(pool);
+    try {
+      await initializeWorkflowPostgresSchema(pool);
+      await cleanup(pool);
+      await pool.query(
+        "INSERT INTO connected_storages (id, account_id, provider, provider_uid, payload, created_at) VALUES " +
+          "($1,$2,'pan115','uid_a','{}'::jsonb,'2026-06-21T00:00:00Z') ON CONFLICT DO NOTHING",
+        [DRIVE_A, ACCOUNT],
+      );
+      await seedSeason(repo, { tmdbId: 600, seasonNumber: 1, storageId: DRIVE_A });
+      await seedMovie(repo, 600, DRIVE_A);
+
+      const result = await repo.untrackTitle(600, { accountId: ACCOUNT, connectedStorageId: DRIVE_A }, "tv");
+      expect(result).toEqual({ status: "untracked", removedSeasons: 1 });
+
+      // tv gone, movie (same numeric id) survives.
+      expect((await pool.query("SELECT 1 FROM media_titles WHERE id = 'tmdb_tv_600'")).rowCount).toBe(0);
+      expect((await pool.query("SELECT 1 FROM media_titles WHERE id = 'tmdb_movie_600'")).rowCount).toBe(1);
+      expect(
+        (await pool.query("SELECT 1 FROM tracked_seasons WHERE id = 'tmdb_movie_600_movie'")).rowCount,
       ).toBe(1);
     } finally {
       await cleanup(pool);
