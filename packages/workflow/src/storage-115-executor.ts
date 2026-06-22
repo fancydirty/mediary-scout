@@ -918,7 +918,10 @@ export function createProtectedStorage115Executor(
     // recursive post-transfer verification listings.
     executorOptions.apiGuardOptions = {
       minDelayMs: positiveIntFromEnv(env["MEDIA_TRACK_115_MIN_DELAY_MS"]) ?? 1_200,
-      maxCallsPerOperation: positiveIntFromEnv(env["MEDIA_TRACK_115_MAX_API_CALLS"]) ?? 240,
+      // HARD limit (throws Pan115RiskControlError). The agent gets a SOFT wrap-up
+      // warning earlier at BUDGET_SOFT_REMIND_AT(=240) via the agent loop, leaving
+      // headroom so its own markObtained/discardStaging cleanup still fits under 300.
+      maxCallsPerOperation: positiveIntFromEnv(env["MEDIA_TRACK_115_MAX_API_CALLS"]) ?? 300,
       maxListItemsPerResponse: 1000,
       ...options.apiGuardOptions,
     };

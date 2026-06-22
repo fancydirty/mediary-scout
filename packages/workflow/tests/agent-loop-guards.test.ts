@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_MAX_STEPS,
   STEP_50_REMINDER,
+  BUDGET_SOFT_REMIND_AT,
+  BUDGET_REMINDER,
+  budgetReflectionNudge,
+  stepReflectionNudge,
+  prepareStepSystemOverride,
   buildRepetitionStop,
   reflectionSystemOverride,
   toStepSignature,
@@ -59,6 +64,60 @@ describe("reflectionSystemOverride", () => {
     expect(STEP_50_REMINDER).toContain("巡检"); // remaining caught next patrol
     expect(STEP_50_REMINDER).toContain("discardStaging");
     expect(STEP_50_REMINDER).toMatch(/不是失败|正常|稳/); // reassuring framing
+  });
+});
+
+describe("stepReflectionNudge", () => {
+  it("returns the step reminder within the window, null before", () => {
+    expect(stepReflectionNudge(50, 60)).toBe(STEP_50_REMINDER);
+    expect(stepReflectionNudge(59, 60)).toBe(STEP_50_REMINDER);
+    expect(stepReflectionNudge(49, 60)).toBeNull();
+  });
+});
+
+describe("budgetReflectionNudge (115 call-budget soft warning)", () => {
+  it("fires at/after the soft threshold (240), not before", () => {
+    expect(budgetReflectionNudge(239)).toBeNull();
+    expect(budgetReflectionNudge(240)).toBe(BUDGET_REMINDER);
+    expect(budgetReflectionNudge(299)).toBe(BUDGET_REMINDER);
+  });
+
+  it("no nudge when spent is unknown (fakes/sim without apiCallCount)", () => {
+    expect(budgetReflectionNudge(undefined)).toBeNull();
+  });
+
+  it("soft threshold is 240 (hard limit 300 is the guard's throw)", () => {
+    expect(BUDGET_SOFT_REMIND_AT).toBe(240);
+  });
+
+  it("reminder is a calm wrap-up: markObtained + discardStaging + next-patrol safety net", () => {
+    expect(BUDGET_REMINDER).toContain("markObtained");
+    expect(BUDGET_REMINDER).toContain("discardStaging");
+    expect(BUDGET_REMINDER).toMatch(/不是失败|正常|巡检/);
+  });
+});
+
+describe("prepareStepSystemOverride (composes step-cap + budget nudges)", () => {
+  const base = "BASE SYSTEM";
+  it("budget only: over 240 calls, far from step cap → budget nudge, no step nudge", () => {
+    const s = prepareStepSystemOverride({ stepNumber: 5, maxSteps: 60, baseSystem: base, apiCallsSpent: 250 })!;
+    expect(s).toContain(BUDGET_REMINDER);
+    expect(s).not.toContain(STEP_50_REMINDER);
+    expect(s).toContain(base);
+  });
+  it("step only: near cap, under budget → step nudge, no budget nudge", () => {
+    const s = prepareStepSystemOverride({ stepNumber: 55, maxSteps: 60, baseSystem: base, apiCallsSpent: 10 })!;
+    expect(s).toContain(STEP_50_REMINDER);
+    expect(s).not.toContain(BUDGET_REMINDER);
+  });
+  it("both: near cap AND over budget → both nudges appended", () => {
+    const s = prepareStepSystemOverride({ stepNumber: 55, maxSteps: 60, baseSystem: base, apiCallsSpent: 260 })!;
+    expect(s).toContain(STEP_50_REMINDER);
+    expect(s).toContain(BUDGET_REMINDER);
+  });
+  it("neither → undefined (no override)", () => {
+    expect(prepareStepSystemOverride({ stepNumber: 5, maxSteps: 60, baseSystem: base, apiCallsSpent: 10 })).toBeUndefined();
+    expect(prepareStepSystemOverride({ stepNumber: 5, maxSteps: 60, baseSystem: base })).toBeUndefined();
   });
 });
 

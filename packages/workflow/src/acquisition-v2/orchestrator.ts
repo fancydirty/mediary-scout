@@ -111,6 +111,9 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     ...(request.qualityGuidance === undefined ? {} : { qualityGuidance: request.qualityGuidance }),
     ...(request.storageProvider === undefined ? {} : { storageProvider: request.storageProvider }),
     ...(request.onProgress ? { onProgress: request.onProgress } : {}),
+    // Real 115 exposes its cumulative call count → drives the budget soft-warning
+    // (240) in the agent loop; fakes/sim omit apiCallCount → no nudge.
+    ...(request.executor.apiCallCount ? { apiCallCount: () => request.executor.apiCallCount!() } : {}),
   };
 
   const result =
