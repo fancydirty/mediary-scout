@@ -8,6 +8,7 @@ import {
   requestSeasonAction,
   type RequestTrackingActionResult,
 } from "../app/actions";
+import { globalNavHref } from "@media-track/workflow";
 import { isLockedResult, RequestedBadge } from "./request-state";
 import { isDemoModeClient } from "../lib/demo-mode";
 import { DemoAcquirePlayback } from "./demo-acquire-playback";
@@ -69,7 +70,7 @@ export function SeasonRequestMenu({
   }
 
   if (isLockedResult(result)) {
-    return <RequestedBadge title={result?.message} />;
+    return <RequestedBadge title={result?.message} activityHref={globalNavHref("/activity", storageId)} />;
   }
 
   const submit = () => {

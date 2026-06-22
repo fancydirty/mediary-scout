@@ -4,7 +4,7 @@ import { CalendarClock, Check, LoaderCircle, Plus } from "lucide-react";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { requestTrackingAction, type RequestTrackingActionResult } from "../app/actions";
-import type { SearchActionState } from "@media-track/workflow";
+import { type SearchActionState, globalNavHref } from "@media-track/workflow";
 import { RequestedBadge } from "./request-state";
 import { isDemoModeClient } from "../lib/demo-mode";
 import { DemoAcquirePlayback } from "./demo-acquire-playback";
@@ -83,7 +83,7 @@ export function RequestTrackButton({
   }
 
   if (inProgress) {
-    return <RequestedBadge title={result?.message} />;
+    return <RequestedBadge title={result?.message} activityHref={globalNavHref("/activity", storageId)} />;
   }
 
   if (reserved) {
