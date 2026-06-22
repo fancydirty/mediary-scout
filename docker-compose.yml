@@ -65,6 +65,11 @@ services:
     command: tunnel --no-autoupdate run
     environment:
       TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    # Lets the connector resolve the Docker host, so a tunnel Public Hostname of
+    # type SSH can point at the host's sshd (host.docker.internal:22) — enabling
+    # SSH-over-tunnel from anywhere without opening a port. Harmless if unused.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - web
     restart: unless-stopped
