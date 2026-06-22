@@ -92,10 +92,17 @@ describe("budgetReflectionNudge (115 call-budget soft warning)", () => {
     expect(BUDGET_SOFT_REMIND_AT).toBe(240);
   });
 
-  it("reminder is a calm wrap-up: markObtained + discardStaging + next-patrol safety net", () => {
+  it("reminder is a calm wrap-up: markObtained + next-patrol safety net", () => {
     expect(BUDGET_REMINDER).toContain("markObtained");
-    expect(BUDGET_REMINDER).toContain("discardStaging");
     expect(BUDGET_REMINDER).toMatch(/不是失败|正常|巡检/);
+  });
+
+  it("cleanup step is movie-aware: TV uses discardStaging, movie uses flattenMovie (not discardStaging)", () => {
+    // Injected for both TV and movie runs — must not tell a movie to discardStaging
+    // (movies have no separate staging; that path is wrong/harmful). Copilot PR#22.
+    expect(BUDGET_REMINDER).toContain("discardStaging"); // still the TV/anime path
+    expect(BUDGET_REMINDER).toContain("flattenMovie"); // movie path explicitly covered
+    expect(BUDGET_REMINDER).toMatch(/电影.*不要再?\s*discardStaging|电影.*flattenMovie/);
   });
 });
 

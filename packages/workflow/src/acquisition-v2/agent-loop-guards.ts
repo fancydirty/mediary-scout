@@ -47,8 +47,8 @@ export function budgetSoftThreshold(hardBudget: number): number {
 export const BUDGET_REMINDER =
   "【网盘调用提醒】本次任务的 115 接口调用已接近预算上限。这是正常的收尾信号,不是失败。请:" +
   "① 不要再发起任何新的搜索或转存(searchResources / transferCandidate / transferUntilLanded 都不要);" +
-  "② 对确实落盘的 markObtained、把已转存好的用 moveToSeason 归位;" +
-  "③ discardStaging 打扫战场;④ finish。" +
+  "② 对确实落盘的 markObtained、把已转存好的归位(TV/动漫用 moveToSeason 入季;电影用 flattenMovie 收进影片目录);" +
+  "③ 打扫战场:TV/动漫用 discardStaging 清空 staging;电影已落影片目录、flattenMovie 已就地清理,不要再 discardStaging;④ finish。" +
   "这次没来得及拿的集不要紧——只要没被 markObtained,下次每日巡检会自动补齐。" +
   "请立刻稳妥收尾:调用一旦到硬上限会被强制中断,别把预算耗在还没收尾上。";
 
