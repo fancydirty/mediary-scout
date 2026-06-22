@@ -188,6 +188,11 @@ export class Pan115ApiGuard {
     this.onEvent = options.onEvent ?? (() => undefined);
   }
 
+  /** Lifetime 115 API calls this guard has made — for per-step观测, not control. */
+  callsSpent(): number {
+    return this.callCount;
+  }
+
   async run<T>(operation: Pan115Operation, call: () => Promise<T>): Promise<T> {
     this.assertCircuitClosed(operation);
     await this.applyDelay(operation);
@@ -334,6 +339,11 @@ export class Storage115Executor implements StorageExecutor {
     this.offlineMaterializeAttempts = options.offlineMaterializeAttempts ?? 4;
     this.offlineMaterializePollMs = options.offlineMaterializePollMs ?? 2000;
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  }
+
+  /** Cumulative 115 API calls so far (observability — surfaced into the agent trace). */
+  apiCallCount(): number {
+    return this.apiGuard.callsSpent();
   }
 
   async createDirectory(input: { name: string; parentId: string }): Promise<string> {

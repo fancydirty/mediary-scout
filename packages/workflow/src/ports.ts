@@ -53,4 +53,7 @@ export interface StorageExecutor {
   listChildDirectories(directoryId: string): Promise<Array<{ id: string; name: string }>>;
   /** Move files (by provider file id) into a target directory inside the write scope. */
   moveFiles(input: { fileIds: string[]; targetDirectoryId: string }): Promise<{ moved: string[] }>;
+  /** Cumulative 115 API calls made so far — observability only. Optional: only the
+   *  real 115 executor implements it; fakes/sims omit it. */
+  apiCallCount?(): number;
 }
