@@ -17,33 +17,25 @@ export function isLockedResult(result: RequestTrackingActionResult | null): bool
 }
 
 /** The standalone "已请求" pill shown after a request is queued (spinner — it is
- *  NOT done, only accepted). Shared by the badge-style acquire controls.
- *  When `activityHref` is given the pill becomes a link to the live 活动 page —
- *  so the real, persistent progress is one click away instead of a manual nav
- *  (the 投产 acquisition-feedback gap the author flagged: "真实情况要去活动里看"). */
+ *  NOT done, only accepted). Shared by the badge-style acquire controls. It links
+ *  to the live 活动 page so the real, persistent progress is one click away instead
+ *  of a manual nav (the 投产 feedback gap the author flagged: "真实情况要去活动里看").
+ *  The href is built inline (mirrors workflow's globalNavHref) — NOT imported from
+ *  the @media-track/workflow barrel, which would drag pg/postgres into this client
+ *  bundle and break the Next build. */
 export function RequestedBadge({
   title,
-  activityHref,
+  storageId,
 }: {
   title?: string | undefined;
-  activityHref?: string | undefined;
+  /** Active drive — scopes the 活动 link with ?w so leaving keeps the drive. */
+  storageId?: string | undefined;
 }) {
-  const inner = (
-    <>
+  const href = storageId ? `/activity?w=${encodeURIComponent(storageId)}` : "/activity";
+  return (
+    <Link className="hub-badge tone-green" href={href} title={title ?? "查看获取进度（活动）"}>
       <LoaderCircle size={12} className="spin" aria-hidden />
       已请求
-    </>
-  );
-  if (activityHref) {
-    return (
-      <Link className="hub-badge tone-green" href={activityHref} title={title ?? "查看获取进度（活动）"}>
-        {inner}
-      </Link>
-    );
-  }
-  return (
-    <span className="hub-badge tone-green" title={title}>
-      {inner}
-    </span>
+    </Link>
   );
 }
