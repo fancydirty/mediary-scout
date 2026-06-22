@@ -24,5 +24,9 @@ ENV HOSTNAME=0.0.0.0
 # Standalone traces from the monorepo root → server entry at apps/web/server.js.
 COPY --from=builder /app/apps/web/.next/standalone ./
 COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
+# `output: standalone` does NOT bundle public/ — copy it explicitly, else every
+# public asset (e.g. /brands/<provider>.svg for the workspace switcher icons) 404s
+# and BrandMark falls back to a bare dot (demo on Vercel serves public/ natively).
+COPY --from=builder /app/apps/web/public ./apps/web/public
 EXPOSE 3000
 CMD ["node", "apps/web/server.js"]
