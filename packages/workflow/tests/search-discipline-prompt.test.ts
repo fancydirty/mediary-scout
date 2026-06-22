@@ -2,18 +2,19 @@ import { describe, expect, it } from "vitest";
 import { buildTvAnimeSystemPrompt, buildMovieSystemPrompt } from "../src/acquisition-v2/task-agents.js";
 
 // Over-search regression: a live 超市 (躲在超市后门抽烟的两人) no-coverage run did 12
-// searchPansou calls — churning many DISTINCT variants and appending genre/sub-type tags
-// (动漫/动画/日剧/ドラマ) that the per-title recipe forbids. (An identical re-search and a
-// "全集" fallback are NOT defects — the recipe relies on flaky-0 jitter-retry and allows
-// 全集/Complete as a fallback.) The agent kept chasing the Japanese name into manga/raws. The
-// fix elevates search discipline to a prominent hard rule (prompt-only, no mechanical
-// keyword filter — selection stays the agent's judgment per the author's stance).
+// searchPansou calls — re-submitting an identical keyword (a no-op: searchResources dedups
+// it, no fresh provider hit — sandbox.ts) AND churning many DISTINCT variants with genre/
+// sub-type tags appended (动漫/动画/日剧/ドラマ) that the recipe forbids, chasing the Japanese
+// name into manga/raws. (A "全集" fallback is NOT a defect — the recipe allows it.) The fix
+// elevates search discipline to a prominent hard rule (prompt-only, no mechanical keyword
+// filter — selection stays the agent's judgment per the author's stance).
 describe("search discipline — anti-churn hard rule (超市 over-search regression)", () => {
-  it("tv/anime prompt allows jitter-retry but forbids genre/sub-type tags and bounds variant churn", () => {
+  it("tv/anime prompt: identical re-search is deduped (vary instead), forbids genre/sub-type tags, bounds churn", () => {
     const p = buildTvAnimeSystemPrompt({});
-    // a 0 can be jitter — re-running the SAME keyword 2-3x is correct (must NOT forbid it,
-    // the per-title recipe's universal law relies on it). The rule targets variant churn, not jitter-retry.
-    expect(p).toMatch(/jitter/i);
+    // re-submitting an identical keyword is a no-op (sandbox dedups → cached snapshot); to
+    // re-check a 0 you must VARY the keyword. The rule must reflect the real tool behavior.
+    expect(p).toMatch(/dedups|cached snapshot/i);
+    expect(p).toMatch(/vary the keyword/i);
     // never append a genre/sub-type tag — assert the exact phrase + a concrete offending tag
     expect(p).toContain("genre/sub-type tag");
     expect(p).toContain("番剧");
