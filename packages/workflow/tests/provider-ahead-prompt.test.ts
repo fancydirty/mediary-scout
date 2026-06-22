@@ -9,10 +9,13 @@ import { buildTvAnimeSystemPrompt, buildMovieSystemPrompt } from "../src/acquisi
 describe("coverage honesty — trust a full pack's beyond-aired episodes (#4 provider-ahead)", () => {
   it("tv/anime: marks verified-landed beyond-aired episodes as provider-ahead", () => {
     const p = buildTvAnimeSystemPrompt({});
-    // NEW #4 clause — distinctive phrase absent from the prior prompt:
+    // NEW #4 clause — distinctive phrases absent from the prior prompt:
     expect(p).toContain("ahead of TMDB"); // a full pack can be ahead of TMDB's aired count
-    expect(p).toMatch(/mark[^.]{0,90}provider-ahead/i); // mark them → recorded provider-ahead
-    expect(p).toMatch(/verified|inspect|landed/i); // safety: only verified-landed, not pack-claimed
+    expect(p).toMatch(/markObtained them too[\s\S]{0,80}provider-ahead/i); // mark them → recorded provider-ahead
+    // must MOVE the extra episodes into the season dir, or discardStaging wipes them (Copilot #23):
+    expect(p).toMatch(/moveToSeason[^.]{0,140}discardStaging|discardStaging[^.]{0,140}moveToSeason/i);
+    // hard-safety wording specific to this clause (not a generic 'inspect' elsewhere):
+    expect(p).toContain("a pack merely claims");
     expect(p).toMatch(/patrol/i); // genuinely-unaired (no resource) still left for the patrol
   });
 
