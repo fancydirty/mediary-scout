@@ -11,6 +11,7 @@ import type {
 import { runTvAcquisitionV2 } from "./acquisition-v2/run-tv-v2.js";
 import type { BridgedV2Result } from "./acquisition-v2/workflow-v2-bridge.js";
 import { makeProgressSink } from "./acquisition-v2/progress-sink.js";
+import { makeAgentTraceSink, combineToolEventSinks } from "./acquisition-v2/agent-trace-sink.js";
 import { runMovieAcquisitionV2 } from "./movie-workflow-v2.js";
 import type { ResourceProvider, StorageExecutor } from "./ports.js";
 import type { WorkflowRepository } from "./repository.js";
@@ -76,6 +77,30 @@ function passthrough(input: TvV2Common): {
   };
 }
 
+/** The run's onProgress: live activity progress (for the activity page) AND the
+ *  durable per-step trace (for post-mortem复盘), combined + isolated so one can't
+ *  break the other. `apiCallCount` surfaces the 115 budget burn per step (real 115
+ *  only; fakes omit it). */
+function progressAndTraceSink(input: {
+  repository: WorkflowRepository;
+  workflowRunId: string;
+  neededHint: number;
+  storage: StorageExecutor;
+}): ReturnType<typeof combineToolEventSinks> {
+  return combineToolEventSinks(
+    makeProgressSink({
+      repository: input.repository,
+      workflowRunId: input.workflowRunId,
+      neededHint: input.neededHint,
+    }),
+    makeAgentTraceSink({
+      repository: input.repository,
+      workflowRunId: input.workflowRunId,
+      apiCallCount: () => input.storage.apiCallCount?.(),
+    }),
+  );
+}
+
 async function persistSingleSeason(input: {
   kind: WorkflowKind;
   title: MediaTitle;
@@ -131,10 +156,11 @@ export async function runType2InitializationV2AndPersist(
     model: input.model,
     workflowRunId: input.workflowRun.id,
     now,
-    onProgress: makeProgressSink({
+    onProgress: progressAndTraceSink({
       repository: input.repository,
       workflowRunId: input.workflowRun.id,
       neededHint: Math.min(input.season.latestAiredEpisode, input.season.totalEpisodes),
+      storage: input.storage,
     }),
     ...passthrough(input),
   });
@@ -178,10 +204,11 @@ export async function runType3MonitoringV2AndPersist(
     // 实有 = the DB obtained marks; the need is aired − these (NOT a 115 scan).
     priorObtained: input.episodes.filter((episode) => episode.obtained).map((episode) => episode.episodeCode),
     now,
-    onProgress: makeProgressSink({
+    onProgress: progressAndTraceSink({
       repository: input.repository,
       workflowRunId: input.workflowRun.id,
       neededHint: input.episodes.filter((episode) => episode.airStatus === "aired" && !episode.obtained).length,
+      storage: input.storage,
     }),
     ...passthrough(input),
   });
@@ -223,13 +250,14 @@ export async function runSeriesInitializationV2AndPersist(
     model: input.model,
     workflowRunId: input.workflowRun.id,
     now,
-    onProgress: makeProgressSink({
+    onProgress: progressAndTraceSink({
       repository: input.repository,
       workflowRunId: input.workflowRun.id,
       neededHint: input.seasons.reduce(
         (sum, season) => sum + Math.min(season.latestAiredEpisode, season.totalEpisodes),
         0,
       ),
+      storage: input.storage,
     }),
     ...passthrough(input),
   });
@@ -308,10 +336,11 @@ export async function runMovieAcquisitionV2AndPersist(input: {
     moviesParentDirectoryId: input.categoryParentId,
     now,
     deadLinkStore: input.repository,
-    onProgress: makeProgressSink({
+    onProgress: progressAndTraceSink({
       repository: input.repository,
       workflowRunId: input.workflowRun.id,
       neededHint: 1,
+      storage: input.storage,
     }),
     ...(input.searchBudget === undefined ? {} : { searchBudget: input.searchBudget }),
     ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
