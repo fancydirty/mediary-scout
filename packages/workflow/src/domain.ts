@@ -144,7 +144,7 @@ export interface AgentDecision {
 
 /**
  * One agent tool call, captured live (pre-execution) for post-mortem复盘. Appended
- * incrementally so a crashed / budget-throwed run still leaves its trace behind.
+ * incrementally so a run that crashes or aborts on a 115 budget throw still leaves its trace behind.
  * `phase` mirrors AgentPhase in acquisition-v2/activity.ts (inlined here to avoid a
  * domain→acquisition-v2 dependency).
  */
