@@ -932,8 +932,9 @@ export function createProtectedStorage115Executor(
     executorOptions.apiGuardOptions = {
       minDelayMs: positiveIntFromEnv(env["MEDIA_TRACK_115_MIN_DELAY_MS"]) ?? 1_200,
       // HARD limit (throws Pan115RiskControlError) — default 300, configurable here.
-      // The agent gets a SOFT wrap-up warning earlier, at budgetSoftThreshold(this)
-      // (= this minus a fixed headroom) via the agent loop, so its own markObtained/
+      // The agent gets a SOFT wrap-up warning earlier, at
+      // budgetSoftThreshold(maxCallsPerOperation) (= that value minus a fixed
+      // headroom) via the agent loop, so its own markObtained/
       // discardStaging cleanup still fits before the hard stop. Override-safe: the
       // soft threshold is derived from this value, never hardcoded.
       maxCallsPerOperation: positiveIntFromEnv(env["MEDIA_TRACK_115_MAX_API_CALLS"]) ?? 300,
