@@ -142,6 +142,23 @@ export interface AgentDecision {
   reason: string;
 }
 
+/**
+ * One agent tool call, captured live (pre-execution) for post-mortem复盘. Appended
+ * incrementally so a crashed / budget-throwed run still leaves its trace behind.
+ * `phase` mirrors AgentPhase in acquisition-v2/activity.ts (inlined here to avoid a
+ * domain→acquisition-v2 dependency).
+ */
+export interface AgentStep {
+  ordinal: number;
+  toolName: string;
+  args: Record<string, unknown>;
+  activity: string;
+  phase: "search" | "pick" | "transfer" | "verify" | "organize" | "mark" | "finalize";
+  /** Cumulative 115 API calls before this step ran (real 115 runs only; omitted otherwise). */
+  apiCalls?: number;
+  at: string;
+}
+
 export type CandidateDispositionKind = "selected" | "rejected" | "uncertain";
 
 export interface CandidateDisposition {
