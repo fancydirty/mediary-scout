@@ -193,9 +193,10 @@ export class Pan115ApiGuard {
     return this.callCount;
   }
 
-  /** The HARD call budget (throws once callCount reaches it). Surfaced so the agent
-   *  loop can derive its SOFT-warning threshold from the actually-configured limit
-   *  instead of hardcoding a number. */
+  /** The HARD call budget: checked BEFORE each call, the guard refuses (throws
+   *  Pan115RiskControlError) the next call once callCount has reached this value.
+   *  Surfaced so the agent loop can derive its SOFT-warning threshold from the
+   *  actually-configured limit instead of hardcoding a number. */
   callBudget(): number {
     return this.maxCallsPerOperation;
   }
