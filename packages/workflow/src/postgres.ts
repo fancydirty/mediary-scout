@@ -467,13 +467,14 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
   }
 
   async appendAgentStep(workflowRunId: string, step: AgentStep): Promise<void> {
-    await this.withTransaction(async (client) => {
-      await client.query(
-        "INSERT INTO agent_steps (workflow_run_id, ordinal, payload) VALUES ($1, $2, $3::jsonb) " +
-          "ON CONFLICT (workflow_run_id, ordinal) DO NOTHING",
-        [workflowRunId, step.ordinal, json(step)],
-      );
-    });
+    // Hot path: fires once per agent tool call, in parallel across runs. A single
+    // autocommit INSERT on the pool — no BEGIN/COMMIT/connect overhead of a tx.
+    await this.ensureSchema();
+    await this.pool.query(
+      "INSERT INTO agent_steps (workflow_run_id, ordinal, payload) VALUES ($1, $2, $3::jsonb) " +
+        "ON CONFLICT (workflow_run_id, ordinal) DO NOTHING",
+      [workflowRunId, step.ordinal, json(step)],
+    );
   }
 
   async listAgentSteps(workflowRunId: string, scopeArg: ScopeArg = undefined): Promise<AgentStep[]> {
@@ -483,19 +484,16 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
         return [];
       }
     }
-    return this.withTransaction((client) =>
-      this.selectMany<AgentStep>(
-        client,
-        "SELECT payload FROM agent_steps WHERE workflow_run_id = $1 ORDER BY ordinal",
-        [workflowRunId],
-      ),
+    return this.selectMany<AgentStep>(
+      this.pool,
+      "SELECT payload FROM agent_steps WHERE workflow_run_id = $1 ORDER BY ordinal",
+      [workflowRunId],
     );
   }
 
   async clearAgentSteps(workflowRunId: string): Promise<void> {
-    await this.withTransaction(async (client) => {
-      await client.query("DELETE FROM agent_steps WHERE workflow_run_id = $1", [workflowRunId]);
-    });
+    await this.ensureSchema();
+    await this.pool.query("DELETE FROM agent_steps WHERE workflow_run_id = $1", [workflowRunId]);
   }
 
   async cancelQueuedWorkflowRun(
