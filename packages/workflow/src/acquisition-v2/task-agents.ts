@@ -82,7 +82,7 @@ function languageLine(options: TaskAgentPromptOptions): string {
 - English scene release (Name.Year.Resolution.Source.Codec-GROUP — dotted ASCII + a scene group like EaZy/RARBG/Guyute/NTb/FLUX/CMCT) → assume NO 中文 subs (foreign-only) = weak coverage for this user.
 - Chinese-community release (a real 中文 release name; or 国语/中字/中英/简繁/双语 markers; or a Chinese release group; bracketed/spaced formatting) → ships 中文 subs. Do NOT require the literal "中字" token — a genuine Chinese-community release carries them.
 - NEVER infer 中文 subs from "it has a subtitle file" or "it's an .mkv": an mkv embeds subtitles that are usually NOT 中文; only the release naming tells you.
-Among reachable candidates a 中文-subbed one MUST win; take an English-scene rip ONLY when no 中文-subbed candidate is reachable, and treat it as weak coverage.`;
+Among reachable candidates a 中文-subbed one MUST win. If NO 中文-subbed candidate is reachable on THIS drive, the 中文 floor is NOT met — a 生肉/raw or foreign-only rip the user cannot read is NOT acceptable coverage: do NOT settle for it. reportNoCoverage honestly (e.g. 该盘无中文字幕源,可能仅存在于其它来源/网盘) rather than landing an unreadable release. (A 中文 source may simply not exist on this drive — that is an honest no-coverage, not a reason to dump 生肉.)`;
   }
   return `\nLANGUAGE PREFERENCE: the user reads ${lang} subtitles. Prefer candidates whose RELEASE is named/built in that language (a release named in a language is far likelier to ship it); treat a foreign-language rip the user cannot read as weak coverage.`;
 }
