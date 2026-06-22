@@ -63,7 +63,7 @@ describe("makeAgentTraceSink", () => {
 describe("combineToolEventSinks", () => {
   it("fans out to every sink and isolates a throwing one", () => {
     const a = vi.fn();
-    const b = vi.fn(() => {
+    const b = vi.fn((_event: AgentToolEvent) => {
       throw new Error("boom");
     });
     const c = vi.fn();
