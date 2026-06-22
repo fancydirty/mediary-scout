@@ -56,4 +56,7 @@ export interface StorageExecutor {
   /** Cumulative 115 API calls made so far — observability only. Optional: only the
    *  real 115 executor implements it; fakes/sims omit it. */
   apiCallCount?(): number;
+  /** The configured HARD 115 call budget — lets the agent loop derive its SOFT
+   *  warning threshold from the real limit. Optional (real 115 executor only). */
+  apiCallBudget?(): number;
 }
