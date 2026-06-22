@@ -49,6 +49,20 @@ async function seedRun(
   });
 }
 
+async function cleanupRun(
+  pool: pg.Pool,
+  opts: { runId: string; tmdb: number; storage: string },
+): Promise<void> {
+  // Drive-scoped: tracked_seasons / episode_states are keyed by (…, connected_storage_id),
+  // so delete only THIS drive's rows — never another drive's for the same season.
+  const seasonId = `tmdb_tv_${opts.tmdb}_s1`;
+  await pool.query("DELETE FROM agent_steps WHERE workflow_run_id = $1", [opts.runId]);
+  await pool.query("DELETE FROM episode_states WHERE tracked_season_id = $1 AND connected_storage_id = $2", [seasonId, opts.storage]);
+  await pool.query("DELETE FROM workflow_runs WHERE id = $1", [opts.runId]);
+  await pool.query("DELETE FROM tracked_seasons WHERE id = $1 AND connected_storage_id = $2", [seasonId, opts.storage]);
+  await pool.query("DELETE FROM media_titles WHERE id = $1", [`tmdb_tv_${opts.tmdb}`]);
+}
+
 const URL = process.env.MEDIA_TRACK_POSTGRES_URL;
 const d = URL ? describe : describe.skip;
 
@@ -98,11 +112,7 @@ d("Postgres agent steps", () => {
       expect(await repo.listAgentSteps(runId, { accountId: "acct_other", connectedStorageId: null })).toEqual([]); // wrong account
       expect(await repo.listAgentSteps(runId, { accountId: "acct_obs_a", connectedStorageId: "cs_other" })).toEqual([]); // wrong drive
     } finally {
-      await pool.query("DELETE FROM agent_steps WHERE workflow_run_id = $1", [runId]);
-      await pool.query("DELETE FROM episode_states WHERE tracked_season_id = $1", [`tmdb_tv_${tmdb}_s1`]);
-      await pool.query("DELETE FROM workflow_runs WHERE id = $1", [runId]);
-      await pool.query("DELETE FROM tracked_seasons WHERE id = $1", [`tmdb_tv_${tmdb}_s1`]);
-      await pool.query("DELETE FROM media_titles WHERE id = $1", [`tmdb_tv_${tmdb}`]);
+      await cleanupRun(pool, { runId, tmdb, storage: "cs_obs_x" });
       await pool.end();
     }
   });
@@ -123,11 +133,7 @@ d("Postgres agent steps", () => {
       await seedRun(repo, { runId, account: "acct_obs_b", storage: "cs_obs_y", tmdb });
       expect((await repo.listAgentSteps(runId)).map((s) => s.ordinal)).toEqual([0, 1]);
     } finally {
-      await pool.query("DELETE FROM agent_steps WHERE workflow_run_id = $1", [runId]);
-      await pool.query("DELETE FROM episode_states WHERE tracked_season_id = $1", [`tmdb_tv_${tmdb}_s1`]);
-      await pool.query("DELETE FROM workflow_runs WHERE id = $1", [runId]);
-      await pool.query("DELETE FROM tracked_seasons WHERE id = $1", [`tmdb_tv_${tmdb}_s1`]);
-      await pool.query("DELETE FROM media_titles WHERE id = $1", [`tmdb_tv_${tmdb}`]);
+      await cleanupRun(pool, { runId, tmdb, storage: "cs_obs_y" });
       await pool.end();
     }
   });
