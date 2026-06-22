@@ -8,18 +8,19 @@ import { buildTvAnimeSystemPrompt, buildMovieSystemPrompt } from "../src/acquisi
 // fix elevates search discipline to a prominent hard rule (prompt-only, no mechanical
 // keyword filter — selection stays the agent's judgment per the author's stance).
 describe("search discipline — anti-churn hard rule (超市 over-search regression)", () => {
-  it("tv/anime prompt forbids identical re-searches and genre/sub-type tags, and bounds churn", () => {
+  it("tv/anime prompt allows jitter-retry but forbids genre/sub-type tags and bounds variant churn", () => {
     const p = buildTvAnimeSystemPrompt({});
-    // never repeat an identical keyword already searched
-    expect(p).toMatch(/identical keyword/i);
+    // a 0 can be jitter — re-running the SAME keyword 1-2x is correct (must NOT forbid it,
+    // the per-title recipe relies on it). The rule targets variant churn, not jitter-retry.
+    expect(p).toMatch(/jitter/i);
     // never append a genre/sub-type tag — name the offending tags so the rule is concrete
     expect(p).toMatch(/genre.{0,4}sub-?type|sub-?type.{0,4}tag/i);
     expect(p).toContain("番剧");
     // a handful of DISTINCT good-faith queries that all miss = reportNoCoverage; don't churn
     expect(p).toMatch(/do ?not churn|don't churn/i);
     // the original/foreign name is a FALLBACK to find subtitle-carrying releases, not a
-    // license to keep hunting raws (directly addresses the 超市 "搜日文转生肉" churn)
-    expect(p).toMatch(/not license to keep (hunting|chasing) raws/i);
+    // license to keep hunting raws (regex tolerates "not a license" / "not license")
+    expect(p).toMatch(/not a? ?license to keep (hunting|chasing) raws/i);
   });
 
   it("movie prompt is unaffected by the tv/anime churn rule", () => {
