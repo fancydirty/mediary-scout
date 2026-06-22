@@ -1426,6 +1426,10 @@ p {
   font-weight: 700;
   padding: 2px 9px;
   border-radius: var(--radius-pill);
+  /* Never let the pill compress + wrap its label (e.g. 暂无资源 → 暂无/资源) on a
+     narrow head row; the title (min-width:0 + ellipsis) absorbs the squeeze instead. */
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .feed-status-pill.tone-green { color: var(--accent); background: rgba(30, 215, 96, 0.12); }
@@ -1501,6 +1505,7 @@ p {
   font-size: 12px;
   color: var(--text-muted);
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 /* Library — all tracked titles grid */

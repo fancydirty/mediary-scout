@@ -38,6 +38,18 @@ describe("seedDemoWorkflowRepository (rich demo library)", () => {
     }
   });
 
+  it("seeds report-bearing notifications inside the 7-day window (通知 page isn't empty/filtered)", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    await seedDemoWorkflowRepository(repo);
+    // Mirror the notifications page's 7-day cutoff: demo notifs must be recent
+    // enough to survive it (fixed past dates would be filtered → empty page).
+    const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const recent = await repo.listNotifications({ accountId: "acct_default", since });
+    expect(recent.length).toBeGreaterThan(0);
+    // Rich L2 cards: report-bearing (status pill + poster), not legacy plain rows.
+    expect(recent.some((n) => n.report != null)).toBe(true);
+  });
+
   it("covers reserved / partial / tracking states", async () => {
     const { all } = await seededStates();
     // reserved: a movie with a future release date (复仇者联盟5, 2026-12-16)

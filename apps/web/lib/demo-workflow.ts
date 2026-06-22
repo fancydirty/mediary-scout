@@ -4,10 +4,15 @@ import {
   InMemoryWorkflowRepository,
   type EpisodeState,
   type MediaTitle,
+  type NotificationReportStatus,
   type TrackedSeason,
   type WorkflowRepository,
   type WorkflowRun,
 } from "@media-track/workflow";
+
+/** Demo notification timestamps are relative to now so they always fall inside
+ *  the 通知 page's 7-day window (fixed past dates would be filtered out → empty). */
+const recentIso = (hoursAgo: number): string => new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
 
 const DEMO_ACCOUNT = "acct_default";
 const DEMO_DRIVE_115 = "cs_demo_115";
@@ -176,12 +181,27 @@ const CURATED: Curated[] = [
   { kind: "series", drive: "quark", type: "anime", tmdbId: 209867, title: "葬送的芙莉莲", year: 2023, posterPath: "/1TtrtRIwXz5BB0gXEl8zgBypl9c.jpg", backdropPath: "/rBOnrVlck7BIlGeWVlzYiZeg4l2.jpg", totalEpisodes: 28, latestAired: 20, obtainedCount: 20, status: "active" },
 ];
 
-// A few notifications so the 通知 page isn't empty (keyed by tmdbId).
-const NOTIFS: Record<number, { kind: string; title: string; body: string; createdAt: string }> = {
-  37165: { kind: "movie_obtained", title: "楚门的世界 (1998) · 已入库", body: "已转存到 115 网盘并完成验证。", createdAt: "2026-06-12T08:00:00.000Z" },
-  842675: { kind: "movie_obtained", title: "流浪地球2 (2023) · 已入库", body: "已转存到 115 网盘并完成验证。", createdAt: "2026-06-12T09:10:00.000Z" },
-  87108: { kind: "tracking_initialized", title: "切尔诺贝利 第 1 季 · 已获取 5 集", body: "目标目录已验证到 5 个视频文件。", createdAt: "2026-06-11T00:02:00.000Z" },
-  120089: { kind: "tracking_initialized", title: "间谍过家家 · 已获取 8 集", body: "已获取至第 8 集，剩余将由每日巡检自动补齐。", createdAt: "2026-06-13T12:00:00.000Z" },
+// A few notifications so the 通知 page isn't empty (keyed by tmdbId). Report-bearing
+// so they render as rich poster + status-pill cards (the redesign's L2 card), with
+// recent timestamps + a spread of statuses (incl. the longer 4-char 暂无资源 pill).
+const NOTIFS: Record<
+  number,
+  {
+    kind: string;
+    status: NotificationReportStatus;
+    seasonLabel: string | null;
+    lines: string[];
+    newlyObtained?: string[];
+    realMissing?: string[];
+    fileCount?: number;
+    totalBytes?: number;
+    hoursAgo: number;
+  }
+> = {
+  37165: { kind: "package_initialized", status: "acquired", seasonLabel: null, lines: [], fileCount: 1, totalBytes: 10_200_000_000, hoursAgo: 2 },
+  842675: { kind: "package_initialized", status: "acquired", seasonLabel: null, lines: [], fileCount: 1, totalBytes: 38_400_000_000, hoursAgo: 6 },
+  87108: { kind: "tracking_completed", status: "partial", seasonLabel: "第 1 季", lines: ["已获取 3/5 集 · 2 集缺失，等待每日巡检补齐"], realMissing: ["S01E04", "S01E05"], hoursAgo: 28 },
+  120089: { kind: "no_coverage", status: "no_coverage", seasonLabel: "第 2 季", lines: ["本次巡检暂未找到合适资源，明日继续尝试"], hoursAgo: 52 },
 };
 
 export async function seedDemoWorkflowRepository(repository: WorkflowRepository): Promise<void> {
@@ -252,7 +272,30 @@ export async function seedDemoWorkflowRepository(repository: WorkflowRepository)
       decisions: [],
       transferAttempts: [],
       notifications: notif
-        ? [{ id: `demo_notif_${item.tmdbId}`, workflowRunId: run.id, kind: notif.kind, title: notif.title, body: notif.body, createdAt: notif.createdAt }]
+        ? [
+            {
+              id: `demo_notif_${item.tmdbId}`,
+              workflowRunId: run.id,
+              kind: notif.kind,
+              title: `${fixture.title.title}${notif.seasonLabel ? ` ${notif.seasonLabel}` : ""}`,
+              body: notif.lines[0] ?? "",
+              createdAt: recentIso(notif.hoursAgo),
+              report: {
+                titleName: fixture.title.title,
+                seasonLabel: notif.seasonLabel,
+                status: notif.status,
+                lines: notif.lines,
+                newlyObtained: notif.newlyObtained ?? [],
+                realMissing: notif.realMissing ?? [],
+                posterPath: fixture.title.posterPath ?? null,
+                tmdbId: item.tmdbId,
+                mediaType: fixture.title.type,
+                year: fixture.title.year,
+                ...(notif.fileCount !== undefined ? { fileCount: notif.fileCount } : {}),
+                ...(notif.totalBytes !== undefined ? { totalBytes: notif.totalBytes } : {}),
+              },
+            },
+          ]
         : [],
     });
   }
