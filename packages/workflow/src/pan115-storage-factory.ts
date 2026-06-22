@@ -74,7 +74,9 @@ export function createBootstrapPan115CookieStorageExecutor(options: {
     writeScopeDirectoryIds: [],
     apiGuardOptions: {
       minDelayMs: Number.isFinite(minDelayMs) && minDelayMs > 0 ? minDelayMs : 1_200,
-      maxCallsPerOperation: Number.isFinite(maxCalls) && maxCalls > 0 ? maxCalls : 240,
+      // HARD limit (default 300, env-overridable) — kept in sync with
+      // createProtectedStorage115Executor; the agent's SOFT warning is derived from it.
+      maxCallsPerOperation: Number.isFinite(maxCalls) && maxCalls > 0 ? maxCalls : 300,
       maxListItemsPerResponse: 1_000,
     },
   });

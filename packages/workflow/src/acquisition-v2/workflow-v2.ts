@@ -144,7 +144,7 @@ export async function runAcquisitionV2Workflow(
 
   // Best-effort real landed size for the notification (true per-episode bytes,
   // not a claimed quality). Reads AFTER the acquisition succeeded; on the heavy
-  // run where the 240-call budget is spent this returns undefined rather than
+  // run where the 115 call budget is spent this returns undefined rather than
   // throwing, so the size is simply omitted — never failing a good run.
   const landed = await readLandedSize(
     request.executor,

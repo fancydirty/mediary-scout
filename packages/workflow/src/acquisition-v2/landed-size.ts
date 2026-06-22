@@ -11,7 +11,7 @@ export interface LandedSize {
  * claimed quality tag.
  *
  * Returns undefined on ANY read failure — most importantly the per-run 115 call
- * budget (240) being exhausted on a heavy run (`Pan115RiskControlError`): the
+ * budget being exhausted on a heavy run (`Pan115RiskControlError`): the
  * size is a notification nicety read AFTER the acquisition already succeeded, so
  * it must never throw and fail an otherwise-good run. Also undefined when no
  * videos are found (omit the line rather than report 0 bytes).
