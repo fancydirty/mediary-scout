@@ -64,7 +64,8 @@ describe("reflectionSystemOverride", () => {
   it("reminder is calm, not scary — frames a normal wrap-up + next-patrol safety net", () => {
     // R3 in the spec: must not panic the agent into dropping still-gettable episodes.
     expect(STEP_50_REMINDER).toContain("巡检"); // remaining caught next patrol
-    expect(STEP_50_REMINDER).toContain("discardStaging");
+    expect(STEP_50_REMINDER).toContain("discardStaging"); // TV/anime cleanup
+    expect(STEP_50_REMINDER).toContain("flattenMovie"); // movie cleanup (not discardStaging)
     expect(STEP_50_REMINDER).toMatch(/不是失败|正常|稳/); // reassuring framing
   });
 });
