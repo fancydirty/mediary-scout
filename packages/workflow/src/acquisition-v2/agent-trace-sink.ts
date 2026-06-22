@@ -26,13 +26,25 @@ function cappedArgs(args: Record<string, unknown>): Record<string, unknown> {
  * budget-burn curve visible across the trace.
  */
 export function makeAgentTraceSink(input: {
-  repository: Pick<WorkflowRepository, "appendAgentStep">;
+  repository: Pick<WorkflowRepository, "appendAgentStep"> &
+    Partial<Pick<WorkflowRepository, "clearAgentSteps">>;
   workflowRunId: string;
   apiCallCount?: () => number | undefined;
   now?: () => string;
 }): (event: AgentToolEvent) => void {
   const now = input.now ?? (() => new Date().toISOString());
   let ordinal = 0;
+  // A manual retry / auto-requeue re-runs under the SAME run id, but this fresh
+  // sink restarts ordinal at 0 — so the prior attempt's rows must be cleared first,
+  // or the new steps collide (PG: dropped via ON CONFLICT; InMemory: duplicated).
+  // The clear is the head of a serialized chain: every append waits for it (and for
+  // the previous append), so writes land in order and never race the clear — while
+  // the agent itself never awaits any of this (fire-and-forget).
+  let tail: Promise<unknown> = Promise.resolve(
+    input.repository.clearAgentSteps?.(input.workflowRunId),
+  ).catch(() => {
+    // best-effort; a failed clear must never surface
+  });
   return (event: AgentToolEvent) => {
     const apiCalls = input.apiCallCount?.();
     const step: AgentStep = {
@@ -44,9 +56,11 @@ export function makeAgentTraceSink(input: {
       ...(typeof apiCalls === "number" ? { apiCalls } : {}),
       at: now(),
     };
-    void Promise.resolve(input.repository.appendAgentStep(input.workflowRunId, step)).catch(() => {
-      // trace is best-effort; never surface its write failure
-    });
+    tail = tail
+      .then(() => input.repository.appendAgentStep(input.workflowRunId, step))
+      .catch(() => {
+        // trace is best-effort; never surface its write failure
+      });
   };
 }
 

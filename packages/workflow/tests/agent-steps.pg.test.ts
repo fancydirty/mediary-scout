@@ -38,4 +38,24 @@ d("Postgres agent steps", () => {
       await pool.end();
     }
   });
+
+  it("clearAgentSteps drops a prior attempt so a retry (same run id) re-traces from 0", async () => {
+    const pool = new pg.Pool({ connectionString: URL });
+    const repo = new PostgresWorkflowRepository(pool);
+    const runId = `run_retry_${Date.now()}`;
+    try {
+      await repo.appendAgentStep(runId, step(0, "searchResources"));
+      await repo.appendAgentStep(runId, step(1, "transferCandidate"));
+      await repo.appendAgentStep(runId, step(2, "markObtained"));
+      // retry: clear, then re-append from ordinal 0 (would otherwise be DROPPED by ON CONFLICT)
+      await repo.clearAgentSteps(runId);
+      await repo.appendAgentStep(runId, step(0, "reportNoCoverage"));
+      const steps = await repo.listAgentSteps(runId);
+      expect(steps.map((s) => s.ordinal)).toEqual([0]);
+      expect(steps[0]!.toolName).toBe("reportNoCoverage");
+    } finally {
+      await pool.query("DELETE FROM agent_steps WHERE workflow_run_id = $1", [runId]);
+      await pool.end();
+    }
+  });
 });

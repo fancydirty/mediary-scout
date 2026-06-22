@@ -492,6 +492,12 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     );
   }
 
+  async clearAgentSteps(workflowRunId: string): Promise<void> {
+    await this.withTransaction(async (client) => {
+      await client.query("DELETE FROM agent_steps WHERE workflow_run_id = $1", [workflowRunId]);
+    });
+  }
+
   async cancelQueuedWorkflowRun(
     workflowRunId: string,
     scopeArg: ScopeArg = undefined,
