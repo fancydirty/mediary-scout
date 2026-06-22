@@ -26,7 +26,9 @@
 
 你说要某部电影 / 剧 / 番,LLM agent 跨索引源搜罗资源、把最合适的转存进你自己的 115 / 夸克网盘、转存后回读验证,并持续追踪还缺什么。
 
-![Mediary Scout — 媒体库](docs/images/library.png)
+![Mediary Scout — 搜片 → 点获取 → agent 自动搜索、转存、验证落进你的网盘](docs/images/demo.gif)
+
+> *上图:只读 [在线 demo](https://mediary.dirtyfancy.sbs) —— 搜片 → 获取 → agent 走完搜索、转存、验证。*
 
 > **免责声明。** Mediary Scout 是**开源、自部署**软件,**不提供、也永远不会提供托管服务** —— 你自己跑实例、自带网盘 / LLM / 元数据凭证。它做的就是你本可以在自己网盘里手动完成的那些文件操作。项目定位详见 [docs/distribution-and-legal-positioning.md](docs/distribution-and-legal-positioning.md)。
 
