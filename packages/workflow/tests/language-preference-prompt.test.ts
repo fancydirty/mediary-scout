@@ -16,8 +16,9 @@ describe("language preference — 中文 is a hard floor (no raw fallback)", () 
       // NEW directive: no 中文 reachable ⇒ not acceptable coverage ⇒ reportNoCoverage
       expect(p).toContain("NOT acceptable coverage");
       expect(p).toContain("该盘无中文字幕源");
-      // the old loose permission to "treat it as weak coverage" (i.e. land the raw) is gone
-      expect(p).not.toContain("treat it as weak coverage");
+      // No "weak coverage" language anywhere in the 中文 prompt — that mixed signal
+      // (English-scene = takeable weak coverage) contradicted the hard floor (Copilot #21).
+      expect(p).not.toContain("weak coverage");
     });
   }
 
