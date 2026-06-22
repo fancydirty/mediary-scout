@@ -16,7 +16,9 @@ describe("coverage honesty — trust a full pack's beyond-aired episodes (#4 pro
     expect(p).toMatch(/moveToSeason[^.]{0,140}discardStaging|discardStaging[^.]{0,140}moveToSeason/i);
     // hard-safety wording specific to this clause (not a generic 'inspect' elsewhere):
     expect(p).toContain("a pack merely claims");
-    expect(p).toMatch(/patrol/i); // genuinely-unaired (no resource) still left for the patrol
+    // clause-specific distinction (not an incidental 'patrol' elsewhere): genuinely-unaired
+    // (no resource) is still left for the patrol, kept separate from provider-ahead.
+    expect(p).toContain("no resource exists for those");
   });
 
   it("movie prompt is unaffected (no seasons/episodes)", () => {
