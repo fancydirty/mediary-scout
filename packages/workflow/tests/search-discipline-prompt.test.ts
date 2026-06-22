@@ -11,8 +11,8 @@ import { buildTvAnimeSystemPrompt, buildMovieSystemPrompt } from "../src/acquisi
 describe("search discipline — anti-churn hard rule (超市 over-search regression)", () => {
   it("tv/anime prompt allows jitter-retry but forbids genre/sub-type tags and bounds variant churn", () => {
     const p = buildTvAnimeSystemPrompt({});
-    // a 0 can be jitter — re-running the SAME keyword 1-2x is correct (must NOT forbid it,
-    // the per-title recipe relies on it). The rule targets variant churn, not jitter-retry.
+    // a 0 can be jitter — re-running the SAME keyword 2-3x is correct (must NOT forbid it,
+    // the per-title recipe's universal law relies on it). The rule targets variant churn, not jitter-retry.
     expect(p).toMatch(/jitter/i);
     // never append a genre/sub-type tag — assert the exact phrase + a concrete offending tag
     expect(p).toContain("genre/sub-type tag");
