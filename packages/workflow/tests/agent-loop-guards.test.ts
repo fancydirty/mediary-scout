@@ -5,6 +5,8 @@ import {
   BUDGET_SOFT_REMIND_AT,
   BUDGET_REMINDER,
   budgetReflectionNudge,
+  budgetSoftThreshold,
+  BUDGET_SOFT_HEADROOM,
   stepReflectionNudge,
   prepareStepSystemOverride,
   buildRepetitionStop,
@@ -94,6 +96,18 @@ describe("budgetReflectionNudge (115 call-budget soft warning)", () => {
     expect(BUDGET_REMINDER).toContain("markObtained");
     expect(BUDGET_REMINDER).toContain("discardStaging");
     expect(BUDGET_REMINDER).toMatch(/不是失败|正常|巡检/);
+  });
+});
+
+describe("budgetSoftThreshold (derive soft from configured hard)", () => {
+  it("default hard 300 → soft 240 (作者拍板)", () => {
+    expect(budgetSoftThreshold(300)).toBe(240);
+  });
+  it("tracks an overridden hard limit (stays headroom below it)", () => {
+    expect(budgetSoftThreshold(500)).toBe(500 - BUDGET_SOFT_HEADROOM);
+  });
+  it("clamps to ≥1 for a tiny budget (never negative)", () => {
+    expect(budgetSoftThreshold(10)).toBe(1);
   });
 });
 

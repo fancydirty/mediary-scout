@@ -193,6 +193,13 @@ export class Pan115ApiGuard {
     return this.callCount;
   }
 
+  /** The HARD call budget (throws once callCount reaches it). Surfaced so the agent
+   *  loop can derive its SOFT-warning threshold from the actually-configured limit
+   *  instead of hardcoding a number. */
+  callBudget(): number {
+    return this.maxCallsPerOperation;
+  }
+
   async run<T>(operation: Pan115Operation, call: () => Promise<T>): Promise<T> {
     this.assertCircuitClosed(operation);
     await this.applyDelay(operation);
@@ -344,6 +351,12 @@ export class Storage115Executor implements StorageExecutor {
   /** Cumulative 115 API calls so far (observability — surfaced into the agent trace). */
   apiCallCount(): number {
     return this.apiGuard.callsSpent();
+  }
+
+  /** The configured HARD call budget — the agent loop derives its SOFT-warning
+   *  threshold from this so the two stay consistent when the limit is overridden. */
+  apiCallBudget(): number {
+    return this.apiGuard.callBudget();
   }
 
   async createDirectory(input: { name: string; parentId: string }): Promise<string> {

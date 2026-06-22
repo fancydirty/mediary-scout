@@ -187,8 +187,10 @@ export interface RunTvAnimeRequest extends TaskAgentPromptOptions {
   target: TvAnimeTarget;
   maxSteps?: number;
   onProgress?: (event: AgentToolEvent) => void;
-  /** Cumulative 115 API calls so far — drives the budget soft-warning (240). */
+  /** Cumulative 115 API calls so far — drives the budget soft-warning. */
   apiCallCount?: () => number | undefined;
+  /** SOFT-warning threshold derived from the configured hard budget. */
+  budgetSoftAt?: number;
 }
 
 export interface RunMovieRequest extends TaskAgentPromptOptions {
@@ -197,12 +199,14 @@ export interface RunMovieRequest extends TaskAgentPromptOptions {
   target: MovieTarget;
   maxSteps?: number;
   onProgress?: (event: AgentToolEvent) => void;
-  /** Cumulative 115 API calls so far — drives the budget soft-warning (240). */
+  /** Cumulative 115 API calls so far — drives the budget soft-warning. */
   apiCallCount?: () => number | undefined;
+  /** SOFT-warning threshold derived from the configured hard budget. */
+  budgetSoftAt?: number;
 }
 
 export async function runTvAnimeTaskAgent(request: RunTvAnimeRequest): Promise<AcquisitionAgentResult> {
-  const { sandbox, model, target, maxSteps, onProgress, apiCallCount, ...promptOptions } = request;
+  const { sandbox, model, target, maxSteps, onProgress, apiCallCount, budgetSoftAt, ...promptOptions } = request;
   const seasonsLabel =
     target.seasons.length === 1 ? `season ${target.seasons[0]}` : `seasons ${target.seasons.join(", ")}`;
   const prompt = `Acquire the missing episodes for "${target.title}"${target.aliases.length ? ` (aliases: ${target.aliases.join(", ")})` : ""}, ${seasonsLabel}.
@@ -217,11 +221,12 @@ If one pack covers multiple seasons, distribute its files in ONE plan with a mov
     ...(maxSteps === undefined ? {} : { maxSteps }),
     ...(onProgress ? { onProgress } : {}),
     ...(apiCallCount ? { apiCallCount } : {}),
+    ...(budgetSoftAt === undefined ? {} : { budgetSoftAt }),
   });
 }
 
 export async function runMovieTaskAgent(request: RunMovieRequest): Promise<AcquisitionAgentResult> {
-  const { sandbox, model, target, maxSteps, onProgress, apiCallCount, ...promptOptions } = request;
+  const { sandbox, model, target, maxSteps, onProgress, apiCallCount, budgetSoftAt, ...promptOptions } = request;
   const prompt = `Acquire the movie "${target.title}" (${target.year})${target.aliases.length ? ` (aliases: ${target.aliases.join(", ")})` : ""}.
 This is the coverage need: the single MOVIE token. Cross-check title AND year so you do not grab a remake or same-IP different film.
 Find the one correct film, transfer it, keep the directory clean, mark it present, then finish.`;
@@ -235,5 +240,6 @@ Find the one correct film, transfer it, keep the directory clean, mark it presen
     ...(maxSteps === undefined ? {} : { maxSteps }),
     ...(onProgress ? { onProgress } : {}),
     ...(apiCallCount ? { apiCallCount } : {}),
+    ...(budgetSoftAt === undefined ? {} : { budgetSoftAt }),
   });
 }

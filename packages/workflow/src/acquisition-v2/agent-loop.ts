@@ -204,9 +204,12 @@ export interface AcquisitionAgentRequest {
    *  + raw name/args). Best-effort; absent in tests/headless. */
   onProgress?: (event: AgentToolEvent) => void;
   /** Cumulative 115 API calls so far (real 115 only). Lets prepareStep inject the
-   *  budget soft-warning at BUDGET_SOFT_REMIND_AT, the same way it injects the
-   *  step-cap wind-down. Absent (fakes/sim) → no budget nudge. */
+   *  budget soft-warning, the same way it injects the step-cap wind-down. Absent
+   *  (fakes/sim) → no budget nudge. */
   apiCallCount?: () => number | undefined;
+  /** SOFT-warning threshold, derived from the configured HARD budget upstream
+   *  (budgetSoftThreshold). Absent → falls back to BUDGET_SOFT_REMIND_AT. */
+  budgetSoftAt?: number;
 }
 
 export interface AcquisitionAgentResult {
@@ -251,6 +254,7 @@ export async function runAcquisitionAgent(
         maxSteps,
         baseSystem: request.system,
         ...(typeof spent === "number" ? { apiCallsSpent: spent } : {}),
+        ...(typeof request.budgetSoftAt === "number" ? { budgetSoftAt: request.budgetSoftAt } : {}),
       });
       return system ? { system } : undefined;
     },

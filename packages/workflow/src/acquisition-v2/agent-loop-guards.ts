@@ -25,21 +25,32 @@ export const STEP_50_REMINDER =
   "这次没来得及拿的集不要紧——只要没被 markObtained,下次每日巡检会自动发现并补齐。" +
   "请稳妥收尾,绝不要为赶进度草率丢弃还能拿到的资源。";
 
-/** 115 API-call SOFT-warning threshold. The HARD limit (where the guard actually
- *  throws Pan115RiskControlError) is 300 — see createProtectedStorage115Executor.
- *  At the soft mark we nudge the agent to wrap up (same idea as the step cap),
- *  leaving headroom so its own markObtained/discardStaging (which cost a few 115
- *  calls) still fit under 300 instead of being cut off mid-cleanup. */
+/** Default SOFT-warning threshold, used only as a fallback when the hard budget is
+ *  unknown (storage without apiCallBudget). In production the threshold is DERIVED
+ *  from the configured hard limit via budgetSoftThreshold so the two never drift
+ *  (default hard 300 → soft 240, matching the拍板 design). */
 export const BUDGET_SOFT_REMIND_AT = 240;
 
-/** Calm wrap-up nudge for the 115 call budget — mirrors STEP_50_REMINDER's tone. */
+/** Headroom (in 115 calls) reserved between the SOFT warning and the HARD limit, so
+ *  the agent's own wrap-up (markObtained / discardStaging — themselves a few 115
+ *  calls) still fits before the hard stop. Default hard 300 − 60 = soft 240. */
+export const BUDGET_SOFT_HEADROOM = 60;
+
+/** Derive the SOFT-warning threshold from the configured HARD budget so they stay
+ *  consistent even when MEDIA_TRACK_115_MAX_API_CALLS overrides the limit. */
+export function budgetSoftThreshold(hardBudget: number): number {
+  return Math.max(1, hardBudget - BUDGET_SOFT_HEADROOM);
+}
+
+/** Calm wrap-up nudge for the 115 call budget — mirrors STEP_50_REMINDER's tone.
+ *  No hardcoded numbers: the threshold is configurable, so the text stays generic. */
 export const BUDGET_REMINDER =
-  "【网盘调用提醒】本次任务的 115 接口调用已接近软上限(约 240,硬上限 300)。这是正常的收尾信号,不是失败。请:" +
+  "【网盘调用提醒】本次任务的 115 接口调用已接近预算上限。这是正常的收尾信号,不是失败。请:" +
   "① 不要再发起新的 searchResources / transferCandidate;" +
   "② 对确实落盘的 markObtained、把已转存好的用 moveToSeason 归位;" +
   "③ discardStaging 打扫战场;④ finish。" +
   "这次没来得及拿的集不要紧——只要没被 markObtained,下次每日巡检会自动补齐。" +
-  "请立刻稳妥收尾:到 300 次会被硬性中断,别把调用预算耗在还没收尾上。";
+  "请立刻稳妥收尾:调用一旦到硬上限会被强制中断,别把预算耗在还没收尾上。";
 
 /** The step-cap reminder as a pure nudge (text or null) — within the last
  *  `within` steps before the cap. Composable with other nudges in prepareStep. */
