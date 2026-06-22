@@ -41,8 +41,12 @@ describe("seedDemoWorkflowRepository (rich demo library)", () => {
   it("seeds report-bearing notifications inside the 7-day window (通知 page isn't empty/filtered)", async () => {
     const repo = new InMemoryWorkflowRepository();
     await seedDemoWorkflowRepository(repo);
-    // Mirror the notifications page's 7-day cutoff: demo notifs must be recent
-    // enough to survive it (fixed past dates would be filtered → empty page).
+    // Mirrors NOTIFICATION_WINDOW_DAYS (=7) / notificationWindowSince() in
+    // workflow-runtime.ts. Kept as a literal on purpose: that module is Next
+    // server-only (next/headers, pg) and shouldn't be imported into a workflow
+    // unit test. The real invariant being guarded is "demo notifs are recent
+    // (now-relative), not fixed past dates" — seed max is 52h, far inside 7d, so
+    // this stays correct unless the window is cut below ~2 days (implausible).
     const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     const recent = await repo.listNotifications({ accountId: "acct_default", since });
     expect(recent.length).toBeGreaterThan(0);

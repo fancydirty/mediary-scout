@@ -200,7 +200,7 @@ const NOTIFS: Record<
 > = {
   37165: { kind: "package_initialized", status: "acquired", seasonLabel: null, lines: [], fileCount: 1, totalBytes: 10_200_000_000, hoursAgo: 2 },
   842675: { kind: "package_initialized", status: "acquired", seasonLabel: null, lines: [], fileCount: 1, totalBytes: 38_400_000_000, hoursAgo: 6 },
-  87108: { kind: "tracking_completed", status: "partial", seasonLabel: "第 1 季", lines: ["已获取 3/5 集 · 2 集缺失，等待每日巡检补齐"], realMissing: ["S01E04", "S01E05"], hoursAgo: 28 },
+  87108: { kind: "tracking_initialized", status: "partial", seasonLabel: "第 1 季", lines: ["已获取 3/5 集 · 2 集缺失，等待每日巡检补齐"], realMissing: ["S01E04", "S01E05"], hoursAgo: 28 },
   120089: { kind: "no_coverage", status: "no_coverage", seasonLabel: "第 2 季", lines: ["本次巡检暂未找到合适资源，明日继续尝试"], hoursAgo: 52 },
 };
 

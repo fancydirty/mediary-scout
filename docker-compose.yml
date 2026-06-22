@@ -68,6 +68,8 @@ services:
     # Lets the connector resolve the Docker host, so a tunnel Public Hostname of
     # type SSH can point at the host's sshd (host.docker.internal:22) — enabling
     # SSH-over-tunnel from anywhere without opening a port. Harmless if unused.
+    # ⚠️ A bare SSH Public Hostname is reachable by anyone who knows it — gate it
+    # with Cloudflare Access, or accept key-only auth (no password auth on sshd).
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
