@@ -41,6 +41,8 @@ services:
       # queue (获取 stuck "排队", category dirs never provisioned). Must be vercel-ai.
       MEDIA_TRACK_AGENT_ADAPTER: vercel-ai
       MEDIA_TRACK_DEMO_SEED: "0"
+      # Agent 逐步日志进 stdout(docker compose logs web 可见);完整有序轨迹另落 agent_steps 表。
+      MEDIA_TRACK_AGENT_LOG: "1"
     # Optional overrides (TMDB/115/LLM/Prowlarr/CID). Missing file is fine —
     # everything has a default or is configured in the 设置 page.
     env_file:
