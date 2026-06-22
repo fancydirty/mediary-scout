@@ -41,7 +41,7 @@ import type {
   Session,
   UpsertConnectedStorageInput,
 } from "./account-credentials.js";
-import { normalizeScope, type ScopeArg, type WorkflowScope } from "./workflow-scope.js";
+import { normalizeScope, scopeMatches, type ScopeArg, type WorkflowScope } from "./workflow-scope.js";
 import { MAGNET_DEAD_LINK_TTL_MS } from "./acquisition-v2/dead-links.js";
 
 type Queryable = Pool | PoolClient;
@@ -478,17 +478,35 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
   }
 
   async listAgentSteps(workflowRunId: string, scopeArg: ScopeArg = undefined): Promise<AgentStep[]> {
-    if (scopeArg !== undefined) {
-      const snapshot = await this.getWorkflowRunSnapshot(workflowRunId, scopeArg);
-      if (!snapshot) {
-        return [];
-      }
+    // Scope gate reads ONLY the run's two ownership columns — not the full snapshot
+    // (season/title/episodes/...) the old getWorkflowRunSnapshot load pulled in.
+    if (scopeArg !== undefined && !(await this.runMatchesScope(workflowRunId, scopeArg))) {
+      return [];
     }
     return this.selectMany<AgentStep>(
       this.pool,
       "SELECT payload FROM agent_steps WHERE workflow_run_id = $1 ORDER BY ordinal",
       [workflowRunId],
     );
+  }
+
+  /** Lightweight (account, storage) visibility check for a run: reads just the two
+   *  scope columns and applies the same scopeMatches predicate as everywhere else.
+   *  Fail-closed — an unknown run is not visible to any scope. */
+  private async runMatchesScope(workflowRunId: string, scopeArg: ScopeArg): Promise<boolean> {
+    const scope = normalizeScope(scopeArg);
+    await this.ensureSchema();
+    const row = await this.pool.query(
+      "SELECT account_id, connected_storage_id FROM workflow_runs WHERE id = $1",
+      [workflowRunId],
+    );
+    const owner = row.rows[0];
+    if (!owner) {
+      return false;
+    }
+    const ownerAccount = (owner.account_id as string | undefined) ?? DEFAULT_ACCOUNT_ID;
+    const ownerStorage = (owner.connected_storage_id as string | null | undefined) ?? null;
+    return scopeMatches(scope, ownerAccount, ownerStorage);
   }
 
   async clearAgentSteps(workflowRunId: string): Promise<void> {
