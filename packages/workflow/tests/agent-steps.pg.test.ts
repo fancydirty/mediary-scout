@@ -107,6 +107,31 @@ d("Postgres agent steps", () => {
     }
   });
 
+  it("agent_steps survive a terminal re-persist (saveWorkflowRunSnapshot must NOT wipe the trace)", async () => {
+    const pool = new pg.Pool({ connectionString: URL });
+    const repo = new PostgresWorkflowRepository(pool);
+    const tmdb = 810000 + (Date.now() % 90000);
+    const runId = `run_persist_${tmdb}`;
+    try {
+      await seedRun(repo, { runId, account: "acct_obs_b", storage: "cs_obs_y", tmdb });
+      await repo.appendAgentStep(runId, step(0, "searchResources"));
+      await repo.appendAgentStep(runId, step(1, "markObtained"));
+      expect((await repo.listAgentSteps(runId)).length).toBe(2);
+      // The worker finalizes a completed run by re-persisting its snapshot. That path
+      // (replaceWorkflowRunSnapshot → deleteWorkflowRunChildren) must NOT delete the
+      // incrementally-written trace — the snapshot doesn't carry agent_steps to re-insert.
+      await seedRun(repo, { runId, account: "acct_obs_b", storage: "cs_obs_y", tmdb });
+      expect((await repo.listAgentSteps(runId)).map((s) => s.ordinal)).toEqual([0, 1]);
+    } finally {
+      await pool.query("DELETE FROM agent_steps WHERE workflow_run_id = $1", [runId]);
+      await pool.query("DELETE FROM episode_states WHERE tracked_season_id = $1", [`tmdb_tv_${tmdb}_s1`]);
+      await pool.query("DELETE FROM workflow_runs WHERE id = $1", [runId]);
+      await pool.query("DELETE FROM tracked_seasons WHERE id = $1", [`tmdb_tv_${tmdb}_s1`]);
+      await pool.query("DELETE FROM media_titles WHERE id = $1", [`tmdb_tv_${tmdb}`]);
+      await pool.end();
+    }
+  });
+
   it("clearAgentSteps drops a prior attempt so a retry (same run id) re-traces from 0", async () => {
     const pool = new pg.Pool({ connectionString: URL });
     const repo = new PostgresWorkflowRepository(pool);

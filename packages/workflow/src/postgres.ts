@@ -1235,7 +1235,11 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     await client.query("DELETE FROM notifications WHERE workflow_run_id = $1", [workflowRunId]);
     await client.query("DELETE FROM transfer_attempts WHERE workflow_run_id = $1", [workflowRunId]);
     await client.query("DELETE FROM agent_decisions WHERE workflow_run_id = $1", [workflowRunId]);
-    await client.query("DELETE FROM agent_steps WHERE workflow_run_id = $1", [workflowRunId]);
+    // NOTE: do NOT delete agent_steps here. This runs on every saveWorkflowRunSnapshot
+    // (re-persist) to clear children the snapshot RE-INSERTS. agent_steps are written
+    // incrementally by the trace sink and are NOT in the snapshot, so deleting them here
+    // would wipe a completed run's trace at finalize. Cross-attempt clearing is handled
+    // by clearAgentSteps (sink start); true teardown is in cancel/untrack.
     await client.query("DELETE FROM resource_snapshots WHERE workflow_run_id = $1", [workflowRunId]);
     // Scope to THIS drive's episodes — never wipe another drive's episodes for the same season.
     await client.query(
