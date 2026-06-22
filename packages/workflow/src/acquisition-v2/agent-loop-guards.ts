@@ -46,7 +46,7 @@ export function budgetSoftThreshold(hardBudget: number): number {
  *  No hardcoded numbers: the threshold is configurable, so the text stays generic. */
 export const BUDGET_REMINDER =
   "【网盘调用提醒】本次任务的 115 接口调用已接近预算上限。这是正常的收尾信号,不是失败。请:" +
-  "① 不要再发起新的 searchResources / transferCandidate;" +
+  "① 不要再发起任何新的搜索或转存(searchResources / transferCandidate / transferUntilLanded 都不要);" +
   "② 对确实落盘的 markObtained、把已转存好的用 moveToSeason 归位;" +
   "③ discardStaging 打扫战场;④ finish。" +
   "这次没来得及拿的集不要紧——只要没被 markObtained,下次每日巡检会自动补齐。" +
