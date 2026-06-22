@@ -349,7 +349,8 @@ export class Storage115Executor implements StorageExecutor {
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
 
-  /** Cumulative 115 API calls so far (observability — surfaced into the agent trace). */
+  /** Cumulative 115 API calls so far — surfaced into the agent trace AND used to
+   *  drive the agent loop's budget soft-warning. */
   apiCallCount(): number {
     return this.apiGuard.callsSpent();
   }

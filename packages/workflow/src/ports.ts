@@ -53,8 +53,9 @@ export interface StorageExecutor {
   listChildDirectories(directoryId: string): Promise<Array<{ id: string; name: string }>>;
   /** Move files (by provider file id) into a target directory inside the write scope. */
   moveFiles(input: { fileIds: string[]; targetDirectoryId: string }): Promise<{ moved: string[] }>;
-  /** Cumulative 115 API calls made so far — observability only. Optional: only the
-   *  real 115 executor implements it; fakes/sims omit it. */
+  /** Cumulative 115 API calls made so far — feeds the per-step trace AND the agent
+   *  loop's budget soft-warning. Optional: only the real 115 executor implements it;
+   *  fakes/sims omit it. */
   apiCallCount?(): number;
   /** The configured HARD 115 call budget — lets the agent loop derive its SOFT
    *  warning threshold from the real limit. Optional (real 115 executor only). */
