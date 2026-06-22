@@ -290,10 +290,17 @@ function CandidateCard({
           </div>
           <div className="candidate-actions">
             {acquiring ? (
-              <span className="hub-badge tone-green" title="后台正在获取">
+              // #6: the persistent post-获取 pill links to the live 活动 page so the
+              // real progress is one click away (the gap the author flagged: "真实情况
+              // 要去活动里看"). storageId scopes it with ?w (mirrors globalNavHref).
+              <Link
+                className="hub-badge tone-green"
+                href={storageId ? `/activity?w=${encodeURIComponent(storageId)}` : "/activity"}
+                title="后台正在获取——点查看进度（活动）"
+              >
                 <LoaderCircle size={12} className="spin" aria-hidden />
                 获取中
-              </span>
+              </Link>
             ) : null}
             {!acquiring && isTv && untrackedSeasons.length > 0 ? (
               <SeasonRequestMenu
