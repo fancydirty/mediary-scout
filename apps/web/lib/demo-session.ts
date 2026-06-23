@@ -178,11 +178,21 @@ export function listDemoInProgress(
 }
 
 function fireInProgress(): void {
+  // Dispatched ASYNCHRONOUSLY: useDemoInProgress both listens to this event AND
+  // calls clearDemoInProgress() (→ fireInProgress) inside its tick when promoting
+  // done items. A synchronous dispatch would re-enter tick() mid-loop (nested
+  // recursion). Deferring to a macrotask lets the current call stack unwind first.
   if (typeof window !== "undefined") {
     try {
-      window.dispatchEvent(new Event(DEMO_INPROGRESS_EVENT));
+      window.setTimeout(() => {
+        try {
+          window.dispatchEvent(new Event(DEMO_INPROGRESS_EVENT));
+        } catch {
+          // no DOM event support — non-fatal
+        }
+      }, 0);
     } catch {
-      // no DOM event support — non-fatal
+      // no timer support — non-fatal
     }
   }
 }
@@ -194,7 +204,12 @@ export function startDemoInProgress(
   if (!storage) {
     return;
   }
-  const next = [entry, ...listDemoInProgress(storage).filter((e) => e.tmdbId !== entry.tmdbId)];
+  // Cap like the completed layer (MAX): in-progress count is normally tiny, but a
+  // bound keeps repeated demo acquisitions from growing sessionStorage unbounded.
+  const next = [entry, ...listDemoInProgress(storage).filter((e) => e.tmdbId !== entry.tmdbId)].slice(
+    0,
+    MAX,
+  );
   try {
     storage.setItem(INPROGRESS_KEY, JSON.stringify(next));
     fireInProgress();

@@ -128,6 +128,14 @@ describe("demo in-progress overlay", () => {
       listDemoInProgress(fakeStorage({ "mediary-demo-inprogress": bad })).map((e) => e.tmdbId),
     ).toEqual([7]);
   });
+
+  it("caps at 20 (newest first) — no unbounded growth", () => {
+    const s = fakeStorage();
+    for (let i = 1; i <= 25; i++) startDemoInProgress(ip(i, i), s);
+    const list = listDemoInProgress(s);
+    expect(list).toHaveLength(20);
+    expect(list[0]!.tmdbId).toBe(25);
+  });
 });
 
 describe("demoInProgressView", () => {

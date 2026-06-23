@@ -18,7 +18,12 @@ import {
 export function DemoAcquirePlayback({ entry }: { entry?: DemoAcquisitionEntry | undefined }) {
   const [elapsed, setElapsed] = useState(0);
   const recorded = useRef(false);
+  // Keyed on entry.tmdbId so a new acquisition (entry change) resets the timer +
+  // the recorded guard and re-announces in-progress, instead of staying stuck on
+  // the previous title's playback.
   useEffect(() => {
+    recorded.current = false;
+    setElapsed(0);
     // Announce this acquisition as in-progress so OTHER pages (media library,
     // activity) show a real-time 获取中 card/row, clock-driven from startedAt —
     // not just this local progress bar. Completion promotion is handled by
@@ -43,7 +48,7 @@ export function DemoAcquirePlayback({ entry }: { entry?: DemoAcquisitionEntry | 
       }
     }, 400);
     return () => clearInterval(id);
-  }, []);
+  }, [entry?.tmdbId]);
 
   const state = playbackStateAt(elapsed);
   const done = state.progress >= 100;

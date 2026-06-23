@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { isDemoModeClient } from "./demo-mode";
 import {
   DEMO_ACQUIRED_EVENT,
   DEMO_INPROGRESS_EVENT,
@@ -48,6 +49,15 @@ export function useDemoAcquiredTmdbIds(): Set<number> {
 export function useDemoInProgress(): DemoInProgressActive[] {
   const [active, setActive] = useState<DemoInProgressActive[]>([]);
   useEffect(() => {
+    // Real mode (or any non-demo page that mounts this hook, e.g. ActivityFeed):
+    // do NO work — no interval, no re-renders. sessionStorage has no key anyway.
+    if (!isDemoModeClient()) {
+      return;
+    }
+    // Only re-render when the active set actually changes — the 500ms tick reads
+    // + diffs cheaply, but skips setState when nothing moved, so an idle demo page
+    // doesn't re-render twice a second.
+    let prevSig = "";
     const tick = () => {
       const view = demoInProgressView(listDemoInProgress(), Date.now());
       for (const d of view.done) {
@@ -60,7 +70,11 @@ export function useDemoInProgress(): DemoInProgressActive[] {
         });
         clearDemoInProgress(d.tmdbId);
       }
-      setActive(view.active);
+      const sig = view.active.map((a) => `${a.tmdbId}:${a.progress}:${a.step}`).join("|");
+      if (sig !== prevSig) {
+        prevSig = sig;
+        setActive(view.active);
+      }
     };
     tick();
     const id = window.setInterval(tick, 500);
