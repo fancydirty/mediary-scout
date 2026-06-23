@@ -17,6 +17,10 @@ export function useActiveRun(
   const [run, setRun] = useState<ActivityActiveRun | null>(null);
   useEffect(() => {
     let alive = true;
+    // Reset on key change (tmdbId/season/storage define the lookup) so a reused
+    // instance doesn't briefly show a different card/workspace's stale progress
+    // until the first poll returns.
+    setRun(null);
     const poll = async () => {
       try {
         const url = storageId ? `/api/activity?w=${encodeURIComponent(storageId)}` : "/api/activity";
