@@ -4,7 +4,12 @@ import { CalendarClock, Check, LoaderCircle, Plus } from "lucide-react";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { requestTrackingAction, type RequestTrackingActionResult } from "../app/actions";
-import type { SearchActionState } from "@media-track/workflow";
+// Import the type from the narrow subpath, NOT the root barrel: the barrel
+// `export *`s ./postgres.js (pg), and Turbopack intermittently fails to erase a
+// type-only barrel import, dragging pg into THIS client bundle → "pg in Client
+// Component Browser" build failures. The /search-view subpath pulls only pg-free
+// leaf modules (domain, workflow-scope), so the type can never carry pg in.
+import type { SearchActionState } from "@media-track/workflow/search-view";
 import { RequestedBadge } from "./request-state";
 import { isDemoModeClient } from "../lib/demo-mode";
 import { DemoAcquirePlayback } from "./demo-acquire-playback";
