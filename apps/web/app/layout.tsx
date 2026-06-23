@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
 import { isDemoMode } from "../lib/demo-mode";
 
@@ -25,6 +26,10 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
           </div>
         ) : null}
         {children}
+        {/* Vercel Web Analytics — DEMO deploy only: gated on isDemoMode() so a
+            self-hosted instance never loads the Vercel insights script (no 404 /
+            no third-party beacon off-Vercel). */}
+        {isDemoMode() ? <Analytics /> : null}
       </body>
     </html>
   );

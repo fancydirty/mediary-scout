@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@media-track/workflow": "*"
+    "@media-track/workflow": "*",
+    "@vercel/analytics": "^2.0.1"
   }
 }
