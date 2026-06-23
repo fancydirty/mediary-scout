@@ -58,6 +58,17 @@ describe("TaskSandbox — markObtained (agent's final declaration; NO mechanical
     expect(summary.obtained).toEqual(["S01E01", "S01E02"]); // garbage dropped, sorted
   });
 
+  it("orders obtained codes NUMERICALLY, not lexically (≥100 episodes — Copilot #29)", async () => {
+    // Long-running shows (One Piece etc.) cross E99. A lexical sort would put
+    // S01E100 before S01E99; finish() must order by (season, episode) numerically.
+    const sandbox = await sandboxWithNeed(["S01E99"]);
+
+    await sandbox.markObtained({ codes: ["S01E100", "S01E09", "S01E99", "S01E10"] });
+
+    const summary = await sandbox.finish();
+    expect(summary.obtained).toEqual(["S01E09", "S01E10", "S01E99", "S01E100"]);
+  });
+
   it("does NOT re-read 115 to verify presence — the mark is the agent's call", async () => {
     // The system no longer mechanically re-reads the target dir to confirm a
     // backing file exists. move/flatten already force-reread and handed the

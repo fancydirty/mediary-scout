@@ -434,9 +434,22 @@ export class TaskSandbox {
     // syntactically valid episode code — a malformed agent mark must NOT flow into
     // syncSeasonNeed's episodePartsFromCode (which throws), crashing the run.
     const needSet = new Set(this.need);
+    const parse = (code: string): [number, number] | null => {
+      const m = /^S(\d{2,})E(\d{2,})$/.exec(code);
+      return m ? [Number(m[1]), Number(m[2])] : null;
+    };
     const obtained = [...this.obtainedCodes]
-      .filter((code) => needSet.has(code) || /^S\d{2,}E\d{2,}$/.test(code))
-      .sort();
+      .filter((code) => needSet.has(code) || parse(code) !== null)
+      // Order by (season, episode) NUMERICALLY — a lexical sort misorders ≥100
+      // (S01E100 < S01E99). Non-episode tokens (e.g. the movie "MOVIE") sort last.
+      .sort((a, b) => {
+        const pa = parse(a);
+        const pb = parse(b);
+        if (pa && pb) return pa[0] - pb[0] || pa[1] - pb[1];
+        if (pa) return -1;
+        if (pb) return 1;
+        return a < b ? -1 : a > b ? 1 : 0;
+      });
     return {
       coverageMet: this.isCoverageMet(),
       obtained,
