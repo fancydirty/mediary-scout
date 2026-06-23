@@ -83,8 +83,13 @@ export function recordDemoAcquisition(
   const existing = listDemoAcquisitions(storage).find((e) => e.tmdbId === entry.tmdbId);
   const stamped: DemoAcquisitionEntry = {
     ...entry,
+    // Only a FINITE existing value is worth preserving — a corrupted sessionStorage
+    // value (string/NaN/Infinity) is nullish-distinct but useless, so fall through
+    // to a fresh finite stamp rather than carrying the garbage forward.
     acquiredAt:
-      entry.acquiredAt ?? existing?.acquiredAt ?? (typeof Date !== "undefined" ? Date.now() : 0),
+      safeAcquiredAt(entry.acquiredAt) ??
+      safeAcquiredAt(existing?.acquiredAt) ??
+      (typeof Date !== "undefined" ? Date.now() : 0),
   };
   const next = [stamped, ...rest].slice(0, MAX);
   try {
@@ -159,7 +164,10 @@ function isInProgressEntry(value: unknown): value is DemoInProgressEntry {
     typeof e.year === "number" &&
     (e.type === "movie" || e.type === "tv" || e.type === "anime") &&
     (e.posterPath === null || typeof e.posterPath === "string") &&
-    typeof e.startedAt === "number"
+    // Finite, not just `number`: a corrupted NaN/Infinity startedAt would make
+    // demoInProgressView's elapsed NaN → entry never promotes → stuck 获取中 row.
+    typeof e.startedAt === "number" &&
+    Number.isFinite(e.startedAt)
   );
 }
 

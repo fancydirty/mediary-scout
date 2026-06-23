@@ -129,6 +129,16 @@ describe("demo in-progress overlay", () => {
     ).toEqual([7]);
   });
 
+  it("rejects non-finite startedAt (corruption guard → never stuck 获取中)", () => {
+    const raw = JSON.stringify([
+      { tmdbId: 1, title: "A", year: 2026, type: "tv", posterPath: null, startedAt: "x" },
+      { tmdbId: 7, title: "B", year: 2026, type: "tv", posterPath: null, startedAt: 5 },
+    ]);
+    expect(
+      listDemoInProgress(fakeStorage({ "mediary-demo-inprogress": raw })).map((e) => e.tmdbId),
+    ).toEqual([7]);
+  });
+
   it("caps at 20 (newest first) — no unbounded growth", () => {
     const s = fakeStorage();
     for (let i = 1; i <= 25; i++) startDemoInProgress(ip(i, i), s);
@@ -244,5 +254,16 @@ describe("recordDemoAcquisition acquiredAt stability", () => {
     const list = listDemoAcquisitions(s);
     expect(list).toHaveLength(1);
     expect(list[0]!.acquiredAt).toBe(1000);
+  });
+
+  it("does NOT preserve a corrupted existing acquiredAt — re-stamps a finite value", () => {
+    const raw = JSON.stringify([
+      { tmdbId: 5, title: "A", year: 2026, type: "movie", posterPath: null, acquiredAt: "bad" },
+    ]);
+    const s = fakeStorage({ "mediary-demo-acquired": raw });
+    recordDemoAcquisition({ tmdbId: 5, title: "A", year: 2026, type: "movie", posterPath: null }, s);
+    const list = listDemoAcquisitions(s);
+    expect(list).toHaveLength(1);
+    expect(Number.isFinite(list[0]!.acquiredAt)).toBe(true);
   });
 });
