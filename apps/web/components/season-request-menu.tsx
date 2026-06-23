@@ -49,6 +49,10 @@ export function SeasonRequestMenu({
   const [isPending, startTransition] = useTransition();
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<number | "all">("all");
+  // The scope ACTUALLY requested (set at submit). The single-season path requests
+  // `onlySeason` while `selected` stays "all", so the locked badge must read this,
+  // not `selected`, to match the right season's run.
+  const [requestedSeason, setRequestedSeason] = useState<number | "all">("all");
   const [result, setResult] = useState<RequestTrackingActionResult | null>(null);
   // Read-only demo: any acquire trigger plays the scripted, client-only playback
   // (the server actions below are gated server-side anyway).
@@ -77,7 +81,7 @@ export function SeasonRequestMenu({
     return (
       <AcquireProgressBadge
         tmdbId={tmdbId}
-        seasonNumber={selected === "all" ? null : selected}
+        seasonNumber={requestedSeason === "all" ? null : requestedSeason}
         storageId={storageId}
         title={result?.message}
       />
@@ -89,6 +93,7 @@ export function SeasonRequestMenu({
       setDemoPlaying(true);
       return;
     }
+    setRequestedSeason(selected);
     startTransition(async () => {
       setOpen(false);
       setResult(
@@ -118,6 +123,7 @@ export function SeasonRequestMenu({
             setDemoPlaying(true);
             return;
           }
+          setRequestedSeason(onlySeason);
           startTransition(async () => {
             setResult(await requestSeasonAction({ tmdbId, seasonNumber: onlySeason, storageId }));
             router.refresh();
