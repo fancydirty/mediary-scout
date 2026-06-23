@@ -57,6 +57,10 @@ describe("inlineProgressView", () => {
     expect(inlineProgressView(run({ status: "running", progress: progress(250, "x") })).percent).toBe(100);
     expect(inlineProgressView(run({ status: "running", progress: null })).step).toBe("正在准备…");
   });
+  it("treats empty/whitespace activity as missing → fallback step", () => {
+    expect(inlineProgressView(run({ status: "running", progress: progress(50, "") })).step).toBe("正在准备…");
+    expect(inlineProgressView(run({ status: "running", progress: progress(50, "   ") })).step).toBe("正在准备…");
+  });
   it("queued or null → running:false", () => {
     expect(inlineProgressView(run({ status: "queued" })).running).toBe(false);
     expect(inlineProgressView(null).running).toBe(false);

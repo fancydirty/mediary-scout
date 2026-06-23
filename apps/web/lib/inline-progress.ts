@@ -19,6 +19,8 @@ export function inlineProgressView(
 ): { running: boolean; percent: number; step: string } {
   const running = run?.status === "running";
   const percent = Math.max(3, Math.min(100, run?.progress?.percent ?? 3));
-  const step = run?.progress?.activity ?? "正在准备…";
+  // Empty/whitespace activity (?? only guards null/undefined) would render a blank
+  // label — treat it as missing and fall back.
+  const step = run?.progress?.activity?.trim() || "正在准备…";
   return { running, percent, step };
 }

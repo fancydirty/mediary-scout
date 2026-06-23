@@ -70,10 +70,17 @@ export function SeasonRequestMenu({
   }
 
   if (isLockedResult(result)) {
-    // Match by tmdbId (seasonNumber null = any of this show's seasons), preferring
-    // the running one → inline live progress while running, static 已请求 pill otherwise.
+    // Match the SEASON that was just requested: a specific season → that number (so
+    // we don't show another season's running progress); "all remaining" → null
+    // (match any of this show's running seasons). → inline live progress while
+    // running, static 已请求 pill otherwise.
     return (
-      <AcquireProgressBadge tmdbId={tmdbId} seasonNumber={null} storageId={storageId} title={result?.message} />
+      <AcquireProgressBadge
+        tmdbId={tmdbId}
+        seasonNumber={selected === "all" ? null : selected}
+        storageId={storageId}
+        title={result?.message}
+      />
     );
   }
 
