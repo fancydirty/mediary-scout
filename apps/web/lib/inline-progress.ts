@@ -1,7 +1,9 @@
 import type { ActivityActiveRun } from "./activity-view";
 
-/** Find THIS card's active run: same tmdbId, and (movie) seasonNumber omitted →
- *  match any season, preferring a running run; (series) exact seasonNumber. */
+/** Find THIS card's active run: same tmdbId, and `seasonNumber === null` matches
+ *  ANY season (movies, and the TV "all remaining seasons" scope), preferring a
+ *  running run; a concrete `seasonNumber` matches exactly (a specific-season TV
+ *  request, so another season's run isn't shown). */
 export function findActiveRun(
   active: ActivityActiveRun[],
   tmdbId: number,
