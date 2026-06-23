@@ -98,6 +98,8 @@ docker compose logs -f cloudflared           # 看到 "Registered tunnel connect
 
 隧道通了之后,`https://media.yourdomain.com` 就能从任意设备打开。`.env` 里的 token 不会进 git(`.env` 已被忽略)。
 
+> 隧道连不上 / 老掉线?cloudflared 默认走 QUIC(UDP)。有些网络(部分校园网、运营商、严格防火墙)封 UDP,隧道就注册不上。这时在 `.env` 设 `TUNNEL_TRANSPORT_PROTOCOL=http2` 回退到走 TCP 的 HTTP/2,再 `docker compose --profile tunnel up -d` 重起即可。
+
 **3. ⚠️ 必须加 Cloudflare Access(否则等于把实例裸挂公网)**
 
 Mediary Scout 默认单用户、无登录,公网入口必须靠 Access 这类前置鉴权挡住:
