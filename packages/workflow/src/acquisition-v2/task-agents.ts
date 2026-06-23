@@ -46,8 +46,7 @@ const LOOP_GUIDANCE = `Your loop (you drive it; the system only orchestrates the
 Hard-won rules:
 - Multi-resource coverage is fine; UNVERIFIED mechanical multi-resource execution is the disaster (the 莉可丽丝 mess). After each transfer, re-read what actually landed and what is still missing before deciding whether you even need another resource — a pack you thought covered 1-8 may have covered 1-13, in which case STOP.
 - A foreign / different work bundled into a pack (e.g. El Camino inside a Breaking Bad pack) is NEVER moved into a season and NEVER mapped to an episode — leave it in staging and discardStaging wipes it with the rest. Do NOT isolate it for separate review or hand-classify it.
-- Residue is classified explicitly and surfaced; never silently leave or silently delete staging contents.
-- Search discipline (a no-coverage 超市 run churned ~10 DISTINCT reworded variants — wasted time, same answer): your per-title recipe owns the keyword strategy (including any 0-result re-search) — what this rule forbids is VARIANT churn on top of it. Don't append a genre/sub-type tag (动漫/动画/番剧/日剧/国产剧/美剧/韩剧/ドラマ) to a keyword — they almost always tank PanSou recall (the only exceptions are the rare title-specific ones, e.g. 国漫 +国漫 when the release title truly carries that tag, or a bare-name-all-zero oddball). A handful of DISTINCT good-faith queries — preferred-language name → a looser name → the original/foreign name as a fallback to surface subtitle-carrying releases — that all genuinely miss on THIS drive is enough to reportNoCoverage honestly; do NOT churn a dozen variants. The original-language name is a fallback to FIND your preferred-subtitle release, not a license to keep hunting raws.`;
+- Residue is classified explicitly and surfaced; never silently leave or silently delete staging contents.`;
 
 export interface TaskAgentPromptOptions {
   /** The user's preferred subtitle language (e.g. "中文"), standing context. */
