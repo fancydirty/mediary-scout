@@ -226,8 +226,12 @@ export class TaskSandbox {
       intoDirectoryId: this.stagingDirectoryId,
     });
     const staging = await this.storage.listTree({ directoryId: this.stagingDirectoryId });
+    // A systemic block ONLY when nothing actually landed — a provider can mark an
+    // attempt failed yet materialize files (e.g. quark); the truth is the landing
+    // point (staging / materializedFileIds), not the status flag.
+    const nothingLanded = staging.length === 0 && attempt.materializedFileIds.length === 0;
     const systemicBlock =
-      attempt.status === "failed" && isSystemicTransferBlockMessage(attempt.providerMessage)
+      attempt.status === "failed" && nothingLanded && isSystemicTransferBlockMessage(attempt.providerMessage)
         ? { reason: attempt.providerMessage!.trim() }
         : undefined;
     return { attempt, staging, ...(systemicBlock ? { systemicBlock } : {}) };
@@ -304,7 +308,9 @@ export class TaskSandbox {
       // systemic one every remaining candidate will fail the same way, so don't
       // grind the rest of the list (the 心灵奇旅 13-transfer waste). Ordinary
       // dead-link failures (过期/取消/错链) keep iterating to the next candidate.
-      if (isSystemicTransferBlockMessage(attempt.providerMessage)) {
+      // Only a block if THIS attempt landed nothing — a provider can materialize
+      // files yet mark the attempt failed (e.g. quark); trust the landing point.
+      if (attempt.materializedFileIds.length === 0 && isSystemicTransferBlockMessage(attempt.providerMessage)) {
         systemicBlock = { reason: attempt.providerMessage!.trim() };
         break;
       }
