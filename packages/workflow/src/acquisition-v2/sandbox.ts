@@ -299,9 +299,11 @@ export class TaskSandbox {
         transferredCandidateId = candidateId;
         break;
       }
-      // Layer-1: if the FIRST failure is a systemic block (quota / auth / VIP),
-      // STOP — every candidate will fail. Don't grind the rest of the list (the
-      // 心灵奇旅 13-transfer waste).
+      // Layer-1: stop on the first failure that is a SYSTEMIC block (quota / auth /
+      // VIP) — it may come after one or more dead-link failures, but once we see a
+      // systemic one every remaining candidate will fail the same way, so don't
+      // grind the rest of the list (the 心灵奇旅 13-transfer waste). Ordinary
+      // dead-link failures (过期/取消/错链) keep iterating to the next candidate.
       if (isSystemicTransferBlockMessage(attempt.providerMessage)) {
         systemicBlock = { reason: attempt.providerMessage! };
         break;
