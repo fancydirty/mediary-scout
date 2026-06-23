@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildTvAnimeSystemPrompt, buildMovieSystemPrompt } from "../src/acquisition-v2/task-agents.js";
+import { readSkillSection } from "../src/acquisition-v2/skill.js";
 
 // #4: a coherent full-season pack often carries episodes BEYOND TMDB's aired cursor
 // (the release is ahead of TMDB). The agent must mark those (verified-landed) episodes
@@ -23,5 +24,19 @@ describe("coverage honesty — trust a full pack's beyond-aired episodes (#4 pro
 
   it("movie prompt is unaffected (no seasons/episodes)", () => {
     expect(buildMovieSystemPrompt({})).not.toContain("provider-ahead");
+  });
+
+  // ROOT CAUSE of the live #4 failure (quark 超市, run 36ce0a93): the agent READS the TV
+  // skill manual (readSkill("tv")) and is told to trust it over memory. PR#23 added
+  // provider-ahead to the SYSTEM PROMPT but NOT to skill.ts — whose "Coverage honesty"
+  // said only "leave unaired for the patrol", contradicting it. The agent followed the
+  // manual and only took the aired E01 despite a full 12-集 中字 pack being present.
+  it("skill.ts TV manual's coverage-honesty carries the provider-ahead carve-out (not just 'leave unaired')", () => {
+    const tv = readSkillSection("tv");
+    expect(tv).toMatch(/provider-ahead|超前/i); // the manual must name provider-ahead
+    expect(tv).toMatch(/ahead of TMDB|beyond the aired|BEYOND the aired/i); // the full-pack-ahead case
+    expect(tv).toContain("markObtained"); // … and that you mark the verified-landed extras
+    // hard-safety must travel with it (don't mark what a pack only claims):
+    expect(tv).toMatch(/merely claims|verified|actually.*land/i);
   });
 });
