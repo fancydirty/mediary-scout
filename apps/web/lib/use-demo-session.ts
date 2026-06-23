@@ -22,6 +22,12 @@ import {
 export function useDemoAcquisitions(): DemoAcquisitionEntry[] {
   const [entries, setEntries] = useState<DemoAcquisitionEntry[]>([]);
   useEffect(() => {
+    // Real mode (or any non-demo page that mounts a consumer, e.g. ActivityFeed):
+    // do NO work — no sessionStorage read, no setState (so no extra render), no
+    // listener. The store has no key anyway → zero impact.
+    if (!isDemoModeClient()) {
+      return;
+    }
     const read = () => setEntries(listDemoAcquisitions());
     read();
     window.addEventListener(DEMO_ACQUIRED_EVENT, read);

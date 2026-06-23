@@ -75,12 +75,16 @@ export function recordDemoAcquisition(
   if (!storage) {
     return [];
   }
-  const rest = listDemoAcquisitions(storage).filter((e) => e.tmdbId !== entry.tmdbId);
+  // Read the session list ONCE (untrusted + potentially large), derive both the
+  // existing match and the rest from the same snapshot — avoids a double parse and
+  // any inconsistency from storage changing between two reads.
+  const current = listDemoAcquisitions(storage);
   // Preserve the FIRST acquiredAt: this can be (re)recorded for the same tmdbId by
   // both the playback done-handler and useDemoInProgress's promotion tick. Re-stamping
   // a later time would push createdAt forward and make the 通知 NEW/unread badge
   // wrongly reappear after the user already saw it. Only stamp when truly new.
-  const existing = listDemoAcquisitions(storage).find((e) => e.tmdbId === entry.tmdbId);
+  const existing = current.find((e) => e.tmdbId === entry.tmdbId);
+  const rest = current.filter((e) => e.tmdbId !== entry.tmdbId);
   const stamped: DemoAcquisitionEntry = {
     ...entry,
     // Only a FINITE existing value is worth preserving — a corrupted sessionStorage

@@ -16,9 +16,19 @@ const TMDB_FEED_POSTER = "https://image.tmdb.org/t/p/w154";
  * outside demo or when empty.
  */
 export function DemoSessionNotifications() {
+  // Guard at the COMPONENT boundary, before any demo hooks: isDemoModeClient() is a
+  // build-time constant, so in real builds the inner (hook-using) body never mounts
+  // → zero hook/effect/render cost. (Conditional component, NOT conditional hook.)
+  if (!isDemoModeClient()) {
+    return null;
+  }
+  return <DemoSessionNotificationsInner />;
+}
+
+function DemoSessionNotificationsInner() {
   const items = demoSessionNotifications(useDemoAcquisitions());
 
-  if (!isDemoModeClient() || items.length === 0) {
+  if (items.length === 0) {
     return null;
   }
 

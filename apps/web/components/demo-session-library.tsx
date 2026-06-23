@@ -14,10 +14,20 @@ import { useDemoAcquisitions, useDemoInProgress } from "../lib/use-demo-session"
  * demo or when both are empty.
  */
 export function DemoSessionLibrary() {
+  // Guard at the COMPONENT boundary, before any demo hooks: isDemoModeClient() is a
+  // build-time constant, so in real builds the inner (hook-using) body never mounts
+  // → zero hook/effect/render cost. (Conditional component, NOT conditional hook.)
+  if (!isDemoModeClient()) {
+    return null;
+  }
+  return <DemoSessionLibraryInner />;
+}
+
+function DemoSessionLibraryInner() {
   const entries = useDemoAcquisitions();
   const acquiring = demoInProgressLibraryCards(useDemoInProgress());
 
-  if (!isDemoModeClient() || (entries.length === 0 && acquiring.length === 0)) {
+  if (entries.length === 0 && acquiring.length === 0) {
     return null;
   }
 
