@@ -75,6 +75,24 @@ describe("hasSystemicTransferBlock / buildSystemicBlockStop", () => {
     expect(hasSystemicTransferBlock([landedStep, blockStep])).toBe(false);
   });
 
+  it("is false when files actually LANDED even though the attempt is marked failed (e.g. quark materializes then marks failed)", () => {
+    // The truth is the landing point, not the status flag: materializedFileIds /
+    // staging non-empty ⇒ the account CAN transfer, so it is not a systemic block.
+    const landedButFailed = {
+      toolCalls: [{ toolName: "transferCandidate", input: { candidateId: "c1" } }],
+      toolResults: [
+        {
+          output: {
+            attempt: { status: "failed", providerMessage: "云下载配额不足", materializedFileIds: ["f1"] },
+            staging: [{ id: "f1" }],
+            systemicBlock: { reason: "云下载配额不足" },
+          },
+        },
+      ],
+    };
+    expect(hasSystemicTransferBlock([landedButFailed])).toBe(false);
+  });
+
   it("is false with no block at all", () => {
     expect(hasSystemicTransferBlock([okStep])).toBe(false);
     expect(hasSystemicTransferBlock([])).toBe(false);

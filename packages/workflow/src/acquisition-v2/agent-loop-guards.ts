@@ -104,15 +104,29 @@ export function hasSystemicTransferBlock(steps: ReadonlyArray<StepLike>): boolea
   for (const step of steps) {
     for (const result of step.toolResults ?? []) {
       const output = result.output as
-        | { systemicBlock?: { reason: string }; attempt?: { status?: string }; transferredCandidateId?: string | null }
+        | {
+            systemicBlock?: { reason: string };
+            attempt?: { status?: string; materializedFileIds?: ReadonlyArray<unknown> };
+            transferredCandidateId?: string | null;
+            staging?: ReadonlyArray<unknown>;
+            landed?: ReadonlyArray<unknown>;
+          }
         | undefined;
       if (output?.systemicBlock) {
         hasBlock = true;
       }
-      // Something transferred ⇒ the account CAN transfer, so a later systemic-looking
-      // message is not an account block. transferCandidate reports attempt.status;
-      // transferUntilLanded reports transferredCandidateId.
-      if (output?.attempt?.status === "succeeded" || output?.transferredCandidateId) {
+      // Something landed ⇒ the account CAN transfer, so a later systemic-looking
+      // message is not an account block. Check the ACTUAL landed files, not just the
+      // status flag: a provider can materialize files yet mark the attempt failed
+      // (e.g. quark), and the truth is the landing point (materializedFileIds /
+      // staging / landed tree), per the "trust the reread, not the prediction" rule.
+      if (
+        output?.attempt?.status === "succeeded" ||
+        Boolean(output?.transferredCandidateId) ||
+        (output?.attempt?.materializedFileIds?.length ?? 0) > 0 ||
+        (output?.staging?.length ?? 0) > 0 ||
+        (output?.landed?.length ?? 0) > 0
+      ) {
         anythingLanded = true;
       }
     }
