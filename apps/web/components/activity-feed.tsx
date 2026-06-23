@@ -6,8 +6,8 @@ import { CheckCircle2, ChevronDown, ChevronRight, Clock3, Loader2, RotateCcw, Tr
 import { showHref } from "@media-track/workflow/scope";
 import type { ActivityActiveRun, ActivityCompletedItem, ActivityView } from "../lib/activity-view";
 import { isDemoModeClient } from "../lib/demo-mode";
-import { demoCompletedItems } from "../lib/demo-session";
-import { useDemoAcquisitions } from "../lib/use-demo-session";
+import { demoCompletedItems, demoInProgressActivityItems } from "../lib/demo-session";
+import { useDemoAcquisitions, useDemoInProgress } from "../lib/use-demo-session";
 
 const POLL_MS = 2600;
 const POSTER = "https://image.tmdb.org/t/p/w185";
@@ -50,19 +50,29 @@ export function ActivityFeed({ storageId }: { storageId?: string | undefined }) 
   // Only show completions for runs THIS session watched go active → done.
   const completed = view.recentCompleted.filter((item) => seenActive.current.has(item.workflowRunId));
   // Demo: acquisitions are client-only (no DB run) → surface this session's
-  // acquired titles as completed items so the activity page reflects them.
+  // acquired titles as completed items, and in-progress playbacks as live 获取中
+  // rows, so the activity page reflects them like production.
   const demoAcq = useDemoAcquisitions();
-  const demoDone = isDemoModeClient() ? demoCompletedItems(demoAcq) : [];
+  const isDemo = isDemoModeClient();
+  const demoDone = isDemo ? demoCompletedItems(demoAcq) : [];
+  const demoActive = demoInProgressActivityItems(useDemoInProgress());
   const allCompleted = [...demoDone, ...completed];
 
   return (
     <div className="activity">
       <section className="act-section">
         <div className="act-section-head act-section-head-static">获取中</div>
-        {running.length === 0 ? (
+        {running.length === 0 && demoActive.length === 0 ? (
           <p className="act-empty">当前没有正在处理的任务。</p>
         ) : (
-          running.map((run) => <RunningRow run={run} storageId={storageId} key={run.runId} />)
+          <>
+            {demoActive.map((item) => (
+              <DemoRunningRow item={item} key={item.id} />
+            ))}
+            {running.map((run) => (
+              <RunningRow run={run} storageId={storageId} key={run.runId} />
+            ))}
+          </>
         )}
       </section>
 
@@ -159,6 +169,31 @@ function Ticker({ text }: { text: string }) {
           {line.text}
         </div>
       ))}
+    </div>
+  );
+}
+
+type DemoActivityItem = ReturnType<typeof demoInProgressActivityItems>[number];
+
+/** Demo-only 获取中 row: clock-driven progress, no DB run (not a link). Mirrors
+ *  RunningRow's poster + progress bar + step layout. */
+function DemoRunningRow({ item }: { item: DemoActivityItem }) {
+  const percent = Math.max(3, Math.min(100, item.progress));
+  return (
+    <div className="act-row act-row-active">
+      {poster(item.posterPath, item.title, "info")}
+      <div className="act-row-body">
+        <div className="act-row-head">
+          <strong>{item.title}</strong>
+        </div>
+        <div className="act-bar">
+          <div className="act-bar-fill" style={{ width: `${percent}%` }} />
+        </div>
+        <div className="act-ticker-row">
+          <Loader2 size={14} className="act-spin" aria-hidden />
+          <Ticker text={item.step} />
+        </div>
+      </div>
     </div>
   );
 }

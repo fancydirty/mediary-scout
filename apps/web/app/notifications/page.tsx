@@ -19,6 +19,7 @@ import {
 import type { NotificationEvent, NotificationReportStatus } from "@media-track/workflow";
 import { landedSize } from "@media-track/workflow";
 import { NotificationsSeenMarker } from "../../components/notifications-seen-marker";
+import { DemoSessionNotifications } from "../../components/demo-session-notifications";
 import { AppSidebar } from "../../components/app-sidebar";
 import {
   ensureDemoSeeded,
@@ -94,6 +95,7 @@ async function NotificationsSurface({ searchParams }: { searchParams: Promise<{ 
             <p>每天的资源获取与追踪日报</p>
           </div>
         </div>
+        <DemoSessionNotifications />
         <Suspense fallback={<FeedSkeleton />}>
           <NotificationFeed connectedStorageId={workspace.connectedStorageId} />
         </Suspense>
