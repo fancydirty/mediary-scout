@@ -32,6 +32,12 @@ export function classifyTransferBlock(
     return null;
   }
   for (const attempt of attempts) {
+    // Only a genuine FAILED transfer signals a block — a no_target_change (115 has
+    // no cached copy / nothing new) can carry an incidental message that must NOT
+    // be misread as an account-level block.
+    if (attempt.status !== "failed") {
+      continue;
+    }
     const message = attempt.providerMessage?.trim() ?? "";
     if (message && SYSTEMIC_PATTERNS.some((pattern) => pattern.test(message))) {
       return { reason: message };

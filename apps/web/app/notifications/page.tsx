@@ -44,6 +44,7 @@ const kindIcon: Record<string, { tone: string; icon: typeof Bell }> = {
   tracking_completed: { tone: "green", icon: PartyPopper },
   already_current: { tone: "muted", icon: CheckCircle2 },
   no_coverage: { tone: "amber", icon: CircleSlash },
+  transfer_failed: { tone: "amber", icon: XCircle },
   foreign_work_detected: { tone: "amber", icon: Film },
 };
 

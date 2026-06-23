@@ -227,7 +227,9 @@ function buildNotification(input: {
     return {
       id: `notification_${workflowRunId}`,
       workflowRunId,
-      kind: noCoverage ? "no_coverage" : "series_initialized",
+      // A systemic transfer block surfaces as report.status "failed" → use a
+      // distinct kind so the leading icon + daily-digest don't count it as 暂无资源.
+      kind: report.status === "failed" ? "transfer_failed" : noCoverage ? "no_coverage" : "series_initialized",
       title: report.titleName,
       body: formatReportPushText(report),
       createdAt: input.now(),
@@ -257,11 +259,14 @@ function buildNotification(input: {
     return {
       id: `notification_${workflowRunId}`,
       workflowRunId,
-      kind: noCoverage
-        ? "no_coverage"
-        : report.status === "complete"
-          ? "tracking_completed"
-          : "episodes_restored",
+      kind:
+        report.status === "failed"
+          ? "transfer_failed"
+          : noCoverage
+            ? "no_coverage"
+            : report.status === "complete"
+              ? "tracking_completed"
+              : "episodes_restored",
       title: `${report.titleName} ${report.seasonLabel}`,
       body: formatReportPushText(report),
       createdAt: input.now(),
@@ -273,7 +278,7 @@ function buildNotification(input: {
   return {
     id: `notification_${workflowRunId}`,
     workflowRunId,
-    kind: noCoverage ? "no_coverage" : "tracking_initialized",
+    kind: report.status === "failed" ? "transfer_failed" : noCoverage ? "no_coverage" : "tracking_initialized",
     title: `${report.titleName} ${report.seasonLabel}`,
     body: formatReportPushText(report),
     createdAt: input.now(),

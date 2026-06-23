@@ -61,4 +61,12 @@ describe("classifyTransferBlock", () => {
     expect(block).not.toBeNull();
     expect(block!.reason).toContain("配额");
   });
+
+  it("ignores non-failed attempts — a no_target_change carrying a matching message must NOT flag a block", () => {
+    expect(
+      classifyTransferBlock([
+        attempt({ status: "no_target_change", providerMessage: "云下载配额不足" }),
+      ]),
+    ).toBeNull();
+  });
 });

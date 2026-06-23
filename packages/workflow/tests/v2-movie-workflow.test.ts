@@ -133,6 +133,7 @@ describe("runMovieAcquisitionV2 — obtained comes from the AGENT'S coverage, ne
     expect(result.notification.body).toContain("转存失败");
     expect(result.notification.body).toContain("配额");
     expect(result.notification.body).not.toContain("暂未找到");
+    expect(result.notification.kind).toBe("transfer_failed");
   });
 
   it("obtained TRUE when the agent declares MOVIE coverage (agent mark, not files on disk)", async () => {

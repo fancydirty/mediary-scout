@@ -100,6 +100,9 @@ describe("bridgeV2WorkflowToResult — V2 facts → per-season WorkflowResult sh
     expect(result.notification.body).toContain("转存失败");
     expect(result.notification.body).toContain("配额");
     expect(result.notification.body).not.toContain("暂未找到");
+    // kind must NOT be no_coverage — else the leading icon + daily-digest would
+    // still count this account block as 暂无资源, contradicting the failed pill.
+    expect(result.notification.kind).toBe("transfer_failed");
   });
 
   it("no-op (nothing was missing) → succeeded, episodes reflect the already-obtained set, no transfers", () => {

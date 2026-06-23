@@ -153,7 +153,9 @@ function buildResult(input: {
   const notification: NotificationEvent = {
     id: `notification_${input.request.workflowRunId}`,
     workflowRunId: input.request.workflowRunId,
-    kind: input.kind,
+    // A systemic transfer block → report.status "failed" → distinct kind so the
+    // leading icon + daily-digest don't count it as 暂无资源.
+    kind: report.status === "failed" ? "transfer_failed" : input.kind,
     title: input.request.title.title,
     body: formatReportPushText(report),
     createdAt: input.now(),
