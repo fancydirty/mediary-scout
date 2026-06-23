@@ -228,7 +228,7 @@ export class TaskSandbox {
     const staging = await this.storage.listTree({ directoryId: this.stagingDirectoryId });
     const systemicBlock =
       attempt.status === "failed" && isSystemicTransferBlockMessage(attempt.providerMessage)
-        ? { reason: attempt.providerMessage! }
+        ? { reason: attempt.providerMessage!.trim() }
         : undefined;
     return { attempt, staging, ...(systemicBlock ? { systemicBlock } : {}) };
   }
@@ -305,7 +305,7 @@ export class TaskSandbox {
       // grind the rest of the list (the 心灵奇旅 13-transfer waste). Ordinary
       // dead-link failures (过期/取消/错链) keep iterating to the next candidate.
       if (isSystemicTransferBlockMessage(attempt.providerMessage)) {
-        systemicBlock = { reason: attempt.providerMessage! };
+        systemicBlock = { reason: attempt.providerMessage!.trim() };
         break;
       }
     }

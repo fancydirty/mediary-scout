@@ -143,9 +143,10 @@ export class Storage115Simulator implements StorageV2 {
     if (!this.dirs.has(input.intoDirectoryId)) {
       throw new Error(`SIM_DIR_NOT_FOUND: target ${input.intoDirectoryId}`);
     }
-    const failureMessage = this.failureMessages.get(input.candidateId);
-    if (failureMessage) {
-      // Explicit failure (quota / auth / dead link) — nothing lands.
+    if (this.failureMessages.has(input.candidateId)) {
+      // Explicit failure (quota / auth / dead link) — nothing lands. Detected by
+      // key presence, NOT truthiness, so an intentionally empty message is honored.
+      const failureMessage = this.failureMessages.get(input.candidateId)!;
       this.spendBudget(1);
       return { status: "failed", materializedFileIds: [], providerMessage: failureMessage };
     }
