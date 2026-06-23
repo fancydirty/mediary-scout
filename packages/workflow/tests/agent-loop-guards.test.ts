@@ -10,6 +10,8 @@ import {
   stepReflectionNudge,
   prepareStepSystemOverride,
   buildRepetitionStop,
+  buildSystemicBlockStop,
+  hasSystemicTransferBlock,
   reflectionSystemOverride,
   toStepSignature,
 } from "../src/index.js";
@@ -42,6 +44,46 @@ describe("buildRepetitionStop", () => {
     const same = { toolCalls: [{ toolName: "searchResources", input: { keyword: "x" } }], toolResults: [{ output: "empty" }] };
     expect(await stop({ steps: [same, same, same, same] as never })).toBe(true);
     expect(await stop({ steps: [same, same] as never })).toBe(false);
+  });
+});
+
+describe("hasSystemicTransferBlock / buildSystemicBlockStop", () => {
+  const blockStep = {
+    toolCalls: [{ toolName: "transferCandidate", input: { candidateId: "c1" } }],
+    toolResults: [{ output: { attempt: { status: "failed", providerMessage: "云下载配额不足" }, staging: [], systemicBlock: { reason: "云下载配额不足" } } }],
+  };
+  const okStep = {
+    toolCalls: [{ toolName: "transferCandidate", input: { candidateId: "c2" } }],
+    toolResults: [{ output: { attempt: { status: "succeeded", providerMessage: "" }, staging: [{ id: "f1" }] } }],
+  };
+
+  it("is true once a tool result reports a systemicBlock and nothing has landed", () => {
+    expect(hasSystemicTransferBlock([blockStep])).toBe(true);
+    expect(hasSystemicTransferBlock([blockStep, blockStep])).toBe(true);
+  });
+
+  it("is false when a transfer succeeded somewhere (the account CAN transfer)", () => {
+    // A later systemic-looking message is not an account block if something already landed.
+    expect(hasSystemicTransferBlock([okStep, blockStep])).toBe(false);
+  });
+
+  it("is false when transferUntilLanded landed something (reports transferredCandidateId, not attempt.status)", () => {
+    const landedStep = {
+      toolCalls: [{ toolName: "transferUntilLanded", input: { candidateIds: ["c2"] } }],
+      toolResults: [{ output: { landed: [{ id: "f1" }], transferredCandidateId: "c2", attempts: [] } }],
+    };
+    expect(hasSystemicTransferBlock([landedStep, blockStep])).toBe(false);
+  });
+
+  it("is false with no block at all", () => {
+    expect(hasSystemicTransferBlock([okStep])).toBe(false);
+    expect(hasSystemicTransferBlock([])).toBe(false);
+  });
+
+  it("buildSystemicBlockStop returns a StopCondition firing on a systemic block", async () => {
+    const stop = buildSystemicBlockStop();
+    expect(await stop({ steps: [blockStep] as never })).toBe(true);
+    expect(await stop({ steps: [okStep] as never })).toBe(false);
   });
 });
 

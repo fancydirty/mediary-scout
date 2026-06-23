@@ -23,6 +23,10 @@ export interface SimTreeFile {
 export interface TransferAttemptResult {
   status: "succeeded" | "failed";
   materializedFileIds: string[];
+  /** The provider's loud failure message (quota / auth / dead link), if any. Layer-1
+   *  surfaces this so the agent sees WHY a transfer failed and can distinguish a
+   *  systemic account block from an ordinary dead link. */
+  providerMessage?: string;
 }
 
 /** What a candidate transfer would land — files keyed by their path relative to
@@ -74,6 +78,7 @@ export class Storage115Simulator implements StorageV2 {
   private readonly files = new Map<string, File>();
   private readonly packs: Map<string, PackSpec>;
   private readonly linkKinds: Map<string, "pan115" | "magnet">;
+  private readonly failureMessages: Map<string, string>;
   private readonly apiBudget: number;
   private sequence = 0;
   private callsSpent = 0;
@@ -84,6 +89,11 @@ export class Storage115Simulator implements StorageV2 {
       /** Per-candidate link kind (default "unknown"). Only matters for the 115-only
        *  transferUntilLanded; ordinary transferCandidate ignores it. */
       linkKinds?: Record<string, "pan115" | "magnet">;
+      /** Per-candidate loud failure message (quota / auth / dead link). Models the
+       *  心灵奇旅 free-account case: the resource exists (pack present) but every
+       *  transfer fails with "云下载配额不足". A candidate with no pack AND no explicit
+       *  failure message returns a generic "failed" with no message (unknown death). */
+      failureMessages?: Record<string, string>;
       rootId?: string;
       apiBudget?: number;
     } = {},
@@ -92,6 +102,7 @@ export class Storage115Simulator implements StorageV2 {
     this.dirs.set(rootId, { id: rootId, name: "root", parentId: null });
     this.packs = new Map(Object.entries(options.packs ?? {}));
     this.linkKinds = new Map(Object.entries(options.linkKinds ?? {}));
+    this.failureMessages = new Map(Object.entries(options.failureMessages ?? {}));
     this.apiBudget = options.apiBudget ?? Number.POSITIVE_INFINITY;
   }
 
@@ -122,14 +133,21 @@ export class Storage115Simulator implements StorageV2 {
   }
 
   /** Transfer a candidate's pack into a directory: materialize its files,
-   *  creating the pack's own wrapper subdirectories as needed. An unknown
-   *  candidate is a dead share — failed, nothing materialized. */
+   *  creating the pack's own wrapper subdirectories as needed. A candidate with a
+   *  configured failureMessage returns failed + that message (models quota / auth /
+   *  dead link). An unknown candidate (no pack, no message) is a generic dead share. */
   async transferCandidate(input: {
     candidateId: string;
     intoDirectoryId: string;
   }): Promise<TransferAttemptResult> {
     if (!this.dirs.has(input.intoDirectoryId)) {
       throw new Error(`SIM_DIR_NOT_FOUND: target ${input.intoDirectoryId}`);
+    }
+    const failureMessage = this.failureMessages.get(input.candidateId);
+    if (failureMessage) {
+      // Explicit failure (quota / auth / dead link) — nothing lands.
+      this.spendBudget(1);
+      return { status: "failed", materializedFileIds: [], providerMessage: failureMessage };
     }
     const pack = this.packs.get(input.candidateId);
     this.spendBudget(1 + (pack?.files.length ?? 0));

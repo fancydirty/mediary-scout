@@ -85,6 +85,42 @@ describe("runAcquisitionAgent — the real AI SDK tool-loop over the sandbox", (
     expect(result.steps).toBeGreaterThanOrEqual(3);
   });
 
+  it("stops the loop early on a systemic transfer block (account quota) instead of grinding every candidate", async () => {
+    // The provider has many real 115 shares for the film, but the account's 云下载
+    // quota is exhausted: EVERY transfer fails with the same systemic message. The
+    // 心灵奇旅 incident ground through 13 of these. The loop must stop after the first.
+    const provider = new FakeResourceProviderV2({
+      results: {
+        soul: Array.from({ length: 8 }, (_, i) => ({ id: `cand_${i}`, title: `心灵奇旅 ${i}`, episodeHints: [], qualityHints: [] })),
+      },
+    });
+    const failureMessages: Record<string, string> = {};
+    for (let i = 0; i < 8; i++) failureMessages[`cand_${i}`] = "云下载配额不足，请升级VIP获得赠送配额或购买云下载配额！";
+    const storage = new Storage115Simulator({ failureMessages });
+    const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
+    const targetSeasonDirectoryId = await storage.createDirectory({ name: "Season 1", parentId: "root" });
+    const sandbox = new TaskSandbox({ provider, storage, stagingDirectoryId, targetSeasonDirectoryIds: { 1: targetSeasonDirectoryId }, need: ["S01E01"] });
+    const search = await sandbox.searchResources("soul");
+    const snapshotId = search.snapshot!.id;
+
+    // A relentless agent that would otherwise transfer all 8 candidates one by one.
+    const model = scriptedModel(
+      Array.from({ length: 8 }, (_, i) => ({ tool: "transferCandidate", input: { snapshotId, candidateId: `cand_${i}` } })),
+    );
+
+    const result = await runAcquisitionAgent({
+      sandbox,
+      model,
+      system: "You acquire media into the scoped sandbox.",
+      prompt: "Ensure S01E01 is obtained.",
+      maxSteps: 20,
+    });
+
+    // The systemic-block stop fired after the FIRST failed transfer — not all 8.
+    expect(result.steps).toBeLessThanOrEqual(2);
+    expect(result.coverage.coverageMet).toBe(false);
+  });
+
   it("the cage still bites inside the loop: a refused tool call comes back as error evidence, not a crash", async () => {
     const { sandbox } = await setup(["S01E01"]);
     const model = scriptedModel([

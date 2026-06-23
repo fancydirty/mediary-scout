@@ -47,6 +47,7 @@ transferCandidate returns the TRUE materialized files (the system rereads for yo
 - A 115 share that transfers without error has landed.
 - A 115 share fails LOUD with a clear reason — the real ones you will see: "链接已过期" (expired), "分享已取消" (cancelled), "访问码错误" (wrong access code), "错误的链接" (bad/malformed link). All = dead. Switch to another covering candidate — a dead link is the NORM, never a reason to give up; try the next resource that covers the need. (For a movie, transferUntilLanded over your ranked 115 shares burns through these dead ones automatically.)
 - A magnet can SILENTLY fail: no error, yet nothing materializes. Trust the staging reread — if nothing landed, it is dead; move on to a 秒传-able candidate instead of waiting (the account's value is instant transfer, not a slow download).
+- **SYSTEMIC BLOCK** (别甩锅): when a transfer fails with "云下载配额不足" / "登录超时" / "请升级VIP" / "鉴权失败" — the resource EXISTS but the ACCOUNT is blocked (quota / auth / VIP). The tool result carries \`systemicBlock: { reason: "..." }\`. **立即停 — DO NOT keep transferring.** Every candidate will fail the same way. Report honestly: the resource was found, the account cannot transfer it (not "no resource"). This is actionable (top up quota / re-login), never blame the resource.
 
 ## Black-box gate (this is exactly where the 奥本海默 run failed)
 "Transparent" = the title states size / resolution / episodes / release group (e.g. "The.Dark.Knight.2008.2160p.BluRay.FGT 16.68GB"). "Black-box / opaque" = a bare name ("名称: 奥本海默") or a vague bundle ("【变形金刚系列】1~5部").
@@ -68,6 +69,9 @@ The drive is 夸克网盘. Every candidate is a 夸克分享链 (pan.quark.cn/s/
 A 夸克分享 fails LOUD with a clear reason — switch to another covering candidate:
 - "分享不存在" (code 41006), "分享已取消 / 已失效 / 已过期", "提取码错误 / 需要提取码". All = dead.
 A dead link is the NORM, never a reason to give up — try the next 夸克分享 that covers the need. For a movie, transferUntilLanded over your ranked 夸克分享 burns through the dead ones automatically (it relies on this loud failure, exactly like the 115 path).
+
+## SYSTEMIC BLOCK (别甩锅)
+When a 夸克转存 fails with a SYSTEMIC message — "配额不足" / "额度已用完" / "VIP会员" / "登录" / "鉴权" — the resource EXISTS but the ACCOUNT is blocked (quota / auth / VIP). The tool result carries \`systemicBlock: { reason: "..." }\`. **立即停 — DO NOT keep transferring.** Every candidate will fail the same way. Report honestly: the resource was found, the account cannot transfer it (not "no resource"). This is actionable (top up / re-login), never blame the resource.
 
 ## Black-box gate (same discipline as 115)
 "Transparent" = the title states size / resolution / episodes / release group. "Black-box / opaque" = a bare name or a vague bundle.

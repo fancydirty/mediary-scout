@@ -18,6 +18,7 @@ async function movieSetup(options: {
   results: Array<{ id: string; title: string }>;
   packs?: Record<string, { files: Array<{ path: string; sizeBytes: number }> }>;
   linkKinds?: Record<string, "pan115" | "magnet">;
+  failureMessages?: Record<string, string>;
 }) {
   const provider = new FakeResourceProviderV2({
     results: { oppenheimer: options.results.map((r) => ({ ...r, episodeHints: [], qualityHints: [] })) },
@@ -25,6 +26,7 @@ async function movieSetup(options: {
   const storage = new Storage115Simulator({
     ...(options.packs ? { packs: options.packs } : {}),
     ...(options.linkKinds ? { linkKinds: options.linkKinds } : {}),
+    ...(options.failureMessages ? { failureMessages: options.failureMessages } : {}),
   });
   const movieDir = await storage.createDirectory({ name: "奥本海默 (2023)", parentId: "root" });
   const sandbox = new TaskSandbox({
@@ -111,6 +113,52 @@ describe("TaskSandbox — transferUntilLanded (movie-only, 115-only, agent-order
     });
     await sandbox.searchResources("oppenheimer");
     await expect(sandbox.transferUntilLanded({ candidateIds: ["live"] })).rejects.toThrow(/movie/i);
+  });
+
+  it("carries each attempt's providerMessage back to the agent", async () => {
+    const { sandbox } = await movieSetup({
+      results: [
+        { id: "dead_1", title: "奥本海默 A" },
+        { id: "live", title: "奥本海默 B" },
+      ],
+      packs: { live: { files: [{ path: "奥本海默 (2023)/Oppenheimer.mkv", sizeBytes: 9000 }] } },
+      linkKinds: { dead_1: "pan115", live: "pan115" },
+      failureMessages: { dead_1: "链接已过期" },
+    });
+    await sandbox.searchResources("oppenheimer");
+    const result = await sandbox.transferUntilLanded({ candidateIds: ["dead_1", "live"] });
+    expect(result.attempts).toEqual([
+      { candidateId: "dead_1", status: "failed", providerMessage: "链接已过期" },
+      { candidateId: "live", status: "succeeded" },
+    ]);
+  });
+
+  it("STOPS at the first systemic block — does NOT burn the rest of the ranked list", async () => {
+    const { sandbox } = await movieSetup({
+      results: [
+        { id: "c1", title: "奥本海默 A" },
+        { id: "c2", title: "奥本海默 B" },
+        { id: "c3", title: "奥本海默 C" },
+      ],
+      // All three are real 115 shares for the film, but the account's quota is
+      // exhausted — every transfer fails with the same systemic message. Grinding
+      // all three is the wasted-transfer the 心灵奇旅 incident is about.
+      packs: { c3: { files: [{ path: "奥本海默 (2023)/o.mkv", sizeBytes: 1 }] } },
+      linkKinds: { c1: "pan115", c2: "pan115", c3: "pan115" },
+      failureMessages: {
+        c1: "云下载配额不足，请升级VIP获得赠送配额或购买云下载配额！",
+        c2: "云下载配额不足，请升级VIP获得赠送配额或购买云下载配额！",
+        c3: "云下载配额不足，请升级VIP获得赠送配额或购买云下载配额！",
+      },
+    });
+    await sandbox.searchResources("oppenheimer");
+
+    const result = await sandbox.transferUntilLanded({ candidateIds: ["c1", "c2", "c3"] });
+
+    // It stopped after the FIRST attempt (one quota failure ⇒ all will fail).
+    expect(result.attempts).toHaveLength(1);
+    expect(result.transferredCandidateId).toBeNull();
+    expect(result.systemicBlock).toEqual({ reason: "云下载配额不足，请升级VIP获得赠送配额或购买云下载配额！" });
   });
 
   it("when every candidate is a dead link, returns no landing (not an exception)", async () => {

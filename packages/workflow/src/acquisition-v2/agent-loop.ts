@@ -5,6 +5,7 @@ import { readSkillSection } from "./skill.js";
 import {
   DEFAULT_MAX_STEPS,
   buildRepetitionStop,
+  buildSystemicBlockStop,
   prepareStepSystemOverride,
 } from "./agent-loop-guards.js";
 import { interpretTool, type AgentToolEvent } from "./activity.js";
@@ -242,9 +243,9 @@ export async function runAcquisitionAgent(
     system: request.system,
     prompt: request.prompt,
     tools,
-    // Two ceilings: a step cap (cost/runaway) AND an OpenHands-style repetition
-    // stop (the real "agent went crazy" signal). Either ends the loop.
-    stopWhen: [stepCountIs(maxSteps), buildRepetitionStop()],
+    // Three stops: step cap (cost/runaway), repetition (agent crazy), and systemic
+    // transfer block (account quota/auth — every candidate will fail, stop grinding).
+    stopWhen: [stepCountIs(maxSteps), buildRepetitionStop(), buildSystemicBlockStop()],
     // Last ~10 steps before the cap: inject a calm "wrap up + clean staging" nudge
     // so a step-capped run doesn't leave the 一人之下-style half-done mess.
     prepareStep: ({ stepNumber }) => {

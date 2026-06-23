@@ -76,6 +76,21 @@ describe("TV/anime system prompt carries the 字字泣血 invariants", () => {
   });
 });
 
+describe("both prompts carry the systemic-block STOP rule (别甩锅: account block ≠ no resource)", () => {
+  it.each([
+    ["tv", buildTvAnimeSystemPrompt({})],
+    ["movie", buildMovieSystemPrompt({})],
+  ])("%s prompt tells the agent to stop on a systemic transfer block", (_name, prompt) => {
+    // names the systemic signals
+    expect(prompt).toMatch(/配额|额度|VIP|登录|鉴权/);
+    // tells it to STOP rather than grind every candidate
+    expect(prompt).toMatch(/系统性|账号|systemic/i);
+    expect(prompt).toMatch(/立即停|不要(再|继续)|别(再|继续)|STOP/i);
+    // surfaced field the agent reads
+    expect(prompt).toContain("systemicBlock");
+  });
+});
+
 describe("quality guidance injection", () => {
   it("tv & movie system prompts include qualityGuidance when provided", () => {
     const g = "画质偏好:高(≈4K)。XYZ-MARKER";

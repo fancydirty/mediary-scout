@@ -22,6 +22,21 @@ describe("brand-aware storage skill", () => {
     expect(() => getStorageSkill("baidu")).toThrowError(/unknown storage brand/i);
   });
 
+  it.each(["pan115", "quark"])(
+    "%s teaches the systemic-block STOP rule (quota/auth = account problem, not a dead link)",
+    (brand) => {
+      const skill = getStorageSkill(brand);
+      // distinguishes a systemic ACCOUNT block from an ordinary dead link
+      expect(skill).toMatch(/系统性|systemic|账号|account/i);
+      expect(skill).toMatch(/配额|额度|VIP|登录|鉴权/);
+      // it must tell the agent to STOP, not keep grinding every candidate
+      expect(skill).toMatch(/立即停|STOP|不要(再|继续)|别(再|继续)/i);
+      expect(skill).toContain("systemicBlock"); // the surfaced tool field
+      // and NOT report "no resource" (the resource exists)
+      expect(skill).toMatch(/资源.*(存在|有)|不是.*没有?资源|别甩锅/);
+    },
+  );
+
   it("readSkillSection selects the brand variant for dead-links-black-box", () => {
     expect(readSkillSection("dead-links-black-box", "quark")).toBe(getStorageSkill("quark"));
     expect(readSkillSection("dead-links-black-box", "pan115")).toBe(getStorageSkill("pan115"));

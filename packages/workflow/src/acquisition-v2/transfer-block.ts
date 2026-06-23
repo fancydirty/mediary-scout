@@ -21,6 +21,17 @@ const SYSTEMIC_PATTERNS: RegExp[] = [
   /PAN115_AUTH|AUTH_FAILED|未授权|鉴权/i,
 ];
 
+/**
+ * Per-message predicate: is this providerMessage a SYSTEMIC account-level block
+ * (quota / auth / VIP) rather than an ordinary dead link? The agent stops grinding
+ * on a systemic block (every candidate will fail); it iterates to the next on a
+ * dead link. Reused by the sandbox (transferCandidate / transferUntilLanded).
+ */
+export function isSystemicTransferBlockMessage(message: string | null | undefined): boolean {
+  const normalized = (message ?? "").trim();
+  return normalized.length > 0 && SYSTEMIC_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
 export function classifyTransferBlock(
   attempts: TransferAttempt[],
 ): { reason: string } | null {
@@ -38,9 +49,8 @@ export function classifyTransferBlock(
     if (attempt.status !== "failed") {
       continue;
     }
-    const message = attempt.providerMessage?.trim() ?? "";
-    if (message && SYSTEMIC_PATTERNS.some((pattern) => pattern.test(message))) {
-      return { reason: message };
+    if (isSystemicTransferBlockMessage(attempt.providerMessage)) {
+      return { reason: attempt.providerMessage.trim() };
     }
   }
   return null;

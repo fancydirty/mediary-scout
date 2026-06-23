@@ -105,10 +105,11 @@ export class RealStorageV2 implements StorageV2 {
     await this.maybeRecordDeadLink(candidate.providerPayload?.["url"], attempt);
     // Only a real materialization counts as success; no_target_change (115 has no
     // cached copy) is a miss the agent must recover from, surfaced as failed +
-    // an empty reread.
+    // an empty reread. Layer-1: surface providerMessage so the agent sees WHY.
     return {
       status: attempt.status === "succeeded" ? "succeeded" : "failed",
       materializedFileIds: attempt.materializedFileIds,
+      ...(attempt.providerMessage ? { providerMessage: attempt.providerMessage } : {}),
     };
   }
 

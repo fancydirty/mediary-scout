@@ -110,6 +110,16 @@ describe("RealStorageV2 — StorageExecutor → StorageV2 adapter", () => {
     expect(result.status).toBe("failed");
   });
 
+  it("surfaces the executor's providerMessage on a failed transfer (so the agent sees WHY)", async () => {
+    const executor = new RecordingExecutor({ status: "failed", message: "云下载配额不足，请升级VIP获得赠送配额或购买云下载配额！" });
+    const { storage, registry } = adapter(executor);
+    registry.record(candidate("cand"));
+
+    const result = await storage.transferCandidate({ candidateId: "cand", intoDirectoryId: "staging" });
+    expect(result.status).toBe("failed");
+    expect(result.providerMessage).toBe("云下载配额不足，请升级VIP获得赠送配额或购买云下载配额！");
+  });
+
   it("fails loud when the candidate id was never observed (not in the registry)", async () => {
     const { storage } = adapter(new RecordingExecutor());
     await expect(storage.transferCandidate({ candidateId: "ghost", intoDirectoryId: "staging" })).rejects.toThrow(

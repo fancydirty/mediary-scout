@@ -45,4 +45,44 @@ describe("TaskSandbox — transferCandidate (snapshot-bound, into staging, force
       sandbox.transferCandidate({ snapshotId: search.snapshot!.id, candidateId: "bogus" }),
     ).rejects.toThrow(/candidate/i);
   });
+
+  it("surfaces a SYSTEMIC block (configures providerMessage + systemicBlock) so the agent stops grinding", async () => {
+    const provider = new FakeResourceProviderV2({
+      results: { show: [{ id: "cand_full", title: "Show 全集", episodeHints: [], qualityHints: [] }] },
+    });
+    // The resource EXISTS (pack present) but the account cannot transfer it (quota) —
+    // exactly the 心灵奇旅 free-account case. The sim returns the loud provider message.
+    const storage = new Storage115Simulator({
+      packs: { cand_full: { files: [{ path: "Show - 01.mkv", sizeBytes: 1 }] } },
+      failureMessages: { cand_full: "云下载配额不足，请升级VIP获得赠送配额或购买云下载配额！" },
+    });
+    const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
+    const sandbox = new TaskSandbox({ provider, storage, stagingDirectoryId, need: ["S01E01"] });
+    const search = await sandbox.searchResources("show");
+
+    const result = await sandbox.transferCandidate({ snapshotId: search.snapshot!.id, candidateId: "cand_full" });
+
+    expect(result.attempt.status).toBe("failed");
+    expect(result.attempt.providerMessage).toContain("配额");
+    expect(result.systemicBlock).toEqual({ reason: "云下载配额不足，请升级VIP获得赠送配额或购买云下载配额！" });
+    expect(result.staging).toHaveLength(0); // nothing landed
+  });
+
+  it("does NOT flag a dead-link failure as a systemic block (keep iterating)", async () => {
+    const provider = new FakeResourceProviderV2({
+      results: { show: [{ id: "dead", title: "Show 全集", episodeHints: [], qualityHints: [] }] },
+    });
+    const storage = new Storage115Simulator({
+      failureMessages: { dead: "链接已过期" },
+    });
+    const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
+    const sandbox = new TaskSandbox({ provider, storage, stagingDirectoryId, need: ["S01E01"] });
+    const search = await sandbox.searchResources("show");
+
+    const result = await sandbox.transferCandidate({ snapshotId: search.snapshot!.id, candidateId: "dead" });
+
+    expect(result.attempt.status).toBe("failed");
+    expect(result.attempt.providerMessage).toBe("链接已过期");
+    expect(result.systemicBlock).toBeUndefined();
+  });
 });
