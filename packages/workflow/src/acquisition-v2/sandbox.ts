@@ -427,7 +427,12 @@ export class TaskSandbox {
   async finish(): Promise<{ coverageMet: boolean; obtained: string[]; missing: string[] }> {
     return {
       coverageMet: this.isCoverageMet(),
-      obtained: this.need.filter((token) => this.obtainedCodes.has(token)),
+      // ALL the agent's marks — not just need∩marked. A coherent full pack often
+      // delivers episodes BEYOND the aired cursor (the need); those provider-ahead
+      // marks must survive finish() so syncSeasonNeed can record them as
+      // provider-ahead (frontend 超前). Filtering to `need` here silently dropped
+      // them — the live #4 bug (quark 超市: agent marked 12, only E01 persisted).
+      obtained: [...this.obtainedCodes],
       missing: this.missingNeed(),
     };
   }

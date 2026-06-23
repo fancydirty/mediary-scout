@@ -29,6 +29,23 @@ describe("TaskSandbox — markObtained (agent's final declaration; NO mechanical
     expect(summary.missing).toEqual(["S01E02"]);
   });
 
+  it("surfaces provider-ahead marks BEYOND the need — a full pack delivered past the aired cursor (#4)", async () => {
+    // The live #4 bug: need = just the aired episode (S01E01, TMDB aired=1); the
+    // agent transferred a coherent full-season pack and (correctly, post skill fix)
+    // markObtained all 12. finish() must surface ALL the agent's marks — not just
+    // need∩marked — or E02–E12 are silently dropped here, before syncSeasonNeed can
+    // record them as provider-ahead (frontend "超前"). This is exactly where the
+    // quark 超市 run lost E02–E12 despite marking them.
+    const sandbox = await sandboxWithNeed(["S01E01"]);
+    const all = Array.from({ length: 12 }, (_, i) => `S01E${String(i + 1).padStart(2, "0")}`);
+
+    await sandbox.markObtained({ codes: all });
+
+    const summary = await sandbox.finish();
+    expect(summary.obtained).toEqual(all); // ALL 12, not just the aired need
+    expect(summary.coverageMet).toBe(true);
+  });
+
   it("does NOT re-read 115 to verify presence — the mark is the agent's call", async () => {
     // The system no longer mechanically re-reads the target dir to confirm a
     // backing file exists. move/flatten already force-reread and handed the
