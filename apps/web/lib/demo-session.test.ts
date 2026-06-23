@@ -1,5 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { listDemoAcquisitions, recordDemoAcquisition, demoCompletedItems, type DemoAcquisitionEntry } from "./demo-session";
+import {
+  listDemoAcquisitions,
+  recordDemoAcquisition,
+  demoCompletedItems,
+  type DemoAcquisitionEntry,
+  startDemoInProgress,
+  listDemoInProgress,
+  clearDemoInProgress,
+  demoInProgressView,
+  demoInProgressLibraryCards,
+  demoInProgressActivityItems,
+  demoSessionNotifications,
+  type DemoInProgressEntry,
+  type DemoInProgressActive,
+} from "./demo-session";
+import { DEMO_PLAYBACK_TOTAL_MS } from "./demo-playback-timeline";
 
 function fakeStorage(initial: Record<string, string> = {}) {
   const map = new Map(Object.entries(initial));
@@ -76,5 +91,120 @@ describe("demoCompletedItems", () => {
     expect(it0.seasonLabel).toBeNull();
     expect(it0.sizeText).toBeNull();
     expect(typeof it0.createdAt).toBe("string");
+  });
+});
+
+describe("demo in-progress overlay", () => {
+  const ip = (tmdbId: number, startedAt: number): DemoInProgressEntry => ({
+    tmdbId,
+    title: `T${tmdbId}`,
+    year: 2026,
+    type: "tv",
+    posterPath: "/p.jpg",
+    startedAt,
+  });
+
+  it("records, lists, dedups by tmdbId (replace, front), clears", () => {
+    const s = fakeStorage();
+    startDemoInProgress(ip(1, 1000), s);
+    startDemoInProgress(ip(2, 1500), s);
+    startDemoInProgress({ ...ip(1, 2000) }, s); // same tmdbId → replace, move front
+    const list = listDemoInProgress(s);
+    expect(list.map((e) => e.tmdbId)).toEqual([1, 2]);
+    expect(list[0]!.startedAt).toBe(2000);
+    clearDemoInProgress(1, s);
+    expect(listDemoInProgress(s).map((e) => e.tmdbId)).toEqual([2]);
+  });
+
+  it("null storage (SSR) → empty list, no throw", () => {
+    expect(listDemoInProgress(null)).toEqual([]);
+    expect(() => startDemoInProgress(ip(1, 0), null)).not.toThrow();
+    expect(() => clearDemoInProgress(1, null)).not.toThrow();
+  });
+
+  it("drops wrong-shape entries", () => {
+    const bad = JSON.stringify([{ tmdbId: "x", startedAt: 1 }, ip(7, 0)]);
+    expect(
+      listDemoInProgress(fakeStorage({ "mediary-demo-inprogress": bad })).map((e) => e.tmdbId),
+    ).toEqual([7]);
+  });
+});
+
+describe("demoInProgressView", () => {
+  const base = { tmdbId: 1, title: "A", year: 2026, type: "tv" as const, posterPath: null };
+
+  it("splits active vs done by the clock", () => {
+    const started = { ...base, startedAt: 0 };
+    const mid = demoInProgressView([started], Math.floor(DEMO_PLAYBACK_TOTAL_MS / 2));
+    expect(mid.done).toEqual([]);
+    expect(mid.active).toHaveLength(1);
+    expect(mid.active[0]!.progress).toBeGreaterThan(0);
+    expect(mid.active[0]!.progress).toBeLessThanOrEqual(100);
+    expect(typeof mid.active[0]!.step).toBe("string");
+    expect(mid.active[0]!.step.length).toBeGreaterThan(0);
+
+    const after = demoInProgressView([started], DEMO_PLAYBACK_TOTAL_MS + 10);
+    expect(after.active).toEqual([]);
+    expect(after.done).toEqual([started]);
+  });
+
+  it("clamps negative elapsed (clock skew) to the first step, never crashes", () => {
+    const future = { ...base, startedAt: 100 };
+    const view = demoInProgressView([future], 0); // now < startedAt
+    expect(view.active).toHaveLength(1);
+    expect(view.active[0]!.progress).toBeGreaterThan(0);
+  });
+});
+
+describe("demo in-progress view mappers", () => {
+  const active: DemoInProgressActive[] = [
+    {
+      tmdbId: 7,
+      title: "X",
+      year: 2026,
+      type: "anime",
+      posterPath: "/p.jpg",
+      startedAt: 0,
+      progress: 40,
+      step: "转存到网盘…",
+    },
+  ];
+
+  it("maps active entries to library 获取中 cards", () => {
+    expect(demoInProgressLibraryCards(active)).toEqual([
+      { tmdbId: 7, title: "X", year: 2026, type: "anime", posterPath: "/p.jpg", acquiring: true },
+    ]);
+  });
+
+  it("maps active entries to activity 获取中 items with progress", () => {
+    const items = demoInProgressActivityItems(active);
+    expect(items[0]!.id).toBe("demo-inprogress-7");
+    expect(items[0]!.title).toBe("X");
+    expect(items[0]!.progress).toBe(40);
+    expect(items[0]!.step).toBe("转存到网盘…");
+    expect(items[0]!.posterPath).toBe("/p.jpg");
+  });
+});
+
+describe("demoSessionNotifications", () => {
+  it("maps completed demo acquisitions to session notification cards (newest first by acquiredAt)", () => {
+    const n = demoSessionNotifications([
+      { tmdbId: 7, title: "X", year: 2026, type: "movie", posterPath: "/p.jpg", acquiredAt: 2000 },
+      { tmdbId: 8, title: "Y", year: 2025, type: "tv", posterPath: null, acquiredAt: 3000 },
+    ]);
+    expect(n).toHaveLength(2);
+    expect(n[0]!.tmdbId).toBe(8); // newest acquiredAt first
+    expect(n[0]!.kind).toBe("acquired");
+    expect(n[0]!.id).toBe("demo-notif-8");
+    expect(n[1]!.title).toBe("X");
+    // createdAt is an ISO string derived from acquiredAt so the seen-marker can diff it.
+    expect(typeof n[0]!.createdAt).toBe("string");
+    expect(new Date(n[0]!.createdAt).toISOString()).toBe(n[0]!.createdAt);
+  });
+
+  it("entries without acquiredAt still render (stable fallback createdAt)", () => {
+    const n = demoSessionNotifications([{ tmdbId: 9, title: "Z", year: 2024, type: "movie", posterPath: null }]);
+    expect(n).toHaveLength(1);
+    expect(typeof n[0]!.createdAt).toBe("string");
   });
 });
