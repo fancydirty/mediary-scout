@@ -215,4 +215,34 @@ describe("demoSessionNotifications", () => {
     expect(n).toHaveLength(1);
     expect(typeof n[0]!.createdAt).toBe("string");
   });
+
+  it("tolerates corrupted acquiredAt (NaN/string) without throwing", () => {
+    const corrupted = [
+      { tmdbId: 1, title: "A", year: 2026, type: "movie", posterPath: null, acquiredAt: NaN },
+      { tmdbId: 2, title: "B", year: 2026, type: "tv", posterPath: null, acquiredAt: "oops" },
+    ] as unknown as DemoAcquisitionEntry[];
+    let out!: ReturnType<typeof demoSessionNotifications>;
+    expect(() => {
+      out = demoSessionNotifications(corrupted);
+    }).not.toThrow();
+    expect(out).toHaveLength(2);
+    for (const n of out) {
+      // createdAt must be a real ISO string (fallback), never "Invalid Date".
+      expect(new Date(n.createdAt).toISOString()).toBe(n.createdAt);
+    }
+  });
+});
+
+describe("recordDemoAcquisition acquiredAt stability", () => {
+  it("preserves the first acquiredAt across a second (no-arg) record of the same tmdbId", () => {
+    const s = fakeStorage();
+    recordDemoAcquisition({ tmdbId: 5, title: "A", year: 2026, type: "movie", posterPath: null, acquiredAt: 1000 }, s);
+    // Second promotion (e.g. hook tick) for the same title, no acquiredAt → must
+    // NOT re-stamp, or the 通知 NEW/unread diff would jump forward and the badge
+    // would wrongly reappear after the user already saw it.
+    recordDemoAcquisition({ tmdbId: 5, title: "A", year: 2026, type: "movie", posterPath: null }, s);
+    const list = listDemoAcquisitions(s);
+    expect(list).toHaveLength(1);
+    expect(list[0]!.acquiredAt).toBe(1000);
+  });
 });

@@ -75,11 +75,18 @@ export function recordDemoAcquisition(
   if (!storage) {
     return [];
   }
+  const rest = listDemoAcquisitions(storage).filter((e) => e.tmdbId !== entry.tmdbId);
+  // Preserve the FIRST acquiredAt: this can be (re)recorded for the same tmdbId by
+  // both the playback done-handler and useDemoInProgress's promotion tick. Re-stamping
+  // a later time would push createdAt forward and make the 通知 NEW/unread badge
+  // wrongly reappear after the user already saw it. Only stamp when truly new.
+  const existing = listDemoAcquisitions(storage).find((e) => e.tmdbId === entry.tmdbId);
   const stamped: DemoAcquisitionEntry = {
     ...entry,
-    acquiredAt: entry.acquiredAt ?? (typeof Date !== "undefined" ? Date.now() : 0),
+    acquiredAt:
+      entry.acquiredAt ?? existing?.acquiredAt ?? (typeof Date !== "undefined" ? Date.now() : 0),
   };
-  const next = [stamped, ...listDemoAcquisitions(storage).filter((e) => e.tmdbId !== entry.tmdbId)].slice(0, MAX);
+  const next = [stamped, ...rest].slice(0, MAX);
   try {
     storage.setItem(KEY, JSON.stringify(next));
     if (typeof window !== "undefined") {
@@ -314,21 +321,30 @@ export interface DemoSessionNotification {
 /** Fixed fallback for entries lacking acquiredAt (legacy / direct construction). */
 const DEMO_NOTIF_FALLBACK_AT = "2026-06-12T08:00:00.000Z";
 
+/** A finite acquiredAt or null — entries come from untrusted sessionStorage, so a
+ *  corrupted value (string / NaN / Infinity) must never reach Date()/arithmetic
+ *  (`new Date(NaN).toISOString()` throws RangeError, breaking the 通知 page). */
+function safeAcquiredAt(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 /** Map completed demo acquisitions to 通知-feed session cards, newest first. */
 export function demoSessionNotifications(
   completed: DemoAcquisitionEntry[],
 ): DemoSessionNotification[] {
   return [...completed]
-    .sort((a, b) => (b.acquiredAt ?? 0) - (a.acquiredAt ?? 0))
-    .map((e) => ({
-      id: `demo-notif-${e.tmdbId}`,
-      tmdbId: e.tmdbId,
-      title: e.title,
-      year: e.year,
-      type: e.type,
-      posterPath: e.posterPath,
-      kind: "acquired" as const,
-      createdAt:
-        e.acquiredAt != null ? new Date(e.acquiredAt).toISOString() : DEMO_NOTIF_FALLBACK_AT,
-    }));
+    .sort((a, b) => (safeAcquiredAt(b.acquiredAt) ?? 0) - (safeAcquiredAt(a.acquiredAt) ?? 0))
+    .map((e) => {
+      const at = safeAcquiredAt(e.acquiredAt);
+      return {
+        id: `demo-notif-${e.tmdbId}`,
+        tmdbId: e.tmdbId,
+        title: e.title,
+        year: e.year,
+        type: e.type,
+        posterPath: e.posterPath,
+        kind: "acquired" as const,
+        createdAt: at != null ? new Date(at).toISOString() : DEMO_NOTIF_FALLBACK_AT,
+      };
+    });
 }
