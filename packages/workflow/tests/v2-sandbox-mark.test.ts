@@ -46,6 +46,18 @@ describe("TaskSandbox — markObtained (agent's final declaration; NO mechanical
     expect(summary.coverageMet).toBe(true);
   });
 
+  it("drops a malformed mark so it never reaches syncSeasonNeed's strict parser (Copilot #29)", async () => {
+    // finish() feeds syncSeasonNeed → episodePartsFromCode, which THROWS on a
+    // non-SxxExx token. A stray/garbage agent mark must be filtered out here, not
+    // crash the whole run. Valid episode codes (incl. provider-ahead) still pass.
+    const sandbox = await sandboxWithNeed(["S01E01"]);
+
+    await sandbox.markObtained({ codes: ["S01E01", "garbage", "S01E02"] });
+
+    const summary = await sandbox.finish();
+    expect(summary.obtained).toEqual(["S01E01", "S01E02"]); // garbage dropped, sorted
+  });
+
   it("does NOT re-read 115 to verify presence — the mark is the agent's call", async () => {
     // The system no longer mechanically re-reads the target dir to confirm a
     // backing file exists. move/flatten already force-reread and handed the

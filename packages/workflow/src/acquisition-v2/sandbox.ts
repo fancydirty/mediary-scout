@@ -425,14 +425,21 @@ export class TaskSandbox {
   /** The agent declares it is done. Returns the honest coverage picture from the
    *  obtained marks — the workflow decides what to persist. */
   async finish(): Promise<{ coverageMet: boolean; obtained: string[]; missing: string[] }> {
+    // Report the agent's marks beyond just need∩marked — a coherent full pack
+    // often delivers episodes BEYOND the aired cursor (the need), and those
+    // provider-ahead marks must survive finish() so syncSeasonNeed records them as
+    // provider-ahead (frontend 超前). Filtering to `need` silently dropped them —
+    // the live #4 bug (quark 超市: agent marked 12, only E01 persisted).
+    // Guard: keep only an in-need token (e.g. the movie "MOVIE" sentinel) or a
+    // syntactically valid episode code — a malformed agent mark must NOT flow into
+    // syncSeasonNeed's episodePartsFromCode (which throws), crashing the run.
+    const needSet = new Set(this.need);
+    const obtained = [...this.obtainedCodes]
+      .filter((code) => needSet.has(code) || /^S\d{2,}E\d{2,}$/.test(code))
+      .sort();
     return {
       coverageMet: this.isCoverageMet(),
-      // ALL the agent's marks — not just need∩marked. A coherent full pack often
-      // delivers episodes BEYOND the aired cursor (the need); those provider-ahead
-      // marks must survive finish() so syncSeasonNeed can record them as
-      // provider-ahead (frontend 超前). Filtering to `need` here silently dropped
-      // them — the live #4 bug (quark 超市: agent marked 12, only E01 persisted).
-      obtained: [...this.obtainedCodes],
+      obtained,
       missing: this.missingNeed(),
     };
   }
