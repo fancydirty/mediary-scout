@@ -4,6 +4,7 @@ import { CalendarClock, CheckCircle2, Clock3, Library, LoaderCircle, Search, Tri
 import { AcquiringPoller } from "../components/acquiring-poller";
 import { AppSidebar } from "../components/app-sidebar";
 import { RequestTrackButton } from "../components/request-track-button";
+import { AcquireProgressBadge } from "../components/acquire-progress-badge";
 import { DemoSessionLibrary } from "../components/demo-session-library";
 import { RememberQuery } from "../components/search-memory";
 import { SearchForm } from "../components/search-form";
@@ -290,17 +291,18 @@ function CandidateCard({
           </div>
           <div className="candidate-actions">
             {acquiring ? (
-              // #6: the persistent post-获取 pill links to the live 活动 page so the
-              // real progress is one click away (the gap the author flagged: "真实情况
-              // 要去活动里看"). storageId scopes it with ?w (mirrors globalNavHref).
-              <Link
-                className="hub-badge tone-green"
-                href={storageId ? `/activity?w=${encodeURIComponent(storageId)}` : "/activity"}
+              // #3a: while the run is RUNNING, show an inline live progress bar in
+              // place (real /api/activity data) — the demo-style elegance the author
+              // wanted instead of a bare spinner. When queued/just-finished it falls
+              // back to the static 已请求 pill, which still links to the live 活动 page
+              // (#6: "真实情况要去活动里看"). seasonNumber null = match this title's
+              // running season; storageId scopes the 活动 link with ?w.
+              <AcquireProgressBadge
+                tmdbId={candidate.tmdbId}
+                seasonNumber={null}
+                storageId={storageId}
                 title="后台正在获取——点查看进度（活动）"
-              >
-                <LoaderCircle size={12} className="spin" aria-hidden />
-                获取中
-              </Link>
+              />
             ) : null}
             {!acquiring && isTv && untrackedSeasons.length > 0 ? (
               <SeasonRequestMenu
