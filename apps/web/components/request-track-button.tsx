@@ -11,6 +11,7 @@ import { requestTrackingAction, type RequestTrackingActionResult } from "../app/
 // leaf modules (domain, workflow-scope), so the type can never carry pg in.
 import type { SearchActionState } from "@media-track/workflow/search-view";
 import { RequestedBadge } from "./request-state";
+import { AcquireProgressBadge } from "./acquire-progress-badge";
 import { isDemoModeClient } from "../lib/demo-mode";
 import { DemoAcquirePlayback } from "./demo-acquire-playback";
 import type { DemoAcquisitionEntry } from "../lib/demo-session";
@@ -29,6 +30,7 @@ import { useDemoAcquiredTmdbIds } from "../lib/use-demo-session";
  */
 export function RequestTrackButton({
   candidateId,
+  tmdbId,
   actionState = "can_request",
   label = "获取",
   disabled = false,
@@ -36,6 +38,9 @@ export function RequestTrackButton({
   demoEntry,
 }: {
   candidateId?: string;
+  /** Production: the candidate's tmdbId, so the in-progress badge can match this
+   *  title's live run in /api/activity and show inline progress. */
+  tmdbId?: number;
   actionState?: SearchActionState;
   label?: string;
   disabled?: boolean;
@@ -88,7 +93,14 @@ export function RequestTrackButton({
   }
 
   if (inProgress) {
-    return <RequestedBadge title={result?.message} storageId={storageId} />;
+    // With a tmdbId, upgrade to an inline live-progress bar while the run is
+    // actually running (falls back to the static 已请求 pill when queued/finished);
+    // without one (legacy callers), keep the static pill.
+    return tmdbId != null ? (
+      <AcquireProgressBadge tmdbId={tmdbId} seasonNumber={null} storageId={storageId} title={result?.message} />
+    ) : (
+      <RequestedBadge title={result?.message} storageId={storageId} />
+    );
   }
 
   if (reserved) {

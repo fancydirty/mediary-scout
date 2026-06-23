@@ -331,6 +331,7 @@ function CandidateCard({
             {!acquiring && !isTv && trackedLabel === null ? (
               <RequestTrackButton
                 candidateId={candidate.id}
+                tmdbId={candidate.tmdbId}
                 actionState={candidate.action.state}
                 disabled={candidate.action.disabled}
                 label={candidate.action.label}

@@ -2958,6 +2958,14 @@ select.setting-control {
   font-size: 11px;
   color: var(--accent);
 }
+/* Production inline acquire progress: reuse the demo-playback bar/step visual on a
+   clickable Link (→ 活动). Inherits color/no-underline from the global `a` rule. */
+.acquire-progress {
+  cursor: pointer;
+}
+.acquire-progress:hover .demo-playback-step {
+  color: var(--text);
+}
 .workspace-switcher .ws-icon {
   width: 16px;
   height: 16px;

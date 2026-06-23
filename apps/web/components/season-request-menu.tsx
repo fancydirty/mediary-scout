@@ -8,7 +8,8 @@ import {
   requestSeasonAction,
   type RequestTrackingActionResult,
 } from "../app/actions";
-import { isLockedResult, RequestedBadge } from "./request-state";
+import { isLockedResult } from "./request-state";
+import { AcquireProgressBadge } from "./acquire-progress-badge";
 import { isDemoModeClient } from "../lib/demo-mode";
 import { DemoAcquirePlayback } from "./demo-acquire-playback";
 import type { DemoAcquisitionEntry } from "../lib/demo-session";
@@ -69,7 +70,11 @@ export function SeasonRequestMenu({
   }
 
   if (isLockedResult(result)) {
-    return <RequestedBadge title={result?.message} storageId={storageId} />;
+    // Match by tmdbId (seasonNumber null = any of this show's seasons), preferring
+    // the running one → inline live progress while running, static 已请求 pill otherwise.
+    return (
+      <AcquireProgressBadge tmdbId={tmdbId} seasonNumber={null} storageId={storageId} title={result?.message} />
+    );
   }
 
   const submit = () => {
