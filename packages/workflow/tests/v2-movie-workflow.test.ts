@@ -82,6 +82,59 @@ describe("runMovieAcquisitionV2 — obtained comes from the AGENT'S coverage, ne
     expect(result.season.storageDirectoryId).toContain("movies_root"); // movie dir verify-or-created
   });
 
+  it("transfers systemically BLOCKED (配额不足) → honest 转存失败 report, NOT 暂未找到资源 (别甩锅)", async () => {
+    // The resource EXISTS (a candidate is found + transfer attempted) but the
+    // account can't materialize it (115 云下载配额不足). The report must say so,
+    // not blame the resource — mirrors the real 心灵奇旅-on-free-account incident.
+    const candidateId = "cand_q";
+    const executor = new FakeStorageExecutor({
+      transferOutcomes: {
+        [candidateId]: { status: "failed", providerMessage: "云下载配额不足，请升级VIP获得赠送配额或购买云下载配额！", files: [] },
+      },
+    });
+    const provider: ResourceProvider = {
+      search: async ({ keyword }): Promise<ResourceSnapshot> => ({
+        id: "snap_q",
+        provider: "pansou",
+        keyword,
+        candidates: [
+          {
+            id: candidateId,
+            snapshotId: "snap_q",
+            index: 0,
+            title: "心灵奇旅 2020 1080p",
+            type: "magnet",
+            source: "pansou",
+            episodeHints: [],
+            qualityHints: [],
+            providerPayload: { url: "magnet:?xt=urn:btih:deadbeef" },
+          },
+        ],
+        createdAt: "2026-06-14T00:00:00.000Z",
+      }),
+    };
+
+    const result = await runMovieAcquisitionV2({
+      title,
+      resourceProvider: provider,
+      storage: executor,
+      model: scriptModel([
+        { tool: "searchResources", input: { keyword: "盗梦空间" } },
+        { tool: "transferCandidate", input: { snapshotId: "snap_q", candidateId } },
+        { tool: "reportNoCoverage", input: { reason: "nothing landed" } },
+      ]),
+      workflowRunId: "run-blocked",
+      moviesParentDirectoryId: "movies_root",
+      now: () => "2026-06-14T00:00:00.000Z",
+    });
+
+    expect(result.episodes[0]!.obtained).toBe(false);
+    expect(result.notification.report?.status).toBe("failed");
+    expect(result.notification.body).toContain("转存失败");
+    expect(result.notification.body).toContain("配额");
+    expect(result.notification.body).not.toContain("暂未找到");
+  });
+
   it("obtained TRUE when the agent declares MOVIE coverage (agent mark, not files on disk)", async () => {
     const executor = new FakeStorageExecutor();
     const result = await runMovieAcquisitionV2({

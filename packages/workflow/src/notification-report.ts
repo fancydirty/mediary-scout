@@ -99,8 +99,9 @@ function sizeFields(input: { fileCount?: number; totalBytes?: number }): {
 
 /** The status+lines for a run that obtained nothing. Default = no_coverage
  *  ("暂未找到资源"); when transfers were systemically blocked, it's an honest
- *  `failed` + the real reason (别甩锅 — the resource exists, the account is blocked). */
-function emptyRunOutcome(
+ *  `failed` + the real reason (别甩锅 — the resource exists, the account is blocked).
+ *  Shared by the TV bridge and the movie workflow so both report identically. */
+export function emptyRunOutcome(
   transferBlockReason?: string | null,
 ): { status: NotificationReportStatus; lines: string[] } {
   if (transferBlockReason && transferBlockReason.trim()) {

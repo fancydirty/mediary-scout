@@ -13,7 +13,8 @@ import {
   type TransferAttempt,
   type WorkflowStatus,
 } from "./domain.js";
-import { buildMovieReport, formatReportPushText } from "./notification-report.js";
+import { buildMovieReport, emptyRunOutcome, formatReportPushText } from "./notification-report.js";
+import { classifyTransferBlock } from "./acquisition-v2/transfer-block.js";
 import type { ResourceProvider, StorageExecutor } from "./ports.js";
 import type { DeadLinkStore } from "./acquisition-v2/dead-links.js";
 import { readLandedSize, type LandedSize } from "./acquisition-v2/landed-size.js";
@@ -144,9 +145,11 @@ function buildResult(input: {
     { posterPath: t.posterPath ?? null, tmdbId: t.tmdbId, mediaType: t.type, year: t.year },
     input.landed,
   );
+  // 别甩锅: nothing landed could mean truly no resource (no_coverage) OR the
+  // account was systemically blocked (115 云下载配额不足/登录过期) — say which.
   const report = input.obtained
     ? baseReport
-    : { ...baseReport, status: "no_coverage" as const, lines: ["暂未找到可用资源 · 将持续尝试"] };
+    : { ...baseReport, ...emptyRunOutcome(classifyTransferBlock(input.attempts)?.reason ?? null) };
   const notification: NotificationEvent = {
     id: `notification_${input.request.workflowRunId}`,
     workflowRunId: input.request.workflowRunId,
