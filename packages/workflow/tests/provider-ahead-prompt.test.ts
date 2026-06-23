@@ -36,7 +36,8 @@ describe("coverage honesty — trust a full pack's beyond-aired episodes (#4 pro
     expect(tv).toMatch(/provider-ahead|超前/i); // the manual must name provider-ahead
     expect(tv).toMatch(/ahead of TMDB|beyond the aired|BEYOND the aired/i); // the full-pack-ahead case
     expect(tv).toContain("markObtained"); // … and that you mark the verified-landed extras
-    // hard-safety must travel with it (don't mark what a pack only claims):
-    expect(tv).toMatch(/merely claims|verified|actually.*land/i);
+    // hard-safety must travel with it — assert the distinctive clause wording, not a loose
+    // word that could match anywhere else in the manual:
+    expect(tv).toContain("a pack merely claims in its title");
   });
 });
