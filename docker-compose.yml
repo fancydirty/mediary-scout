@@ -69,6 +69,12 @@ services:
     command: tunnel --no-autoupdate run
     environment:
       TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+      # Connector transport. Unset/empty → "auto" (cloudflared's own default: prefers
+      # QUIC/UDP, nominally falls back to HTTP/2). We default to the literal "auto" not
+      # "" because cloudflared rejects an empty protocol value ("unknown protocol").
+      # On UDP-blocked/throttled networks auto often doesn't fall back cleanly (tunnel
+      # won't register or keeps dropping) — set TUNNEL_TRANSPORT_PROTOCOL=http2 in .env.
+      TUNNEL_TRANSPORT_PROTOCOL: ${TUNNEL_TRANSPORT_PROTOCOL:-auto}
     # Lets the connector resolve the Docker host, so a tunnel Public Hostname of
     # type SSH can point at the host's sshd (host.docker.internal:22) — enabling
     # SSH-over-tunnel from anywhere without opening a port. Harmless if unused.
