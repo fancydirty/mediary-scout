@@ -15,6 +15,7 @@ import {
   type WorkflowStatus,
 } from "../domain.js";
 import { buildSeasonReport, buildSeriesReport, formatReportPushText } from "../notification-report.js";
+import { classifyTransferBlock } from "./transfer-block.js";
 import type { RunAcquisitionV2WorkflowResult } from "./workflow-v2.js";
 
 /**
@@ -88,11 +89,18 @@ export function bridgeV2WorkflowToResult(input: {
   // Newly obtained this run = was missing before, present now — per season.
   const newlyObtainedCodes = v2.missingBefore.filter((code) => !stillMissingSet.has(code));
 
+  // 别甩锅: if nothing landed because transfers were systemically BLOCKED (115 云
+  // 下载配额不足 / 登录过期 / 非 VIP), report an honest "转存失败:<原因>" instead of
+  // "暂未找到资源" — the resource exists, the account is blocked.
+  const transferBlock = classifyTransferBlock(v2.outcome.transferAttempts);
+  const transferBlockReason = status === "no_coverage" && transferBlock ? transferBlock.reason : null;
+
   const notification = buildNotification({
     title,
     mode: input.mode,
     seasons,
     status,
+    transferBlockReason,
     newlyObtainedCodes,
     workflowRunId,
     now: input.now,
@@ -195,6 +203,8 @@ function buildNotification(input: {
   mode: V2BridgeMode;
   seasons: BridgedSeasonResult[];
   status: WorkflowStatus;
+  /** Honest 转存失败 reason when transfers were systemically blocked (else null). */
+  transferBlockReason?: string | null;
   newlyObtainedCodes: string[];
   workflowRunId: string;
   now: () => string;
@@ -210,6 +220,7 @@ function buildNotification(input: {
       titleName: title.title,
       seasons: seasons.map((entry) => ({ season: entry.season, episodes: entry.episodes })),
       noCoverage,
+      transferBlockReason: input.transferBlockReason ?? null,
       meta: titleMeta,
       ...sizeInput(input),
     });
@@ -237,6 +248,7 @@ function buildNotification(input: {
     episodes: entry.episodes,
     newlyObtained,
     noCoverage,
+    transferBlockReason: input.transferBlockReason ?? null,
     meta: titleMeta,
     ...sizeInput(input),
   });

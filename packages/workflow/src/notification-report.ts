@@ -73,6 +73,11 @@ export interface SeasonReportInput {
   newlyObtained?: string[];
   /** Force the no-coverage shape regardless of episode facts. */
   noCoverage?: boolean;
+  /** When nothing landed because transfers were systemically BLOCKED (115 云下载
+   *  配额不足 / 登录过期 / 非 VIP), the honest report is "转存失败:<reason>" with
+   *  status `failed` — NOT "暂未找到资源" (the resource exists; the account is
+   *  blocked). Only meaningful together with noCoverage. See classifyTransferBlock. */
+  transferBlockReason?: string | null;
   /** Real landed video files: count + summed bytes. The card/push show the true
    *  per-episode size from these (总字节 / 文件数), not a claimed quality tag. */
   fileCount?: number;
@@ -92,6 +97,18 @@ function sizeFields(input: { fileCount?: number; totalBytes?: number }): {
     : {};
 }
 
+/** The status+lines for a run that obtained nothing. Default = no_coverage
+ *  ("暂未找到资源"); when transfers were systemically blocked, it's an honest
+ *  `failed` + the real reason (别甩锅 — the resource exists, the account is blocked). */
+function emptyRunOutcome(
+  transferBlockReason?: string | null,
+): { status: NotificationReportStatus; lines: string[] } {
+  if (transferBlockReason && transferBlockReason.trim()) {
+    return { status: "failed", lines: [`转存失败:${transferBlockReason.trim()}`] };
+  }
+  return { status: "no_coverage", lines: ["暂未找到可用资源 · 将持续尝试"] };
+}
+
 /**
  * Single-season report. Never lists unaired episodes as missing — `realMissing`
  * is exactly the aired-but-not-obtained set, so a season waiting on unaired
@@ -109,8 +126,7 @@ export function buildSeasonReport(input: SeasonReportInput): NotificationReport 
     return {
       titleName: input.titleName,
       seasonLabel: label,
-      status: "no_coverage",
-      lines: ["暂未找到可用资源 · 将持续尝试"],
+      ...emptyRunOutcome(input.transferBlockReason),
       newlyObtained: [],
       realMissing,
       ...(input.meta ?? {}),
@@ -164,6 +180,8 @@ export function buildSeriesReport(input: {
   titleName: string;
   seasons: SeriesReportSeasonInput[];
   noCoverage?: boolean;
+  /** See SeasonReportInput.transferBlockReason — honest 转存失败 when blocked. */
+  transferBlockReason?: string | null;
   meta?: NotificationTitleMeta;
   fileCount?: number;
   totalBytes?: number;
@@ -172,8 +190,7 @@ export function buildSeriesReport(input: {
     return {
       titleName: input.titleName,
       seasonLabel: null,
-      status: "no_coverage",
-      lines: ["暂未找到可用资源 · 将持续尝试"],
+      ...emptyRunOutcome(input.transferBlockReason),
       newlyObtained: [],
       realMissing: [],
       ...(input.meta ?? {}),

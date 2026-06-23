@@ -132,6 +132,46 @@ describe("landedSize", () => {
   });
 });
 
+describe("transferBlockReason — honest report when transfers were blocked (not no_coverage)", () => {
+  const s = season({ totalEpisodes: 12, latestAiredEpisode: 1 });
+  it("buildSeasonReport: noCoverage + block reason → status failed + 转存失败 line (not 暂未找到资源)", () => {
+    const report = buildSeasonReport({
+      titleName: "心灵奇旅",
+      season: s,
+      episodes: episodes({ season: s, obtained: [] }),
+      noCoverage: true,
+      transferBlockReason: "云下载配额不足，请升级VIP",
+    });
+    expect(report.status).toBe("failed");
+    expect(report.lines.join("")).toContain("转存失败");
+    expect(report.lines.join("")).toContain("配额");
+    expect(report.lines.join("")).not.toContain("暂未找到");
+  });
+
+  it("buildSeasonReport: noCoverage WITHOUT block reason → unchanged no_coverage", () => {
+    const report = buildSeasonReport({
+      titleName: "无源片",
+      season: s,
+      episodes: episodes({ season: s, obtained: [] }),
+      noCoverage: true,
+    });
+    expect(report.status).toBe("no_coverage");
+    expect(report.lines.join("")).toContain("暂未找到");
+  });
+
+  it("buildSeriesReport: noCoverage + block reason → status failed + 转存失败 line", () => {
+    const report = buildSeriesReport({
+      titleName: "某剧",
+      seasons: [],
+      noCoverage: true,
+      transferBlockReason: "登录超时，请重新登录。",
+    });
+    expect(report.status).toBe("failed");
+    expect(report.lines.join("")).toContain("转存失败");
+    expect(report.lines.join("")).toContain("登录");
+  });
+});
+
 describe("buildSeasonReport", () => {
   it("reads as airing when all AIRED episodes are obtained but unaired remain", () => {
     const s = season({ totalEpisodes: 16, latestAiredEpisode: 12 });
