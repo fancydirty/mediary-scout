@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { findActiveRun, inlineProgressView, trickleDisplayPercent } from "./inline-progress";
+import {
+  advanceTrickle,
+  findActiveRun,
+  initialTrickleState,
+  inlineProgressView,
+  trickleDisplayPercent,
+} from "./inline-progress";
 import type { ActivityActiveRun } from "./activity-view";
 
 function run(over: Partial<ActivityActiveRun>): ActivityActiveRun {
@@ -92,6 +98,11 @@ describe("trickleDisplayPercent — keep the bar alive during a long opaque step
   it("never claims completion (capped below 100 even from a high base)", () => {
     expect(trickleDisplayPercent(96, 10_000_000)).toBeLessThanOrEqual(99);
   });
+  it("never trickles BACKWARD for a base at/above the cap (Copilot: base 100 → stays 100)", () => {
+    expect(trickleDisplayPercent(100, 0)).toBe(100);
+    expect(trickleDisplayPercent(100, 60_000)).toBe(100); // not 99 — no negative slope
+    expect(trickleDisplayPercent(100, 600_000)).toBeGreaterThanOrEqual(100);
+  });
   it("monotonic non-decreasing in elapsed (never rewinds)", () => {
     let prev = -1;
     for (const ms of [0, 1_000, 10_000, 60_000, 300_000]) {
@@ -99,5 +110,52 @@ describe("trickleDisplayPercent — keep the bar alive during a long opaque step
       expect(v).toBeGreaterThanOrEqual(prev);
       prev = v;
     }
+  });
+});
+
+describe("advanceTrickle — display stays monotonic across polls/ticks", () => {
+  it("Copilot: a small server increment must NOT rewind the displayed bar", () => {
+    // base 10, crept to ~13 after 10s; next poll reports server=11 → must stay ≥13.
+    let s = initialTrickleState(10, 0, "run1");
+    s = advanceTrickle(s, { serverPercent: 10, nowMs: 10_000, key: "run1" });
+    const crept = s.displayed;
+    expect(crept).toBeGreaterThan(11);
+    s = advanceTrickle(s, { serverPercent: 11, nowMs: 10_400, key: "run1" });
+    expect(s.displayed).toBeGreaterThanOrEqual(crept); // no drop to 11
+  });
+  it("eases from a real jump (search 11% → transfer 37%) and keeps climbing", () => {
+    let s = initialTrickleState(11, 0, "r");
+    s = advanceTrickle(s, { serverPercent: 11, nowMs: 90_000, key: "r" }); // long search creep
+    expect(s.displayed).toBeGreaterThan(11);
+    expect(s.displayed).toBeLessThan(30); // never crossed toward 37
+    s = advanceTrickle(s, { serverPercent: 37, nowMs: 92_000, key: "r" }); // transfer jump
+    expect(s.displayed).toBeGreaterThanOrEqual(37);
+  });
+  it("a new run (key change) resets the bar to that run's value", () => {
+    let s = initialTrickleState(80, 0, "old");
+    s = advanceTrickle(s, { serverPercent: 80, nowMs: 30_000, key: "old" });
+    expect(s.displayed).toBeGreaterThan(80);
+    s = advanceTrickle(s, { serverPercent: 8, nowMs: 30_100, key: "new" });
+    expect(s.displayed).toBe(8); // fresh, not carrying old run's 80+
+  });
+  it("monotonic across a full real sequence (never rewinds at any tick)", () => {
+    const ticks: Array<{ serverPercent: number; nowMs: number }> = [
+      { serverPercent: 8, nowMs: 0 },
+      { serverPercent: 10, nowMs: 3_000 },
+      { serverPercent: 11, nowMs: 7_000 }, // then frozen 94s of trickle:
+      { serverPercent: 11, nowMs: 30_000 },
+      { serverPercent: 11, nowMs: 101_000 },
+      { serverPercent: 37, nowMs: 121_000 },
+      { serverPercent: 64, nowMs: 135_000 },
+      { serverPercent: 96, nowMs: 170_000 },
+    ];
+    let s = initialTrickleState(8, 0, "r");
+    let prev = -1;
+    for (const t of ticks) {
+      s = advanceTrickle(s, { ...t, key: "r" });
+      expect(s.displayed).toBeGreaterThanOrEqual(prev);
+      prev = s.displayed;
+    }
+    expect(prev).toBeGreaterThanOrEqual(96);
   });
 });
