@@ -1,5 +1,4 @@
-import { connection } from "next/server";
-import { NextResponse } from "next/server";
+import { connection, NextResponse } from "next/server";
 import { isMultiUserEnabled, getBootstrapState } from "../../../../lib/workflow-runtime";
 
 /** Tells the /login page whether the instance is unclaimed (→ show the context-aware
