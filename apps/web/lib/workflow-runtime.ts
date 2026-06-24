@@ -252,9 +252,10 @@ export async function getBootstrapState(): Promise<{ needsClaim: boolean; hasExi
 }
 
 /** Current account's display summary for the sidebar identity block — NEVER the
- *  password hash. Null when there's no real account (unauthenticated sentinel). */
-/** Per-request memoized account summary. The identity loader renders twice on
- *  multi-user pages (desktop footer + mobile top-bar copy), and both call this —
+ *  password hash. Null when there's no real account (unauthenticated sentinel).
+ *
+ *  Per-request memoized via `cache()`: the identity loader renders twice on
+ *  multi-user pages (desktop footer + mobile top-bar copy) and both call this —
  *  `cache()` dedupes the `getAccountById` DB read within a single request so we
  *  only hit the DB once even with two mounted loaders. (Next.js / React.cache
  *  per-request memoization pattern.) */

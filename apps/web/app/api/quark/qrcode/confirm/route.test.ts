@@ -53,4 +53,16 @@ describe("POST /api/quark/qrcode/confirm — error mapping", () => {
     const res = await POST(req({}));
     expect(res.status).toBe(400);
   });
+
+  it("returns 400 (not 502) when the request body is invalid JSON", async () => {
+    const r = new NextRequest("http://localhost/api/quark/qrcode/confirm", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{not json",
+    });
+    const res = await POST(r);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.ok).toBe(false);
+  });
 });
