@@ -79,6 +79,14 @@ try {
     console.log(`已重置账号「${username}」的密码为: ${newPassword}`);
     console.log("请用该密码登录后到「设置 → 修改密码」改成你自己的。");
   }
+} catch (err) {
+  // 42P01 = undefined_table: schema not initialized yet (web never started once).
+  if (err && typeof err === "object" && err.code === "42P01") {
+    console.error("数据库尚未初始化(accounts 表不存在)。请先启动一次 web 服务完成 schema 初始化,再跑本脚本。");
+    exitCode = 1;
+  } else {
+    throw err;
+  }
 } finally {
   await client.end();
 }
