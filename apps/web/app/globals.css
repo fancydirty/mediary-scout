@@ -2970,6 +2970,79 @@ select.setting-control {
 .acquire-progress:hover .demo-playback-step {
   color: var(--text);
 }
+/* Sidebar account identity (multi-user) — a <details> dropdown like the switcher. */
+.account-identity {
+  margin-bottom: 8px;
+}
+.account-identity-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 13px;
+  color: var(--text, #e6e6e6);
+}
+.account-identity-summary::-webkit-details-marker {
+  display: none;
+}
+.account-identity-summary:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+.account-identity-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent, #1db954);
+  color: #08130c;
+  font-size: 12px;
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+.account-identity-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.account-identity-owner {
+  font-size: 11px;
+  color: var(--text-muted, #9a9a9a);
+  border: 1px solid var(--border, #2a2a2a);
+  border-radius: 999px;
+  padding: 0 6px;
+}
+.account-identity-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+  padding-left: 4px;
+}
+.account-identity-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--text-muted, #9a9a9a);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  font: inherit;
+}
+.account-identity-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text, #e6e6e6);
+}
 .workspace-switcher .ws-icon {
   width: 16px;
   height: 16px;

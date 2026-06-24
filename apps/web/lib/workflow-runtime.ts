@@ -250,6 +250,13 @@ export async function getBootstrapState(): Promise<{ needsClaim: boolean; hasExi
   return deriveBootstrapState(accounts, library.length);
 }
 
+/** Current account's display summary for the sidebar identity block — NEVER the
+ *  password hash. Null when there's no real account (unauthenticated sentinel). */
+export async function getCurrentAccountSummary(): Promise<{ username: string; isOwner: boolean } | null> {
+  const acct = await getWorkflowRepository().getAccountById(await getCurrentAccountId());
+  return acct ? { username: acct.username, isOwner: acct.isOwner } : null;
+}
+
 /** §7 P1: multi-user mode gates the login/register UI + session enforcement.
  *  Default OFF → single-user, no login, everything is the implicit default
  *  account (P0 behavior, zero-change). */
