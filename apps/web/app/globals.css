@@ -3043,6 +3043,35 @@ select.setting-control {
   background: rgba(255, 255, 255, 0.05);
   color: var(--text, #e6e6e6);
 }
+/* Owner account-management panel rows. */
+.account-admin {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.account-admin-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border, #2a2a2a);
+  border-radius: 8px;
+}
+.account-admin-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.account-admin-name {
+  font-weight: 600;
+}
+.account-admin-meta {
+  font-size: 12px;
+  color: var(--text-muted, #9a9a9a);
+}
 .workspace-switcher .ws-icon {
   width: 16px;
   height: 16px;

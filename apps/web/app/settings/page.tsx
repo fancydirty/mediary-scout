@@ -1,6 +1,6 @@
 import { connection } from "next/server";
 import { Suspense } from "react";
-import { Bell, Bot, Cable, CalendarClock, Clapperboard, Gauge, Languages, Radio, ShieldCheck, TriangleAlert } from "lucide-react";
+import { Bell, Bot, Cable, CalendarClock, Clapperboard, Gauge, KeyRound, Languages, Radio, ShieldCheck, TriangleAlert, Users } from "lucide-react";
 import { AppSidebar } from "../../components/app-sidebar";
 import { AddDriveBrandTabs } from "../../components/add-drive-brand-tabs";
 import { TestConnectionButton } from "../../components/test-connection-button";
@@ -13,10 +13,15 @@ import { TmdbApiKeyForm } from "../../components/tmdb-api-key-form";
 import { ProwlarrConfigForm } from "../../components/prowlarr-config-form";
 import { PanSouConfigForm } from "../../components/pansou-config-form";
 import { DailySweepForm } from "../../components/daily-sweep-form";
+import { PasswordChangeForm } from "../../components/password-change-form";
+import { AccountAdminPanel } from "../../components/account-admin-panel";
 import {
   getAccountConnectedStorages,
   getAccountScopedSettings,
   getCurrentAccountId,
+  getCurrentAccountSummary,
+  isMultiUserEnabled,
+  listManagedAccounts,
   getDailySweepTime,
   getPan115ConnectionStatus,
   getWorkflowRepository,
@@ -91,6 +96,12 @@ export default function SettingsPage({
             <Suspense fallback={<div className="skeleton skeleton-heading" />}>
               <PushNotificationSection />
             </Suspense>
+            <Suspense fallback={null}>
+              <PasswordChangeSection />
+            </Suspense>
+            <Suspense fallback={null}>
+              <AccountManagementSection />
+            </Suspense>
           </>
         )}
       </main>
@@ -102,6 +113,48 @@ async function SettingsSidebar({ searchParams }: { searchParams: Promise<{ w?: s
   const { w } = await searchParams;
   const workspace = await resolveGlobalWorkspace(w);
   return <AppSidebar active="settings" basePath={workspace.basePath} activeStorageId={workspace.activeStorageId} />;
+}
+
+async function PasswordChangeSection() {
+  if (!isMultiUserEnabled()) return null;
+  await connection();
+  return (
+    <section id="password" className="panel" style={{ maxWidth: 720, marginTop: 24 }}>
+      <div className="panel-header">
+        <div>
+          <h2 className="panel-title">
+            <KeyRound size={16} aria-hidden style={{ verticalAlign: "-2px", marginRight: 8 }} />
+            修改密码
+          </h2>
+          <p className="panel-note">修改后所有登录会话失效，需用新密码重新登录</p>
+        </div>
+      </div>
+      <PasswordChangeForm />
+    </section>
+  );
+}
+
+async function AccountManagementSection() {
+  if (!isMultiUserEnabled()) return null;
+  await connection();
+  const me = await getCurrentAccountSummary();
+  if (!me?.isOwner) return null;
+  const accounts = await listManagedAccounts(await getCurrentAccountId());
+  if (!accounts) return null;
+  return (
+    <section id="accounts" className="panel" style={{ maxWidth: 720, marginTop: 24 }}>
+      <div className="panel-header">
+        <div>
+          <h2 className="panel-title">
+            <Users size={16} aria-hidden style={{ verticalAlign: "-2px", marginRight: 8 }} />
+            账号管理
+          </h2>
+          <p className="panel-note">作为站主，你可以为忘记密码的用户重置密码（不影响他们的网盘和媒体库）</p>
+        </div>
+      </div>
+      <AccountAdminPanel accounts={accounts} />
+    </section>
+  );
 }
 
 async function PreferredLanguageSection() {

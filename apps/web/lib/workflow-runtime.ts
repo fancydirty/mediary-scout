@@ -257,6 +257,37 @@ export async function getCurrentAccountSummary(): Promise<{ username: string; is
   return acct ? { username: acct.username, isOwner: acct.isOwner } : null;
 }
 
+export interface ManagedAccount {
+  id: string;
+  username: string;
+  isOwner: boolean;
+  createdAt: string;
+  driveCount: number;
+}
+
+/** Owner-only: sanitized account list for the 账号管理 panel (no password hashes).
+ *  Returns null for non-owners — server-side gate, not just hidden UI. */
+export async function listManagedAccounts(ownerAccountId: string): Promise<ManagedAccount[] | null> {
+  const repo = getWorkflowRepository();
+  const owner = await repo.getAccountById(ownerAccountId);
+  if (!canManageAccounts(owner)) {
+    return null;
+  }
+  const accounts = await repo.listAccounts();
+  const summaries: ManagedAccount[] = [];
+  for (const account of accounts) {
+    const drives = await repo.listConnectedStorages(account.id);
+    summaries.push({
+      id: account.id,
+      username: account.username,
+      isOwner: account.isOwner,
+      createdAt: account.createdAt,
+      driveCount: drives.length,
+    });
+  }
+  return summaries;
+}
+
 /** §7 P1: multi-user mode gates the login/register UI + session enforcement.
  *  Default OFF → single-user, no login, everything is the implicit default
  *  account (P0 behavior, zero-change). */

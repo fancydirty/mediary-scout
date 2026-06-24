@@ -570,3 +570,25 @@ export async function testPushNotificationAction(
     return { success: false, message: `测试失败：${String(error)}` };
   }
 }
+
+/** Self-service password change (multi-user). Verifies the current password,
+ *  rotates the hash, revokes all sessions (caller must re-login). */
+export async function changePasswordAction(
+  current: string,
+  next: string,
+): Promise<{ ok: boolean; error?: string }> {
+  assertNotDemo();
+  const { getCurrentAccountId, changeOwnPassword } = await import("../lib/workflow-runtime");
+  return changeOwnPassword(await getCurrentAccountId(), current, next);
+}
+
+/** Owner-only reset of another account's password. The owner check is enforced
+ *  inside resetUserPassword (server-side, not just hidden UI). */
+export async function resetUserPasswordAction(
+  targetAccountId: string,
+  newPassword: string,
+): Promise<{ ok: boolean; error?: string }> {
+  assertNotDemo();
+  const { getCurrentAccountId, resetUserPassword } = await import("../lib/workflow-runtime");
+  return resetUserPassword(await getCurrentAccountId(), targetAccountId, newPassword);
+}
