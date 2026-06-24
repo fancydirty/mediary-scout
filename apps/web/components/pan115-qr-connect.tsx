@@ -91,16 +91,20 @@ export function Pan115QrConnect() {
       });
       const data = (await response.json()) as { ok: boolean; userName?: string; error?: string };
       if (!data.ok) {
-        throw new Error(data.error ?? "登录失败");
+        if (generation.current !== myGeneration) return;
+        setPhase("error");
+        setMessage(data.error ?? "登录失败");
+        return;
       }
       if (generation.current !== myGeneration) return;
       setPhase("done");
       setMessage(data.userName ? `已连接为 ${data.userName}` : "已连接");
       router.refresh();
     } catch (error) {
+      // Network failure (fetch threw) — show a generic retry hint, no Error: prefix.
       if (generation.current !== myGeneration) return;
       setPhase("error");
-      setMessage(String(error));
+      setMessage("网络异常，请重试。");
     }
   }
 
