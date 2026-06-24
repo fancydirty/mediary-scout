@@ -44,7 +44,13 @@ export function interpretTool(toolName: string, args: Record<string, unknown> = 
     case "inspectStaging":
       return { activity: "正在核对落盘的视频文件…", phase: "verify" };
     case "inspectTargetDir":
-      return { activity: "正在核对入库目录…", phase: "verify" };
+      // EARLY orientation: the agent inspects the landing/library directory to know
+      // where files go — typically BEFORE search/transfer. So it weighs as early
+      // setup (low band), NOT verify. Classing it as `verify` (66%) made the
+      // monotonic bar jump to ~66% right after this step, before any real work, and
+      // pinned it there through the transfer. (inspectStaging — the post-transfer
+      // landed-file check — is the genuine verify above.)
+      return { activity: "正在核对入库目录…", phase: "search" };
     case "moveToSeason": {
       const moves = asArray(args.moves) as Array<{ season?: number }>;
       const seasons = moves.map((move) => move?.season).filter((season): season is number => typeof season === "number");

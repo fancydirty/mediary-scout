@@ -22,13 +22,27 @@ export function makeProgressSink(input: {
   const needed = input.neededHint ?? 0;
   let percent = 0;
   let obtained = 0;
+  // Track how many tool calls the agent has made in the CURRENT phase, so the bar
+  // creeps forward within a long phase (e.g., several searches / transfer retries)
+  // instead of freezing at the band midpoint — it should reflect ongoing work.
+  let currentPhase: AgentToolEvent["phase"] | null = null;
+  let stepsInPhase = 0;
 
   return (event: AgentToolEvent) => {
     if (event.toolName === "markObtained") {
       const codes = Array.isArray(event.args.codes) ? event.args.codes : [];
       obtained += codes.filter((code) => code !== "MOVIE").length;
     }
-    const subFraction = event.phase === "mark" && needed > 0 ? obtained / needed : undefined;
+    if (event.phase !== currentPhase) {
+      currentPhase = event.phase;
+      stepsInPhase = 0;
+    }
+    stepsInPhase += 1;
+    // The mark phase uses its REAL obtained/needed fraction; every other phase uses
+    // an asymptotic step-count fraction n/(n+2) (1st≈0.33, climbing toward — but
+    // never reaching — the band end, so it stays honest within the band).
+    const subFraction =
+      event.phase === "mark" && needed > 0 ? obtained / needed : stepsInPhase / (stepsInPhase + 2);
     percent = Math.max(percent, phaseProgress(event.phase, subFraction));
     void Promise.resolve(
       input.repository.updateWorkflowRunProgress(input.workflowRunId, {

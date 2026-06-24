@@ -19,9 +19,18 @@ describe("interpretTool — real agent tool names → cleaned 中文 + phase", (
     expect(interpretTool("transferUntilLanded", { candidateIds: ["a", "b"] }).phase).toBe("transfer");
   });
 
-  it("inspectStaging / inspectTargetDir → verify phase, no ids leaked", () => {
+  it("inspectStaging → verify (post-transfer file check), no ids leaked", () => {
     expect(interpretTool("inspectStaging", {})).toEqual({ activity: "正在核对落盘的视频文件…", phase: "verify" });
-    expect(interpretTool("inspectTargetDir", { season: 5 }).phase).toBe("verify");
+  });
+
+  it("inspectTargetDir is EARLY orientation → must NOT weigh as verify (else the bar jumps to ~66% before any transfer)", () => {
+    // 2026-06-24 bug: 确认入库目录 runs early (orient the landing dir before transfer),
+    // but was classed as `verify` → the monotonic bar jumped to ~66% right after it,
+    // before the real search/transfer work. Its progress weight must be LOW.
+    const targetDir = interpretTool("inspectTargetDir", { season: 5 });
+    expect(targetDir.activity).toBe("正在核对入库目录…");
+    expect(targetDir.phase).not.toBe("verify");
+    expect(phaseProgress(targetDir.phase)).toBeLessThan(phaseProgress("transfer"));
   });
 
   it("moveToSeason reads the moves plan: single season names it, multi-season generalizes, movie move", () => {
