@@ -1032,6 +1032,35 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     await this.pool.query("DELETE FROM sessions WHERE id = $1", [id]);
   }
 
+  async adoptDefaultAccount(input: { username: string; passwordHash: string }): Promise<void> {
+    await this.ensureSchema();
+    try {
+      await this.pool.query("UPDATE accounts SET username = $1, password_hash = $2 WHERE id = $3", [
+        input.username,
+        input.passwordHash,
+        DEFAULT_ACCOUNT_ID,
+      ]);
+    } catch (error) {
+      if (error && typeof error === "object" && (error as { code?: string }).code === "23505") {
+        throw new DuplicateUsernameError(input.username);
+      }
+      throw error;
+    }
+  }
+
+  async setAccountPassword(accountId: string, passwordHash: string): Promise<void> {
+    await this.ensureSchema();
+    await this.pool.query("UPDATE accounts SET password_hash = $1 WHERE id = $2", [passwordHash, accountId]);
+  }
+
+  async deleteSessionsForAccount(accountId: string, exceptSessionId?: string): Promise<void> {
+    await this.ensureSchema();
+    await this.pool.query("DELETE FROM sessions WHERE account_id = $1 AND ($2::text IS NULL OR id <> $2)", [
+      accountId,
+      exceptSessionId ?? null,
+    ]);
+  }
+
   async recordDeadLink(input: {
     key: string;
     kind: "pan115" | "magnet";
