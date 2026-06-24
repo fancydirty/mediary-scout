@@ -82,7 +82,12 @@ export function QuarkQrConnect() {
         body: JSON.stringify({ serviceTicket }),
       });
       const data = (await res.json()) as { ok: boolean; providerUid?: string; error?: string };
-      if (!data.ok) throw new Error(data.error ?? "登录失败");
+      if (!data.ok) {
+        if (generation.current !== myGen) return;
+        setPhase("error");
+        setMessage(`${data.error ?? "登录失败"}（可改用下方手动粘 cookie）`);
+        return;
+      }
       if (generation.current !== myGen) return;
       setPhase("done");
       setMessage("夸克已连接。");
@@ -90,7 +95,7 @@ export function QuarkQrConnect() {
     } catch (error) {
       if (generation.current !== myGen) return;
       setPhase("error");
-      setMessage(`${String(error)}（可改用下方手动粘 cookie）`);
+      setMessage("网络异常，请重试。（可改用下方手动粘 cookie）");
     }
   }
 
