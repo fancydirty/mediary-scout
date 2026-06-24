@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { findActiveRun, inlineProgressView } from "./inline-progress";
+import { findActiveRun, inlineProgressView, trickleDisplayPercent } from "./inline-progress";
 import type { ActivityActiveRun } from "./activity-view";
 
 function run(over: Partial<ActivityActiveRun>): ActivityActiveRun {
@@ -64,5 +64,40 @@ describe("inlineProgressView", () => {
   it("queued or null → running:false", () => {
     expect(inlineProgressView(run({ status: "queued" })).running).toBe(false);
     expect(inlineProgressView(null).running).toBe(false);
+  });
+});
+
+// 2026-06-24 bug: a single `searchResources` tool call ran 94s (half the run); the
+// bar is event-driven (only writes on a tool call) so it sat FROZEN at 11% the whole
+// time → looked empty / "no progress". Fix: client trickles the bar forward between
+// server updates. trickleDisplayPercent eases from the last server % toward a soft
+// ceiling just above it (decelerating, never reaching), so a long opaque step shows
+// continuous life without claiming completion.
+describe("trickleDisplayPercent — keep the bar alive during a long opaque step", () => {
+  it("no creep at t=0 (shows exactly the server value)", () => {
+    expect(trickleDisplayPercent(11, 0)).toBe(11);
+  });
+  it("creeps forward over time, strictly increasing (the frozen-94s symptom)", () => {
+    const early = trickleDisplayPercent(11, 5_000);
+    const mid = trickleDisplayPercent(11, 30_000);
+    const late = trickleDisplayPercent(11, 90_000);
+    expect(early).toBeGreaterThan(11);
+    expect(mid).toBeGreaterThan(early);
+    expect(late).toBeGreaterThan(mid);
+  });
+  it("never crosses the next real milestone (search 11% must not creep toward transfer 37%)", () => {
+    // Even after an absurdly long wait, the soft ceiling stays well below the next jump.
+    expect(trickleDisplayPercent(11, 10_000_000)).toBeLessThan(30);
+  });
+  it("never claims completion (capped below 100 even from a high base)", () => {
+    expect(trickleDisplayPercent(96, 10_000_000)).toBeLessThanOrEqual(99);
+  });
+  it("monotonic non-decreasing in elapsed (never rewinds)", () => {
+    let prev = -1;
+    for (const ms of [0, 1_000, 10_000, 60_000, 300_000]) {
+      const v = trickleDisplayPercent(20, ms);
+      expect(v).toBeGreaterThanOrEqual(prev);
+      prev = v;
+    }
   });
 });
