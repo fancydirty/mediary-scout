@@ -98,13 +98,13 @@ describe("makeProgressSink", () => {
     const idxOfEarlyTargetDir = 2;
     const idxOfStaging = 7; // first genuine post-transfer verify
     // The early inspectTargetDir must keep the bar low (still in the early/search region).
-    expect(percents[idxOfEarlyTargetDir]).toBeLessThan(25); // below the transfer band start
+    expect(percents[idxOfEarlyTargetDir]!).toBeLessThan(25); // below the transfer band start
     // The bar must not reach verify-territory before the post-transfer file check.
     expect(Math.max(...percents.slice(0, idxOfStaging))).toBeLessThan(60);
     // The transfer steps must actually move the bar (reflecting the real work).
     expect(percents[4]!).toBeGreaterThan(percents[idxOfEarlyTargetDir]!);
     // Monotonic + finishes high.
-    for (let i = 1; i < percents.length; i += 1) expect(percents[i]).toBeGreaterThanOrEqual(percents[i - 1]!);
+    for (let i = 1; i < percents.length; i += 1) expect(percents[i]!).toBeGreaterThanOrEqual(percents[i - 1]!);
     expect(percents.at(-1)!).toBeGreaterThanOrEqual(95);
   });
 });
