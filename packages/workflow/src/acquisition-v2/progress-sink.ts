@@ -8,9 +8,11 @@ import { phaseProgress, type AgentToolEvent } from "./activity.js";
  * write must NEVER throw and fail an otherwise-good acquisition.
  *
  * `neededHint` (the run's missing-episode count) lets the mark phase show a real
- * obtained/needed fraction; omit it (movies / unknown) and the bar uses the band
- * midpoint instead. `obtained` accumulates across markObtained calls (the MOVIE
- * sentinel is not an episode and is not counted).
+ * obtained/needed fraction. For every other phase the bar advances WITHIN the band
+ * by an asymptotic step-count fraction (n/(n+2)) — so a long phase (several searches
+ * / transfer retries) creeps forward instead of freezing at the midpoint, while
+ * never escaping the band. `obtained` accumulates across markObtained calls (the
+ * MOVIE sentinel is not an episode and is not counted).
  */
 export function makeProgressSink(input: {
   repository: Pick<WorkflowRepository, "updateWorkflowRunProgress">;
