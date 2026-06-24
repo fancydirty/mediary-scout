@@ -28,5 +28,10 @@ COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
 # public asset (e.g. /brands/<provider>.svg for the workspace switcher icons) 404s
 # and BrandMark falls back to a bare dot (demo on Vercel serves public/ natively).
 COPY --from=builder /app/apps/web/public ./apps/web/public
+# Admin CLI escape hatch (forgot-password). standalone ships no scripts/ — copy it
+# in so `docker compose exec web node scripts/reset-password.mjs <user>` works. The
+# script is self-contained (raw pg + scrypt), so it needs no workflow dist (which
+# standalone bundles into .next and doesn't expose as a module).
+COPY --from=builder /app/scripts/reset-password.mjs ./scripts/reset-password.mjs
 EXPOSE 3000
 CMD ["node", "apps/web/server.js"]
