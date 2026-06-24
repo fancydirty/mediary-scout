@@ -2943,6 +2943,10 @@ select.setting-control {
   overflow: hidden;
 }
 .demo-playback-fill {
+  /* MUST be block: the fill is a <span> (inline by default), and CSS width/height
+     are IGNORED on inline boxes — so without this the fill collapses to 0×0 and the
+     bar shows NO progress at any percent (the green never renders). */
+  display: block;
   height: 100%;
   background: var(--accent);
   transition: width 0.4s ease;
