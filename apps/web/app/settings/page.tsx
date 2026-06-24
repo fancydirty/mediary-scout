@@ -116,8 +116,10 @@ async function SettingsSidebar({ searchParams }: { searchParams: Promise<{ w?: s
 }
 
 async function PasswordChangeSection() {
-  if (!isMultiUserEnabled()) return null;
+  // connection() FIRST: cacheComponents would otherwise prerender this at build time
+  // (multi-user off) and bake it as null → never shows in production multi-user.
   await connection();
+  if (!isMultiUserEnabled()) return null;
   return (
     <section id="password" className="panel" style={{ maxWidth: 720, marginTop: 24 }}>
       <div className="panel-header">
@@ -135,8 +137,8 @@ async function PasswordChangeSection() {
 }
 
 async function AccountManagementSection() {
-  if (!isMultiUserEnabled()) return null;
   await connection();
+  if (!isMultiUserEnabled()) return null;
   const me = await getCurrentAccountSummary();
   if (!me?.isOwner) return null;
   const accounts = await listManagedAccounts(await getCurrentAccountId());
