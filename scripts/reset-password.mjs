@@ -65,8 +65,17 @@ try {
     exitCode = 1;
   } else {
     const hash = await hashPassword(newPassword);
-    await client.query("UPDATE accounts SET password_hash = $1 WHERE id = $2", [hash, account.id]);
-    await client.query("DELETE FROM sessions WHERE account_id = $1", [account.id]);
+    // Atomic: rotate the hash AND revoke sessions together, so a failed DELETE can't
+    // leave the password changed while old session cookies still work.
+    await client.query("BEGIN");
+    try {
+      await client.query("UPDATE accounts SET password_hash = $1 WHERE id = $2", [hash, account.id]);
+      await client.query("DELETE FROM sessions WHERE account_id = $1", [account.id]);
+      await client.query("COMMIT");
+    } catch (txError) {
+      await client.query("ROLLBACK");
+      throw txError;
+    }
     console.log(`已重置账号「${username}」的密码为: ${newPassword}`);
     console.log("请用该密码登录后到「设置 → 修改密码」改成你自己的。");
   }
