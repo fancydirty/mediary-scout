@@ -54,18 +54,23 @@ if (!connectionString) {
 
 const client = new pg.Client({ connectionString });
 await client.connect();
+// Derive the exit code inside try, exit AFTER finally — calling process.exit() in the
+// try block would skip finally and leak the pg connection.
+let exitCode = 0;
 try {
   const found = await client.query("SELECT id FROM accounts WHERE username = $1", [username]);
   const account = found.rows[0];
   if (!account) {
     console.error(`找不到账号: ${username}`);
-    process.exit(1);
+    exitCode = 1;
+  } else {
+    const hash = await hashPassword(newPassword);
+    await client.query("UPDATE accounts SET password_hash = $1 WHERE id = $2", [hash, account.id]);
+    await client.query("DELETE FROM sessions WHERE account_id = $1", [account.id]);
+    console.log(`已重置账号「${username}」的密码为: ${newPassword}`);
+    console.log("请用该密码登录后到「设置 → 修改密码」改成你自己的。");
   }
-  const hash = await hashPassword(newPassword);
-  await client.query("UPDATE accounts SET password_hash = $1 WHERE id = $2", [hash, account.id]);
-  await client.query("DELETE FROM sessions WHERE account_id = $1", [account.id]);
-  console.log(`已重置账号「${username}」的密码为: ${newPassword}`);
-  console.log("请用该密码登录后到「设置 → 修改密码」改成你自己的。");
 } finally {
   await client.end();
 }
+process.exit(exitCode);
