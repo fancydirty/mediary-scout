@@ -1,13 +1,15 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { HelpCircle, LoaderCircle } from "lucide-react";
 
 /**
- * §7 P1 login / register. Only reachable when MEDIA_TRACK_MULTI_USER=1 (single-
- * user deployments never see it — proxy passes through). Posts to the auth
- * routes, which set the signed httpOnly session cookie; on success we hard-nav to
- * the library so the new session is picked up server-side.
+ * §7 P1 login / register, with a context-aware CLAIM screen. Only reachable when
+ * MEDIA_TRACK_MULTI_USER=1. On an UNCLAIMED instance (`/api/auth/bootstrap` →
+ * needsClaim) the page becomes a claim screen: it registers the first user, which
+ * adopts the seeded acct_default (keeping any existing library), and the copy makes
+ * that explicit (接管 if a library already exists, otherwise 创建站主). Once claimed,
+ * it's the normal login + open self-registration.
  */
 export default function LoginPage() {
   const [mode, setMode] = useState<"login" | "register">("login");
@@ -16,11 +18,23 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [whyOpen, setWhyOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
+  const [bootstrap, setBootstrap] = useState<{ needsClaim: boolean; hasExistingLibrary: boolean } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/auth/bootstrap")
+      .then((res) => res.json())
+      .then((data) => setBootstrap(data))
+      .catch(() => setBootstrap(null));
+  }, []);
+
+  const claiming = bootstrap?.needsClaim === true;
+  // While unclaimed, only registration (→ adopt acct_default) is possible.
+  const effectiveMode: "login" | "register" = claiming ? "register" : mode;
 
   const submit = () => {
     setError(null);
     startTransition(async () => {
-      const res = await fetch(`/api/auth/${mode}`, {
+      const res = await fetch(`/api/auth/${effectiveMode}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ username, password }),
@@ -34,14 +48,30 @@ export default function LoginPage() {
     });
   };
 
+  const title = claiming
+    ? bootstrap?.hasExistingLibrary
+      ? "接管这台实例"
+      : "创建站主账号"
+    : mode === "login"
+      ? "登录"
+      : "创建账号";
+  const note = claiming
+    ? bootstrap?.hasExistingLibrary
+      ? "这台实例已有媒体库。设置站主用户名 + 密码来接管它——你的库和网盘都会原样归你。"
+      : "你是第一个用户。这个账号将成为站主，拥有管理权限。"
+    : mode === "login"
+      ? "登录以访问你的媒体库"
+      : "创建一个本地账号开始使用";
+  const buttonText = claiming ? "接管并进入" : mode === "login" ? "登录" : "创建并登录";
+
   return (
     <main style={{ maxWidth: 360, margin: "14vh auto", padding: "0 20px" }}>
       <div className="panel" style={{ textAlign: "center" }}>
         <h1 className="panel-title" style={{ margin: "0 0 6px" }}>
-          {mode === "login" ? "登录" : "创建账号"}
+          {title}
         </h1>
         <p className="panel-note" style={{ marginBottom: 20 }}>
-          {mode === "login" ? "登录以访问你的媒体库" : "创建一个本地账号开始使用"}
+          {note}
         </p>
 
         <form
@@ -68,7 +98,7 @@ export default function LoginPage() {
               onChange={(event) => setPassword(event.target.value)}
               placeholder="密码"
               aria-label="密码"
-              autoComplete={mode === "login" ? "current-password" : "new-password"}
+              autoComplete={effectiveMode === "login" ? "current-password" : "new-password"}
             />
           </div>
           {error ? (
@@ -82,17 +112,11 @@ export default function LoginPage() {
             disabled={isPending}
             style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}
           >
-            {isPending ? (
-              <LoaderCircle size={14} className="spin" aria-hidden />
-            ) : mode === "login" ? (
-              "登录"
-            ) : (
-              "创建并登录"
-            )}
+            {isPending ? <LoaderCircle size={14} className="spin" aria-hidden /> : buttonText}
           </button>
         </form>
 
-        {mode === "register" ? (
+        {!claiming && mode === "register" ? (
           <div style={{ marginTop: 14 }}>
             <span
               role="note"
@@ -134,27 +158,30 @@ export default function LoginPage() {
           </div>
         ) : null}
 
-        <p className="panel-note" style={{ marginTop: 16 }}>
-          {mode === "login" ? "还没有账号？" : "已有账号？"}{" "}
-          <button
-            type="button"
-            onClick={() => {
-              setMode(mode === "login" ? "register" : "login");
-              setError(null);
-              setWhyOpen(false);
-            }}
-            style={{
-              background: "none",
-              border: "none",
-              color: "var(--accent, #1db954)",
-              cursor: "pointer",
-              padding: 0,
-              font: "inherit",
-            }}
-          >
-            {mode === "login" ? "创建账号" : "去登录"}
-          </button>
-        </p>
+        {/* While unclaimed there is nobody to log in as, so hide the toggle. */}
+        {!claiming ? (
+          <p className="panel-note" style={{ marginTop: 16 }}>
+            {mode === "login" ? "还没有账号？" : "已有账号？"}{" "}
+            <button
+              type="button"
+              onClick={() => {
+                setMode(mode === "login" ? "register" : "login");
+                setError(null);
+                setWhyOpen(false);
+              }}
+              style={{
+                background: "none",
+                border: "none",
+                color: "var(--accent, #1db954)",
+                cursor: "pointer",
+                padding: 0,
+                font: "inherit",
+              }}
+            >
+              {mode === "login" ? "创建账号" : "去登录"}
+            </button>
+          </p>
+        ) : null}
       </div>
     </main>
   );
