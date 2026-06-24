@@ -93,6 +93,9 @@ export function QuarkQrConnect() {
       setMessage("夸克已连接。");
       router.refresh();
     } catch (error) {
+      // Anything here is NOT a clean API error (those returned in `data` above):
+      // a network failure (fetch threw) OR a JSON decode failure (response.json()
+      // threw on a non-JSON body). Show a generic retry hint + the cookie fallback.
       if (generation.current !== myGen) return;
       setPhase("error");
       setMessage("网络异常，请重试。（可改用下方手动粘 cookie）");

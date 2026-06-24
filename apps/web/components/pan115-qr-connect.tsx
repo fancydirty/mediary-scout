@@ -101,7 +101,9 @@ export function Pan115QrConnect() {
       setMessage(data.userName ? `已连接为 ${data.userName}` : "已连接");
       router.refresh();
     } catch (error) {
-      // Network failure (fetch threw) — show a generic retry hint, no Error: prefix.
+      // Anything here is NOT a clean API error (those returned in `data` above):
+      // a network failure (fetch threw) OR a JSON decode failure (response.json()
+      // threw on a non-JSON body). Show a generic retry hint, no Error: prefix.
       if (generation.current !== myGeneration) return;
       setPhase("error");
       setMessage("网络异常，请重试。");

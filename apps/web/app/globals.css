@@ -1223,6 +1223,9 @@ p {
      shares the row with the drive switcher without overflow. */
   .sidebar-top-identity .account-identity {
     margin-bottom: 0;
+    /* Establish a positioning context so the absolutely-positioned dropdown
+       anchors to THIS block, not the viewport. */
+    position: relative;
   }
   .sidebar-top-identity .account-identity-summary {
     padding: 6px 8px;
@@ -1233,8 +1236,9 @@ p {
        bar from overflowing when both switcher + identity are present. */
     max-width: 80px;
   }
-  /* The dropdown opens below the summary, inline (not absolute) so it can't
-     overflow horizontally — it wraps within the viewport. */
+  /* The dropdown opens absolutely-positioned below the summary, anchored to the
+     right edge of the identity block (whose `position: relative` is set above)
+     so it never overflows a 390px viewport horizontally. */
   .sidebar-top-identity .account-identity-menu {
     position: absolute;
     right: 0;
