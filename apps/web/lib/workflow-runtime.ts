@@ -70,6 +70,7 @@ import {
 } from "@media-track/workflow";
 import { findDemoCandidateById, findDemoCandidateByTmdbId } from "./demo-candidates";
 import { seedDemoWorkflowRepository } from "./demo-workflow";
+import { resolveRegistration, deriveBootstrapState, canManageAccounts } from "./account-bootstrap";
 
 export type CandidateTrackingRequestResult =
   | {
@@ -140,24 +141,35 @@ export async function registerAccount(username: string, password: string): Promi
     return { ok: false, error: "用户名至少 2 位、密码至少 6 位。" };
   }
   const repository = getWorkflowRepository();
-  const isFirst = (await repository.listAccounts()).every((account) => account.id === DEFAULT_ACCOUNT_ID);
-  const account: Account = {
-    id: `acct_${randomBytes(12).toString("hex")}`,
-    username: trimmed,
-    passwordHash: await hashPassword(password),
-    groupId: null,
-    isOwner: isFirst,
-    createdAt: new Date().toISOString(),
-  };
+  const passwordHash = await hashPassword(password);
+  const decision = resolveRegistration(await repository.listAccounts());
   try {
+    if (decision.kind === "adopt-default") {
+      // First user on an unclaimed instance: claim acct_default in place so the
+      // existing library + drives stay theirs (is_owner already true on seed).
+      await repository.adoptDefaultAccount({ username: trimmed, passwordHash });
+      return {
+        ok: true,
+        accountId: DEFAULT_ACCOUNT_ID,
+        signedCookie: await createLoginSession(DEFAULT_ACCOUNT_ID),
+      };
+    }
+    const account: Account = {
+      id: `acct_${randomBytes(12).toString("hex")}`,
+      username: trimmed,
+      passwordHash,
+      groupId: null,
+      isOwner: false,
+      createdAt: new Date().toISOString(),
+    };
     await repository.createAccount(account);
+    return { ok: true, accountId: account.id, signedCookie: await createLoginSession(account.id) };
   } catch (error) {
     if (error instanceof DuplicateUsernameError) {
       return { ok: false, error: "用户名已存在。" };
     }
     throw error;
   }
-  return { ok: true, accountId: account.id, signedCookie: await createLoginSession(account.id) };
 }
 
 /** Authenticate username+password and start a session. */
@@ -182,6 +194,60 @@ export async function logoutSession(signedCookie: string | undefined): Promise<v
   if (sessionId) {
     await getWorkflowRepository().deleteSession(sessionId);
   }
+}
+
+/** Self-service password change. Verifies the current password, sets the new hash,
+ *  and revokes ALL of the account's sessions (incl. the caller's → must re-login). */
+export async function changeOwnPassword(
+  accountId: string,
+  currentPassword: string,
+  newPassword: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (newPassword.length < 6) {
+    return { ok: false, error: "新密码至少 6 位。" };
+  }
+  const repo = getWorkflowRepository();
+  const acct = await repo.getAccountById(accountId);
+  const valid = Boolean(acct && acct.passwordHash.length > 0 && (await verifyPassword(currentPassword, acct.passwordHash)));
+  if (!acct || !valid) {
+    return { ok: false, error: "当前密码不正确。" };
+  }
+  await repo.setAccountPassword(accountId, await hashPassword(newPassword));
+  await repo.deleteSessionsForAccount(accountId);
+  return { ok: true };
+}
+
+/** Owner-only reset of another account's password (no current-password needed).
+ *  Server-enforced owner check — NOT just hidden UI. Revokes the target's sessions. */
+export async function resetUserPassword(
+  ownerAccountId: string,
+  targetAccountId: string,
+  newPassword: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const repo = getWorkflowRepository();
+  const owner = await repo.getAccountById(ownerAccountId);
+  if (!canManageAccounts(owner)) {
+    return { ok: false, error: "无权限。" };
+  }
+  if (newPassword.length < 6) {
+    return { ok: false, error: "新密码至少 6 位。" };
+  }
+  const target = await repo.getAccountById(targetAccountId);
+  if (!target) {
+    return { ok: false, error: "账号不存在。" };
+  }
+  await repo.setAccountPassword(targetAccountId, await hashPassword(newPassword));
+  await repo.deleteSessionsForAccount(targetAccountId);
+  return { ok: true };
+}
+
+/** Bootstrap state for the /login claim screen: is the instance unclaimed, and does
+ *  the default account already own a library (→ "接管" vs "创建" copy). */
+export async function getBootstrapState(): Promise<{ needsClaim: boolean; hasExistingLibrary: boolean }> {
+  const repo = getWorkflowRepository();
+  const accounts = await repo.listAccounts();
+  const library = await repo.listTrackedSeasonStates(DEFAULT_ACCOUNT_ID);
+  return deriveBootstrapState(accounts, library.length);
 }
 
 /** §7 P1: multi-user mode gates the login/register UI + session enforcement.
