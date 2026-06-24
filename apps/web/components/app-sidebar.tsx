@@ -41,6 +41,14 @@ export function AppSidebar({
         <WorkspaceSwitcherLoader />
       </Suspense>
 
+      {/* Account identity — mobile top-bar copy (desktop keeps the footer one).
+          Single-user/demo → AccountIdentityLoader returns null → empty. */}
+      <Suspense fallback={null}>
+        <div className="sidebar-top-identity">
+          <AccountIdentityLoader />
+        </div>
+      </Suspense>
+
       <nav aria-label="主导航">
         <ul className="nav-list">
           <li>

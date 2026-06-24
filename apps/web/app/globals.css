@@ -1092,6 +1092,13 @@ p {
 
 /* ---------- responsive ---------- */
 
+/* Account identity has two homes: the footer (desktop) and the top bar (mobile).
+   This wrapper holds the top-bar copy; desktop hides it, mobile shows it.
+   Single-user/demo → AccountIdentityLoader renders null → empty anyway. */
+.sidebar-top-identity {
+  display: none;
+}
+
 @media (max-width: 1080px) {
   .dashboard-grid {
     grid-template-columns: 1fr;
@@ -1199,6 +1206,53 @@ p {
 
   .nav-activity-item {
     display: block;
+  }
+
+  /* Mobile: the footer is hidden, so surface the account identity in the TOP
+     bar (next to the drive switcher), not the bottom tab bar — the tab bar is
+     icon-over-label links, and a <details> dropdown doesn't fit that pattern. */
+  .sidebar-top-identity {
+    display: block;
+  }
+  /* Avoid double-display: the footer copy is still rendered server-side (it's
+     the desktop home), only hidden on mobile — getCurrentAccountSummary is
+     per-request memoized via React.cache so the two loaders share one DB read. */
+  .sidebar-footer .account-identity {
+    display: none;
+  }
+  /* The top bar is a flex row with justify-content:space-between. The identity
+     <details> sits at the right end; keep it compact (avatar dot + name) so it
+     shares the row with the drive switcher without overflow. */
+  .sidebar-top-identity .account-identity {
+    margin-bottom: 0;
+    /* Establish a positioning context so the absolutely-positioned dropdown
+       anchors to THIS block, not the viewport. */
+    position: relative;
+  }
+  .sidebar-top-identity .account-identity-summary {
+    padding: 6px 8px;
+  }
+  .sidebar-top-identity .account-identity-name {
+    /* Truncate (ellipsis) the username text on very narrow phones (≤390px) so the
+       avatar dot + truncated name share the top bar with the drive switcher
+       without overflow; the dropdown reveals the full name. (Not fully hidden —
+       a breakpoint to hide it entirely is YAGNI for now.) */
+    max-width: 80px;
+  }
+  /* The dropdown opens absolutely-positioned below the summary, anchored to the
+     right edge of the identity block (whose `position: relative` is set above)
+     so it never overflows a 390px viewport horizontally. */
+  .sidebar-top-identity .account-identity-menu {
+    position: absolute;
+    right: 0;
+    top: 100%;
+    min-width: 180px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border, #2a2a2a);
+    border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    padding: 4px;
+    z-index: 60;
   }
 
   .main {

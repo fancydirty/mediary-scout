@@ -82,15 +82,23 @@ export function QuarkQrConnect() {
         body: JSON.stringify({ serviceTicket }),
       });
       const data = (await res.json()) as { ok: boolean; providerUid?: string; error?: string };
-      if (!data.ok) throw new Error(data.error ?? "登录失败");
+      if (!data.ok) {
+        if (generation.current !== myGen) return;
+        setPhase("error");
+        setMessage(`${data.error ?? "登录失败"}（可改用下方手动粘 cookie）`);
+        return;
+      }
       if (generation.current !== myGen) return;
       setPhase("done");
       setMessage("夸克已连接。");
       router.refresh();
     } catch (error) {
+      // Anything here is NOT a clean API error (those returned in `data` above):
+      // a network failure (fetch threw) OR a JSON decode failure (response.json()
+      // threw on a non-JSON body). Show a generic retry hint + the cookie fallback.
       if (generation.current !== myGen) return;
       setPhase("error");
-      setMessage(`${String(error)}（可改用下方手动粘 cookie）`);
+      setMessage("网络异常，请重试。（可改用下方手动粘 cookie）");
     }
   }
 

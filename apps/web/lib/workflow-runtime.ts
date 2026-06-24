@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { cache } from "react";
 import {
   PanSouResourceProvider,
   createProtectedPan115CookieStorageExecutorFromEnv,
@@ -251,11 +252,19 @@ export async function getBootstrapState(): Promise<{ needsClaim: boolean; hasExi
 }
 
 /** Current account's display summary for the sidebar identity block — NEVER the
- *  password hash. Null when there's no real account (unauthenticated sentinel). */
-export async function getCurrentAccountSummary(): Promise<{ username: string; isOwner: boolean } | null> {
-  const acct = await getWorkflowRepository().getAccountById(await getCurrentAccountId());
-  return acct ? { username: acct.username, isOwner: acct.isOwner } : null;
-}
+ *  password hash. Null when there's no real account (unauthenticated sentinel).
+ *
+ *  Per-request memoized via `cache()`: the identity loader renders twice on
+ *  multi-user pages (desktop footer + mobile top-bar copy) and both call this —
+ *  `cache()` dedupes the `getAccountById` DB read within a single request so we
+ *  only hit the DB once even with two mounted loaders. (Next.js / React.cache
+ *  per-request memoization pattern.) */
+export const getCurrentAccountSummary = cache(
+  async (): Promise<{ username: string; isOwner: boolean } | null> => {
+    const acct = await getWorkflowRepository().getAccountById(await getCurrentAccountId());
+    return acct ? { username: acct.username, isOwner: acct.isOwner } : null;
+  },
+);
 
 export interface ManagedAccount {
   id: string;
