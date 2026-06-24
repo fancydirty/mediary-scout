@@ -16,13 +16,13 @@ import { advanceTrickle, initialTrickleState, inlineProgressView } from "../lib/
  * the CSS `width` transition bridges each step. Stateful only in the ref + interval.
  */
 function useTrickledPercent(serverPercent: number, running: boolean, runKey: string): number {
-  const stateRef = useRef(initialTrickleState(serverPercent, Date.now(), runKey));
+  // One clock read per render, shared by init + advance, so the first paint sits EXACTLY
+  // at the server value (no sub-tick creep) and render stays consistent.
+  const nowMs = Date.now();
+  const stateRef = useRef<ReturnType<typeof initialTrickleState> | null>(null);
+  stateRef.current ??= initialTrickleState(serverPercent, nowMs, runKey);
   const [, force] = useState(0);
-  stateRef.current = advanceTrickle(stateRef.current, {
-    serverPercent,
-    nowMs: Date.now(),
-    key: runKey,
-  });
+  stateRef.current = advanceTrickle(stateRef.current, { serverPercent, nowMs, key: runKey });
   useEffect(() => {
     if (!running) return;
     const id = setInterval(() => force((n) => n + 1), 400);
