@@ -3183,3 +3183,38 @@ select.setting-control {
   display: flex;
   justify-content: flex-end;
 }
+
+/* ---------- GitHub nameplate (Settings page bottom — quiet 暗记 + CTA) ---------- */
+.github-nameplate {
+  margin-top: 32px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border, #2a2a2a);
+  max-width: 720px;
+}
+.github-nameplate-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted, #9a9a9a);
+  font-size: 12px;
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+.github-nameplate-link:hover {
+  color: var(--text, #e6e6e6);
+}
+.github-nameplate-link:hover .github-nameplate-cta {
+  color: var(--accent, #1db954);
+}
+.github-nameplate-text {
+  white-space: nowrap;
+}
+.github-nameplate-cta {
+  color: var(--text, #e6e6e6);
+  transition: color 0.15s ease;
+}
+@media (max-width: 860px) {
+  .github-nameplate {
+    margin-top: 24px;
+  }
+}
