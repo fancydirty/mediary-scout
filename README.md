@@ -110,6 +110,41 @@ Then open the web UI and, in **Settings**, provide what you want to use (all bri
 
 Self-host on a NAS, a router (软路由), a spare PC, or a VPS — and reach it from your phone / TV via **Tailscale** or a **Cloudflare Tunnel** (no public IP needed; never expose `:3000` raw). Full walkthrough: **[docs/deploy.md](docs/deploy.md)**.
 
+### Deploy with an agent
+
+Prefer to have an AI agent (Claude Code, Codex, opencode, …) walk you through it? Paste this prompt into it — it'll ask the right questions, then deploy for you:
+
+````markdown
+You are deploying Mediary Scout, a self-hosted media-acquisition agent. Follow the repo's docs/deploy.md. Ask the user the questions below IN ORDER, then execute.
+
+## MUST ask (don't start without answers)
+1. **Where are you deploying?** Which machine (NAS / router / spare PC / VPS), and how do I operate it — SSH in, or run commands on its local terminal?
+2. **Single-user or multi-user?** Default single-user (just you). Multi-user lets family/friends each register, bind their own drives, and keep separate libraries.
+
+## SHOULD ask (have defaults, but confirm preference)
+3. **Local-only, or reach it from outside?**
+   - Local network only (default — open `http://<host>:3000` from devices on the same LAN)
+   - Tailscale (private mesh — recommended for home; no public IP, auto-encrypted)
+   - Cloudflare Tunnel (public HTTPS like `https://media.yourdomain.com` — needs a domain on Cloudflare + Access in front)
+4. **Configure real acquisition now, or just get it running first?** Real acquisition needs a 115/Quark drive + an LLM endpoint (OpenAI-compatible) + 115 directory CIDs. Skipping means it boots and you can look around, configure later in Settings.
+
+## OPTIONAL — one question, skip all if the user doesn't care
+5. Any of these you want to set up now? Reply "none" to skip and use defaults:
+   - Push notifications (Bark / Server酱 / WeChat Work / webhook)
+   - Your own TMDB key (default: works out of the box via the author's proxy)
+   - Prowlarr magnet aggregation (115 only)
+   - Build acceleration (registry mirror + npm mirror — needed in mainland China)
+
+## Then execute
+- `git clone https://github.com/fancydirty/mediary-scout && cd mediary-scout`
+- `docker compose up -d` (first build takes a few minutes)
+- If multi-user: add `MEDIA_TRACK_MULTI_USER=1` to `.env`, then `docker compose up -d web`
+- If Cloudflare Tunnel: follow docs/deploy.md §"方式二" — create the tunnel in the Zero Trust dashboard, put the token in `.env`, `docker compose --profile tunnel up -d`, and **add Cloudflare Access** (never expose the instance without auth)
+- If build acceleration: `docker compose build --build-arg NPM_REGISTRY=https://registry.npmmirror.com` + a registry mirror in `/etc/docker/daemon.json`
+- Open `http://<host>:3000`, walk the user through Settings (drive / LLM / optional extras)
+- Verify it's up, report the URL, and tell them how to upgrade (`git pull && docker compose up -d --build`)
+````
+
 ## Demo
 
 **🔭 Try it live: [mediary.dirtyfancy.sbs](https://mediary.dirtyfancy.sbs)**

@@ -110,6 +110,41 @@ docker compose up -d
 
 自部署到 NAS、软路由、闲置 PC 或 VPS,并经 **Tailscale** 或 **Cloudflare Tunnel** 从手机 / 电视访问(无需公网 IP;别把 `:3000` 裸暴露)。完整教程:**[docs/deploy.md](docs/deploy.md)**。
 
+### 让 agent 帮你部署
+
+想让 AI agent(Claude Code、Codex、opencode 等)带你走?把下面这段提示词丢给它——它会问对问题、然后替你部署:
+
+````markdown
+你要部署 Mediary Scout,一个自部署的媒体获取 agent。按仓库 docs/deploy.md 来。按下面顺序问用户,然后执行。
+
+## 必问(没答案别开始)
+1. **部署到哪台机器?** NAS / 软路由 / 闲置 PC / VPS,以及我怎么操作它——SSH 进去,还是在它本机终端跑命令?
+2. **单账号还是多账号?** 默认单账号(就你自己用)。多账号让家人/朋友各注册、各绑自己的网盘、各看各的库。
+
+## 建议问(有默认,但确认偏好)
+3. **只在局域网用,还是出门也要用?**
+   - 只在局域网(默认——同 WiFi 下设备开 `http://<主机IP>:3000`)
+   - Tailscale(私有 mesh——家用推荐,无公网 IP、自动加密)
+   - Cloudflare Tunnel(公网 HTTPS 如 `https://media.yourdomain.com`——需 Cloudflare 托管域名 + Access 前置鉴权)
+4. **现在就配真实获取,还是先起来看看?** 真实获取需要 115/夸克网盘 + LLM 端点(OpenAI 兼容)+ 115 目录 CID。先不起来也能看 UI,后续在设置页配。
+
+## 可选——一句话问,都不需要就跳过用默认
+5. 这些可选增强有想现在配的吗?都不需要就回"跳过":
+   - 通知推送(Bark / Server酱 / 企微 / webhook)
+   - 自己的 TMDB key(不配默认经作者代理开箱即用)
+   - Prowlarr 磁力聚合(115 专属)
+   - 国内构建加速(registry mirror + npm 镜像)
+
+## 然后执行
+- `git clone https://github.com/fancydirty/mediary-scout && cd mediary-scout`
+- `docker compose up -d`(首次构建几分钟)
+- 多账号:在 `.env` 加 `MEDIA_TRACK_MULTI_USER=1`,再 `docker compose up -d web`
+- Cloudflare Tunnel:按 docs/deploy.md §"方式二"——在 Zero Trust 控制台建隧道、token 放 `.env`、`docker compose --profile tunnel up -d`,并**务必加 Cloudflare Access**(别裸挂公网)
+- 国内构建加速:`docker compose build --build-arg NPM_REGISTRY=https://registry.npmmirror.com` + `/etc/docker/daemon.json` 配 registry mirror
+- 打开 `http://<主机>:3000`,带用户走设置页(网盘 / LLM / 可选项)
+- 确认起来、报 URL、告诉怎么升级(`git pull && docker compose up -d --build`)
+````
+
 ## Demo
 
 **🔭 在线体验:[mediary.dirtyfancy.sbs](https://mediary.dirtyfancy.sbs)**
