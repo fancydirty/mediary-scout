@@ -3217,4 +3217,10 @@ select.setting-control {
   .github-nameplate {
     margin-top: 24px;
   }
+  /* Allow the nameplate text to wrap on narrow phones — the one-line string
+     (dots + Chinese + English + "GitHub →") can exceed 320–390px and force
+     horizontal scroll. Desktop keeps the single-line nowrap above. */
+  .github-nameplate-text {
+    white-space: normal;
+  }
 }

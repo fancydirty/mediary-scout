@@ -475,9 +475,8 @@ export async function ensureDemoSeeded(targetRepository: WorkflowRepository): Pr
   // gate, a fresh SELF-HOSTED instance (empty DB) would get demo fake drives
   // (demo115/demoquark) + fake tracked titles auto-inserted into acct_default on
   // first page load — confusing garbage that looks like the owner bound real
-  // drives. prod with real data skips via seedDemoIfEmpty's emptiness check, but
-  // a brand-new self-host hits the empty branch. Gate on isDemoMode() so only the
-  // Vercel demo (MEDIA_TRACK_DEMO_MODE=1) seeds.
+  // drives. Gate on isDemoMode() so only the Vercel demo (MEDIA_TRACK_DEMO_MODE=1)
+  // reaches the emptiness check below; non-demo instances never seed.
   if (!isDemoMode()) {
     return;
   }
