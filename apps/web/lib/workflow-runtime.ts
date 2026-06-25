@@ -72,6 +72,7 @@ import {
 import { findDemoCandidateById, findDemoCandidateByTmdbId } from "./demo-candidates";
 import { seedDemoWorkflowRepository } from "./demo-workflow";
 import { resolveRegistration, deriveBootstrapState, canManageAccounts } from "./account-bootstrap";
+import { isDemoMode } from "./demo-mode";
 
 export type CandidateTrackingRequestResult =
   | {
@@ -470,6 +471,16 @@ export async function getCurrentAccountId(): Promise<string> {
 }
 
 export async function ensureDemoSeeded(targetRepository: WorkflowRepository): Promise<void> {
+  // Only the public read-only demo deploy should ever be seeded. Without this
+  // gate, a fresh SELF-HOSTED instance (empty DB) would get demo fake drives
+  // (demo115/demoquark) + fake tracked titles auto-inserted into acct_default on
+  // first page load — confusing garbage that looks like the owner bound real
+  // drives. prod with real data skips via seedDemoIfEmpty's emptiness check, but
+  // a brand-new self-host hits the empty branch. Gate on isDemoMode() so only the
+  // Vercel demo (MEDIA_TRACK_DEMO_MODE=1) seeds.
+  if (!isDemoMode()) {
+    return;
+  }
   if (process.env.MEDIA_TRACK_DEMO_SEED === "0") {
     return;
   }
