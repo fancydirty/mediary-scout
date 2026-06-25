@@ -126,7 +126,7 @@ You are deploying Mediary Scout, a self-hosted media-acquisition agent. Follow t
    - Local network only (default — open `http://<host>:3000` from devices on the same LAN)
    - Tailscale (private mesh — recommended for home; no public IP, auto-encrypted)
    - Cloudflare Tunnel (public HTTPS like `https://media.yourdomain.com` — needs a domain on Cloudflare + Access in front)
-4. **Configure real acquisition now, or just get it running first?** Real acquisition needs a 115/Quark drive + an LLM endpoint (OpenAI-compatible) + 115 directory CIDs. Skipping means it boots and you can look around, configure later in Settings.
+4. **Configure real acquisition now, or just get it running first?** Real acquisition needs a 115/Quark drive + an LLM endpoint (OpenAI-compatible) + (if using 115) 115 directory CIDs. Skipping means it boots and you can look around, configure later in Settings.
 
 ## OPTIONAL — one question, skip all if the user doesn't care
 5. Any of these you want to set up now? Reply "none" to skip and use defaults:
@@ -137,10 +137,10 @@ You are deploying Mediary Scout, a self-hosted media-acquisition agent. Follow t
 
 ## Then execute
 - `git clone https://github.com/fancydirty/mediary-scout && cd mediary-scout`
+- If build acceleration (mainland China): `docker compose build --build-arg NPM_REGISTRY=https://registry.npmmirror.com` + a registry mirror in `/etc/docker/daemon.json`, **before** the first `up`
 - `docker compose up -d` (first build takes a few minutes)
 - If multi-user: add `MEDIA_TRACK_MULTI_USER=1` to `.env`, then `docker compose up -d web`
-- If Cloudflare Tunnel: follow docs/deploy.md §"方式二" — create the tunnel in the Zero Trust dashboard, put the token in `.env` as `TUNNEL_TOKEN=...`, `docker compose --profile tunnel up -d`, and **add Cloudflare Access** (never expose the instance without auth)
-- If build acceleration: `docker compose build --build-arg NPM_REGISTRY=https://registry.npmmirror.com` + a registry mirror in `/etc/docker/daemon.json`
+- If Cloudflare Tunnel: follow docs/deploy.md §"方式二" — create the tunnel in the Zero Trust dashboard, put the token in `.env` as `TUNNEL_TOKEN=<your-token>`, `docker compose --profile tunnel up -d`, and **add Cloudflare Access** (never expose the instance without auth)
 - Open `http://<host>:3000`, walk the user through Settings (drive / LLM / optional extras)
 - Verify it's up, report the URL, and tell them how to upgrade (`git pull && docker compose up -d --build`)
 ````
