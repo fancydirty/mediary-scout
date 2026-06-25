@@ -12,9 +12,21 @@ async function ensureDemoSeeded(repo: InstanceType<typeof InMemoryWorkflowReposi
 }
 
 describe("ensureDemoSeeded — gated on isDemoMode", () => {
-  const original = process.env.MEDIA_TRACK_DEMO_MODE;
-  beforeEach(() => { delete process.env.MEDIA_TRACK_DEMO_MODE; });
-  afterEach(() => { if (original === undefined) delete process.env.MEDIA_TRACK_DEMO_MODE; else process.env.MEDIA_TRACK_DEMO_MODE = original; });
+  const originalDemoMode = process.env.MEDIA_TRACK_DEMO_MODE;
+  const originalDemoSeed = process.env.MEDIA_TRACK_DEMO_SEED;
+  beforeEach(() => {
+    delete process.env.MEDIA_TRACK_DEMO_MODE;
+    // MEDIA_TRACK_DEMO_SEED="0" short-circuits seeding (docker-compose sets it
+    // for self-hosting). Clear it so the "demo=1 → seeds" test is deterministic
+    // and doesn't depend on whatever the outer test runner inherited.
+    delete process.env.MEDIA_TRACK_DEMO_SEED;
+  });
+  afterEach(() => {
+    if (originalDemoMode === undefined) delete process.env.MEDIA_TRACK_DEMO_MODE;
+    else process.env.MEDIA_TRACK_DEMO_MODE = originalDemoMode;
+    if (originalDemoSeed === undefined) delete process.env.MEDIA_TRACK_DEMO_SEED;
+    else process.env.MEDIA_TRACK_DEMO_SEED = originalDemoSeed;
+  });
 
   it("does NOT seed a fresh self-hosted instance (empty DB, not demo mode)", async () => {
     const repo = new InMemoryWorkflowRepository();
@@ -37,5 +49,14 @@ describe("ensureDemoSeeded — gated on isDemoMode", () => {
     const providers = storages.map((s) => s.providerUid).sort();
     expect(providers).toContain("demo115");
     expect(providers).toContain("demoquark");
+  });
+
+  it("respects MEDIA_TRACK_DEMO_SEED=0 even in demo mode (explicit opt-out)", async () => {
+    process.env.MEDIA_TRACK_DEMO_MODE = "1";
+    process.env.MEDIA_TRACK_DEMO_SEED = "0";
+    const repo = new InMemoryWorkflowRepository();
+    await ensureDemoSeeded(repo);
+    const storages = await repo.listConnectedStorages("acct_default");
+    expect(storages.length).toBe(0);
   });
 });

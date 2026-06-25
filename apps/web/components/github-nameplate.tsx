@@ -11,7 +11,7 @@ export function GithubNameplate() {
       <Link
         href="https://github.com/fancydirty/mediary-scout"
         target="_blank"
-        rel="noreferrer"
+        rel="noopener noreferrer"
         className="github-nameplate-link"
       >
         {/* GitHub mark (official simplified path, from github/logos — MIT-spirit
