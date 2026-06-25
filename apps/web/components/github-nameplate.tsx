@@ -5,7 +5,7 @@ import Link from "next/link";
  *  "this is open source, here's the repo". Shows on both demo and self-hosted
  *  (demo visitors are potential self-hosters too). No star count (new repo,
  *  thin numbers look bleak) — just the GitHub mark + a one-line pitch. */
-export function GithubNameplate() {
+export function GitHubNameplate() {
   return (
     <footer className="github-nameplate">
       <Link
@@ -14,8 +14,8 @@ export function GithubNameplate() {
         rel="noopener noreferrer"
         className="github-nameplate-link"
       >
-        {/* GitHub mark (official simplified path, from github/logos — MIT-spirit
-            brand mark, no copyright concern for a link attribution). */}
+        {/* GitHub mark (simplified inline SVG so we don't pull a brand-icon
+            dependency; used here only as a link attribution marker). */}
         <svg
           width="16"
           height="16"

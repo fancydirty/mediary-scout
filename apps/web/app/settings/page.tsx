@@ -15,7 +15,7 @@ import { PanSouConfigForm } from "../../components/pansou-config-form";
 import { DailySweepForm } from "../../components/daily-sweep-form";
 import { PasswordChangeForm } from "../../components/password-change-form";
 import { AccountAdminPanel } from "../../components/account-admin-panel";
-import { GithubNameplate } from "../../components/github-nameplate";
+import { GitHubNameplate } from "../../components/github-nameplate";
 import {
   getAccountConnectedStorages,
   getAccountScopedSettings,
@@ -105,7 +105,7 @@ export default function SettingsPage({
             </Suspense>
           </>
         )}
-        <GithubNameplate />
+        <GitHubNameplate />
       </main>
     </div>
   );
