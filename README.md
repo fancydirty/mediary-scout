@@ -139,7 +139,7 @@ You are deploying Mediary Scout, a self-hosted media-acquisition agent. Follow t
 - `git clone https://github.com/fancydirty/mediary-scout && cd mediary-scout`
 - `docker compose up -d` (first build takes a few minutes)
 - If multi-user: add `MEDIA_TRACK_MULTI_USER=1` to `.env`, then `docker compose up -d web`
-- If Cloudflare Tunnel: follow docs/deploy.md §"方式二" — create the tunnel in the Zero Trust dashboard, put the token in `.env`, `docker compose --profile tunnel up -d`, and **add Cloudflare Access** (never expose the instance without auth)
+- If Cloudflare Tunnel: follow docs/deploy.md §"方式二" — create the tunnel in the Zero Trust dashboard, put the token in `.env` as `TUNNEL_TOKEN=...`, `docker compose --profile tunnel up -d`, and **add Cloudflare Access** (never expose the instance without auth)
 - If build acceleration: `docker compose build --build-arg NPM_REGISTRY=https://registry.npmmirror.com` + a registry mirror in `/etc/docker/daemon.json`
 - Open `http://<host>:3000`, walk the user through Settings (drive / LLM / optional extras)
 - Verify it's up, report the URL, and tell them how to upgrade (`git pull && docker compose up -d --build`)
