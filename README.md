@@ -99,6 +99,8 @@ cp .env.example .env   # optional — most config can be set in the UI
 docker compose up -d
 ```
 
+> 🇨🇳 **Can't reach Docker Hub (mainland China)?** A first build failing with `auth.docker.io ... i/o timeout` / `DeadlineExceeded` means Docker Hub is blocked — **configure a registry mirror first** (Docker Desktop and Linux differ): see **[docs/deploy.md → registry mirror](docs/deploy.md#国内构建加速连不上-docker-hub)**.
+
 Then open the web UI and, in **Settings**, provide what you want to use (all bring-your-own):
 
 - **A drive** — connect 115 or Quark (QR-scan login, or paste a cookie).

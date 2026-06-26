@@ -1,6 +1,12 @@
-# syntax=docker/dockerfile:1
 # media-track self-host image: Next.js app + in-process queue worker
 # (started via apps/web/instrumentation.ts). One container = web + worker.
+#
+# No `# syntax=docker/dockerfile:1` on purpose: this image uses only baseline
+# Dockerfile features (multi-stage, COPY --from, ARG), so the external frontend
+# buys us nothing — and that directive forces BuildKit to fetch the frontend image
+# from Docker Hub at build start, which (a) is the FIRST thing to fail when Hub is
+# unreachable and (b) can bypass a configured registry mirror. Dropping it keeps the
+# whole build on the mirror once one is set. (See #46.)
 
 FROM node:22-slim AS builder
 WORKDIR /app

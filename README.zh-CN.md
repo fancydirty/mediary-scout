@@ -99,6 +99,8 @@ cp .env.example .env   # 可选——大多数配置可在 UI 里填
 docker compose up -d
 ```
 
+> 🇨🇳 **国内连不上 Docker Hub?** 首次构建报 `auth.docker.io ... i/o timeout` / `DeadlineExceeded` = Docker Hub 被墙,**先配镜像加速**(Docker Desktop 与 Linux 方式不同):见 **[docs/deploy.md → 国内构建加速](docs/deploy.md#国内构建加速连不上-docker-hub)**。
+
 打开 web UI,在**设置**里按需提供(全部自带):
 
 - **网盘** —— 连 115 或夸克(扫码登录,或粘贴 cookie)。
