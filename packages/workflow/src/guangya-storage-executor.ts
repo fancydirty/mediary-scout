@@ -477,10 +477,19 @@ export class GuangYaStorageExecutor implements StorageExecutor {
    * scope (dev) allows everything.
    */
   private assertWithinWriteScope(directoryId: string, action: string): string {
-    const normalized = normalizeId(directoryId);
+    // 光鸭's ROOT directory id is the empty string "": create_dir / get_file_list with
+    // parentId:"" operate on root (confirmed live). connect-time provisioning
+    // (provisionCategoryDirs, empty write scope) creates the root category folder under
+    // "" — so "" is a VALID parent for directory creation there and must NOT be pushed
+    // through normalizeId's throw-on-empty. Handle the empty-scope (dev/connect) "allow
+    // all" branch BEFORE normalizing, so root "" passes. With a non-empty (worker
+    // runtime) scope, "" is never a legitimate write target (production writes go into
+    // provisioned NESTED dirs); it falls through to a clean WRITE_SCOPE_VIOLATION below.
+    const trimmed = directoryId.trim();
     if (this.writeScopeDirectoryIds.size === 0) {
-      return normalized;
+      return trimmed;
     }
+    const normalized = normalizeId(directoryId);
     if (this.writeScopeDirectoryIds.has(normalized) || this.derivedScopeIds.has(normalized)) {
       return normalized;
     }

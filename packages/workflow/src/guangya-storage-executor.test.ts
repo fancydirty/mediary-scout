@@ -147,6 +147,41 @@ describe("GuangYaStorageExecutor.createDirectory", () => {
     expect(id).toBe("fresh-dir");
     expect(createDir).toHaveBeenCalledTimes(1);
   });
+
+  it("provisions the connect-time category tree at the 光鸭 root (parentId='')", async () => {
+    // 光鸭's ROOT directory id is the empty string "": get_file_list/create_dir with
+    // parentId:"" operate on root (confirmed live). connectGuangYa →
+    // provisionCategoryDirs calls createDirectory({ name, parentId: "" }) to make the
+    // root category folder. With an EMPTY write scope (connect-time provisioning),
+    // "" must be accepted as the valid root parent, not throw on empty.
+    const fs = new Map<string, GuangYaStorageItem[]>();
+    fs.set("", []);
+    let nextId = 1;
+    const listFiles = vi.fn<GuangYaStorageClient["listFiles"]>(async (parentId: string) => {
+      return fs.get(parentId) ?? [];
+    });
+    const createDir = vi.fn<GuangYaStorageClient["createDir"]>(async (parentId, dirName) => {
+      const id = `dir-${nextId++}`;
+      fs.set(id, []);
+      const items = fs.get(parentId) ?? [];
+      items.push({ fileId: id, parentId, fileName: dirName, fileSize: 0, resType: 2 });
+      fs.set(parentId, items);
+      return id;
+    });
+    const client = fakeClient({ listFiles, createDir });
+    // Connect-time: empty write scope (dev/provisioning).
+    const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [] });
+
+    // find-or-create the root category folder AT root ("").
+    const rootId = await executor.createDirectory({ name: "Mediary Scout", parentId: "" });
+    expect(rootId).toBe("dir-1");
+    expect(createDir).toHaveBeenCalledWith("", "Mediary Scout");
+
+    // then create a child under that returned id — also succeeds.
+    const moviesId = await executor.createDirectory({ name: "Movies", parentId: rootId });
+    expect(moviesId).toBe("dir-2");
+    expect(createDir).toHaveBeenCalledWith(rootId, "Movies");
+  });
 });
 
 describe("GuangYaStorageExecutor write-scope guard", () => {
