@@ -1507,6 +1507,23 @@ async function probeStorageConnection(
   throw new Error(`unknown storage brand: ${provider}`);
 }
 
+/**
+ * Whether the background worker has a drive it could use — i.e. whether
+ * getWorkerStorageExecutor(acct_default) would succeed rather than throw
+ * "PAN115_COOKIE is required". Returns false ONLY in the genuine fresh-deploy case
+ * (adapter "115", no acct_default 网盘 bound, no env cookie), so the worker can skip
+ * QUIETLY instead of spamming the logs every poll. Cheap + non-throwing.
+ */
+export async function workerHasConfiguredDrive(): Promise<boolean> {
+  if ((process.env.MEDIA_TRACK_STORAGE_ADAPTER ?? "fake") !== "115") {
+    return true; // fake/dev executor never needs a cookie
+  }
+  if ((process.env.PAN115_COOKIE ?? "").trim().length > 0) {
+    return true; // legacy env-cookie bootstrap path
+  }
+  return (await getAccountStorageCredentials(DEFAULT_ACCOUNT_ID)) !== null;
+}
+
 async function getWorkerStorageExecutor(
   accountId: string = DEFAULT_ACCOUNT_ID,
   connectedStorageId?: string | null,

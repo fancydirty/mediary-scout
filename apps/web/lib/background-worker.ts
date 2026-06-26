@@ -19,6 +19,11 @@ export interface DrainDeps {
   runScheduled: () => Promise<unknown>;
   /** Safety cap on runs per tick so a never-idle queue can't spin forever. */
   maxDrains?: number;
+  /** Whether any drive is connected. When provided and false (a fresh instance
+   *  with no 网盘 yet), the tick skips drain + sweep QUIETLY instead of building a
+   *  drive client that throws "PAN115_COOKIE is required" every poll. Optional so
+   *  existing callers/tests behave unchanged (absent ⇒ assume configured). */
+  isDriveConfigured?: (() => Promise<boolean>) | undefined;
 }
 
 /**
@@ -28,6 +33,12 @@ export interface DrainDeps {
  * threw, so a transient queue failure never starves 巡检.
  */
 export async function drainQueueOnce(deps: DrainDeps): Promise<number> {
+  // Fresh instance, no 网盘 connected yet → nothing the worker can do. Skip QUIETLY
+  // (don't call runNext/runScheduled, which would build a drive client and throw
+  // every poll). Resumes automatically once the user connects a drive.
+  if (deps.isDriveConfigured && !(await deps.isDriveConfigured())) {
+    return 0;
+  }
   const maxDrains = deps.maxDrains ?? 50;
   let drained = 0;
   try {
@@ -66,14 +77,19 @@ export interface WorkerRuntime {
   runScheduled: () => Promise<unknown>;
   /** Requeue orphaned "running" runs left by a dead worker; returns the count. */
   recover: () => Promise<number>;
+  /** Whether any drive is connected (gates the tick — see DrainDeps). Optional so
+   *  test runtimes can omit it (absent ⇒ assume configured). */
+  isDriveConfigured?: () => Promise<boolean>;
 }
 
 async function defaultRuntime(): Promise<WorkerRuntime> {
-  const { runNextQueuedWorkflow, runScheduledType3, recoverOrphanedRuns } = await import("./workflow-runtime");
+  const { runNextQueuedWorkflow, runScheduledType3, recoverOrphanedRuns, workerHasConfiguredDrive } =
+    await import("./workflow-runtime");
   return {
     runNext: () => runNextQueuedWorkflow(),
     runScheduled: () => runScheduledType3(),
     recover: () => recoverOrphanedRuns(),
+    isDriveConfigured: () => workerHasConfiguredDrive(),
   };
 }
 
@@ -111,7 +127,11 @@ export function startBackgroundWorker(options?: { pollMs?: number; runtime?: Wor
     running = true;
     try {
       const runtime = await loadRuntime();
-      const drained = await drainQueueOnce({ runNext: runtime.runNext, runScheduled: runtime.runScheduled });
+      const drained = await drainQueueOnce({
+        runNext: runtime.runNext,
+        runScheduled: runtime.runScheduled,
+        isDriveConfigured: runtime.isDriveConfigured,
+      });
       if (drained > 0) {
         console.log(`[background-worker] drained ${drained} queued run(s) this tick`);
       }

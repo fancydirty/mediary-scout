@@ -51,6 +51,33 @@ describe("drainQueueOnce — the in-process queue drainer (one tick)", () => {
     expect(drained).toBe(0);
     expect(runScheduled).toHaveBeenCalledTimes(1);
   });
+
+  // Fresh instance with no drive connected yet: the worker can't acquire anywhere,
+  // so it must skip BOTH drain and sweep QUIETLY — not call them and let them throw
+  // "PAN115_COOKIE is required" every tick, which spammed the logs and made new users
+  // think the deploy was broken.
+  it("skips drain AND sweep quietly when no drive is configured", async () => {
+    const runNext = vi.fn(async () => ({ status: "idle" as const }));
+    const runScheduled = vi.fn(async () => ({ outcomes: [] }));
+    const isDriveConfigured = vi.fn(async () => false);
+
+    const drained = await drainQueueOnce({ runNext, runScheduled, isDriveConfigured });
+
+    expect(drained).toBe(0);
+    expect(isDriveConfigured).toHaveBeenCalledTimes(1);
+    expect(runNext).not.toHaveBeenCalled(); // never tried → no "drain failed" throw
+    expect(runScheduled).not.toHaveBeenCalled(); // never tried → no "daily sweep failed" throw
+  });
+
+  it("drains + sweeps normally when a drive IS configured", async () => {
+    const runNext = vi.fn(async () => ({ status: "idle" as const }));
+    const runScheduled = vi.fn(async () => ({ outcomes: [] }));
+
+    await drainQueueOnce({ runNext, runScheduled, isDriveConfigured: async () => true });
+
+    expect(runNext).toHaveBeenCalledTimes(1);
+    expect(runScheduled).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("startBackgroundWorker — the in-process worker loop (auto-drive)", () => {
