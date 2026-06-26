@@ -36,6 +36,18 @@ describe("switcherItems", () => {
     const items = switcherItems(drives, "/"); // top-of-file drives have no provider
     expect(items[0]!.provider).toBeUndefined();
   });
+  it("unnamed label uses the brand registry label per provider (光鸭 ≠ 115)", () => {
+    const branded = [
+      { id: "g", label: null, provider: "guangya", providerUid: "100000003", createdAt: "2026-06-01T00:00:00.000Z", status: "active" as const },
+      { id: "q", label: null, provider: "quark", providerUid: "100000002", createdAt: "2026-06-10T00:00:00.000Z", status: "active" as const },
+      { id: "p", label: null, provider: "pan115", providerUid: "100000001", createdAt: "2026-06-20T00:00:00.000Z", status: "active" as const },
+    ];
+    const items = switcherItems(branded, "/");
+    expect(items.find((i) => i.id === "g")?.label).toContain("光鸭");
+    expect(items.find((i) => i.id === "g")?.label).not.toContain("115");
+    expect(items.find((i) => i.id === "q")?.label).toContain("夸克");
+    expect(items.find((i) => i.id === "p")?.label).toContain("115");
+  });
   it("label falls back to a uid-tail when unnamed; frozen surfaced", () => {
     const frozen = [
       { id: "csOld", label: null, providerUid: "100000001", createdAt: "2026-06-01T00:00:00.000Z", status: "active" as const },

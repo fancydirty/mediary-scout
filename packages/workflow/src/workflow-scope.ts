@@ -1,4 +1,5 @@
 import { DEFAULT_ACCOUNT_ID } from "./domain.js";
+import { getStorageBrand, isRegisteredStorageProvider } from "./storage-brands.js";
 
 /** The data partition key for the multi-drive tree model: an account (identity)
  *  plus the specific connected storage (workspace). `connectedStorageId` may be
@@ -75,6 +76,16 @@ export interface WorkspaceSwitcherItem {
   provider?: string | undefined;
 }
 
+/** The switcher chip's brand label, sourced from the brand registry so every
+ *  brand (115 / 夸克 / 光鸭) reads correctly — not a 夸克-vs-115 ternary that
+ *  mislabels a 光鸭 drive as "115". Falls back to the raw provider for an
+ *  unknown / undefined provider. */
+function providerLabel(provider: string | undefined): string {
+  return provider !== undefined && isRegisteredStorageProvider(provider)
+    ? getStorageBrand(provider).label
+    : (provider ?? "网盘");
+}
+
 /**
  * Build the workspace switcher tabs (pure, testable). The earliest-created drive
  * is primary and routes to "/"; the rest route to /w/<id>. The active tab is the
@@ -109,7 +120,7 @@ export function switcherItems(
       href,
       label:
         storage.label?.trim() ||
-        `${storage.provider === "quark" ? "夸克" : "115"} …${storage.providerUid.slice(-4)}`,
+        `${providerLabel(storage.provider)} …${storage.providerUid.slice(-4)}`,
       isActive,
       frozen: storage.status === "frozen",
       provider: storage.provider,

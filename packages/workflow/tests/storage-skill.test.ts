@@ -18,11 +18,26 @@ describe("brand-aware storage skill", () => {
     expect(pan115).not.toContain("41006"); // 115 has no quark codes
   });
 
+  it("getStorageSkill('guangya') teaches the magnet/offline-task model and does NOT throw", () => {
+    const guangya = getStorageSkill("guangya");
+    expect(guangya).toBeTruthy();
+    expect(guangya.length).toBeGreaterThan(0);
+    // magnet/offline drive: candidates are magnets resolved → offline task → poll
+    expect(guangya).toMatch(/磁力|magnet/i);
+    expect(guangya).toMatch(/光鸭/);
+    // a 115/quark/光鸭 SHARE link is rejected loud on this magnet-only drive
+    expect(guangya).toContain("GUANGYA_ONLY_MAGNET");
+    // must NOT mislead with 115-only 秒传 wording
+    expect(guangya).not.toMatch(/秒传/);
+    // must NOT carry quark fail-loud codes
+    expect(guangya).not.toContain("41006");
+  });
+
   it("getStorageSkill throws for an unknown brand", () => {
     expect(() => getStorageSkill("baidu")).toThrowError(/unknown storage brand/i);
   });
 
-  it.each(["pan115", "quark"])(
+  it.each(["pan115", "quark", "guangya"])(
     "%s teaches the systemic-block STOP rule (quota/auth = account problem, not a dead link)",
     (brand) => {
       const skill = getStorageSkill(brand);
@@ -40,6 +55,7 @@ describe("brand-aware storage skill", () => {
   it("readSkillSection selects the brand variant for dead-links-black-box", () => {
     expect(readSkillSection("dead-links-black-box", "quark")).toBe(getStorageSkill("quark"));
     expect(readSkillSection("dead-links-black-box", "pan115")).toBe(getStorageSkill("pan115"));
+    expect(readSkillSection("dead-links-black-box", "guangya")).toBe(getStorageSkill("guangya"));
     // defaults to 115 when no brand is given (single-user / legacy)
     expect(readSkillSection("dead-links-black-box")).toBe(getStorageSkill("pan115"));
   });

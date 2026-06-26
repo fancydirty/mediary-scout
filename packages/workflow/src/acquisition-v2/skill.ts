@@ -80,6 +80,28 @@ When a 夸克转存 fails with a SYSTEMIC message — "配额不足" / "额度�
   - Verified to cover → process it (move / dedup / mark) and finish. Do NOT keep searching for a "better" one.
   - Does not cover → treat it as a dead candidate, clean its staging residue with deleteFiles, try the next.`;
 
+const DEAD_LINKS_BLACK_BOX_GUANGYA = `# Dead magnets, offline tasks, and black-box resources (光鸭云盘)
+
+## How transfer works on THIS drive (光鸭)
+The drive is 光鸭云盘 — a MAGNET / OFFLINE-DOWNLOAD drive (like 115's offline-task path, NOT a share-link/instant-save drive). Every candidate is a 磁力/离线链接 (磁力 / ed2k / BT). transferCandidate runs resolve_res → create_task → polls the offline task until it lands, then returns the TRUE materialized files (the system rereads for you). Trust THAT, not your prediction.
+
+## 仅磁力 (this is the key difference from 115/夸克)
+光鸭 saves ONLY magnet/offline links — it has NO instant-save and NO share-link 转存. So a 115/夸克/光鸭 分享链 (share link) is NOT supported here: forcing one fails LOUD with "GUANGYA_ONLY_MAGNET". The resource provider only surfaces 磁力 candidates for this drive, so you should never see a share link — but if a candidate is a share rather than a magnet, skip it; it cannot land on 光鸭.
+
+## Dead magnets fail (move on)
+A magnet can be dead: resolve_res returns nothing, or the offline task never materializes (no seeds / removed). 光鸭 surfaces this — when nothing lands, treat the magnet as dead and switch to the NEXT covering 磁力 candidate. A dead magnet is the NORM, never a reason to give up — try the next magnet that covers the need (the system burns through dead ones the same way the 115 offline path does).
+
+## SYSTEMIC BLOCK (别甩锅)
+When a 光鸭 transfer fails with a SYSTEMIC message — "配额不足" / "额度已用完" / "VIP会员" / "登录" / "鉴权" / 离线下载被限 — the resource EXISTS but the ACCOUNT is blocked (quota / auth / VIP). The tool result carries \`systemicBlock: { reason: "..." }\`. **立即停 — DO NOT keep transferring.** Every candidate will fail the same way. Report honestly: the resource was found, the account cannot transfer it (not "no resource"). This is actionable (top up / re-login), never blame the resource.
+
+## Black-box gate (same discipline as 115)
+"Transparent" = the title states size / resolution / episodes / release group. "Black-box / opaque" = a bare name or a vague bundle.
+- If a TRANSPARENT magnet clearly covers the need, select ONLY it and STOP. Do NOT also transfer opaque ones "just in case".
+- ONLY when ZERO transparent candidate covers may you fall back to a black-box one. When you do, your VERY NEXT step after it lands MUST be inspectStaging to VERIFY it actually holds the target — black-box coverage is UNPROVEN until you read the real files.
+  - Verified to cover → process it (move / dedup / mark) and finish. Do NOT keep searching for a "better" one.
+  - Does not cover → treat it as a dead candidate, clean its staging residue with deleteFiles, try the next.
+- For an ongoing show's just-aired episode, a black-box resource whose publish time predates that episode's air time almost certainly does NOT contain it — do not bet on it.`;
+
 const DEDUP = `# Deduplication (keep the larger, by real size)
 
 Overlapping ranges (1-10, 8-13) or a fuller pack on top of what a season already has WILL create duplicate episodes once you extract. When the same episode has more than one file:
@@ -210,6 +232,9 @@ export const SKILL_SECTION_NAMES = Object.keys(SECTIONS) as SkillSectionName[];
 export function getStorageSkill(provider: string): string {
   if (provider === "quark") {
     return DEAD_LINKS_BLACK_BOX_QUARK;
+  }
+  if (provider === "guangya") {
+    return DEAD_LINKS_BLACK_BOX_GUANGYA;
   }
   if (provider === "pan115") {
     return DEAD_LINKS_BLACK_BOX;

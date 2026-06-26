@@ -7,6 +7,7 @@ import {
   needForTvTarget,
   runMovieTaskAgent,
   runTvAnimeTaskAgent,
+  transferModelLine,
 } from "../src/acquisition-v2/task-agents.js";
 import { TaskSandbox } from "../src/acquisition-v2/sandbox.js";
 import { FakeResourceProviderV2 } from "../src/acquisition-v2/fake-provider.js";
@@ -88,6 +89,43 @@ describe("both prompts carry the systemic-block STOP rule (别甩锅: account bl
     expect(prompt).toMatch(/立即停|不要(再|继续)|别(再|继续)|STOP/i);
     // surfaced field the agent reads
     expect(prompt).toContain("systemicBlock");
+  });
+});
+
+describe("transferModelLine — brand transfer model in the prompt", () => {
+  it("guangya: magnet/offline model, NOT the default 115 秒传/share model", () => {
+    const line = transferModelLine({ storageProvider: "guangya" });
+    expect(line).toBeTruthy();
+    expect(line.length).toBeGreaterThan(0);
+    expect(line).toMatch(/磁力|magnet/i);
+    expect(line).toMatch(/光鸭/);
+    expect(line).toContain("GUANGYA_ONLY_MAGNET");
+    // it is a magnet-only drive: must NOT inherit 115's 秒传 / 115/share wording
+    expect(line).not.toMatch(/秒传/);
+    // distinct from the quark line and from the default (115) empty line
+    expect(line).not.toBe(transferModelLine({ storageProvider: "quark" }));
+    expect(line).not.toBe(transferModelLine({}));
+  });
+
+  it("quark stays the 转存分享链 / 无磁力 model", () => {
+    const line = transferModelLine({ storageProvider: "quark" });
+    expect(line).toMatch(/夸克/);
+    expect(line).toMatch(/QUARK_NO_MAGNET/);
+  });
+
+  it("115 (default) injects no extra transfer-model line", () => {
+    expect(transferModelLine({})).toBe("");
+    expect(transferModelLine({ storageProvider: "pan115" })).toBe("");
+  });
+});
+
+describe("guangya system prompts carry the magnet transfer model", () => {
+  it.each([
+    ["tv", buildTvAnimeSystemPrompt({ storageProvider: "guangya" })],
+    ["movie", buildMovieSystemPrompt({ storageProvider: "guangya" })],
+  ])("%s prompt names the magnet/offline model and GUANGYA_ONLY_MAGNET", (_name, prompt) => {
+    expect(prompt).toMatch(/磁力|magnet/i);
+    expect(prompt).toContain("GUANGYA_ONLY_MAGNET");
   });
 });
 

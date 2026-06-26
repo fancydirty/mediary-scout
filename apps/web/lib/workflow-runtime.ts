@@ -1607,6 +1607,10 @@ async function probeStorageConnection(
     await new GuangYaClient({
       accessToken: credential?.accessToken ?? "",
       refreshToken: credential?.refreshToken ?? "",
+      // Pin the SAME persisted device id as connect/worker so "Test connection"
+      // doesn't mint a fresh one (harmless today — validate is account-host — but
+      // consistent with the rest of the brand's device-pinning).
+      ...(credential?.deviceId === undefined ? {} : { deviceId: credential.deviceId }),
     }).validateToken();
     return;
   }
