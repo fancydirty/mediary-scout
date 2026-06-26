@@ -361,13 +361,24 @@ export class GuangYaStorageExecutor implements StorageExecutor {
   }
 
   /** Poll list_task until the task leaves the in-progress state or a cap is hit.
-   *  ⚠️ status semantics (2 = done? is there a distinct failed code?) are a PLACEHOLDER
-   *  to be refined after the live e2e (Task 8) observes real status codes. v1: treat status>=2 as terminal. */
+   *  光鸭 list_task status (observed live 2026-06-27, Big Buck Bunny magnet → real
+   *  account): 1 = in-progress/queued (fileId is ""), 2 = done (fileId is populated
+   *  with the materialized dir/file id). The sequence seen was 1 → 2, with the file
+   *  landing the same instant status flipped to 2. We treat status >= 2 as terminal
+   *  AND break the moment a non-empty fileId materializes (the strongest "file landed"
+   *  signal — it appears exactly at completion). No distinct failed code was observed
+   *  in this run; the transfer()'s before/after listVideoFiles diff remains the source
+   *  of truth for succeeded-vs-failed, so pollTask only needs the correct terminal
+   *  condition + to not waste the full poll budget. If a future run surfaces a higher
+   *  failed code (e.g. 3/4), status >= 2 already breaks on it so the diff can judge. */
   private async pollTask(taskId: string): Promise<void> {
     for (let i = 0; i < this.taskPollMaxPolls; i++) {
       const tasks = await this.client.listTask([taskId]);
       const t = tasks.find((x) => x.taskId === taskId);
       if (!t) {
+        return;
+      }
+      if (t.fileId !== "" && t.fileId !== "0") {
         return;
       }
       if (t.status >= 2) {
