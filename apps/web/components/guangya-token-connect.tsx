@@ -37,7 +37,7 @@ export function GuangYaTokenConnect() {
       </p>
       <p className="push-help" style={{ marginBottom: 12 }}>
         光鸭云盘{" "}
-        <a href="https://www.guangyun.com/" target="_blank" rel="noopener noreferrer">
+        <a href="https://www.guangyapan.com" target="_blank" rel="noopener noreferrer">
           官网 <ExternalLink size={12} style={{ verticalAlign: "-1px" }} />
         </a>
       </p>

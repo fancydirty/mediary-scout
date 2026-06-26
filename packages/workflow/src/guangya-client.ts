@@ -125,7 +125,7 @@ export class GuangYaClient {
   constructor(options: GuangYaClientOptions) {
     this.accessToken = options.accessToken;
     this.refreshToken = options.refreshToken;
-    this.deviceId = options.deviceId?.trim() || generateDeviceId();
+    this.deviceId = options.deviceId?.trim() || generateGuangYaDeviceId();
     this.onTokensRefreshed = options.onTokensRefreshed;
     this.fetchImpl = options.fetchImpl ?? ((url, init) => fetch(url, init));
   }
@@ -321,7 +321,13 @@ export class GuangYaClient {
   }
 }
 
-function generateDeviceId(): string {
+/**
+ * Generate a stable 光鸭 device id (32 hex chars) for the `Did` header. Call this
+ * ONCE at connect time and persist the result so every worker run reuses the same
+ * id — a fresh id each run looks like many devices to 光鸭's risk control. The
+ * client's internal default (when no deviceId is supplied) calls this same helper.
+ */
+export function generateGuangYaDeviceId(): string {
   return globalThis.crypto.randomUUID().replace(/-/g, "");
 }
 

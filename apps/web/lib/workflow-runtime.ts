@@ -46,6 +46,7 @@ import {
   allowedResourceTypesForKinds,
   parseQuarkUid,
   parseGuangYaUid,
+  generateGuangYaDeviceId,
   GuangYaClient,
   type ResolveAccountWorkerContext,
   hashPassword,
@@ -2211,8 +2212,12 @@ export async function connectGuangYa(rawAccessToken: string, rawRefreshToken: st
   if (!accessToken || !refreshToken) {
     throw new Error("请填写光鸭 access_token 与 refresh_token。");
   }
+  // Pin a stable device id ONCE at connect time. Persisting it (vs. letting the
+  // client auto-generate a fresh one each worker run) keeps the `Did` header
+  // constant across runs, so 光鸭's risk control sees one device, not many.
+  const deviceId = generateGuangYaDeviceId();
   // validateToken() confirms the pair is live AND yields the authoritative sub.
-  const client = new GuangYaClient({ accessToken, refreshToken });
+  const client = new GuangYaClient({ accessToken, refreshToken, deviceId });
   let providerUid: string;
   try {
     providerUid = await client.validateToken();
@@ -2228,7 +2233,7 @@ export async function connectGuangYa(rawAccessToken: string, rawRefreshToken: st
   if (decision.action === "reject") {
     throw new StorageOwnedByOtherAccountError();
   }
-  const payload = { accessToken, refreshToken, meta: { connectedAt: new Date().toISOString() } };
+  const payload = { accessToken, refreshToken, deviceId, meta: { connectedAt: new Date().toISOString() } };
   if (decision.action === "refresh" && existing) {
     // Same account re-bind → refresh the token blob, keep the resolved CIDs.
     await repository.upsertConnectedStorage({
@@ -2257,7 +2262,7 @@ export async function connectGuangYa(rawAccessToken: string, rawRefreshToken: st
   try {
     const executor = createExecutorForBrand({
       provider: "guangya",
-      credential: { accessToken, refreshToken },
+      credential: { accessToken, refreshToken, deviceId },
       scopeCids: [],
     });
     cids = await provisionCategoryDirs({
