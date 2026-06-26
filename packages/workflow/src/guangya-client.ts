@@ -32,6 +32,32 @@ export interface GuangYaItem {
   resType: number;
 }
 
+/** One subfile inside a bt/磁力 resource (fileIndex is null when the API omits it). */
+export interface GuangYaSubfile {
+  fileName: string;
+  fileIndex: number | null;
+  fileSize: number;
+}
+
+/** resolve_res result, parsed into the typed shape the executor relies on. */
+export interface GuangYaResolvedRes {
+  resType: number;
+  url?: string;
+  btResInfo?: {
+    infoHash: string;
+    fileName: string;
+    subfiles: GuangYaSubfile[];
+  };
+}
+
+/** One offline-task status row from list_task. */
+export interface GuangYaTaskStatus {
+  taskId: string;
+  status: number;
+  progress: number;
+  fileId: string;
+}
+
 /** The token pair (+ the device id they were bound to) handed to the persist hook. */
 export interface GuangYaTokens {
   accessToken: string;
@@ -178,8 +204,9 @@ export class GuangYaClient {
   }
 
   /** Resolve a share/magnet URL to its resType + (for bt) subfile listing. */
-  async resolveRes(url: string): Promise<unknown> {
-    return this.postAPI("/cloudcollection/v1/resolve_res", { url });
+  async resolveRes(url: string): Promise<GuangYaResolvedRes> {
+    const data = await this.postAPI("/cloudcollection/v1/resolve_res", { url });
+    return toResolvedRes(data);
   }
 
   /** Create an offline-download task; returns the taskId. */
@@ -206,9 +233,9 @@ export class GuangYaClient {
   }
 
   /** Poll the status/progress of offline tasks. */
-  async listTask(taskIds: string[]): Promise<unknown[]> {
+  async listTask(taskIds: string[]): Promise<GuangYaTaskStatus[]> {
     const data = await this.postAPI("/cloudcollection/v1/list_task", { taskIds });
-    return arrayValue(recordValue(data, "list"));
+    return arrayValue(recordValue(data, "list")).filter(isRecord).map(toTaskStatus);
   }
 
   /**
@@ -305,6 +332,41 @@ function toItem(raw: Record<string, unknown>): GuangYaItem {
     fileName: stringValue(raw.fileName),
     fileSize: numberValue(raw.fileSize),
     resType: numberValue(raw.resType),
+  };
+}
+
+function toResolvedRes(data: unknown): GuangYaResolvedRes {
+  const resolved: GuangYaResolvedRes = { resType: numberValue(recordValue(data, "resType")) };
+  const url = recordValue(data, "url");
+  if (typeof url === "string" && url.length > 0) {
+    resolved.url = url;
+  }
+  const btRaw = recordValue(data, "btResInfo");
+  if (isRecord(btRaw)) {
+    resolved.btResInfo = {
+      infoHash: stringValue(recordValue(btRaw, "infoHash")),
+      fileName: stringValue(recordValue(btRaw, "fileName")),
+      subfiles: arrayValue(recordValue(btRaw, "subfiles")).filter(isRecord).map(toSubfile),
+    };
+  }
+  return resolved;
+}
+
+function toSubfile(raw: Record<string, unknown>): GuangYaSubfile {
+  const idx = raw.fileIndex;
+  return {
+    fileName: stringValue(raw.fileName),
+    fileIndex: typeof idx === "number" && Number.isFinite(idx) ? idx : null,
+    fileSize: numberValue(raw.fileSize),
+  };
+}
+
+function toTaskStatus(raw: Record<string, unknown>): GuangYaTaskStatus {
+  return {
+    taskId: stringValue(raw.taskId),
+    status: numberValue(raw.status),
+    progress: numberValue(raw.progress),
+    fileId: stringValue(raw.fileId),
   };
 }
 

@@ -8,15 +8,23 @@
  *  - 转存 is OFFLINE/磁力 (resolve_res → create_task → poll). This is the OPPOSITE
  *    of quark: a MAGNET works, a share link fails LOUD (GUANGYA_ONLY_MAGNET).
  *    Share-link 转存 is a phase-2 feature.
- *  - 光鸭 has NO parent-walk / breadcrumb API, so the write-scope guard is a flat
- *    membership check: the transfer/createDir target is always a known scope dir
- *    id, so we allow iff the id is in the write scope (empty scope = dev, allow all).
+ *  - 光鸭 has NO parent-walk / breadcrumb API, so the write-scope guard CANNOT walk
+ *    a target's parents the way quark does (quark hops up via getFileInfo). Instead
+ *    the guard is DERIVED-SCOPE: the workflow always provisions the directory chain
+ *    TOP-DOWN from a connect-time scope root (rootDir + Movies/TV/Anime) via
+ *    createDirectory on THIS executor instance before any write. Real write targets
+ *    are NESTED (transfer→TV/<Show>/staging-<runId>, moveFiles→Season NN), never a
+ *    scope root. So each nested dir is authorized by being find-or-created under an
+ *    already-in-scope parent during the same run, and its id is then tracked in
+ *    `derivedScopeIds`. A write is allowed iff its target id is a scope root OR a
+ *    derived id (empty scope = dev, allow all). See assertWithinWriteScope below.
  *  - A 光鸭 item is a directory when `resType === 2`; ids key on `fileId`, names on
  *    `fileName`, sizes on `fileSize`. Directory listing uses `listFiles(dirId)`.
  */
 import type { PackageTreeFile, ResourceCandidate, TransferAttempt, TransferStatus, VerifiedFile } from "./domain.js";
 import { episodeCodeFromFileName } from "./episode-code.js";
 import { isGuangYaAuthError } from "./guangya-client.js";
+import type { GuangYaResolvedRes, GuangYaTaskStatus } from "./guangya-client.js";
 import type { StorageExecutor, UnparsedVideoFile } from "./ports.js";
 
 const MAX_RECURSIVE_COLLECT_DEPTH = 6;
@@ -46,36 +54,11 @@ export interface GuangYaStorageItem {
   resType: number;
 }
 
-/** Resolved subfile inside a bt/磁力 resource. */
-export interface GuangYaSubfile {
-  fileName: string;
-  fileIndex: number;
-  fileSize: number;
-}
-
-/** resolve_res result the executor relies on (bt resources carry btResInfo). */
-export interface GuangYaResolvedRes {
-  resType: number;
-  url?: string;
-  btResInfo?: {
-    infoHash: string;
-    fileName: string;
-    subfiles: GuangYaSubfile[];
-  };
-}
-
-/** One offline-task status row from list_task. */
-export interface GuangYaTaskStatus {
-  taskId: string;
-  status: number;
-  progress?: number;
-  fileId?: string;
-}
-
 /**
- * The structural slice of GuangYaClient the executor depends on. The real
- * GuangYaClient (whose resolveRes/listTask return `unknown`) is adapted to this
- * typed shape by the factory (a later task); tests inject a typed fake directly.
+ * The structural slice of GuangYaClient the executor depends on. resolveRes/listTask
+ * reuse the SAME typed shapes the real GuangYaClient now returns (GuangYaResolvedRes /
+ * GuangYaTaskStatus, imported from ./guangya-client.js), so `new GuangYaClient(...)`
+ * is structurally assignable here with no runtime adapter. Tests inject a typed fake.
  */
 export interface GuangYaStorageClient {
   listFiles(parentId: string): Promise<GuangYaStorageItem[]>;
@@ -118,6 +101,10 @@ interface VideoFact {
 export class GuangYaStorageExecutor implements StorageExecutor {
   private readonly client: GuangYaStorageClient;
   private readonly writeScopeDirectoryIds: Set<string>;
+  /** Ids of nested dirs find-or-created under an already-in-scope parent during this
+   *  run. They become authorized write targets (光鸭 has no parent-walk API to verify
+   *  them otherwise). Populated by createDirectory; consulted by assertWithinWriteScope. */
+  private readonly derivedScopeIds = new Set<string>();
   private readonly protectedDirectoryIds: Set<string>;
   private readonly minVideoSizeBytes: number;
   private readonly videoExtensions: Set<string>;
@@ -146,11 +133,16 @@ export class GuangYaStorageExecutor implements StorageExecutor {
       if (isDirectory(item) && nameOf(item) === input.name) {
         const existingId = idOf(item);
         if (existingId) {
+          // Authorize this nested dir as a future write target (it lives under an
+          // already-in-scope parent). Covers both the find-existing and create branches.
+          this.derivedScopeIds.add(existingId);
           return existingId;
         }
       }
     }
-    return this.client.createDir(safeParentId, input.name);
+    const createdId = await this.client.createDir(safeParentId, input.name);
+    this.derivedScopeIds.add(createdId);
+    return createdId;
   }
 
   async listVideoFiles(directoryId: string): Promise<VerifiedFile[]> {
@@ -465,16 +457,20 @@ export class GuangYaStorageExecutor implements StorageExecutor {
   }
 
   /**
-   * 光鸭 has NO parent-walk / breadcrumb API, so the guard is a flat membership
-   * check: the transfer/createDir target is always a known scope dir id. Allow iff
-   * the id is in the write scope; empty scope (dev) allows everything.
+   * 光鸭 has NO parent-walk / breadcrumb API, so we cannot verify a write target by
+   * walking up to a scope root (the premise that "the target is always a scope-root
+   * id" is FALSE — real targets are nested staging/Season dirs). Instead we use
+   * DERIVED SCOPE: a write is allowed iff its target id is a connect-time scope root
+   * (writeScopeDirectoryIds) OR a nested dir find-or-created under an already-in-scope
+   * parent during this run (derivedScopeIds, populated by createDirectory). Empty
+   * scope (dev) allows everything.
    */
   private assertWithinWriteScope(directoryId: string, action: string): string {
     const normalized = normalizeId(directoryId);
     if (this.writeScopeDirectoryIds.size === 0) {
       return normalized;
     }
-    if (this.writeScopeDirectoryIds.has(normalized)) {
+    if (this.writeScopeDirectoryIds.has(normalized) || this.derivedScopeIds.has(normalized)) {
       return normalized;
     }
     throw new Error(

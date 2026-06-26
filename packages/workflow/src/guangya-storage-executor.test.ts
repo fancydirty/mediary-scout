@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ResourceCandidate, ResourceType } from "./domain.js";
 import { GuangYaAuthError } from "./guangya-client.js";
-import type { GuangYaStorageClient } from "./guangya-storage-executor.js";
+import type { GuangYaStorageClient, GuangYaStorageItem } from "./guangya-storage-executor.js";
 import { GuangYaStorageExecutor } from "./guangya-storage-executor.js";
 
 /** Minimal in-memory fake of the structural client the executor depends on. */
@@ -163,6 +163,81 @@ describe("GuangYaStorageExecutor write-scope guard", () => {
     const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [SCOPE] });
     await expect(
       executor.createDirectory({ name: "x", parentId: "elsewhere" }),
+    ).rejects.toThrow(/WRITE_SCOPE_VIOLATION/);
+  });
+
+  it("authorizes writes into runtime-created NESTED dirs (derived scope), still refuses unknown ids", async () => {
+    // The real workflow provisions the dir chain TOP-DOWN from a scope root via
+    // createDirectory before any write, then transfers/moves into the NESTED leaf —
+    // never into a scope root. Flat-membership wrongly throws here; derived-scope must pass.
+    const TV_SCOPE = "tv-scope";
+    // In-memory FS: each dir id -> its child items. New dirs created lazily.
+    const fs = new Map<string, GuangYaStorageItem[]>();
+    fs.set(TV_SCOPE, []);
+    let nextId = 1;
+    const stagingFiles: GuangYaStorageItem[] = [];
+    const listFiles = vi.fn<GuangYaStorageClient["listFiles"]>(async (parentId: string) => {
+      return fs.get(parentId) ?? [];
+    });
+    const createDir = vi.fn<GuangYaStorageClient["createDir"]>(async (parentId: string, dirName: string) => {
+      const id = `dir-${nextId++}`;
+      fs.set(id, []);
+      const items = fs.get(parentId) ?? [];
+      items.push({ fileId: id, parentId, fileName: dirName, fileSize: 0, resType: 2 });
+      fs.set(parentId, items);
+      return id;
+    });
+    const moveFiles = vi.fn<GuangYaStorageClient["moveFiles"]>(async () => {});
+    const client = fakeClient({ listFiles, createDir, moveFiles });
+
+    const executor = new GuangYaStorageExecutor({
+      client,
+      writeScopeDirectoryIds: [TV_SCOPE],
+    });
+
+    // Provision chain TOP-DOWN from the scope root.
+    const showId = await executor.createDirectory({ name: "Show", parentId: TV_SCOPE });
+    // Nested 2 levels under TV — flat membership would throw WRITE_SCOPE_VIOLATION here.
+    const stagingId = await executor.createDirectory({ name: "staging", parentId: showId });
+    const seasonId = await executor.createDirectory({ name: "Season 01", parentId: showId });
+
+    // transfer into the nested staging dir succeeds (no WRITE_SCOPE_VIOLATION).
+    // Staging listing: empty on the before-snapshot, one new video on the after-snapshot
+    // (simulating the offline download landing). Other dirs read from the in-memory fs.
+    let stagingListCalls = 0;
+    listFiles.mockImplementation(async (parentId: string) => {
+      if (parentId === stagingId) {
+        stagingListCalls += 1;
+        return stagingListCalls === 1 ? [] : stagingFiles;
+      }
+      return fs.get(parentId) ?? [];
+    });
+    stagingFiles.push({
+      fileId: "ep1",
+      parentId: stagingId,
+      fileName: "ep1.mkv",
+      fileSize: 50 * 1024 * 1024,
+      resType: 1,
+    });
+    const attempt = await executor.transfer({
+      workflowRunId: "run-1",
+      directoryId: stagingId,
+      candidate: candidate(),
+    });
+    expect(attempt.status).toBe("succeeded");
+    expect(attempt.materializedFileIds).toEqual(["ep1"]);
+
+    // moveFiles into the created Season dir under showId succeeds.
+    const moved = await executor.moveFiles({ fileIds: ["ep1"], targetDirectoryId: seasonId });
+    expect(moved.moved).toEqual(["ep1"]);
+
+    // A totally-unknown id (never created under scope) is still refused.
+    await expect(
+      executor.transfer({
+        workflowRunId: "run-2",
+        directoryId: "totally-unknown-id",
+        candidate: candidate(),
+      }),
     ).rejects.toThrow(/WRITE_SCOPE_VIOLATION/);
   });
 });
