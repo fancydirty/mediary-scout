@@ -4,6 +4,7 @@ import {
   QuarkStorageExecutor,
   Storage115Executor,
 } from "../src/index.js";
+import { GuangYaStorageExecutor } from "../src/guangya-storage-executor.js";
 
 describe("createExecutorForBrand", () => {
   it("pan115 → Storage115Executor (write scope from scopeCids)", () => {
@@ -14,6 +15,15 @@ describe("createExecutorForBrand", () => {
   it("quark → QuarkStorageExecutor", () => {
     const exec = createExecutorForBrand({ provider: "quark", cookie: "__uid=1", scopeCids: ["ROOT"] });
     expect(exec).toBeInstanceOf(QuarkStorageExecutor);
+  });
+
+  it("guangya → GuangYaStorageExecutor (from a token credential blob, no cookie)", () => {
+    const exec = createExecutorForBrand({
+      provider: "guangya",
+      credential: { accessToken: "AT", refreshToken: "RT", deviceId: "d" },
+      scopeCids: ["root"],
+    });
+    expect(exec).toBeInstanceOf(GuangYaStorageExecutor);
   });
 
   it("unknown provider throws", () => {

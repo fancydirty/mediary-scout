@@ -9,10 +9,28 @@ import {
   Pan115AuthError,
   QuarkAuthError,
 } from "../src/index.js";
+import { GuangYaAuthError, parseGuangYaUid } from "../src/guangya-client.js";
+
+/** Build a fake 光鸭 JWT whose payload (2nd segment, base64url) carries `payload`. */
+function makeGuangYaJwt(payload: Record<string, unknown>): string {
+  return `eyJhbGciOiJSUzI1NiJ9.${Buffer.from(JSON.stringify(payload)).toString("base64url")}.s`;
+}
 
 describe("storage brand registry", () => {
-  it("registers exactly pan115 + quark", () => {
-    expect(STORAGE_BRANDS.map((b) => b.provider).sort()).toEqual(["pan115", "quark"]);
+  it("registers exactly pan115 + quark + guangya", () => {
+    expect(STORAGE_BRANDS.map((b) => b.provider).sort()).toEqual(["guangya", "pan115", "quark"]);
+  });
+
+  it("getStorageBrand resolves guangya with its label, magnet/prowlarr kinds + uid parsing", () => {
+    const g = getStorageBrand("guangya");
+    expect(g.provider).toBe("guangya");
+    expect(g.label).toBe("光鸭云盘");
+    expect(g.resourceProviderKinds).toContain("pansou-magnet");
+    expect(g.resourceProviderKinds).toContain("prowlarr"); // 光鸭支持磁力
+    expect(g.parseUid).toBe(parseGuangYaUid);
+    expect(g.parseUid(makeGuangYaJwt({ sub: "U1" }))).toBe("U1");
+    expect(g.isAuthError(new GuangYaAuthError("x"))).toBe(true);
+    expect(g.isAuthError(new QuarkAuthError("y"))).toBe(false);
   });
 
   it("getStorageBrand resolves quark with its label + resource kinds (no prowlarr)", () => {
@@ -50,6 +68,7 @@ describe("storage brand registry", () => {
     const { brandSupportsProwlarr } = await import("../src/index.js");
     expect(brandSupportsProwlarr("pan115")).toBe(true);
     expect(brandSupportsProwlarr("quark")).toBe(false);
+    expect(brandSupportsProwlarr("guangya")).toBe(true);
     expect(brandSupportsProwlarr("baidu")).toBe(false);
   });
 });

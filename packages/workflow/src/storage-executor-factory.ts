@@ -7,6 +7,9 @@
  * Lives here (not in storage-brands.ts) because building the 115 executor pulls
  * in env/protected-wrapper concerns the brand-identity registry must stay free of.
  */
+import { GuangYaClient } from "./guangya-client.js";
+import type { GuangYaClientOptions } from "./guangya-client.js";
+import { GuangYaStorageExecutor } from "./guangya-storage-executor.js";
 import { createProtectedPan115CookieStorageExecutorFromEnv } from "./pan115-storage-factory.js";
 import type { StorageExecutor } from "./ports.js";
 import { QuarkCookieClient } from "./quark-cookie-client.js";
@@ -14,23 +17,54 @@ import { QuarkStorageExecutor } from "./quark-storage-executor.js";
 
 export function createExecutorForBrand(input: {
   provider: string;
-  cookie: string;
+  /** Cookie credential for cookie-auth brands (115/夸克). Optional now that 光鸭
+   *  authenticates with a token blob instead — pass `credential` for those. */
+  cookie?: string;
+  /** Opaque credential blob for token-auth brands (光鸭: {accessToken,refreshToken,deviceId}). */
+  credential?: unknown;
   /** The drive's write-scope directory ids (rootCid + Movies/TV/Anime). */
   scopeCids: string[];
   /** Base env for the 115 executor (guard pacing etc); defaults to process.env. */
   env?: Record<string, string | undefined>;
+  /** Persist hook for refreshed token-auth credentials (光鸭 refresh rotates tokens). */
+  onCredentialRefresh?: (creds: unknown) => void | Promise<void>;
 }): StorageExecutor {
   if (input.provider === "pan115") {
+    const cookie = input.cookie ?? "";
     const env = {
       ...(input.env ?? process.env),
-      PAN115_COOKIE: input.cookie,
+      PAN115_COOKIE: cookie,
       ...(input.scopeCids.length > 0 ? { MEDIA_TRACK_115_WRITE_SCOPE_CIDS: input.scopeCids.join(",") } : {}),
     };
     return createProtectedPan115CookieStorageExecutorFromEnv({ env });
   }
   if (input.provider === "quark") {
     return new QuarkStorageExecutor({
-      client: new QuarkCookieClient({ cookie: input.cookie }),
+      client: new QuarkCookieClient({ cookie: input.cookie ?? "" }),
+      writeScopeDirectoryIds: input.scopeCids,
+    });
+  }
+  if (input.provider === "guangya") {
+    const c = (input.credential ?? {}) as {
+      accessToken?: string;
+      refreshToken?: string;
+      deviceId?: string;
+    };
+    // Build options without ever setting optional keys to `undefined`
+    // (exactOptionalPropertyTypes forbids it).
+    const clientOptions: GuangYaClientOptions = {
+      accessToken: c.accessToken ?? "",
+      refreshToken: c.refreshToken ?? "",
+    };
+    if (c.deviceId !== undefined) {
+      clientOptions.deviceId = c.deviceId;
+    }
+    const onRefresh = input.onCredentialRefresh;
+    if (onRefresh) {
+      clientOptions.onTokensRefreshed = (t) => onRefresh(t);
+    }
+    return new GuangYaStorageExecutor({
+      client: new GuangYaClient(clientOptions),
       writeScopeDirectoryIds: input.scopeCids,
     });
   }

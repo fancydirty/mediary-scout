@@ -11,11 +11,12 @@
  * capabilities (uid parsing, auth-error classification, applicable resource kinds).
  */
 import { parsePan115Uid } from "./account-credentials.js";
+import { isGuangYaAuthError, parseGuangYaUid } from "./guangya-client.js";
 import { isPan115AuthError } from "./pan115-cookie-client.js";
 import { isQuarkAuthError, parseQuarkUid } from "./quark-cookie-client.js";
 
-export type StorageProvider = "pan115" | "quark";
-export type ResourceProviderKind = "pansou-115" | "pansou-quark" | "prowlarr";
+export type StorageProvider = "pan115" | "quark" | "guangya";
+export type ResourceProviderKind = "pansou-115" | "pansou-quark" | "pansou-magnet" | "prowlarr";
 
 export interface StorageBrand {
   provider: StorageProvider;
@@ -44,6 +45,13 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     parseUid: parseQuarkUid,
     isAuthError: isQuarkAuthError,
     resourceProviderKinds: ["pansou-quark"],
+  },
+  {
+    provider: "guangya",
+    label: "光鸭云盘",
+    parseUid: parseGuangYaUid,
+    isAuthError: isGuangYaAuthError,
+    resourceProviderKinds: ["pansou-magnet", "prowlarr"],
   },
 ];
 
