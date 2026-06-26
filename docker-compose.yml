@@ -18,7 +18,9 @@ services:
     restart: unless-stopped
 
   pansou:
-    image: ghcr.io/fish2018/pansou-web:latest
+    # From ghcr.io — a Docker Hub registry mirror does NOT cover this. If ghcr is
+    # blocked (mainland China), set PANSOU_IMAGE in .env to a ghcr mirror/proxy.
+    image: ${PANSOU_IMAGE:-ghcr.io/fish2018/pansou-web:latest}
     restart: unless-stopped
 
   web:
