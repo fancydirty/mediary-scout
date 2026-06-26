@@ -139,8 +139,8 @@ export class GuangYaClient {
         parentId,
         page: currentPage,
         pageSize,
-        orderBy: "fileName",
-        sortType: "asc",
+        orderBy: 3,
+        sortType: 1,
         fileTypes: [],
       });
       const list = arrayValue(recordValue(data, "list")).filter(isRecord);
@@ -229,12 +229,12 @@ export class GuangYaClient {
       await this.refreshTokens();
       return this.postAPI(path, body, true);
     }
-    const json = (await response.json()) as unknown;
+    const json = (await response.json().catch(() => ({}))) as unknown;
     const msg = stringValue(recordValue(json, "msg"));
-    if (msg === "" || msg.toLowerCase() === "success") {
+    if (response.ok && (msg === "" || msg.toLowerCase() === "success")) {
       return recordValue(json, "data");
     }
-    throw new Error(`GUANGYA_API_FAILED: ${path} msg=${msg}`);
+    throw new Error(`GUANGYA_API_FAILED: ${path} status=${response.status} msg=${msg}`);
   }
 
   /**

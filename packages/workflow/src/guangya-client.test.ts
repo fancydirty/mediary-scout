@@ -81,6 +81,18 @@ describe("GuangYaClient.validateToken", () => {
       Authorization: `Bearer ${ACCESS}`,
     });
   });
+
+  it("throws when /user/me returns 200 but the body has no sub", async () => {
+    const fetchImpl = mockFetch(async () => jsonResponse(200, { name: "Tester" }));
+    const client = new GuangYaClient({
+      accessToken: ACCESS,
+      refreshToken: REFRESH,
+      deviceId: "dev123",
+      fetchImpl,
+    });
+
+    await expect(client.validateToken()).rejects.toBeInstanceOf(GuangYaAuthError);
+  });
 });
 
 describe("GuangYaClient.listFiles", () => {
@@ -123,10 +135,12 @@ describe("GuangYaClient.listFiles", () => {
       Did: "dev123",
       Dt: "4",
     });
-    expect(JSON.parse(ri.body as string)).toMatchObject({
+    expect(JSON.parse(ri.body as string)).toEqual({
       parentId: "p0",
       page: 0,
       pageSize: 100,
+      orderBy: 3,
+      sortType: 1,
       fileTypes: [],
     });
   });
