@@ -4,8 +4,9 @@ import { useState } from "react";
 import { Pan115QrConnect } from "./pan115-qr-connect";
 import { QuarkQrConnect } from "./quark-qr-connect";
 import { QuarkCookieConnect } from "./quark-cookie-connect";
+import { GuangYaTokenConnect } from "./guangya-token-connect";
 
-type Brand = "pan115" | "quark";
+type Brand = "pan115" | "quark" | "guangya";
 
 /** Settings "添加网盘": pick a brand, then connect it. Both brands scan a QR; 夸克
  *  keeps a collapsed cookie-paste fallback (the QR cookie-exchange is the fragile
@@ -32,9 +33,19 @@ export function AddDriveBrandTabs() {
         >
           夸克网盘
         </button>
+        <button
+          type="button"
+          className={brand === "guangya" ? "primary-button" : "secondary-button"}
+          onClick={() => setBrand("guangya")}
+          aria-pressed={brand === "guangya"}
+        >
+          光鸭云盘
+        </button>
       </div>
       {brand === "pan115" ? (
         <Pan115QrConnect />
+      ) : brand === "guangya" ? (
+        <GuangYaTokenConnect />
       ) : (
         <div>
           <QuarkQrConnect />

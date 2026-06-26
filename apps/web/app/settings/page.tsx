@@ -328,7 +328,7 @@ async function Pan115Section() {
             {drives.map((drive) => (
               <li key={drive.id} className="setting-row" style={{ justifyContent: "space-between" }}>
                 <span>
-                  {drive.provider === "pan115" ? "115网盘" : drive.provider === "quark" ? "夸克网盘" : drive.provider}
+                  {drive.provider === "pan115" ? "115网盘" : drive.provider === "quark" ? "夸克网盘" : drive.provider === "guangya" ? "光鸭云盘" : drive.provider}
                   <span className="push-help"> · 账号 {drive.providerUid}</span>
                   {drive.connectedAt ? (
                     <span className="push-help"> · 连接于 {drive.connectedAt.slice(0, 16).replace("T", " ")}</span>
@@ -348,7 +348,7 @@ async function Pan115Section() {
                   <TestConnectionButton storageId={drive.id} />
                   <UnbindStorageButton
                     storageId={drive.id}
-                    label={drive.provider === "pan115" ? "115网盘" : drive.provider === "quark" ? "夸克网盘" : drive.provider}
+                    label={drive.provider === "pan115" ? "115网盘" : drive.provider === "quark" ? "夸克网盘" : drive.provider === "guangya" ? "光鸭云盘" : drive.provider}
                   />
                 </span>
               </li>

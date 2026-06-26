@@ -43,7 +43,10 @@ import {
   getStorageBrand,
   isRegisteredStorageProvider,
   brandSupportsProwlarr,
+  allowedResourceTypesForKinds,
   parseQuarkUid,
+  parseGuangYaUid,
+  GuangYaClient,
   type ResolveAccountWorkerContext,
   hashPassword,
   verifyPassword,
@@ -1260,9 +1263,8 @@ async function getWorkerResourceProvider(
     const kinds: readonly string[] = isRegisteredStorageProvider(provider)
       ? getStorageBrand(provider).resourceProviderKinds
       : ["pansou-115", "prowlarr"];
-    const allowedTypes: ResourceType[] = kinds.includes("pansou-quark")
-      ? ["quark"]
-      : ["115", "magnet"];
+    // 夸克 → quark-only links; 光鸭(磁力) → magnet-only; 115 → 115 + magnet.
+    const allowedTypes: ResourceType[] = allowedResourceTypesForKinds(kinds);
     const providers: Array<{ name: string; provider: ResourceProvider }> = [
       {
         name: "pansou",
@@ -1306,16 +1308,51 @@ async function getWorkerResourceProvider(
 /** §7: the account's 115 credentials (cookie + category CIDs) from its
  *  connected_storages record. null when the account hasn't connected a 115 yet
  *  (then the worker falls back to the legacy env cookie / env CIDs). */
+interface GuangYaCredential {
+  accessToken: string;
+  refreshToken: string;
+  deviceId?: string;
+}
+
 interface AccountStorageCredentials {
   id: string;
   /** The drive's brand — drives executor/probe/resource dispatch (tree model). */
   provider: string;
   status: "active" | "frozen";
+  /** Cookie credential for cookie-auth brands (115/夸克). Empty for token-auth
+   *  brands (光鸭), which carry their token blob in `credential` instead. */
   cookie: string;
+  /** Token blob for token-auth brands (光鸭: {accessToken,refreshToken,deviceId}).
+   *  null for cookie-auth brands. */
+  credential: GuangYaCredential | null;
   rootCid: string | null;
   moviesCid: string | null;
   tvCid: string | null;
   animeCid: string | null;
+}
+
+/** Pull a drive's brand-appropriate credential out of its connected_storage
+ *  payload. 115/夸克 store a cookie string; 光鸭 stores a token blob. Returns a
+ *  presence flag the resolver uses the SAME way it used a non-empty cookie. */
+function extractStorageCredential(
+  provider: string,
+  payload: unknown,
+): { cookie: string; credential: GuangYaCredential | null } {
+  if (provider === "guangya") {
+    const blob = (payload ?? {}) as { accessToken?: string; refreshToken?: string; deviceId?: string };
+    const accessToken = blob.accessToken?.trim() ?? "";
+    const refreshToken = blob.refreshToken?.trim() ?? "";
+    if (!accessToken || !refreshToken) {
+      return { cookie: "", credential: null };
+    }
+    const credential: GuangYaCredential = { accessToken, refreshToken };
+    if (blob.deviceId !== undefined) {
+      credential.deviceId = blob.deviceId;
+    }
+    return { cookie: "", credential };
+  }
+  const cookie = (payload as { cookie?: string } | null)?.cookie?.trim() ?? "";
+  return { cookie, credential: null };
 }
 
 /**
@@ -1323,12 +1360,23 @@ interface AccountStorageCredentials {
  * account root and return the CIDs. Uses an UNRESTRICTED bootstrap executor — a
  * fresh drive has no write scope yet, and the scope is meant to come FROM these
  * dirs (the catch-22 that left 115 drives stuck "目录待建"). Bounded, idempotent
- * (find-or-create, no deletes). 115 root and 夸克 root are both "0".
+ * (find-or-create, no deletes). 115 root and 夸克 root are both "0"; 光鸭 root is "".
  */
 async function provisionDriveCategoryDirs(
   provider: string,
   cookie: string,
+  credential: GuangYaCredential | null,
 ): Promise<{ rootCid: string; moviesCid: string; tvCid: string; animeCid: string }> {
+  if (provider === "guangya") {
+    const executor = createExecutorForBrand({ provider: "guangya", credential: credential ?? {}, scopeCids: [] });
+    return provisionCategoryDirs({
+      baseParentId: "", // 光鸭 account root
+      storage: {
+        listChildDirs: (parentId: string) => executor.listChildDirectories(parentId),
+        createDirectory: (dir) => executor.createDirectory(dir),
+      },
+    });
+  }
   const executor =
     provider === "quark"
       ? createExecutorForBrand({ provider: "quark", cookie, scopeCids: [] })
@@ -1340,6 +1388,57 @@ async function provisionDriveCategoryDirs(
       createDirectory: (dir) => executor.createDirectory(dir),
     },
   });
+}
+
+/**
+ * Build the persist hook handed to a 光鸭 executor: when the client rotates its
+ * token pair (refresh on 401), write the new {accessToken,refreshToken,deviceId}
+ * back into this drive's connected_storage payload so the next run starts from the
+ * fresh tokens. Re-reads the row at call time to preserve its CIDs/label/meta
+ * (mirrors the cookie-refresh upsert in connectGuangYa). Best-effort: a persist
+ * failure is logged, not thrown — the in-memory client keeps the new tokens for
+ * the rest of the run regardless.
+ */
+function makeGuangYaTokenPersister(
+  accountId: string,
+  storageId: string,
+): (creds: unknown) => Promise<void> {
+  return async (creds) => {
+    try {
+      const tokens = (creds ?? {}) as { accessToken?: string; refreshToken?: string; deviceId?: string };
+      if (!tokens.accessToken || !tokens.refreshToken) {
+        return;
+      }
+      const repository = getWorkflowRepository();
+      const drive = (await repository.listConnectedStorages(accountId)).find((s) => s.id === storageId);
+      if (!drive) {
+        console.warn(`[media-track] 光鸭 token refresh: drive ${storageId} vanished, skip persist`);
+        return;
+      }
+      const prevMeta = (drive.payload as { meta?: unknown } | null)?.meta;
+      const payload = {
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        ...(tokens.deviceId === undefined ? {} : { deviceId: tokens.deviceId }),
+        ...(prevMeta === undefined ? {} : { meta: prevMeta }),
+      };
+      await repository.upsertConnectedStorage({
+        id: drive.id,
+        accountId,
+        provider: drive.provider,
+        providerUid: drive.providerUid,
+        label: drive.label,
+        payload,
+        rootCid: drive.rootCid,
+        moviesCid: drive.moviesCid,
+        tvCid: drive.tvCid,
+        animeCid: drive.animeCid,
+        createdAt: drive.createdAt,
+      });
+    } catch (error) {
+      console.error(`[media-track] 光鸭 token refresh persist failed for ${storageId}: ${String(error)}`);
+    }
+  };
 }
 
 async function getAccountStorageCredentials(
@@ -1357,8 +1456,13 @@ async function getAccountStorageCredentials(
           (storage) => storage.id === connectedStorageId && isRegisteredStorageProvider(storage.provider),
         )
       : storages.find((storage) => isRegisteredStorageProvider(storage.provider));
-    const cookie = (drive?.payload as { cookie?: string } | null)?.cookie?.trim();
-    if (!drive || !cookie) {
+    if (!drive) {
+      return null;
+    }
+    const { cookie, credential } = extractStorageCredential(drive.provider, drive.payload);
+    // No usable credential (no cookie for 115/夸克, no token blob for 光鸭) → treat
+    // as not-connected, exactly like the old empty-cookie guard.
+    if (!cookie && !credential) {
       return null;
     }
     let { rootCid, moviesCid, tvCid, animeCid } = drive;
@@ -1370,7 +1474,7 @@ async function getAccountStorageCredentials(
     const liveMode = process.env.MEDIA_TRACK_STORAGE_ADAPTER === "115";
     if (liveMode && drive.status === "active" && !(rootCid && moviesCid && tvCid && animeCid)) {
       try {
-        const p = await provisionDriveCategoryDirs(drive.provider, cookie);
+        const p = await provisionDriveCategoryDirs(drive.provider, cookie, credential);
         ({ rootCid, moviesCid, tvCid, animeCid } = p);
         await getWorkflowRepository().upsertConnectedStorage({
           id: drive.id,
@@ -1395,6 +1499,7 @@ async function getAccountStorageCredentials(
       provider: drive.provider,
       status: drive.status,
       cookie,
+      credential,
       rootCid,
       moviesCid,
       tvCid,
@@ -1472,7 +1577,7 @@ export async function testConnection(
   }
   const brand = getStorageBrand(creds.provider);
   try {
-    await probeStorageConnection(creds.provider, creds.cookie, creds.rootCid);
+    await probeStorageConnection(creds.provider, creds.cookie, creds.rootCid, creds.credential);
     await getWorkflowRepository().setConnectedStorageStatus(creds.id, "active", null, null);
     return { ok: true, status: "active", message: "连接正常。" };
   } catch (error) {
@@ -1492,8 +1597,18 @@ async function probeStorageConnection(
   provider: string,
   cookie: string,
   rootCid: string | null,
+  credential: GuangYaCredential | null,
 ): Promise<void> {
   const { Pan115CookieClient, QuarkCookieClient } = await import("@media-track/workflow");
+  if (provider === "guangya") {
+    // Token-auth: validateToken() does account/v1/user/me + refresh-retry on 401;
+    // a dead token pair throws GuangYaAuthError (caller freezes). rootCid unused.
+    await new GuangYaClient({
+      accessToken: credential?.accessToken ?? "",
+      refreshToken: credential?.refreshToken ?? "",
+    }).validateToken();
+    return;
+  }
   if (provider === "quark") {
     await new QuarkCookieClient({ cookie }).listItems({ directoryId: rootCid ?? "0" });
     return;
@@ -1540,6 +1655,18 @@ async function getWorkerStorageExecutor(
       const scopeCids = [creds.rootCid, creds.moviesCid, creds.tvCid, creds.animeCid].filter(
         (cid): cid is string => Boolean(cid),
       );
+      // 光鸭 authenticates with a rotating token blob (not a cookie): pass the
+      // credential + a persist hook so a mid-run refresh writes the new tokens back
+      // into this drive's payload. 115/夸克 keep the cookie path untouched.
+      if (creds.provider === "guangya") {
+        return createExecutorForBrand({
+          provider: "guangya",
+          credential: creds.credential ?? {},
+          scopeCids,
+          env: process.env,
+          onCredentialRefresh: makeGuangYaTokenPersister(accountId, creds.id),
+        });
+      }
       return createExecutorForBrand({
         provider: creds.provider,
         cookie: creds.cookie,
@@ -2070,4 +2197,92 @@ export async function completeQuarkQrLogin(serviceTicket: string): Promise<{ pro
   const { QuarkQrLoginClient } = await import("@media-track/workflow");
   const { cookie } = await new QuarkQrLoginClient().exchangeCookie(serviceTicket);
   return connectQuarkCookie(cookie);
+}
+
+/**
+ * 光鸭云盘:粘贴 access_token + refresh_token 绑定为一块新盘。与 connectQuarkCookie
+ * 同构,只是凭证是 token 二元组(非 cookie)且认证走 validateToken()(account/v1/user/me)
+ * 而非 listItems。validateToken() 返回 sub 作为 providerUid(键 UNIQUE(provider,uid));
+ * token 失效会抛 GuangYaAuthError → 报错返回。绑定/provision/refresh 全镜像夸克路径。
+ */
+export async function connectGuangYa(rawAccessToken: string, rawRefreshToken: string): Promise<{ providerUid: string }> {
+  const accessToken = rawAccessToken.trim();
+  const refreshToken = rawRefreshToken.trim();
+  if (!accessToken || !refreshToken) {
+    throw new Error("请填写光鸭 access_token 与 refresh_token。");
+  }
+  // validateToken() confirms the pair is live AND yields the authoritative sub.
+  const client = new GuangYaClient({ accessToken, refreshToken });
+  let providerUid: string;
+  try {
+    providerUid = await client.validateToken();
+  } catch (error) {
+    throw new Error(
+      `无法用该 token 登录光鸭云盘（请确认 access_token / refresh_token 完整且未过期）：${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  const accountId = await getCurrentAccountId();
+  const repository = getWorkflowRepository();
+  const existing = await repository.findConnectedStorageByUid("guangya", providerUid);
+  const decision = resolveStorageBinding({ provider: "guangya", providerUid, accountId, existing });
+  if (decision.action === "reject") {
+    throw new StorageOwnedByOtherAccountError();
+  }
+  const payload = { accessToken, refreshToken, meta: { connectedAt: new Date().toISOString() } };
+  if (decision.action === "refresh" && existing) {
+    // Same account re-bind → refresh the token blob, keep the resolved CIDs.
+    await repository.upsertConnectedStorage({
+      id: existing.id,
+      accountId,
+      provider: "guangya",
+      providerUid,
+      label: existing.label,
+      payload,
+      rootCid: existing.rootCid,
+      moviesCid: existing.moviesCid,
+      tvCid: existing.tvCid,
+      animeCid: existing.animeCid,
+      createdAt: existing.createdAt,
+    });
+    return { providerUid };
+  }
+  // insert: provision the category tree under the 光鸭 root (""). Best-effort — a
+  // failure still stores the connection (worker self-heals/falls back later).
+  let cids: { rootCid: string | null; moviesCid: string | null; tvCid: string | null; animeCid: string | null } = {
+    rootCid: null,
+    moviesCid: null,
+    tvCid: null,
+    animeCid: null,
+  };
+  try {
+    const executor = createExecutorForBrand({
+      provider: "guangya",
+      credential: { accessToken, refreshToken },
+      scopeCids: [],
+    });
+    cids = await provisionCategoryDirs({
+      baseParentId: "", // 光鸭 account root
+      storage: {
+        listChildDirs: (parentId: string) => executor.listChildDirectories(parentId),
+        createDirectory: (dir) => executor.createDirectory(dir),
+      },
+    });
+  } catch (error) {
+    console.error(`[media-track] 光鸭 directory provision failed (will store without CIDs): ${String(error)}`);
+  }
+  const idSuffix = providerUid.replace(/[^A-Za-z0-9]/g, "").slice(0, 48);
+  await repository.upsertConnectedStorage({
+    id: `cs_guangya_${idSuffix}`,
+    accountId,
+    provider: "guangya",
+    providerUid,
+    label: null,
+    payload,
+    rootCid: cids.rootCid,
+    moviesCid: cids.moviesCid,
+    tvCid: cids.tvCid,
+    animeCid: cids.animeCid,
+    createdAt: new Date().toISOString(),
+  });
+  return { providerUid };
 }

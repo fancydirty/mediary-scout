@@ -25,6 +25,8 @@ export * from "./pan115-cookie-client.js";
 export * from "./quark-cookie-client.js";
 export * from "./quark-qrcode-login.js";
 export * from "./quark-storage-executor.js";
+export * from "./guangya-client.js";
+export * from "./guangya-storage-executor.js";
 export * from "./storage-brands.js";
 export * from "./storage-executor-factory.js";
 export * from "./pan115-storage-factory.js";

@@ -73,6 +73,24 @@ export async function connectQuarkAction(cookie: string): Promise<ConnectQuarkAc
   }
 }
 
+/** Settings "添加网盘 → 光鸭": bind a pasted access_token + refresh_token as a new
+ *  drive. Mirrors connectQuarkAction; the token blob is validated + provisioned in
+ *  connectGuangYa (workflow-runtime). */
+export async function connectGuangYaAction(
+  accessToken: string,
+  refreshToken: string,
+): Promise<ConnectQuarkActionResult> {
+  assertNotDemo();
+  try {
+    const { connectGuangYa } = await import("../lib/workflow-runtime");
+    const { providerUid } = await connectGuangYa(accessToken, refreshToken);
+    revalidatePath("/settings");
+    return { ok: true, message: `光鸭云盘已连接（账号 ${providerUid.slice(0, 10)}…）。` };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 export interface RequestTrackingActionResult {
   status: "requested" | "already_tracked" | "active_workflow" | "reserved" | "unsupported";
   message: string;
