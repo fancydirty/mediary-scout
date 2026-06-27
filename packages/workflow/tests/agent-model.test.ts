@@ -47,6 +47,38 @@ describe("agent-model — the live OpenAI-compatible (BYO) LanguageModel factory
     expect(providerSettings.headers).toBeUndefined();
   });
 
+  // C1 (Copilot #51): a blank/whitespace apiKey (e.g. AGENT_MODEL_API_KEY= in
+  // .env) must NOT send `api-key: ""` — that breaks keyless local LLMs with an
+  // avoidable 401. Only attach the header for a non-empty key (trimmed).
+  it("omits the api-key header for an EMPTY-STRING apiKey (keyless)", () => {
+    const { providerSettings } = createAgentProviderConfig({
+      apiKey: "",
+      baseURL: "http://localhost:11434/v1",
+      modelId: "qwen2.5",
+    });
+    expect(providerSettings.headers).toBeUndefined();
+  });
+
+  it("omits the api-key header for a whitespace-only apiKey (keyless)", () => {
+    const { providerSettings } = createAgentProviderConfig({
+      apiKey: "   ",
+      baseURL: "http://localhost:11434/v1",
+      modelId: "qwen2.5",
+    });
+    expect(providerSettings.headers).toBeUndefined();
+  });
+
+  it("trims the api-key, baseURL and modelId before building provider settings", () => {
+    const { providerSettings, modelId } = createAgentProviderConfig({
+      apiKey: "  secret  ",
+      baseURL: "  https://example.test/v1  ",
+      modelId: "  custom-model  ",
+    });
+    expect(providerSettings.headers).toEqual({ "api-key": "secret" });
+    expect(providerSettings.baseURL).toBe("https://example.test/v1");
+    expect(modelId).toBe("custom-model");
+  });
+
   it("throws an agnostic error (no MiMo) when baseURL is missing", () => {
     expect(() => createAgentProviderConfig({ modelId: "x" })).toThrow();
     try {
@@ -109,6 +141,13 @@ describe("llmConfigError — agnostic, BYO required-config predicate", () => {
 
   it("never mentions MiMo in the message", () => {
     expect((llmConfigError({}) ?? "").toLowerCase()).not.toContain("mimo");
+  });
+
+  // C2 (Copilot #51): clean, user-facing wording.
+  it("uses the approved cleaned-up wording", () => {
+    expect(llmConfigError({})).toBe(
+      "未配置 AI 模型。请到「设置 → AI 模型」填写 Base URL 和模型名(任意 OpenAI 兼容服务,自带);云端服务还需 API Key,本地模型可留空。",
+    );
   });
 });
 

@@ -37,13 +37,61 @@ describe("describeAgentRunError", () => {
     expect(describeAgentRunError("Workflow failed")).toBe("Workflow failed");
   });
 
+  it("maps an 'incorrect api key' message to the guidance", () => {
+    expect(describeAgentRunError(new Error("Incorrect API key provided"))).toBe(LLM_AUTH_GUIDANCE);
+  });
+
   it("never mentions MiMo in the auth guidance", () => {
     expect(LLM_AUTH_GUIDANCE.toLowerCase()).not.toContain("mimo");
   });
 
-  it("uses the approved agnostic 401 guidance text", () => {
+  it("uses the approved agnostic runtime-401 guidance text", () => {
     expect(LLM_AUTH_GUIDANCE).toBe(
       "AI 模型鉴权失败(401):请到 设置 → AI 模型 检查 API Key 是否有效、模型是否有权限(任意 OpenAI 兼容服务,自带 key)。",
     );
+  });
+});
+
+// C3 (Copilot #51): the LLM-auth classifier must NOT swallow netdisk (brand) auth
+// errors. They carry "401"/"403" in their message (e.g. GUANGYA_AUTH_FAILED: 401
+// after refresh) but are a 网盘 token problem, not an AI-模型 problem — showing the
+// "AI 模型鉴权失败" guidance for them is misleading.
+describe("describeAgentRunError — does NOT misclassify netdisk (brand) auth errors as LLM-auth", () => {
+  it("leaves a GuangYa 401 auth error UNCHANGED (not the AI 模型 message)", () => {
+    const msg = "GUANGYA_AUTH_FAILED: 401 after refresh (/file/list)";
+    expect(describeAgentRunError(new Error(msg))).toBe(msg);
+  });
+
+  it("leaves a GuangYa validate 401 error UNCHANGED", () => {
+    const msg = "GUANGYA_VALIDATE_FAILED: 401 after refresh";
+    expect(describeAgentRunError(new Error(msg))).toBe(msg);
+  });
+
+  it("leaves a Quark 403 auth error UNCHANGED", () => {
+    const msg = "QUARK_AUTH_FAILED: 需要验证 (code 403)";
+    expect(describeAgentRunError(new Error(msg))).toBe(msg);
+  });
+
+  it("leaves a Pan115 auth error UNCHANGED", () => {
+    const msg = "PAN115_AUTH_FAILED: 登录失效 401";
+    expect(describeAgentRunError(new Error(msg))).toBe(msg);
+  });
+
+  it("leaves a brand auth error with a 401 statusCode UNCHANGED (brand prefix wins)", () => {
+    const brand = Object.assign(new Error("GUANGYA_AUTH_FAILED: 401 after refresh"), {
+      statusCode: 401,
+      name: "GuangYaAuthError",
+    });
+    expect(describeAgentRunError(brand)).toBe("GUANGYA_AUTH_FAILED: 401 after refresh");
+  });
+
+  it("still maps a real AI-SDK 401 (no brand prefix) to the guidance", () => {
+    const apiError = Object.assign(new Error("Unauthorized"), { statusCode: 401 });
+    expect(describeAgentRunError(apiError)).toBe(LLM_AUTH_GUIDANCE);
+  });
+
+  it("does NOT map a bare numeric 401 in an unrelated message to the guidance", () => {
+    const msg = "HTTP 401 while fetching subtitle index";
+    expect(describeAgentRunError(new Error(msg))).toBe(msg);
   });
 });

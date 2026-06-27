@@ -40,7 +40,7 @@ export function llmConfigError(cfg: { apiKey?: string; baseURL?: string; modelId
   const baseURL = (cfg.baseURL ?? "").trim();
   const modelId = (cfg.modelId ?? "").trim();
   if (baseURL === "" || modelId === "") {
-    return "未配置 AI 模型:请到 设置 → AI 模型 填写 Base URL 和 模型名(任意 OpenAI 兼容服务,自带);云端服务还需 API Key,本地模型可留空。";
+    return "未配置 AI 模型。请到「设置 → AI 模型」填写 Base URL 和模型名(任意 OpenAI 兼容服务,自带);云端服务还需 API Key,本地模型可留空。";
   }
   return null;
 }
@@ -57,12 +57,19 @@ export function createAgentProviderConfig(options: AgentModelOptions = {}): {
   if (configError) {
     throw new Error(configError);
   }
+  // Trim before building: llmConfigError validates on trimmed values, so the
+  // provider must use the trimmed values too (a pasted "  https://x/v1  " would
+  // otherwise hit a malformed endpoint). The api-key header is attached ONLY for
+  // a non-empty trimmed key — a blank/whitespace key (e.g. AGENT_MODEL_API_KEY=
+  // in .env) means keyless local LLM; sending `api-key: ""` would cause an
+  // avoidable 401 (Copilot #51 C1).
+  const key = options.apiKey?.trim();
   const providerSettings: OpenAICompatibleProviderSettings = {
     name: options.providerName ?? DEFAULT_PROVIDER_NAME,
-    baseURL: options.baseURL!,
-    ...(options.apiKey === undefined ? {} : { headers: { "api-key": options.apiKey } }),
+    baseURL: options.baseURL!.trim(),
+    ...(key ? { headers: { "api-key": key } } : {}),
   };
-  return { providerSettings, modelId: options.modelId! };
+  return { providerSettings, modelId: options.modelId!.trim() };
 }
 
 /** Build the live LanguageModel from explicit options (DB settings). Honors the

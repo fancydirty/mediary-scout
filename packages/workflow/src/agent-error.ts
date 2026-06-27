@@ -18,15 +18,32 @@
 export const LLM_AUTH_GUIDANCE =
   "AI 模型鉴权失败(401):请到 设置 → AI 模型 检查 API Key 是否有效、模型是否有权限(任意 OpenAI 兼容服务,自带 key)。";
 
-// Message substrings that indicate an LLM authentication failure (case-insensitive).
-const AUTH_PATTERNS = [
+// LLM-SPECIFIC auth markers (case-insensitive). Deliberately NOT the bare numeric
+// "401"/"403" substrings — those over-match netdisk (brand) auth errors whose
+// messages carry the status number (e.g. "GUANGYA_AUTH_FAILED: 401 after refresh")
+// and would be misreported as an AI-模型 problem (Copilot #51 C3). These words are
+// what an OpenAI-compatible endpoint actually returns on a key/permission failure.
+const LLM_AUTH_PATTERNS = [
   "unauthorized",
-  "401",
   "forbidden",
-  "403",
   "invalid api key",
   "invalid_api_key",
+  "incorrect api key",
   "authentication",
+];
+
+// Netdisk (storage brand) auth errors are a TOKEN problem with the user's drive,
+// not the AI model. They are thrown as Pan115AuthError / QuarkAuthError /
+// GuangYaAuthError with these message prefixes (and class names). If any of these
+// markers is present anywhere in the error (or its cause chain), it is NEVER an
+// LLM-auth error — even if it carries a 401/403 statusCode or the word in its text.
+const BRAND_AUTH_MARKERS = [
+  "guangya",
+  "quark",
+  "pan115",
+  "pan115autherror",
+  "quarkautherror",
+  "guangyaautherror",
 ];
 
 function messageOf(error: unknown): string {
@@ -49,13 +66,26 @@ function statusCodeOf(error: unknown): number | undefined {
   return undefined;
 }
 
+/** True if this error (one node, name+message) is a netdisk brand auth error —
+ *  which must NEVER be reported as an AI-模型 auth failure. */
+function isBrandAuthError(error: unknown): boolean {
+  const msg = messageOf(error);
+  return BRAND_AUTH_MARKERS.some((marker) => msg.includes(marker));
+}
+
 /**
  * True if `error` (or anything in its `cause` chain — the AI SDK wraps the real
- * error) is an LLM authentication failure: a 401/403 status code (e.g. an AI-SDK
- * APICallError), or a message matching a known auth pattern. Recursion-bounded.
+ * error) is an LLM authentication failure: an AI-SDK APICallError with a 401/403
+ * statusCode, OR a message matching an LLM-specific auth marker. A netdisk (brand)
+ * auth error short-circuits to false — even with a 401 statusCode — so a drive
+ * token problem is never mislabeled an AI-模型 problem. Recursion-bounded.
  */
 export function isLlmAuthError(error: unknown, depth = 0): boolean {
   if (error === null || error === undefined || depth > 5) {
+    return false;
+  }
+  // A brand auth error anywhere short-circuits: NOT an LLM-auth error.
+  if (isBrandAuthError(error)) {
     return false;
   }
   const status = statusCodeOf(error);
@@ -63,7 +93,7 @@ export function isLlmAuthError(error: unknown, depth = 0): boolean {
     return true;
   }
   const msg = messageOf(error);
-  if (AUTH_PATTERNS.some((pattern) => msg.includes(pattern))) {
+  if (LLM_AUTH_PATTERNS.some((pattern) => msg.includes(pattern))) {
     return true;
   }
   const cause = (error as { cause?: unknown }).cause;
