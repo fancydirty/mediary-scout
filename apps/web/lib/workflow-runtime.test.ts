@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  acquireLlmPreflightError,
   getLlmConfig,
   getPanSouBaseUrl,
   getProwlarrConfig,
@@ -8,6 +9,8 @@ import {
   PANSOU_BASE_URL_SETTING_KEY,
   DEFAULT_PANSOU_BASE_URL,
   getTmdbAccesses,
+  LLM_BASE_URL_SETTING_KEY,
+  LLM_MODEL_ID_SETTING_KEY,
   PROWLARR_API_KEY_SETTING_KEY,
   PROWLARR_BASE_URL_SETTING_KEY,
   TMDB_API_KEY_SETTING_KEY,
@@ -50,6 +53,58 @@ describe("getLlmConfig", () => {
     expect(cfg.baseURL).toBeUndefined();
     expect(cfg.apiKey).toBeUndefined();
     expect(cfg.modelId).toBe("x");
+  });
+});
+
+describe("acquireLlmPreflightError (点击获取时的 LLM 预检)", () => {
+  const configured = repoMap({
+    [LLM_BASE_URL_SETTING_KEY]: "https://api.example.com/v1",
+    [LLM_MODEL_ID_SETTING_KEY]: "gpt-4o-mini",
+  });
+  const unconfigured = repoMap({});
+
+  it("live (vercel-ai) + unconfigured → the friendly 未配置 message (blocks enqueue)", async () => {
+    const message = await acquireLlmPreflightError({
+      settings: unconfigured,
+      env: { MEDIA_TRACK_AGENT_ADAPTER: "vercel-ai" } as unknown as NodeJS.ProcessEnv,
+    });
+    expect(message).toContain("未配置 AI 模型");
+  });
+
+  it("live (vercel-ai) + fully configured → null (common case, unchanged behavior)", async () => {
+    const message = await acquireLlmPreflightError({
+      settings: configured,
+      env: { MEDIA_TRACK_AGENT_ADAPTER: "vercel-ai" } as unknown as NodeJS.ProcessEnv,
+    });
+    expect(message).toBeNull();
+  });
+
+  it("fake/demo adapter + nothing configured → null (no LLM needed, never blocks)", async () => {
+    const message = await acquireLlmPreflightError({
+      settings: unconfigured,
+      env: { MEDIA_TRACK_AGENT_ADAPTER: "fake" } as unknown as NodeJS.ProcessEnv,
+    });
+    expect(message).toBeNull();
+  });
+
+  it("default adapter (unset) + nothing configured → null (fake is the default)", async () => {
+    const message = await acquireLlmPreflightError({
+      settings: unconfigured,
+      env: {} as unknown as NodeJS.ProcessEnv,
+    });
+    expect(message).toBeNull();
+  });
+
+  it("live (vercel-ai) + config from env (no DB) → null", async () => {
+    const message = await acquireLlmPreflightError({
+      settings: unconfigured,
+      env: {
+        MEDIA_TRACK_AGENT_ADAPTER: "vercel-ai",
+        AGENT_MODEL_BASE_URL: "https://env.example/v1",
+        AGENT_MODEL_ID: "env-model",
+      } as unknown as NodeJS.ProcessEnv,
+    });
+    expect(message).toBeNull();
   });
 });
 

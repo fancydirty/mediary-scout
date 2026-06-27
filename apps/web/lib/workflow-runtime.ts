@@ -1756,6 +1756,32 @@ export async function resolveAgentModelConfig(
   };
 }
 
+/** Acquire-time LLM pre-check (issue #52): the friendly "configure your model"
+ *  message if a LIVE (vercel-ai) acquisition can't run for lack of LLM config,
+ *  else null. Resolves config EXACTLY as the worker's getAgentModel does
+ *  (account-scoped DB → .env) and reuses the SAME llmConfigError predicate, so a
+ *  click that would only die later in the worker is caught NOW — no doomed run is
+ *  enqueued, no failed card piles up in 活动. The fake/demo adapter never needs an
+ *  LLM → always null (never blocks demo/fake). Common case (configured) → null →
+ *  callers behave byte-identically to before (purely additive). Settings/env are
+ *  injectable for unit tests; production calls pass the current account id. */
+export async function acquireLlmPreflightError(
+  arg:
+    | string
+    | {
+        settings: { getSetting(key: string): Promise<string | null> };
+        env?: NodeJS.ProcessEnv;
+      },
+): Promise<string | null> {
+  const settings = typeof arg === "string" ? getAccountScopedSettings(arg) : arg.settings;
+  const env = typeof arg === "string" ? process.env : arg.env ?? process.env;
+  if (env.MEDIA_TRACK_AGENT_ADAPTER !== "vercel-ai") {
+    return null;
+  }
+  const resolved = await resolveAgentModelConfig(settings, env);
+  return llmConfigError(resolved);
+}
+
 async function getAgentModel(repository: {
   getSetting(key: string): Promise<string | null>;
 }): Promise<{

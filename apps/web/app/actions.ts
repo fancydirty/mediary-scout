@@ -4,6 +4,22 @@ import { revalidatePath } from "next/cache";
 import { queueCandidateSeries, queueCandidateTracking, reserveCandidate } from "../lib/workflow-runtime";
 import { assertNotDemo } from "../lib/demo-mode";
 
+/**
+ * Acquire-time LLM pre-check (issue #52). Returns a not-started result carrying
+ * the friendly "未配置 AI 模型" message when a live (vercel-ai) acquisition can't
+ * run for lack of LLM config — so the click does NOT enqueue a doomed run that
+ * would only fail later in the worker (no wasted spin, no failed card in 活动).
+ * Returns null when an LLM is configured (common case → unchanged behavior) or on
+ * the fake/demo adapter (never needs an LLM → never blocked). Shared by every
+ * acquire entry point. Resolves config the SAME way the worker does
+ * (account-scoped DB → env), via acquireLlmPreflightError.
+ */
+async function acquireLlmNotConfigured(): Promise<RequestTrackingActionResult | null> {
+  const { getCurrentAccountId, acquireLlmPreflightError } = await import("../lib/workflow-runtime");
+  const message = await acquireLlmPreflightError(await getCurrentAccountId());
+  return message ? { status: "llm_not_configured", message } : null;
+}
+
 export interface TestStorageConnectionResult {
   ok: boolean;
   status: "active" | "frozen";
@@ -92,7 +108,16 @@ export async function connectGuangYaAction(
 }
 
 export interface RequestTrackingActionResult {
-  status: "requested" | "already_tracked" | "active_workflow" | "reserved" | "unsupported";
+  status:
+    | "requested"
+    | "already_tracked"
+    | "active_workflow"
+    | "reserved"
+    | "unsupported"
+    // Acquire-time LLM pre-check (issue #52): no live model configured, so nothing
+    // was enqueued. The UI surfaces `message` and keeps the 获取 control clickable
+    // (NOT flipped to 获取中/已请求) — it is a not-started result, like `unsupported`.
+    | "llm_not_configured";
   message: string;
 }
 
@@ -141,6 +166,10 @@ export async function requestTrackingAction(input?: {
   }
 
   if (input?.candidateId) {
+    const preflight = await acquireLlmNotConfigured();
+    if (preflight) {
+      return preflight;
+    }
     const request = await queueCandidateTracking(input.candidateId, input.storageId);
     if (request.status === "already_tracked") {
       return {
@@ -182,6 +211,10 @@ export async function requestSeriesAction(input: {
   storageId: string | undefined;
 }): Promise<RequestTrackingActionResult> {
   assertNotDemo();
+  const preflight = await acquireLlmNotConfigured();
+  if (preflight) {
+    return preflight;
+  }
   const request = await queueCandidateSeries(input.candidateId, input.storageId);
   if (request.status === "already_tracked") {
     return { status: "already_tracked", message: "全剧已追踪，后台会继续按缺集状态检查。" };
@@ -243,6 +276,10 @@ export async function requestSeasonAction(input: {
   storageId: string | undefined;
 }): Promise<RequestTrackingActionResult> {
   assertNotDemo();
+  const preflight = await acquireLlmNotConfigured();
+  if (preflight) {
+    return preflight;
+  }
   const { queueSeasonTracking } = await import("../lib/title-hub");
   const request = await queueSeasonTracking(input.tmdbId, input.seasonNumber, input.storageId);
   if (request.status === "already_tracked") {
@@ -267,6 +304,10 @@ export async function requestRemainingAction(input: {
   storageId: string | undefined;
 }): Promise<RequestTrackingActionResult> {
   assertNotDemo();
+  const preflight = await acquireLlmNotConfigured();
+  if (preflight) {
+    return preflight;
+  }
   const { queueRemainingSeasons } = await import("../lib/title-hub");
   const request = await queueRemainingSeasons(input.tmdbId, input.storageId);
   if (request.status === "already_tracked") {

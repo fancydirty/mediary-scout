@@ -8,7 +8,7 @@ import {
   requestSeasonAction,
   type RequestTrackingActionResult,
 } from "../app/actions";
-import { isLockedResult } from "./request-state";
+import { AcquireResultNotice, isLockedResult } from "./request-state";
 import { AcquireProgressBadge } from "./acquire-progress-badge";
 import { isDemoModeClient } from "../lib/demo-mode";
 import { DemoAcquirePlayback } from "./demo-acquire-playback";
@@ -114,25 +114,28 @@ export function SeasonRequestMenu({
     // ambiguous bare "获取" sitting next to "第 1 季已获取".
     const isRemainingOfMany = totalSeasonCount > 1;
     return (
-      <button
-        className="primary-button"
-        type="button"
-        disabled={isPending}
-        onClick={() => {
-          if (demo) {
-            setDemoPlaying(true);
-            return;
-          }
-          setRequestedSeason(onlySeason);
-          startTransition(async () => {
-            setResult(await requestSeasonAction({ tmdbId, seasonNumber: onlySeason, storageId }));
-            router.refresh();
-          });
-        }}
-      >
-        {isPending ? <LoaderCircle size={14} className="spin" aria-hidden /> : <Plus size={14} aria-hidden />}
-        {isRemainingOfMany ? `获取第 ${onlySeason} 季` : "获取"}
-      </button>
+      <>
+        <button
+          className="primary-button"
+          type="button"
+          disabled={isPending}
+          onClick={() => {
+            if (demo) {
+              setDemoPlaying(true);
+              return;
+            }
+            setRequestedSeason(onlySeason);
+            startTransition(async () => {
+              setResult(await requestSeasonAction({ tmdbId, seasonNumber: onlySeason, storageId }));
+              router.refresh();
+            });
+          }}
+        >
+          {isPending ? <LoaderCircle size={14} className="spin" aria-hidden /> : <Plus size={14} aria-hidden />}
+          {isRemainingOfMany ? `获取第 ${onlySeason} 季` : "获取"}
+        </button>
+        <AcquireResultNotice result={result} />
+      </>
     );
   }
 
@@ -190,6 +193,7 @@ export function SeasonRequestMenu({
           ))}
         </ul>
       ) : null}
+      <AcquireResultNotice result={result} />
     </div>
   );
 }

@@ -16,6 +16,23 @@ export function isLockedResult(result: RequestTrackingActionResult | null): bool
   );
 }
 
+/**
+ * The acquire-time LLM pre-check (issue #52) returned the "未配置 AI 模型" message
+ * and enqueued NOTHING — so the control must stay clickable (NOT locked) and show
+ * the guidance inline. Shared so the acquire components surface it consistently
+ * instead of only as a hover title. Renders nothing for any other status.
+ */
+export function AcquireResultNotice({
+  result,
+}: {
+  result: RequestTrackingActionResult | null;
+}) {
+  if (result?.status !== "llm_not_configured") {
+    return null;
+  }
+  return <p className="request-result">{result.message}</p>;
+}
+
 /** The standalone "已请求" pill shown after a request is queued (spinner — it is
  *  NOT done, only accepted). Shared by the badge-style acquire controls. It links
  *  to the live 活动 page so the real, persistent progress is one click away instead

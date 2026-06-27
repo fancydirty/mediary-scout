@@ -3,7 +3,7 @@
 import { Check, Layers, LoaderCircle } from "lucide-react";
 import { useState, useTransition } from "react";
 import { requestSeriesAction, type RequestTrackingActionResult } from "../app/actions";
-import { isLockedResult } from "./request-state";
+import { AcquireResultNotice, isLockedResult } from "./request-state";
 import { isDemoModeClient } from "../lib/demo-mode";
 import { DemoAcquirePlayback } from "./demo-acquire-playback";
 import type { DemoAcquisitionEntry } from "../lib/demo-session";
@@ -43,27 +43,30 @@ export function RequestSeriesButton({
   }
 
   return (
-    <button
-      className="primary-button series-button"
-      type="button"
-      title={result?.message ?? "获取全部季"}
-      disabled={isPending || isLocked}
-      onClick={() => {
-        if (demo) {
-          setDemoPlaying(true);
-          return;
-        }
-        startTransition(async () => {
-          setResult(await requestSeriesAction({ candidateId, storageId }));
-        });
-      }}
-    >
-      {isPending || isLocked ? (
-        <LoaderCircle size={14} className="spin" aria-hidden />
-      ) : (
-        <Layers size={14} aria-hidden />
-      )}
-      {isLocked ? "已请求" : "获取全剧"}
-    </button>
+    <>
+      <button
+        className="primary-button series-button"
+        type="button"
+        title={result?.message ?? "获取全部季"}
+        disabled={isPending || isLocked}
+        onClick={() => {
+          if (demo) {
+            setDemoPlaying(true);
+            return;
+          }
+          startTransition(async () => {
+            setResult(await requestSeriesAction({ candidateId, storageId }));
+          });
+        }}
+      >
+        {isPending || isLocked ? (
+          <LoaderCircle size={14} className="spin" aria-hidden />
+        ) : (
+          <Layers size={14} aria-hidden />
+        )}
+        {isLocked ? "已请求" : "获取全剧"}
+      </button>
+      <AcquireResultNotice result={result} />
+    </>
   );
 }
