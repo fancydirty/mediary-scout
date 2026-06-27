@@ -201,6 +201,48 @@ describe("GuangYaStorageExecutor write-scope guard", () => {
     ).rejects.toThrow(/WRITE_SCOPE_VIOLATION/);
   });
 
+  it("authorizes removeDirectory of an offline-created subdir discovered under an in-scope dir (movie flatten clean-up)", async () => {
+    // A movie magnet offline-downloads as a WRAPPER subdir the SERVER created (NOT via
+    // createDirectory) directly under the in-scope movie dir. flattenMovie lifts the video
+    // out, then removeDirectory(wrapper) to clear the residue. The wrapper is provably under
+    // an in-scope parent (discovered by listing it) — derived scope must authorize its
+    // removal, exactly like a createDirectory'd dir. Regression: WRITE_SCOPE_VIOLATION here
+    // left empty wrapper dirs + non-video junk behind on 光鸭 movies (TV is clean because
+    // discardStaging removes the createDirectory'd staging dir wholesale).
+    const MOVIE = "movie-dir";
+    const wrapperId = "wrapper-1";
+    const fs = new Map<string, GuangYaStorageItem[]>();
+    fs.set(MOVIE, [{ fileId: wrapperId, parentId: MOVIE, fileName: "Oppenheimer.2023.1080p", fileSize: 0, resType: 2 }]);
+    fs.set(wrapperId, []);
+    const deleteFiles = vi.fn<GuangYaStorageClient["deleteFiles"]>(async () => {});
+    const listFiles = vi.fn<GuangYaStorageClient["listFiles"]>(async (p: string) => fs.get(p) ?? []);
+    const executor = new GuangYaStorageExecutor({
+      client: fakeClient({ listFiles, deleteFiles }),
+      writeScopeDirectoryIds: [MOVIE],
+    });
+
+    const subdirs = await executor.listSubdirectories({ directoryId: MOVIE });
+    expect(subdirs.map((d) => d.id)).toContain(wrapperId);
+
+    await expect(executor.removeDirectory(wrapperId)).resolves.toEqual({ removed: true });
+    expect(deleteFiles).toHaveBeenCalledWith([wrapperId]);
+  });
+
+  it("does NOT authorize removal of children discovered by listing an OUT-of-scope dir", async () => {
+    // Listing is a read and may target dirs outside the write scope; discovering a child
+    // there must NOT make it writable. Only listing an IN-scope dir extends derived scope.
+    const fs = new Map<string, GuangYaStorageItem[]>();
+    fs.set("elsewhere", [{ fileId: "stranger", parentId: "elsewhere", fileName: "x", fileSize: 0, resType: 2 }]);
+    fs.set("stranger", []);
+    const listFiles = vi.fn<GuangYaStorageClient["listFiles"]>(async (p: string) => fs.get(p) ?? []);
+    const executor = new GuangYaStorageExecutor({
+      client: fakeClient({ listFiles }),
+      writeScopeDirectoryIds: [SCOPE],
+    });
+    await executor.listSubdirectories({ directoryId: "elsewhere" });
+    await expect(executor.removeDirectory("stranger")).rejects.toThrow(/WRITE_SCOPE_VIOLATION/);
+  });
+
   it("authorizes writes into runtime-created NESTED dirs (derived scope), still refuses unknown ids", async () => {
     // The real workflow provisions the dir chain TOP-DOWN from a scope root via
     // createDirectory before any write, then transfers/moves into the NESTED leaf —

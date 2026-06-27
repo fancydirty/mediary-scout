@@ -308,6 +308,15 @@ export class GuangYaStorageExecutor implements StorageExecutor {
       if (depth > maxDepth) {
         return;
       }
+      // A subdir DISCOVERED under an in-scope parent is itself within scope (the same
+      // top-down derivation createDirectory relies on) — register it so a later
+      // removeDirectory can clear it. 光鸭's offline download creates wrapper subdirs
+      // SERVER-SIDE (not via createDirectory), so without this the movie flatten's
+      // removeDirectory(wrapper) hits WRITE_SCOPE_VIOLATION and leaves empty wrapper dirs
+      // + non-video junk behind (TV is clean: discardStaging removes the createDirectory'd
+      // staging dir wholesale). Listing an OUT-of-scope dir does NOT widen scope (read ≠
+      // write); registration is gated on the parent already being in scope.
+      const parentInScope = this.isWithinWriteScope(dirId);
       const items = await this.client.listFiles(dirId);
       for (const item of items) {
         if (!isDirectory(item)) {
@@ -316,6 +325,9 @@ export class GuangYaStorageExecutor implements StorageExecutor {
         const childId = idOf(item);
         if (!childId) {
           continue;
+        }
+        if (parentInScope) {
+          this.derivedScopeIds.add(normalizeId(childId));
         }
         const path = `${prefix}${nameOf(item)}`;
         results.push({ id: childId, path });
@@ -476,6 +488,21 @@ export class GuangYaStorageExecutor implements StorageExecutor {
    * parent during this run (derivedScopeIds, populated by createDirectory). Empty
    * scope (dev) allows everything.
    */
+  /** Non-throwing scope membership check (mirrors assertWithinWriteScope). Empty scope
+   *  (dev) treats everything as in-scope; root "" is never a write target under a real
+   *  scope. Used to gate derived-scope registration during listing. */
+  private isWithinWriteScope(directoryId: string): boolean {
+    if (this.writeScopeDirectoryIds.size === 0) {
+      return true;
+    }
+    const trimmed = directoryId.trim();
+    if (trimmed === "") {
+      return false;
+    }
+    const normalized = normalizeId(directoryId);
+    return this.writeScopeDirectoryIds.has(normalized) || this.derivedScopeIds.has(normalized);
+  }
+
   private assertWithinWriteScope(directoryId: string, action: string): string {
     // 光鸭's ROOT directory id is the empty string "": create_dir / get_file_list with
     // parentId:"" operate on root (confirmed live). connect-time provisioning
