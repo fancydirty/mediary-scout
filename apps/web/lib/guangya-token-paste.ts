@@ -9,8 +9,9 @@
  * 任一 token 框,parseTokenPaste 会自动拆成两个字段;粘裸 token 则走 sanitizeToken。
  */
 
-// 不被正则 \s 类覆盖的不可见码点:零宽空格、零宽非连字、零宽连字、BOM。
-// (NBSP U+00A0 与 BOM U+FEFF 实际在 \s 内,这里仍显式列出 feff 保险。)
+// 不被正则 \s 类覆盖的零宽码点:零宽空格(200b)、零宽非连字(200c)、零宽连字(200d)。
+// 这三个 \s 抓不到,必须显式列出。BOM(FEFF)与 NBSP(00A0)本身已在 \s 内、会被
+// sanitizeToken 的 \s 分支剥掉;FEFF 仍冗余列出一份纯属保险,无害。
 const INVISIBLE_CODEPOINTS = new Set([0x200b, 0x200c, 0x200d, 0xfeff]);
 
 /**
@@ -41,9 +42,15 @@ function pickString(obj: Record<string, unknown>, ...keys: string[]): string | n
  * 否则返回 null(不是 JSON 块,按裸 token 处理)。
  */
 export function parseTokenPaste(raw: string): { accessToken: string; refreshToken: string } | null {
+  // 便宜的前置守卫:onChange 是热路径,绝大多数输入是裸 token(非 `{` 开头)。
+  // 先 startsWith("{") 短路,避免对每次按键都 JSON.parse-抛错-catch(白白制造抖动)。
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("{")) {
+    return null;
+  }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
+    parsed = JSON.parse(trimmed);
   } catch {
     return null;
   }
