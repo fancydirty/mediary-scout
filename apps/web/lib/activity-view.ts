@@ -1,5 +1,6 @@
 import {
   landedSize,
+  type EpisodeState,
   type MediaType,
   type NotificationReportStatus,
   type WorkflowRepository,
@@ -14,7 +15,12 @@ export interface ActivityActiveRun {
   year: number | null;
   type: MediaType;
   posterPath: string | null;
+  /** Single requested season; null for movies and whole-show ("全季") runs. */
   seasonNumber: number | null;
+  /** Distinct, sorted seasons actually covered by this run (derived from the
+   *  episode set). A 全季 run spans many seasons even though `seasonNumber` is
+   *  null — use this to label the card "第 1/2/3/4 季" instead of just "第 1 季". */
+  seasonNumbers: number[];
   status: "queued" | "running";
   /** 1-based position among queued items; null for the running one. */
   queuePosition: number | null;
@@ -43,6 +49,44 @@ export interface ActivityView {
    *  browser session by only showing the ones whose runId it observed active —
    *  robust to notification createdAt timing (which ≈ run-start, not finish). */
   recentCompleted: ActivityCompletedItem[];
+}
+
+/**
+ * Distinct, sorted (numeric) season numbers present in an episode set, derived
+ * from each episode's `SxxExx` code (EpisodeState carries no explicit season).
+ * A whole-show ("全季") run has episodes across many seasons even though its
+ * `season.seasonNumber` is a single placeholder → this exposes the real span.
+ * Pure + defensive: episodes with an unparseable code are skipped.
+ */
+export function distinctSeasons(episodes: readonly EpisodeState[]): number[] {
+  const seasons = new Set<number>();
+  for (const episode of episodes) {
+    const match = /^S(\d{2,})E\d{2,}$/.exec(episode.episodeCode);
+    if (match) {
+      seasons.add(Number(match[1]));
+    }
+  }
+  return Array.from(seasons).sort((a, b) => a - b);
+}
+
+/**
+ * The season label for an active-run card. Movies and season-less runs → "".
+ * One season → "第 N 季"; several → "第 1/2/3/4 季". Prefers the covered-season
+ * list; falls back to the single `seasonNumber` when the list is empty. Pure.
+ */
+export function seasonLabelText(
+  type: MediaType,
+  seasonNumbers: readonly number[],
+  seasonNumber: number | null,
+): string {
+  if (type === "movie") {
+    return "";
+  }
+  const seasons = seasonNumbers.length > 0 ? seasonNumbers : seasonNumber === null ? [] : [seasonNumber];
+  if (seasons.length === 0) {
+    return "";
+  }
+  return `第 ${seasons.join("/")} 季`;
 }
 
 /**
@@ -100,6 +144,7 @@ export async function getActivityView(input: {
       type: snapshot.title.type,
       posterPath: snapshot.title.posterPath ?? null,
       seasonNumber: snapshot.season.seasonNumber ?? null,
+      seasonNumbers: distinctSeasons(snapshot.episodes),
       status,
       queuePosition: status === "queued" && queueIndex >= 0 ? queueIndex + 1 : null,
       missingCount,

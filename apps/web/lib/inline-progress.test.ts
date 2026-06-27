@@ -17,6 +17,7 @@ function run(over: Partial<ActivityActiveRun>): ActivityActiveRun {
     type: "movie",
     posterPath: null,
     seasonNumber: null,
+    seasonNumbers: [],
     status: "running",
     queuePosition: null,
     missingCount: 0,

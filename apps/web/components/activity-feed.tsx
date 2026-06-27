@@ -5,6 +5,7 @@ import Link from "next/link";
 import { CheckCircle2, ChevronDown, ChevronRight, Clock3, Loader2, RotateCcw, TriangleAlert, X } from "lucide-react";
 import { showHref } from "@media-track/workflow/scope";
 import type { ActivityActiveRun, ActivityCompletedItem, ActivityView } from "../lib/activity-view";
+import { seasonLabelText } from "../lib/activity-view";
 import { isDemoModeClient } from "../lib/demo-mode";
 import { demoCompletedItems, demoInProgressActivityItems } from "../lib/demo-session";
 import { useDemoAcquisitions, useDemoInProgress } from "../lib/use-demo-session";
@@ -105,7 +106,7 @@ function poster(posterPath: string | null, title: string, tone: string) {
 }
 
 function seasonLabel(run: ActivityActiveRun): string {
-  return run.type === "movie" || run.seasonNumber === null ? "" : `第 ${run.seasonNumber} 季`;
+  return seasonLabelText(run.type, run.seasonNumbers ?? [], run.seasonNumber);
 }
 
 function RunningRow({ run, storageId }: { run: ActivityActiveRun; storageId?: string | undefined }) {
