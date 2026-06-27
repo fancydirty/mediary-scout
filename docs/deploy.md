@@ -1,12 +1,13 @@
 # Deploy Mediary Scout
 
-> **English summary.** Self-host with one command — `docker compose up -d` brings up web (Next.js + in-process worker) + Postgres + a bundled PanSou. Open `http://<host>:3000`, go to Settings, scan-login your 115 / Quark drive, add an OpenAI-compatible LLM endpoint, and you're running. To reach it from your phone / TV / on the go, use **Tailscale** (private mesh — safest) or a **Cloudflare Tunnel** (public HTTPS, no public IP). **Never expose `:3000` raw to the internet.** Full walkthrough below (Chinese).
+> **English summary.** Self-host with one command — `docker compose up -d` brings up web (Next.js + in-process worker) + Postgres + a bundled PanSou. Open `http://<host>:3000`, go to Settings, scan-login your 115 / Quark drive (or paste a 光鸭 / GuangYaPan token), add an OpenAI-compatible LLM endpoint, and you're running. To reach it from your phone / TV / on the go, use **Tailscale** (private mesh — safest) or a **Cloudflare Tunnel** (public HTTPS, no public IP). **Never expose `:3000` raw to the internet.** Full walkthrough below (Chinese).
 
 一行命令起整套:**web(Next + 进程内 worker)+ Postgres + 自带 PanSou**。本指南覆盖:选宿主 → compose 起服务 → 从自己的设备访问 → 安全/升级。
 
 ## 目录
 - [选择你的宿主](#选择你的宿主)
 - [Compose 快速开始](#compose-快速开始)
+- [光鸭云盘(GuangYaPan)连接](#光鸭云盘guangyapan连接)
 - [想跑真实获取还需要](#想跑真实获取还需要)
 - [可选增强](#可选增强)
 - [从你的设备访问](#从你的设备访问)
@@ -33,7 +34,7 @@ docker compose up -d        # 首次会构建 web 镜像,几分钟
 ```
 
 打开 `http://<你的主机>:3000`:
-1. **设置 → 网盘**:115 扫码登录(cookie 持久化到数据库,后续自动转存);夸克在设置选夸克品牌粘贴 cookie。
+1. **设置 → 网盘**:115 扫码登录(cookie 持久化到数据库,后续自动转存);夸克在设置选夸克品牌粘贴 cookie;光鸭云盘在设置选光鸭品牌粘贴 token(见 [光鸭云盘连接](#光鸭云盘guangyapan连接))。
 2. 就这样。**TMDB 元数据经作者 CF Worker 开箱即用**(想用自己额度可在设置填 TMDB key);**PanSou 网盘搜索源已自带**。
 
 ### 组成 / 端口
@@ -48,6 +49,50 @@ docker compose up -d        # 首次会构建 web 镜像,几分钟
 
 `docker-compose.yml` 的 `environment:` 已设好库连接、PanSou 地址、adapters。要覆盖额外项(TMDB / 115 cookie / LLM / Prowlarr / CID),在仓库根放 `.env`(参照 `.env.example`)——compose 会自动加载(缺失也无妨)。
 
+## 光鸭云盘(GuangYaPan)连接
+
+光鸭云盘(迅雷旗下,2026 年上线)是第三个支持的网盘品牌。它走**磁力 / 离线下载优先**路径:agent 把 PanSou(magnet 类型)与可选 Prowlarr 找到的磁力 / ed2k / BT 候选,经光鸭的离线下载 API 拉进你自己的盘——和 115 的离线任务路径同理。
+
+> ⚠️ **v1 仅支持磁力 / 离线。** 光鸭目前**不**转存 115 / 夸克 / 光鸭自己的**分享链**(这类候选会按设计明确报错 `GUANGYA_ONLY_MAGNET`,不静默失败)。所以光鸭和 **Prowlarr 搭配最好**(磁力覆盖更全)。
+>
+> 和所有获取一样,光鸭也需要先配好 **AI 模型(LLM)**,见下文「[想跑真实获取还需要](#想跑真实获取还需要)」。
+
+光鸭用 **`access_token` + `refresh_token`** 鉴权(不是 cookie、不是扫码)。`access_token` 约 2 小时过期,`refresh_token` 会在过期时自动续期,续期后的新 token 自动写回该盘,无需你手动重粘。
+
+### 1. 在设置页粘 token
+
+**设置 → 网盘连接 → 选「光鸭云盘」标签页**,把下面取到的两个 token 分别粘进 `access_token` 与 `refresh_token` 两个框,点「连接光鸭」。连接时会用 token 校验登录态、并在你盘里建好 `Mediary Scout/{Movies,TV,Anime}` 分类目录。
+
+### 2. 怎么拿到这两个 token
+
+1. 用浏览器登录光鸭云盘网页版:**[https://www.guangyapan.com](https://www.guangyapan.com)**(或 app.guangyapan.com),确保已登录。
+2. 按 **F12** 打开 DevTools → 切到 **Console(控制台)** 标签。
+3. 粘贴并运行下面这段(它从 `localStorage` 里读出登录态。光鸭把凭证存在键 `credentials_<clientid>`,当前 clientid 是 `aMe-8VSlkrbQXpUR`,即键名 `credentials_aMe-8VSlkrbQXpUR`):
+
+   ```js
+   (() => {
+     const clientId = "aMe-8VSlkrbQXpUR"; // 光鸭 web app 的 client_id
+     const raw = localStorage.getItem(`credentials_${clientId}`);
+     if (!raw) { console.warn("没找到 credentials_* —— 请确认已登录光鸭网页版后重试"); return; }
+     const c = JSON.parse(raw);
+     const out = { accessToken: c.access_token, refreshToken: c.refresh_token };
+     console.log("accessToken:\n" + out.accessToken);
+     console.log("\nrefreshToken:\n" + out.refreshToken);
+     try { copy(JSON.stringify(out, null, 2)); console.log("\n(已复制到剪贴板)"); } catch {}
+     return out;
+   })();
+   ```
+
+   > 如果 `credentials_aMe-8VSlkrbQXpUR` 取不到(光鸭后续改了 clientid),在 Console 里跑 `Object.keys(localStorage).filter(k => k.startsWith("credentials_"))` 看实际键名,把后缀换进上面的 `clientId`。
+
+4. 控制台会打印 `accessToken` 与 `refreshToken`(且尝试把 `{accessToken, refreshToken}` JSON 复制到剪贴板)。把这两个值分别粘回设置页对应的框。
+
+> 🔒 **别把 token 贴到任何公开地方**(issue、聊天群、截图、粘贴板网站)。它们等同你光鸭账号的登录态;只该出现在你自己实例的设置页里。
+
+### 3. 来源致谢(API 逆向)
+
+光鸭云盘的网盘 API 集成,基于开源项目 **[AList](https://github.com/AlistGo/alist)** 的 `guangyapan` driver(目录 [`drivers/guangyapan`](https://github.com/AlistGo/alist/tree/main/drivers/guangyapan))。该 driver 是本项目逆向光鸭 API 的来源,在此致谢。
+
 ## 想跑真实获取还需要
 
 - **AI 模型**(设置 → AI 模型):填一个 OpenAI 兼容的 `baseURL / apiKey / modelId`——agent 靠它决策。不填则获取流程无法规划。
@@ -56,7 +101,7 @@ docker compose up -d        # 首次会构建 web 镜像,几分钟
 ## 可选增强
 
 - **自己的 TMDB key**(设置 → TMDB 元数据):直连你自己的额度,调不通自动回退作者代理。
-- **Prowlarr**(设置 → 资源提供商):接入索引器聚合,磁力与 PanSou 结果合并、走 115 秒传。
+- **Prowlarr**(设置 → 资源提供商):接入索引器聚合,磁力与 PanSou 结果合并,走 115 或光鸭的离线下载落盘(夸克无磁力 API)。
 - **换 PanSou 实例**(设置 → 资源提供商):默认用 compose 自带的;想指向别的实例/公共域名在此手填。
 
 ## 从你的设备访问

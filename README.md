@@ -24,7 +24,7 @@
   <a href="README.zh-CN.md">中文文档</a>
 </p>
 
-You ask for a movie, show, or anime; an LLM agent scouts resources across your indexers, transfers the best match into your own 115 / Quark drive, verifies what landed, and keeps tracking what's still missing.
+You ask for a movie, show, or anime; an LLM agent scouts resources across your indexers, transfers the best match into your own 115 / Quark / 光鸭 drive, verifies what landed, and keeps tracking what's still missing.
 
 ![Mediary Scout — search a title, hit 获取, and the agent searches, transfers, and verifies it into your drive](docs/images/demo.gif)
 
@@ -48,7 +48,7 @@ You ask for a movie, show, or anime; an LLM agent scouts resources across your i
 
 Most "media automation" either searches well but doesn't know what you're actually missing, or moves files but never verifies what landed. Mediary Scout treats acquisition as a **state problem**, driven by an agent that acts from evidence, not vibes:
 
-- **Multi-drive, brand-extensible** — 115 and Quark today, each a first-class workspace (a tree model: one account, many drives). Adding a new drive brand is a contained plugin.
+- **Multi-drive, brand-extensible** — 115, Quark, and 光鸭 (GuangYaPan) today, each a first-class workspace (a tree model: one account, many drives). Adding a new drive brand is a contained plugin.
 - **Agent-driven selection** — the agent reads real search results and picks by quality preference, **Chinese-subtitle** needs, and de-duplication, then verifies the transfer after it happens.
 - **Tracking & scheduled gap-fill** — season-level state machine; a scheduled sweep comes back only for shows that still have missing episodes.
 - **Cloud-native** — it **transfers** shares/magnets straight into your drive (秒传 / save), it does not download to a local disk.
@@ -80,7 +80,7 @@ flowchart LR
     Q --> W["In-process worker"]
     W --> AG["V2 sandbox agent"]
     AG -->|search| SRC["PanSou / Prowlarr"]
-    AG -->|transfer| DR["115 / Quark drive"]
+    AG -->|transfer| DR["115 / Quark / 光鸭 drive"]
     AG -->|read back| DR
     AG -->|verify + mark| Q
     Q -->|realtime| UI
@@ -103,10 +103,10 @@ docker compose up -d
 
 Then open the web UI and, in **Settings**, provide what you want to use (all bring-your-own):
 
-- **A drive** — connect 115 or Quark (QR-scan login, or paste a cookie).
+- **A drive** — connect 115 or Quark (QR-scan login, or paste a cookie), or 光鸭 (paste `access_token` + `refresh_token` — see [setup guide](docs/deploy.md#光鸭云盘guangyapan连接)).
 - **TMDB** — works out of the box via a proxy; add your own key for direct access.
 - **LLM** — any OpenAI-compatible endpoint (`baseURL` / `apiKey` / `modelId`). The author never sees your key.
-- **Prowlarr** *(optional)* — add your indexers for magnet/torrent sources (115 only; Quark has no magnet API).
+- **Prowlarr** *(optional)* — add your indexers for magnet/torrent sources (115 and 光鸭, which are magnet-capable; Quark has no magnet API).
 
 ## Deploy
 
@@ -128,7 +128,7 @@ You are deploying Mediary Scout, a self-hosted media-acquisition agent. Follow t
    - Local network only (default — open `http://<host>:3000` from devices on the same LAN)
    - Tailscale (private mesh — recommended for home; no public IP, auto-encrypted)
    - Cloudflare Tunnel (public HTTPS like `https://media.yourdomain.com` — needs a domain on Cloudflare + Access in front)
-4. **Configure real acquisition now, or just get it running first?** Real acquisition needs a 115/Quark drive + an LLM endpoint (OpenAI-compatible) + (if using 115) 115 directory CIDs. Skipping means it boots and you can look around, configure later in Settings.
+4. **Configure real acquisition now, or just get it running first?** Real acquisition needs a 115/Quark/光鸭 drive + an LLM endpoint (OpenAI-compatible) + (if using 115) 115 directory CIDs. Skipping means it boots and you can look around, configure later in Settings.
 
 ## OPTIONAL — one question, skip all if the user doesn't care
 5. Any of these you want to set up now? Reply "none" to skip and use defaults:
@@ -155,14 +155,17 @@ A public, **read-only** demo — mock drives, real TMDB search across the whole 
 
 ## Supported drives
 
+Three Chinese cloud drives, each a first-class workspace:
+
 - **115** (`pan115`) — full support, including magnet via Prowlarr.
 - **Quark** (`quark`) — share-link transfer (no magnet web API).
+- **GuangYaPan / 光鸭云盘** (`guangya`) — Xunlei-family drive; **magnet / offline-download first** (transfers magnet/ed2k/BT via its offline-task API, like 115's offline path — it does **not** transfer 115/Quark/光鸭 share-links in v1). Token auth (`access_token` + `refresh_token`). Pairs well with Prowlarr. **[Setup guide → docs/deploy.md#光鸭云盘-guangyapan-连接](docs/deploy.md#光鸭云盘guangyapan连接)**
 
-New brands plug into a storage-brand registry; the bulk of adding one is a cookie client + a storage executor for that drive's transfer API.
+New brands plug into a storage-brand registry; the bulk of adding one is a drive client + a storage executor for that drive's transfer API.
 
 ## Status & limitations
 
-- Self-hosted, for advanced users; you need usable 115/Quark access (a membership is most practical).
+- Self-hosted, for advanced users; you need usable 115/Quark/光鸭 access (a membership is most practical).
 - Scheduled monitoring is most valuable on an always-on host.
 - This is not a hosted product and ships no hosted backend.
 
@@ -173,6 +176,7 @@ Built on top of, and grateful to:
 - [PanSou](https://github.com/fish2018/pansou-web) — resource search backend
 - [Prowlarr](https://github.com/Prowlarr/Prowlarr) — indexer manager (optional)
 - [p115client](https://github.com/ChenyangGao/p115client) — 115 API reference
+- [AList](https://github.com/AlistGo/alist) — GuangYaPan (光鸭云盘) API integration reference (the `drivers/guangyapan` driver)
 - [TMDB](https://www.themoviedb.org/) — metadata (this product is not endorsed or certified by TMDB)
 
-Not affiliated with 115, Quark, TMDB, or any indexer. Mediary Scout is an independent, disciplined workflow built around these pieces.
+Not affiliated with 115, Quark, 光鸭云盘 (GuangYaPan), TMDB, or any indexer. Mediary Scout is an independent, disciplined workflow built around these pieces.
