@@ -61,7 +61,7 @@ docker compose up -d        # 首次会构建 web 镜像,几分钟
 
 ### 1. 在设置页粘 token
 
-**设置 → 网盘连接 → 选「光鸭云盘」标签页**,把下面取到的两个 token 分别粘进 `access_token` 与 `refresh_token` 两个框,点「连接光鸭」。连接时会用 token 校验登录态、并在你盘里建好 `Mediary Scout/{Movies,TV,Anime}` 分类目录。
+**设置 → 网盘连接 → 选「光鸭云盘」标签页**。最省事:把下面 Console 打印出来的内容(打印的两段、或它复制到剪贴板的 JSON,都行)整段粘到**第一个框**,再点框下方的 **「识别并拆分 token」**,两个框会自动填好;确认无误后点「连接光鸭」。(也可以仍按老办法手动把两个值分别粘进两个框。)连接时会用 token 校验登录态、并在你盘里建好 `Mediary Scout/{Movies,TV,Anime}` 分类目录。
 
 ### 2. 怎么拿到这两个 token
 
@@ -85,7 +85,7 @@ docker compose up -d        # 首次会构建 web 镜像,几分钟
 
    > 如果 `credentials_aMe-8VSlkrbQXpUR` 取不到(光鸭后续改了 clientid),在 Console 里跑 `Object.keys(localStorage).filter(k => k.startsWith("credentials_"))` 看实际键名,把后缀换进上面的 `clientId`。
 
-4. 控制台会打印 `accessToken` 与 `refreshToken`(且尝试把 `{accessToken, refreshToken}` JSON 复制到剪贴板)。把这两个值分别粘回设置页对应的框。
+4. 控制台会打印 `accessToken` 与 `refreshToken`(且尝试把 `{accessToken, refreshToken}` JSON 复制到剪贴板)。把打印的两段、或复制的 JSON,整段粘到设置页**第一个框**,点 **「识别并拆分 token」**即可自动填好两个框(不必手动分辨哪段是哪个)。
 
 > 🔒 **别把 token 贴到任何公开地方**(issue、聊天群、截图、粘贴板网站)。它们等同你光鸭账号的登录态;只该出现在你自己实例的设置页里。
 

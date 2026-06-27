@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Check, ExternalLink, LoaderCircle } from "lucide-react";
+import { Check, ExternalLink, LoaderCircle, Wand2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { connectGuangYaAction } from "../app/actions";
-import { parseTokenPaste, sanitizeToken } from "../lib/guangya-token-paste";
+import { extractGuangYaTokens, parseTokenPaste, sanitizeToken } from "../lib/guangya-token-paste";
 
 /**
  * 光鸭云盘 token 连接 —— 光鸭用 access_token + refresh_token 鉴权(非 cookie)。
@@ -17,10 +17,12 @@ export function GuangYaTokenConnect() {
   const [refreshToken, setRefreshToken] = useState("");
   const [isPending, startTransition] = useTransition();
   const [result, setResult] = useState<string | null>(null);
+  const [extractNote, setExtractNote] = useState<string | null>(null);
 
   // 智能粘贴:Console snippet 拷出的整块 JSON({"accessToken":…,"refreshToken":…})
   // 粘进任一框 → 自动拆填两个字段;裸 token → 仅清洗当前字段。
   const handleTokenInput = (value: string, setSelf: (v: string) => void) => {
+    setExtractNote(null);
     const blob = parseTokenPaste(value);
     if (blob) {
       setAccessToken(blob.accessToken);
@@ -28,6 +30,21 @@ export function GuangYaTokenConnect() {
       return;
     }
     setSelf(sanitizeToken(value));
+  };
+
+  // 显式「识别并拆分」:鲁棒提取(JSON / 标签文本 / 启发式),不管粘的是 Console 打印的
+  // 两段还是复制的 JSON,一次粘 box1 + 一次点击就能把两个框都填好。
+  const handleExtract = () => {
+    const r = extractGuangYaTokens(accessToken);
+    if (r) {
+      setAccessToken(r.accessToken);
+      setRefreshToken(r.refreshToken);
+      setExtractNote("✅ 已识别 access + refresh");
+    } else {
+      setExtractNote(
+        "没识别出两个 token —— 请确认粘贴内容里同时含 access_token 和 refresh_token(可直接粘 Console 打印的两段或复制的 JSON)。",
+      );
+    }
   };
 
   const handleConnect = () => {
@@ -47,7 +64,8 @@ export function GuangYaTokenConnect() {
       <p className="panel-note" style={{ marginBottom: 6 }}>
         从光鸭云盘 app/网页端的登录态中复制 <code>access_token</code> 与 <code>refresh_token</code>，分别粘到下面两个框。
         access_token 用于鉴权，refresh_token 在过期时自动续期（续期后新 token 会自动保存）。
-        也可以直接把复制到的整块 JSON（含 accessToken 与 refreshToken）粘到任一框，会自动拆填到两个框。
+        最省事：把粘贴内容（Console 打印的两段、或复制的 JSON 都行）粘到第一个框，再点
+        <strong>「识别并拆分」</strong>，两个框会自动填好。
       </p>
       <p className="push-help" style={{ marginBottom: 12 }}>
         光鸭云盘{" "}
@@ -64,6 +82,24 @@ export function GuangYaTokenConnect() {
         rows={3}
         style={{ width: "100%", fontFamily: "monospace", fontSize: 12, resize: "vertical" }}
       />
+      {accessToken.trim() ? (
+        <div style={{ marginTop: 6 }}>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={handleExtract}
+            style={{ fontSize: 12, padding: "4px 10px" }}
+          >
+            <Wand2 size={12} aria-hidden style={{ verticalAlign: "-2px", marginRight: 4 }} />
+            识别并拆分 token
+          </button>
+          {extractNote ? (
+            <p className="panel-note" style={{ marginTop: 6, marginBottom: 0 }}>
+              {extractNote}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
       <textarea
         className="setting-textarea"
         value={refreshToken}

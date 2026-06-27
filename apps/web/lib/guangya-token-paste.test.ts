@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseTokenPaste, sanitizeToken } from "./guangya-token-paste";
+import { extractGuangYaTokens, parseTokenPaste, sanitizeToken } from "./guangya-token-paste";
 
 // Invisible chars built from codepoints (reviewable + encoding-stable — never
 // embed the literals in source, which is exactly what we strip).
@@ -82,5 +82,78 @@ describe("parseTokenPaste", () => {
 
   it("returns null for non-object JSON (array)", () => {
     expect(parseTokenPaste('["AT","RT"]')).toBeNull();
+  });
+});
+
+describe("extractGuangYaTokens", () => {
+  it("handles a camelCase JSON blob", () => {
+    expect(extractGuangYaTokens('{"accessToken":"eyJa.b.c","refreshToken":"gy.RT"}')).toEqual({
+      accessToken: "eyJa.b.c",
+      refreshToken: "gy.RT",
+    });
+  });
+
+  it("handles a snake_case JSON blob", () => {
+    expect(extractGuangYaTokens('{"access_token":"eyJa.b.c","refresh_token":"gy.RT"}')).toEqual({
+      accessToken: "eyJa.b.c",
+      refreshToken: "gy.RT",
+    });
+  });
+
+  it("handles the Console-printed labeled block (with trailing noise)", () => {
+    const pasted = "accessToken:\neyJabc.def.ghi\n\nrefreshToken:\ngy.RT123\n(已复制到剪贴板)";
+    expect(extractGuangYaTokens(pasted)).toEqual({
+      accessToken: "eyJabc.def.ghi",
+      refreshToken: "gy.RT123",
+    });
+  });
+
+  it("handles concatenated / newline-collapsed text via heuristic + label", () => {
+    expect(extractGuangYaTokens("eyJabc.def.ghirefreshToken:gy.RT123")).toEqual({
+      accessToken: "eyJabc.def.ghi",
+      refreshToken: "gy.RT123",
+    });
+  });
+
+  it("does not let a labeled access value swallow a following refresh label", () => {
+    // Real-product shape: the onChange sanitize strips ALL whitespace from the
+    // pasted Console block BEFORE extract runs, so labels+values are glued:
+    // `accessToken:<JWT>refreshToken:gy.<rt>`. The access capture must stop at the
+    // next `refreshToken` label, not eat it.
+    expect(extractGuangYaTokens("accessToken:eyJabc.def.ghirefreshToken:gy.RT123")).toEqual({
+      accessToken: "eyJabc.def.ghi",
+      refreshToken: "gy.RT123",
+    });
+  });
+
+  it("handles two bare lines with no labels (pure heuristic)", () => {
+    expect(extractGuangYaTokens("eyJabc.def.ghi\ngy.RT123")).toEqual({
+      accessToken: "eyJabc.def.ghi",
+      refreshToken: "gy.RT123",
+    });
+  });
+
+  it("sanitizes zero-width chars inside extracted tokens", () => {
+    const pasted = `accessToken: eyJabc.def.ghi\nrefreshToken: gy.${ZWSP}RT${ZWNJ}123`;
+    expect(extractGuangYaTokens(pasted)).toEqual({
+      accessToken: "eyJabc.def.ghi",
+      refreshToken: "gy.RT123",
+    });
+  });
+
+  it("returns null when only one token is present", () => {
+    expect(extractGuangYaTokens("accessToken: eyJabc.def.ghi")).toBeNull();
+    expect(extractGuangYaTokens("refreshToken: gy.RT123")).toBeNull();
+    expect(extractGuangYaTokens("eyJabc.def.ghi")).toBeNull();
+  });
+
+  it("returns null for garbage", () => {
+    expect(extractGuangYaTokens("hello world, no tokens here")).toBeNull();
+    expect(extractGuangYaTokens("")).toBeNull();
+  });
+
+  it("never throws on arbitrary input", () => {
+    expect(() => extractGuangYaTokens("{not json")).not.toThrow();
+    expect(() => extractGuangYaTokens("random ::: text")).not.toThrow();
   });
 });

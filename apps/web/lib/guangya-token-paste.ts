@@ -15,6 +15,19 @@
 const INVISIBLE_CODEPOINTS = new Set([0x200b, 0x200c, 0x200d, 0xfeff]);
 
 /**
+ * 只剥掉零宽/不可见码点,保留普通空白。提取器用它做正则前处理:零宽字符会打断
+ * 值捕获(gy.<ZWSP>RT → 只剩 gy.),但普通空白/换行是 label↔值 的有用边界,必须留。
+ */
+function stripInvisible(raw: string): string {
+  let out = "";
+  for (const ch of raw) {
+    if (INVISIBLE_CODEPOINTS.has(ch.codePointAt(0) ?? -1)) continue;
+    out += ch;
+  }
+  return out;
+}
+
+/**
  * 从粘贴的 token 里剥掉所有空白 + 不可见字符(token 本身不含空白)。防御网页复制
  * 带进来的空格/制表/换行/NBSP/零宽字符/BOM——否则会静默存错值,让用户以为 token 坏了。
  */
@@ -64,4 +77,73 @@ export function parseTokenPaste(raw: string): { accessToken: string; refreshToke
     return null;
   }
   return { accessToken: sanitizeToken(access), refreshToken: sanitizeToken(refresh) };
+}
+
+// 光鸭 refresh token 以 `gy.` 开头(启发式锚点)。
+const REFRESH_HEURISTIC = /\bgy\.[A-Za-z0-9._~+/=-]+/;
+// JWT(access token)启发式:三段点分,字符集不含点本身(避免吃进后面的 refreshToken: 等噪声)。
+const JWT_HEURISTIC = /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/;
+// 标签 + 值:标签(access_token / accessToken …)后跟 :/引号/空白,再抓值。值字符集
+// 不含点之外的 token 合法字符;用 sanitizeToken 兜底去掉尾巴噪声。
+const ACCESS_LABEL = /access[_\s]*token["':\s]+([A-Za-z0-9._~+/=-]+)/i;
+const REFRESH_LABEL = /refresh[_\s]*token["':\s]+([A-Za-z0-9._~+/=-]+)/i;
+
+/**
+ * 鲁棒提取光鸭 access + refresh token —— parseTokenPaste(纯 JSON)的超集。按序尝试:
+ *   1) JSON 块(复用 parseTokenPaste)。
+ *   2) 标签文本:`access_token: …` / `refresh_token: …`(容忍 :/引号/空白)。
+ *   3) 启发式:access = 第一个 JWT(eyJ…三段);refresh = 第一个 `gy.…`。
+ * 仅当 access 与 refresh 都找到才返回(两者都过 sanitizeToken,去空白/零宽/尾部噪声);
+ * 否则 null。永不抛错(供 onClick 直接调用)。
+ *
+ * 为什么先定位 refresh、再在其之前找 access:粘贴常是
+ * `…eyJa.b.crefreshToken:gy.…`(换行被吞),JWT 启发式会贪婪吃进 `refreshToken`,
+ * 故 access 只在 refresh 标记之前的片段里找。
+ */
+export function extractGuangYaTokens(raw: string): { accessToken: string; refreshToken: string } | null {
+  // 1) JSON 优先(用原文,JSON.parse 自己容忍空白)。
+  const json = parseTokenPaste(raw);
+  if (json) return json;
+
+  // 2/3) 在「去零宽、保留普通空白」的副本上跑正则:零宽字符会打断值捕获(gy.<ZWSP>RT
+  // 只剩 gy.),必须先去掉;但普通空白/换行是 label 与值之间的有用边界,保留。
+  const text = stripInvisible(raw);
+
+  // 先定位 refresh(标签优先,回退 gy. 启发式),记下它在文本里的起点。
+  let refresh: string | null = null;
+  let refreshIndex = text.length;
+  const refreshLabel = text.match(REFRESH_LABEL);
+  if (refreshLabel && refreshLabel[1]) {
+    refresh = refreshLabel[1];
+    refreshIndex = refreshLabel.index ?? text.length;
+  } else {
+    const refreshHeur = text.match(REFRESH_HEURISTIC);
+    if (refreshHeur) {
+      refresh = refreshHeur[0];
+      refreshIndex = refreshHeur.index ?? text.length;
+    }
+  }
+
+  // access 只在 refresh 标记之前的片段(head)里找——无论标签还是启发式。否则在「换行被
+  // onChange 清洗吞掉」的真实粘贴里(accessToken:<JWT>refreshToken:gy.<rt>),access 的值
+  // 捕获会越过下一个 refreshToken 标签、把它一并吃进去(实测踩坑)。
+  const head = text.slice(0, refreshIndex);
+  let access: string | null = null;
+  const accessLabel = head.match(ACCESS_LABEL);
+  if (accessLabel && accessLabel[1]) {
+    access = accessLabel[1];
+  } else {
+    const jwt = head.match(JWT_HEURISTIC);
+    if (jwt) access = jwt[0];
+  }
+
+  if (access === null || refresh === null) {
+    return null;
+  }
+  const accessToken = sanitizeToken(access);
+  const refreshToken = sanitizeToken(refresh);
+  if (accessToken === "" || refreshToken === "") {
+    return null;
+  }
+  return { accessToken, refreshToken };
 }
