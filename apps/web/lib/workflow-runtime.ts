@@ -1578,7 +1578,13 @@ export async function testConnection(
   }
   const brand = getStorageBrand(creds.provider);
   try {
-    await probeStorageConnection(creds.provider, creds.cookie, creds.rootCid, creds.credential);
+    await probeStorageConnection(
+      creds.provider,
+      creds.cookie,
+      creds.rootCid,
+      creds.credential,
+      makeGuangYaTokenPersister(accountId, creds.id),
+    );
     await getWorkflowRepository().setConnectedStorageStatus(creds.id, "active", null, null);
     return { ok: true, status: "active", message: "连接正常。" };
   } catch (error) {
@@ -1599,6 +1605,9 @@ async function probeStorageConnection(
   cookie: string,
   rootCid: string | null,
   credential: GuangYaCredential | null,
+  // Persist rotated tokens if validateToken() refreshes during the probe. Wired by
+  // testConnection (an existing drive). Omitted at first-connect (no row yet).
+  onTokensRefreshed?: ((creds: unknown) => Promise<void>) | undefined,
 ): Promise<void> {
   const { Pan115CookieClient, QuarkCookieClient } = await import("@media-track/workflow");
   if (provider === "guangya") {
@@ -1611,6 +1620,9 @@ async function probeStorageConnection(
       // doesn't mint a fresh one (harmless today — validate is account-host — but
       // consistent with the rest of the brand's device-pinning).
       ...(credential?.deviceId === undefined ? {} : { deviceId: credential.deviceId }),
+      // A 401 during the probe refreshes the token pair; persist it so the DB
+      // doesn't keep a stale token that later wrongly freezes the drive.
+      ...(onTokensRefreshed ? { onTokensRefreshed } : {}),
     }).validateToken();
     return;
   }
@@ -2240,13 +2252,16 @@ export async function connectGuangYa(rawAccessToken: string, rawRefreshToken: st
   const payload = { accessToken, refreshToken, deviceId, meta: { connectedAt: new Date().toISOString() } };
   if (decision.action === "refresh" && existing) {
     // Same account re-bind → refresh the token blob, keep the resolved CIDs.
+    // Reuse the already-pinned deviceId (风控: a re-bind must NOT look like a new
+    // device); only fall back to the freshly-generated one if the drive has none.
+    const pinnedDeviceId = (existing.payload as { deviceId?: string } | null)?.deviceId ?? deviceId;
     await repository.upsertConnectedStorage({
       id: existing.id,
       accountId,
       provider: "guangya",
       providerUid,
       label: existing.label,
-      payload,
+      payload: { accessToken, refreshToken, deviceId: pinnedDeviceId, meta: { connectedAt: new Date().toISOString() } },
       rootCid: existing.rootCid,
       moviesCid: existing.moviesCid,
       tvCid: existing.tvCid,
