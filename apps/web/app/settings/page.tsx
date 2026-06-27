@@ -218,7 +218,9 @@ async function LlmConfigSection() {
             <Bot size={16} aria-hidden style={{ verticalAlign: "-2px", marginRight: 8 }} />
             AI 模型
           </h2>
-          <p className="panel-note">驱动获取 agent 的大模型(OpenAI 兼容);自带 key,只存你本机</p>
+          <p className="panel-note">
+            获取 agent 用的大模型(任意 OpenAI 兼容服务,自带);<strong>必填</strong>,未配置时获取会失败。本地模型 Key 可留空。只存你本机
+          </p>
         </div>
       </div>
       <LlmConfigForm baseURL={baseURL} modelId={modelId} apiKeySet={apiKeySet} />

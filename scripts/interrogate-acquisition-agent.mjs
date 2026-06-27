@@ -82,7 +82,7 @@ const only = args.only ? args.only.split(",").map((s) => s.trim()).filter(Boolea
 
 console.log("=== §6a interrogation (read-only — verifies 聪明 before spending) ===");
 console.log("agent:", agent);
-console.log("model:", process.env.AGENT_MODEL_ID ?? process.env.XIAOMI_MIMO_MODEL_ID ?? "mimo-v2.5-pro (default)");
+console.log("model:", process.env.AGENT_MODEL_ID ?? process.env.XIAOMI_MIMO_MODEL_ID ?? "(unset — required)");
 console.log("scenario:", scenario);
 if (only) console.log("only:", only.join(", "));
 console.log("");

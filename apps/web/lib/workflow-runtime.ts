@@ -16,6 +16,7 @@ import {
   createAgentModel,
   createAgentModelFromEnv,
   createStubAcquisitionModel,
+  llmConfigError,
   dispatchNotifications,
   formatDailyDigestPushText,
   getTrackedSeasonStatusView,
@@ -1735,9 +1736,11 @@ async function getWorkerStorageParents(
  * passed to each workflow as standing context, not baked into the model instance.
  */
 /** Resolve the live agent model config the SAME way the worker builds it: DB
- *  (pass an account-scoped repo) → .env → built-in MiMo defaults (filled later by
- *  createAgentModel). Shared by getAgentModel and testLlmConnectionAction so the
- *  Settings「测试连接」exercises exactly what acquisitions use. */
+ *  (pass an account-scoped repo) → .env (AGENT_MODEL_* with XIAOMI_MIMO_* as a
+ *  back-compat fallback) → undefined. There is NO built-in default endpoint —
+ *  baseURL/modelId must be configured (truly BYO, issue #49). Shared by
+ *  getAgentModel and testLlmConnectionAction so the Settings「测试连接」exercises
+ *  exactly what acquisitions use. */
 export async function resolveAgentModelConfig(
   repository: { getSetting(key: string): Promise<string | null> },
   env: NodeJS.ProcessEnv = process.env,
@@ -1767,9 +1770,21 @@ async function getAgentModel(repository: {
   const qualityPreference = await getQualityPreference(repository);
 
   // Resolve the live model config the SAME way the test action does (shared
-  // resolver) — DB-first, then .env, then built-in MiMo defaults.
+  // resolver) — DB-first, then .env. No built-in default endpoint.
   const resolved = await resolveAgentModelConfig(repository, env);
   const { apiKey, baseURL, modelId } = resolved;
+  // Fail-fast pre-check (issue #49): on the live (vercel-ai) path, if baseURL or
+  // modelId is missing the run would die on its first model call (or hit the
+  // author endpoint keyless → 401). Throw the actionable, agnostic guidance NOW
+  // — before building/using the model — so the user gets guidance at 获取 time
+  // instead of a raw failure after a long agent run. apiKey may be empty (keyless
+  // local LLM is valid); the fake/stub adapter never needs a model config.
+  if (adapter === "vercel-ai") {
+    const configError = llmConfigError(resolved);
+    if (configError) {
+      throw new Error(configError);
+    }
+  }
   // Cache per resolved config signature (so a Settings edit takes effect without
   // a restart AND different accounts' models coexist).
   const signature = `${adapter}|${baseURL ?? ""}|${modelId ?? ""}|${apiKey ?? ""}`;

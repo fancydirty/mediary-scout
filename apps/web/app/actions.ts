@@ -457,18 +457,21 @@ export async function testLlmConnectionAction(): Promise<{ ok: boolean; message:
       "../lib/workflow-runtime"
     );
     const accountId = await getCurrentAccountId();
-    // Resolve EXACTLY as the worker does (account-scoped → env → defaults).
+    // Resolve EXACTLY as the worker does (account-scoped → env). No default endpoint.
     const cfg = await resolveAgentModelConfig(getAccountScopedSettings(accountId));
-    if (!cfg.apiKey) {
-      return { ok: false, message: "未配置 API Key —— 请先填写并保存。" };
+    const { createAgentModel, llmConfigError } = await import("@media-track/workflow");
+    // BYO + agnostic: baseURL + 模型 are required; API Key is optional (keyless
+    // local LLM). Surface the same actionable, model-agnostic message the agent uses.
+    const configError = llmConfigError(cfg);
+    if (configError) {
+      return { ok: false, message: configError };
     }
-    const { createAgentModel } = await import("@media-track/workflow");
     const { generateText } = await import("ai");
     const model = createAgentModel(cfg);
-    // A tiny real call — proves the key/base_url/model actually work, killing the
-    // "stored a wrong value silently" 大误会. Not reached unless apiKey is set.
+    // A tiny real call — proves the base_url/model (and key, if any) actually work,
+    // killing the "stored a wrong value silently" 大误会.
     await generateText({ model, prompt: "ping" });
-    return { ok: true, message: `连接正常 · ${cfg.modelId ?? "mimo-v2.5-pro"}` };
+    return { ok: true, message: `连接正常 · ${cfg.modelId}` };
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     return { ok: false, message: `连接失败：${msg.slice(0, 200)}` };

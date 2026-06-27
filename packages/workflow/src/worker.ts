@@ -18,6 +18,7 @@ import {
   requeueWorkflowRunForRetry,
 } from "./repository.js";
 import { isTransientAcquisitionError } from "./acquisition-v2/transient-error.js";
+import { describeAgentRunError } from "./agent-error.js";
 import { formatReportPushText } from "./notification-report.js";
 import { isMovieUnreleased } from "./domain.js";
 import {
@@ -174,7 +175,12 @@ export async function handleWorkflowRunFailure(input: {
 }): Promise<{ status: "auto_requeued" | "failed"; workflowRunId: string; errorMessage: string }> {
   const { claimed, error, repository } = input;
   const nowIso = input.now();
-  const errorMessage = error instanceof Error ? error.message : "Workflow failed";
+  // describeAgentRunError maps an LLM auth/401 failure (the agent dying on its
+  // first model call when the BYO LLM key is missing/invalid, issue #49) onto
+  // actionable, provider-agnostic guidance; every other error keeps its original
+  // message. The raw `error` object is untouched, so transient classification +
+  // any logging stay accurate.
+  const errorMessage = describeAgentRunError(error);
   const priorCount = claimed.workflowRun.autoRequeueCount ?? 0;
   const transient = isTransientAcquisitionError(error);
   const willRetry = transient && priorCount < AUTO_REQUEUE_MAX;

@@ -111,6 +111,34 @@ describe("handleWorkflowRunFailure", () => {
     expect(saved.episodes[0]?.episodeCode).toBe("S01E01");
   });
 
+  it("maps an LLM 401 'Unauthorized' failure to actionable guidance in the user-facing message (#49)", async () => {
+    const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
+    const out = await handleWorkflowRunFailure({
+      claimed: snapshot(),
+      error: new Error("Unauthorized"),
+      repository: { saveWorkflowRunSnapshot: save },
+      now,
+    });
+    expect(out.status).toBe("failed");
+    expect(out.errorMessage).toContain("AI 模型鉴权失败");
+    expect(out.errorMessage).not.toBe("Unauthorized");
+    const saved = save.mock.calls[0]![0];
+    const body = saved.notifications[0]?.body ?? "";
+    expect(body).toContain("设置 → AI 模型");
+    expect(body).not.toContain("Unauthorized");
+  });
+
+  it("leaves a non-LLM failure message unchanged (no false positive)", async () => {
+    const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
+    const out = await handleWorkflowRunFailure({
+      claimed: snapshot(),
+      error: new Error("QUARK_TRANSFER_FAILED: dead share"),
+      repository: { saveWorkflowRunSnapshot: save },
+      now,
+    });
+    expect(out.errorMessage).toBe("QUARK_TRANSFER_FAILED: dead share");
+  });
+
   it("terminally fails a NON-transient error immediately (count=0)", async () => {
     const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
     const out = await handleWorkflowRunFailure({

@@ -2,7 +2,7 @@ import { createOpenAICompatible, type OpenAICompatibleProviderSettings } from "@
 import type { LanguageModel } from "ai";
 
 /**
- * The live acquisition agent model factory — a bare OpenAI-compatible (MiMo)
+ * The live acquisition agent model factory — a bare OpenAI-compatible
  * LanguageModel that drives the V2 sandbox tool-loop. This was lost in Phase 8
  * (764ae19) when the dead structured-output agent (`ai-sdk-agent.ts`) was deleted
  * wholesale; but the FACTORY is live — `apps/web` `getAgentModel` calls
@@ -10,14 +10,17 @@ import type { LanguageModel } from "ai";
  * interrogation script uses it too. Restored here as a focused, dependency-light
  * module (no dead agent attached).
  *
- * The MiMo OpenAI-compatible endpoint does NOT support `response_format`; the V2
- * agent never relies on it (it uses the AI SDK tool-loop with zod inputSchemas),
- * so a bare model is all that is needed.
+ * Truly BYO + model-AGNOSTIC (issue #49): the self-hoster supplies their own
+ * OpenAI-compatible endpoint (Settings → AI 模型 / env). `baseURL` + `modelId` are
+ * REQUIRED — the factory invents NO default endpoint. `apiKey` is OPTIONAL: cloud
+ * services need it (sent as the `api-key` header); keyless local LLMs
+ * (ollama / LM Studio) legitimately omit it. There is NO silent author default.
+ *
+ * A bare model (no `response_format`) is all the V2 agent needs — it uses the AI
+ * SDK tool-loop with zod inputSchemas, never structured output.
  */
 
 const DEFAULT_PROVIDER_NAME = "agent-model";
-const DEFAULT_BASE_URL = "https://token-plan-sgp.xiaomimimo.com/v1";
-const DEFAULT_MODEL_ID = "mimo-v2.5-pro";
 
 export interface AgentModelOptions {
   apiKey?: string;
@@ -26,22 +29,45 @@ export interface AgentModelOptions {
   providerName?: string;
 }
 
-/** Map options (with MiMo defaults) onto OpenAI-compatible provider settings. */
+/**
+ * Agnostic (model-vendor-neutral) error for an LLM config that cannot build a
+ * model: returns a message when `baseURL` or `modelId` is missing/blank, else
+ * null. `apiKey` is NOT required (keyless local LLMs are valid). PURE + exported
+ * so the fail-fast upstream pre-check reuses the SAME predicate the factory
+ * enforces. NEVER mentions a specific provider.
+ */
+export function llmConfigError(cfg: { apiKey?: string; baseURL?: string; modelId?: string }): string | null {
+  const baseURL = (cfg.baseURL ?? "").trim();
+  const modelId = (cfg.modelId ?? "").trim();
+  if (baseURL === "" || modelId === "") {
+    return "未配置 AI 模型:请到 设置 → AI 模型 填写 Base URL 和 模型名(任意 OpenAI 兼容服务,自带);云端服务还需 API Key,本地模型可留空。";
+  }
+  return null;
+}
+
+/** Map options onto OpenAI-compatible provider settings. baseURL + modelId are
+ *  REQUIRED (no invented default); apiKey is optional (keyless local LLMs). Throws
+ *  the agnostic config error as a backstop — the friendly pre-check upstream
+ *  catches the same gap first. */
 export function createAgentProviderConfig(options: AgentModelOptions = {}): {
   providerSettings: OpenAICompatibleProviderSettings;
   modelId: string;
 } {
+  const configError = llmConfigError(options);
+  if (configError) {
+    throw new Error(configError);
+  }
   const providerSettings: OpenAICompatibleProviderSettings = {
     name: options.providerName ?? DEFAULT_PROVIDER_NAME,
-    baseURL: options.baseURL ?? DEFAULT_BASE_URL,
+    baseURL: options.baseURL!,
     ...(options.apiKey === undefined ? {} : { headers: { "api-key": options.apiKey } }),
   };
-  return { providerSettings, modelId: options.modelId ?? DEFAULT_MODEL_ID };
+  return { providerSettings, modelId: options.modelId! };
 }
 
-/** Build the live LanguageModel from explicit options (DB settings), with the
- *  built-in MiMo defaults filling any gap. Used by the web layer to honor the
- *  user's Settings → AI 模型 config (BYO-key self-host). */
+/** Build the live LanguageModel from explicit options (DB settings). Honors the
+ *  user's Settings → AI 模型 config (BYO self-host). Throws the agnostic config
+ *  error when baseURL/modelId are missing. */
 export function createAgentModel(options: AgentModelOptions = {}): LanguageModel {
   const { providerSettings, modelId } = createAgentProviderConfig(options);
   return createOpenAICompatible(providerSettings)(modelId);
@@ -49,7 +75,8 @@ export function createAgentModel(options: AgentModelOptions = {}): LanguageModel
 
 /**
  * Build the live LanguageModel from env. Reads AGENT_MODEL_* with XIAOMI_MIMO_*
- * as the fallback (same precedence the web/worker and interrogation use).
+ * as the fallback (back-compat: existing instances that set the legacy keys keep
+ * working). Same precedence the web/worker and interrogation use.
  */
 export function createAgentModelFromEnv(env: NodeJS.ProcessEnv = process.env): LanguageModel {
   const options: AgentModelOptions = {};

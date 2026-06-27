@@ -118,7 +118,7 @@ const input = {
 
 console.log("=== acquisition planning live smoke (read-only) ===");
 console.log(JSON.stringify(input, null, 2));
-console.log("model:", process.env.AGENT_MODEL_ID ?? "mimo-v2.5-pro (default)");
+console.log("model:", process.env.AGENT_MODEL_ID ?? "(unset — required)");
 
 const startedAt = Date.now();
 const result = await runAcquisitionPlanningSmoke({
