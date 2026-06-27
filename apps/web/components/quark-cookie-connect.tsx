@@ -40,7 +40,7 @@ export function QuarkCookieConnect() {
         </a>
       </p>
       <textarea
-        className="setting-control"
+        className="setting-textarea"
         value={cookie}
         onChange={(event) => setCookie(event.target.value)}
         placeholder="把完整的 Cookie 粘到这里（形如 __pus=…; __uid=…; __kps=…）"

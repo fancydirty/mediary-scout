@@ -2277,6 +2277,29 @@ li.hub-season-row.untracked {
   border-color: var(--accent);
 }
 
+/* Multi-line variant of .setting-control for <textarea> (token/cookie boxes).
+   Shares the card bg / border / focus look, but un-does the single-line box:
+   auto height, real vertical padding, soft (non-pill) corners. */
+.setting-textarea {
+  appearance: none;
+  -webkit-appearance: none;
+  height: auto;
+  min-height: 76px;
+  background-color: var(--bg-card);
+  color: var(--text);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  font-size: 13.5px;
+  font-family: inherit;
+  padding: 10px 14px;
+  transition: border-color 0.15s ease;
+}
+
+.setting-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 select.setting-control {
   cursor: pointer;
   padding-right: 42px;

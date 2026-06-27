@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { Check, ExternalLink, LoaderCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { connectGuangYaAction } from "../app/actions";
+import { parseTokenPaste, sanitizeToken } from "../lib/guangya-token-paste";
 
 /**
  * 光鸭云盘 token 连接 —— 光鸭用 access_token + refresh_token 鉴权(非 cookie)。
@@ -16,6 +17,18 @@ export function GuangYaTokenConnect() {
   const [refreshToken, setRefreshToken] = useState("");
   const [isPending, startTransition] = useTransition();
   const [result, setResult] = useState<string | null>(null);
+
+  // 智能粘贴:Console snippet 拷出的整块 JSON({"accessToken":…,"refreshToken":…})
+  // 粘进任一框 → 自动拆填两个字段;裸 token → 仅清洗当前字段。
+  const handleTokenInput = (value: string, setSelf: (v: string) => void) => {
+    const blob = parseTokenPaste(value);
+    if (blob) {
+      setAccessToken(blob.accessToken);
+      setRefreshToken(blob.refreshToken);
+      return;
+    }
+    setSelf(sanitizeToken(value));
+  };
 
   const handleConnect = () => {
     startTransition(async () => {
@@ -34,6 +47,7 @@ export function GuangYaTokenConnect() {
       <p className="panel-note" style={{ marginBottom: 6 }}>
         从光鸭云盘 app/网页端的登录态中复制 <code>access_token</code> 与 <code>refresh_token</code>，分别粘到下面两个框。
         access_token 用于鉴权，refresh_token 在过期时自动续期（续期后新 token 会自动保存）。
+        也可以直接把复制到的整块 JSON（含 accessToken 与 refreshToken）粘到任一框，会自动拆填到两个框。
       </p>
       <p className="push-help" style={{ marginBottom: 12 }}>
         光鸭云盘{" "}
@@ -42,18 +56,18 @@ export function GuangYaTokenConnect() {
         </a>
       </p>
       <textarea
-        className="setting-control"
+        className="setting-textarea"
         value={accessToken}
-        onChange={(event) => setAccessToken(event.target.value)}
-        placeholder="粘贴 access_token（形如 eyJ…）"
+        onChange={(event) => handleTokenInput(event.target.value, setAccessToken)}
+        placeholder="粘贴 access_token（形如 eyJ…），或整块 JSON"
         aria-label="光鸭 access_token"
         rows={3}
         style={{ width: "100%", fontFamily: "monospace", fontSize: 12, resize: "vertical" }}
       />
       <textarea
-        className="setting-control"
+        className="setting-textarea"
         value={refreshToken}
-        onChange={(event) => setRefreshToken(event.target.value)}
+        onChange={(event) => handleTokenInput(event.target.value, setRefreshToken)}
         placeholder="粘贴 refresh_token"
         aria-label="光鸭 refresh_token"
         rows={3}
