@@ -1,11 +1,17 @@
 import {
   landedSize,
-  type EpisodeState,
   type MediaType,
   type NotificationReportStatus,
   type WorkflowRepository,
   type WorkflowRunProgress,
 } from "@media-track/workflow";
+import { distinctSeasons, seasonLabelText } from "./activity-season-label";
+
+// Re-export the pure season-label helpers so existing server-side imports from
+// this module keep working. The CANONICAL home is the runtime-free
+// `activity-season-label.ts` — the "use client" activity-feed must import from
+// there (not here), since this module pulls the Postgres-backed runtime.
+export { distinctSeasons, seasonLabelText };
 
 /** One title currently in the pipeline (queued or running). */
 export interface ActivityActiveRun {
@@ -15,11 +21,14 @@ export interface ActivityActiveRun {
   year: number | null;
   type: MediaType;
   posterPath: string | null;
-  /** Single requested season; null for movies and whole-show ("全季") runs. */
+  /** The snapshot's primary/placeholder season number (`snapshot.season`). May
+   *  be a real number even for a whole-show ("全季") run, where it's just the
+   *  scope's anchor season — NOT the full set of covered seasons. null only for
+   *  movies / season-less snapshots. For display, prefer `seasonNumbers`. */
   seasonNumber: number | null;
-  /** Distinct, sorted seasons actually covered by this run (derived from the
-   *  episode set). A 全季 run spans many seasons even though `seasonNumber` is
-   *  null — use this to label the card "第 1/2/3/4 季" instead of just "第 1 季". */
+  /** The distinct, sorted seasons the run actually covers, derived from its
+   *  episode set. This is what the UI labels (e.g. "第 1/2/3/4 季"); a 全季 run
+   *  spans many seasons even though `seasonNumber` is a single anchor value. */
   seasonNumbers: number[];
   status: "queued" | "running";
   /** 1-based position among queued items; null for the running one. */
@@ -49,44 +58,6 @@ export interface ActivityView {
    *  browser session by only showing the ones whose runId it observed active —
    *  robust to notification createdAt timing (which ≈ run-start, not finish). */
   recentCompleted: ActivityCompletedItem[];
-}
-
-/**
- * Distinct, sorted (numeric) season numbers present in an episode set, derived
- * from each episode's `SxxExx` code (EpisodeState carries no explicit season).
- * A whole-show ("全季") run has episodes across many seasons even though its
- * `season.seasonNumber` is a single placeholder → this exposes the real span.
- * Pure + defensive: episodes with an unparseable code are skipped.
- */
-export function distinctSeasons(episodes: readonly EpisodeState[]): number[] {
-  const seasons = new Set<number>();
-  for (const episode of episodes) {
-    const match = /^S(\d{2,})E\d{2,}$/.exec(episode.episodeCode);
-    if (match) {
-      seasons.add(Number(match[1]));
-    }
-  }
-  return Array.from(seasons).sort((a, b) => a - b);
-}
-
-/**
- * The season label for an active-run card. Movies and season-less runs → "".
- * One season → "第 N 季"; several → "第 1/2/3/4 季". Prefers the covered-season
- * list; falls back to the single `seasonNumber` when the list is empty. Pure.
- */
-export function seasonLabelText(
-  type: MediaType,
-  seasonNumbers: readonly number[],
-  seasonNumber: number | null,
-): string {
-  if (type === "movie") {
-    return "";
-  }
-  const seasons = seasonNumbers.length > 0 ? seasonNumbers : seasonNumber === null ? [] : [seasonNumber];
-  if (seasons.length === 0) {
-    return "";
-  }
-  return `第 ${seasons.join("/")} 季`;
 }
 
 /**

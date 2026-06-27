@@ -7,7 +7,7 @@ import {
   type TrackedSeason,
   type WorkflowStatus,
 } from "@media-track/workflow";
-import { distinctSeasons, getActivityView, seasonLabelText } from "./activity-view";
+import { getActivityView } from "./activity-view";
 
 function title(tmdbId: number, name: string): MediaTitle {
   return { id: `t${tmdbId}`, tmdbId, type: "tv", title: name, originalTitle: name, year: 2026, aliases: [], posterPath: `/p${tmdbId}.jpg` };
@@ -90,41 +90,6 @@ function run(input: {
         : [],
   };
 }
-
-describe("distinctSeasons", () => {
-  it("returns distinct, sorted season numbers from episode codes", () => {
-    const episodes = [episode(1, 1), episode(1, 2), episode(2, 1), episode(3, 1), episode(3, 2)];
-    expect(distinctSeasons(episodes)).toEqual([1, 2, 3]);
-  });
-  it("single season → [n]", () => {
-    expect(distinctSeasons([episode(1, 1), episode(1, 2)])).toEqual([1]);
-    expect(distinctSeasons([episode(2, 1)])).toEqual([2]);
-  });
-  it("empty → []", () => {
-    expect(distinctSeasons([])).toEqual([]);
-  });
-  it("sorts numerically (not lexically) and dedupes out-of-order codes", () => {
-    expect(distinctSeasons([episode(10, 1), episode(2, 1), episode(2, 2), episode(1, 1)])).toEqual([1, 2, 10]);
-  });
-});
-
-describe("seasonLabelText", () => {
-  it("movie → empty string regardless of seasons", () => {
-    expect(seasonLabelText("movie", [1, 2], 1)).toBe("");
-  });
-  it("no seasons (empty list, null single) → empty string", () => {
-    expect(seasonLabelText("tv", [], null)).toBe("");
-  });
-  it("single season → 第 N 季", () => {
-    expect(seasonLabelText("tv", [2], 2)).toBe("第 2 季");
-  });
-  it("multiple seasons → joined 第 1/2/3/4 季", () => {
-    expect(seasonLabelText("tv", [1, 2, 3, 4], 1)).toBe("第 1/2/3/4 季");
-  });
-  it("falls back to the single seasonNumber when the list is empty", () => {
-    expect(seasonLabelText("tv", [], 3)).toBe("第 3 季");
-  });
-});
 
 describe("getActivityView", () => {
   it("active run over multiple seasons exposes the distinct sorted seasonNumbers", async () => {
