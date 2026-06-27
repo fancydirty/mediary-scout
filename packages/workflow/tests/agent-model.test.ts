@@ -30,50 +30,60 @@ describe("agent-model — the live OpenAI-compatible (BYO) LanguageModel factory
     expect(providerSettings.baseURL).toBe("https://example.test/v1");
   });
 
-  it("sends the api-key header when apiKey is set", () => {
+  // #49 real root cause: the key must go out BOTH ways. Standard OpenAI-compatible
+  // providers (DeepSeek/OpenAI/Groq/OpenRouter) authenticate via
+  // `Authorization: Bearer <key>`, which @ai-sdk/openai-compatible emits ONLY from
+  // the provider's `apiKey` field — they IGNORE the `api-key` header. MiMo/Azure
+  // read the `api-key` header. Sending both = universal compatibility.
+  it("sends the key BOTH ways when apiKey is set (apiKey→Bearer AND api-key header)", () => {
     const { providerSettings } = createAgentProviderConfig({
       apiKey: "secret",
       baseURL: "https://example.test/v1",
       modelId: "custom-model",
     });
+    expect(providerSettings.apiKey).toBe("secret");
     expect(providerSettings.headers).toEqual({ "api-key": "secret" });
   });
 
-  it("omits the api-key header for a keyless local LLM", () => {
+  it("omits BOTH apiKey and headers for a keyless local LLM", () => {
     const { providerSettings } = createAgentProviderConfig({
       baseURL: "http://localhost:11434/v1",
       modelId: "qwen2.5",
     });
+    expect(providerSettings.apiKey).toBeUndefined();
     expect(providerSettings.headers).toBeUndefined();
   });
 
   // C1 (Copilot #51): a blank/whitespace apiKey (e.g. AGENT_MODEL_API_KEY= in
-  // .env) must NOT send `api-key: ""` — that breaks keyless local LLMs with an
-  // avoidable 401. Only attach the header for a non-empty key (trimmed).
-  it("omits the api-key header for an EMPTY-STRING apiKey (keyless)", () => {
+  // .env) must NOT send a key at all — neither Bearer nor `api-key: ""` — that
+  // breaks keyless local LLMs with an avoidable 401.
+  it("omits BOTH apiKey and headers for an EMPTY-STRING apiKey (keyless)", () => {
     const { providerSettings } = createAgentProviderConfig({
       apiKey: "",
       baseURL: "http://localhost:11434/v1",
       modelId: "qwen2.5",
     });
+    expect(providerSettings.apiKey).toBeUndefined();
     expect(providerSettings.headers).toBeUndefined();
   });
 
-  it("omits the api-key header for a whitespace-only apiKey (keyless)", () => {
+  it("omits BOTH apiKey and headers for a whitespace-only apiKey (keyless)", () => {
     const { providerSettings } = createAgentProviderConfig({
       apiKey: "   ",
       baseURL: "http://localhost:11434/v1",
       modelId: "qwen2.5",
     });
+    expect(providerSettings.apiKey).toBeUndefined();
     expect(providerSettings.headers).toBeUndefined();
   });
 
-  it("trims the api-key, baseURL and modelId before building provider settings", () => {
+  it("trims the key (both Bearer + header), baseURL and modelId before building provider settings", () => {
     const { providerSettings, modelId } = createAgentProviderConfig({
       apiKey: "  secret  ",
       baseURL: "  https://example.test/v1  ",
       modelId: "  custom-model  ",
     });
+    expect(providerSettings.apiKey).toBe("secret");
     expect(providerSettings.headers).toEqual({ "api-key": "secret" });
     expect(providerSettings.baseURL).toBe("https://example.test/v1");
     expect(modelId).toBe("custom-model");

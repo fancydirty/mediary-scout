@@ -59,15 +59,25 @@ export function createAgentProviderConfig(options: AgentModelOptions = {}): {
   }
   // Trim before building: llmConfigError validates on trimmed values, so the
   // provider must use the trimmed values too (a pasted "  https://x/v1  " would
-  // otherwise hit a malformed endpoint). The api-key header is attached ONLY for
-  // a non-empty trimmed key — a blank/whitespace key (e.g. AGENT_MODEL_API_KEY=
-  // in .env) means keyless local LLM; sending `api-key: ""` would cause an
-  // avoidable 401 (Copilot #51 C1).
+  // otherwise hit a malformed endpoint).
+  //
+  // Send the key BOTH ways when present (#49 real root cause):
+  //  - `apiKey`  → the provider emits `Authorization: Bearer <key>`. This is how
+  //    STANDARD OpenAI-compatible services authenticate — DeepSeek, OpenAI, Groq,
+  //    OpenRouter, … — and they IGNORE a custom `api-key` header. Without this a
+  //    correctly-configured DeepSeek key still 401s.
+  //  - `headers: { "api-key": <key> }` → MiMo / Azure-OpenAI read this header.
+  // They coexist safely: the provider merges
+  // `{ ...(apiKey && { Authorization }), ...headers }`, and our header key is
+  // `api-key` (not `Authorization`), so neither clobbers the other.
+  //
+  // A blank/whitespace key (e.g. AGENT_MODEL_API_KEY= in .env) → send NEITHER
+  // (keyless local LLM — ollama/LM Studio; sending an empty key would 401) (C1).
   const key = options.apiKey?.trim();
   const providerSettings: OpenAICompatibleProviderSettings = {
     name: options.providerName ?? DEFAULT_PROVIDER_NAME,
     baseURL: options.baseURL!.trim(),
-    ...(key ? { headers: { "api-key": key } } : {}),
+    ...(key ? { apiKey: key, headers: { "api-key": key } } : {}),
   };
   return { providerSettings, modelId: options.modelId!.trim() };
 }
