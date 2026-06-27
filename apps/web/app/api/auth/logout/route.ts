@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { SESSION_COOKIE_NAME, logoutSession } from "../../../../lib/workflow-runtime";
+import { SESSION_COOKIE_NAME, isCookieSecure, logoutSession } from "../../../../lib/workflow-runtime";
 
 /** Destroy the session + clear the cookie. */
 export async function POST(request: NextRequest) {
@@ -9,7 +9,7 @@ export async function POST(request: NextRequest) {
   response.cookies.set(SESSION_COOKIE_NAME, "", {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: isCookieSecure(),
     path: "/",
     maxAge: 0,
   });

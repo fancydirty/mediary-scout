@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import {
   SESSION_COOKIE_NAME,
   isMultiUserEnabled,
+  isCookieSecure,
   loginAccount,
 } from "../../../../lib/workflow-runtime";
 
@@ -25,7 +26,7 @@ export async function POST(request: NextRequest) {
   response.cookies.set(SESSION_COOKIE_NAME, result.signedCookie, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: isCookieSecure(),
     path: "/",
     maxAge: SESSION_MAX_AGE,
   });

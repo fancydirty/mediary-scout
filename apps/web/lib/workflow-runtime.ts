@@ -311,6 +311,18 @@ export function isMultiUserEnabled(): boolean {
 }
 
 export const SESSION_COOKIE_NAME = "mt_session";
+
+/** Whether the mt_session cookie should carry the Secure flag.
+ *  MEDIA_TRACK_COOKIE_SECURE=0 → false (HTTP/FRP/LAN scenarios).
+ *  MEDIA_TRACK_COOKIE_SECURE=1 → true (enforce HTTPS-only).
+ *  Unset → auto: secure only when NODE_ENV === "production".
+ */
+export function isCookieSecure(): boolean {
+  const explicit = process.env.MEDIA_TRACK_COOKIE_SECURE?.trim();
+  if (explicit === "0") return false;
+  if (explicit === "1") return true;
+  return process.env.NODE_ENV === "production";
+}
 const SESSION_SECRET_SETTING_KEY = "session_secret";
 /** Sentinel account that owns no data — returned in multi-user mode when there
  *  is no valid session, so reads fail CLOSED (empty) instead of leaking the
