@@ -22,10 +22,10 @@
 
 ## 部署与基础设施
 
-- **#47(closes #46)** 修**连不上 Docker Hub 时构建第一步就卡死** —— 首次 `docker compose build` 在拉基础镜像处挂住(`auth.docker.io ... i/o timeout`)。加了镜像加速文档(Docker Desktop / Linux 分别说明,面向国内网络)。
+- **#47(closes #46)** 修复**连不上 Docker Hub 时构建第一步就卡死** —— 首次 `docker compose build` 在拉基础镜像处挂住(`auth.docker.io ... i/o timeout`)。加了镜像加速文档(Docker Desktop / Linux 分别说明,面向国内网络)。
 - **#48** 未连任何网盘时,后台 worker **静默跳过**获取轮询,不再每 3 秒刷一行 `PAN115_COOKIE is required` 日志(新装、还没连盘时日志干净)。
 
 ## 试用
 
-- 免安装只读 demo:https://mediary.dirtyfancy.sbs
+- 免安装只读 demo: https://mediary.dirtyfancy.sbs
 - 自部署:见 [README](../README.md) + [docs/deploy.md](deploy.md)

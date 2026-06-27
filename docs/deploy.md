@@ -1,6 +1,6 @@
 # Deploy Mediary Scout
 
-> **English summary.** Self-host with one command — `docker compose up -d` brings up web (Next.js + in-process worker) + Postgres + a bundled PanSou. Open `http://<host>:3000`, go to Settings, scan-login your 115 / Quark drive (or paste a 光鸭 / GuangYaPan token), add an OpenAI-compatible LLM endpoint, and you're running. To reach it from your phone / TV / on the go, use **Tailscale** (private mesh — safest) or a **Cloudflare Tunnel** (public HTTPS, no public IP). **Never expose `:3000` raw to the internet.** Full walkthrough below (Chinese).
+> **English summary.** Self-host with one command — `docker compose up -d` brings up web (Next.js + in-process worker) + Postgres + a bundled PanSou. Open `http://<host>:3000`, go to Settings, scan-login your 115 / Quark drive (or paste a 光鸭 / GuangYaPan `access_token` + `refresh_token`), add an OpenAI-compatible LLM endpoint, and you're running. To reach it from your phone / TV / on the go, use **Tailscale** (private mesh — safest) or a **Cloudflare Tunnel** (public HTTPS, no public IP). **Never expose `:3000` raw to the internet.** Full walkthrough below (Chinese).
 
 一行命令起整套:**web(Next + 进程内 worker)+ Postgres + 自带 PanSou**。本指南覆盖:选宿主 → compose 起服务 → 从自己的设备访问 → 安全/升级。
 
@@ -34,7 +34,7 @@ docker compose up -d        # 首次会构建 web 镜像,几分钟
 ```
 
 打开 `http://<你的主机>:3000`:
-1. **设置 → 网盘**:115 扫码登录(cookie 持久化到数据库,后续自动转存);夸克在设置选夸克品牌粘贴 cookie;光鸭云盘在设置选光鸭品牌粘贴 token(见 [光鸭云盘连接](#光鸭云盘guangyapan连接))。
+1. **设置 → 网盘**:115 扫码登录(cookie 持久化到数据库,后续自动转存);夸克在设置选夸克品牌粘贴 cookie;光鸭云盘在设置选光鸭品牌粘贴 `access_token` + `refresh_token` 两个值(见 [光鸭云盘连接](#光鸭云盘guangyapan连接))。
 2. 就这样。**TMDB 元数据经作者 CF Worker 开箱即用**(想用自己额度可在设置填 TMDB key);**PanSou 网盘搜索源已自带**。
 
 ### 组成 / 端口

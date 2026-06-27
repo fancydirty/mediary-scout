@@ -159,7 +159,7 @@ Three Chinese cloud drives, each a first-class workspace:
 
 - **115** (`pan115`) — full support, including magnet via Prowlarr.
 - **Quark** (`quark`) — share-link transfer (no magnet web API).
-- **GuangYaPan / 光鸭云盘** (`guangya`) — Xunlei-family drive; **magnet / offline-download first** (transfers magnet/ed2k/BT via its offline-task API, like 115's offline path — it does **not** transfer 115/Quark/光鸭 share-links in v1). Token auth (`access_token` + `refresh_token`). Pairs well with Prowlarr. **[Setup guide → docs/deploy.md#光鸭云盘-guangyapan-连接](docs/deploy.md#光鸭云盘guangyapan连接)**
+- **GuangYaPan / 光鸭云盘** (`guangya`) — Xunlei-family drive; **magnet / offline-download first** (transfers magnet/ed2k/BT via its offline-task API, like 115's offline path — it does **not** transfer 115/Quark/光鸭 share-links in v1). Token auth (`access_token` + `refresh_token`). Pairs well with Prowlarr. **[Setup guide](docs/deploy.md#光鸭云盘guangyapan连接)**
 
 New brands plug into a storage-brand registry; the bulk of adding one is a drive client + a storage executor for that drive's transfer API.
 
