@@ -133,6 +133,23 @@ describe("extractGuangYaTokens", () => {
     });
   });
 
+  it("JWT heuristic does not swallow a following refresh LABEL (no separator)", () => {
+    // The JWT's final segment is all [A-Za-z0-9_-], so `eyJa.b.crefreshToken`
+    // would over-consume `refreshToken` into the signature. Bounding access to
+    // the text before the refresh start fixes it regardless of separators.
+    expect(extractGuangYaTokens("eyJa.b.crefreshToken:gy.RT1")).toEqual({
+      accessToken: "eyJa.b.c",
+      refreshToken: "gy.RT1",
+    });
+  });
+
+  it("JWT heuristic does not swallow a following gy. token (bare concatenation)", () => {
+    expect(extractGuangYaTokens("eyJa.b.cgy.RT1")).toEqual({
+      accessToken: "eyJa.b.c",
+      refreshToken: "gy.RT1",
+    });
+  });
+
   it("sanitizes zero-width chars inside extracted tokens", () => {
     const pasted = `accessToken: eyJabc.def.ghi\nrefreshToken: gy.${ZWSP}RT${ZWNJ}123`;
     expect(extractGuangYaTokens(pasted)).toEqual({

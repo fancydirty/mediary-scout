@@ -79,8 +79,10 @@ export function parseTokenPaste(raw: string): { accessToken: string; refreshToke
   return { accessToken: sanitizeToken(access), refreshToken: sanitizeToken(refresh) };
 }
 
-// 光鸭 refresh token 以 `gy.` 开头(启发式锚点)。
-const REFRESH_HEURISTIC = /\bgy\.[A-Za-z0-9._~+/=-]+/;
+// 光鸭 refresh token 以 `gy.` 开头(启发式锚点)。不加 \b:真实粘贴里 access JWT 常与
+// refresh 紧贴无分隔(eyJa.b.cgy.RT1),前一个字符是词字符会让 \b 失配 → 漏掉 refresh。
+// `gy\.` 字面锚点已足够具体,匹配第一个出现处即可。
+const REFRESH_HEURISTIC = /gy\.[A-Za-z0-9._~+/=-]+/;
 // JWT(access token)启发式:三段点分,字符集不含点本身(避免吃进后面的 refreshToken: 等噪声)。
 const JWT_HEURISTIC = /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/;
 // 标签 + 值:标签(access_token / accessToken …)后跟 :/引号/空白,再抓值。值字符集
@@ -109,24 +111,27 @@ export function extractGuangYaTokens(raw: string): { accessToken: string; refres
   // 只剩 gy.),必须先去掉;但普通空白/换行是 label 与值之间的有用边界,保留。
   const text = stripInvisible(raw);
 
-  // 先定位 refresh(标签优先,回退 gy. 启发式),记下它在文本里的起点。
+  // 定位 refresh:取值用「标签优先、回退 gy. 启发式」;但 access 的定界用 refresh 的
+  // 「最早起点」——即 gy. 命中位置 与 refresh 标签位置 二者中更靠前的那个。这样无论分隔符
+  // 如何(甚至 access JWT 与 refresh 紧贴无分隔:eyJa.b.cgy.RT1),access 都被钳在 refresh
+  // 之前,JWT 的末段([A-Za-z0-9_-]+)不会把后面的 refreshToken/gy. 吞进签名(Copilot #57)。
   let refresh: string | null = null;
-  let refreshIndex = text.length;
+  let refreshStart = Number.POSITIVE_INFINITY;
   const refreshLabel = text.match(REFRESH_LABEL);
   if (refreshLabel && refreshLabel[1]) {
     refresh = refreshLabel[1];
-    refreshIndex = refreshLabel.index ?? text.length;
-  } else {
-    const refreshHeur = text.match(REFRESH_HEURISTIC);
-    if (refreshHeur) {
-      refresh = refreshHeur[0];
-      refreshIndex = refreshHeur.index ?? text.length;
-    }
+    refreshStart = refreshLabel.index ?? refreshStart;
   }
+  const refreshHeur = text.match(REFRESH_HEURISTIC);
+  if (refreshHeur) {
+    // 标签没拿到值时,gy. 启发式补上 refresh 值。
+    if (refresh === null) refresh = refreshHeur[0];
+    // access 定界取更早者(gy. 可能出现在标签之前)。
+    refreshStart = Math.min(refreshStart, refreshHeur.index ?? Number.POSITIVE_INFINITY);
+  }
+  const refreshIndex = Number.isFinite(refreshStart) ? refreshStart : text.length;
 
-  // access 只在 refresh 标记之前的片段(head)里找——无论标签还是启发式。否则在「换行被
-  // onChange 清洗吞掉」的真实粘贴里(accessToken:<JWT>refreshToken:gy.<rt>),access 的值
-  // 捕获会越过下一个 refreshToken 标签、把它一并吃进去(实测踩坑)。
+  // access 只在 refresh 起点之前的片段(head)里找——无论标签还是启发式。
   const head = text.slice(0, refreshIndex);
   let access: string | null = null;
   const accessLabel = head.match(ACCESS_LABEL);
