@@ -1,5 +1,7 @@
 import {
   MAX_DISTINCT_PLANNING_SEARCHES,
+  MOVIE_SEARCH_BUDGET,
+  MOVIE_SEARCH_SOFT_THRESHOLD,
   decideSearchGate,
   keywordReferencesTitle,
   normalizeSearchKeyword,
@@ -41,6 +43,12 @@ export interface TaskSandboxOptions {
    *  these is rejected at the tool boundary (the agent's "2026 电影" genre/year
    *  fallback only returns noise). Empty/omitted → no title check (fail open). */
   titleTerms?: string[];
+  /** Movie-only "中文字幕软兜底": when true, the search budget becomes 8+2 (a
+   *  RESERVE the agent is told about), and on budget exhaustion the agent is
+   *  authorized to land a raw-name match of the CORRECT film as last-resort
+   *  coverage (flagged 可能无中字) rather than reportNoCoverage. TV/anime leave
+   *  this false so the 中文 floor stays HARD (no 生肉 dumping). */
+  subtitleFallback?: boolean;
 }
 
 export interface SearchToolResult {
@@ -50,6 +58,10 @@ export interface SearchToolResult {
   deduped?: boolean;
   /** Set when the search budget is exhausted; the agent must decide from what it has. */
   refused?: string;
+  /** Movie 8+2 reserve: set on a search performed in the reserve zone (after the
+   *  normal 8) — tells the agent it is on its last searches and the subtitle
+   *  fallback policy is now in play. */
+  note?: string;
 }
 
 export interface TransferToolResult {
@@ -74,14 +86,25 @@ export class TaskSandbox {
   private readonly movieDir: string | undefined;
   private readonly need: readonly string[];
   private readonly titleTerms: readonly string[];
+  private readonly subtitleFallback: boolean;
+  /** Reserve-zone threshold (movie 8+2) — undefined disables the reserve zone. */
+  private readonly softThreshold: number | undefined;
   private readonly seenKeywords = new Set<string>();
   private readonly snapshotByKeyword = new Map<string, ResourceSnapshotV2>();
   private readonly observedSnapshots = new Map<string, ResourceSnapshotV2>();
   private readonly obtainedCodes = new Set<string>();
+  /** Set when the agent landed a movie via the 中文字幕 last-resort fallback (no
+   *  confirmed 中字). Surfaced in finish() → notification 可能无中文字幕(兜底). */
+  private subtitleFallbackUsed = false;
 
   constructor(options: TaskSandboxOptions) {
     this.provider = options.provider;
-    this.searchBudget = options.searchBudget ?? MAX_DISTINCT_PLANNING_SEARCHES;
+    this.subtitleFallback = options.subtitleFallback ?? false;
+    // Movie 8+2: default to MOVIE_SEARCH_BUDGET (10) with a reserve at 8 when the
+    // subtitle fallback is on; otherwise the normal hard-8 (no reserve zone).
+    this.searchBudget =
+      options.searchBudget ?? (this.subtitleFallback ? MOVIE_SEARCH_BUDGET : MAX_DISTINCT_PLANNING_SEARCHES);
+    this.softThreshold = this.subtitleFallback ? MOVIE_SEARCH_SOFT_THRESHOLD : undefined;
     this.storage = options.storage;
     this.stagingDirectoryId = options.stagingDirectoryId;
     this.seasonDirs = new Map(
@@ -137,21 +160,38 @@ export class TaskSandbox {
       normalizedKeyword: normalized,
       seenKeywords: this.seenKeywords,
       maxDistinctSearches: this.searchBudget,
+      ...(this.softThreshold === undefined ? {} : { softThreshold: this.softThreshold }),
     });
     if (decision === "duplicate") {
       const prior = this.snapshotByKeyword.get(normalized);
       return prior ? { snapshot: prior, deduped: true } : { deduped: true };
     }
     if (decision === "exhausted") {
-      return {
-        refused: `search budget exhausted (${this.searchBudget} distinct searches); decide from the evidence already gathered`,
-      };
+      return { refused: this.budgetExhaustedMessage() };
     }
+    // "fresh" and "reserve" both perform the search; "reserve" (movie 8+2) attaches
+    // the note that flips the agent into last-resort subtitle-fallback mode.
     this.seenKeywords.add(normalized);
     const snapshot = await this.provider.search(keyword);
     this.snapshotByKeyword.set(normalized, snapshot);
     this.observedSnapshots.set(snapshot.id, snapshot);
-    return { snapshot };
+    return decision === "reserve" ? { snapshot, note: this.reserveNote() } : { snapshot };
+  }
+
+  /** Budget-exhausted refusal. For a movie (subtitle fallback) it authorizes the
+   *  last-resort raw landing; otherwise the original hard-stop message (the 中文
+   *  floor stays hard for TV/anime). */
+  private budgetExhaustedMessage(): string {
+    if (this.subtitleFallback) {
+      return `搜索预算已用尽(${this.searchBudget} 次)。立刻从已有证据决策:若已确认正确影片的 raw 名匹配,就兜底 transferCandidate 落它,并在 markObtained 时带 subtitleFallback(系统会标注「可能无中文字幕」);只有连正确影片的任何候选都没有时,才 reportNoCoverage。`;
+    }
+    return `search budget exhausted (${this.searchBudget} distinct searches); decide from the evidence already gathered`;
+  }
+
+  /** The reserve-zone note (movie 8+2) attached to searches 9–10. */
+  private reserveNote(): string {
+    const reserve = this.searchBudget - (this.softThreshold ?? this.searchBudget);
+    return `⚠️ 中字搜索预算(${this.softThreshold})已用满,还剩 ${reserve} 次预留。用它做最后的裸名/抖动复搜;若仍找不到带中字的版本、但已确认正确影片的 raw 名匹配,就直接 transferCandidate 兜底落它(markObtained 带 subtitleFallback,系统标注「可能无中字」),不要 reportNoCoverage —— 有正片胜过没有,且该版实际未必无中字。`;
   }
 
   /** Whether a snapshot id was actually observed in this task — the gate for
@@ -404,9 +444,14 @@ export class TaskSandbox {
    *  round. Correctness is the prompt ordering (clean/flatten, THEN mark last),
    *  not a system gate that costs extra 115 reads. No fileId↔episode map (§1.13):
    *  the code IS the unit; the agent names what it judged present. */
-  async markObtained(input: { codes: string[] }): Promise<{ confirmed: string[] }> {
+  async markObtained(input: { codes: string[]; subtitleFallback?: boolean }): Promise<{ confirmed: string[] }> {
     for (const code of input.codes) {
       this.obtainedCodes.add(code);
+    }
+    // Movie 中文字幕软兜底: the agent landed a raw-name match without a confirmed
+    // 中文 sub track (budget exhausted). Sticky so finish() can flag 可能无中字.
+    if (input.subtitleFallback) {
+      this.subtitleFallbackUsed = true;
     }
     return { confirmed: input.codes };
   }
@@ -454,7 +499,7 @@ export class TaskSandbox {
 
   /** The agent declares it is done. Returns the honest coverage picture from the
    *  obtained marks — the workflow decides what to persist. */
-  async finish(): Promise<{ coverageMet: boolean; obtained: string[]; missing: string[] }> {
+  async finish(): Promise<{ coverageMet: boolean; obtained: string[]; missing: string[]; subtitleFallback: boolean }> {
     // Report the agent's marks beyond just need∩marked — a coherent full pack
     // often delivers episodes BEYOND the aired cursor (the need), and those
     // provider-ahead marks must survive finish() so syncSeasonNeed records them as
@@ -484,6 +529,7 @@ export class TaskSandbox {
       coverageMet: this.isCoverageMet(),
       obtained,
       missing: this.missingNeed(),
+      subtitleFallback: this.subtitleFallbackUsed,
     };
   }
 

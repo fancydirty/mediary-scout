@@ -159,9 +159,10 @@ export function buildSandboxToolSet(
     },
     markObtained: {
       description:
-        "Your FINAL action: declare the episode codes you have obtained (e.g. [\"S01E13\"], or [\"MOVIE\"] for a film). Do this LAST — only after you have moved the files into the target dir, flattened the wrapper, and confirmed from your inspect that the real films are in place. Pure agent judgment: no fileId, the system does not re-read to second-guess you.",
-      inputSchema: z.object({ codes: z.array(z.string()) }),
-      execute: (args: { codes: string[] }) => asEvidence(() => sandbox.markObtained(args)),
+        "Your FINAL action: declare the episode codes you have obtained (e.g. [\"S01E13\"], or [\"MOVIE\"] for a film). Do this LAST — only after you have moved the files into the target dir, flattened the wrapper, and confirmed from your inspect that the real films are in place. Pure agent judgment: no fileId, the system does not re-read to second-guess you. MOVIE last-resort fallback: if you landed a raw-name match of the correct film WITHOUT a confirmed 中文 sub track (中字 budget exhausted), pass subtitleFallback:true so the system flags 可能无中文字幕.",
+      inputSchema: z.object({ codes: z.array(z.string()), subtitleFallback: z.boolean().optional() }),
+      execute: (args: { codes: string[]; subtitleFallback?: boolean }) =>
+        asEvidence(() => sandbox.markObtained(args)),
     },
     finish: {
       description: "Declare the task done. Returns the honest coverage summary (what is obtained, what remains).",
@@ -219,7 +220,7 @@ export interface AcquisitionAgentResult {
   /** Number of loop steps the model took. */
   steps: number;
   /** Final honest coverage picture, read from the sandbox after the loop. */
-  coverage: { coverageMet: boolean; obtained: string[]; missing: string[] };
+  coverage: { coverageMet: boolean; obtained: string[]; missing: string[]; subtitleFallback: boolean };
 }
 
 /** Run the strong agent's self-driven loop over the sandbox tools. */

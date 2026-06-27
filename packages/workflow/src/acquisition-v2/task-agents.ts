@@ -59,6 +59,11 @@ export interface TaskAgentPromptOptions {
   /** The run's drive brand ("pan115" | "quark") — selects the brand transfer model
    *  in the prompt and the brand-specific dead-links skill section. Default 115. */
   storageProvider?: string;
+  /** Movie-only: soften the 中文 floor into a last-resort fallback (land a
+   *  correct-film raw match when the search budget is exhausted and no 中字 is
+   *  reachable, flagged 可能无中字) instead of the HARD reportNoCoverage. Set by
+   *  buildMovieSystemPrompt; TV/anime leave it false so the floor stays hard. */
+  subtitleFallback?: boolean;
 }
 
 /** A brand-specific transfer-model note. 夸克 differs from 115 (转存分享链 / 无磁力)
@@ -83,10 +88,20 @@ function languageLine(options: TaskAgentPromptOptions): string {
   // "the title contains Chinese chars" (PanSou prepends the show's 中文片名 to English
   // scene filenames, which fools that). The 中字 resource MUST win when reachable.
   if (lang.includes("中")) {
-    return `\nLANGUAGE PREFERENCE: the user reads 中文 subtitles — a HARD requirement, not a nice-to-have. Judge Chinese subs from the RELEASE, NOT from "the title contains Chinese characters": PanSou often prepends the show's 中文片名 to an English scene filename (中文片名-Name.Year.1080p.WEB-DL.Codec-GROUP) — mentally STRIP that prefix and judge what remains.
-- English scene release (Name.Year.Resolution.Source.Codec-GROUP — dotted ASCII + a scene group like EaZy/RARBG/Guyute/NTb/FLUX/CMCT) → assume NO 中文 subs: foreign-only, the user CANNOT read it, so it does NOT meet the 中文 floor (treated the same as 生肉 below — not acceptable coverage).
-- Chinese-community release (a real 中文 release name; or 国语/中字/中英/简繁/双语 markers; or a Chinese release group; bracketed/spaced formatting) → ships 中文 subs. Do NOT require the literal "中字" token — a genuine Chinese-community release carries them.
-- NEVER infer 中文 subs from "it has a subtitle file" or "it's an .mkv": an mkv embeds subtitles that are usually NOT 中文; only the release naming tells you.
+    const head = `\nLANGUAGE PREFERENCE: the user reads 中文 subtitles — ${
+      options.subtitleFallback ? "strongly preferred; search hard for it first" : "a HARD requirement, not a nice-to-have"
+    }. Judge Chinese subs from the RELEASE, NOT from "the title contains Chinese characters": PanSou often prepends the show's 中文片名 to an English scene filename (中文片名-Name.Year.1080p.WEB-DL.Codec-GROUP) — mentally STRIP that prefix and judge what remains.
+- English scene release (Name.Year.Resolution.Source.Codec-GROUP — dotted ASCII + a scene group like EaZy/RARBG/Guyute/NTb/FLUX/CMCT) → assume NO 中文 subs: foreign-only, the user CANNOT read it.
+- Chinese-community release (a real 中文 release name; or 国语/中字/中英/简繁/双语/CHS-ENG/CHS/中英双字/国粤双语 markers; or a Chinese release group; bracketed/spaced formatting) → ships 中文 subs. Do NOT require the literal "中字" token — a genuine Chinese-community release carries them.
+- NEVER infer 中文 subs from "it has a subtitle file" or "it's an .mkv": an mkv embeds subtitles that are usually NOT 中文; only the release naming tells you.`;
+    // Movie: SOFT last-resort fallback. TV/anime: HARD floor (no 生肉 dumping — a raw
+    // Japanese episode with no subs is unwatchable and would falsely mark an episode
+    // obtained, blocking the patrol from re-acquiring it; that was the 2026-06-22 fix).
+    if (options.subtitleFallback) {
+      return `${head}
+Among reachable candidates a 中文-subbed one MUST win — spend your first 8 searches genuinely seeking 中字. LAST-RESORT FALLBACK (movie): when the search budget is exhausted and NO 中文-subbed candidate is reachable, but you HAVE identified a raw-name match of the CORRECT film, LAND IT rather than reportNoCoverage — 有正片(没中字)胜过没资源, and the release may in fact carry embedded 中文 subs the title does not advertise (CHS-ENG / 内封中英双字). Then markObtained with subtitleFallback:true so the system flags 「可能无中文字幕」. Guards: only AFTER a genuine 中字 search effort (never a lazy first choice), NEVER the WRONG film; reportNoCoverage only if NO candidate of the correct film exists at all.`;
+    }
+    return `${head}
 Among reachable candidates a 中文-subbed one MUST win. If NO 中文-subbed candidate is reachable on THIS drive, the 中文 floor is NOT met — a 生肉/raw or foreign-only rip the user cannot read is NOT acceptable coverage: do NOT settle for it. reportNoCoverage honestly (e.g. 该盘无中文字幕源,可能仅存在于其它来源/网盘) rather than landing an unreadable release. (A 中文 source may simply not exist on this drive — that is an honest no-coverage, not a reason to dump 生肉.)`;
   }
   return `\nLANGUAGE PREFERENCE: the user reads ${lang} subtitles. Prefer candidates whose RELEASE is named/built in that language (a release named in a language is far likelier to ship it); treat a foreign-language rip the user cannot read as weak coverage.`;
@@ -149,7 +164,7 @@ Single video: reject packs, collections, multi-part, box sets, or anything struc
 Dead links are the norm — many 115 shares are expired/cancelled (链接已过期 / 分享已取消 / 错误的链接). When you have RANKED several 115-share candidates that are all the SAME target film (best resource first), hand that ORDERED list to transferUntilLanded({candidateIds:[...]}): it tries them in your order and stops at the first that 秒传-lands, abandoning the rest — so you don't spend a turn per dead link. It is 115-shares ONLY and the SET must be your vetted choice (a keyword search mixes in same-named DIFFERENT works — e.g. a variety show or an unrelated cartoon — which you must exclude FIRST). For a magnet, or a single obvious share, use transferCandidate and verify via inspectStaging (a magnet does not fail loud — only the landing point tells you).
 
 SYSTEMIC BLOCK (别甩锅): transferUntilLanded / transferCandidate may return \`systemicBlock: { reason: "..." }\` — the transfer failed with "云下载配额不足" / "登录超时" / "VIP" / "鉴权". **立即停,不要再转存**. The resource EXISTS; the ACCOUNT is blocked (quota / auth / VIP). Every candidate will fail. DO NOT keep transferring, DO NOT report "no resource". Report honestly: the resource was found, the account cannot transfer it (actionable: top up / re-login). This is NOT a dead link (dead links iterate; a systemic block STOPS).
-${languageLine(options)}
+${languageLine({ ...options, subtitleFallback: true })}
 ${transferModelLine(options)}
 ${searchHintsBlock(options)}
 ${qualityGuidanceBlock(options)}

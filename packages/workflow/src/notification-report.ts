@@ -260,12 +260,15 @@ export function buildMovieReport(
   titleName: string,
   meta?: NotificationTitleMeta,
   size?: { fileCount: number; totalBytes: number },
+  /** Movie 中文字幕软兜底: landed a raw-name match without a confirmed 中字 track
+   *  (中字 budget exhausted) — surface it so the user can add subs / re-seek. */
+  subtitleFallback = false,
 ): NotificationReport {
   return {
     titleName,
     seasonLabel: null,
     status: "acquired",
-    lines: ["已获取入库"],
+    lines: subtitleFallback ? ["已获取入库", "⚠️ 可能无中文字幕(兜底)"] : ["已获取入库"],
     newlyObtained: [],
     realMissing: [],
     ...sizeFields(size ?? {}),

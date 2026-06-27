@@ -89,6 +89,9 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
   const sandbox = new TaskSandbox({
     provider,
     storage,
+    // Movie-only 中文字幕软兜底: 8+2 budget + last-resort raw landing (the prompt's
+    // soft floor authorizes it). TV/anime omit it → hard floor + hard 8-budget.
+    ...(request.target.kind === "movie" ? { subtitleFallback: true } : {}),
     stagingDirectoryId: request.stagingDirectoryId,
     ...(request.targetSeasonDirectoryIds === undefined
       ? {}

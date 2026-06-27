@@ -157,6 +157,30 @@ describe("runMovieAcquisitionV2 — obtained comes from the AGENT'S coverage, ne
     expect(result.episodes[0]!.obtained).toBe(true);
   });
 
+  it("中文字幕软兜底: markObtained({subtitleFallback:true}) flags 可能无中文字幕 in the notification (环太平洋)", async () => {
+    const executor = new FakeStorageExecutor();
+    const result = await runMovieAcquisitionV2({
+      title,
+      resourceProvider: emptyProvider(),
+      storage: executor,
+      // The agent exhausted its 中字 budget and landed a raw-name match of the correct
+      // film — declaring the subtitle fallback. The thread markObtained→finish→
+      // coverage→buildResult→buildMovieReport must surface it.
+      model: scriptModel([
+        { tool: "searchResources", input: { keyword: "盗梦空间" } },
+        { tool: "markObtained", input: { codes: ["MOVIE"], subtitleFallback: true } },
+        { tool: "finish", input: {} },
+      ]),
+      workflowRunId: "run-m-fb",
+      moviesParentDirectoryId: "movies_root",
+      now: () => "2026-06-14T00:00:00.000Z",
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.notification.report?.lines.some((l) => l.includes("可能无中文字幕"))).toBe(true);
+    expect(result.notification.body).toContain("可能无中文字幕");
+  });
+
   it("obtained reflects agent coverage, NOT a file sitting in the dir (the mechanical bug)", async () => {
     // A stray file is present in the movie dir, but the agent judged no coverage and
     // never marked. The old code did `listVideoFiles().length > 0` → wrongly obtained.

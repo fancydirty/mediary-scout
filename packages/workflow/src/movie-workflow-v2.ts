@@ -110,6 +110,8 @@ export async function runMovieAcquisitionV2(
     snapshots: v2.outcome.resourceSnapshots,
     attempts: v2.outcome.transferAttempts,
     decisions: v2.outcome.decisions,
+    // 中文字幕软兜底: the agent landed a raw match with no confirmed 中字 → flag it.
+    subtitleFallback: obtained && v2.coverage.subtitleFallback,
     ...(landed ? { landed } : {}),
     now,
   });
@@ -124,6 +126,8 @@ function buildResult(input: {
   snapshots: ResourceSnapshot[];
   attempts: TransferAttempt[];
   decisions: AgentDecision[];
+  /** Landed via the 中文字幕 last-resort fallback (no confirmed 中字) → notification flag. */
+  subtitleFallback?: boolean;
   landed?: LandedSize;
   now: () => string;
 }): MovieWorkflowResult {
@@ -144,6 +148,7 @@ function buildResult(input: {
     t.title,
     { posterPath: t.posterPath ?? null, tmdbId: t.tmdbId, mediaType: t.type, year: t.year },
     input.landed,
+    input.subtitleFallback ?? false,
   );
   // 别甩锅: nothing landed could mean truly no resource (no_coverage) OR the
   // account was systemically blocked (115 云下载配额不足/登录过期) — say which.

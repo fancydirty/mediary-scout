@@ -55,6 +55,40 @@ describe("TaskSandbox — searchResources (system-budgeted, dedup, snapshot-boun
     expect(sandbox.hasObservedSnapshot("never-observed")).toBe(false);
   });
 
+  it("movie (subtitleFallback): 9th/10th search run but carry the 8+2 reserve note; 11th is exhausted with fallback authorization", async () => {
+    const sandbox = new TaskSandbox({
+      provider: { async search(keyword) { return { id: `s_${keyword}`, keyword, candidates: [] }; } },
+      subtitleFallback: true,
+    });
+    for (let i = 0; i < 8; i++) {
+      const r = await sandbox.searchResources(`kw${i}`);
+      expect(r.snapshot).toBeDefined();
+      expect(r.note).toBeUndefined(); // first 8 are normal 中字-seeking searches
+    }
+    const ninth = await sandbox.searchResources("kw8");
+    expect(ninth.snapshot).toBeDefined();
+    expect(ninth.note).toMatch(/预留|兜底/);
+    const tenth = await sandbox.searchResources("kw9");
+    expect(tenth.snapshot).toBeDefined();
+    expect(tenth.note).toMatch(/预留|兜底/);
+    const eleventh = await sandbox.searchResources("kw10");
+    expect(eleventh.snapshot).toBeUndefined();
+    expect(eleventh.refused).toMatch(/兜底|可能无中|subtitleFallback/);
+  });
+
+  it("non-movie: budget stays 8, no reserve note, original exhausted message (floor stays hard)", async () => {
+    const sandbox = new TaskSandbox({
+      provider: { async search(keyword) { return { id: `s_${keyword}`, keyword, candidates: [] }; } },
+    });
+    for (let i = 0; i < 8; i++) {
+      const r = await sandbox.searchResources(`kw${i}`);
+      expect(r.note).toBeUndefined();
+    }
+    const ninth = await sandbox.searchResources("kw8");
+    expect(ninth.refused).toMatch(/budget exhausted/);
+    expect(ninth.refused).not.toMatch(/兜底/);
+  });
+
   it("rejects a keyword that does not reference the title (no provider hit, no budget spent)", async () => {
     let calls = 0;
     const sandbox = new TaskSandbox({

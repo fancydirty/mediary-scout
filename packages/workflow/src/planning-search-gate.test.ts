@@ -57,3 +57,42 @@ describe("decideSearchGate", () => {
     ).toBe("fresh");
   });
 });
+
+describe("decideSearchGate — reserve zone (softThreshold, the movie 8+2 budget)", () => {
+  const setOfSize = (n: number): Set<string> => new Set(Array.from({ length: n }, (_, i) => `kw${i}`));
+
+  it("returns reserve for a NEW keyword at/above softThreshold but below max", () => {
+    expect(
+      decideSearchGate({ normalizedKeyword: "new", seenKeywords: setOfSize(8), maxDistinctSearches: 10, softThreshold: 8 }),
+    ).toBe("reserve");
+    expect(
+      decideSearchGate({ normalizedKeyword: "new", seenKeywords: setOfSize(9), maxDistinctSearches: 10, softThreshold: 8 }),
+    ).toBe("reserve");
+  });
+
+  it("stays fresh below the softThreshold", () => {
+    expect(
+      decideSearchGate({ normalizedKeyword: "new", seenKeywords: setOfSize(7), maxDistinctSearches: 10, softThreshold: 8 }),
+    ).toBe("fresh");
+  });
+
+  it("is exhausted at max even with a softThreshold set", () => {
+    expect(
+      decideSearchGate({ normalizedKeyword: "new", seenKeywords: setOfSize(10), maxDistinctSearches: 10, softThreshold: 8 }),
+    ).toBe("exhausted");
+  });
+
+  it("duplicate still takes precedence inside the reserve zone", () => {
+    const seen = setOfSize(8);
+    seen.add("dup");
+    expect(
+      decideSearchGate({ normalizedKeyword: "dup", seenKeywords: seen, maxDistinctSearches: 10, softThreshold: 8 }),
+    ).toBe("duplicate");
+  });
+
+  it("without softThreshold behaves exactly as before (no reserve zone)", () => {
+    expect(
+      decideSearchGate({ normalizedKeyword: "new", seenKeywords: setOfSize(8), maxDistinctSearches: 8 }),
+    ).toBe("exhausted");
+  });
+});

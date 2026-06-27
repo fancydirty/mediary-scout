@@ -29,6 +29,20 @@ describe("TaskSandbox — markObtained (agent's final declaration; NO mechanical
     expect(summary.missing).toEqual(["S01E02"]);
   });
 
+  it("records a subtitle-fallback landing so the workflow can flag 可能无中字 (movie)", async () => {
+    const sandbox = await sandboxWithNeed(["MOVIE"]);
+    await sandbox.markObtained({ codes: ["MOVIE"], subtitleFallback: true });
+    const summary = await sandbox.finish();
+    expect(summary.obtained).toEqual(["MOVIE"]);
+    expect(summary.subtitleFallback).toBe(true);
+  });
+
+  it("a normal landing leaves subtitleFallback false", async () => {
+    const sandbox = await sandboxWithNeed(["MOVIE"]);
+    await sandbox.markObtained({ codes: ["MOVIE"] });
+    expect((await sandbox.finish()).subtitleFallback).toBe(false);
+  });
+
   it("surfaces provider-ahead marks BEYOND the need — a full pack delivered past the aired cursor (#4)", async () => {
     // The live #4 bug: need = just the aired episode (S01E01, TMDB aired=1); the
     // agent transferred a coherent full-season pack and (correctly, post skill fix)

@@ -27,4 +27,10 @@ describe("getSearchRecipe", () => {
     expect(r).toMatch(/首搜[^。]*中文译名/);
     expect(r).toMatch(/美剧[^。]*(有害|0 胜 7|0-for-7)|避免[^]*美剧/);
   });
+
+  it("movie recipe judges 中字 by reading titles (CHS-ENG…) and forbids 中字/国语 marker keywords (环太平洋 lesson)", () => {
+    const movie = getSearchRecipe("movie");
+    expect(movie).toContain("CHS-ENG"); // recognize 中字 by reading the release name
+    expect(movie).toContain("别把"); // do NOT append 中字/国语/双语/字幕 markers (cut recall)
+  });
 });

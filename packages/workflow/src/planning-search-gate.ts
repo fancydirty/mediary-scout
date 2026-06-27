@@ -18,10 +18,17 @@
  *    never truncates legitimate coverage searching — it only stops the thrash.
  */
 
-export type SearchGateDecision = "fresh" | "duplicate" | "exhausted";
+export type SearchGateDecision = "fresh" | "duplicate" | "exhausted" | "reserve";
 
 /** Generous distinct-search ceiling — above real need, below the observed thrash. */
 export const MAX_DISTINCT_PLANNING_SEARCHES = 8;
+
+/** Movie-only "8+2" budget: the normal 8 中字-seeking searches, then a 2-search
+ *  RESERVE the agent is told about (decideSearchGate → "reserve") so it can do a
+ *  final raw/jitter re-search and, failing that, land a raw-name match of the
+ *  correct film as last-resort coverage rather than reporting no-coverage. */
+export const MOVIE_SEARCH_BUDGET = 10;
+export const MOVIE_SEARCH_SOFT_THRESHOLD = MAX_DISTINCT_PLANNING_SEARCHES;
 
 /**
  * Fold trivial keyword variants together (whitespace/case) so the model cannot
@@ -59,12 +66,20 @@ export function decideSearchGate(args: {
   normalizedKeyword: string;
   seenKeywords: ReadonlySet<string>;
   maxDistinctSearches: number;
+  /** When set (movie 8+2 budget), a NEW keyword at/above this count but below
+   *  maxDistinctSearches returns "reserve" — still runs, but signals the agent it
+   *  is on its last searches and the subtitle-fallback policy is now in play.
+   *  Omitted → no reserve zone (unchanged hard-stop behavior). */
+  softThreshold?: number;
 }): SearchGateDecision {
   if (args.seenKeywords.has(args.normalizedKeyword)) {
     return "duplicate";
   }
   if (args.seenKeywords.size >= args.maxDistinctSearches) {
     return "exhausted";
+  }
+  if (args.softThreshold !== undefined && args.seenKeywords.size >= args.softThreshold) {
+    return "reserve";
   }
   return "fresh";
 }

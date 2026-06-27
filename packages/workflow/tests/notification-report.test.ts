@@ -130,6 +130,14 @@ describe("landedSize", () => {
     const movie = buildMovieReport("周处除三害", { posterPath: "/p.jpg", tmdbId: 996154, mediaType: "movie", year: 2024 }, { fileCount: 1, totalBytes: 2 * GB });
     expect(movie).toMatchObject({ posterPath: "/p.jpg", tmdbId: 996154, year: 2024, fileCount: 1, totalBytes: 2 * GB });
   });
+
+  it("flags a 中文字幕 fallback landing (no confirmed 中字) and stays silent otherwise", () => {
+    const fb = buildMovieReport("环太平洋", undefined, undefined, true);
+    expect(fb.lines.some((l) => l.includes("可能无中文字幕"))).toBe(true);
+    const normal = buildMovieReport("环太平洋", undefined, undefined, false);
+    expect(normal.lines.some((l) => l.includes("可能无中文字幕"))).toBe(false);
+    expect(buildMovieReport("环太平洋").lines.some((l) => l.includes("可能无中文字幕"))).toBe(false);
+  });
 });
 
 describe("transferBlockReason — honest report when transfers were blocked (not no_coverage)", () => {

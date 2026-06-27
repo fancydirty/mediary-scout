@@ -182,6 +182,34 @@ describe("Movie system prompt carries movie-specific invariants", () => {
   });
 });
 
+describe("中文字幕 floor: HARD for TV/anime, SOFT last-resort fallback for movie", () => {
+  it("movie + 中文: soft fallback — authorizes landing a correct-film raw match when budget exhausted, flagged subtitleFallback", () => {
+    const prompt = buildMovieSystemPrompt({ preferredLanguage: "中文" });
+    expect(prompt).toMatch(/subtitleFallback/);
+    expect(prompt).toMatch(/兜底|可能无中文字幕/);
+    // still prefers 中字 first (not a lazy raw grab)
+    expect(prompt).toMatch(/中文.*MUST win|search HARD|先|优先/);
+  });
+
+  it("TV/anime + 中文: floor stays HARD — no 生肉, reportNoCoverage, no fallback", () => {
+    const prompt = buildTvAnimeSystemPrompt({ preferredLanguage: "中文" });
+    expect(prompt).toMatch(/生肉/);
+    expect(prompt).toMatch(/reportNoCoverage/);
+    expect(prompt).not.toMatch(/subtitleFallback/);
+  });
+
+  it("no language preference → no language block in either prompt", () => {
+    expect(buildMovieSystemPrompt({})).not.toMatch(/LANGUAGE PREFERENCE/);
+    expect(buildTvAnimeSystemPrompt({})).not.toMatch(/LANGUAGE PREFERENCE/);
+  });
+
+  it("non-中文 preference (e.g. English) uses the generic line, no fallback machinery", () => {
+    const prompt = buildMovieSystemPrompt({ preferredLanguage: "English" });
+    expect(prompt).toMatch(/LANGUAGE PREFERENCE: the user reads English/);
+    expect(prompt).not.toMatch(/subtitleFallback/);
+  });
+});
+
 describe("run wiring", () => {
   it("runTvAnimeTaskAgent drives the loop with the TV need and reports honest coverage", async () => {
     const need = needForTvTarget({ missingEpisodes: ["S01E01"] });
