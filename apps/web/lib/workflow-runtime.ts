@@ -328,11 +328,15 @@ export function isCookieSecure(request: {
   const explicit = process.env.MEDIA_TRACK_COOKIE_SECURE?.trim();
   if (explicit === "0") return false;
   if (explicit === "1") return true;
+  // Scheme spelling varies by proxy/framework: x-forwarded-proto is usually "https"
+  // but some send "https:"; nextUrl.protocol is usually "https:" but could be "https".
+  // Normalize (lowercase, trim, strip trailing colon) so neither form drops Secure.
+  const normalizeScheme = (raw: string) => raw.trim().toLowerCase().replace(/:$/, "");
   const forwarded = request.headers.get("x-forwarded-proto");
   if (forwarded) {
-    return forwarded.split(",")[0]!.trim().toLowerCase() === "https";
+    return normalizeScheme(forwarded.split(",")[0]!) === "https";
   }
-  return (request.nextUrl?.protocol ?? "").toLowerCase() === "https:";
+  return normalizeScheme(request.nextUrl?.protocol ?? "") === "https";
 }
 const SESSION_SECRET_SETTING_KEY = "session_secret";
 /** Sentinel account that owns no data — returned in multi-user mode when there

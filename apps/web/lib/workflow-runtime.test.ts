@@ -251,4 +251,19 @@ describe("isCookieSecure (the LAN/HTTP login-bounce fix, #60)", () => {
   it("auto: x-forwarded-proto comma list uses the first (client-facing) hop", () => {
     expect(isCookieSecure(req({ xfp: "https, http", protocol: "http:" }))).toBe(true);
   });
+
+  // Copilot #61: scheme strings vary by proxy/framework — x-forwarded-proto is
+  // usually "https" but some send "https:"; nextUrl.protocol is usually "https:"
+  // but could be "https". Normalize (strip trailing colon) so neither form drops Secure.
+  it("auto: x-forwarded-proto with a trailing colon (https:) → still secure", () => {
+    expect(isCookieSecure(req({ xfp: "https:", protocol: "http:" }))).toBe(true);
+  });
+
+  it("auto: nextUrl.protocol without a colon (https) → still secure", () => {
+    expect(isCookieSecure(req({ protocol: "https" }))).toBe(true);
+  });
+
+  it("auto: x-forwarded-proto http with a colon (http:) → insecure", () => {
+    expect(isCookieSecure(req({ xfp: "http:", protocol: "http:" }))).toBe(false);
+  });
 });
