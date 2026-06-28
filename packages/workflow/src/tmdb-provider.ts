@@ -340,6 +340,10 @@ export async function prepareMovieTarget(input: {
         genreIds: details.genres,
         originCountries: details.origin_country,
       }),
+      // Carried so the movie agent can skip the 中文 subtitle floor for 国产片
+      // (CN-origin = natively Chinese-spoken; details.origin_country is mapped from
+      // the movie's production_countries). Search itself stays origin-independent.
+      originCountries: details.origin_country,
       title,
       originalTitle: normalizeTitle(details.original_title) || title,
       year: yearFromDate(details.release_date),

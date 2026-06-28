@@ -377,6 +377,9 @@ describe("TmdbSearchProvider", () => {
 
     expect(target.title.year).toBe(2001);
     expect(target.title.releaseDate).toBe("2001-07-20"); // full date kept for the reserve air-time gate
+    // origin_country (mapped from production_countries) is carried so the movie agent
+    // can skip the 中文 subtitle floor for 国产片 (a CN movie would carry ["CN"]).
+    expect(target.title.originCountries).toEqual(["JP"]);
     expect(target.keyword).toBe("千与千寻"); // bare title — no quality token in the keyword
   });
 });

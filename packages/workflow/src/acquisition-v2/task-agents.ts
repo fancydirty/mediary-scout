@@ -64,6 +64,10 @@ export interface TaskAgentPromptOptions {
    *  reachable, flagged 可能无中字) instead of the HARD reportNoCoverage. Set by
    *  buildMovieSystemPrompt; TV/anime leave it false so the floor stays hard. */
   subtitleFallback?: boolean;
+  /** TMDB origin_country of the title (e.g. ["CN"], ["US"]). When it includes CN,
+   *  the work is natively Chinese-spoken → the 中文 subtitle floor is irrelevant
+   *  (no 中字 to hunt), so languageLine skips it. Empty/absent → normal floor. */
+  originCountries?: string[];
 }
 
 /** A brand-specific transfer-model note. 夸克 differs from 115 (转存分享链 / 无磁力)
@@ -88,6 +92,12 @@ function languageLine(options: TaskAgentPromptOptions): string {
   // "the title contains Chinese chars" (PanSou prepends the show's 中文片名 to English
   // scene filenames, which fools that). The 中字 resource MUST win when reachable.
   if (lang.includes("中")) {
+    // 国产 (CN-origin) titles are natively Chinese-spoken — there is no 中字 to hunt
+    // and no 生肉 risk. Skip the whole subtitle floor (the 环太平洋 follow-up): don't
+    // burn budget on 中字/国语 markers, just pick on quality/completeness.
+    if ((options.originCountries ?? []).includes("CN")) {
+      return `\nLANGUAGE PREFERENCE: 这是中国大陆出品(国产)作品,原生中文对白 —— 无需做任何中文字幕判定,也不要把 中字/国语/双语 等词拼进搜索关键词。直接按画质/完整性正常选片即可。`;
+    }
     const head = `\nLANGUAGE PREFERENCE: the user reads 中文 subtitles — ${
       options.subtitleFallback ? "strongly preferred; search hard for it first" : "a HARD requirement, not a nice-to-have"
     }. Judge Chinese subs from the RELEASE, NOT from "the title contains Chinese characters": PanSou often prepends the show's 中文片名 to an English scene filename (中文片名-Name.Year.1080p.WEB-DL.Codec-GROUP) — mentally STRIP that prefix and judge what remains.

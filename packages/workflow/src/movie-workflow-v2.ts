@@ -87,6 +87,8 @@ export async function runMovieAcquisitionV2(
     ...(request.searchBudget === undefined ? {} : { searchBudget: request.searchBudget }),
     ...(request.maxSteps === undefined ? {} : { maxSteps: request.maxSteps }),
     ...(request.preferredLanguage === undefined ? {} : { preferredLanguage: request.preferredLanguage }),
+    // 国产片(CN origin)→ 电影 prompt 跳过中文字幕 floor(原生中文对白,无中字可寻)。
+    ...(request.title.originCountries === undefined ? {} : { originCountries: request.title.originCountries }),
     ...(request.storageProvider === undefined ? {} : { storageProvider: request.storageProvider }),
     ...(request.deadLinkStore ? { deadLinkStore: request.deadLinkStore } : {}),
     ...(request.onProgress ? { onProgress: request.onProgress } : {}),

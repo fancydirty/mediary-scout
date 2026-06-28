@@ -46,6 +46,9 @@ export interface RunAcquisitionV2Request {
   searchBudget?: number;
   maxSteps?: number;
   preferredLanguage?: string;
+  /** TMDB origin_country of the title — when it includes CN the movie prompt skips
+   *  the 中文 subtitle floor (国产片 natively Chinese-spoken). */
+  originCountries?: string[];
   /** This title's per-media-type PanSou keyword recipe, injected into the prompt. */
   searchHints?: string;
   /** Rendered quality-preference guidance (召回后选片优先级), injected into the prompt. */
@@ -111,6 +114,7 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     model: request.model,
     ...(request.maxSteps === undefined ? {} : { maxSteps: request.maxSteps }),
     ...(request.preferredLanguage === undefined ? {} : { preferredLanguage: request.preferredLanguage }),
+    ...(request.originCountries === undefined ? {} : { originCountries: request.originCountries }),
     ...(request.searchHints === undefined ? {} : { searchHints: request.searchHints }),
     ...(request.qualityGuidance === undefined ? {} : { qualityGuidance: request.qualityGuidance }),
     ...(request.storageProvider === undefined ? {} : { storageProvider: request.storageProvider }),

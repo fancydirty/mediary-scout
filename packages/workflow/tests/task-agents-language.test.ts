@@ -32,3 +32,23 @@ describe("languageLine — Chinese-subtitle selection guidance", () => {
     expect(p).toContain("English");
   });
 });
+
+describe("languageLine — 国产 (CN-origin) content needs no 中字 judgement (国产电影 fix)", () => {
+  it("movie + 中文 + CN origin → 国产 native line, the 中字 floor is skipped entirely", () => {
+    const p = buildMovieSystemPrompt({ preferredLanguage: "中文", originCountries: ["CN"] });
+    expect(p).toMatch(/国产|原生中文|中文对白/);
+    expect(p).toMatch(/无需|不需要/);
+    expect(p).not.toContain("subtitleFallback"); // no fallback machinery
+    expect(p).not.toContain("HARD requirement"); // no hard floor
+  });
+
+  it("movie + 中文 + foreign origin (US) → soft subtitle fallback (unchanged)", () => {
+    const p = buildMovieSystemPrompt({ preferredLanguage: "中文", originCountries: ["US"] });
+    expect(p).toContain("subtitleFallback");
+    expect(p).not.toMatch(/国产/);
+  });
+
+  it("movie + 中文 + no origin info → soft fallback (unchanged default)", () => {
+    expect(buildMovieSystemPrompt({ preferredLanguage: "中文" })).toContain("subtitleFallback");
+  });
+})
