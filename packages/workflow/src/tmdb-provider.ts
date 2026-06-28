@@ -38,15 +38,28 @@ function normalizeAccess(access: TmdbAccess): TmdbAccess {
 }
 
 /** Try each access in order; first success wins, all-fail throws. This is the
- *  one chokepoint where user-key → proxy fallback lives. */
+ *  one chokepoint where user-key → proxy fallback lives.
+ *
+ *  `deadAccesses` (shared across a provider's lifetime) memoizes which accesses
+ *  have already failed so later calls skip them instead of re-paying the cost.
+ *  Without it, a user TMDB token whose direct api.themoviedb.org hop is blocked
+ *  makes EVERY call (a search fires ~11) re-time-out on that hop before falling
+ *  back — the cumulative stall shows as "A server error occurred" (issue #68).
+ *  Accesses are dropped from the dead set on no live attempt so a request that
+ *  starts all-dead still probes once rather than throwing blind. */
 async function fetchViaAccessChain(
   accesses: TmdbAccess[],
   path: string,
   query: Record<string, string>,
   fetchJson: TmdbFetchJson,
+  deadAccesses?: Set<string>,
 ): Promise<unknown> {
   let lastError: unknown = new Error("no TMDB access configured");
-  for (const access of accesses) {
+  const live = deadAccesses ? accesses.filter((a) => !deadAccesses.has(a.baseURL)) : accesses;
+  // If every access is already marked dead, fall back to trying them all again
+  // (the prior failures may have been transient) rather than throwing blind.
+  const candidates = live.length > 0 ? live : accesses;
+  for (const access of candidates) {
     const url = `${access.baseURL}/${path}?${new URLSearchParams(query).toString()}`;
     const headers: Record<string, string> = { "Content-Type": "application/json;charset=utf-8" };
     if (access.readToken !== undefined) {
@@ -56,9 +69,10 @@ async function fetchViaAccessChain(
       return await fetchJson(url, { method: "GET", headers });
     } catch (error) {
       lastError = error;
+      deadAccesses?.add(access.baseURL);
     }
   }
-  throw new Error(`All ${accesses.length} TMDB access(es) failed: ${String(lastError)}`);
+  throw new Error(`All ${candidates.length} TMDB access(es) failed: ${String(lastError)}`);
 }
 
 /** Build the access list from either the new `accesses` or the legacy single
@@ -150,6 +164,9 @@ export class TmdbMetadataProvider {
   private readonly accesses: TmdbAccess[];
   private readonly language: string;
   private readonly fetchJson: TmdbFetchJson;
+  /** Per-instance memo of accesses that already failed (issue #68): skip them on
+   *  later calls so a blocked direct hop isn't re-probed once per TMDB request. */
+  private readonly deadAccesses = new Set<string>();
 
   constructor(options: TmdbMetadataProviderOptions) {
     this.accesses = resolveAccesses(options);
@@ -178,7 +195,7 @@ export class TmdbMetadataProvider {
   }
 
   private async get(path: string, query: Record<string, string>): Promise<unknown> {
-    return fetchViaAccessChain(this.accesses, path, query, this.fetchJson);
+    return fetchViaAccessChain(this.accesses, path, query, this.fetchJson, this.deadAccesses);
   }
 }
 
@@ -186,6 +203,9 @@ export class TmdbSearchProvider implements MediaSearchProvider {
   private readonly accesses: TmdbAccess[];
   private readonly language: string;
   private readonly fetchJson: TmdbFetchJson;
+  /** Per-instance memo of accesses that already failed (issue #68): skip them on
+   *  later calls so a blocked direct hop isn't re-probed once per TMDB request. */
+  private readonly deadAccesses = new Set<string>();
   private readonly maxResults: number;
   private readonly tvDetailsLimit: number;
 
@@ -238,7 +258,7 @@ export class TmdbSearchProvider implements MediaSearchProvider {
   }
 
   private async get(path: string, query: Record<string, string>): Promise<unknown> {
-    return fetchViaAccessChain(this.accesses, path, query, this.fetchJson);
+    return fetchViaAccessChain(this.accesses, path, query, this.fetchJson, this.deadAccesses);
   }
 }
 
@@ -425,10 +445,18 @@ export async function prepareSeriesTarget(input: {
   };
 }
 
+/** Per-request timeout for a single TMDB hop. A blocked direct api.themoviedb.org
+ *  connection otherwise hangs on the platform default (~10s+), and a search fires
+ *  many hops in series — the cumulative stall is what surfaced as a server error
+ *  in issue #68. Bounding each hop lets the access chain fail over to the proxy
+ *  well within the page's render budget. TMDB itself answers in well under a second. */
+const TMDB_FETCH_TIMEOUT_MS = 4500;
+
 async function defaultFetchJson(url: string, init: TmdbFetchInit): Promise<unknown> {
   const response = await fetch(url, {
     method: init.method,
     headers: init.headers,
+    signal: AbortSignal.timeout(TMDB_FETCH_TIMEOUT_MS),
   });
   if (!response.ok) {
     throw new Error(`TMDB request failed with HTTP ${response.status}`);

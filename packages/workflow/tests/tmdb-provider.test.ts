@@ -446,6 +446,33 @@ describe("TmdbMetadataProvider multi-access fallback", () => {
     await expect(provider.getMovieDetails(278)).rejects.toThrow(/access/i);
   });
 
+  it("remembers a dead access and skips it on later calls within the same provider (issue #68)", async () => {
+    // The #68 repro: a user TMDB token makes api.themoviedb.org the first access.
+    // When that endpoint is unreachable (blocked network) it fails per call. A
+    // search fires ~11 TMDB calls; without memo, EVERY call re-pays the dead
+    // direct hop → cumulative timeout → "A server error occurred". The provider
+    // must probe the dead access once, then go straight to the working proxy.
+    const calls: string[] = [];
+    const provider = new TmdbMetadataProvider({
+      accesses: [
+        { baseURL: "https://primary.example/3", readToken: "userkey" },
+        { baseURL: "https://proxy.example" },
+      ],
+      fetchJson: async (url) => {
+        calls.push(url);
+        if (url.startsWith("https://primary.example")) throw new Error("ETIMEDOUT");
+        return movieJson(278);
+      },
+    });
+    await provider.getMovieDetails(278);
+    await provider.getMovieDetails(550);
+    await provider.getMovieDetails(155);
+    const primaryCalls = calls.filter((u) => u.startsWith("https://primary.example"));
+    const proxyCalls = calls.filter((u) => u.startsWith("https://proxy.example"));
+    expect(primaryCalls).toHaveLength(1); // probed once, then remembered as dead
+    expect(proxyCalls).toHaveLength(3); // every call still resolves via the proxy
+  });
+
   it("sends Authorization only when the access has a readToken", async () => {
     const seen: Array<Record<string, string>> = [];
     const provider = new TmdbMetadataProvider({
