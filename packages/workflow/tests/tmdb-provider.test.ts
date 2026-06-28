@@ -473,6 +473,35 @@ describe("TmdbMetadataProvider multi-access fallback", () => {
     expect(proxyCalls).toHaveLength(3); // every call still resolves via the proxy
   });
 
+  it("keys the dead set by baseURL + token, so a failing user key does not poison a working env key on the same host (Copilot #69)", async () => {
+    // getTmdbAccesses produces two accesses with the SAME baseURL (TMDB direct)
+    // but different tokens: the user key, then the env token. A bad user key must
+    // not make later calls skip the env-token access (same host) — only the exact
+    // failing access should be remembered as dead.
+    const tokensTried: string[] = [];
+    const provider = new TmdbMetadataProvider({
+      accesses: [
+        { baseURL: "https://api.themoviedb.org/3", readToken: "bad-user-key" },
+        { baseURL: "https://api.themoviedb.org/3", readToken: "good-env-key" },
+        { baseURL: "https://proxy.example" },
+      ],
+      fetchJson: async (_url, init) => {
+        const auth = init.headers.Authorization ?? "(none)";
+        tokensTried.push(auth);
+        if (auth === "Bearer bad-user-key") throw new Error("HTTP 401");
+        return movieJson(278);
+      },
+    });
+    await provider.getMovieDetails(278);
+    await provider.getMovieDetails(550);
+    await provider.getMovieDetails(155);
+    // The good env key is used on every call; the proxy is never needed.
+    expect(tokensTried.filter((a) => a === "Bearer good-env-key")).toHaveLength(3);
+    expect(tokensTried.filter((a) => a === "(none)")).toHaveLength(0); // proxy never hit
+    // The bad user key is probed once, then remembered as dead (not retried).
+    expect(tokensTried.filter((a) => a === "Bearer bad-user-key")).toHaveLength(1);
+  });
+
   it("sends Authorization only when the access has a readToken", async () => {
     const seen: Array<Record<string, string>> = [];
     const provider = new TmdbMetadataProvider({

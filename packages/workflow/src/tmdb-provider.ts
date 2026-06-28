@@ -45,8 +45,11 @@ function normalizeAccess(access: TmdbAccess): TmdbAccess {
  *  Without it, a user TMDB token whose direct api.themoviedb.org hop is blocked
  *  makes EVERY call (a search fires ~11) re-time-out on that hop before falling
  *  back — the cumulative stall shows as "A server error occurred" (issue #68).
- *  Accesses are dropped from the dead set on no live attempt so a request that
- *  starts all-dead still probes once rather than throwing blind. */
+ *  Keyed by baseURL + token (accessKey), so two accesses sharing a host but
+ *  carrying different tokens (user key, then env token) are tracked independently
+ *  — a failing user key must not skip a still-working env-token access. When every
+ *  access is already marked dead the set is left untouched and all are retried
+ *  (the prior failures may have been transient) rather than throwing blind. */
 async function fetchViaAccessChain(
   accesses: TmdbAccess[],
   path: string,
@@ -55,9 +58,8 @@ async function fetchViaAccessChain(
   deadAccesses?: Set<string>,
 ): Promise<unknown> {
   let lastError: unknown = new Error("no TMDB access configured");
-  const live = deadAccesses ? accesses.filter((a) => !deadAccesses.has(a.baseURL)) : accesses;
-  // If every access is already marked dead, fall back to trying them all again
-  // (the prior failures may have been transient) rather than throwing blind.
+  const accessKey = (a: TmdbAccess) => `${a.baseURL}\n${a.readToken ?? ""}`;
+  const live = deadAccesses ? accesses.filter((a) => !deadAccesses.has(accessKey(a))) : accesses;
   const candidates = live.length > 0 ? live : accesses;
   for (const access of candidates) {
     const url = `${access.baseURL}/${path}?${new URLSearchParams(query).toString()}`;
@@ -69,7 +71,7 @@ async function fetchViaAccessChain(
       return await fetchJson(url, { method: "GET", headers });
     } catch (error) {
       lastError = error;
-      deadAccesses?.add(access.baseURL);
+      deadAccesses?.add(accessKey(access));
     }
   }
   throw new Error(`All ${candidates.length} TMDB access(es) failed: ${String(lastError)}`);
