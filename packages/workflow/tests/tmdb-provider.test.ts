@@ -502,6 +502,33 @@ describe("TmdbMetadataProvider multi-access fallback", () => {
     expect(tokensTried.filter((a) => a === "Bearer bad-user-key")).toHaveLength(1);
   });
 
+  it("the dead key keeps readToken undefined distinct from an empty-string token (Copilot #70)", async () => {
+    // `readToken: ""` (Authorization "Bearer ") and `readToken: undefined` (no
+    // Authorization) are different accesses; the dead-access key must not conflate
+    // them via `?? ""`, else a failing "" access on a host would also disable the
+    // undefined-token access there. (Defensive: getTmdbAccesses never emits "".)
+    let proxyHits = 0;
+    const provider = new TmdbMetadataProvider({
+      accesses: [
+        { baseURL: "https://same.example/3", readToken: "" }, // Authorization "Bearer " → fails
+        { baseURL: "https://same.example/3" }, // undefined token, same host → must stay live
+        { baseURL: "https://proxy.example" },
+      ],
+      fetchJson: async (url, init) => {
+        if (url.startsWith("https://proxy.example")) {
+          proxyHits += 1;
+          return movieJson(278);
+        }
+        if (init.headers.Authorization === "Bearer ") throw new Error("HTTP 401");
+        return movieJson(278); // the undefined-token same-host access succeeds
+      },
+    });
+    await provider.getMovieDetails(278);
+    await provider.getMovieDetails(550);
+    // The undefined-token direct access serves every call; the proxy is never needed.
+    expect(proxyHits).toBe(0);
+  });
+
   it("sends Authorization only when the access has a readToken", async () => {
     const seen: Array<Record<string, string>> = [];
     const provider = new TmdbMetadataProvider({
