@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
   acquireLlmPreflightError,
+  isCookieSecure,
   getLlmConfig,
   getPanSouBaseUrl,
   getProwlarrConfig,
@@ -211,5 +212,43 @@ describe("getPanSouBaseUrl", () => {
     const url = await getPanSouBaseUrl(repoMap({}), {} as unknown as NodeJS.ProcessEnv);
     expect(url).toBe(DEFAULT_PANSOU_BASE_URL);
     expect(DEFAULT_PANSOU_BASE_URL).toMatch(/^https?:\/\//);
+  });
+});
+
+describe("isCookieSecure (the LAN/HTTP login-bounce fix, #60)", () => {
+  const req = (opts: { xfp?: string; protocol?: string }) =>
+    ({
+      headers: { get: (n: string) => (n.toLowerCase() === "x-forwarded-proto" ? opts.xfp ?? null : null) },
+      nextUrl: { protocol: opts.protocol },
+    }) as unknown as Parameters<typeof isCookieSecure>[0];
+
+  beforeEach(() => {
+    delete process.env.MEDIA_TRACK_COOKIE_SECURE;
+  });
+
+  it("env=0 forces insecure even over HTTPS (operator opt-out)", () => {
+    process.env.MEDIA_TRACK_COOKIE_SECURE = "0";
+    expect(isCookieSecure(req({ xfp: "https", protocol: "https:" }))).toBe(false);
+  });
+
+  it("env=1 forces secure even over HTTP (operator opt-in)", () => {
+    process.env.MEDIA_TRACK_COOKIE_SECURE = "1";
+    expect(isCookieSecure(req({ protocol: "http:" }))).toBe(true);
+  });
+
+  it("auto: plain-HTTP LAN (no proxy, http) → insecure so the cookie is actually sent (the bug)", () => {
+    expect(isCookieSecure(req({ protocol: "http:" }))).toBe(false);
+  });
+
+  it("auto: reverse proxy / CF Tunnel sets x-forwarded-proto=https → secure", () => {
+    expect(isCookieSecure(req({ xfp: "https", protocol: "http:" }))).toBe(true);
+  });
+
+  it("auto: direct HTTPS → secure", () => {
+    expect(isCookieSecure(req({ protocol: "https:" }))).toBe(true);
+  });
+
+  it("auto: x-forwarded-proto comma list uses the first (client-facing) hop", () => {
+    expect(isCookieSecure(req({ xfp: "https, http", protocol: "http:" }))).toBe(true);
   });
 });

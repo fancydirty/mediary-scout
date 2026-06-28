@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
   response.cookies.set(SESSION_COOKIE_NAME, result.signedCookie, {
     httpOnly: true,
     sameSite: "lax",
-    secure: isCookieSecure(),
+    secure: isCookieSecure(request),
     path: "/",
     maxAge: SESSION_MAX_AGE,
   });

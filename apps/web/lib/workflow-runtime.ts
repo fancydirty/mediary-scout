@@ -313,15 +313,26 @@ export function isMultiUserEnabled(): boolean {
 export const SESSION_COOKIE_NAME = "mt_session";
 
 /** Whether the mt_session cookie should carry the Secure flag.
- *  MEDIA_TRACK_COOKIE_SECURE=0 → false (HTTP/FRP/LAN scenarios).
- *  MEDIA_TRACK_COOKIE_SECURE=1 → true (enforce HTTPS-only).
- *  Unset → auto: secure only when NODE_ENV === "production".
- */
-export function isCookieSecure(): boolean {
+ *  MEDIA_TRACK_COOKIE_SECURE=0 → false (force off, HTTP-only operators).
+ *  MEDIA_TRACK_COOKIE_SECURE=1 → true (force on, enforce HTTPS-only).
+ *  Unset → AUTO from the client-facing request scheme: Secure over HTTPS, NOT over
+ *  plain HTTP. This is the #60 fix — keying off NODE_ENV (which the Docker image
+ *  hard-sets to "production") marked the cookie Secure even on a plain-HTTP LAN/FRP
+ *  origin, so the browser never sent it back and login bounced. A reverse proxy /
+ *  Cloudflare Tunnel terminates TLS and forwards `x-forwarded-proto`; trust its
+ *  first (client-facing) hop, else fall back to the request's own protocol. */
+export function isCookieSecure(request: {
+  headers: { get(name: string): string | null };
+  nextUrl?: { protocol?: string };
+}): boolean {
   const explicit = process.env.MEDIA_TRACK_COOKIE_SECURE?.trim();
   if (explicit === "0") return false;
   if (explicit === "1") return true;
-  return process.env.NODE_ENV === "production";
+  const forwarded = request.headers.get("x-forwarded-proto");
+  if (forwarded) {
+    return forwarded.split(",")[0]!.trim().toLowerCase() === "https";
+  }
+  return (request.nextUrl?.protocol ?? "").toLowerCase() === "https:";
 }
 const SESSION_SECRET_SETTING_KEY = "session_secret";
 /** Sentinel account that owns no data — returned in multi-user mode when there
