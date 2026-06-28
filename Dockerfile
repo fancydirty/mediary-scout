@@ -13,17 +13,20 @@ WORKDIR /app
 # Override for faster installs behind slow/blocked registries, e.g.
 #   docker compose build --build-arg NPM_REGISTRY=https://registry.npmmirror.com
 ARG NPM_REGISTRY=https://registry.npmjs.org
-# next.config.ts reads .env at build time, but .env is in .dockerignore (secrets).
-# Pass the public-only config values that next.config.ts needs as build args.
+# next.config.ts bakes serverActions.allowedOrigins at BUILD time, but .env is in
+# .dockerignore (secrets) so it isn't readable then. Pass this public-only value as a
+# build arg. Declared here; exported to ENV only just before the build step (below) so
+# changing it doesn't bust the cached npm ci / dependency layers.
 ARG MEDIA_TRACK_ALLOWED_ORIGINS
-ENV MEDIA_TRACK_ALLOWED_ORIGINS=${MEDIA_TRACK_ALLOWED_ORIGINS}
 # Install deps first (cached unless the manifests change), then copy source.
 COPY package.json package-lock.json ./
 COPY apps/web/package.json apps/web/
 COPY packages/workflow/package.json packages/workflow/
 RUN npm config set registry "$NPM_REGISTRY" && npm ci
 COPY . .
-# build:web = build:workflow (tsc) + next build apps/web (output: standalone)
+# build:web = build:workflow (tsc) + next build apps/web (output: standalone).
+# allowedOrigins is baked here — change it ⇒ rebuild (docker compose up -d --build).
+ENV MEDIA_TRACK_ALLOWED_ORIGINS=${MEDIA_TRACK_ALLOWED_ORIGINS}
 RUN npm run build:web
 
 FROM node:22-slim AS runner
