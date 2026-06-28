@@ -24,7 +24,10 @@ services:
     restart: unless-stopped
 
   web:
-    build: .
+    build:
+      context: .
+      args:
+        MEDIA_TRACK_ALLOWED_ORIGINS: ${MEDIA_TRACK_ALLOWED_ORIGINS:-}
     depends_on:
       postgres:
         condition: service_healthy

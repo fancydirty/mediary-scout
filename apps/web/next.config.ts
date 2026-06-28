@@ -45,6 +45,12 @@ const nextConfig: NextConfig = {
   // mid-acquisition regardless).
   experimental: {
     staleTimes: { dynamic: 60, static: 300 },
+    serverActions: {
+      allowedOrigins: (process.env.MEDIA_TRACK_ALLOWED_ORIGINS ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
+    },
   },
   // Legacy per-season URL → the canonical one-page-per-show route. Handled at
   // the routing layer (not a render-time redirect page, which can't prerender

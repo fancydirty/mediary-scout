@@ -13,6 +13,10 @@ WORKDIR /app
 # Override for faster installs behind slow/blocked registries, e.g.
 #   docker compose build --build-arg NPM_REGISTRY=https://registry.npmmirror.com
 ARG NPM_REGISTRY=https://registry.npmjs.org
+# next.config.ts reads .env at build time, but .env is in .dockerignore (secrets).
+# Pass the public-only config values that next.config.ts needs as build args.
+ARG MEDIA_TRACK_ALLOWED_ORIGINS
+ENV MEDIA_TRACK_ALLOWED_ORIGINS=${MEDIA_TRACK_ALLOWED_ORIGINS}
 # Install deps first (cached unless the manifests change), then copy source.
 COPY package.json package-lock.json ./
 COPY apps/web/package.json apps/web/
