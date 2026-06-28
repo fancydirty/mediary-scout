@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   acquireLlmPreflightError,
+  customDirNamesFromEnv,
   isCookieSecure,
   getLlmConfig,
   getPanSouBaseUrl,
@@ -267,3 +268,32 @@ describe("isCookieSecure (the LAN/HTTP login-bounce fix, #60)", () => {
     expect(isCookieSecure(req({ xfp: "http:", protocol: "http:" }))).toBe(false);
   });
 });
+
+describe("customDirNamesFromEnv (brand-agnostic 自定义媒体库目录名)", () => {
+  const env = (m: Record<string, string>) => m as unknown as NodeJS.ProcessEnv;
+
+  it("nothing set → {} (defaults apply downstream)", () => {
+    expect(customDirNamesFromEnv(env({}))).toEqual({});
+  });
+
+  it("reads + trims the four generic vars (applies to every drive brand)", () => {
+    expect(
+      customDirNamesFromEnv(
+        env({
+          MEDIA_TRACK_LIBRARY_ROOT_DIR: " 我的影音库 ",
+          MEDIA_TRACK_LIBRARY_MOVIES_DIR: "电影",
+          MEDIA_TRACK_LIBRARY_TV_DIR: "剧集",
+          MEDIA_TRACK_LIBRARY_ANIME_DIR: "番剧",
+        }),
+      ),
+    ).toEqual({ rootName: "我的影音库", moviesName: "电影", tvName: "剧集", animeName: "番剧" });
+  });
+
+  it("blank / whitespace values are omitted (never an empty-string root → no write-scope footgun)", () => {
+    expect(
+      customDirNamesFromEnv(
+        env({ MEDIA_TRACK_LIBRARY_ROOT_DIR: "", MEDIA_TRACK_LIBRARY_MOVIES_DIR: "   ", MEDIA_TRACK_LIBRARY_TV_DIR: "剧集" }),
+      ),
+    ).toEqual({ tvName: "剧集" });
+  });
+})

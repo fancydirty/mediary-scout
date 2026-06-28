@@ -64,6 +64,57 @@ describe("provisionCategoryDirs (find-or-create, idempotent)", () => {
     await provisionCategoryDirs({ storage: fakeStorage, baseParentId: "ROOT", rootName: "media-track-test" });
     expect(created[0]).toBe("media-track-test"); // explicit value still wins
   });
+
+  it("honors custom root + category names (all four), creating them under the custom root", async () => {
+    const created: string[] = [];
+    const fakeStorage = {
+      async listChildDirs() {
+        return [] as Array<{ name: string; id: string }>;
+      },
+      async createDirectory({ name, parentId }: { name: string; parentId: string }) {
+        created.push(`${name}@${parentId}`);
+        return `new_${name}`;
+      },
+    };
+    const cids = await provisionCategoryDirs({
+      storage: fakeStorage,
+      baseParentId: "ROOT",
+      rootName: "我的影音库",
+      moviesName: "电影",
+      tvName: "剧集",
+      animeName: "番剧",
+    });
+    expect(created[0]).toBe("我的影音库@ROOT");
+    expect(created.slice(1)).toEqual(["电影@new_我的影音库", "剧集@new_我的影音库", "番剧@new_我的影音库"]);
+    expect(cids.moviesCid).toBe("new_电影");
+  });
+
+  it("treats empty / whitespace names as unset → falls back to defaults (root never collapses to the account root)", async () => {
+    const created: string[] = [];
+    const fakeStorage = {
+      async listChildDirs() {
+        return [] as Array<{ name: string; id: string }>;
+      },
+      async createDirectory({ name, parentId }: { name: string; parentId: string }) {
+        created.push(`${name}@${parentId}`);
+        return `new_${name}`;
+      },
+    };
+    const cids = await provisionCategoryDirs({
+      storage: fakeStorage,
+      baseParentId: "0", // account root
+      rootName: "",
+      moviesName: "   ",
+      tvName: "",
+      animeName: "",
+    });
+    // Safety: an empty rootName must NOT place categories at the account root.
+    // It falls back to the brand default and creates a real container folder.
+    expect(created[0]).toBe("Mediary Scout@0");
+    expect(cids.rootCid).toBe("new_Mediary Scout");
+    expect(cids.rootCid).not.toBe("0");
+    expect(created.slice(1)).toEqual(["Movies@new_Mediary Scout", "TV@new_Mediary Scout", "Anime@new_Mediary Scout"]);
+  });
 });
 
 describe("parsePan115Uid", () => {

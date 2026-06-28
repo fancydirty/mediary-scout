@@ -338,6 +338,35 @@ export function isCookieSecure(request: {
   }
   return normalizeScheme(request.nextUrl?.protocol ?? "") === "https";
 }
+
+/** Brand-agnostic custom media-library directory NAMES, read from env and applied
+ *  to every drive's connect-time provisioning (115 / 夸克 / 光鸭 all funnel through
+ *  provisionCategoryDirs). Names only — never CIDs, and a blank value is omitted so
+ *  it falls back to the brand default downstream. The root therefore can never
+ *  collapse to the account root, so a drive's write scope stays bounded to its own
+ *  container. Read at connect time: changing a name only affects newly-connected drives. */
+export function customDirNamesFromEnv(env: NodeJS.ProcessEnv): {
+  rootName?: string;
+  moviesName?: string;
+  tvName?: string;
+  animeName?: string;
+} {
+  const opts: { rootName?: string; moviesName?: string; tvName?: string; animeName?: string } = {};
+  const pick = (raw: string | undefined): string | undefined => {
+    const trimmed = raw?.trim();
+    return trimmed ? trimmed : undefined;
+  };
+  const root = pick(env.MEDIA_TRACK_LIBRARY_ROOT_DIR);
+  if (root) opts.rootName = root;
+  const movies = pick(env.MEDIA_TRACK_LIBRARY_MOVIES_DIR);
+  if (movies) opts.moviesName = movies;
+  const tv = pick(env.MEDIA_TRACK_LIBRARY_TV_DIR);
+  if (tv) opts.tvName = tv;
+  const anime = pick(env.MEDIA_TRACK_LIBRARY_ANIME_DIR);
+  if (anime) opts.animeName = anime;
+  return opts;
+}
+
 const SESSION_SECRET_SETTING_KEY = "session_secret";
 /** Sentinel account that owns no data — returned in multi-user mode when there
  *  is no valid session, so reads fail CLOSED (empty) instead of leaking the
@@ -1400,6 +1429,7 @@ async function provisionDriveCategoryDirs(
     const executor = createExecutorForBrand({ provider: "guangya", credential: credential ?? {}, scopeCids: [] });
     return provisionCategoryDirs({
       baseParentId: "", // 光鸭 account root
+      ...customDirNamesFromEnv(process.env),
       storage: {
         listChildDirs: (parentId: string) => executor.listChildDirectories(parentId),
         createDirectory: (dir) => executor.createDirectory(dir),
@@ -1412,6 +1442,7 @@ async function provisionDriveCategoryDirs(
       : createBootstrapPan115CookieStorageExecutor({ cookie });
   return provisionCategoryDirs({
     baseParentId: "0",
+    ...customDirNamesFromEnv(process.env),
     storage: {
       listChildDirs: (parentId: string) => executor.listChildDirectories(parentId),
       createDirectory: (dir) => executor.createDirectory(dir),
@@ -2121,6 +2152,7 @@ async function bindPan115ConnectedStorage(input: {
       const executor = createBootstrapPan115CookieStorageExecutor({ cookie: input.cookie });
       const provisioned = await provisionCategoryDirs({
         baseParentId: "0", // 115 account root
+        ...customDirNamesFromEnv(process.env),
         storage: {
           // listChildDirectories = single-level, root-safe (find-or-create reads
           // the account root's children; recursive listSubdirectories is guarded).
@@ -2248,6 +2280,7 @@ export async function connectQuarkCookie(rawCookie: string): Promise<{ providerU
     const executor = createExecutorForBrand({ provider: "quark", cookie, scopeCids: [] });
     cids = await provisionCategoryDirs({
       baseParentId: "0", // 夸克 account root
+      ...customDirNamesFromEnv(process.env),
       storage: {
         listChildDirs: (parentId: string) => executor.listChildDirectories(parentId),
         createDirectory: (dir) => executor.createDirectory(dir),
@@ -2354,6 +2387,7 @@ export async function connectGuangYa(rawAccessToken: string, rawRefreshToken: st
     });
     cids = await provisionCategoryDirs({
       baseParentId: "", // 光鸭 account root
+      ...customDirNamesFromEnv(process.env),
       storage: {
         listChildDirs: (parentId: string) => executor.listChildDirectories(parentId),
         createDirectory: (dir) => executor.createDirectory(dir),

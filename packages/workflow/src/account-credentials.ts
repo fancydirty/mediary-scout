@@ -113,21 +113,33 @@ export interface ProvisionedCids {
  * Idempotent: reuse a same-named directory if one already exists under the
  * parent, else create it. Safe to re-run on an already-provisioned 网盘 (the
  * second run finds every dir and creates nothing).
+ *
+ * Directory names are customisable (rootName / moviesName / tvName / animeName).
+ * A blank or whitespace-only name falls back to its brand default — in
+ * particular the root ALWAYS resolves to a real container folder, never to the
+ * account root, so the drive's write scope can never widen to the whole account.
  */
 export async function provisionCategoryDirs(input: {
   storage: DirProvisionStorage;
   baseParentId: string;
   rootName?: string;
+  moviesName?: string;
+  tvName?: string;
+  animeName?: string;
 }): Promise<ProvisionedCids> {
-  const rootName = input.rootName ?? "Mediary Scout";
+  const named = (value: string | undefined, fallback: string) => value?.trim() || fallback;
+  const rootName = named(input.rootName, "Mediary Scout");
+  const moviesName = named(input.moviesName, "Movies");
+  const tvName = named(input.tvName, "TV");
+  const animeName = named(input.animeName, "Anime");
   const findOrCreate = async (name: string, parentId: string): Promise<string> => {
     const existing = (await input.storage.listChildDirs(parentId)).find((dir) => dir.name === name);
     return existing ? existing.id : input.storage.createDirectory({ name, parentId });
   };
   const rootCid = await findOrCreate(rootName, input.baseParentId);
-  const moviesCid = await findOrCreate("Movies", rootCid);
-  const tvCid = await findOrCreate("TV", rootCid);
-  const animeCid = await findOrCreate("Anime", rootCid);
+  const moviesCid = await findOrCreate(moviesName, rootCid);
+  const tvCid = await findOrCreate(tvName, rootCid);
+  const animeCid = await findOrCreate(animeName, rootCid);
   return { rootCid, moviesCid, tvCid, animeCid };
 }
 
