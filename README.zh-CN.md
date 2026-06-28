@@ -180,3 +180,6 @@ docker compose up -d
 - [TMDB](https://www.themoviedb.org/) —— 元数据(本产品未获 TMDB 认证或背书)
 
 与 115、夸克、光鸭云盘、TMDB 及任何索引器均无隶属关系。Mediary Scout 是围绕这些组件构建的、克制的独立工作流。
+
+## Star History
+![Star History Chart](https://api.star-history.com/svg?repos=fancydirty/mediary-scout)

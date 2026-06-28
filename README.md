@@ -180,3 +180,7 @@ Built on top of, and grateful to:
 - [TMDB](https://www.themoviedb.org/) — metadata (this product is not endorsed or certified by TMDB)
 
 Not affiliated with 115, Quark, 光鸭云盘 (GuangYaPan), TMDB, or any indexer. Mediary Scout is an independent, disciplined workflow built around these pieces.
+
+## Star History
+![Star History Chart](https://api.star-history.com/svg?repos=fancydirty/mediary-scout)
+
