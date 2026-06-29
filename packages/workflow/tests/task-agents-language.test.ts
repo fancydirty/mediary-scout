@@ -51,4 +51,24 @@ describe("languageLine — 国产 (CN-origin) content needs no 中字 judgement 
   it("movie + 中文 + no origin info → soft fallback (unchanged default)", () => {
     expect(buildMovieSystemPrompt({ preferredLanguage: "中文" })).toContain("subtitleFallback");
   });
+
+  it("TV/anime + 中文 + CN origin → 国产 native line, the 中字 floor is skipped entirely (#72 fix)", () => {
+    const p = buildTvAnimeSystemPrompt({ preferredLanguage: "中文", originCountries: ["CN"] });
+    expect(p).toMatch(/国产|原生中文|中文对白/);
+    expect(p).toMatch(/无需|不需要/);
+    expect(p).not.toContain("HARD requirement"); // no hard floor for domestic content
+    expect(p).not.toContain("subtitleFallback"); // TV never has fallback anyway
+  });
+
+  it("TV/anime + 中文 + foreign origin (US) → HARD requirement for 中字", () => {
+    const p = buildTvAnimeSystemPrompt({ preferredLanguage: "中文", originCountries: ["US"] });
+    expect(p).toContain("HARD requirement");
+    expect(p).not.toMatch(/国产/);
+  });
+
+  it("TV/anime + 中文 + no origin info → HARD requirement (unchanged default)", () => {
+    const p = buildTvAnimeSystemPrompt({ preferredLanguage: "中文" });
+    expect(p).toContain("HARD requirement");
+    expect(p).not.toMatch(/国产/);
+  });
 })

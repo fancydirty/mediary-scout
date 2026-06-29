@@ -42,6 +42,9 @@ export interface RunAcquisitionV2WorkflowRequest {
   searchBudget?: number;
   maxSteps?: number;
   preferredLanguage?: string;
+  /** TMDB origin_country of the title — when it includes CN the TV/anime prompt skips
+   *  the 中文 subtitle floor (国产剧/动漫 natively Chinese-spoken). */
+  originCountries?: string[];
   searchHints?: string;
   qualityGuidance?: string;
   /** The run's drive brand ("pan115" | "quark") — selects brand-specific skill. */
@@ -128,6 +131,7 @@ export async function runAcquisitionV2Workflow(
     ...(request.searchBudget === undefined ? {} : { searchBudget: request.searchBudget }),
     ...(request.maxSteps === undefined ? {} : { maxSteps: request.maxSteps }),
     ...(request.preferredLanguage === undefined ? {} : { preferredLanguage: request.preferredLanguage }),
+    ...(request.originCountries === undefined ? {} : { originCountries: request.originCountries }),
     ...(request.searchHints === undefined ? {} : { searchHints: request.searchHints }),
     ...(request.qualityGuidance === undefined ? {} : { qualityGuidance: request.qualityGuidance }),
     ...(request.storageProvider === undefined ? {} : { storageProvider: request.storageProvider }),

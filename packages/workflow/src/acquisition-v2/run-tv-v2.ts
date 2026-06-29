@@ -81,6 +81,7 @@ export async function runTvAcquisitionV2(request: RunTvAcquisitionV2Request): Pr
     ...(request.searchBudget === undefined ? {} : { searchBudget: request.searchBudget }),
     ...(request.maxSteps === undefined ? {} : { maxSteps: request.maxSteps }),
     ...(request.preferredLanguage === undefined ? {} : { preferredLanguage: request.preferredLanguage }),
+    ...(request.title.originCountries === undefined ? {} : { originCountries: request.title.originCountries }),
     ...(request.storageProvider === undefined ? {} : { storageProvider: request.storageProvider }),
     ...(request.deadLinkStore ? { deadLinkStore: request.deadLinkStore } : {}),
     ...(request.onProgress ? { onProgress: request.onProgress } : {}),
