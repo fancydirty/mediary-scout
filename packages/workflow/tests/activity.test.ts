@@ -72,8 +72,8 @@ describe("interpretTool — real agent tool names → cleaned 中文 + phase", (
     expect(r.phase).toBe("search");
   });
 
-  it("searchResources with a raw keyword echoes it (so the system pre-warm search shows its keyword on the activity page)", () => {
-    expect(interpretTool("searchResources", { keyword: "庆余年" })).toEqual({
+  it("searchResources trims leading/trailing whitespace from the displayed keyword (no stray-space echo)", () => {
+    expect(interpretTool("searchResources", { keyword: "  庆余年  " })).toEqual({
       activity: "正在搜索资源:庆余年",
       phase: "search",
     });
