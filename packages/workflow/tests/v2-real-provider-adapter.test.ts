@@ -43,7 +43,7 @@ describe("RealResourceProviderV2 — pansou → ResourceProviderV2 adapter", () 
     // V2 shape: id/keyword/candidates with only the fields the agent judges from.
     expect(snapshot.id).toBe("snap_real_1");
     expect(snapshot.candidates).toEqual([
-      { id: "cand_a", title: "莉可丽丝 全集 1080p", episodeHints: ["1-13"], qualityHints: ["1080p"] },
+      { id: "cand_a", title: "莉可丽丝 全集 1080p" },
     ]);
     // The run id is threaded so content-addressed snapshots don't collide across runs.
     expect(calls[0]).toEqual({ keyword: "莉可丽丝 全集", workflowRunId: "run-1" });
@@ -91,5 +91,18 @@ describe("RealResourceProviderV2 — pansou → ResourceProviderV2 adapter", () 
     expect(registry.get("live")).toBeDefined();
     expect(registry.get("dead_share")).toBeUndefined();
     expect(registry.get("dead_magnet")).toBeUndefined();
+  });
+
+  it("agent-facing candidate exposes only id and title (no hints) — Task 3", async () => {
+    const provider: ResourceProvider = { search: async () => realSnapshot() };
+    const registry = new CandidateRegistry();
+    const adapter = new RealResourceProviderV2({ provider, registry, workflowRunId: "run-1" });
+
+    const snapshot = await adapter.search("莉可丽丝 全集");
+
+    const candidate = snapshot.candidates[0]!;
+    expect(Object.keys(candidate).sort()).toEqual(["id", "title"]);
+    expect(candidate.id).toBe("cand_a");
+    expect(candidate.title).toBe("莉可丽丝 全集 1080p");
   });
 });

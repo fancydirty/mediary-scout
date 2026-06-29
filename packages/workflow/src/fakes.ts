@@ -19,8 +19,6 @@ const FIXED_CREATED_AT = "2026-01-01T00:00:00.000Z";
 
 export interface CandidateFixture {
   title: string;
-  episodeHints: string[];
-  qualityHints?: string[];
   source?: string;
   providerPayload?: Record<string, unknown>;
 }
@@ -62,8 +60,6 @@ export class FakeResourceProvider implements ResourceProvider {
       title: fixture.title,
       type: "115",
       source: fixture.source ?? "fake",
-      episodeHints: [...fixture.episodeHints],
-      qualityHints: [...(fixture.qualityHints ?? [])],
       providerPayload: { ...(fixture.providerPayload ?? {}) },
     }));
 

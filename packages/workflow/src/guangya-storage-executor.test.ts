@@ -27,8 +27,6 @@ function candidate(overrides: Partial<ResourceCandidate> = {}): ResourceCandidat
     title: "Some Movie",
     type: "magnet" as ResourceType,
     source: "test",
-    episodeHints: [],
-    qualityHints: [],
     providerPayload: { url: "magnet:?xt=urn:btih:deadbeef" },
     ...overrides,
   };

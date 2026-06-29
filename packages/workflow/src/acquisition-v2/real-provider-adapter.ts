@@ -8,7 +8,7 @@ import type { ResourceProviderV2, ResourceSnapshotV2 } from "./fake-provider.js"
  * Phase 6 — the real PanSou provider as a ResourceProviderV2. It runs the real
  * search, records each candidate's full payload in the shared registry (so the
  * storage adapter can transfer by id), and hands the agent only the V2 view:
- * id/title/episodeHints/qualityHints — never the raw url or provider index.
+ * id/title — never the raw url or provider index.
  */
 export interface RealResourceProviderV2Options {
   provider: ResourceProvider;
@@ -69,8 +69,6 @@ export class RealResourceProviderV2 implements ResourceProviderV2 {
       candidates: kept.map((candidate) => ({
         id: candidate.id,
         title: candidate.title,
-        episodeHints: candidate.episodeHints,
-        qualityHints: candidate.qualityHints,
       })),
     };
   }

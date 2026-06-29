@@ -13,8 +13,6 @@
 export interface SimResourceCandidate {
   id: string;
   title: string;
-  episodeHints: string[];
-  qualityHints: string[];
 }
 
 export interface ResourceSnapshotV2 {

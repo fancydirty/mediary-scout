@@ -70,8 +70,6 @@ describe("PanSouResourceProvider", () => {
         title: "翘楚 S01E01 4K",
         type: "115",
         source: "telegram-a",
-        episodeHints: ["S01E01"],
-        qualityHints: ["4K"],
         providerPayload: {
           url: "https://115.com/s/abc",
           password: "pw1",
@@ -84,8 +82,6 @@ describe("PanSouResourceProvider", () => {
         index: 1,
         title: "翘楚 S01E01 4K",
         type: "magnet",
-        episodeHints: ["S01E01"],
-        qualityHints: ["4K"],
         providerPayload: {
           url: "magnet:?xt=urn:btih:abc",
           password: "",
@@ -99,8 +95,6 @@ describe("PanSouResourceProvider", () => {
         title: "翘楚 第2集 1080p",
         type: "115",
         source: "telegram-b",
-        episodeHints: ["S01E02"],
-        qualityHints: ["1080p"],
       }),
     ]);
   });

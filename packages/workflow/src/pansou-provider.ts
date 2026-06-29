@@ -5,7 +5,6 @@ import type {
   ResourceType,
 } from "./domain.js";
 import type { ResourceProvider } from "./ports.js";
-import { extractEpisodeHints, extractQualityHints } from "./resource-hints.js";
 
 export interface PanSouFetchInit {
   method: "POST";
@@ -105,8 +104,6 @@ export class PanSouResourceProvider implements ResourceProvider {
       title: fact.title,
       type: fact.type,
       source: fact.source,
-      episodeHints: extractEpisodeHints(fact.title),
-      qualityHints: extractQualityHints(fact.title),
       providerPayload: {
         url: fact.url,
         password: fact.password,

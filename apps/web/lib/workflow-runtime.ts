@@ -1347,15 +1347,11 @@ async function getWorkerResourceProvider(
       "翘楚 4K": [
         {
           title: "翘楚 S01E01-S01E12 4K",
-          episodeHints: episodeCodes(1, 12),
-          qualityHints: ["4K"],
         },
       ],
       "绝命毒师 4K": [
         {
           title: "绝命毒师 S01E01-S01E07 4K",
-          episodeHints: episodeCodes(1, 7),
-          qualityHints: ["4K"],
         },
       ],
     },

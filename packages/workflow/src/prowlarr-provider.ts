@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import type { ResourceCandidate, ResourceSnapshot } from "./domain.js";
 import type { ResourceProvider } from "./ports.js";
-import { extractEpisodeHints, extractQualityHints } from "./resource-hints.js";
 
 export interface ProwlarrFetchInit {
   method: "GET";
@@ -64,8 +63,6 @@ export class ProwlarrResourceProvider implements ResourceProvider {
       title: fact.title,
       type: "magnet",
       source: fact.indexer,
-      episodeHints: extractEpisodeHints(fact.title),
-      qualityHints: extractQualityHints(fact.title),
       providerPayload: {
         url: fact.magnet,
         infoHash: fact.infoHash,

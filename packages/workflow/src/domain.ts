@@ -119,8 +119,6 @@ export interface ResourceCandidate {
   title: string;
   type: ResourceType;
   source: string;
-  episodeHints: string[];
-  qualityHints: string[];
   providerPayload: Record<string, unknown>;
 }
 

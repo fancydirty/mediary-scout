@@ -43,7 +43,6 @@ describe("ProwlarrResourceProvider", () => {
     expect(c.source).toBe("1337x");
     expect(c.providerPayload.url).toBe("magnet:?xt=urn:btih:abcdef0123456789abcdef0123456789abcdef01");
     expect(c.providerPayload.infoHash).toBe("abcdef0123456789abcdef0123456789abcdef01");
-    expect(c.qualityHints).toContain("2160p");
   });
 
   it("uses a magnet downloadUrl when infoHash is absent and back-fills the hash", async () => {
@@ -58,7 +57,6 @@ describe("ProwlarrResourceProvider", () => {
     const c = snap.candidates[0]!;
     expect(c.providerPayload.url).toContain("magnet:?xt=urn:btih:DEADBEEF");
     expect(c.providerPayload.infoHash).toBe("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
-    expect(c.episodeHints).toContain("S01E01");
   });
 
   it("skips torrent releases that have neither infoHash nor a magnet downloadUrl", async () => {

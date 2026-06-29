@@ -185,7 +185,7 @@ describe("fake adapters", () => {
     const snapshot = await provider.search({ keyword: "翘楚 4K" });
 
     expect(snapshot.candidates.map((candidate) => candidate.index)).toEqual([0, 1]);
-    expect(snapshot.candidates.map((candidate) => candidate.episodeHints)).toEqual([["S01E13"], ["S01E14"]]);
+    expect(snapshot.candidates.map((candidate) => candidate.title)).toEqual(["翘楚 S01E13 4K", "翘楚 S01E14 4K"]);
   });
 
   it("uses distinct stable ids across multiple resource snapshots", async () => {
@@ -279,8 +279,6 @@ function candidateFixture(id: string): ResourceCandidate {
     title: "Show S01E01 4K",
     type: "115",
     source: "test",
-    episodeHints: ["S01E01"],
-    qualityHints: ["4K"],
     providerPayload: {
       url: "https://115.com/s/example",
       rawType: "115",
