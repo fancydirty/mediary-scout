@@ -65,6 +65,20 @@ describe("interpretTool — real agent tool names → cleaned 中文 + phase", (
     expect(interpretTool("readSkill", { section: "protocol" }).activity).toBe("正在查阅操作手册…");
   });
 
+  it("viewResourceSnapshot is the pre-warmed 活期文档 review → mapped (not the generic 处理中 fallback)", () => {
+    const r = interpretTool("viewResourceSnapshot", {});
+    expect(r.activity).not.toBe("处理中…");
+    expect(r.activity).toMatch(/候选|预搜|活期文档|浏览/);
+    expect(r.phase).toBe("search");
+  });
+
+  it("searchResources trims leading/trailing whitespace from the displayed keyword (no stray-space echo)", () => {
+    expect(interpretTool("searchResources", { keyword: "  庆余年  " })).toEqual({
+      activity: "正在搜索资源:庆余年",
+      phase: "search",
+    });
+  });
+
   it("never leaks ids/paths and falls back for an unknown tool", () => {
     expect(interpretTool("weirdTool", { cid: "33988", path: "/x" })).toEqual({ activity: "处理中…", phase: "search" });
   });
