@@ -109,6 +109,20 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     ...(request.searchBudget === undefined ? {} : { searchBudget: request.searchBudget }),
   });
 
+  // Pre-warm the raw snapshot (bare title) BEFORE building the system prompt, so the
+  // prefetchedCandidateCount pointer can be injected. If the provider fails (network
+  // error, etc.), gracefully degrade: no pointer, agent searches normally.
+  let prefetchedCandidateCount: number | undefined;
+  try {
+    const rawKeyword = request.target.title; // bare title (中文名), no quality/subtitle/year
+    await sandbox.primeRawSnapshot(rawKeyword);
+    prefetchedCandidateCount = sandbox.viewResourceSnapshot().candidateCount;
+  } catch (error) {
+    // Provider unavailable → no pre-warm; agent will searchResources normally.
+    // Do NOT crash the workflow.
+    prefetchedCandidateCount = undefined;
+  }
+
   const common = {
     sandbox,
     model: request.model,
@@ -127,6 +141,8 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     ...(request.executor.apiCallBudget
       ? { budgetSoftAt: budgetSoftThreshold(request.executor.apiCallBudget()) }
       : {}),
+    // Inject the prefetched candidate count into the prompt so the pointer renders.
+    ...(prefetchedCandidateCount === undefined ? {} : { prefetchedCandidateCount }),
   };
 
   const result =
