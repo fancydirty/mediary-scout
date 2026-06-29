@@ -21,10 +21,14 @@ const STRIP_NOTICE =
   "已从关键词移除画质/字幕词(如 4K/1080p/蓝光/中字/字幕):PanSou 是通配符匹配,加这些只会把召回打成子集或归零,raw 裸标题召回最全。已改用裸标题搜索。";
 
 /** Strip quality/subtitle tokens from a search keyword and fold the resulting
- *  whitespace. Returns whether anything was removed (drives the agent notice). */
+ *  whitespace. `stripped` is true ONLY when an actual QUALITY_SUBTITLE_TOKEN was
+ *  removed — NOT when mere whitespace was collapsed (so "奥本海默   第二季" does
+ *  not falsely trip the strip notice). */
 function stripQualitySubtitleTokens(keyword: string): { keyword: string; stripped: boolean } {
+  const stripped = QUALITY_SUBTITLE_TOKEN.test(keyword);
+  QUALITY_SUBTITLE_TOKEN.lastIndex = 0;
   const cleaned = keyword.replace(QUALITY_SUBTITLE_TOKEN, " ").replace(/\s+/g, " ").trim();
-  return { keyword: cleaned, stripped: cleaned !== keyword.trim() };
+  return { keyword: cleaned, stripped };
 }
 
 /**
@@ -184,7 +188,7 @@ export class TaskSandbox {
     // real title. (asEvidence turns this throw into the {error} the agent reads.)
     if (!keywordReferencesTitle(effectiveKeyword, this.titleTerms)) {
       throw new Error(
-        `搜索关键词必须包含片名(片名/原名/别名)。"${keyword}" 不含片名,只会返回噪音,已拒绝。请用包含片名的关键词(可附加年份/原名/4K/全集 等),不要用纯类型或纯年份(如 "电影"、"2026 电影")。`,
+        `搜索关键词必须包含片名(片名/原名/别名)。"${keyword}" 不含片名,只会返回噪音,已拒绝。请用包含片名的关键词(裸标题召回最全;繁体/英文/原名 可作升级,别加画质/字幕/年份词——会被移除且只会减召回),不要用纯类型或纯年份(如 "电影"、"2026 电影")。`,
       );
     }
     const normalized = normalizeSearchKeyword(effectiveKeyword);
