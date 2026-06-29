@@ -89,6 +89,48 @@ describe("TaskSandbox — searchResources (system-budgeted, dedup, snapshot-boun
     expect(ninth.refused).not.toMatch(/兜底/);
   });
 
+  it("strips quality/subtitle tokens from an agent keyword, searches the bare title, and notes it (C5)", async () => {
+    const provider = new FakeResourceProviderV2({
+      results: { 铁拳教育: [{ id: "c1", title: "铁拳教育 全12集" }] },
+    });
+    const sandbox = new TaskSandbox({ provider, searchBudget: 8, titleTerms: ["铁拳教育"] });
+
+    const result = await sandbox.searchResources("铁拳教育 1080p 中字");
+
+    expect(result.snapshot?.candidates).toHaveLength(1);
+    expect(result.notice).toMatch(/已移除|画质|raw/);
+  });
+
+  it("strips quality/subtitle tokens BEFORE the title gate, so a quality-only-tail keyword still passes", async () => {
+    let searched = "";
+    const sandbox = new TaskSandbox({
+      provider: {
+        async search(keyword) {
+          searched = keyword;
+          return { id: `s_${keyword}`, keyword, candidates: [] };
+        },
+      },
+      searchBudget: 8,
+      titleTerms: ["奥本海默"],
+    });
+
+    await sandbox.searchResources("奥本海默 4K 蓝光 BluRay");
+
+    expect(searched).toBe("奥本海默");
+  });
+
+  it("leaves a bare title keyword untouched (no strip, no notice)", async () => {
+    const provider = new FakeResourceProviderV2({
+      results: { 铁拳教育: [{ id: "c1", title: "铁拳教育 全12集" }] },
+    });
+    const sandbox = new TaskSandbox({ provider, searchBudget: 8, titleTerms: ["铁拳教育"] });
+
+    const result = await sandbox.searchResources("铁拳教育");
+
+    expect(result.snapshot?.candidates).toHaveLength(1);
+    expect(result.notice).toBeUndefined();
+  });
+
   it("rejects a keyword that does not reference the title (no provider hit, no budget spent)", async () => {
     let calls = 0;
     const sandbox = new TaskSandbox({

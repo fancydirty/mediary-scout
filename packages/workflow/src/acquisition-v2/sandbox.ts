@@ -10,6 +10,23 @@ import type { ResourceProviderV2, ResourceSnapshotV2 } from "./fake-provider.js"
 import type { SimTreeFile, StorageV2, TransferAttemptResult } from "./storage-115-simulator.js";
 import { isSystemicTransferBlockMessage } from "./transfer-block.js";
 
+/** Quality / subtitle / source tokens that PanSou share titles almost never carry,
+ *  so appending them collapses recall (实测归零). Case-insensitive; word-ish so
+ *  "1080p" / "WEB-DL" / "BluRay" match as units. 中字/国语/双语/字幕 are CJK so they
+ *  match anywhere. */
+const QUALITY_SUBTITLE_TOKEN =
+  /\b(?:4k|2160p|1080p|720p|hdr|dv|remux|web-?dl|bluray|bdrip)\b|蓝光|中字|国语|双语|字幕/gi;
+
+const STRIP_NOTICE =
+  "已从关键词移除画质/字幕词(如 4K/1080p/蓝光/中字/字幕):PanSou 是通配符匹配,加这些只会把召回打成子集或归零,raw 裸标题召回最全。已改用裸标题搜索。";
+
+/** Strip quality/subtitle tokens from a search keyword and fold the resulting
+ *  whitespace. Returns whether anything was removed (drives the agent notice). */
+function stripQualitySubtitleTokens(keyword: string): { keyword: string; stripped: boolean } {
+  const cleaned = keyword.replace(QUALITY_SUBTITLE_TOKEN, " ").replace(/\s+/g, " ").trim();
+  return { keyword: cleaned, stripped: cleaned !== keyword.trim() };
+}
+
 /**
  * The task sandbox for the Acquisition V2 rebuild — the permission cage the
  * strong agent runs inside. It owns the budgets, the scope, the observed
@@ -62,6 +79,9 @@ export interface SearchToolResult {
    *  normal 8) — tells the agent it is on its last searches and the subtitle
    *  fallback policy is now in play. */
   note?: string;
+  /** Set when quality/subtitle tokens were stripped from the agent's keyword
+   *  (C5 guardrail): tells the agent the words were dropped and raw recalls more. */
+  notice?: string;
 }
 
 export interface TransferToolResult {
@@ -149,16 +169,26 @@ export class TaskSandbox {
    *  searches are capped by the budget. Every observed snapshot is recorded so a
    *  later transferCandidate can be bound to a snapshot seen in THIS task. */
   async searchResources(keyword: string): Promise<SearchToolResult> {
+    // C5 guardrail: PanSou wildcard-matches share titles, which almost never carry
+    // 画质/字幕 markers — so a quality/subtitle-laden keyword collapses recall to a
+    // subset or to ZERO (实测 铁拳教育 84→+1080p=0, 奥本海默 185→+中字=0). Strip those
+    // tokens BEFORE the title gate so the bare title still passes, and tell the
+    // agent the words were dropped (raw recalls the most). Not a hard reject — it
+    // does not second-guess the agent's title choice, only removes proven-dead noise.
+    const stripped = stripQualitySubtitleTokens(keyword);
+    const effectiveKeyword = stripped.keyword;
+
     // Hard guard: a keyword that names no title term is a genre/year-only
     // fallback ("2026 电影") — it can only return noise. Reject it BEFORE the
     // budget/provider so it costs nothing and the agent must re-keyword with the
     // real title. (asEvidence turns this throw into the {error} the agent reads.)
-    if (!keywordReferencesTitle(keyword, this.titleTerms)) {
+    if (!keywordReferencesTitle(effectiveKeyword, this.titleTerms)) {
       throw new Error(
         `搜索关键词必须包含片名(片名/原名/别名)。"${keyword}" 不含片名,只会返回噪音,已拒绝。请用包含片名的关键词(可附加年份/原名/4K/全集 等),不要用纯类型或纯年份(如 "电影"、"2026 电影")。`,
       );
     }
-    const normalized = normalizeSearchKeyword(keyword);
+    const normalized = normalizeSearchKeyword(effectiveKeyword);
+    const notice = stripped.stripped ? STRIP_NOTICE : undefined;
 
     // Check dedup FIRST — if this keyword was already searched (either by agent
     // or by system pre-warming), return the cached snapshot without hitting the
@@ -166,7 +196,7 @@ export class TaskSandbox {
     // searching a keyword that was pre-warmed.
     const cachedSnapshot = this.snapshotByKeyword.get(normalized);
     if (cachedSnapshot) {
-      return { snapshot: cachedSnapshot, deduped: true };
+      return { snapshot: cachedSnapshot, deduped: true, ...(notice ? { notice } : {}) };
     }
 
     const decision = decideSearchGate({
@@ -179,7 +209,7 @@ export class TaskSandbox {
       // This branch should now be unreachable since we check snapshotByKeyword above,
       // but keep it for backward compatibility in case seenKeywords has an entry but
       // snapshotByKeyword doesn't (should never happen in practice).
-      return { deduped: true };
+      return { deduped: true, ...(notice ? { notice } : {}) };
     }
     if (decision === "exhausted") {
       return { refused: this.budgetExhaustedMessage() };
@@ -187,10 +217,14 @@ export class TaskSandbox {
     // "fresh" and "reserve" both perform the search; "reserve" (movie 8+2) attaches
     // the note that flips the agent into last-resort subtitle-fallback mode.
     this.seenKeywords.add(normalized);
-    const snapshot = await this.provider.search(keyword);
+    const snapshot = await this.provider.search(effectiveKeyword);
     this.snapshotByKeyword.set(normalized, snapshot);
     this.observedSnapshots.set(snapshot.id, snapshot);
-    return decision === "reserve" ? { snapshot, note: this.reserveNote() } : { snapshot };
+    return {
+      snapshot,
+      ...(decision === "reserve" ? { note: this.reserveNote() } : {}),
+      ...(notice ? { notice } : {}),
+    };
   }
 
   /** Budget-exhausted refusal. For a movie (subtitle fallback) it authorizes the

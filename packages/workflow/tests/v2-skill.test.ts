@@ -74,3 +74,34 @@ describe("acquisition skill — localized, sectioned, on-demand manual", () => {
     expect(tvIndex).toMatch(/readSkill/);
   });
 });
+
+describe("SEARCH section — raw 活期文档 doctrine (Task 5: C2/C3)", () => {
+  it("teaches raw is best practice and the results are already pre-searched in viewResourceSnapshot", () => {
+    const search = readSkillSection("search");
+    expect(search).toMatch(/viewResourceSnapshot/);
+    expect(search).toMatch(/活期文档/);
+    expect(search).toMatch(/raw|裸/);
+  });
+
+  it("carries the blood-and-tears measurement table (raw recall vs quality/year-narrowed)", () => {
+    const search = readSkillSection("search");
+    expect(search).toContain("铁拳教育");
+    expect(search).toContain("84");
+    expect(search).toContain("奥本海默");
+    expect(search).toContain("185");
+    expect(search).toContain("庆余年");
+    expect(search).toContain("146");
+  });
+
+  it("demotes searchResources to 繁体/英文 upgrades only (not for re-searching raw)", () => {
+    const search = readSkillSection("search");
+    expect(search).toMatch(/繁体|英文/);
+    expect(search).toMatch(/searchResources/);
+  });
+
+  it("teaches reading discipline: find a good cover → use it; only reportNoCoverage after reading the WHOLE document", () => {
+    const search = readSkillSection("search");
+    expect(search).toMatch(/通读|读完|全部/);
+    expect(search).toMatch(/reportNoCoverage/);
+  });
+});
