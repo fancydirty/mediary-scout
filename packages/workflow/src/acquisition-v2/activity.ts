@@ -34,6 +34,12 @@ export function interpretTool(toolName: string, args: Record<string, unknown> = 
   switch (toolName) {
     case "readSkill":
       return { activity: "正在查阅操作手册…", phase: "search" };
+    case "viewResourceSnapshot":
+      // The pre-warmed 活期文档 review: the agent is browsing the system's
+      // already-searched raw candidates (free, read-only) before deciding. It is
+      // search-phase work (orient the candidate set, no transfer yet), so it stays
+      // in the low band — never the generic "处理中…" fallback.
+      return { activity: "正在浏览候选资源…", phase: "search" };
     case "searchResources": {
       const keyword = String(args.keyword ?? "").trim();
       return { activity: keyword ? `正在搜索资源:${keyword}` : "正在搜索资源…", phase: "search" };
