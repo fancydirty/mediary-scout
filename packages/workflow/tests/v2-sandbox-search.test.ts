@@ -131,6 +131,17 @@ describe("TaskSandbox — searchResources (system-budgeted, dedup, snapshot-boun
     expect(result.notice).toBeUndefined();
   });
 
+  it("does NOT emit the strip notice when only whitespace changed (no quality token removed)", async () => {
+    const provider = new FakeResourceProviderV2({
+      results: { "奥本海默 第二季": [{ id: "c1", title: "奥本海默 第二季 全集" }] },
+    });
+    const sandbox = new TaskSandbox({ provider, searchBudget: 8, titleTerms: ["奥本海默"] });
+
+    const result = await sandbox.searchResources("奥本海默   第二季");
+
+    expect(result.notice).toBeUndefined();
+  });
+
   it("rejects a keyword that does not reference the title (no provider hit, no budget spent)", async () => {
     let calls = 0;
     const sandbox = new TaskSandbox({

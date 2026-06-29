@@ -44,17 +44,18 @@ describe("raw snapshot pre-warming", () => {
   it("pre-warmed search does NOT consume the agent's distinct search budget", async () => {
     const sandbox = await createTestSandbox(["Resource A", "Resource B"]);
 
-    // 预热
     await sandbox.primeRawSnapshot("test-title");
 
-    // agent 之后搜索仍有完整预算(默认 8 次)
-    const result1 = await sandbox.searchResources("keyword1");
-    expect(result1.refused).toBeUndefined();
-
-    const result2 = await sandbox.searchResources("keyword2");
-    expect(result2.refused).toBeUndefined();
-
-    // ... 继续搜索直到预算耗尽(8 次,不包括预热)
+    // The agent still has the FULL budget of 8 distinct searches: 8 fresh keywords
+    // all run (none refused), and only the 9th distinct agent search is refused —
+    // proving the system pre-warm took none of the agent's slots.
+    for (let i = 0; i < 8; i++) {
+      const r = await sandbox.searchResources(`agent-kw-${i}`);
+      expect(r.refused, `agent search #${i + 1} should run`).toBeUndefined();
+    }
+    const ninth = await sandbox.searchResources("agent-kw-8");
+    expect(ninth.refused).toBeTruthy();
+    expect(ninth.snapshot).toBeUndefined();
   });
 
   it("agent re-searching the same raw keyword hits dedup and does NOT re-hit the provider", async () => {
@@ -144,14 +145,5 @@ describe("system prompt carries raw snapshot pointer", () => {
 
     expect(tvPrompt).not.toContain("viewResourceSnapshot");
     expect(moviePrompt).not.toContain("viewResourceSnapshot");
-  });
-});
-
-describe("viewResourceSnapshot tool registration", () => {
-  it("agent-loop tools table includes viewResourceSnapshot as read-only", async () => {
-    // 这个测试需要检查 agent-loop.ts 中的工具表
-    // 由于工具表是在 runAcquisitionAgent 内部构造的,我们通过集成测试验证
-    // 这里先占位,实际实现后可能需要调整测试策略
-    expect(true).toBe(true); // placeholder
   });
 });
