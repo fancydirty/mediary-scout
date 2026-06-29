@@ -25,6 +25,10 @@ const STRIP_NOTICE =
  *  removed — NOT when mere whitespace was collapsed (so "奥本海默   第二季" does
  *  not falsely trip the strip notice). */
 function stripQualitySubtitleTokens(keyword: string): { keyword: string; stripped: boolean } {
+  // QUALITY_SUBTITLE_TOKEN has the /g flag → RegExp.test() is stateful on lastIndex.
+  // Reset BEFORE and after the test so a non-zero lastIndex (from any prior/concurrent
+  // use of this shared regex) can never make `stripped` a false negative.
+  QUALITY_SUBTITLE_TOKEN.lastIndex = 0;
   const stripped = QUALITY_SUBTITLE_TOKEN.test(keyword);
   QUALITY_SUBTITLE_TOKEN.lastIndex = 0;
   const cleaned = keyword.replace(QUALITY_SUBTITLE_TOKEN, " ").replace(/\s+/g, " ").trim();
@@ -188,7 +192,7 @@ export class TaskSandbox {
     // real title. (asEvidence turns this throw into the {error} the agent reads.)
     if (!keywordReferencesTitle(effectiveKeyword, this.titleTerms)) {
       throw new Error(
-        `搜索关键词必须包含片名(片名/原名/别名)。"${keyword}" 不含片名,只会返回噪音,已拒绝。请用包含片名的关键词(裸标题召回最全;繁体/英文/原名 可作升级,别加画质/字幕/年份词——会被移除且只会减召回),不要用纯类型或纯年份(如 "电影"、"2026 电影")。`,
+        `搜索关键词必须包含片名(片名/原名/别名)。"${keyword}" 不含片名,只会返回噪音,已拒绝。请用包含片名的关键词(裸标题召回最全;繁体/英文/原名 可作升级。注意:画质/字幕词会被自动移除,年份/季 等词虽不移除但同样会减召回,别加),不要用纯类型或纯年份(如 "电影"、"2026 电影")。`,
       );
     }
     const normalized = normalizeSearchKeyword(effectiveKeyword);

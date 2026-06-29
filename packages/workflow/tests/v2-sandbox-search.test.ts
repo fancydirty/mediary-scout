@@ -142,6 +142,19 @@ describe("TaskSandbox — searchResources (system-budgeted, dedup, snapshot-boun
     expect(result.notice).toBeUndefined();
   });
 
+  it("emits the strip notice on EVERY quality-laden search (shared /g regex lastIndex never leaks)", async () => {
+    const provider = new FakeResourceProviderV2({
+      results: { 铁拳教育: [{ id: "c1", title: "铁拳教育 全集" }], 奥本海默: [{ id: "c2", title: "奥本海默 全集" }] },
+    });
+    const sandbox = new TaskSandbox({ provider, searchBudget: 8, titleTerms: ["铁拳教育", "奥本海默"] });
+
+    const first = await sandbox.searchResources("铁拳教育 1080p");
+    const second = await sandbox.searchResources("奥本海默 中字");
+
+    expect(first.notice).toMatch(/已移除|画质|raw/);
+    expect(second.notice).toMatch(/已移除|画质|raw/);
+  });
+
   it("rejects a keyword that does not reference the title (no provider hit, no budget spent)", async () => {
     let calls = 0;
     const sandbox = new TaskSandbox({
