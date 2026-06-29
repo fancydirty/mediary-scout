@@ -43,3 +43,6 @@ docs/roadmap-self-host-expansion.md
 
 # 个人博客草稿(推广用,不进公共仓库)
 docs/blog/
+
+# OhMyOpenCode runtime session artifacts
+.omo/
