@@ -96,6 +96,9 @@ export class TaskSandbox {
   /** Set when the agent landed a movie via the 中文字幕 last-resort fallback (no
    *  confirmed 中字). Surfaced in finish() → notification 可能无中文字幕(兜底). */
   private subtitleFallbackUsed = false;
+  /** Raw snapshot from pre-warming (system-initiated search). Stored so
+   *  viewResourceSnapshot can return it multiple times without cost. */
+  private rawSnapshot: ResourceSnapshotV2 | null = null;
 
   constructor(options: TaskSandboxOptions) {
     this.provider = options.provider;
@@ -156,6 +159,16 @@ export class TaskSandbox {
       );
     }
     const normalized = normalizeSearchKeyword(keyword);
+
+    // Check dedup FIRST — if this keyword was already searched (either by agent
+    // or by system pre-warming), return the cached snapshot without hitting the
+    // provider or consuming budget. This covers both agent re-searches and agent
+    // searching a keyword that was pre-warmed.
+    const cachedSnapshot = this.snapshotByKeyword.get(normalized);
+    if (cachedSnapshot) {
+      return { snapshot: cachedSnapshot, deduped: true };
+    }
+
     const decision = decideSearchGate({
       normalizedKeyword: normalized,
       seenKeywords: this.seenKeywords,
@@ -163,8 +176,10 @@ export class TaskSandbox {
       ...(this.softThreshold === undefined ? {} : { softThreshold: this.softThreshold }),
     });
     if (decision === "duplicate") {
-      const prior = this.snapshotByKeyword.get(normalized);
-      return prior ? { snapshot: prior, deduped: true } : { deduped: true };
+      // This branch should now be unreachable since we check snapshotByKeyword above,
+      // but keep it for backward compatibility in case seenKeywords has an entry but
+      // snapshotByKeyword doesn't (should never happen in practice).
+      return { deduped: true };
     }
     if (decision === "exhausted") {
       return { refused: this.budgetExhaustedMessage() };
@@ -543,5 +558,54 @@ export class TaskSandbox {
       );
     }
     return { reason, searchesPerformed: this.seenKeywords.size };
+  }
+
+  /** Pre-warm a raw search (system-initiated, does NOT consume agent's distinct
+   *  search budget). The snapshot is recorded in dedup/registry/observedSnapshots
+   *  just like an agent search, so agent can later transferCandidate by id. Calling
+   *  this multiple times replaces the prior raw snapshot. */
+  async primeRawSnapshot(keyword: string): Promise<void> {
+    const normalized = normalizeSearchKeyword(keyword);
+    // Perform the search WITHOUT marking it as seen by the agent (don't add to
+    // seenKeywords) — so it doesn't consume the distinct search budget.
+    const snapshot = await this.provider.search(keyword);
+
+    // Record in dedup map so agent re-searching this keyword hits dedup
+    this.snapshotByKeyword.set(normalized, snapshot);
+
+    // Record in observed snapshots so transferCandidate can resolve candidate ids
+    this.observedSnapshots.set(snapshot.id, snapshot);
+
+    // Store for viewResourceSnapshot
+    this.rawSnapshot = snapshot;
+  }
+
+  /** Read-only tool: view the pre-warmed raw snapshot as a structured document.
+   *  Free, repeatable, does NOT consume search budget. Returns id + title for each
+   *  candidate (truncated at 120 if excessive). */
+  viewResourceSnapshot(): { document: string; candidateCount: number } {
+    if (!this.rawSnapshot) {
+      return {
+        document: "No raw snapshot available. Call primeRawSnapshot first.",
+        candidateCount: 0,
+      };
+    }
+
+    const candidates = this.rawSnapshot.candidates;
+    const total = candidates.length;
+    const truncated = candidates.slice(0, 120);
+    const remaining = total - truncated.length;
+
+    let document = `📋 Raw snapshot (${total} candidates):\n\n`;
+
+    for (const candidate of truncated) {
+      document += `[${candidate.id}] ${candidate.title}\n`;
+    }
+
+    if (remaining > 0) {
+      document += `\n... 还有 ${remaining} 条。如需更多,可用 searchResources 搜繁体/英文关键词。\n`;
+    }
+
+    return { document, candidateCount: total };
   }
 }

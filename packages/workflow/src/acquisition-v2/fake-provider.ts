@@ -32,10 +32,12 @@ export interface ResourceProviderV2 {
 export class FakeResourceProviderV2 implements ResourceProviderV2 {
   private readonly results: Map<string, SimResourceCandidate[]>;
   private readonly errorKeywords: Set<string>;
+  private readonly onSearch: (() => void) | undefined;
 
   constructor(options: {
     results?: Record<string, SimResourceCandidate[]>;
     errorKeywords?: string[];
+    onSearch?: () => void;
   } = {}) {
     this.results = new Map(
       Object.entries(options.results ?? {}).map(([keyword, candidates]) => [
@@ -44,9 +46,11 @@ export class FakeResourceProviderV2 implements ResourceProviderV2 {
       ]),
     );
     this.errorKeywords = new Set((options.errorKeywords ?? []).map(normalizeKeyword));
+    this.onSearch = options.onSearch ?? undefined;
   }
 
   async search(keyword: string): Promise<ResourceSnapshotV2> {
+    this.onSearch?.();
     const normalized = normalizeKeyword(keyword);
     if (this.errorKeywords.has(normalized)) {
       throw new Error(`PROVIDER_ERROR: search failed for "${keyword}"`);

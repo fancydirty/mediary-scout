@@ -68,6 +68,9 @@ export interface TaskAgentPromptOptions {
    *  the work is natively Chinese-spoken → the 中文 subtitle floor is irrelevant
    *  (no 中字 to hunt), so languageLine skips it. Empty/absent → normal floor. */
   originCountries?: string[];
+  /** Count of pre-warmed raw candidates (system pre-searched the raw keyword).
+   *  When present, prompt includes a pointer to viewResourceSnapshot. */
+  prefetchedCandidateCount?: number;
 }
 
 /** A brand-specific transfer-model note. 夸克 differs from 115 (转存分享链 / 无磁力)
@@ -129,11 +132,18 @@ function qualityGuidanceBlock(options: TaskAgentPromptOptions): string {
     : `\nQUALITY PREFERENCE (召回后选片优先级,不影响搜索词):\n${options.qualityGuidance}\n`;
 }
 
+function rawSnapshotPointer(options: TaskAgentPromptOptions): string {
+  if (options.prefetchedCandidateCount === undefined || options.prefetchedCandidateCount === 0) {
+    return "";
+  }
+  return `\n📋 RAW SNAPSHOT (活期文档): The system has already pre-searched the raw keyword (bare title) for you and found ${options.prefetchedCandidateCount} candidates. Your FIRST step: call viewResourceSnapshot() to view this live document — it's free, read-only, and contains all the raw candidates (id + title). Do NOT use searchResources to re-search the raw keyword; searchResources is ONLY for 繁体/英文/原名 upgrades when the raw snapshot is insufficient.\n`;
+}
+
 export function buildTvAnimeSystemPrompt(options: TaskAgentPromptOptions): string {
   return `${SANDBOX_BOUNDARY}
 
 ${skillMandate("tv")}
-
+${rawSnapshotPointer(options)}
 You own the COMPLETE acquisition judgment for one OR MORE seasons of a TV/anime title in scope: keyword strategy, target matching, season/episode coverage, package recognition + normalization, provider-ahead reasoning, staging→season extraction, residue classification, same-episode dedup grouping, and marking. It is ONE deliberation, not separate filters. The need is simply "应有 vs 实有 = which episodes are still missing"; it may span several seasons.
 
 Target matching:
@@ -165,7 +175,7 @@ export function buildMovieSystemPrompt(options: TaskAgentPromptOptions): string 
   return `${SANDBOX_BOUNDARY}
 
 ${skillMandate("movie")}
-
+${rawSnapshotPointer(options)}
 You own the COMPLETE acquisition judgment for ONE movie: target正片 identification (guard against remakes/wrong films — cross-check BOTH title AND year), main-file selection, quality tradeoff, rejection of extras/trailers/foreign works, import cleanup, and marking. A movie is a SINGLE video file — there are no seasons or episodes; its one synthetic coverage token is "MOVIE".
 
 Identity (the hard part): the candidate must be THIS film, not a remake, sequel, prequel, or same-IP different film. Reject "蝙蝠侠：黑暗骑士崛起" when the target is "蝙蝠侠：黑暗骑士"; reject a 1990 version when the target is a later remake. When identity is unclear, do not transfer speculatively.

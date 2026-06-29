@@ -44,6 +44,7 @@ describe("buildSandboxToolSet — the agent's tool surface over the cage", () =>
         "reportNoCoverage",
         "searchResources",
         "transferCandidate",
+        "viewResourceSnapshot",
       ].sort(),
     );
   });
