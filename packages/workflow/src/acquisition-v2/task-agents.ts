@@ -3,6 +3,7 @@ import { runAcquisitionAgent, type AcquisitionAgentResult } from "./agent-loop.j
 import type { AgentToolEvent } from "./activity.js";
 import type { TaskSandbox } from "./sandbox.js";
 import { skillIndexForAgent } from "./skill.js";
+import { getStorageBrand } from "../storage-brands.js";
 
 /**
  * The 字字泣血 mandate: the agent MUST read its skill manual before acting and
@@ -101,11 +102,21 @@ function languageLine(options: TaskAgentPromptOptions): string {
     if ((options.originCountries ?? []).includes("CN")) {
       return `\nLANGUAGE PREFERENCE: 这是中国大陆出品(国产)作品,原生中文对白 —— 无需做任何中文字幕判定,也不要把 中字/国语/双语 等词拼进搜索关键词。直接按画质/完整性正常选片即可。`;
     }
+
+    // Soft default: Chinese-titled resources are more likely to carry Chinese subs
+    // (don't treat lack of "中字" marker as proof of raw). Strengthen this default
+    // for 115/quark (Chinese-world drives) but keep it conservative for guangya.
+    const provider = options.storageProvider ?? "pan115";
+    const brand = getStorageBrand(provider);
+    const brandStrengthen = brand.assumeChineseSubsFromChineseTitle
+      ? ` 尤其是 ${brand.label} 本就是中文世界的网盘,资源主要来自中文圈 —— 资源名是中文的更应默认带有中文字幕。`
+      : "";
+
     const head = `\nLANGUAGE PREFERENCE: the user reads 中文 subtitles — ${
       options.subtitleFallback ? "strongly preferred; search hard for it first" : "a HARD requirement, not a nice-to-have"
     }. Judge Chinese subs from the RELEASE, NOT from "the title contains Chinese characters": PanSou often prepends the show's 中文片名 to an English scene filename (中文片名-Name.Year.1080p.WEB-DL.Codec-GROUP) — mentally STRIP that prefix and judge what remains.
 - English scene release (Name.Year.Resolution.Source.Codec-GROUP — dotted ASCII + a scene group like EaZy/RARBG/Guyute/NTb/FLUX/CMCT) → assume NO 中文 subs: foreign-only, the user CANNOT read it.
-- Chinese-community release (a real 中文 release name; or 国语/中字/中英/简繁/双语/CHS-ENG/CHS/中英双字/国粤双语 markers; or a Chinese release group; bracketed/spaced formatting) → ships 中文 subs. Do NOT require the literal "中字" token — a genuine Chinese-community release carries them.
+- Chinese-community release (a real 中文 release name; or 国语/中字/中英/简繁/双语/CHS-ENG/CHS/中英双字/国粤双语 markers; or a Chinese release group; bracketed/spaced formatting) → ships 中文 subs. Do NOT require the literal "中字" token — a genuine Chinese-community release carries them. 资源名是中文的,默认就应该带有中文字幕(别因为标题不写「中字」字样就当成生肉)。${brandStrengthen}
 - NEVER infer 中文 subs from "it has a subtitle file" or "it's an .mkv": an mkv embeds subtitles that are usually NOT 中文; only the release naming tells you.`;
     // Movie: SOFT last-resort fallback. TV/anime: HARD floor (no 生肉 dumping — a raw
     // Japanese episode with no subs is unwatchable and would falsely mark an episode

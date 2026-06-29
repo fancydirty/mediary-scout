@@ -71,4 +71,41 @@ describe("languageLine — 国产 (CN-origin) content needs no 中字 judgement 
     expect(p).toContain("HARD requirement");
     expect(p).not.toMatch(/国产/);
   });
+});
+
+describe("languageLine — 中字软默认按品牌注册表解耦 (Task 4)", () => {
+  it("115/quark drives strengthen the Chinese-subs soft default for foreign titles", () => {
+    for (const provider of ["pan115", "quark"]) {
+      const p = buildTvAnimeSystemPrompt({
+        preferredLanguage: "中文",
+        originCountries: ["US"],
+        storageProvider: provider,
+      });
+      // Should contain the strengthening language about Chinese-world drives
+      expect(p).toMatch(/中文世界|中文圈|资源名.*中文.*默认.*字幕|更应默认带中/);
+    }
+  });
+
+  it("guangya does NOT apply the strengthened Chinese-subs default", () => {
+    const p = buildTvAnimeSystemPrompt({
+      preferredLanguage: "中文",
+      originCountries: ["US"],
+      storageProvider: "guangya",
+    });
+    // Should NOT contain the 115/quark-specific strengthening
+    expect(p).not.toMatch(/中文世界|中文圈.*更应默认/);
+  });
+
+  it("CN-origin content still skips 中字 judgment regardless of provider (regression check)", () => {
+    for (const provider of ["pan115", "quark", "guangya"]) {
+      const p = buildTvAnimeSystemPrompt({
+        preferredLanguage: "中文",
+        originCountries: ["CN"],
+        storageProvider: provider,
+      });
+      expect(p).toMatch(/国产|原生中文/);
+      expect(p).toMatch(/无需|不需要/);
+      expect(p).not.toContain("HARD requirement");
+    }
+  });
 })

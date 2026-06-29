@@ -30,6 +30,11 @@ export interface StorageBrand {
   /** Resource providers applicable to this brand. Quark has no magnet web API, so
    *  it omits "prowlarr" — magnet stays 115-only. */
   resourceProviderKinds: ResourceProviderKind[];
+  /** Whether to strengthen the Chinese-subs soft default for this brand. When true,
+   *  the agent prompt emphasizes that Chinese-titled resources from this drive are
+   *  more likely to carry Chinese subs (these are Chinese-world drives where resources
+   *  mostly come from the Chinese community). Set to false for magnet-only drives. */
+  assumeChineseSubsFromChineseTitle: boolean;
 }
 
 export const STORAGE_BRANDS: StorageBrand[] = [
@@ -39,6 +44,7 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     parseUid: parsePan115Uid,
     isAuthError: isPan115AuthError,
     resourceProviderKinds: ["pansou-115", "prowlarr"],
+    assumeChineseSubsFromChineseTitle: true,
   },
   {
     provider: "quark",
@@ -46,6 +52,7 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     parseUid: parseQuarkUid,
     isAuthError: isQuarkAuthError,
     resourceProviderKinds: ["pansou-quark"],
+    assumeChineseSubsFromChineseTitle: true,
   },
   {
     provider: "guangya",
@@ -53,6 +60,7 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     parseUid: parseGuangYaUid,
     isAuthError: isGuangYaAuthError,
     resourceProviderKinds: ["pansou-magnet", "prowlarr"],
+    assumeChineseSubsFromChineseTitle: false,
   },
 ];
 

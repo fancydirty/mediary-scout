@@ -71,4 +71,12 @@ describe("storage brand registry", () => {
     expect(brandSupportsProwlarr("guangya")).toBe(true);
     expect(brandSupportsProwlarr("baidu")).toBe(false);
   });
+
+  it("brand registry carries assumeChineseSubsFromChineseTitle flag (Task 4)", () => {
+    // 115 and quark are Chinese-world drives → assume Chinese subs from Chinese titles
+    expect(getStorageBrand("pan115").assumeChineseSubsFromChineseTitle).toBe(true);
+    expect(getStorageBrand("quark").assumeChineseSubsFromChineseTitle).toBe(true);
+    // guangya is magnet-only, more strict
+    expect(getStorageBrand("guangya").assumeChineseSubsFromChineseTitle).toBe(false);
+  });
 });
