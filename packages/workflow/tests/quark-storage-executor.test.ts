@@ -107,8 +107,6 @@ function shareCandidate(url: string, password = ""): ResourceCandidate {
     title: "Movie 2020",
     type: "manual",
     source: "pansou",
-    episodeHints: [],
-    qualityHints: [],
     providerPayload: { url, password },
   };
 }

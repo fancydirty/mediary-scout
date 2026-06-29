@@ -7,7 +7,7 @@ import { Storage115Simulator } from "../src/acquisition-v2/storage-115-simulator
 
 async function setup(need: string[] = ["S01E01"]) {
   const provider = new FakeResourceProviderV2({
-    results: { show: [{ id: "cand", title: "Show", episodeHints: [], qualityHints: [] }] },
+    results: { show: [{ id: "cand", title: "Show" }] },
   });
   const storage = new Storage115Simulator({ packs: { cand: { files: [{ path: "Show - 01.mkv", sizeBytes: 9 }] } } });
   const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });

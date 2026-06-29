@@ -18,8 +18,6 @@ function realSnapshot(): ResourceSnapshot {
         title: "莉可丽丝 全集 1080p",
         type: "115",
         source: "pansou",
-        episodeHints: ["1-13"],
-        qualityHints: ["1080p"],
         providerPayload: { url: "https://115.com/s/abc", receiveCode: "x1" },
       },
     ],

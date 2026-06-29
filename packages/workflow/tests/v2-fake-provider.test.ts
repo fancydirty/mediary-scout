@@ -6,7 +6,7 @@ describe("FakeResourceProviderV2", () => {
     const provider = new FakeResourceProviderV2({
       results: {
         "show 4k": [
-          { id: "cand_full", title: "Show S01 全集 4K", episodeHints: ["S01E01", "S01E12"], qualityHints: ["4K"] },
+          { id: "cand_full", title: "Show S01 全集 4K" },
         ],
       },
     });
@@ -31,7 +31,7 @@ describe("FakeResourceProviderV2", () => {
   });
 
   it("gives the same content-addressed snapshot id for the same result set (dedup-safe)", async () => {
-    const same = [{ id: "c1", title: "T", episodeHints: [], qualityHints: [] }];
+    const same = [{ id: "c1", title: "T" }];
     const provider = new FakeResourceProviderV2({ results: { k1: same, k2: same } });
 
     const a = await provider.search("k1");

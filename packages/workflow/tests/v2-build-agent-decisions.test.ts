@@ -36,8 +36,6 @@ function snap(id: string, candidateIds: string[]): ResourceSnapshot {
       title: cid,
       type: "115",
       source: "pansou",
-      episodeHints: [],
-      qualityHints: [],
       providerPayload: {},
     })),
   };

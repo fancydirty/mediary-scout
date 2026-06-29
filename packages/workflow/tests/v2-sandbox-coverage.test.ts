@@ -7,8 +7,8 @@ function provider() {
   return new FakeResourceProviderV2({
     results: {
       show: [
-        { id: "cand1", title: "Show E01", episodeHints: [], qualityHints: [] },
-        { id: "cand2", title: "Show E01 dup", episodeHints: [], qualityHints: [] },
+        { id: "cand1", title: "Show E01" },
+        { id: "cand2", title: "Show E01 dup" },
       ],
     },
   });

@@ -5,7 +5,7 @@ import { Storage115Simulator } from "../src/acquisition-v2/storage-115-simulator
 
 async function setup() {
   const provider = new FakeResourceProviderV2({
-    results: { show: [{ id: "cand_full", title: "Show 全集", episodeHints: [], qualityHints: [] }] },
+    results: { show: [{ id: "cand_full", title: "Show 全集" }] },
   });
   const storage = new Storage115Simulator({
     packs: { cand_full: { files: Array.from({ length: 3 }, (_, i) => ({ path: `Show - 0${i + 1}.mkv`, sizeBytes: 1 })) } },
@@ -48,7 +48,7 @@ describe("TaskSandbox — transferCandidate (snapshot-bound, into staging, force
 
   it("surfaces a SYSTEMIC block (configures providerMessage + systemicBlock) so the agent stops grinding", async () => {
     const provider = new FakeResourceProviderV2({
-      results: { show: [{ id: "cand_full", title: "Show 全集", episodeHints: [], qualityHints: [] }] },
+      results: { show: [{ id: "cand_full", title: "Show 全集" }] },
     });
     // The resource EXISTS (pack present) but the account cannot transfer it (quota) —
     // exactly the 心灵奇旅 free-account case. The sim returns the loud provider message.
@@ -70,7 +70,7 @@ describe("TaskSandbox — transferCandidate (snapshot-bound, into staging, force
 
   it("does NOT flag a dead-link failure as a systemic block (keep iterating)", async () => {
     const provider = new FakeResourceProviderV2({
-      results: { show: [{ id: "dead", title: "Show 全集", episodeHints: [], qualityHints: [] }] },
+      results: { show: [{ id: "dead", title: "Show 全集" }] },
     });
     const storage = new Storage115Simulator({
       failureMessages: { dead: "链接已过期" },

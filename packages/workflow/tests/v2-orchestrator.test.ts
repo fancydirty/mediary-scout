@@ -96,8 +96,8 @@ describe("runAcquisitionV2 — raw snapshot pre-warming integration", () => {
             provider: "pansou",
             keyword,
             candidates: [
-              { id: "c1", title: "铁拳教育 S01", sourceUrl: "https://pan.example.com/1", providerPayload: {} },
-              { id: "c2", title: "铁拳教育 全集", sourceUrl: "https://pan.example.com/2", providerPayload: {} },
+              { id: "c1", snapshotId: "snap_raw", index: 0, title: "铁拳教育 S01", type: "115", source: "pansou", providerPayload: {} },
+              { id: "c2", snapshotId: "snap_raw", index: 1, title: "铁拳教育 全集", type: "115", source: "pansou", providerPayload: {} },
             ],
             createdAt: "2026-06-29T00:00:00.000Z",
           };
@@ -194,7 +194,7 @@ describe("runAcquisitionV2 — raw snapshot pre-warming integration", () => {
             id: "snap_movie_raw",
             provider: "pansou",
             keyword,
-            candidates: [{ id: "m1", title: "流浪地球 4K", sourceUrl: "https://pan.example.com/m1", providerPayload: {} }],
+            candidates: [{ id: "m1", snapshotId: "snap_movie_raw", index: 0, title: "流浪地球 4K", type: "115", source: "pansou", providerPayload: {} }],
             createdAt: "2026-06-29T00:00:00.000Z",
           };
         }

@@ -12,8 +12,6 @@ function candidate(id: string): ResourceCandidate {
     title: "Show 全集",
     type: "115",
     source: "pansou",
-    episodeHints: [],
-    qualityHints: [],
     providerPayload: { url: "https://115.com/s/abc", receiveCode: "pw" },
   };
 }

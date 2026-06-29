@@ -6,7 +6,7 @@ import { Storage115Simulator } from "../src/acquisition-v2/storage-115-simulator
 describe("TaskSandbox.discardStaging — harnessed wholesale staging wipe (TV/anime)", () => {
   it("wipes the whole staging dir after the agent distributed what it needs; the season dir survives", async () => {
     const provider = new FakeResourceProviderV2({
-      results: { show: [{ id: "cand", title: "Show", episodeHints: [], qualityHints: [] }] },
+      results: { show: [{ id: "cand", title: "Show" }] },
     });
     const storage = new Storage115Simulator({
       packs: { cand: { files: [{ path: "Show - 01.mkv", sizeBytes: 9 }, { path: "Show - 02.mkv", sizeBytes: 9 }] } },
@@ -52,7 +52,7 @@ describe("TaskSandbox.discardStaging — harnessed wholesale staging wipe (TV/an
 describe("TaskSandbox.flattenMovie — automatic video+subtitle extraction (movie)", () => {
   it("extracts ALL video and subtitle files to the movie dir root and removes the wrapper", async () => {
     const provider = new FakeResourceProviderV2({
-      results: { x: [{ id: "film", title: "Inception", episodeHints: [], qualityHints: [] }] },
+      results: { x: [{ id: "film", title: "Inception" }] },
     });
     const storage = new Storage115Simulator({
       packs: {

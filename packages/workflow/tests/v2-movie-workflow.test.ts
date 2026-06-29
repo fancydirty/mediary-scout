@@ -105,8 +105,6 @@ describe("runMovieAcquisitionV2 — obtained comes from the AGENT'S coverage, ne
             title: "心灵奇旅 2020 1080p",
             type: "magnet",
             source: "pansou",
-            episodeHints: [],
-            qualityHints: [],
             providerPayload: { url: "magnet:?xt=urn:btih:deadbeef" },
           },
         ],

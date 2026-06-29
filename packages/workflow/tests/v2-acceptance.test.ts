@@ -12,7 +12,7 @@ import { Storage115Simulator, type PackSpec } from "../src/acquisition-v2/storag
  */
 
 function candidate(id: string, title = id): SimResourceCandidate {
-  return { id, title, episodeHints: [], qualityHints: [] };
+  return { id, title };
 }
 
 async function makeSandbox(opts: {

@@ -15,7 +15,7 @@ async function multiSeasonSetup(opts: {
   packFiles: Array<{ path: string; sizeBytes: number }>;
 }) {
   const provider = new FakeResourceProviderV2({
-    results: { show: [{ id: "series", title: "Show Complete Series", episodeHints: [], qualityHints: [] }] },
+    results: { show: [{ id: "series", title: "Show Complete Series" }] },
   });
   const storage = new Storage115Simulator({ packs: { series: { files: opts.packFiles } } });
   const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });

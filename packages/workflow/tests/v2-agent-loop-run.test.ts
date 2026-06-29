@@ -32,7 +32,7 @@ function scriptedModel(steps: Array<{ tool: string; input: unknown } | { text: s
 
 async function setup(need: string[]) {
   const provider = new FakeResourceProviderV2({
-    results: { "lycoris recoil": [{ id: "full_pack", title: "Lycoris Recoil S01 全集", episodeHints: [], qualityHints: [] }] },
+    results: { "lycoris recoil": [{ id: "full_pack", title: "Lycoris Recoil S01 全集" }] },
   });
   const storage = new Storage115Simulator({
     packs: { full_pack: { files: [{ path: "[Grp] LR/LR - 01.mkv", sizeBytes: 100 }] } },
@@ -91,7 +91,7 @@ describe("runAcquisitionAgent — the real AI SDK tool-loop over the sandbox", (
     // 心灵奇旅 incident ground through 13 of these. The loop must stop after the first.
     const provider = new FakeResourceProviderV2({
       results: {
-        soul: Array.from({ length: 8 }, (_, i) => ({ id: `cand_${i}`, title: `心灵奇旅 ${i}`, episodeHints: [], qualityHints: [] })),
+        soul: Array.from({ length: 8 }, (_, i) => ({ id: `cand_${i}`, title: `心灵奇旅 ${i}` })),
       },
     });
     const failureMessages: Record<string, string> = {};

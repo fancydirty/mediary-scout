@@ -13,17 +13,14 @@ describe("runPan115ShareAdapterSmoke", () => {
         "Show 4K": [
           {
             title: "Show expired link",
-            episodeHints: ["S01E01"],
             providerPayload: { url: "https://115.com/s/expired?password=bad" },
           },
           {
             title: "Show already transferred elsewhere",
-            episodeHints: ["S01E01"],
             providerPayload: { url: "https://115.com/s/duplicate?password=dup" },
           },
           {
             title: "Show working link",
-            episodeHints: ["S01E01"],
             providerPayload: { url: "https://115.com/s/working?password=ok" },
           },
         ],
@@ -77,7 +74,6 @@ describe("runPan115ShareAdapterSmoke", () => {
         "Show 4K": [
           {
             title: "Show expired link",
-            episodeHints: ["S01E01"],
             providerPayload: { url: "https://115.com/s/expired?password=bad" },
           },
         ],
@@ -124,8 +120,6 @@ describe("runPan115ShareAdapterSmoke", () => {
               title: "Show magnet",
               type: "magnet" as const,
               source: "fake",
-              episodeHints: ["S01E01"],
-              qualityHints: [],
               providerPayload: { url: "magnet:?xt=urn:btih:abc" },
             },
           ],

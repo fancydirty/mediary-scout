@@ -30,7 +30,7 @@ describe("§6b multi-season acceptance", () => {
     const { sandbox } = await setup({
       need: ["S03E01"],
       seasons: [3, 5], // user only wants seasons 3 & 5
-      results: { show: [{ id: "cand", title: "S3 pack", episodeHints: [], qualityHints: [] }] },
+      results: { show: [{ id: "cand", title: "S3 pack" }] },
       packs: { cand: { files: [{ path: "S3/Show - 01.mkv", sizeBytes: 1 }] } },
     });
     const search = await sandbox.searchResources("show");
@@ -47,8 +47,8 @@ describe("§6b multi-season acceptance", () => {
       seasons: [1, 2],
       results: {
         show: [
-          { id: "complete", title: "Complete Series", episodeHints: [], qualityHints: [] },
-          { id: "extra", title: "extra pack", episodeHints: [], qualityHints: [] },
+          { id: "complete", title: "Complete Series" },
+          { id: "extra", title: "extra pack" },
         ],
       },
       packs: {
@@ -77,7 +77,7 @@ describe("§6b multi-season acceptance", () => {
     const { sandbox } = await setup({
       need: ["S01E01", "S02E07"], // S02E07 has no covering resource anywhere
       seasons: [1, 2],
-      results: { show: [{ id: "s1only", title: "Season 1 only", episodeHints: [], qualityHints: [] }] },
+      results: { show: [{ id: "s1only", title: "Season 1 only" }] },
       packs: { s1only: { files: [{ path: "S1/E01.mkv", sizeBytes: 1 }] } },
     });
     const search = await sandbox.searchResources("show");

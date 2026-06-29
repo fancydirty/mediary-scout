@@ -22,8 +22,6 @@ function fakeProvider(
           title: `${name} ${index}`,
           type: c.infoHash ? "magnet" : "115",
           source: name,
-          episodeHints: [],
-          qualityHints: [],
           providerPayload: c.infoHash ? { url: c.url, infoHash: c.infoHash } : { url: c.url },
         })),
       };

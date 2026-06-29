@@ -1140,8 +1140,6 @@ function candidateFixture(input: {
     title: "Show S01E01",
     type: input.type,
     source: "pansou",
-    episodeHints: ["S01E01"],
-    qualityHints: ["4K"],
     providerPayload: input.providerPayload,
   };
 }

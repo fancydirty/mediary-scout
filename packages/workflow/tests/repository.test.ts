@@ -664,8 +664,6 @@ function workflowPersistenceFixture(
           title: "Show S01E01",
           type: "115",
           source: "fake",
-          episodeHints: ["S01E01"],
-          qualityHints: ["4K"],
           providerPayload: {},
         },
       ],

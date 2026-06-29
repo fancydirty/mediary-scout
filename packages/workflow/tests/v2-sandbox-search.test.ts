@@ -5,7 +5,7 @@ import { FakeResourceProviderV2 } from "../src/acquisition-v2/fake-provider.js";
 describe("TaskSandbox — searchResources (system-budgeted, dedup, snapshot-bound)", () => {
   it("returns the full candidate snapshot for a fresh keyword", async () => {
     const provider = new FakeResourceProviderV2({
-      results: { show: [{ id: "c1", title: "Show", episodeHints: [], qualityHints: [] }] },
+      results: { show: [{ id: "c1", title: "Show" }] },
     });
     const sandbox = new TaskSandbox({ provider, searchBudget: 8 });
 
@@ -45,7 +45,7 @@ describe("TaskSandbox — searchResources (system-budgeted, dedup, snapshot-boun
 
   it("records observed snapshots so a later transfer can be snapshot-bound", async () => {
     const provider = new FakeResourceProviderV2({
-      results: { show: [{ id: "c1", title: "Show", episodeHints: [], qualityHints: [] }] },
+      results: { show: [{ id: "c1", title: "Show" }] },
     });
     const sandbox = new TaskSandbox({ provider, searchBudget: 8 });
 

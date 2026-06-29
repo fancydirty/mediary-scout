@@ -21,7 +21,7 @@ async function movieSetup(options: {
   failureMessages?: Record<string, string>;
 }) {
   const provider = new FakeResourceProviderV2({
-    results: { oppenheimer: options.results.map((r) => ({ ...r, episodeHints: [], qualityHints: [] })) },
+    results: { oppenheimer: options.results.map((r) => ({ ...r })) },
   });
   const storage = new Storage115Simulator({
     ...(options.packs ? { packs: options.packs } : {}),
@@ -96,7 +96,7 @@ describe("TaskSandbox — transferUntilLanded (movie-only, 115-only, agent-order
 
   it("is movie-only — a TV-scoped task refuses it", async () => {
     const provider = new FakeResourceProviderV2({
-      results: { oppenheimer: [{ id: "live", title: "x", episodeHints: [], qualityHints: [] }] },
+      results: { oppenheimer: [{ id: "live", title: "x" }] },
     });
     const storage = new Storage115Simulator({
       packs: { live: { files: [{ path: "m.mkv", sizeBytes: 1 }] } },

@@ -10,7 +10,6 @@ async function createTestSandbox(candidateTitles: string[], keyword = "铁拳教
       [keyword]: candidateTitles.map((title, idx) => ({
         id: `c${idx}`,
         title,
-        providerPayload: { url: `https://example.com/${idx}` },
       })),
     },
   });
@@ -61,7 +60,7 @@ describe("raw snapshot pre-warming", () => {
   it("agent re-searching the same raw keyword hits dedup and does NOT re-hit the provider", async () => {
     let searchCount = 0;
     const provider = new FakeResourceProviderV2({
-      results: { raw: [{ id: "c1", title: "Title", providerPayload: { url: "https://example.com/1" } }] },
+      results: { raw: [{ id: "c1", title: "Title" }] },
       onSearch: () => { searchCount++; },
     });
     const storage = new Storage115Simulator({ packs: {} });

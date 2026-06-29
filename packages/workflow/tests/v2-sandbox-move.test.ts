@@ -5,7 +5,7 @@ import { Storage115Simulator } from "../src/acquisition-v2/storage-115-simulator
 
 async function setup() {
   const provider = new FakeResourceProviderV2({
-    results: { show: [{ id: "cand_full", title: "Show 全集", episodeHints: [], qualityHints: [] }] },
+    results: { show: [{ id: "cand_full", title: "Show 全集" }] },
   });
   const storage = new Storage115Simulator({
     packs: { cand_full: { files: Array.from({ length: 3 }, (_, i) => ({ path: `Pack/Show - 0${i + 1}.mkv`, sizeBytes: 1 })) } },

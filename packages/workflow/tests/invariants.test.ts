@@ -176,8 +176,8 @@ describe("fake adapters", () => {
     const provider = new FakeResourceProvider({
       keywordResults: {
         "翘楚 4K": [
-          { title: "翘楚 S01E13 4K", episodeHints: ["S01E13"] },
-          { title: "翘楚 S01E14 4K", episodeHints: ["S01E14"] },
+          { title: "翘楚 S01E13 4K" },
+          { title: "翘楚 S01E14 4K" },
         ],
       },
     });
@@ -191,8 +191,8 @@ describe("fake adapters", () => {
   it("uses distinct stable ids across multiple resource snapshots", async () => {
     const provider = new FakeResourceProvider({
       keywordResults: {
-        "翘楚 4K": [{ title: "翘楚 S01E13 4K", episodeHints: ["S01E13"] }],
-        "翘楚 1080p": [{ title: "翘楚 S01E13 1080p", episodeHints: ["S01E13"] }],
+        "翘楚 4K": [{ title: "翘楚 S01E13 4K" }],
+        "翘楚 1080p": [{ title: "翘楚 S01E13 1080p" }],
       },
     });
 
