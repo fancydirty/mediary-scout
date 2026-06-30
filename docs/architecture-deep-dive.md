@@ -283,24 +283,47 @@ export async function runAcquisitionV2(request) {
 ```typescript
 export function buildSandboxToolSet(sandbox: TaskSandbox, options) {
   const tools = {
+    readSkill: {
+      inputSchema: z.object({ section: z.string() }),
+      execute: (args) => readSkillSection(args.section, options.storageProvider),
+    },
+    viewResourceSnapshot: {
+      inputSchema: z.object({}),
+      execute: () => sandbox.viewResourceSnapshot(),  // 系统预搜的 raw 活期文档
+    },
     searchResources: {
       inputSchema: z.object({ keyword: z.string() }),
       execute: (args) => asEvidence(() => sandbox.searchResources(args.keyword)),
-    },
-    transferCandidate: {
-      inputSchema: z.object({ snapshotId: z.string(), candidateId: z.string() }),
-      execute: (args) => asEvidence(() => sandbox.transferCandidate(args)),
     },
     inspectStaging: {
       inputSchema: z.object({}),
       execute: () => asEvidence(() => sandbox.inspectStaging()),
     },
+    inspectTargetDir: {
+      inputSchema: z.object({ season: z.number().int().positive().optional() }),
+      execute: (args) => asEvidence(() => sandbox.inspectTargetDir(args)),
+    },
+    transferCandidate: {
+      inputSchema: z.object({ snapshotId: z.string(), candidateId: z.string() }),
+      execute: (args) => asEvidence(() => sandbox.transferCandidate(args)),
+    },
     moveToSeason: {
-      inputSchema: z.object({ moves: z.array(...) }),
+      // 注意: 输入是 fileIds (不是文件名), 每个 move 指定 season + fileIds
+      inputSchema: z.object({ moves: z.array(z.object({
+        season: z.number().int().positive().optional(),
+        fileIds: z.array(z.string()),
+      })) }),
       execute: (args) => asEvidence(() => sandbox.moveToSeason(args)),
     },
-    // ... 还有 markObtained, deleteFiles, flattenMovie, discardStaging, finish, reportNoCoverage
+    // ... 还有 deleteFiles, flattenMovie, discardStaging, markObtained, finish, reportNoCoverage
   };
+  // 电影任务额外注入 transferUntilLanded:
+  if (options.movie) {
+    tools["transferUntilLanded"] = {
+      inputSchema: z.object({ candidateIds: z.array(z.string()) }),
+      execute: (args) => asEvidence(() => sandbox.transferUntilLanded(args)),
+    };
+  }
   return tools;
 }
 ```
@@ -337,7 +360,7 @@ LLM: 我要调 transferCandidate({snapshotId:"X", candidateId:"abc"})
 | **接口降维** | Provider 只返回 `{id, title}` | `real-provider-adapter.ts:66-73` |
 | **接口降维** | 真实 dir/file ID 被映射 | `real-storage-adapter.ts:116-125` |
 | **旁路隔离** | raw URL 在 Registry，Agent 不可达 | `candidate-registry.ts` |
-| **方法集合** | 仅 12 个工具方法 | `agent-loop.ts:87-198` |
+| **方法集合** | 13 个工具方法（电影任务额外 +1：`transferUntilLanded`） | `agent-loop.ts:87-198` |
 | **参数校验** | Zod schema 限制输入 | `agent-loop.ts:96-189` |
 | **Hard Guards** | 8 个守卫硬拦截 | `sandbox.ts` |
 | **强制重读** | 写后 listTree 返回真实状态 | `sandbox.ts:325,466,493,554` |
@@ -683,15 +706,30 @@ revalidatePath(`/show/${tmdbId}`);  // 刷新详情页
 `apps/web/lib/background-worker.ts:110`:
 
 ```typescript
-export function startBackgroundWorker(runtime) {
-  // 1. 崩溃恢复: 把所有 "running" 重置为 "queued"
-  await runtime.recover();
+export function startBackgroundWorker(options?: { pollMs?; runtime? }): void {
+  if (started) return;                       // 单例: 只启动一次
+  started = true;
+  const pollMs = options?.pollMs ?? 3000;
 
-  // 2. 启动定时轮询
-  setInterval(() => tick(runtime), 3000);
+  let running = false;
+  const tick = async () => {
+    if (running) return;                     // 防重入: 上一 tick 没跑完就跳过
+    running = true;
+    try {
+      const runtime = await loadRuntime();
+      await drainQueueOnce({ ...runtime });  // claim+run 直到队列空 (或达每 tick 上限)
+    } finally {
+      running = false;
+    }
+  };
 
-  // 3. 立即执行首次 (零等待)
-  tick(runtime);
+  // 先崩溃恢复 (把 orphaned "running" 重新入队), 再启动轮询; 用 IIFE 包住 async
+  void (async () => {
+    const runtime = await loadRuntime();
+    await runtime.recover();                 // 恢复孤儿 run
+    await tick();                            // 立即首 tick (零等待, 刚点的获取不等一整个间隔)
+    setInterval(() => void tick(), pollMs);  // 之后定时轮询
+  })();
 }
 ```
 
@@ -811,7 +849,7 @@ export async function runTvAcquisitionV2(input) {
 
 ### 12.4 Phase IV — Agent Loop 内部 (Sandbox 中的自主决策)
 
-**这是整个系统的核心创新**。Agent 在一个权限笼 (Sandbox) 中运行，只能通过 12 个受限工具与外部世界交互。
+**这是整个系统的核心创新**。Agent 在一个权限笼 (Sandbox) 中运行，只能通过 13 个受限工具与外部世界交互（电影任务额外 +1：`transferUntilLanded`，仅 `options.movie` 时注入）。
 
 #### 12.4.1 V2 Workflow 编排
 
@@ -859,20 +897,24 @@ export async function runAcquisitionV2Workflow(input) {
 `packages/workflow/src/acquisition-v2/agent-loop.ts:87-198`:
 
 ```typescript
-// Agent 看到的工具 (全部映射到 Sandbox 方法)
+// Agent 看到的工具 (全部映射到 Sandbox 方法；顺序同 agent-loop.ts)
 const tools = {
-  searchResources:       // 搜索资源
-  transferCandidate:     // 秒传单个候选
-  transferUntilLanded:   // 电影: 按优先级列表秒传直到成功
+  readSkill:             // 按需读领域技能手册章节
+  viewResourceSnapshot:  // 查看系统预搜的 raw 候选「活期文档」(只读、免费、不耗预算)
+  searchResources:       // 搜索资源 (仅用于繁体/英文升级；raw 已预搜)
   inspectStaging:        // 查看暂存区落地文件
+  inspectTargetDir:      // 查看目标季/库目录已有内容
+  transferCandidate:     // 秒传单个候选
   moveToSeason:          // 从暂存区移动到季目录
   deleteFiles:           // 删除重复/小文件
-  markObtained:          // 手动标记已获取
   flattenMovie:          // 电影: 展开嵌套目录
   discardStaging:        // 清空暂存区
+  markObtained:          // 手动标记已获取
   finish:                // 完成 (停止 Agent)
   reportNoCoverage:      // 无源报告
 };
+// 电影任务 (options.movie === true) 额外注入:
+//   transferUntilLanded: // 电影: 按优先级列表逐个秒传, 第一个落地即停 (115 分享链, 穿透死链)
 ```
 
 每条工具都包装在 `asEvidence()` 中 (`agent-loop.ts:23-28`):
@@ -938,25 +980,26 @@ Agent: transferCandidate({snapshotId: "snap_a1b2c3d4", candidateId: "snap_a1b2c3
   ← Agent: {
       attempt: {status: "succeeded"},
       staging: [
-        {name: "Oppenheimer.S01E01.mkv", sizeBytes: 5000000000},
-        {name: "Oppenheimer.S01E02.mkv", sizeBytes: 5100000000},
+        {id: "f_a1b2", name: "Oppenheimer.S01E01.mkv", path: "...", isVideo: true, sizeBytes: 5000000000},
+        {id: "f_c3d4", name: "Oppenheimer.S01E02.mkv", path: "...", isVideo: true, sizeBytes: 5100000000},
         ...
       ]
     }
 
 Agent: inspectStaging()  // 确认落地内容
-  ← staging 文件列表 (从夸克强制重读)
+  ← staging 文件列表 (从夸克强制重读, 每个文件带 id)
 
 Agent: moveToSeason({moves: [
-  {fromName: "Oppenheimer.S01E01.mkv", toSeason: 1},
+  {season: 1, fileIds: ["f_a1b2", "f_c3d4", ...]},  // 用 fileId, 同季视频+字幕一起
   ...
 ]})
-  → Sandbox: 检查文件在暂存区存在
+  → Sandbox: 检查 fileIds 都在暂存区存在
   → QuarkCookieClient.moveFiles({fids: [...], to: seasonDirFid})
   → Force-reread: staging 现在是空的, season dir 有 8 个文件
-  ← {season: [{files: [...]}], staging: []}
+  ← {seasons: {1: [...]}, staging: []}
 
-Agent: finish({summary: "获取《奥本海默》第1季共8集,4K画质,已全部转移至 Season 1 目录"})
+Agent: markObtained({codes: ["S01E01", ..., "S01E08"]})  // 标记已获取 (最后一步)
+Agent: finish()  // 无参数; 返回 {coverageMet, obtained, missing, subtitleFallback}
   ← Agent 退出, 代码接管
 ```
 
@@ -1311,18 +1354,21 @@ flowchart TB
     subgraph Sandbox["🔒 TaskSandbox (权限笼)"]
         direction TB
 
-        subgraph Tools["暴露的 12 个工具"]
+        subgraph Tools["暴露的 13 个工具 (电影任务 +1)"]
+            RS["readSkill"]
+            VRS["viewResourceSnapshot"]
             SR["searchResources"]
-            TC["transferCandidate"]
-            TUL["transferUntilLanded"]
             IS["inspectStaging"]
+            ITD["inspectTargetDir"]
+            TC["transferCandidate"]
             MTS["moveToSeason"]
             DF["deleteFiles"]
-            MO["markObtained"]
             FM["flattenMovie"]
             DS["discardStaging"]
+            MO["markObtained"]
             FN["finish"]
             RNC["reportNoCoverage"]
+            TUL["transferUntilLanded<br/>(仅电影任务注入)"]
         end
 
         subgraph Guards["8 层 Hard Guards"]
