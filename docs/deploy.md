@@ -101,6 +101,7 @@ docker compose up -d        # 首次会构建 web 镜像,几分钟
 ## 可选增强
 
 - **自己的 TMDB key**(设置 → TMDB 元数据):直连你自己的额度,调不通自动回退作者代理。
+- **出站代理**(`.env` 设 `HTTP_PROXY` / `HTTPS_PROXY`):墙内想用**自己的 TMDB token / 额度**时用得到。TMDB 的 API 主机(`api.themoviedb.org`)在国内常被单独墙(官网能开 ≠ API 能通),直连不到你的 token 就用不上。给容器配一个能穿透的代理即可让全部出站请求(TMDB / PanSou / Prowlarr)走它:在仓库根 `.env` 里写 `HTTP_PROXY=http://172.17.0.1:7890` 和 `HTTPS_PROXY=http://172.17.0.1:7890`(`172.17.0.1` 是 Docker 默认网关,指向宿主机;端口换成你宿主上代理软件的实际端口,如 Clash 的 7890),再 `docker compose up -d`。`NO_PROXY` 可排除内网地址。**不设代理时行为不变**——TMDB token 留空走作者内置代理依旧开箱即用,这条只为「墙内 + 想用自己 token」准备。
 - **Prowlarr**(设置 → 资源提供商):接入索引器聚合,磁力与 PanSou 结果合并,走 115 或光鸭的离线下载落盘(夸克无磁力 API)。
 - **换 PanSou 实例**(设置 → 资源提供商):默认用 compose 自带的;想指向别的实例/公共域名在此手填。
 
