@@ -16,7 +16,7 @@ export async function register(): Promise<void> {
   const { configureHttpProxyFromEnv } = await import("./lib/http-proxy");
   const proxy = configureHttpProxyFromEnv();
   if (proxy.enabled) {
-    console.log(`[instrumentation] outbound proxy enabled via env (${proxy.proxyUrl})`);
+    console.log(`[instrumentation] outbound proxy enabled via env (${proxy.proxyDisplay})`);
   }
   // Fail fast + loud on a runtime misconfig (e.g. MEDIA_TRACK_AGENT_ADAPTER=real)
   // instead of booting a worker that can never drain the queue. Throwing here

@@ -50,4 +50,25 @@ describe("configureHttpProxyFromEnv — opt-in proxy for outbound fetch (undici 
     expect(result.enabled).toBe(false);
     expect(setDispatcher).not.toHaveBeenCalled();
   });
+
+  it("exposes a REDACTED proxy display (host:port only) so credentials never reach logs", () => {
+    const result = configureHttpProxyFromEnv(
+      { HTTP_PROXY: "http://user:secret@proxy.internal:7890" },
+      { setDispatcher: vi.fn(), makeAgent: () => ({}) as unknown as import("undici").Dispatcher },
+    );
+    expect(result.enabled).toBe(true);
+    expect(result.proxyDisplay).toBe("proxy.internal:7890");
+    // The credentials must NOT appear anywhere in the safe display.
+    expect(result.proxyDisplay).not.toContain("secret");
+    expect(result.proxyDisplay).not.toContain("user");
+  });
+
+  it("proxyDisplay falls back to the raw value when it isn't a parseable URL (still no crash)", () => {
+    const result = configureHttpProxyFromEnv(
+      { HTTP_PROXY: "172.17.0.1:7890" },
+      { setDispatcher: vi.fn(), makeAgent: () => ({}) as unknown as import("undici").Dispatcher },
+    );
+    expect(result.enabled).toBe(true);
+    expect(result.proxyDisplay).toBe("172.17.0.1:7890");
+  });
 });

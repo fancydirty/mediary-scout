@@ -23,9 +23,23 @@ export interface ConfigureProxyDeps {
 export interface ConfigureProxyResult {
   enabled: boolean;
   proxyUrl?: string;
+  /** Credentials-stripped host:port for safe logging — a proxy URL may embed
+   *  user:pass, which must never reach application logs. */
+  proxyDisplay?: string;
 }
 
 const PROXY_ENV_KEYS = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] as const;
+
+/** Reduce a proxy URL to `host:port`, dropping any embedded credentials. Falls
+ *  back to the raw value when it is not a parseable URL (e.g. bare `host:port`). */
+function redactProxy(raw: string): string {
+  try {
+    const u = new URL(raw);
+    return u.port ? `${u.hostname}:${u.port}` : u.hostname;
+  } catch {
+    return raw;
+  }
+}
 
 const defaultDeps: ConfigureProxyDeps = {
   setDispatcher: setGlobalDispatcher,
@@ -46,5 +60,5 @@ export function configureHttpProxyFromEnv(
     return { enabled: false };
   }
   deps.setDispatcher(deps.makeAgent());
-  return { enabled: true, proxyUrl };
+  return { enabled: true, proxyUrl, proxyDisplay: redactProxy(proxyUrl) };
 }
