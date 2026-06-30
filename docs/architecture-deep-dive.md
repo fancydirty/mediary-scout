@@ -500,7 +500,7 @@ Agent 自主决策:
 | TypeScript 源文件 | ~110 个 |
 | React 组件 | 44 个 |
 | 测试文件 | ~20 个 |
-| Python E2E 脚本 | 5 个 |
+| Python 单元测试 (unittest) | 5 个 |
 | 运维/调查脚本 | 30+ 个 |
 | API 路由 | 19 个 |
 | 网盘客户端 | 3 个 (115/夸克/光鸭) |
@@ -735,7 +735,7 @@ export function startBackgroundWorker(options?: { pollMs?; runtime? }): void {
 
 #### 12.3.2 轮询 Claim
 
-`apps/web/lib/workflow-runtime.ts:701` — `runNextQueuedWorkflow()`:
+`apps/web/lib/workflow-runtime.ts:701` — `runNextQueuedWorkflow()`（下为**简化示意伪代码**，非逐行源码：`loadCookie`/`loadAccountCreds` 等为示意名；真实逻辑是按 kind 优先级依次尝试 `runQueued{Type2,Series,Movie}Workflow`，每个 claimed run 经 `resolveAccountContext` 解析自己的账号凭据）：
 
 ```typescript
 async function runNextQueuedWorkflow() {
@@ -1664,7 +1664,7 @@ flowchart TD
 
 1. `cp .env.example .env`
 2. `docker compose up -d`
-3. 打开 `http://<host>:3000` → 设置页扫码绑定网盘 → 配置 LLM → 开始使用
+3. 打开 `http://<host>:3000`（仅限本机/局域网；**默认单用户模式无登录鉴权**——auth gate 仅在 `MEDIA_TRACK_MULTI_USER=1` 时生效，见 `apps/web/proxy.ts:4-18`，故**切勿把 :3000 裸暴露公网**）→ 设置页扫码绑定网盘 → 配置 LLM → 开始使用
 
 支持 Tailscale (内网穿透) 和 Cloudflare Tunnel (公网 HTTPS) 两种外网访问方式。
 
