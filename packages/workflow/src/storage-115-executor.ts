@@ -535,7 +535,11 @@ export class Storage115Executor implements StorageExecutor {
     let remaining = this.offlineMaterializeAttempts;
     let materializedFileIds: string[] = [];
     while (remaining > 0) {
-      const tree = await this.listTree({ directoryId: safeDirectoryId });
+      // maxDepth: 2 bounds the per-poll API fan-out (listTree recurses + lists each
+      // subdir; the default depth-6 could explode calls on a big staging tree). A 115
+      // offline task lands the file directly under the target dir OR one wrapper level
+      // down, so depth 2 catches both while staying cheap.
+      const tree = await this.listTree({ directoryId: safeDirectoryId, maxDepth: 2 });
       const hit = tree.find(
         (file) => file.path.endsWith(`/${input.filename}`) || file.path === input.filename,
       );
