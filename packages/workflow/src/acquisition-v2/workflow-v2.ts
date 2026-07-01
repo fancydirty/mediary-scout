@@ -49,6 +49,8 @@ export interface RunAcquisitionV2WorkflowRequest {
   qualityGuidance?: string;
   /** The run's drive brand ("pan115" | "quark") — selects brand-specific skill. */
   storageProvider?: string;
+  /** assrt token (Settings → 字幕来源). Undefined = 字幕流程不触发。 */
+  assrtToken?: string;
   deadLinkStore?: DeadLinkStore;
   onProgress?: (event: AgentToolEvent) => void;
 }
@@ -135,6 +137,7 @@ export async function runAcquisitionV2Workflow(
     ...(request.searchHints === undefined ? {} : { searchHints: request.searchHints }),
     ...(request.qualityGuidance === undefined ? {} : { qualityGuidance: request.qualityGuidance }),
     ...(request.storageProvider === undefined ? {} : { storageProvider: request.storageProvider }),
+    ...(request.assrtToken === undefined ? {} : { assrtToken: request.assrtToken }),
     ...(request.deadLinkStore ? { deadLinkStore: request.deadLinkStore } : {}),
     ...(request.onProgress ? { onProgress: request.onProgress } : {}),
   });
