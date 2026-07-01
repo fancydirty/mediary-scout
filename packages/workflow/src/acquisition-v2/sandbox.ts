@@ -6,7 +6,7 @@ import {
   keywordReferencesTitle,
   normalizeSearchKeyword,
 } from "../planning-search-gate.js";
-import type { AssrtCandidate, AssrtSubtitleFile } from "../subtitle-provider.js";
+import type { AssrtCandidate, AssrtSubtitleFile, AssrtProviderPort } from "../subtitle-provider.js";
 import type { ResourceProviderV2, ResourceSnapshotV2 } from "./fake-provider.js";
 import type { SimTreeFile, StorageV2, TransferAttemptResult } from "./storage-115-simulator.js";
 import { isSystemicTransferBlockMessage } from "./transfer-block.js";
@@ -78,10 +78,7 @@ export interface TaskSandboxOptions {
   /** assrt subtitle provider — when present AND the run is non-CN on a 115 drive,
    *  the orchestrator pre-warms a subtitle snapshot and the agent gets
    *  viewSubtitleSnapshot / transferSubtitle tools. Undefined = no subtitle flow. */
-  subtitleProvider?: {
-    search(keyword: string): Promise<AssrtCandidate[]>;
-    detail(id: number): Promise<AssrtSubtitleFile[]>;
-  };
+  subtitleProvider?: AssrtProviderPort;
 }
 
 export interface SearchToolResult {
@@ -673,7 +670,7 @@ export class TaskSandbox {
    *  assrt / a no-result search never blocks the video task. */
   async primeSubtitleSnapshot(
     keyword: string,
-    provider: { search(k: string): Promise<AssrtCandidate[]>; detail(id: number): Promise<AssrtSubtitleFile[]> },
+    provider: AssrtProviderPort,
   ): Promise<void> {
     try {
       this.subtitleSnapshot = await provider.search(keyword);

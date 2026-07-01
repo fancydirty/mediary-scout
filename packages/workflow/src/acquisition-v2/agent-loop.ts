@@ -225,6 +225,9 @@ export interface AcquisitionAgentRequest {
   maxSteps?: number;
   /** Movie task → expose the movie-only transferUntilLanded tool. */
   movie?: boolean;
+  /** When true, register the subtitle tools (viewSubtitleSnapshot + transferSubtitle).
+   *  Set by the orchestrator only when the subtitle gates pass. */
+  subtitle?: boolean;
   /** The run's drive brand — selects the brand-specific dead-links skill section. */
   storageProvider?: string;
   /** Per-tool-call live progress for the activity page (cleaned activity + phase
@@ -255,6 +258,7 @@ export async function runAcquisitionAgent(
   const onProgress = request.onProgress;
   const tools = buildSandboxToolSet(request.sandbox, {
     movie: request.movie ?? false,
+    ...(request.subtitle ? { subtitle: true } : {}),
     ...(request.storageProvider === undefined ? {} : { storageProvider: request.storageProvider }),
     ...(onProgress
       ? {

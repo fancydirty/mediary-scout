@@ -23,6 +23,14 @@ export interface AssrtSubtitleFile {
   url: string;
 }
 
+/** The subtitle-provider surface the orchestrator/sandbox depend on (search +
+ *  detail). AssrtSubtitleProvider implements it; tests inject a spy of the same
+ *  shape. Named so the shape isn't hand-duplicated across call sites. */
+export interface AssrtProviderPort {
+  search(keyword: string): Promise<AssrtCandidate[]>;
+  detail(id: number): Promise<AssrtSubtitleFile[]>;
+}
+
 export interface AssrtSubtitleProviderOptions {
   token: string;
   fetchJson?: AssrtFetchJson;

@@ -9,6 +9,7 @@ import { RealResourceProviderV2 } from "./real-provider-adapter.js";
 import { RealStorageV2 } from "./real-storage-adapter.js";
 import { budgetSoftThreshold } from "./agent-loop-guards.js";
 import { TaskSandbox } from "./sandbox.js";
+import { AssrtSubtitleProvider, type AssrtProviderPort } from "../subtitle-provider.js";
 import {
   needForMovie,
   needForTvTarget,
@@ -58,6 +59,14 @@ export interface RunAcquisitionV2Request {
   /** Filters known-dead candidates from search results before the agent sees them,
    *  and records newly-proven-dead links from failed transfers (#15). */
   deadLinkStore?: DeadLinkStore;
+  /** assrt token (Settings → 字幕来源). When set AND origin is non-CN AND the
+   *  drive is 115, the orchestrator pre-warms a subtitle snapshot and the agent
+   *  gets viewSubtitleSnapshot/transferSubtitle tools. Undefined/empty = no
+   *  subtitle flow (the agent never sees those tools). */
+  assrtToken?: string;
+  /** Injectable assrt provider (tests pass a spy). When absent, the orchestrator
+   *  builds a real AssrtSubtitleProvider from assrtToken. */
+  assrtProvider?: AssrtProviderPort;
   /** Per-tool-call live progress for the activity page (best-effort). */
   onProgress?: (event: AgentToolEvent) => void;
 }
@@ -123,6 +132,28 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     prefetchedCandidateCount = undefined;
   }
 
+  // Pre-warm the assrt subtitle snapshot when all three gates pass: token
+  // configured, non-CN origin (国产内容 natively Chinese-spoken, no 中字 to find),
+  // and the drive is 115 (phase 1 only — quark/guangya have no subtitle landing
+  // path). Soft-fail: a flaky assrt / empty search sets an empty snapshot, never
+  // blocks the video task. When the gates don't pass, the subtitle tools are
+  // simply not registered (the agent never knows subtitles were an option).
+  const subtitleActive =
+    request.assrtToken !== undefined &&
+    request.assrtToken.trim() !== "" &&
+    (request.originCountries ?? []).every((c) => c !== "CN") &&
+    (request.storageProvider ?? "pan115") === "pan115";
+  if (subtitleActive) {
+    const subtitleProvider: AssrtProviderPort =
+      request.assrtProvider ?? new AssrtSubtitleProvider({ token: request.assrtToken! });
+    try {
+      await sandbox.primeSubtitleSnapshot(request.target.title, subtitleProvider);
+    } catch {
+      // assrt unavailable → empty snapshot; the subtitle tools still register
+      // (viewSubtitleSnapshot will show "no snapshot"), agent decides from there.
+    }
+  }
+
   const common = {
     sandbox,
     model: request.model,
@@ -132,6 +163,7 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     ...(request.searchHints === undefined ? {} : { searchHints: request.searchHints }),
     ...(request.qualityGuidance === undefined ? {} : { qualityGuidance: request.qualityGuidance }),
     ...(request.storageProvider === undefined ? {} : { storageProvider: request.storageProvider }),
+    ...(subtitleActive ? { subtitle: true } : {}),
     ...(request.onProgress ? { onProgress: request.onProgress } : {}),
     // Real 115 exposes its cumulative call count → drives the budget soft-warning
     // in the agent loop; fakes/sim omit apiCallCount → no nudge.
