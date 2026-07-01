@@ -672,9 +672,9 @@ export class TaskSandbox {
     keyword: string,
     provider: AssrtProviderPort,
   ): Promise<void> {
+    this.subtitleProvider = provider;
     try {
       this.subtitleSnapshot = await provider.search(keyword);
-      this.subtitleProvider = provider; // remember detail() for transferSubtitle
     } catch {
       this.subtitleSnapshot = [];
     }
@@ -685,7 +685,7 @@ export class TaskSandbox {
   viewSubtitleSnapshot(): { document: string; candidateCount: number } {
     if (!this.subtitleSnapshot || this.subtitleSnapshot.length === 0) {
       return {
-        document: "No subtitle snapshot available (未配置 assrt token / 国产内容 / 预搜无结果). Call primeSubtitleSnapshot first or skip subtitles.",
+        document: "No subtitle candidates were found for this title on assrt.net. Subtitles are optional — proceed with the video alone; do not block or retry on this.",
         candidateCount: 0,
       };
     }
