@@ -1068,6 +1068,45 @@ describe("Storage115Executor.transferSubtitleUrl", () => {
     expect(attempt.status).toBe("no_target_change");
     expect(attempt.materializedFileIds).toEqual([]);
   });
+
+  it("assigns DISTINCT attempt ids across a succeed-then-fail sequence on one executor (no transfer_attempts PK collision)", async () => {
+    // A multi-file subtitle package loops transferSubtitleUrl per file on the SAME
+    // executor instance. A succeeded call followed by a failed call must NOT reuse
+    // the same attempt id — otherwise both attempts collide on the transfer_attempts
+    // primary key and the run's single-transaction persist rolls back, losing the
+    // video's obtained marks (a subtitle failure blocking the video).
+    const api = new FakePan115Api({ directories: { stage: [] } });
+    let call = 0;
+    api.addOfflineTask = async (input) => {
+      call += 1;
+      if (call === 1) {
+        api.directories[input.directoryId] = [
+          ...(api.directories[input.directoryId] ?? []),
+          { fid: "sub_ok", n: "Show.S01E01.ass", s: "700KB" },
+        ];
+        return { ok: true, message: "offline task accepted" };
+      }
+      return { ok: false, message: "invalid url" };
+    };
+    const executor = new Storage115Executor({ api });
+
+    const first = await executor.transferSubtitleUrl!({
+      url: "http://file0.assrt.net/onthefly/1/Show.S01E01.ass",
+      filename: "Show.S01E01.ass",
+      directoryId: "stage",
+      workflowRunId: "run-collide",
+    });
+    const second = await executor.transferSubtitleUrl!({
+      url: "http://file0.assrt.net/dead.ass",
+      filename: "Show.S01E02.ass",
+      directoryId: "stage",
+      workflowRunId: "run-collide",
+    });
+
+    expect(first.status).toBe("succeeded");
+    expect(second.status).toBe("failed");
+    expect(first.id).not.toBe(second.id); // distinct ids — no PK collision
+  });
 });
 
 class FakePan115Api implements Pan115StorageApi {

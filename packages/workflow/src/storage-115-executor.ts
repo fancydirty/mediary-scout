@@ -550,9 +550,9 @@ export class Storage115Executor implements StorageExecutor {
     const status: TransferStatus =
       materializedFileIds.length > 0 ? "succeeded" : "no_target_change";
     return {
-      id: `${input.workflowRunId}_subtitle_${this.nextTransferNumber}`,
+      id: `${input.workflowRunId}_subtitle_${attemptNumber}`,
       workflowRunId: input.workflowRunId,
-      candidateId: `subtitle:${input.filename}`,
+      candidateId,
       status,
       providerMessage:
         status === "succeeded"
