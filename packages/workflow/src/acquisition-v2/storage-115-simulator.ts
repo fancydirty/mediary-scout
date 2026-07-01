@@ -66,11 +66,21 @@ export interface StorageV2 {
    *  the source of the wrapper-dir handle flatten removes. */
   listSubdirectories(input: { directoryId: string }): Promise<Array<{ id: string; path: string }>>;
   moveFiles(input: { fileIds: string[]; targetDirectoryId: string }): Promise<{ moved: string[] }>;
+  /** Rename a single file in place (same directory) — the subtitle-rename exception. */
+  renameFile(input: { directoryId: string; fileId: string; newName: string }): Promise<void>;
   /** Delete files scoped to a directory — real 115 deletion is directory-scoped,
    *  so the caller names the dir the files live in. */
   deleteFiles(input: { directoryId: string; fileIds: string[] }): Promise<{ deleted: string[] }>;
   /** Remove a directory and everything nested under it (the flatten peel-off). */
   removeDirectory(input: { directoryId: string }): Promise<{ removed: string[] }>;
+  /** Subtitle direct-link landing (test-double): drops a same-named file into the
+   *  target dir so sandbox/agent-loop tests work without a real 115 round-trip. */
+  transferSubtitleUrl(input: {
+    url: string;
+    filename: string;
+    intoDirectoryId: string;
+    workflowRunId: string;
+  }): Promise<TransferAttemptResult>;
 }
 
 export class Storage115Simulator implements StorageV2 {
@@ -167,6 +177,26 @@ export class Storage115Simulator implements StorageV2 {
     return { status: "succeeded", materializedFileIds };
   }
 
+  async transferSubtitleUrl(input: {
+    url: string;
+    filename: string;
+    intoDirectoryId: string;
+    workflowRunId: string;
+  }): Promise<TransferAttemptResult> {
+    if (!this.dirs.has(input.intoDirectoryId)) {
+      throw new Error(`SIM_DIR_NOT_FOUND: target ${input.intoDirectoryId}`);
+    }
+    this.spendBudget(1);
+    const id = this.nextId("file");
+    this.files.set(id, {
+      id,
+      name: input.filename,
+      parentId: input.intoDirectoryId,
+      sizeBytes: 1024, // test double; size irrelevant to subtitle logic
+    });
+    return { status: "succeeded", materializedFileIds: [id] };
+  }
+
   /** Recursive, path-preserving snapshot of everything under a directory. */
   async listTree(input: { directoryId: string }): Promise<SimTreeFile[]> {
     if (!this.dirs.has(input.directoryId)) {
@@ -215,6 +245,18 @@ export class Storage115Simulator implements StorageV2 {
       moved.push(fileId);
     }
     return { moved };
+  }
+
+  async renameFile(input: { directoryId: string; fileId: string; newName: string }): Promise<void> {
+    if (!this.dirs.has(input.directoryId)) {
+      throw new Error(`SIM_DIR_NOT_FOUND: ${input.directoryId}`);
+    }
+    this.spendBudget(1);
+    const file = this.files.get(input.fileId);
+    if (!file || file.parentId !== input.directoryId) {
+      throw new Error(`SIM_FILE_NOT_FOUND: ${input.fileId}`);
+    }
+    file.name = input.newName;
   }
 
   /** Recursive subdirectories of a directory, path-relative to it. */

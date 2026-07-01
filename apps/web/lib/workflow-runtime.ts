@@ -684,11 +684,13 @@ function buildAccountContextResolver(): ResolveAccountWorkerContext {
     // 115→PanSou+Prowlarr). null when no drive resolves → default 115 fallback.
     const driveProvider =
       (await getAccountStorageCredentials(accountId, connectedStorageId))?.provider ?? "pan115";
+    const assrtToken = await getAssrtToken(scoped);
     return {
       storage: await getWorkerStorageExecutor(accountId, connectedStorageId),
       resourceProvider: await getWorkerResourceProvider(scoped, driveProvider),
       storageProvider: driveProvider,
       model,
+      ...(assrtToken === undefined ? {} : { assrtToken }),
       ...(preferredLanguage === undefined ? {} : { preferredLanguage }),
       ...(qualityPreference === undefined ? {} : { qualityPreference }),
       storageParentDirectoryId: parents.tv,
@@ -815,6 +817,18 @@ export async function getLlmConfig(repository: {
 }
 
 export const TMDB_API_KEY_SETTING_KEY = "tmdb_api_key";
+
+export const ASSRT_TOKEN_SETTING_KEY = "assrt_token";
+
+/** The user's assrt.net subtitle API token (Settings → 字幕来源). Undefined when
+ *  unset/blank → the orchestrator skips the subtitle flow entirely (the agent
+ *  never sees viewSubtitleSnapshot/transferSubtitle). Free registration, BYO-token. */
+export async function getAssrtToken(
+  repository: { getSetting(key: string): Promise<string | null> },
+): Promise<string | undefined> {
+  const value = (await repository.getSetting(ASSRT_TOKEN_SETTING_KEY))?.trim();
+  return value ? value : undefined;
+}
 
 /** Author-deployed CF Worker that proxies TMDB with the author's key (KV-cached).
  *  env TMDB_PROXY_BASE_URL overrides it (e.g. a user who self-hosts the worker). */

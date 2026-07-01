@@ -66,6 +66,7 @@ async function resolveWorkerDeps(
   preferredLanguage: string | undefined;
   qualityPreference: "high" | "medium" | undefined;
   storageProvider: string | undefined;
+  assrtToken: string | undefined;
   storageParentDirectoryId: string | undefined;
   animeStorageParentDirectoryId: string | undefined;
   moviesParentDirectoryId: string | undefined;
@@ -78,6 +79,7 @@ async function resolveWorkerDeps(
     preferredLanguage: ctx.preferredLanguage ?? base.preferredLanguage,
     qualityPreference: ctx.qualityPreference ?? base.qualityPreference,
     storageProvider: ctx.storageProvider ?? base.storageProvider,
+    assrtToken: ctx.assrtToken ?? base.assrtToken,
     storageParentDirectoryId:
       ctx.storageParentDirectoryId ?? base.storageParentDirectoryId,
     animeStorageParentDirectoryId:
@@ -113,6 +115,8 @@ export interface AccountWorkerContext {
   qualityPreference?: "high" | "medium";
   /** The run's drive brand ("pan115" | "quark") — selects brand-specific skill. */
   storageProvider?: string;
+  /** assrt token (Settings → 字幕来源). Undefined = 字幕流程不触发。 */
+  assrtToken?: string;
   storageParentDirectoryId?: string;
   animeStorageParentDirectoryId?: string;
   moviesParentDirectoryId?: string;
@@ -292,6 +296,9 @@ export async function runQueuedType2Workflow(input: {
       ...(deps.storageProvider === undefined
         ? {}
         : { storageProvider: deps.storageProvider }),
+      ...(deps.assrtToken === undefined
+        ? {}
+        : { assrtToken: deps.assrtToken }),
       // finishedAt is stamped post-run inside the persist step (see runner-v2),
       // so it reflects actual completion, not the claim time.
       workflowRun: {
@@ -486,6 +493,9 @@ export async function runScheduledType3Monitoring(input: {
         ...(deps.storageProvider === undefined
           ? {}
           : { storageProvider: deps.storageProvider }),
+        ...(deps.assrtToken === undefined
+          ? {}
+          : { assrtToken: deps.assrtToken }),
         workflowRun: { id: workflowRunId, startedAt, finishedAt: null },
         now,
       });
@@ -554,6 +564,7 @@ async function patrolMovie(args: {
     preferredLanguage: string | undefined;
     qualityPreference: "high" | "medium" | undefined;
     storageProvider: string | undefined;
+    assrtToken: string | undefined;
     moviesParentDirectoryId: string | undefined;
   };
   state: {
@@ -638,6 +649,9 @@ async function patrolMovie(args: {
       ...(deps.storageProvider === undefined
         ? {}
         : { storageProvider: deps.storageProvider }),
+      ...(deps.assrtToken === undefined
+        ? {}
+        : { assrtToken: deps.assrtToken }),
       workflowRun: { id: workflowRunId, startedAt, finishedAt: null },
       now,
     });
@@ -763,6 +777,9 @@ export async function runQueuedMovieAcquisition(input: {
       ...(deps.storageProvider === undefined
         ? {}
         : { storageProvider: deps.storageProvider }),
+      ...(deps.assrtToken === undefined
+        ? {}
+        : { assrtToken: deps.assrtToken }),
       workflowRun: {
         id: claimed.workflowRun.id,
         startedAt: claimed.workflowRun.startedAt,
@@ -856,6 +873,9 @@ export async function runQueuedSeriesInitialization(input: {
       ...(deps.storageProvider === undefined
         ? {}
         : { storageProvider: deps.storageProvider }),
+      ...(deps.assrtToken === undefined
+        ? {}
+        : { assrtToken: deps.assrtToken }),
       workflowRun: {
         id: claimed.workflowRun.id,
         startedAt: claimed.workflowRun.startedAt,

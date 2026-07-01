@@ -47,6 +47,8 @@ export interface RunMovieAcquisitionV2Request {
   qualityPreference?: "high" | "medium";
   /** The run's drive brand ("pan115" | "quark") — selects brand-specific skill. */
   storageProvider?: string;
+  /** assrt token (Settings → 字幕来源). Undefined = 字幕流程不触发。 */
+  assrtToken?: string;
   deadLinkStore?: DeadLinkStore;
   onProgress?: (event: AgentToolEvent) => void;
   now?: () => string;
@@ -90,6 +92,7 @@ export async function runMovieAcquisitionV2(
     // 国产片(CN origin)→ 电影 prompt 跳过中文字幕 floor(原生中文对白,无中字可寻)。
     ...(request.title.originCountries === undefined ? {} : { originCountries: request.title.originCountries }),
     ...(request.storageProvider === undefined ? {} : { storageProvider: request.storageProvider }),
+    ...(request.assrtToken === undefined ? {} : { assrtToken: request.assrtToken }),
     ...(request.deadLinkStore ? { deadLinkStore: request.deadLinkStore } : {}),
     ...(request.onProgress ? { onProgress: request.onProgress } : {}),
   });

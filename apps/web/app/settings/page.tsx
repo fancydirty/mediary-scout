@@ -1,6 +1,6 @@
 import { connection } from "next/server";
 import { Suspense } from "react";
-import { Bell, Bot, Cable, CalendarClock, Clapperboard, Gauge, KeyRound, Languages, Radio, ShieldCheck, TriangleAlert, Users } from "lucide-react";
+import { Bell, Bot, Cable, CalendarClock, Clapperboard, Gauge, KeyRound, Languages, Radio, ShieldCheck, Subtitles, TriangleAlert, Users } from "lucide-react";
 import { AppSidebar } from "../../components/app-sidebar";
 import { AddDriveBrandTabs } from "../../components/add-drive-brand-tabs";
 import { TestConnectionButton } from "../../components/test-connection-button";
@@ -10,6 +10,7 @@ import { PreferredLanguageForm } from "../../components/preferred-language-form"
 import { QualityPreferenceForm } from "../../components/quality-preference-form";
 import { LlmConfigForm } from "../../components/llm-config-form";
 import { TmdbApiKeyForm } from "../../components/tmdb-api-key-form";
+import { AssrtTokenForm } from "../../components/assrt-token-form";
 import { ProwlarrConfigForm } from "../../components/prowlarr-config-form";
 import { PanSouConfigForm } from "../../components/pansou-config-form";
 import { DailySweepForm } from "../../components/daily-sweep-form";
@@ -32,6 +33,7 @@ import {
   LLM_MODEL_ID_SETTING_KEY,
   LLM_API_KEY_SETTING_KEY,
   TMDB_API_KEY_SETTING_KEY,
+  ASSRT_TOKEN_SETTING_KEY,
   PROWLARR_BASE_URL_SETTING_KEY,
   PROWLARR_API_KEY_SETTING_KEY,
   PANSOU_BASE_URL_SETTING_KEY,
@@ -90,6 +92,9 @@ export default function SettingsPage({
             </Suspense>
             <Suspense fallback={<div className="skeleton skeleton-heading" />}>
               <ResourceProviderSection />
+            </Suspense>
+            <Suspense fallback={<div className="skeleton skeleton-heading" />}>
+              <SubtitleSourceSection />
             </Suspense>
             <Suspense fallback={<div className="skeleton skeleton-heading" />}>
               <DailySweepSection />
@@ -285,6 +290,27 @@ async function ResourceProviderSection() {
           </p>
         </>
       ) : null}
+    </section>
+  );
+}
+
+async function SubtitleSourceSection() {
+  await connection();
+  const repository = getAccountScopedSettings(await getCurrentAccountId());
+  const tokenSet = Boolean((await repository.getSetting(ASSRT_TOKEN_SETTING_KEY))?.trim());
+
+  return (
+    <section className="panel" style={{ maxWidth: 720, marginTop: 24 }}>
+      <div className="panel-header">
+        <div>
+          <h2 className="panel-title">
+            <Subtitles size={16} aria-hidden style={{ verticalAlign: "-2px", marginRight: 8 }} />
+            字幕来源
+          </h2>
+          <p className="panel-note">外挂中文字幕自动补全（assrt.net，免费）；仅对非国产内容 + 115 网盘生效</p>
+        </div>
+      </div>
+      <AssrtTokenForm tokenSet={tokenSet} />
     </section>
   );
 }

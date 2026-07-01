@@ -6,6 +6,7 @@ import {
   keywordReferencesTitle,
   normalizeSearchKeyword,
 } from "../planning-search-gate.js";
+import type { AssrtCandidate, AssrtSubtitleFile, AssrtProviderPort } from "../subtitle-provider.js";
 import type { ResourceProviderV2, ResourceSnapshotV2 } from "./fake-provider.js";
 import type { SimTreeFile, StorageV2, TransferAttemptResult } from "./storage-115-simulator.js";
 import { isSystemicTransferBlockMessage } from "./transfer-block.js";
@@ -16,6 +17,8 @@ import { isSystemicTransferBlockMessage } from "./transfer-block.js";
  *  match anywhere. */
 const QUALITY_SUBTITLE_TOKEN =
   /\b(?:4k|2160p|1080p|720p|hdr|dv|remux|web-?dl|bluray|bdrip)\b|蓝光|中字|国语|双语|字幕/gi;
+
+const SUBTITLE_NAME_PATTERN = /\.(srt|ass|ssa|sub|idx|vtt|sup|smi)$/i;
 
 const STRIP_NOTICE =
   "已从关键词移除画质/字幕词(如 4K/1080p/蓝光/中字/字幕):PanSou 是通配符匹配,加这些只会把召回打成子集或归零,raw 裸标题召回最全。已改用裸标题搜索。";
@@ -74,6 +77,10 @@ export interface TaskSandboxOptions {
    *  coverage (flagged 可能无中字) rather than reportNoCoverage. TV/anime leave
    *  this false so the 中文 floor stays HARD (no 生肉 dumping). */
   subtitleFallback?: boolean;
+  /** assrt subtitle provider — when present AND the run is non-CN on a 115 drive,
+   *  the orchestrator pre-warms a subtitle snapshot and the agent gets
+   *  viewSubtitleSnapshot / transferSubtitle tools. Undefined = no subtitle flow. */
+  subtitleProvider?: AssrtProviderPort;
 }
 
 export interface SearchToolResult {
@@ -127,6 +134,13 @@ export class TaskSandbox {
   /** Raw snapshot from pre-warming (system-initiated search). Stored so
    *  viewResourceSnapshot can return it multiple times without cost. */
   private rawSnapshot: ResourceSnapshotV2 | null = null;
+  /** assrt provider remembered from primeSubtitleSnapshot so transferSubtitle can
+   *  later call detail() without the agent re-passing it. Reassigned on prime, so
+   *  NOT readonly — mirrors rawSnapshot. */
+  private subtitleProvider: TaskSandboxOptions["subtitleProvider"];
+  /** Pre-warmed assrt candidates (id + title + lang), like rawSnapshot for video.
+   *  Reassigned by primeSubtitleSnapshot, so NOT readonly. */
+  private subtitleSnapshot: AssrtCandidate[] | null = null;
 
   constructor(options: TaskSandboxOptions) {
     this.provider = options.provider;
@@ -144,6 +158,7 @@ export class TaskSandbox {
     this.movieDir = options.targetMovieDirectoryId;
     this.need = options.need ?? [];
     this.titleTerms = options.titleTerms ?? [];
+    this.subtitleProvider = options.subtitleProvider;
   }
 
   /** Every scoped target directory (all seasons + the movie) — the union used for
@@ -649,5 +664,132 @@ export class TaskSandbox {
     }
 
     return { document, candidateCount: total };
+  }
+
+  /** Pre-warm the assrt subtitle snapshot (system-initiated, like primeRawSnapshot).
+   *  Stores candidates so viewSubtitleSnapshot can render them repeatedly for free.
+   *  Soft-fails (empty snapshot) on any provider miss — never throws, so a flaky
+   *  assrt / a no-result search never blocks the video task. */
+  async primeSubtitleSnapshot(
+    keyword: string,
+    provider: AssrtProviderPort,
+  ): Promise<void> {
+    this.subtitleProvider = provider;
+    try {
+      this.subtitleSnapshot = await provider.search(keyword);
+    } catch {
+      this.subtitleSnapshot = [];
+    }
+  }
+
+  /** Read-only view of the pre-warmed subtitle candidates as a structured doc.
+   *  Free, repeatable. The agent reads this to pick which subtitle package to land. */
+  viewSubtitleSnapshot(): { document: string; candidateCount: number } {
+    if (!this.subtitleSnapshot || this.subtitleSnapshot.length === 0) {
+      return {
+        document: "No subtitle candidates were found for this title on assrt.net. Subtitles are optional — proceed with the video alone; do not block or retry on this.",
+        candidateCount: 0,
+      };
+    }
+    const candidates = this.subtitleSnapshot;
+    let document = `📋 Subtitle snapshot (${candidates.length} candidates from assrt.net):\n\n`;
+    for (const candidate of candidates) {
+      const lang = candidate.lang ? ` [${candidate.lang}]` : "";
+      document += `[${candidate.id}] ${candidate.title}${lang}\n`;
+    }
+    return { document, candidateCount: candidates.length };
+  }
+
+  /** Land a chosen subtitle package's files into staging via the 115 offline-task
+   *  path (transferSubtitleUrl). Resolves the package's filelist via detail(),
+   *  submits each file's url, returns the filenames that actually landed. The
+   *  agent then renames them (moveToSeason/flattenMovie) to ride beside the video.
+   *  Soft-fails: empty filelist → {status:"failed", landedFilenames:[]}. */
+  async transferSubtitle(input: {
+    candidateId: number;
+    workflowRunId?: string;
+  }): Promise<{ status: "succeeded" | "failed"; landedFilenames: string[]; error?: string }> {
+    if (!this.storage || !this.stagingDirectoryId) {
+      throw new Error("SANDBOX: no storage/staging handle configured for subtitle transfer");
+    }
+    if (!this.subtitleProvider) {
+      throw new Error("SANDBOX_NO_SUBTITLE_PROVIDER: subtitle flow was not primed");
+    }
+    if (!this.subtitleSnapshot || !this.subtitleSnapshot.some((c) => c.id === input.candidateId)) {
+      throw new Error(
+        `SANDBOX_SUBTITLE_NOT_IN_SNAPSHOT: candidate ${input.candidateId} was not in the pre-warmed subtitle snapshot`,
+      );
+    }
+    const workflowRunId = input.workflowRunId ?? "agent";
+    let files: AssrtSubtitleFile[];
+    try {
+      files = await this.subtitleProvider.detail(input.candidateId);
+    } catch {
+      return { status: "failed", landedFilenames: [] };
+    }
+    if (files.length === 0) {
+      return { status: "failed", landedFilenames: [] };
+    }
+    const landedFilenames: string[] = [];
+    let lastError: string | undefined;
+    for (const file of files) {
+      try {
+        const result = await this.storage.transferSubtitleUrl({
+          url: file.url,
+          filename: file.filename,
+          intoDirectoryId: this.stagingDirectoryId,
+          workflowRunId,
+        });
+        if (result.status === "succeeded") {
+          landedFilenames.push(file.filename);
+        } else if (result.providerMessage) {
+          lastError = result.providerMessage;
+        }
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+      }
+    }
+    if (landedFilenames.length === 0 && lastError === undefined) {
+      lastError = "subtitle transfer failed (no files landed, no provider message)";
+    }
+    return {
+      status: landedFilenames.length > 0 ? "succeeded" : "failed",
+      landedFilenames,
+      ...(lastError ? { error: lastError } : {}),
+    };
+  }
+
+  /** Rename a landed subtitle file in staging (the ONE rename exception — subtitles
+   *  are renamed to match their video so scrapers auto-load them). Scope-guarded to
+   *  THIS task's staging: the fileId must currently be in staging. */
+  async renameSubtitle(input: { fileId: string; newName: string }): Promise<{ renamed: string }> {
+    if (!this.storage || !this.stagingDirectoryId) {
+      throw new Error("SANDBOX: no storage/staging handle configured for subtitle rename");
+    }
+    const staging = await this.storage.listTree({ directoryId: this.stagingDirectoryId });
+    const target = staging.find((file) => file.id === input.fileId);
+    if (!target) {
+      throw new Error(`SANDBOX_FILE_NOT_IN_STAGING: ${input.fileId} is not in this task's staging`);
+    }
+    // Enforce the "subtitles are the ONLY renameable files" rule at the tool boundary
+    // (the sandbox makes the documented mistake impossible, rather than trusting the
+    // agent): the SOURCE must be a subtitle, the NEW name must stay a subtitle (so a
+    // model slip can't disguise a video), and the new name must be a bare filename
+    // (no path separators — rename is not a move).
+    if (!target.isSubtitle) {
+      throw new Error(`SANDBOX_NOT_A_SUBTITLE: ${input.fileId} is not a subtitle file; only subtitles may be renamed`);
+    }
+    if (/[\\/]/.test(input.newName)) {
+      throw new Error(`SANDBOX_INVALID_SUBTITLE_NAME: newName must be a bare filename without path separators`);
+    }
+    if (!SUBTITLE_NAME_PATTERN.test(input.newName)) {
+      throw new Error(`SANDBOX_INVALID_SUBTITLE_NAME: newName must keep a subtitle extension (.srt/.ass/.ssa/.sub/.idx/.vtt/.sup/.smi)`);
+    }
+    await this.storage.renameFile({
+      directoryId: this.stagingDirectoryId,
+      fileId: input.fileId,
+      newName: input.newName,
+    });
+    return { renamed: input.newName };
   }
 }

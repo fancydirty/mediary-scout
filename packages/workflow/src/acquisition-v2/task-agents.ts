@@ -60,6 +60,9 @@ export interface TaskAgentPromptOptions {
   /** The run's drive brand ("pan115" | "quark") — selects the brand transfer model
    *  in the prompt and the brand-specific dead-links skill section. Default 115. */
   storageProvider?: string;
+  /** When true, the agent loop registers the subtitle tools (viewSubtitleSnapshot +
+   *  transferSubtitle). Set by orchestrator when the subtitle gates pass. */
+  subtitle?: boolean;
   /** Movie-only: soften the 中文 floor into a last-resort fallback (land a
    *  correct-film raw match when the search budget is exhausted and no 中字 is
    *  reachable, flagged 可能无中字) instead of the HARD reportNoCoverage. Set by
@@ -274,6 +277,7 @@ If one pack covers multiple seasons, distribute its files in ONE plan with a mov
     system: buildTvAnimeSystemPrompt(promptOptions),
     prompt,
     ...(promptOptions.storageProvider === undefined ? {} : { storageProvider: promptOptions.storageProvider }),
+    ...(promptOptions.subtitle ? { subtitle: true } : {}),
     ...(maxSteps === undefined ? {} : { maxSteps }),
     ...(onProgress ? { onProgress } : {}),
     ...(apiCallCount ? { apiCallCount } : {}),
@@ -293,6 +297,7 @@ Find the one correct film, transfer it, keep the directory clean, mark it presen
     prompt,
     movie: true,
     ...(promptOptions.storageProvider === undefined ? {} : { storageProvider: promptOptions.storageProvider }),
+    ...(promptOptions.subtitle ? { subtitle: true } : {}),
     ...(maxSteps === undefined ? {} : { maxSteps }),
     ...(onProgress ? { onProgress } : {}),
     ...(apiCallCount ? { apiCallCount } : {}),

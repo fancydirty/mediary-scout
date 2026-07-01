@@ -113,6 +113,34 @@ export class RealStorageV2 implements StorageV2 {
     };
   }
 
+  async transferSubtitleUrl(input: {
+    url: string;
+    filename: string;
+    intoDirectoryId: string;
+    workflowRunId?: string;
+  }): Promise<TransferAttemptResult> {
+    if (!this.executor.transferSubtitleUrl) {
+      throw new Error("REAL_STORAGE_NO_SUBTITLE_SUPPORT: this storage brand has no transferSubtitleUrl");
+    }
+    const attempt = await this.executor.transferSubtitleUrl({
+      url: input.url,
+      filename: input.filename,
+      directoryId: input.intoDirectoryId,
+      workflowRunId: this.workflowRunId,
+    });
+    // Deliberately NOT recorded into recordedAttempts: those are the video-candidate
+    // transfer trace, and validateWorkflowRunSnapshot requires every persisted
+    // transferAttempt.candidateId to belong to a resource snapshot. A subtitle
+    // attempt's synthetic `subtitle:<filename>` candidateId has no snapshot, so
+    // persisting it would abort the whole run's snapshot save AFTER the video already
+    // landed. Subtitles are a soft side-channel — kept out of the video trace.
+    return {
+      status: attempt.status === "succeeded" ? "succeeded" : "failed",
+      materializedFileIds: attempt.materializedFileIds,
+      ...(attempt.providerMessage ? { providerMessage: attempt.providerMessage } : {}),
+    };
+  }
+
   async listTree(input: { directoryId: string }): Promise<SimTreeFile[]> {
     const tree = await this.executor.listTree({ directoryId: input.directoryId });
     return tree.map((file) => ({
@@ -130,6 +158,10 @@ export class RealStorageV2 implements StorageV2 {
 
   async moveFiles(input: { fileIds: string[]; targetDirectoryId: string }): Promise<{ moved: string[] }> {
     return this.executor.moveFiles(input);
+  }
+
+  async renameFile(input: { directoryId: string; fileId: string; newName: string }): Promise<void> {
+    return this.executor.renameFile(input);
   }
 
   async deleteFiles(input: { directoryId: string; fileIds: string[] }): Promise<{ deleted: string[] }> {

@@ -88,6 +88,10 @@ export function buildSandboxToolSet(
   sandbox: TaskSandbox,
   options: {
     movie?: boolean;
+    /** When true, register viewSubtitleSnapshot + transferSubtitle (the "tool
+     *  exists = this run needs subtitles" signal). Set by the orchestrator only
+     *  when assrtToken is configured AND the title is non-CN AND the drive is 115. */
+    subtitle?: boolean;
     onToolCall?: (toolName: string, args: Record<string, unknown>) => void;
     /** The run's drive brand — selects the brand-specific dead-links section. */
     storageProvider?: string;
@@ -190,6 +194,28 @@ export function buildSandboxToolSet(
       execute: (args: { candidateIds: string[] }) => asEvidence(() => sandbox.transferUntilLanded(args)),
     };
   }
+  if (options.subtitle) {
+    tools["viewSubtitleSnapshot"] = {
+      description:
+        "View the system's pre-warmed assrt.net subtitle snapshot (活期文档). Read-only, free, repeatable. The system already searched assrt for this title's bare name; this returns the candidate subtitle packages (id + title + language tag). THIS TOOL APPEARING IN YOUR TOOLSET means this run needs external Chinese subtitles — read it and pick a package whose language covers your need (简/繁/双语), then transferSubtitle to land its files.",
+      inputSchema: z.object({}),
+      execute: () => Promise.resolve(sandbox.viewSubtitleSnapshot()),
+    };
+    tools["transferSubtitle"] = {
+      description:
+        "Land a chosen assrt subtitle package's files into staging. Pass the candidateId from viewSubtitleSnapshot. The system resolves the package's filelist (per-episode .ass/.srt with SxxExx filenames) and lands each via 115's offline-task path. Returns the filenames that landed. Then RENAME each landed subtitle to match its video (same prefix, different extension) — subtitles are the ONLY files you may rename (a documented exception to the keep-original-name rule) so the scraper auto-loads them. Subtitle miss/empty filelist is a SOFT fail — it does NOT block video coverage; just proceed without subtitles.",
+      inputSchema: z.object({ candidateId: z.number().int().positive() }),
+      execute: (args: { candidateId: number }) =>
+        asEvidence(() => sandbox.transferSubtitle({ candidateId: args.candidateId, workflowRunId: "agent" })),
+    };
+    tools["renameSubtitle"] = {
+      description:
+        "Rename a landed subtitle file (from transferSubtitle) to match its video: same filename prefix as the video, keep the subtitle extension (e.g. video Show.S02E01.mkv → subtitle Show.S02E01.ass). Pass the subtitle's fileId (from inspectStaging) + the newName. Subtitles are the ONLY files you may rename (the documented exception) so the scraper auto-loads them beside the video. Then move it into the season with its video via moveToSeason.",
+      inputSchema: z.object({ fileId: z.string(), newName: z.string() }),
+      execute: (args: { fileId: string; newName: string }) =>
+        asEvidence(() => sandbox.renameSubtitle(args)),
+    };
+  }
   const toolSet = tools as ToolSet;
   return wrapTools(toolSet, {
     ...(options.onToolCall ? { onToolCall: options.onToolCall } : {}),
@@ -206,6 +232,9 @@ export interface AcquisitionAgentRequest {
   maxSteps?: number;
   /** Movie task → expose the movie-only transferUntilLanded tool. */
   movie?: boolean;
+  /** When true, register the subtitle tools (viewSubtitleSnapshot + transferSubtitle).
+   *  Set by the orchestrator only when the subtitle gates pass. */
+  subtitle?: boolean;
   /** The run's drive brand — selects the brand-specific dead-links skill section. */
   storageProvider?: string;
   /** Per-tool-call live progress for the activity page (cleaned activity + phase
@@ -236,6 +265,7 @@ export async function runAcquisitionAgent(
   const onProgress = request.onProgress;
   const tools = buildSandboxToolSet(request.sandbox, {
     movie: request.movie ?? false,
+    ...(request.subtitle ? { subtitle: true } : {}),
     ...(request.storageProvider === undefined ? {} : { storageProvider: request.storageProvider }),
     ...(onProgress
       ? {

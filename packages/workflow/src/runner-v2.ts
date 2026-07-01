@@ -46,6 +46,8 @@ interface TvV2Common {
   qualityPreference?: "high" | "medium";
   /** The run's drive brand ("pan115" | "quark") — selects brand-specific skill. */
   storageProvider?: string;
+  /** assrt token (Settings → 字幕来源). Undefined = 字幕流程不触发。 */
+  assrtToken?: string;
   /**
    * Wall clock for the run. Drives the engine's timestamps (including the
    * terminal notification's `createdAt`) AND the persisted `finishedAt`, which
@@ -67,6 +69,7 @@ function passthrough(input: TvV2Common): {
   preferredLanguage?: string;
   qualityPreference?: "high" | "medium";
   storageProvider?: string;
+  assrtToken?: string;
 } {
   return {
     ...(input.searchBudget === undefined ? {} : { searchBudget: input.searchBudget }),
@@ -74,6 +77,7 @@ function passthrough(input: TvV2Common): {
     ...(input.preferredLanguage === undefined ? {} : { preferredLanguage: input.preferredLanguage }),
     ...(input.qualityPreference === undefined ? {} : { qualityPreference: input.qualityPreference }),
     ...(input.storageProvider === undefined ? {} : { storageProvider: input.storageProvider }),
+    ...(input.assrtToken === undefined ? {} : { assrtToken: input.assrtToken }),
   };
 }
 
@@ -323,6 +327,8 @@ export async function runMovieAcquisitionV2AndPersist(input: {
   qualityPreference?: "high" | "medium";
   /** The run's drive brand ("pan115" | "quark") — selects brand-specific skill. */
   storageProvider?: string;
+  /** assrt token (Settings → 字幕来源). Undefined = 字幕流程不触发。 */
+  assrtToken?: string;
   /** See TvV2Common.now — finishedAt is stamped post-run from this clock. */
   now?: () => string;
 }): Promise<MovieWorkflowResult> {
@@ -347,6 +353,7 @@ export async function runMovieAcquisitionV2AndPersist(input: {
     ...(input.preferredLanguage === undefined ? {} : { preferredLanguage: input.preferredLanguage }),
     ...(input.qualityPreference === undefined ? {} : { qualityPreference: input.qualityPreference }),
     ...(input.storageProvider === undefined ? {} : { storageProvider: input.storageProvider }),
+    ...(input.assrtToken === undefined ? {} : { assrtToken: input.assrtToken }),
   });
 
   await input.repository.saveWorkflowRunSnapshot({
