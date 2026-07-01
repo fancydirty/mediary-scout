@@ -1069,6 +1069,33 @@ describe("Storage115Executor.transferSubtitleUrl", () => {
     expect(attempt.materializedFileIds).toEqual([]);
   });
 
+  it("best-effort cancels the in-flight offline task on no_target_change (frees quota, prevents late drop)", async () => {
+    const SUBTITLE_URL = "http://file0.assrt.net/onthefly/never-lands.ass";
+    const api = new FakePan115Api({
+      directories: { stage: [] },
+      offlineTaskList: [
+        { infoHash: "hash-abc", name: "never-lands.ass", percentDone: 0, status: 1, statusText: "downloading", url: SUBTITLE_URL },
+      ],
+    });
+    api.addOfflineTask = async () => ({ ok: true, message: "accepted" });
+    const executor = new Storage115Executor({
+      api,
+      offlineMaterializeAttempts: 1,
+      offlineMaterializePollMs: 1,
+      sleep: async () => {},
+    });
+
+    const attempt = await executor.transferSubtitleUrl!({
+      url: SUBTITLE_URL,
+      filename: "never-lands.ass",
+      directoryId: "stage",
+      workflowRunId: "run-test",
+    });
+
+    expect(attempt.status).toBe("no_target_change");
+    expect(api.removedOfflineHashes).toContain("hash-abc"); // the queued task was cancelled by its infoHash
+  });
+
   it("assigns DISTINCT attempt ids across a succeed-then-fail sequence on one executor (no transfer_attempts PK collision)", async () => {
     // A multi-file subtitle package loops transferSubtitleUrl per file on the SAME
     // executor instance. A succeeded call followed by a failed call must NOT reuse

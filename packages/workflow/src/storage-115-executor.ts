@@ -551,6 +551,27 @@ export class Storage115Executor implements StorageExecutor {
       if (remaining > 0) await this.sleep(this.offlineMaterializePollMs);
     }
 
+    // Nothing materialized in the window: 115 queued a real background download we
+    // will not wait for. Best-effort cancel it (task_del) so it can't drop the file
+    // into staging AFTER the workflow moves on, and so it doesn't tie up offline-task
+    // quota — mirroring transfer()'s non-秒传 cleanup. The HTTP subtitle url has no
+    // infoHash up front, so resolve the queued task by matching its url in the task
+    // list, then remove it by the infoHash 115 assigned. Never fail the attempt over
+    // cleanup.
+    if (materializedFileIds.length === 0) {
+      try {
+        const tasks = await this.callApi("listOfflineTasks", () => this.api.listOfflineTasks());
+        const queued = tasks.find((task) => task.url === input.url);
+        if (queued && queued.infoHash) {
+          await this.callApi("removeOfflineTask", () =>
+            this.api.removeOfflineTask({ infoHashes: [queued.infoHash] }),
+          );
+        }
+      } catch {
+        // best-effort cleanup — a failed cancel must never fail the subtitle attempt
+      }
+    }
+
     const status: TransferStatus =
       materializedFileIds.length > 0 ? "succeeded" : "no_target_change";
     return {
