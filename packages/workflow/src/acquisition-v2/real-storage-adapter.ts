@@ -113,6 +113,28 @@ export class RealStorageV2 implements StorageV2 {
     };
   }
 
+  async transferSubtitleUrl(input: {
+    url: string;
+    filename: string;
+    intoDirectoryId: string;
+  }): Promise<TransferAttemptResult> {
+    if (!this.executor.transferSubtitleUrl) {
+      throw new Error("REAL_STORAGE_NO_SUBTITLE_SUPPORT: this storage brand has no transferSubtitleUrl");
+    }
+    const attempt = await this.executor.transferSubtitleUrl({
+      url: input.url,
+      filename: input.filename,
+      directoryId: input.intoDirectoryId,
+      workflowRunId: this.workflowRunId,
+    });
+    this.recordedAttempts.push(attempt);
+    return {
+      status: attempt.status === "succeeded" ? "succeeded" : "failed",
+      materializedFileIds: attempt.materializedFileIds,
+      ...(attempt.providerMessage ? { providerMessage: attempt.providerMessage } : {}),
+    };
+  }
+
   async listTree(input: { directoryId: string }): Promise<SimTreeFile[]> {
     const tree = await this.executor.listTree({ directoryId: input.directoryId });
     return tree.map((file) => ({

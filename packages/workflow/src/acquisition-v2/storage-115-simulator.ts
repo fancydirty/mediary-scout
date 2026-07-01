@@ -71,6 +71,14 @@ export interface StorageV2 {
   deleteFiles(input: { directoryId: string; fileIds: string[] }): Promise<{ deleted: string[] }>;
   /** Remove a directory and everything nested under it (the flatten peel-off). */
   removeDirectory(input: { directoryId: string }): Promise<{ removed: string[] }>;
+  /** Subtitle direct-link landing (test-double): drops a same-named file into the
+   *  target dir so sandbox/agent-loop tests work without a real 115 round-trip. */
+  transferSubtitleUrl(input: {
+    url: string;
+    filename: string;
+    intoDirectoryId: string;
+    workflowRunId: string;
+  }): Promise<TransferAttemptResult>;
 }
 
 export class Storage115Simulator implements StorageV2 {
@@ -165,6 +173,26 @@ export class Storage115Simulator implements StorageV2 {
       materializedFileIds.push(id);
     }
     return { status: "succeeded", materializedFileIds };
+  }
+
+  async transferSubtitleUrl(input: {
+    url: string;
+    filename: string;
+    intoDirectoryId: string;
+    workflowRunId: string;
+  }): Promise<TransferAttemptResult> {
+    if (!this.dirs.has(input.intoDirectoryId)) {
+      throw new Error(`SIM_DIR_NOT_FOUND: target ${input.intoDirectoryId}`);
+    }
+    this.spendBudget(1);
+    const id = this.nextId("file");
+    this.files.set(id, {
+      id,
+      name: input.filename,
+      parentId: input.intoDirectoryId,
+      sizeBytes: 1024, // test double; size irrelevant to subtitle logic
+    });
+    return { status: "succeeded", materializedFileIds: [id] };
   }
 
   /** Recursive, path-preserving snapshot of everything under a directory. */

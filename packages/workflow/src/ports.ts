@@ -60,4 +60,15 @@ export interface StorageExecutor {
   /** The configured HARD 115 call budget — lets the agent loop derive its SOFT
    *  warning threshold from the real limit. Optional (real 115 executor only). */
   apiCallBudget?(): number;
+  /** Subtitle direct-link landing (115-only, phase 1). Submits the http url as a
+   *  115 offline task and confirms the named file landed via listTree (NOT
+   *  listVideoFiles — subtitle extensions are invisible to that path). Optional:
+   *  only the 115 executor implements it; the subtitle tool is registered only
+   *  for pan115, so a non-115 executor is never asked. */
+  transferSubtitleUrl?(input: {
+    url: string;
+    filename: string;
+    directoryId: string;
+    workflowRunId: string;
+  }): Promise<TransferAttempt>;
 }
