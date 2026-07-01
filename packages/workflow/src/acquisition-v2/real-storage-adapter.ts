@@ -117,6 +117,7 @@ export class RealStorageV2 implements StorageV2 {
     url: string;
     filename: string;
     intoDirectoryId: string;
+    workflowRunId?: string;
   }): Promise<TransferAttemptResult> {
     if (!this.executor.transferSubtitleUrl) {
       throw new Error("REAL_STORAGE_NO_SUBTITLE_SUPPORT: this storage brand has no transferSubtitleUrl");

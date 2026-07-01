@@ -18,6 +18,8 @@ import { isSystemicTransferBlockMessage } from "./transfer-block.js";
 const QUALITY_SUBTITLE_TOKEN =
   /\b(?:4k|2160p|1080p|720p|hdr|dv|remux|web-?dl|bluray|bdrip)\b|蓝光|中字|国语|双语|字幕/gi;
 
+const SUBTITLE_NAME_PATTERN = /\.(srt|ass|ssa|sub|idx|vtt|sup|smi)$/i;
+
 const STRIP_NOTICE =
   "已从关键词移除画质/字幕词(如 4K/1080p/蓝光/中字/字幕):PanSou 是通配符匹配,加这些只会把召回打成子集或归零,raw 裸标题召回最全。已改用裸标题搜索。";
 
@@ -765,8 +767,23 @@ export class TaskSandbox {
       throw new Error("SANDBOX: no storage/staging handle configured for subtitle rename");
     }
     const staging = await this.storage.listTree({ directoryId: this.stagingDirectoryId });
-    if (!staging.some((file) => file.id === input.fileId)) {
+    const target = staging.find((file) => file.id === input.fileId);
+    if (!target) {
       throw new Error(`SANDBOX_FILE_NOT_IN_STAGING: ${input.fileId} is not in this task's staging`);
+    }
+    // Enforce the "subtitles are the ONLY renameable files" rule at the tool boundary
+    // (the sandbox makes the documented mistake impossible, rather than trusting the
+    // agent): the SOURCE must be a subtitle, the NEW name must stay a subtitle (so a
+    // model slip can't disguise a video), and the new name must be a bare filename
+    // (no path separators — rename is not a move).
+    if (!target.isSubtitle) {
+      throw new Error(`SANDBOX_NOT_A_SUBTITLE: ${input.fileId} is not a subtitle file; only subtitles may be renamed`);
+    }
+    if (/[\\/]/.test(input.newName)) {
+      throw new Error(`SANDBOX_INVALID_SUBTITLE_NAME: newName must be a bare filename without path separators`);
+    }
+    if (!SUBTITLE_NAME_PATTERN.test(input.newName)) {
+      throw new Error(`SANDBOX_INVALID_SUBTITLE_NAME: newName must keep a subtitle extension (.srt/.ass/.ssa/.sub/.idx/.vtt/.sup/.smi)`);
     }
     await this.storage.renameFile({
       directoryId: this.stagingDirectoryId,
