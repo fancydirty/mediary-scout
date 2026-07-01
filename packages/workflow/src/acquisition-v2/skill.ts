@@ -194,6 +194,20 @@ const MISTAKES = `# Worked right/wrong examples (the hard-won lessons)
 - Acting on a hunch: transferring / deleting / marking without first stating Evidence → Facts → Decision. WRONG. Right: state the evidence and the facts, then act.
 - Serial single transfers: transfer-one → re-search → transfer-one, repeated, hammering 115. WRONG. Right: decide the covering set, then transfer it back-to-back without re-searching.`;
 
+const SUBTITLE = `# External subtitle completion (assrt.net) — only when viewSubtitleSnapshot is in your tools
+
+## The signal
+\`viewSubtitleSnapshot\` appearing in your toolset means THIS run needs external Chinese subtitles — the system already searched assrt.net for this title's bare name and laid the candidate packages out as a read-only 活期文档. If the tool is NOT in your toolset, this whole section does not apply — skip it (国产内容 natively Chinese-spoken, or no assrt token configured, or the drive is not 115).
+
+## The flow (alongside, never blocking the video)
+1. viewSubtitleSnapshot() — read the candidate packages. Each shows id + title + language tag (e.g. [英 简 双语]). Pick ONE whose language covers your need (prefer 简体/双语 for a Chinese-subtitle user).
+2. transferSubtitle({ candidateId }) — land its files into staging. assrt's filelist is per-episode with SxxExx filenames already, so the landed files are named like "Breaking.Bad.S02E01.ass".
+3. RENAME each landed subtitle to match its video: same filename prefix, different extension (video.mkv → subtitle.ass). Subtitles are the ONLY files you may rename — a documented exception to the keep-original-name rule, because players auto-load a subtitle whose prefix matches the video. Everything else (videos, covers, nfos) still keeps its original name.
+4. Move the renamed subtitle with its video in the SAME moveToSeason call (its fileId rides in that season's fileIds), or let flattenMovie pull it up for a movie — exactly like a subtitle that came bundled inside the resource pack.
+
+## Soft-fail (never block the video)
+Subtitle miss / empty filelist / transferSubtitle returning failed / no matching SxxExx episode — all of these are SOFT. Video coverage is the only hard gate. If subtitles don't pan out, proceed with the video alone (markObtained on the video as normal); the user values an honest "video landed, no subtitle" over a blocked task. Never re-search assrt repeatedly — one viewSubtitleSnapshot read, one pick, one transfer attempt, move on.`;
+
 const SEARCH = `# Keyword strategy by media type (lived PanSou research)
 
 ## ⛳ 最重要:raw 已经预搜好了,就在你眼前的「活期文档」里
@@ -251,6 +265,7 @@ const SECTIONS = {
   movie: MOVIE,
   tv: TV,
   mistakes: MISTAKES,
+  subtitle: SUBTITLE,
 } as const;
 
 export type SkillSectionName = keyof typeof SECTIONS;
@@ -300,6 +315,6 @@ export function skillIndexForAgent(agent: "movie" | "tv"): string {
   const own = agent; // "movie" or "tv"
   return `You have a domain skill manual. Read a section on demand with readSkill({ section: "<name>" }) — do not act from memory when a section covers your situation.
 Read NOW, before you start: "protocol" (the Evidence→Facts→Decision + decide-the-covering-set-then-batch method) and "${own}" (your acquisition playbook).
-Re-read the moment you hit it: "search" (your first searches return junk / 0 / wrong works — the per-media-type keyword recipes), "dead-links-black-box" (a transfer fails, or every candidate title is opaque), "dedup" (the same episode lands more than once), "mistakes" (worked right/wrong examples).
-Available sections: protocol, ${own}, search, dead-links-black-box, dedup, mistakes.`;
+Re-read the moment you hit it: "search" (your first searches return junk / 0 / wrong works — the per-media-type keyword recipes), "dead-links-black-box" (a transfer fails, or every candidate title is opaque), "dedup" (the same episode lands more than once), "subtitle" (viewSubtitleSnapshot is in your toolset — external Chinese subtitles are available for this run), "mistakes" (worked right/wrong examples).
+Available sections: protocol, ${own}, search, dead-links-black-box, dedup, subtitle, mistakes.`;
 }
