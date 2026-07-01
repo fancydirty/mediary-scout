@@ -208,6 +208,13 @@ export function buildSandboxToolSet(
       execute: (args: { candidateId: number }) =>
         asEvidence(() => sandbox.transferSubtitle({ candidateId: args.candidateId, workflowRunId: "agent" })),
     };
+    tools["renameSubtitle"] = {
+      description:
+        "Rename a landed subtitle file (from transferSubtitle) to match its video: same filename prefix as the video, keep the subtitle extension (e.g. video Show.S02E01.mkv → subtitle Show.S02E01.ass). Pass the subtitle's fileId (from inspectStaging) + the newName. Subtitles are the ONLY files you may rename (the documented exception) so the scraper auto-loads them beside the video. Then move it into the season with its video via moveToSeason.",
+      inputSchema: z.object({ fileId: z.string(), newName: z.string() }),
+      execute: (args: { fileId: string; newName: string }) =>
+        asEvidence(() => sandbox.renameSubtitle(args)),
+    };
   }
   const toolSet = tools as ToolSet;
   return wrapTools(toolSet, {

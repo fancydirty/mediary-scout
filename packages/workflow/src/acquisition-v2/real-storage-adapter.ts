@@ -154,6 +154,10 @@ export class RealStorageV2 implements StorageV2 {
     return this.executor.moveFiles(input);
   }
 
+  async renameFile(input: { directoryId: string; fileId: string; newName: string }): Promise<void> {
+    return this.executor.renameFile(input);
+  }
+
   async deleteFiles(input: { directoryId: string; fileIds: string[] }): Promise<{ deleted: string[] }> {
     return this.executor.deleteFiles(input);
   }

@@ -66,6 +66,8 @@ export interface StorageV2 {
    *  the source of the wrapper-dir handle flatten removes. */
   listSubdirectories(input: { directoryId: string }): Promise<Array<{ id: string; path: string }>>;
   moveFiles(input: { fileIds: string[]; targetDirectoryId: string }): Promise<{ moved: string[] }>;
+  /** Rename a single file in place (same directory) — the subtitle-rename exception. */
+  renameFile(input: { directoryId: string; fileId: string; newName: string }): Promise<void>;
   /** Delete files scoped to a directory — real 115 deletion is directory-scoped,
    *  so the caller names the dir the files live in. */
   deleteFiles(input: { directoryId: string; fileIds: string[] }): Promise<{ deleted: string[] }>;
@@ -243,6 +245,18 @@ export class Storage115Simulator implements StorageV2 {
       moved.push(fileId);
     }
     return { moved };
+  }
+
+  async renameFile(input: { directoryId: string; fileId: string; newName: string }): Promise<void> {
+    if (!this.dirs.has(input.directoryId)) {
+      throw new Error(`SIM_DIR_NOT_FOUND: ${input.directoryId}`);
+    }
+    this.spendBudget(1);
+    const file = this.files.get(input.fileId);
+    if (!file || file.parentId !== input.directoryId) {
+      throw new Error(`SIM_FILE_NOT_FOUND: ${input.fileId}`);
+    }
+    file.name = input.newName;
   }
 
   /** Recursive subdirectories of a directory, path-relative to it. */

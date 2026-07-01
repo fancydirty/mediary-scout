@@ -756,4 +756,23 @@ export class TaskSandbox {
       ...(lastError ? { error: lastError } : {}),
     };
   }
+
+  /** Rename a landed subtitle file in staging (the ONE rename exception — subtitles
+   *  are renamed to match their video so scrapers auto-load them). Scope-guarded to
+   *  THIS task's staging: the fileId must currently be in staging. */
+  async renameSubtitle(input: { fileId: string; newName: string }): Promise<{ renamed: string }> {
+    if (!this.storage || !this.stagingDirectoryId) {
+      throw new Error("SANDBOX: no storage/staging handle configured for subtitle rename");
+    }
+    const staging = await this.storage.listTree({ directoryId: this.stagingDirectoryId });
+    if (!staging.some((file) => file.id === input.fileId)) {
+      throw new Error(`SANDBOX_FILE_NOT_IN_STAGING: ${input.fileId} is not in this task's staging`);
+    }
+    await this.storage.renameFile({
+      directoryId: this.stagingDirectoryId,
+      fileId: input.fileId,
+      newName: input.newName,
+    });
+    return { renamed: input.newName };
+  }
 }

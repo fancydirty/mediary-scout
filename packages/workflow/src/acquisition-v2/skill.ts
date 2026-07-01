@@ -202,7 +202,7 @@ const SUBTITLE = `# External subtitle completion (assrt.net) — only when viewS
 ## The flow (alongside, never blocking the video)
 1. viewSubtitleSnapshot() — read the candidate packages. Each shows id + title + language tag (e.g. [英 简 双语]). Pick ONE whose language covers your need (prefer 简体/双语 for a Chinese-subtitle user).
 2. transferSubtitle({ candidateId }) — land its files into staging. assrt's filelist is per-episode with SxxExx filenames already, so the landed files are named like "Breaking.Bad.S02E01.ass".
-3. RENAME each landed subtitle to match its video: same filename prefix, different extension (video.mkv → subtitle.ass). Subtitles are the ONLY files you may rename — a documented exception to the keep-original-name rule, because players auto-load a subtitle whose prefix matches the video. Everything else (videos, covers, nfos) still keeps its original name.
+3. renameSubtitle({ fileId, newName }) — rename each landed subtitle (get its fileId from inspectStaging) to match its video: same prefix as the video file, keep the subtitle extension (Show.S02E01.mkv → Show.S02E01.ass). Subtitles are the ONLY files you may rename — the documented exception — so the player auto-loads them. Everything else keeps its original name.
 4. Move the renamed subtitle with its video in the SAME moveToSeason call (its fileId rides in that season's fileIds), or let flattenMovie pull it up for a movie — exactly like a subtitle that came bundled inside the resource pack.
 
 ## Soft-fail (never block the video)

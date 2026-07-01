@@ -154,6 +154,45 @@ describe("transferSubtitle", () => {
   });
 });
 
+describe("renameSubtitle", () => {
+  it("renames a landed subtitle file in staging to a new name", async () => {
+    const { sandbox } = await createSubtitleSandbox();
+    const file = { filename: "Breaking.Bad.S02E01.SOMEGROUP.ass", url: "http://file0.assrt.net/onthefly/1/a.ass?api=1" };
+    const provider = makeAssrtProvider([{ id: 500, title: "BB", lang: "英 简 双语" }], { 500: [file] });
+    await sandbox.primeSubtitleSnapshot("BB", provider);
+    const res = await sandbox.transferSubtitle({ candidateId: 500 });
+    expect(res.status).toBe("succeeded");
+
+    // Find the landed file's id via inspectStaging, then rename it.
+    const staging = await sandbox.inspectStaging();
+    const landed = staging.find((f) => f.path.endsWith("Breaking.Bad.S02E01.SOMEGROUP.ass"));
+    expect(landed).toBeDefined();
+
+    const out = await sandbox.renameSubtitle({ fileId: landed!.id, newName: "The.Video.S02E01.ass" });
+    expect(out.renamed).toBe("The.Video.S02E01.ass");
+
+    const after = await sandbox.inspectStaging();
+    expect(after.some((f) => f.path.endsWith("The.Video.S02E01.ass"))).toBe(true);
+    expect(after.some((f) => f.path.endsWith("Breaking.Bad.S02E01.SOMEGROUP.ass"))).toBe(false);
+  });
+
+  it("throws when the fileId is not in staging (scope guard)", async () => {
+    const { sandbox } = await createSubtitleSandbox();
+    await expect(sandbox.renameSubtitle({ fileId: "not-in-staging", newName: "x.ass" }))
+      .rejects.toThrow(/not in.*staging|SANDBOX_FILE_NOT_IN_STAGING|未.*staging/i);
+  });
+});
+
+describe("buildSandboxToolSet renameSubtitle registration", () => {
+  it("registers renameSubtitle only when options.subtitle is true", () => {
+    const provider = new FakeResourceProviderV2({ results: { title: [] } });
+    const storage = new Storage115Simulator({ packs: {} });
+    const sandbox = new TaskSandbox({ provider, storage, stagingDirectoryId: "s", need: ["S01E01"] });
+    expect("renameSubtitle" in buildSandboxToolSet(sandbox)).toBe(false);
+    expect("renameSubtitle" in buildSandboxToolSet(sandbox, { subtitle: true })).toBe(true);
+  });
+});
+
 describe("buildSandboxToolSet subtitle tool registration", () => {
   it("does NOT include viewSubtitleSnapshot/transferSubtitle by default", () => {
     const provider = new FakeResourceProviderV2({ results: { title: [] } });
