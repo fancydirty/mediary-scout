@@ -64,6 +64,16 @@ class RecordingExecutor implements StorageExecutor {
     return [];
   }
   async renameFile(): Promise<void> {}
+  async transferSubtitleUrl(input: { url: string; filename: string; directoryId: string; workflowRunId: string }): Promise<TransferAttempt> {
+    return {
+      id: `${input.workflowRunId}_subtitle_1`,
+      workflowRunId: input.workflowRunId,
+      candidateId: `subtitle:${input.filename}`,
+      status: "succeeded",
+      providerMessage: "",
+      materializedFileIds: ["sub_f1"],
+    };
+  }
   async flattenDirectory(): Promise<{ moved: string[]; removed: string[] }> {
     return { moved: [], removed: [] };
   }
@@ -156,6 +166,29 @@ describe("RealStorageV2 — StorageExecutor → StorageV2 adapter", () => {
     const { storage } = adapter(executor);
     await storage.deleteFiles({ directoryId: "season", fileIds: ["f1"] });
     expect(executor.deletes).toEqual([{ directoryId: "season", fileIds: ["f1"] }]);
+  });
+
+  it("keeps subtitle transfers OUT of attempts() so they can't fail snapshot persistence validation", async () => {
+    // A subtitle transfer's synthetic `subtitle:<filename>` candidateId belongs to no
+    // resource snapshot; validateWorkflowRunSnapshot rejects any persisted transferAttempt
+    // whose candidateId is not in a snapshot. So subtitle attempts must NOT enter attempts()
+    // (the persisted video-candidate trace) — otherwise a subtitle would abort the whole
+    // run's save after the video already landed.
+    const executor = new RecordingExecutor();
+    const { storage, registry } = adapter(executor);
+    registry.record(candidate("cand"));
+
+    await storage.transferCandidate({ candidateId: "cand", intoDirectoryId: "staging" });
+    await storage.transferSubtitleUrl({
+      url: "http://file0.assrt.net/onthefly/1/Show.S01E01.ass",
+      filename: "Show.S01E01.ass",
+      intoDirectoryId: "staging",
+    });
+
+    const attempts = storage.attempts();
+    expect(attempts).toHaveLength(1); // only the video transfer, not the subtitle
+    expect(attempts[0]!.candidateId).toBe("cand");
+    expect(attempts.some((a) => a.candidateId.startsWith("subtitle:"))).toBe(false);
   });
 
   it("classifies candidate link kind from the recorded url (115 share / magnet / unknown)", async () => {

@@ -556,15 +556,17 @@ export class Storage115Executor implements StorageExecutor {
     // into staging AFTER the workflow moves on, and so it doesn't tie up offline-task
     // quota — mirroring transfer()'s non-秒传 cleanup. The HTTP subtitle url has no
     // infoHash up front, so resolve the queued task by matching its url in the task
-    // list, then remove it by the infoHash 115 assigned. Never fail the attempt over
-    // cleanup.
+    // list, then remove it by the infoHash 115 assigned. Only cancel on an UNAMBIGUOUS
+    // single match — if the account-wide list has zero or multiple tasks for this url
+    // (e.g. a stale task from a prior run), skip rather than risk cancelling the wrong
+    // task. Never fail the attempt over cleanup.
     if (materializedFileIds.length === 0) {
       try {
         const tasks = await this.callApi("listOfflineTasks", () => this.api.listOfflineTasks());
-        const queued = tasks.find((task) => task.url === input.url);
-        if (queued && queued.infoHash) {
+        const matches = tasks.filter((task) => task.url === input.url && task.infoHash);
+        if (matches.length === 1) {
           await this.callApi("removeOfflineTask", () =>
-            this.api.removeOfflineTask({ infoHashes: [queued.infoHash] }),
+            this.api.removeOfflineTask({ infoHashes: [matches[0]!.infoHash] }),
           );
         }
       } catch {

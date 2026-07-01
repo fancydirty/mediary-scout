@@ -128,7 +128,12 @@ export class RealStorageV2 implements StorageV2 {
       directoryId: input.intoDirectoryId,
       workflowRunId: this.workflowRunId,
     });
-    this.recordedAttempts.push(attempt);
+    // Deliberately NOT recorded into recordedAttempts: those are the video-candidate
+    // transfer trace, and validateWorkflowRunSnapshot requires every persisted
+    // transferAttempt.candidateId to belong to a resource snapshot. A subtitle
+    // attempt's synthetic `subtitle:<filename>` candidateId has no snapshot, so
+    // persisting it would abort the whole run's snapshot save AFTER the video already
+    // landed. Subtitles are a soft side-channel — kept out of the video trace.
     return {
       status: attempt.status === "succeeded" ? "succeeded" : "failed",
       materializedFileIds: attempt.materializedFileIds,
