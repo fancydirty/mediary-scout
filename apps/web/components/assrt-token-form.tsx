@@ -26,7 +26,10 @@ export function AssrtTokenForm({ tokenSet }: { tokenSet: boolean }) {
     startTransition(async () => {
       const res = await clearAssrtTokenAction();
       setResult(res.success ? "✅ 已清除，字幕补全功能关闭" : `❌ ${res.message ?? "清除失败"}`);
-      if (res.success) setHasToken(false);
+      if (res.success) {
+        setHasToken(false);
+        setToken("");
+      }
       setTimeout(() => setResult(null), 3000);
     });
   };
