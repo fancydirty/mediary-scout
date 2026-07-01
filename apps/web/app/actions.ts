@@ -546,6 +546,32 @@ export async function clearTmdbApiKeyAction(): Promise<PushSettingsActionResult>
   }
 }
 
+export async function saveAssrtTokenAction(token: string): Promise<PushSettingsActionResult> {
+  assertNotDemo();
+  try {
+    const { getWorkflowRepository, getCurrentAccountId, ASSRT_TOKEN_SETTING_KEY } = await import("../lib/workflow-runtime");
+    const repository = getWorkflowRepository();
+    const trimmed = token.trim();
+    if (trimmed) {
+      await repository.setAccountSetting(await getCurrentAccountId(), ASSRT_TOKEN_SETTING_KEY, trimmed);
+    }
+    return { success: true };
+  } catch (error) {
+    return { success: false, message: `保存失败：${String(error)}` };
+  }
+}
+
+export async function clearAssrtTokenAction(): Promise<PushSettingsActionResult> {
+  assertNotDemo();
+  try {
+    const { getWorkflowRepository, getCurrentAccountId, ASSRT_TOKEN_SETTING_KEY } = await import("../lib/workflow-runtime");
+    await getWorkflowRepository().setAccountSetting(await getCurrentAccountId(), ASSRT_TOKEN_SETTING_KEY, "");
+    return { success: true };
+  } catch (error) {
+    return { success: false, message: `清除失败：${String(error)}` };
+  }
+}
+
 export async function savePanSouBaseUrlAction(baseURL: string): Promise<PushSettingsActionResult> {
   assertNotDemo();
   try {
