@@ -20,6 +20,7 @@ export * from "./pansou-provider.js";
 export * from "./prowlarr-provider.js";
 export * from "./composite-provider.js";
 export * from "./tmdb-provider.js";
+export * from "./subtitle-provider.js";
 export * from "./storage-115-executor.js";
 export * from "./pan115-cookie-client.js";
 export * from "./quark-cookie-client.js";
