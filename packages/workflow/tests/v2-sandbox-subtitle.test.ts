@@ -3,6 +3,7 @@ import { TaskSandbox } from "../src/acquisition-v2/sandbox.js";
 import { FakeResourceProviderV2 } from "../src/acquisition-v2/fake-provider.js";
 import { Storage115Simulator, type TransferAttemptResult } from "../src/acquisition-v2/storage-115-simulator.js";
 import type { AssrtCandidate, AssrtSubtitleFile } from "../src/subtitle-provider.js";
+import { buildSandboxToolSet } from "../src/acquisition-v2/agent-loop.js";
 
 /** The provider object shape primeSubtitleSnapshot takes. */
 type FakeAssrtProvider = {
@@ -150,5 +151,35 @@ describe("transferSubtitle", () => {
     expect(result.status).toBe("succeeded"); // at least one landed
     expect(result.landedFilenames).toEqual(["Show.S01E01.ass"]); // only the one that landed
     expect(result.error).toBe("dead link"); // the failure's message surfaced
+  });
+});
+
+describe("buildSandboxToolSet subtitle tool registration", () => {
+  it("does NOT include viewSubtitleSnapshot/transferSubtitle by default", () => {
+    const provider = new FakeResourceProviderV2({ results: { title: [] } });
+    const storage = new Storage115Simulator({ packs: {} });
+    const sandbox = new TaskSandbox({
+      provider,
+      storage,
+      stagingDirectoryId: "s",
+      need: ["S01E01"],
+    });
+    const tools = buildSandboxToolSet(sandbox);
+    expect("viewSubtitleSnapshot" in tools).toBe(false);
+    expect("transferSubtitle" in tools).toBe(false);
+  });
+
+  it("includes viewSubtitleSnapshot/transferSubtitle when options.subtitle is true", () => {
+    const provider = new FakeResourceProviderV2({ results: { title: [] } });
+    const storage = new Storage115Simulator({ packs: {} });
+    const sandbox = new TaskSandbox({
+      provider,
+      storage,
+      stagingDirectoryId: "s",
+      need: ["S01E01"],
+    });
+    const tools = buildSandboxToolSet(sandbox, { subtitle: true });
+    expect("viewSubtitleSnapshot" in tools).toBe(true);
+    expect("transferSubtitle" in tools).toBe(true);
   });
 });
