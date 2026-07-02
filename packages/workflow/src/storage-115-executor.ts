@@ -511,9 +511,11 @@ export class Storage115Executor implements StorageExecutor {
     workflowRunId: string;
   }): Promise<TransferAttempt> {
     const safeDirectoryId = await this.assertWithinWriteScope(input.directoryId, "transfer subtitle");
-    // Mirror transfer(): one number consumed per call (first call = _subtitle_1),
-    // unconditionally — a failed subtitle attempt burns a slot just like a failed
-    // transfer does, so subsequent ids never collide.
+    // Mirror transfer(): one number consumed per call from the SHARED transfer
+    // counter (video transfers advance it too, so the suffix reflects the run's
+    // overall attempt order, not a subtitle-only sequence), unconditionally — a
+    // failed subtitle attempt burns a slot just like a failed transfer does, so
+    // subsequent ids never collide.
     const attemptNumber = this.nextTransferNumber;
     this.nextTransferNumber += 1;
     const candidateId = `subtitle:${input.filename}`;

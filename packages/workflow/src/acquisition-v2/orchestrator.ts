@@ -134,7 +134,12 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
 
   // Pre-warm the assrt subtitle snapshot when all three gates pass: token
   // configured, non-CN origin (国产内容 natively Chinese-spoken, no 中字 to find),
-  // and the EXECUTOR can land external subtitle urls. The third gate is a
+  // and the EXECUTOR can land external subtitle urls. UNKNOWN origin (undefined/
+  // empty originCountries — missing TMDB metadata) deliberately counts as
+  // non-CN: the spec gate is "not known to be 国产", and the failure mode is
+  // soft-and-cheap (a CN title just gets an empty assrt snapshot + "proceed
+  // without subtitles"), whereas requiring KNOWN non-CN would silently drop
+  // subtitles for every foreign title with missing metadata. The third gate is a
   // CAPABILITY probe (transferSubtitleUrl presence), not a brand string — the
   // day the 光鸭/夸克 executor implements the method, subtitles light up there
   // automatically, and the gate can never disagree with what the executor can

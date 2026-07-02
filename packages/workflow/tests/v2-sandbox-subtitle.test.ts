@@ -133,7 +133,7 @@ describe("transferSubtitle", () => {
     // Override the sim's subtitle landing: 1st file succeeds, 2nd fails.
     let call = 0;
     storage.transferSubtitleUrl = async (
-      input: { url: string; filename: string; intoDirectoryId: string; workflowRunId: string },
+      _input: { url: string; filename: string; intoDirectoryId: string },
     ): Promise<TransferAttemptResult> => {
       call += 1;
       if (call === 1) return { status: "succeeded", materializedFileIds: ["f1"] };
@@ -313,7 +313,7 @@ describe("subtitle snapshot evidence + failure bounding", () => {
     const provider = new FakeResourceProviderV2({ results: { title: [] } });
     class FlakyStorage extends Storage115Simulator {
       calls = 0;
-      override async transferSubtitleUrl(input: { url: string; filename: string; intoDirectoryId: string; workflowRunId: string }): Promise<TransferAttemptResult> {
+      override async transferSubtitleUrl(input: { url: string; filename: string; intoDirectoryId: string }): Promise<TransferAttemptResult> {
         this.calls += 1;
         // fail, fail, succeed, fail, fail, succeed, ... — never 3 in a row
         if (this.calls % 3 === 0) return super.transferSubtitleUrl(input);
@@ -340,7 +340,7 @@ describe("transferSubtitle — non-subtitle files are filtered at the boundary",
     const provider = new FakeResourceProviderV2({ results: { title: [] } });
     class CountingStorage extends Storage115Simulator {
       calls: string[] = [];
-      override async transferSubtitleUrl(input: { url: string; filename: string; intoDirectoryId: string; workflowRunId: string }): Promise<TransferAttemptResult> {
+      override async transferSubtitleUrl(input: { url: string; filename: string; intoDirectoryId: string }): Promise<TransferAttemptResult> {
         this.calls.push(input.filename);
         return super.transferSubtitleUrl(input);
       }

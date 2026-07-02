@@ -714,7 +714,6 @@ export class TaskSandbox {
    *  Soft-fails: empty filelist → {status:"failed", landedFilenames:[]}. */
   async transferSubtitle(input: {
     candidateId: number;
-    workflowRunId?: string;
   }): Promise<{ status: "succeeded" | "failed"; landedFilenames: string[]; error?: string }> {
     if (!this.storage || !this.stagingDirectoryId) {
       throw new Error("SANDBOX: no storage/staging handle configured for subtitle transfer");
@@ -727,7 +726,6 @@ export class TaskSandbox {
         `SANDBOX_SUBTITLE_NOT_IN_SNAPSHOT: candidate ${input.candidateId} was not in the pre-warmed subtitle snapshot`,
       );
     }
-    const workflowRunId = input.workflowRunId ?? "agent";
     let files: AssrtSubtitleFile[];
     try {
       files = await this.subtitleProvider.detail(input.candidateId);
@@ -767,7 +765,6 @@ export class TaskSandbox {
           url: file.url,
           filename: file.filename,
           intoDirectoryId: this.stagingDirectoryId,
-          workflowRunId,
         });
         if (result.status === "succeeded") {
           landedFilenames.push(file.filename);

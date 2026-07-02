@@ -117,7 +117,6 @@ export class RealStorageV2 implements StorageV2 {
     url: string;
     filename: string;
     intoDirectoryId: string;
-    workflowRunId?: string;
   }): Promise<TransferAttemptResult> {
     if (!this.executor.transferSubtitleUrl) {
       throw new Error("REAL_STORAGE_NO_SUBTITLE_SUPPORT: this storage brand has no transferSubtitleUrl");
@@ -126,6 +125,8 @@ export class RealStorageV2 implements StorageV2 {
       url: input.url,
       filename: input.filename,
       directoryId: input.intoDirectoryId,
+      // Run identity comes from THIS adapter instance — StorageV2 callers can't
+      // (and shouldn't) override it, so the input carries no workflowRunId.
       workflowRunId: this.workflowRunId,
     });
     // Deliberately NOT recorded into recordedAttempts: those are the video-candidate

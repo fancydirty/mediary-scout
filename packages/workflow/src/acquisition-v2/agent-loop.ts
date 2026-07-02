@@ -90,7 +90,9 @@ export function buildSandboxToolSet(
     movie?: boolean;
     /** When true, register viewSubtitleSnapshot + transferSubtitle (the "tool
      *  exists = this run needs subtitles" signal). Set by the orchestrator only
-     *  when assrtToken is configured AND the title is non-CN AND the drive is 115. */
+     *  when assrtToken is configured AND the title is non-CN AND the executor
+     *  can land external subtitle urls (transferSubtitleUrl capability probe —
+     *  today 115; any brand lights up by implementing the method). */
     subtitle?: boolean;
     onToolCall?: (toolName: string, args: Record<string, unknown>) => void;
     /** The run's drive brand — selects the brand-specific dead-links section. */
@@ -206,7 +208,7 @@ export function buildSandboxToolSet(
         "Land a chosen assrt subtitle package's files into staging. Pass the candidateId from viewSubtitleSnapshot. The system resolves the package's filelist (per-episode .ass/.srt with SxxExx filenames) and lands each via the drive's offline-task path. Returns the filenames that landed. Then RENAME each landed subtitle to match its video (same prefix, different extension) — subtitles are the ONLY files you may rename (a documented exception to the keep-original-name rule) so the scraper auto-loads them. Subtitle miss/empty filelist is a SOFT fail — it does NOT block video coverage; just proceed without subtitles.",
       inputSchema: z.object({ candidateId: z.number().int().positive() }),
       execute: (args: { candidateId: number }) =>
-        asEvidence(() => sandbox.transferSubtitle({ candidateId: args.candidateId, workflowRunId: "agent" })),
+        asEvidence(() => sandbox.transferSubtitle({ candidateId: args.candidateId })),
     };
     tools["renameSubtitle"] = {
       description:
