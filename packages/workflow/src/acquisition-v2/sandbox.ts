@@ -692,10 +692,17 @@ export class TaskSandbox {
       };
     }
     const candidates = this.subtitleSnapshot;
-    let document = `📋 Subtitle snapshot (${candidates.length} candidates from assrt.net):\n\n`;
+    let document = `📋 Subtitle snapshot (${candidates.length} candidates from assrt.net; ★=社区评分,组=字幕组 — 大家验证过的证据,语义权衡用):\n\n`;
     for (const candidate of candidates) {
       const lang = candidate.lang ? ` [${candidate.lang}]` : "";
-      document += `[${candidate.id}] ${candidate.title}${lang}\n`;
+      const evidence = [
+        candidate.voteScore === undefined ? "" : `★${candidate.voteScore}`,
+        candidate.releaseSite ? `组:${candidate.releaseSite}` : "",
+        candidate.uploadTime ?? "",
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      document += `[${candidate.id}] ${candidate.title}${lang}${evidence ? ` (${evidence})` : ""}\n`;
     }
     return { document, candidateCount: candidates.length };
   }
@@ -732,7 +739,14 @@ export class TaskSandbox {
     }
     const landedFilenames: string[] = [];
     let lastError: string | undefined;
-    for (const file of files) {
+    // Budget guard: each failed landing costs real 115 API calls (offline task +
+    // materialization polls + cleanup). A dead assrt package fails file after file
+    // the same way — abort after 3 CONSECUTIVE failures instead of hammering the
+    // whole filelist (a success resets the counter: mixed flakiness still lands).
+    const MAX_CONSECUTIVE_FAILURES = 3;
+    let consecutiveFailures = 0;
+    for (let i = 0; i < files.length; i += 1) {
+      const file = files[i]!;
       try {
         const result = await this.storage.transferSubtitleUrl({
           url: file.url,
@@ -742,11 +756,20 @@ export class TaskSandbox {
         });
         if (result.status === "succeeded") {
           landedFilenames.push(file.filename);
-        } else if (result.providerMessage) {
-          lastError = result.providerMessage;
+          consecutiveFailures = 0;
+        } else {
+          consecutiveFailures += 1;
+          if (result.providerMessage) {
+            lastError = result.providerMessage;
+          }
         }
       } catch (error) {
+        consecutiveFailures += 1;
         lastError = error instanceof Error ? error.message : String(error);
+      }
+      if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+        lastError = `已连续 ${MAX_CONSECUTIVE_FAILURES} 个字幕文件落盘失败,提前中止(剩余 ${files.length - i - 1} 个未尝试)。字幕是软目标——不要重试,带着已落的继续,或直接只交付视频。${lastError ? ` 最后错误: ${lastError}` : ""}`;
+        break;
       }
     }
     if (landedFilenames.length === 0 && lastError === undefined) {

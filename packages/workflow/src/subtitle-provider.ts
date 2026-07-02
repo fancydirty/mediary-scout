@@ -16,6 +16,12 @@ export interface AssrtCandidate {
   title: string;
   /** 语言标签,如 "英 简 双语"。空串表示未知。 */
   lang: string;
+  /** 社区评分(vote_score)。API 无排序参数,这是给 agent 的"大家选择"证据。 */
+  voteScore?: number;
+  /** 字幕组/来源站(release_site),质量语义判断的证据。 */
+  releaseSite?: string;
+  /** 上传时间(upload_time),新旧判断证据。 */
+  uploadTime?: string;
 }
 
 export interface AssrtSubtitleFile {
@@ -76,7 +82,21 @@ export class AssrtSubtitleProvider {
       const videoName = str(entry["videoname"]).trim();
       const title = [nativeName, videoName].filter(Boolean).join(" · ") || `assrt #${id}`;
       const lang = isRecord(entry["lang"]) ? str(entry["lang"]["desc"]).trim() : "";
-      out.push({ id, title, lang });
+      // Community-pick evidence: the API can't sort by votes/downloads, so we
+      // surface what search already returns (vote_score/release_site/upload_time)
+      // and let the agent weigh it semantically. Keys omitted when absent.
+      const voteScoreRaw = entry["vote_score"];
+      const voteScore = typeof voteScoreRaw === "number" ? voteScoreRaw : undefined;
+      const releaseSite = str(entry["release_site"]).trim();
+      const uploadTime = str(entry["upload_time"]).trim();
+      out.push({
+        id,
+        title,
+        lang,
+        ...(voteScore === undefined ? {} : { voteScore }),
+        ...(releaseSite ? { releaseSite } : {}),
+        ...(uploadTime ? { uploadTime } : {}),
+      });
     }
     return out;
   }

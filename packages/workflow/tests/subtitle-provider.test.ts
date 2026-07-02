@@ -106,3 +106,37 @@ describe("AssrtSubtitleProvider.detail", () => {
     expect(await provider.detail(1)).toEqual([]);
   });
 });
+
+describe("AssrtSubtitleProvider.search — community-pick evidence fields", () => {
+  it("carries vote_score / release_site / upload_time when the API sends them", async () => {
+    const provider = new AssrtSubtitleProvider({
+      token: "T",
+      fetchJson: fakeFetch({
+        "sub/search": {
+          status: 0,
+          sub: {
+            subs: [
+              {
+                id: 5, videoname: "V", native_name: "N", lang: { desc: "简" },
+                vote_score: 50, release_site: "YYeTs", upload_time: "2023-05-01 12:00:00",
+              },
+            ],
+          },
+        },
+      }),
+    });
+    const out = await provider.search("k");
+    expect(out[0]).toMatchObject({ voteScore: 50, releaseSite: "YYeTs", uploadTime: "2023-05-01 12:00:00" });
+  });
+
+  it("omits the evidence keys entirely when absent (keeps the lean shape)", async () => {
+    const provider = new AssrtSubtitleProvider({
+      token: "T",
+      fetchJson: fakeFetch({
+        "sub/search": { status: 0, sub: { subs: [{ id: 6, videoname: "V", native_name: "", lang: { desc: "" } }] } },
+      }),
+    });
+    const out = await provider.search("k");
+    expect(Object.keys(out[0]!).sort()).toEqual(["id", "lang", "title"]);
+  });
+});

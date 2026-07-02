@@ -272,3 +272,65 @@ describe("buildSandboxToolSet subtitle tool registration", () => {
     expect("transferSubtitle" in tools).toBe(true);
   });
 });
+
+describe("subtitle snapshot evidence + failure bounding", () => {
+  it("viewSubtitleSnapshot renders vote score + release site so the agent can pick the community favorite", async () => {
+    const { sandbox } = await createSubtitleSandbox();
+    const provider = makeAssrtProvider(
+      [{ id: 2, title: "BB S02", lang: "简", voteScore: 50, releaseSite: "YYeTs", uploadTime: "2023-05-01 12:00:00" }],
+      {},
+    );
+    await sandbox.primeSubtitleSnapshot("BB", provider);
+    const snap = sandbox.viewSubtitleSnapshot();
+    expect(snap.document).toContain("★50");
+    expect(snap.document).toContain("YYeTs");
+  });
+
+  it("aborts after 3 consecutive landing failures instead of hammering the whole filelist (115 budget guard)", async () => {
+    const provider = new FakeResourceProviderV2({ results: { title: [] } });
+    class AlwaysFailingStorage extends Storage115Simulator {
+      calls = 0;
+      override async transferSubtitleUrl(): Promise<TransferAttemptResult> {
+        this.calls += 1;
+        return { status: "failed", materializedFileIds: [], providerMessage: "dead link" };
+      }
+    }
+    const storage = new AlwaysFailingStorage({ packs: {} });
+    const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
+    const sandbox = new TaskSandbox({ provider, storage, stagingDirectoryId, targetSeasonDirectoryIds: {}, need: [] });
+    const files = Array.from({ length: 10 }, (_, i) => ({ filename: `E${i}.ass`, url: `http://x/${i}.ass` }));
+    const assrt = makeAssrtProvider([{ id: 7, title: "t", lang: "" }], { 7: files });
+    await sandbox.primeSubtitleSnapshot("t", assrt);
+
+    const result = await sandbox.transferSubtitle({ candidateId: 7 });
+
+    expect(result.status).toBe("failed");
+    expect(storage.calls).toBe(3);
+    expect(result.error).toMatch(/连续|consecutive/i);
+  });
+
+  it("a success in between resets the consecutive-failure counter", async () => {
+    const provider = new FakeResourceProviderV2({ results: { title: [] } });
+    class FlakyStorage extends Storage115Simulator {
+      calls = 0;
+      override async transferSubtitleUrl(input: { url: string; filename: string; intoDirectoryId: string; workflowRunId: string }): Promise<TransferAttemptResult> {
+        this.calls += 1;
+        // fail, fail, succeed, fail, fail, succeed, ... — never 3 in a row
+        if (this.calls % 3 === 0) return super.transferSubtitleUrl(input);
+        return { status: "failed", materializedFileIds: [], providerMessage: "flaky" };
+      }
+    }
+    const storage = new FlakyStorage({ packs: {} });
+    const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
+    const sandbox = new TaskSandbox({ provider, storage, stagingDirectoryId, targetSeasonDirectoryIds: {}, need: [] });
+    const files = Array.from({ length: 6 }, (_, i) => ({ filename: `E${i}.ass`, url: `http://x/${i}.ass` }));
+    const assrt = makeAssrtProvider([{ id: 8, title: "t", lang: "" }], { 8: files });
+    await sandbox.primeSubtitleSnapshot("t", assrt);
+
+    const result = await sandbox.transferSubtitle({ candidateId: 8 });
+
+    expect(result.status).toBe("succeeded");
+    expect(storage.calls).toBe(6); // all 6 attempted — counter reset by the successes
+    expect(result.landedFilenames).toEqual(["E2.ass", "E5.ass"]);
+  });
+});
