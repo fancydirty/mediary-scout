@@ -269,7 +269,12 @@ export class GuangYaStorageExecutor implements StorageExecutor {
     this.nextTransferNumber += 1;
     const candidateId = `subtitle:${input.filename}`;
 
-    let providerMessage = "";
+    // Status semantics mirror the 115 subtitle path: `failed` is reserved for a
+    // HARD provider error (create_task rejected, API error); a task that was
+    // accepted but produced nothing in the target within the window is the soft
+    // `no_target_change` — the same distinction transfer() draws.
+    let hardErrorMessage = "";
+    let softMissMessage = "";
     let materializedFileIds: string[] = [];
     try {
       const taskId = await this.client.createTask({
@@ -279,26 +284,31 @@ export class GuangYaStorageExecutor implements StorageExecutor {
       });
       const landedFileId = await this.pollTaskForFileId(taskId);
       if (!landedFileId) {
-        providerMessage = "SUBTITLE_NOT_LANDED: 离线任务在轮询窗口内未落盘(任务可能迟到,不等)";
+        softMissMessage = "SUBTITLE_NOT_LANDED: 离线任务在轮询窗口内未落盘(任务可能迟到,不等)";
       } else if ((await this.client.listFiles(safe)).some((item) => idOf(item) === landedFileId)) {
         materializedFileIds = [landedFileId];
       } else {
-        providerMessage = "SUBTITLE_NOT_LANDED: 任务报告完成但 fileId 不在目标目录";
+        softMissMessage = "SUBTITLE_NOT_LANDED: 任务报告完成但 fileId 不在目标目录";
       }
     } catch (error) {
       // Auth failures must surface so the worker freezes the drive — never absorbed.
       if (isGuangYaAuthError(error)) {
         throw error;
       }
-      providerMessage = error instanceof Error ? error.message : String(error);
+      hardErrorMessage = error instanceof Error ? error.message : String(error);
     }
 
+    const status: TransferStatus = hardErrorMessage
+      ? "failed"
+      : materializedFileIds.length > 0
+        ? "succeeded"
+        : "no_target_change";
     return {
       id: `${input.workflowRunId}_subtitle_${attemptNumber}`,
       workflowRunId: input.workflowRunId,
       candidateId,
-      status: materializedFileIds.length > 0 ? "succeeded" : "failed",
-      providerMessage,
+      status,
+      providerMessage: hardErrorMessage || softMissMessage,
       materializedFileIds,
     };
   }

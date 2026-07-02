@@ -400,7 +400,7 @@ describe("GuangYaStorageExecutor.transferSubtitleUrl", () => {
     expect(client.listTask).not.toHaveBeenCalled();
   });
 
-  it("reports failed when the task never completes within the poll cap", async () => {
+  it("reports no_target_change (not failed) when the task never completes within the poll cap — mirrors the 115 soft-miss semantics", async () => {
     const listTask = vi.fn<GuangYaStorageClient["listTask"]>(async () => [
       { taskId: "task-1", status: 1, progress: 10, fileId: "" },
     ]);
@@ -419,12 +419,31 @@ describe("GuangYaStorageExecutor.transferSubtitleUrl", () => {
       workflowRunId: "run-1",
     });
 
-    expect(attempt.status).toBe("failed");
+    expect(attempt.status).toBe("no_target_change");
     expect(attempt.materializedFileIds).toEqual([]);
     expect(attempt.providerMessage).toMatch(/未.*落盘|落盘超时|not.*land/i);
   });
 
-  it("reports failed when the task ends with a fileId that is NOT in the target directory (don't trust list_task blindly)", async () => {
+  it("reports failed (hard provider error) when create_task rejects the url", async () => {
+    const createTask = vi.fn<GuangYaStorageClient["createTask"]>(async () => {
+      throw new Error("GUANGYA_API_FAILED: /cloudcollection/v1/create_task status=400 msg=unsupported url");
+    });
+    const client = fakeClient({ createTask });
+    const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [SCOPE] });
+
+    const attempt = await executor.transferSubtitleUrl({
+      url: SUB_URL,
+      filename: SUB_NAME,
+      directoryId: SCOPE,
+      workflowRunId: "run-1",
+    });
+
+    expect(attempt.status).toBe("failed");
+    expect(attempt.providerMessage).toMatch(/GUANGYA_API_FAILED/);
+    expect(attempt.materializedFileIds).toEqual([]);
+  });
+
+  it("reports no_target_change when the task ends with a fileId that is NOT in the target directory (don't trust list_task blindly)", async () => {
     const listTask = vi.fn<GuangYaStorageClient["listTask"]>(async () => [
       { taskId: "task-1", status: 2, progress: 100, fileId: "sub-file-1" },
     ]);
@@ -439,7 +458,7 @@ describe("GuangYaStorageExecutor.transferSubtitleUrl", () => {
       workflowRunId: "run-1",
     });
 
-    expect(attempt.status).toBe("failed");
+    expect(attempt.status).toBe("no_target_change");
     expect(attempt.materializedFileIds).toEqual([]);
   });
 
