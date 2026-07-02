@@ -147,3 +147,23 @@ describe("system prompt carries raw snapshot pointer", () => {
     expect(moviePrompt).not.toContain("viewResourceSnapshot");
   });
 });
+
+describe("system prompt carries subtitle snapshot pointer (symmetric with raw pointer)", () => {
+  it("TV/movie prompts include the subtitle pointer when the run is subtitle-active with candidates", () => {
+    for (const build of [buildTvAnimeSystemPrompt, buildMovieSystemPrompt]) {
+      const prompt = build({ subtitle: true, subtitleCandidateCount: 12 });
+      expect(prompt).toContain("12");
+      expect(prompt).toContain("viewSubtitleSnapshot");
+      expect(prompt).toMatch(/字幕|subtitle/i);
+    }
+  });
+
+  it("no subtitle pointer when the flow is inactive or the snapshot is empty", () => {
+    // The skill INDEX may mention viewSubtitleSnapshot (it tells the agent when to
+    // read the subtitle section) — what must NOT render is the POINTER header.
+    expect(buildTvAnimeSystemPrompt({})).not.toContain("SUBTITLE SNAPSHOT");
+    expect(buildTvAnimeSystemPrompt({ subtitle: true, subtitleCandidateCount: 0 })).not.toContain(
+      "SUBTITLE SNAPSHOT",
+    );
+  });
+});

@@ -139,3 +139,11 @@ describe("runAcquisitionV2 subtitle pre-warming gates (capability-based, no bran
     ).toBe(0);
   });
 });
+
+describe("unknown-origin gate (known non-CN required)", () => {
+  it("does NOT pre-warm when origin metadata is missing/empty — niche CN titles lacking TMDB metadata must not burn assrt quota on every patrol", async () => {
+    expect(
+      await runWithGates({ originCountries: [], storageProvider: "pan115", assrtToken: "fake-token", subtitleCapable: true }),
+    ).toBe(0);
+  });
+});

@@ -63,6 +63,9 @@ export interface TaskAgentPromptOptions {
   /** When true, the agent loop registers the subtitle tools (viewSubtitleSnapshot +
    *  transferSubtitle). Set by orchestrator when the subtitle gates pass. */
   subtitle?: boolean;
+  /** How many subtitle packages the system's assrt pre-search found — renders the
+   *  subtitle pointer line (the 活期文档 twin of prefetchedCandidateCount). */
+  subtitleCandidateCount?: number;
   /** Movie-only: soften the 中文 floor into a last-resort fallback (land a
    *  correct-film raw match when the search budget is exhausted and no 中字 is
    *  reachable, flagged 可能无中字) instead of the HARD reportNoCoverage. Set by
@@ -153,11 +156,22 @@ function rawSnapshotPointer(options: TaskAgentPromptOptions): string {
   return `\n📋 RAW SNAPSHOT (活期文档): The system has already pre-searched the raw keyword (bare title) for you and found ${options.prefetchedCandidateCount} candidates. Your FIRST step: call viewResourceSnapshot() to view this live document — it's free, read-only, and contains all the raw candidates (id + title). Do NOT use searchResources to re-search the raw keyword; searchResources is ONLY for 繁体/英文/原名 upgrades when the raw snapshot is insufficient.\n`;
 }
 
+/** The subtitle twin of rawSnapshotPointer — rendered only when the subtitle flow
+ *  is active AND the pre-search found candidates, so the 活期文档 signal is
+ *  symmetric for video and subtitles (a low-end model shouldn't have to infer the
+ *  pre-search from the tool description alone). */
+function subtitleSnapshotPointer(options: TaskAgentPromptOptions): string {
+  if (!options.subtitle || !options.subtitleCandidateCount) {
+    return "";
+  }
+  return `\n📋 SUBTITLE SNAPSHOT (字幕活期文档): The system has already pre-searched assrt.net for this title and found ${options.subtitleCandidateCount} subtitle packages. After the video lands, call viewSubtitleSnapshot() (free, read-only) and follow the "subtitle" skill section — pick ONE package, transferSubtitle it, renameSubtitle to match the video. Subtitles are a SOFT goal: never let them block or delay the video.\n`;
+}
+
 export function buildTvAnimeSystemPrompt(options: TaskAgentPromptOptions): string {
   return `${SANDBOX_BOUNDARY}
 
 ${skillMandate("tv")}
-${rawSnapshotPointer(options)}
+${rawSnapshotPointer(options)}${subtitleSnapshotPointer(options)}
 You own the COMPLETE acquisition judgment for one OR MORE seasons of a TV/anime title in scope: keyword strategy, target matching, season/episode coverage, package recognition + normalization, provider-ahead reasoning, staging→season extraction, residue classification, same-episode dedup grouping, and marking. It is ONE deliberation, not separate filters. The need is simply "应有 vs 实有 = which episodes are still missing"; it may span several seasons.
 
 Target matching:
@@ -189,7 +203,7 @@ export function buildMovieSystemPrompt(options: TaskAgentPromptOptions): string 
   return `${SANDBOX_BOUNDARY}
 
 ${skillMandate("movie")}
-${rawSnapshotPointer(options)}
+${rawSnapshotPointer(options)}${subtitleSnapshotPointer(options)}
 You own the COMPLETE acquisition judgment for ONE movie: target正片 identification (guard against remakes/wrong films — cross-check BOTH title AND year), main-file selection, quality tradeoff, rejection of extras/trailers/foreign works, import cleanup, and marking. A movie is a SINGLE video file — there are no seasons or episodes; its one synthetic coverage token is "MOVIE".
 
 Identity (the hard part): the candidate must be THIS film, not a remake, sequel, prequel, or same-IP different film. Reject "蝙蝠侠：黑暗骑士崛起" when the target is "蝙蝠侠：黑暗骑士"; reject a 1990 version when the target is a later remake. When identity is unclear, do not transfer speculatively.

@@ -516,10 +516,15 @@ export class Storage115Executor implements StorageExecutor {
     // before spending any API call. Soft failure (attempt, not throw): the
     // sandbox counts it like any other landing failure.
     if (/[\\/]/.test(input.filename)) {
+      // Consume a number even for guard-rejected calls (same "one number per
+      // call" invariant as every other attempt) so ids stay unique; keep the
+      // raw filename OUT of the candidateId — it's exactly what pollutes ids.
+      const invalidAttemptNumber = this.nextTransferNumber;
+      this.nextTransferNumber += 1;
       return {
-        id: `${input.workflowRunId}_subtitle_invalid_name`,
+        id: `${input.workflowRunId}_subtitle_${invalidAttemptNumber}`,
         workflowRunId: input.workflowRunId,
-        candidateId: `subtitle:${input.filename}`,
+        candidateId: `subtitle:invalid_name_${invalidAttemptNumber}`,
         status: "failed",
         providerMessage:
           "SUBTITLE_INVALID_FILENAME: filename must be a bare name without path separators (路径分隔符)",
@@ -535,6 +540,20 @@ export class Storage115Executor implements StorageExecutor {
     const attemptNumber = this.nextTransferNumber;
     this.nextTransferNumber += 1;
     const candidateId = `subtitle:${input.filename}`;
+
+    // Landing detection is a BEFORE/AFTER diff (mirroring transfer()'s
+    // materialization diff): only a same-named file that APPEARS after the task
+    // was submitted counts. Matching a pre-existing file (an earlier attempt's
+    // leftover with the same name) would report success for a transfer that
+    // landed nothing. Match by exact basename — endsWith("/name") could be
+    // satisfied by a same-named file in any wrapper dir, which is intended, but
+    // exact basename keeps it unambiguous.
+    const basenameMatches = (path: string): boolean => path.split("/").pop() === input.filename;
+    const beforeIds = new Set(
+      (await this.listTree({ directoryId: safeDirectoryId, maxDepth: 2 }))
+        .filter((file) => basenameMatches(file.path))
+        .map((file) => file.providerFileId),
+    );
 
     const action = await this.callApi("addOfflineTask", () =>
       this.api.addOfflineTask({ url: input.url, directoryId: safeDirectoryId }),
@@ -559,7 +578,7 @@ export class Storage115Executor implements StorageExecutor {
       // down, so depth 2 catches both while staying cheap.
       const tree = await this.listTree({ directoryId: safeDirectoryId, maxDepth: 2 });
       const hit = tree.find(
-        (file) => file.path.endsWith(`/${input.filename}`) || file.path === input.filename,
+        (file) => basenameMatches(file.path) && !beforeIds.has(file.providerFileId),
       );
       if (hit) {
         materializedFileIds = [hit.providerFileId];

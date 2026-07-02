@@ -133,30 +133,36 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
   }
 
   // Pre-warm the assrt subtitle snapshot when all three gates pass: token
-  // configured, non-CN origin (国产内容 natively Chinese-spoken, no 中字 to find),
-  // and the EXECUTOR can land external subtitle urls. UNKNOWN origin (undefined/
-  // empty originCountries — missing TMDB metadata) deliberately counts as
-  // non-CN: the spec gate is "not known to be 国产", and the failure mode is
-  // soft-and-cheap (a CN title just gets an empty assrt snapshot + "proceed
-  // without subtitles"), whereas requiring KNOWN non-CN would silently drop
-  // subtitles for every foreign title with missing metadata. The third gate is a
-  // CAPABILITY probe (transferSubtitleUrl presence), not a brand string — the
-  // day the 光鸭/夸克 executor implements the method, subtitles light up there
-  // automatically, and the gate can never disagree with what the executor can
-  // actually do (today only 115 implements it). Soft-fail: a flaky assrt /
-  // empty search sets an empty snapshot, never blocks the video task. When the
-  // gates don't pass, the subtitle tools are simply not registered (the agent
-  // never knows subtitles were an option).
+  // configured, KNOWN non-CN origin, and the EXECUTOR can land external
+  // subtitle urls. UNKNOWN origin (undefined/empty originCountries — missing
+  // TMDB metadata) counts as NOT eligible: niche 国产短剧 are precisely the
+  // titles most likely to lack origin metadata, while mainstream foreign
+  // titles essentially always carry it — and a false positive here recurs on
+  // EVERY patrol tick, burning the shared assrt quota (20/min) and confusing
+  // the agent with subtitle tools on a natively-Chinese title. Requiring known
+  // non-CN loses almost nothing and matches the UI copy (仅对非国产内容生效).
+  // The third gate is a CAPABILITY probe (transferSubtitleUrl presence), not a
+  // brand string — the day the 光鸭/夸克 executor implements the method,
+  // subtitles light up there automatically, and the gate can never disagree
+  // with what the executor can actually do (today only 115 implements it).
+  // Soft-fail: a flaky assrt / empty search sets an empty snapshot, never
+  // blocks the video task. When the gates don't pass, the subtitle tools are
+  // simply not registered (the agent never knows subtitles were an option).
+  const origins = request.originCountries ?? [];
   const subtitleActive =
     request.assrtToken !== undefined &&
     request.assrtToken.trim() !== "" &&
-    (request.originCountries ?? []).every((c) => c !== "CN") &&
+    origins.length > 0 &&
+    origins.every((c) => c !== "CN") &&
     typeof request.executor.transferSubtitleUrl === "function";
+  let subtitleCandidateCount: number | undefined;
   if (subtitleActive) {
     const subtitleProvider: AssrtProviderPort =
       request.assrtProvider ?? new AssrtSubtitleProvider({ token: request.assrtToken! });
     try {
       await sandbox.primeSubtitleSnapshot(request.target.title, subtitleProvider);
+      // Feed the prompt pointer line (the 活期文档 twin of prefetchedCandidateCount).
+      subtitleCandidateCount = sandbox.viewSubtitleSnapshot().candidateCount;
     } catch {
       // assrt unavailable → empty snapshot; the subtitle tools still register
       // (viewSubtitleSnapshot will show "no snapshot"), agent decides from there.
@@ -173,6 +179,7 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     ...(request.qualityGuidance === undefined ? {} : { qualityGuidance: request.qualityGuidance }),
     ...(request.storageProvider === undefined ? {} : { storageProvider: request.storageProvider }),
     ...(subtitleActive ? { subtitle: true } : {}),
+    ...(subtitleCandidateCount ? { subtitleCandidateCount } : {}),
     ...(request.onProgress ? { onProgress: request.onProgress } : {}),
     // Real 115 exposes its cumulative call count → drives the budget soft-warning
     // in the agent loop; fakes/sim omit apiCallCount → no nudge.

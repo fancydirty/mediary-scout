@@ -1005,6 +1005,43 @@ describe("Storage115Executor", () => {
 });
 
 describe("Storage115Executor.transferSubtitleUrl", () => {
+  it("does NOT claim a pre-existing same-named file — only a file that APPEARS after submission counts", async () => {
+    const api = new FakePan115Api({
+      directories: { stage: [{ fid: "old_leftover", n: "Show.S01E01.ass", s: "1KB" }] },
+    });
+    api.addOfflineTask = async () => ({ ok: true, message: "accepted" }); // lands nothing new
+    const executor = new Storage115Executor({
+      api,
+      offlineMaterializeAttempts: 1,
+      offlineMaterializePollMs: 1,
+      sleep: async () => {},
+    });
+
+    const attempt = await executor.transferSubtitleUrl!({
+      url: "http://file0.assrt.net/onthefly/1/Show.S01E01.ass",
+      filename: "Show.S01E01.ass",
+      directoryId: "stage",
+      workflowRunId: "run-test",
+    });
+
+    expect(attempt.status).toBe("no_target_change");
+    expect(attempt.materializedFileIds).toEqual([]);
+  });
+
+  it("guard-rejected invalid filenames consume attempt numbers — ids never collide", async () => {
+    const api = new FakePan115Api({ directories: { stage: [] } });
+    const executor = new Storage115Executor({ api });
+
+    const a = await executor.transferSubtitleUrl!({ url: "http://x/a.ass", filename: "a/b.ass", directoryId: "stage", workflowRunId: "run-test" });
+    const b = await executor.transferSubtitleUrl!({ url: "http://x/c.ass", filename: "c\\d.ass", directoryId: "stage", workflowRunId: "run-test" });
+
+    expect(a.status).toBe("failed");
+    expect(b.status).toBe("failed");
+    expect(a.id).not.toBe(b.id);
+    expect(a.candidateId).not.toBe(b.candidateId);
+    expect(a.candidateId).not.toContain("/"); // raw filename kept OUT of the id
+  });
+
   it("rejects a filename containing path separators at the boundary (zero API calls)", async () => {
     const api = new FakePan115Api({ directories: { stage: [] } });
     let offlineCalls = 0;
