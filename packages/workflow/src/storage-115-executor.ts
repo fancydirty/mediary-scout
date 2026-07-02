@@ -359,8 +359,9 @@ export class Storage115Executor implements StorageExecutor {
     // Subtitles are NOT 秒传 confirmations — they are real server-side HTTP
     // fetches with queue latency. Live e2e (The Matrix, 2026-07-02) measured
     // one landing at ~20s and one at ~60s (the 8s video window mis-judged it
-    // no_target_change and the file dropped in late). 8 × 6s ≈ 48s covers the
-    // common case while bounding poll cost (each poll = one depth-2 listTree).
+    // no_target_change and the file dropped in late). 8 attempts sleep only
+    // BETWEEN polls (7 gaps × 6s ≈ 42s + listing time) — covers the common
+    // case while bounding poll cost (each poll = one depth-2 listTree).
     this.subtitleMaterializeAttempts = options.subtitleMaterializeAttempts ?? 8;
     this.subtitleMaterializePollMs = options.subtitleMaterializePollMs ?? 6000;
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
