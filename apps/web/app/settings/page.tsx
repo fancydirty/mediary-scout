@@ -1,3 +1,4 @@
+import { driveConnectionBadge } from "../../lib/settings-badge";
 import { connection } from "next/server";
 import { Suspense } from "react";
 import { Bell, Bot, Cable, CalendarClock, Clapperboard, Gauge, KeyRound, Languages, Radio, ShieldCheck, Subtitles, TriangleAlert, Users } from "lucide-react";
@@ -328,19 +329,23 @@ async function Pan115Section() {
             <Cable size={16} aria-hidden style={{ verticalAlign: "-2px", marginRight: 8 }} />
             网盘连接
           </h2>
-          <p className="panel-note">连接 115（扫码）或夸克（粘贴 cookie）；凭证持久化到数据库，自动用于后续转存。每块盘是独立工作区</p>
+          <p className="panel-note">连接 115（扫码）、夸克（粘贴 cookie）或光鸭（粘贴 token）；凭证持久化到数据库，自动用于后续转存。每块盘是独立工作区</p>
         </div>
-        {status.connected ? (
-          <span className="hub-badge tone-green">
-            <ShieldCheck size={12} aria-hidden />
-            {status.source === "qr" ? "已扫码连接" : "已连接（.env）"}
-          </span>
-        ) : (
-          <span className="hub-badge tone-amber">
-            <TriangleAlert size={12} aria-hidden />
-            未连接
-          </span>
-        )}
+        {(() => {
+          // #93: derive the header badge from ALL drives — 115-only status made
+          // a 光鸭/夸克-only user read a permanent misleading 未连接.
+          const badge = driveConnectionBadge({ envConnected: status.connected, drives });
+          return (
+            <span className={`hub-badge tone-${badge.tone}`}>
+              {badge.tone === "green" ? (
+                <ShieldCheck size={12} aria-hidden />
+              ) : (
+                <TriangleAlert size={12} aria-hidden />
+              )}
+              {badge.label}
+            </span>
+          );
+        })()}
       </div>
 
       {drives.length === 0 ? (
@@ -387,7 +392,7 @@ async function Pan115Section() {
 
       <p className="panel-note" style={{ marginBottom: 8 }}>
         {drives.length > 0
-          ? "添加另一块网盘（115 或夸克）——不同账号即新增一块独立工作区；绑到已连的同一账号会自动刷新登录"
+          ? "添加另一块网盘（115／夸克／光鸭）——不同账号即新增一块独立工作区；绑到已连的同一账号会自动刷新登录"
           : "添加你的第一块网盘"}
       </p>
       <AddDriveBrandTabs />
