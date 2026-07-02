@@ -1005,6 +1005,39 @@ describe("Storage115Executor", () => {
 });
 
 describe("Storage115Executor.transferSubtitleUrl", () => {
+  it("createProtectedStorage115Executor passes the subtitle window options through (tuning must not be silently ignored)", async () => {
+    const api = new FakePan115Api({ directories: { stage: [] } });
+    let listCalls = 0;
+    api.addOfflineTask = async () => ({ ok: true, message: "accepted" });
+    const origList = api.listItems.bind(api);
+    api.listItems = async (input) => {
+      listCalls += 1;
+      // Lands on the 2nd listing — inside the DEFAULT window (8) but outside the
+      // TUNED window (1). If the factory drops the tuning, this test sees succeeded.
+      if (listCalls === 2) {
+        api.directories["stage"] = [{ fid: "late_sub", n: "Tuned.S01E01.ass", s: "40KB" }];
+      }
+      return origList(input);
+    };
+    const executor = createProtectedStorage115Executor({
+      api,
+      env: { MEDIA_TRACK_115_TEST_ROOT_CID: "stage" },
+      apiGuardOptions: { minDelayMs: 0 },
+      subtitleMaterializeAttempts: 1,
+      subtitleMaterializePollMs: 1,
+      sleep: async () => {},
+    });
+
+    const attempt = await executor.transferSubtitleUrl!({
+      url: "http://file0.assrt.net/onthefly/1/Tuned.S01E01.ass",
+      filename: "Tuned.S01E01.ass",
+      directoryId: "stage",
+      workflowRunId: "run-test",
+    });
+
+    expect(attempt.status).toBe("no_target_change");
+  });
+
   it("uses a subtitle-specific materialization window wider than the video default (live e2e: real assrt landings took ~60s, video window is 4x2s)", async () => {
     const api = new FakePan115Api({ directories: { stage: [] } });
     let listCalls = 0;

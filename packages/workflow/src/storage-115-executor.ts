@@ -1118,6 +1118,12 @@ function optionalExecutorOptions(
   if (options.offlineMaterializePollMs !== undefined) {
     executorOptions.offlineMaterializePollMs = options.offlineMaterializePollMs;
   }
+  if (options.subtitleMaterializeAttempts !== undefined) {
+    executorOptions.subtitleMaterializeAttempts = options.subtitleMaterializeAttempts;
+  }
+  if (options.subtitleMaterializePollMs !== undefined) {
+    executorOptions.subtitleMaterializePollMs = options.subtitleMaterializePollMs;
+  }
   if (options.sleep !== undefined) {
     executorOptions.sleep = options.sleep;
   }
