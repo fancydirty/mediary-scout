@@ -1078,8 +1078,8 @@ describe("Storage115Executor.transferSubtitleUrl", () => {
     api.addOfflineTask = async () => ({ ok: true, message: "accepted" }); // lands nothing new
     const executor = new Storage115Executor({
       api,
-      offlineMaterializeAttempts: 1,
-      offlineMaterializePollMs: 1,
+      subtitleMaterializeAttempts: 1,
+      subtitleMaterializePollMs: 1,
       sleep: async () => {},
     });
 
@@ -1178,8 +1178,8 @@ describe("Storage115Executor.transferSubtitleUrl", () => {
     api.addOfflineTask = async () => ({ ok: true, message: "accepted" });
     const executor = new Storage115Executor({
       api,
-      offlineMaterializeAttempts: 1,
-      offlineMaterializePollMs: 1,
+      subtitleMaterializeAttempts: 1,
+      subtitleMaterializePollMs: 1,
       sleep: async () => {},
     });
 
@@ -1205,8 +1205,8 @@ describe("Storage115Executor.transferSubtitleUrl", () => {
     api.addOfflineTask = async () => ({ ok: true, message: "accepted" });
     const executor = new Storage115Executor({
       api,
-      offlineMaterializeAttempts: 1,
-      offlineMaterializePollMs: 1,
+      subtitleMaterializeAttempts: 1,
+      subtitleMaterializePollMs: 1,
       sleep: async () => {},
     });
 

@@ -122,8 +122,9 @@ export interface Storage115ExecutorOptions {
    *  (2026-07-02, The Matrix) measured landings at ~20s and ~60s.
    *  Timing semantics: the first poll is immediate; sleeps happen only BETWEEN
    *  polls, so the effective wait ≈ (attempts - 1) × pollMs plus listTree time
-   *  (defaults 8 & 6000ms → ~42s of sleeps). Each poll costs one depth-2
-   *  listTree, so attempts also bounds the 115 API spend per file. */
+   *  (defaults 8 & 6000ms → ~42s of sleeps). Worst-case listTree count is
+   *  1 + attempts (the before/after-diff snapshot + each poll), so attempts
+   *  bounds the 115 API spend per file. */
   subtitleMaterializeAttempts?: number;
   subtitleMaterializePollMs?: number;
   /** Injectable sleep (tests pass a fast/no-op). */
