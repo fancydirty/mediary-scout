@@ -1005,6 +1005,33 @@ describe("Storage115Executor", () => {
 });
 
 describe("Storage115Executor.transferSubtitleUrl", () => {
+  it("uses a subtitle-specific materialization window wider than the video default (live e2e: real assrt landings took ~60s, video window is 4x2s)", async () => {
+    const api = new FakePan115Api({ directories: { stage: [] } });
+    let listCalls = 0;
+    api.addOfflineTask = async () => ({ ok: true, message: "accepted" });
+    const origList = api.listItems.bind(api);
+    api.listItems = async (input) => {
+      listCalls += 1;
+      // The file materializes only on the 6th listing — beyond the video window
+      // (4 attempts) but inside the subtitle window.
+      if (listCalls === 6) {
+        api.directories["stage"] = [{ fid: "late_sub", n: "Late.S01E01.ass", s: "40KB" }];
+      }
+      return origList(input);
+    };
+    const executor = new Storage115Executor({ api, sleep: async () => {} });
+
+    const attempt = await executor.transferSubtitleUrl!({
+      url: "http://file0.assrt.net/onthefly/1/Late.S01E01.ass",
+      filename: "Late.S01E01.ass",
+      directoryId: "stage",
+      workflowRunId: "run-test",
+    });
+
+    expect(attempt.status).toBe("succeeded");
+    expect(attempt.materializedFileIds).toEqual(["late_sub"]);
+  });
+
   it("does NOT claim a pre-existing same-named file — only a file that APPEARS after submission counts", async () => {
     const api = new FakePan115Api({
       directories: { stage: [{ fid: "old_leftover", n: "Show.S01E01.ass", s: "1KB" }] },
