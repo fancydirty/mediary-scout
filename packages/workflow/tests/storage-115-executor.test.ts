@@ -1006,22 +1006,28 @@ describe("Storage115Executor", () => {
 
 describe("Storage115Executor.transferSubtitleUrl", () => {
   it("createProtectedStorage115Executor passes the subtitle window options through (tuning must not be silently ignored)", async () => {
-    const api = new FakePan115Api({ directories: { stage: [] } });
+    // Target a staging SUBDIR inside the write scope — the scope root itself is
+    // (correctly) protected from recursive listing.
+    const api = new FakePan115Api({
+      directories: { sub_stage: [] },
+      directoryInfo: { sub_stage: seasonPathInfo("test_root", "sub_stage") },
+    });
     let listCalls = 0;
     api.addOfflineTask = async () => ({ ok: true, message: "accepted" });
     const origList = api.listItems.bind(api);
     api.listItems = async (input) => {
       listCalls += 1;
-      // Lands on the 2nd listing — inside the DEFAULT window (8) but outside the
-      // TUNED window (1). If the factory drops the tuning, this test sees succeeded.
-      if (listCalls === 2) {
-        api.directories["stage"] = [{ fid: "late_sub", n: "Tuned.S01E01.ass", s: "40KB" }];
+      // Listing #1 is the BEFORE-snapshot; the tuned window (1) polls exactly once
+      // (listing #2). Landing on listing #3 is inside the DEFAULT window (8) but
+      // outside the tuned one — if the factory drops the tuning, this sees succeeded.
+      if (listCalls === 3) {
+        api.directories["sub_stage"] = [{ fid: "late_sub", n: "Tuned.S01E01.ass", s: "40KB" }];
       }
       return origList(input);
     };
     const executor = createProtectedStorage115Executor({
       api,
-      env: { MEDIA_TRACK_115_TEST_ROOT_CID: "stage" },
+      env: { MEDIA_TRACK_115_TEST_ROOT_CID: "test_root" },
       apiGuardOptions: { minDelayMs: 0 },
       subtitleMaterializeAttempts: 1,
       subtitleMaterializePollMs: 1,
@@ -1031,7 +1037,7 @@ describe("Storage115Executor.transferSubtitleUrl", () => {
     const attempt = await executor.transferSubtitleUrl!({
       url: "http://file0.assrt.net/onthefly/1/Tuned.S01E01.ass",
       filename: "Tuned.S01E01.ass",
-      directoryId: "stage",
+      directoryId: "sub_stage",
       workflowRunId: "run-test",
     });
 
