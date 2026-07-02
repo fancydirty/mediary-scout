@@ -130,20 +130,6 @@ function bridgeSeason(input: {
 }): BridgedSeasonResult {
   const { title, intent, v2, obtainedSet, providerAheadSet } = input;
   const trackedSeasonId = `${title.id}_s${intent.seasonNumber}`;
-  const status: SeasonStatus =
-    intent.status ??
-    (intent.totalEpisodes > 0 && intent.latestAiredEpisode >= intent.totalEpisodes ? "completed" : "active");
-  const season: TrackedSeason = {
-    id: trackedSeasonId,
-    mediaTitleId: title.id,
-    seasonNumber: intent.seasonNumber,
-    status,
-    qualityPreference: intent.qualityPreference,
-    storageDirectoryId: v2.directories.seasonDirectoryIds[intent.seasonNumber] ?? "",
-    totalEpisodes: intent.totalEpisodes,
-    latestAiredEpisode: intent.latestAiredEpisode,
-    latestAiredSource: "metadata",
-  };
 
   const base = createEpisodeStates({
     trackedSeasonId,
@@ -183,6 +169,33 @@ function bridgeSeason(input: {
       verifiedFileIds: [],
     });
   }
+
+  const fullyAired = intent.totalEpisodes > 0 && intent.latestAiredEpisode >= intent.totalEpisodes;
+  const baseStatus: SeasonStatus = intent.status ?? (fullyAired ? "completed" : "active");
+  // The finale graduation season-sync.ts promises ("only the finale — all
+  // obtained — graduates it to completed"). Callers pass the persisted status
+  // through, and this bridge is the only post-creation writer of it — so an
+  // active season that is now fully aired AND fully obtained must graduate
+  // HERE, or the patrol re-sweeps a finished show daily and the library keeps
+  // 追更中 while the notification claims 不再追踪. A season with real aired
+  // gaps stays active so the sweep keeps filling them; completed never reverts.
+  const fullyObtained =
+    fullyAired &&
+    episodes.filter((episode) => episode.airStatus === "aired").every((episode) => episode.obtained) &&
+    episodes.filter((episode) => episode.obtained).length >= intent.totalEpisodes;
+  const status: SeasonStatus = baseStatus === "active" && fullyObtained ? "completed" : baseStatus;
+
+  const season: TrackedSeason = {
+    id: trackedSeasonId,
+    mediaTitleId: title.id,
+    seasonNumber: intent.seasonNumber,
+    status,
+    qualityPreference: intent.qualityPreference,
+    storageDirectoryId: v2.directories.seasonDirectoryIds[intent.seasonNumber] ?? "",
+    totalEpisodes: intent.totalEpisodes,
+    latestAiredEpisode: intent.latestAiredEpisode,
+    latestAiredSource: "metadata",
+  };
 
   return { season, episodes };
 }

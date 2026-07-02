@@ -125,6 +125,64 @@ describe("bridgeV2WorkflowToResult — V2 facts → per-season WorkflowResult sh
     expect(result.notification.trigger).toBe("scheduled");
   });
 
+  // The finale graduation promised by season-sync.ts ("only the finale — all
+  // obtained — graduates it to completed"). Callers pass the persisted status
+  // through, so without graduating HERE an active season stays active forever:
+  // the patrol re-sweeps a finished, fully-obtained show daily and the library
+  // keeps its 追更中 badge while the notification says 不再追踪 (莫离 bug).
+  it("type3 patrol: active season now fully aired AND fully obtained → persisted status graduates to completed", () => {
+    const result = bridgeV2WorkflowToResult({
+      title,
+      mode: "type3",
+      seasons: [{ seasonNumber: 1, totalEpisodes: 3, latestAiredEpisode: 3, qualityPreference: "4K", status: "active" }],
+      v2: v2Result({
+        missingBefore: [],
+        obtained: ["S01E01", "S01E02", "S01E03"],
+        stillMissing: [],
+      }),
+      workflowRunId: "run-x",
+      now: () => "2026-06-15T00:00:00.000Z",
+    });
+
+    expect(result.seasons[0]!.season.status).toBe("completed");
+    // The user-facing report agrees — persisted state and 不再追踪 wording can't diverge.
+    expect(result.notification.report?.status).toBe("complete");
+  });
+
+  it("type3 patrol: fully aired but a real gap remains → stays active so the sweep keeps filling", () => {
+    const result = bridgeV2WorkflowToResult({
+      title,
+      mode: "type3",
+      seasons: [{ seasonNumber: 1, totalEpisodes: 3, latestAiredEpisode: 3, qualityPreference: "4K", status: "active" }],
+      v2: v2Result({
+        missingBefore: ["S01E02"],
+        obtained: ["S01E01", "S01E03"],
+        stillMissing: ["S01E02"],
+      }),
+      workflowRunId: "run-x",
+      now: () => "2026-06-15T00:00:00.000Z",
+    });
+
+    expect(result.seasons[0]!.season.status).toBe("active");
+  });
+
+  it("type3 patrol: still airing (latestAired < total) with everything aired obtained → stays active", () => {
+    const result = bridgeV2WorkflowToResult({
+      title,
+      mode: "type3",
+      seasons: [{ seasonNumber: 1, totalEpisodes: 12, latestAiredEpisode: 2, qualityPreference: "4K", status: "active" }],
+      v2: v2Result({
+        missingBefore: [],
+        obtained: ["S01E01", "S01E02"],
+        stillMissing: [],
+      }),
+      workflowRunId: "run-x",
+      now: () => "2026-06-15T00:00:00.000Z",
+    });
+
+    expect(result.seasons[0]!.season.status).toBe("active");
+  });
+
   it("multi-season series, partial coverage → status partial, series-level rollup notification", () => {
     const result = bridgeV2WorkflowToResult({
       title,
