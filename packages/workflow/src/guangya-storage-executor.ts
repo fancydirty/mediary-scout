@@ -481,9 +481,12 @@ export class GuangYaStorageExecutor implements StorageExecutor {
    *  with the materialized dir/file id). The sequence seen was 1 → 2, with the file
    *  landing the same instant status flipped to 2. We treat status >= 2 as terminal
    *  AND break the moment a non-empty fileId materializes (the strongest "file landed"
-   *  signal — it appears exactly at completion). No distinct failed code was observed
-   *  in this run (a later probe's statusCounts hints codes up to 5 exist); status >= 2
-   *  already breaks on any of them, so the caller's own landing check judges:
+   *  signal — it appears exactly at completion). 3 = FAILED ("云添加失败" in the
+   *  光鸭 client; observed live 2026-07-02 — three stuck subtitle fetches sat at
+   *  status 1 for 9+ minutes before the provider gave up and flipped them 1 → 3,
+   *  so a task can be terminally dead while still reading as in-progress; codes up
+   *  to 5 exist per statusCounts). status >= 2 breaks on all of them, so the
+   *  caller's own landing check judges:
    *  transfer() diffs listVideoFiles before/after, transferSubtitleUrl verifies the
    *  returned fileId is present in the target directory. */
   private async pollTaskForFileId(taskId: string, maxPolls: number, intervalMs: number): Promise<string> {
