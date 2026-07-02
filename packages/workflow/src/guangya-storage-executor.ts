@@ -228,6 +228,81 @@ export class GuangYaStorageExecutor implements StorageExecutor {
     return attempt;
   }
 
+  /** Subtitle direct-link landing — the capability gate: this method existing is
+   *  what lights the whole subtitle flow up for 光鸭 (orchestrator probes
+   *  `typeof executor.transferSubtitleUrl === "function"`, zero other wiring).
+   *  Probe-verified live 2026-07-02 (assrt srt → real drive): create_task accepts
+   *  a plain http url directly (no resolve_res needed), RESPECTS newName for url
+   *  tasks (the file lands under exactly that name), and the status-2 task row
+   *  carries the landed fileId. So unlike 115 there is no before/after tree diff
+   *  or basename matching — the task's own fileId IS the materialized file. We
+   *  still confirm that fileId is really present in the target directory before
+   *  reporting success (never trust a task row over the directory itself).
+   *  光鸭 has no task-cancel endpoint in our client, so a timed-out task is
+   *  reported failed and may still land late — the same soft late-landing
+   *  semantics 115 accepts when its unambiguous-cancel guard skips. */
+  async transferSubtitleUrl(input: {
+    url: string;
+    filename: string;
+    directoryId: string;
+    workflowRunId: string;
+  }): Promise<TransferAttempt> {
+    // Boundary validation mirrors the 115 executor: the filename comes from an
+    // EXTERNAL provider (assrt) and doubles as 光鸭's newName — a path-y name
+    // would pollute the candidateId AND the landing name. Soft failure (attempt,
+    // not throw); consume a counter slot so ids stay unique.
+    if (/[\\/]/.test(input.filename)) {
+      const invalidAttemptNumber = this.nextTransferNumber;
+      this.nextTransferNumber += 1;
+      return {
+        id: `${input.workflowRunId}_subtitle_${invalidAttemptNumber}`,
+        workflowRunId: input.workflowRunId,
+        candidateId: `subtitle:invalid_name_${invalidAttemptNumber}`,
+        status: "failed",
+        providerMessage:
+          "SUBTITLE_INVALID_FILENAME: filename must be a bare name without path separators (路径分隔符)",
+        materializedFileIds: [],
+      };
+    }
+    const safe = this.assertWithinWriteScope(input.directoryId, "transfer subtitle");
+    const attemptNumber = this.nextTransferNumber;
+    this.nextTransferNumber += 1;
+    const candidateId = `subtitle:${input.filename}`;
+
+    let providerMessage = "";
+    let materializedFileIds: string[] = [];
+    try {
+      const taskId = await this.client.createTask({
+        url: input.url,
+        parentId: safe,
+        newName: input.filename,
+      });
+      const landedFileId = await this.pollTaskForFileId(taskId);
+      if (!landedFileId) {
+        providerMessage = "SUBTITLE_NOT_LANDED: 离线任务在轮询窗口内未落盘(任务可能迟到,不等)";
+      } else if ((await this.client.listFiles(safe)).some((item) => idOf(item) === landedFileId)) {
+        materializedFileIds = [landedFileId];
+      } else {
+        providerMessage = "SUBTITLE_NOT_LANDED: 任务报告完成但 fileId 不在目标目录";
+      }
+    } catch (error) {
+      // Auth failures must surface so the worker freezes the drive — never absorbed.
+      if (isGuangYaAuthError(error)) {
+        throw error;
+      }
+      providerMessage = error instanceof Error ? error.message : String(error);
+    }
+
+    return {
+      id: `${input.workflowRunId}_subtitle_${attemptNumber}`,
+      workflowRunId: input.workflowRunId,
+      candidateId,
+      status: materializedFileIds.length > 0 ? "succeeded" : "failed",
+      providerMessage,
+      materializedFileIds,
+    };
+  }
+
   async flattenDirectory(directoryId: string): Promise<{ moved: string[]; removed: string[] }> {
     const safeDirectoryId = this.assertWithinWriteScope(directoryId, "flatten directory");
     const videos = await this.collectVideos(safeDirectoryId, safeDirectoryId);
@@ -383,6 +458,27 @@ export class GuangYaStorageExecutor implements StorageExecutor {
    *  of truth for succeeded-vs-failed, so pollTask only needs the correct terminal
    *  condition + to not waste the full poll budget. If a future run surfaces a higher
    *  failed code (e.g. 3/4), status >= 2 already breaks on it so the diff can judge. */
+  /** pollTask, but returns the landed fileId ("" = did not land in the window).
+   *  Same terminal rules as pollTask; used by transferSubtitleUrl, whose landing
+   *  confirmation is the task row's own fileId rather than a tree diff. */
+  private async pollTaskForFileId(taskId: string): Promise<string> {
+    for (let i = 0; i < this.taskPollMaxPolls; i++) {
+      const tasks = await this.client.listTask([taskId]);
+      const t = tasks.find((x) => x.taskId === taskId);
+      if (!t) {
+        return "";
+      }
+      if (t.fileId !== "" && t.fileId !== "0") {
+        return t.fileId;
+      }
+      if (t.status >= 2) {
+        return "";
+      }
+      await new Promise((r) => setTimeout(r, this.taskPollIntervalMs));
+    }
+    return "";
+  }
+
   private async pollTask(taskId: string): Promise<void> {
     for (let i = 0; i < this.taskPollMaxPolls; i++) {
       const tasks = await this.client.listTask([taskId]);

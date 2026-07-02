@@ -351,3 +351,153 @@ describe("GuangYaStorageExecutor item-adapter", () => {
     ]);
   });
 });
+
+describe("GuangYaStorageExecutor.transferSubtitleUrl", () => {
+  const SUB_URL = "http://file1.assrt.net/download/715078/The.Matrix.1999.srt?_=1&-=abc&api=1";
+  const SUB_NAME = "The.Matrix.1999.srt";
+
+  it("lands a subtitle via create_task(newName) and reports the task's fileId (probe 2026-07-02: url tasks respect newName; status 2 carries fileId)", async () => {
+    const createTask = vi.fn<GuangYaStorageClient["createTask"]>(async () => "task-sub");
+    const listTask = vi.fn<GuangYaStorageClient["listTask"]>(async () => [
+      { taskId: "task-sub", status: 2, progress: 100, fileId: "sub-file-1" },
+    ]);
+    const listFiles = vi.fn<GuangYaStorageClient["listFiles"]>(async () => [
+      { fileId: "sub-file-1", parentId: SCOPE, fileName: SUB_NAME, fileSize: 88753, resType: 1 },
+    ]);
+    const client = fakeClient({ createTask, listTask, listFiles });
+    const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [SCOPE] });
+
+    const attempt = await executor.transferSubtitleUrl({
+      url: SUB_URL,
+      filename: SUB_NAME,
+      directoryId: SCOPE,
+      workflowRunId: "run-1",
+    });
+
+    expect(createTask).toHaveBeenCalledTimes(1);
+    expect(createTask.mock.calls[0]![0]).toEqual({ url: SUB_URL, parentId: SCOPE, newName: SUB_NAME });
+    expect(attempt.status).toBe("succeeded");
+    expect(attempt.materializedFileIds).toEqual(["sub-file-1"]);
+    expect(attempt.candidateId).toBe(`subtitle:${SUB_NAME}`);
+    expect(attempt.id).toBe("run-1_subtitle_1");
+  });
+
+  it("rejects a path-y filename as a failed attempt without spending any API call", async () => {
+    const client = fakeClient();
+    const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [SCOPE] });
+
+    const attempt = await executor.transferSubtitleUrl({
+      url: SUB_URL,
+      filename: "subdir/evil.ass",
+      directoryId: SCOPE,
+      workflowRunId: "run-1",
+    });
+
+    expect(attempt.status).toBe("failed");
+    expect(attempt.candidateId).toBe("subtitle:invalid_name_1");
+    expect(attempt.providerMessage).toMatch(/SUBTITLE_INVALID_FILENAME/);
+    expect(client.createTask).not.toHaveBeenCalled();
+    expect(client.listTask).not.toHaveBeenCalled();
+  });
+
+  it("reports failed when the task never completes within the poll cap", async () => {
+    const listTask = vi.fn<GuangYaStorageClient["listTask"]>(async () => [
+      { taskId: "task-1", status: 1, progress: 10, fileId: "" },
+    ]);
+    const client = fakeClient({ listTask });
+    const executor = new GuangYaStorageExecutor({
+      client,
+      writeScopeDirectoryIds: [SCOPE],
+      taskPollMaxPolls: 2,
+      taskPollIntervalMs: 0,
+    });
+
+    const attempt = await executor.transferSubtitleUrl({
+      url: SUB_URL,
+      filename: SUB_NAME,
+      directoryId: SCOPE,
+      workflowRunId: "run-1",
+    });
+
+    expect(attempt.status).toBe("failed");
+    expect(attempt.materializedFileIds).toEqual([]);
+    expect(attempt.providerMessage).toMatch(/未.*落盘|落盘超时|not.*land/i);
+  });
+
+  it("reports failed when the task ends with a fileId that is NOT in the target directory (don't trust list_task blindly)", async () => {
+    const listTask = vi.fn<GuangYaStorageClient["listTask"]>(async () => [
+      { taskId: "task-1", status: 2, progress: 100, fileId: "sub-file-1" },
+    ]);
+    const listFiles = vi.fn<GuangYaStorageClient["listFiles"]>(async () => []);
+    const client = fakeClient({ listTask, listFiles });
+    const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [SCOPE] });
+
+    const attempt = await executor.transferSubtitleUrl({
+      url: SUB_URL,
+      filename: SUB_NAME,
+      directoryId: SCOPE,
+      workflowRunId: "run-1",
+    });
+
+    expect(attempt.status).toBe("failed");
+    expect(attempt.materializedFileIds).toEqual([]);
+  });
+
+  it("propagates auth errors so the worker can freeze the drive", async () => {
+    const createTask = vi.fn<GuangYaStorageClient["createTask"]>(async () => {
+      throw new GuangYaAuthError("GUANGYA_AUTH_FAILED: 401 after refresh");
+    });
+    const client = fakeClient({ createTask });
+    const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [SCOPE] });
+
+    await expect(
+      executor.transferSubtitleUrl({
+        url: SUB_URL,
+        filename: SUB_NAME,
+        directoryId: SCOPE,
+        workflowRunId: "run-1",
+      }),
+    ).rejects.toThrow(GuangYaAuthError);
+  });
+
+  it("refuses a target directory outside the write scope", async () => {
+    const client = fakeClient();
+    const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [SCOPE] });
+
+    await expect(
+      executor.transferSubtitleUrl({
+        url: SUB_URL,
+        filename: SUB_NAME,
+        directoryId: "outside-dir",
+        workflowRunId: "run-1",
+      }),
+    ).rejects.toThrow(/WRITE_SCOPE_VIOLATION/);
+  });
+
+  it("shares the transfer attempt counter with transfer() so ids never collide", async () => {
+    const listTask = vi.fn<GuangYaStorageClient["listTask"]>(async () => [
+      { taskId: "task-1", status: 2, progress: 100, fileId: "sub-file-1" },
+    ]);
+    const listFiles = vi.fn<GuangYaStorageClient["listFiles"]>(async () => [
+      { fileId: "sub-file-1", parentId: SCOPE, fileName: SUB_NAME, fileSize: 88753, resType: 1 },
+    ]);
+    const client = fakeClient({ listTask, listFiles });
+    const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [SCOPE] });
+
+    const first = await executor.transferSubtitleUrl({
+      url: SUB_URL,
+      filename: SUB_NAME,
+      directoryId: SCOPE,
+      workflowRunId: "run-1",
+    });
+    const second = await executor.transferSubtitleUrl({
+      url: SUB_URL,
+      filename: SUB_NAME,
+      directoryId: SCOPE,
+      workflowRunId: "run-1",
+    });
+
+    expect(first.id).toBe("run-1_subtitle_1");
+    expect(second.id).toBe("run-1_subtitle_2");
+  });
+});
