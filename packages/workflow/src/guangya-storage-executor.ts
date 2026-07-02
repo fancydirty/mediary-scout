@@ -239,8 +239,9 @@ export class GuangYaStorageExecutor implements StorageExecutor {
    *  still confirm that fileId is really present in the target directory before
    *  reporting success (never trust a task row over the directory itself).
    *  光鸭 has no task-cancel endpoint in our client, so a timed-out task is
-   *  reported failed and may still land late — the same soft late-landing
-   *  semantics 115 accepts when its unambiguous-cancel guard skips. */
+   *  reported as a soft no_target_change (failed is reserved for hard provider
+   *  errors) and may still land late — the same soft late-landing semantics 115
+   *  accepts when its unambiguous-cancel guard skips. */
   async transferSubtitleUrl(input: {
     url: string;
     filename: string;
@@ -457,20 +458,18 @@ export class GuangYaStorageExecutor implements StorageExecutor {
     return { deleted: input.fileIds };
   }
 
-  /** Poll list_task until the task leaves the in-progress state or a cap is hit.
+  /** Poll list_task until the task leaves the in-progress state or a cap is hit;
+   *  returns the landed fileId ("" = did not land in the window).
    *  光鸭 list_task status (observed live 2026-06-27, Big Buck Bunny magnet → real
    *  account): 1 = in-progress/queued (fileId is ""), 2 = done (fileId is populated
    *  with the materialized dir/file id). The sequence seen was 1 → 2, with the file
    *  landing the same instant status flipped to 2. We treat status >= 2 as terminal
    *  AND break the moment a non-empty fileId materializes (the strongest "file landed"
    *  signal — it appears exactly at completion). No distinct failed code was observed
-   *  in this run; the transfer()'s before/after listVideoFiles diff remains the source
-   *  of truth for succeeded-vs-failed, so pollTask only needs the correct terminal
-   *  condition + to not waste the full poll budget. If a future run surfaces a higher
-   *  failed code (e.g. 3/4), status >= 2 already breaks on it so the diff can judge. */
-  /** pollTask, but returns the landed fileId ("" = did not land in the window).
-   *  Same terminal rules as pollTask; used by transferSubtitleUrl, whose landing
-   *  confirmation is the task row's own fileId rather than a tree diff. */
+   *  in this run (a later probe's statusCounts hints codes up to 5 exist); status >= 2
+   *  already breaks on any of them, so the caller's own landing check judges:
+   *  transfer() diffs listVideoFiles before/after, transferSubtitleUrl verifies the
+   *  returned fileId is present in the target directory. */
   private async pollTaskForFileId(taskId: string): Promise<string> {
     for (let i = 0; i < this.taskPollMaxPolls; i++) {
       const tasks = await this.client.listTask([taskId]);
@@ -490,20 +489,7 @@ export class GuangYaStorageExecutor implements StorageExecutor {
   }
 
   private async pollTask(taskId: string): Promise<void> {
-    for (let i = 0; i < this.taskPollMaxPolls; i++) {
-      const tasks = await this.client.listTask([taskId]);
-      const t = tasks.find((x) => x.taskId === taskId);
-      if (!t) {
-        return;
-      }
-      if (t.fileId !== "" && t.fileId !== "0") {
-        return;
-      }
-      if (t.status >= 2) {
-        return;
-      }
-      await new Promise((r) => setTimeout(r, this.taskPollIntervalMs));
-    }
+    await this.pollTaskForFileId(taskId);
   }
 
   private async directoryContainsLargeVideo(directoryId: string): Promise<boolean> {
