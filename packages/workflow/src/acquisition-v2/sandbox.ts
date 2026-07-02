@@ -737,6 +737,21 @@ export class TaskSandbox {
     if (files.length === 0) {
       return { status: "failed", landedFilenames: [] };
     }
+    // Boundary guard (same class as the rename guard): only subtitle-extension
+    // files may ride the landing pipeline. assrt's detail() can return a
+    // whole-package .zip fallback or stray readme/fonts entries — those would
+    // land as unusable junk in staging (renameSubtitle rejects them, cleanup has
+    // to sweep them) while burning real 115 API budget, and a zip-only landing
+    // would report a misleading "succeeded".
+    const subtitleFiles = files.filter((file) => SUBTITLE_NAME_PATTERN.test(file.filename));
+    if (subtitleFiles.length === 0) {
+      return {
+        status: "failed",
+        landedFilenames: [],
+        error:
+          "该字幕包没有可直接落盘的字幕文件(整包压缩包 zip/rar 落盘也无法使用)——换一个候选,或放弃字幕(软目标,不阻塞视频)。",
+      };
+    }
     const landedFilenames: string[] = [];
     let lastError: string | undefined;
     // Budget guard: each failed landing costs real 115 API calls (offline task +
@@ -745,8 +760,8 @@ export class TaskSandbox {
     // whole filelist (a success resets the counter: mixed flakiness still lands).
     const MAX_CONSECUTIVE_FAILURES = 3;
     let consecutiveFailures = 0;
-    for (let i = 0; i < files.length; i += 1) {
-      const file = files[i]!;
+    for (let i = 0; i < subtitleFiles.length; i += 1) {
+      const file = subtitleFiles[i]!;
       try {
         const result = await this.storage.transferSubtitleUrl({
           url: file.url,
@@ -768,7 +783,7 @@ export class TaskSandbox {
         lastError = error instanceof Error ? error.message : String(error);
       }
       if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-        lastError = `已连续 ${MAX_CONSECUTIVE_FAILURES} 个字幕文件落盘失败,提前中止(剩余 ${files.length - i - 1} 个未尝试)。字幕是软目标——不要重试,带着已落的继续,或直接只交付视频。${lastError ? ` 最后错误: ${lastError}` : ""}`;
+        lastError = `已连续 ${MAX_CONSECUTIVE_FAILURES} 个字幕文件落盘失败,提前中止(剩余 ${subtitleFiles.length - i - 1} 个未尝试)。字幕是软目标——不要重试,带着已落的继续,或直接只交付视频。${lastError ? ` 最后错误: ${lastError}` : ""}`;
         break;
       }
     }

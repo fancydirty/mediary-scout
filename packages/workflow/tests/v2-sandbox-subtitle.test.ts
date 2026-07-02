@@ -334,3 +334,49 @@ describe("subtitle snapshot evidence + failure bounding", () => {
     expect(result.landedFilenames).toEqual(["E2.ass", "E5.ass"]);
   });
 });
+
+describe("transferSubtitle — non-subtitle files are filtered at the boundary", () => {
+  it("lands only subtitle-extension files from a mixed filelist (readme/fonts skipped, no budget waste)", async () => {
+    const provider = new FakeResourceProviderV2({ results: { title: [] } });
+    class CountingStorage extends Storage115Simulator {
+      calls: string[] = [];
+      override async transferSubtitleUrl(input: { url: string; filename: string; intoDirectoryId: string; workflowRunId: string }): Promise<TransferAttemptResult> {
+        this.calls.push(input.filename);
+        return super.transferSubtitleUrl(input);
+      }
+    }
+    const storage = new CountingStorage({ packs: {} });
+    const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
+    const sandbox = new TaskSandbox({ provider, storage, stagingDirectoryId, targetSeasonDirectoryIds: {}, need: [] });
+    const assrt = makeAssrtProvider(
+      [{ id: 9, title: "t", lang: "简" }],
+      { 9: [
+        { filename: "Show.S01E01.ass", url: "http://x/1.ass" },
+        { filename: "readme.txt", url: "http://x/readme.txt" },
+        { filename: "fonts.zip", url: "http://x/fonts.zip" },
+      ] },
+    );
+    await sandbox.primeSubtitleSnapshot("t", assrt);
+
+    const result = await sandbox.transferSubtitle({ candidateId: 9 });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.landedFilenames).toEqual(["Show.S01E01.ass"]);
+    expect(storage.calls).toEqual(["Show.S01E01.ass"]); // txt/zip never hit 115
+  });
+
+  it("whole-package zip fallback → failed WITHOUT any storage call (a zip in staging is unusable junk)", async () => {
+    const { sandbox } = await createSubtitleSandbox();
+    const assrt = makeAssrtProvider(
+      [{ id: 10, title: "t", lang: "简" }],
+      { 10: [{ filename: "pack.zip", url: "http://x/pack.zip" }] },
+    );
+    await sandbox.primeSubtitleSnapshot("t", assrt);
+
+    const result = await sandbox.transferSubtitle({ candidateId: 10 });
+
+    expect(result.status).toBe("failed");
+    expect(result.landedFilenames).toEqual([]);
+    expect(result.error).toMatch(/压缩包|zip|字幕文件/i);
+  });
+});
