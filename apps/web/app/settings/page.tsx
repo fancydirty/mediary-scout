@@ -334,7 +334,7 @@ async function Pan115Section() {
         {(() => {
           // #93: derive the header badge from ALL drives — 115-only status made
           // a 光鸭/夸克-only user read a permanent misleading 未连接.
-          const badge = driveConnectionBadge({ envConnected: status.connected, drives });
+          const badge = driveConnectionBadge({ envConnected: status.connected && status.source === "env", drives });
           return (
             <span className={`hub-badge tone-${badge.tone}`}>
               {badge.tone === "green" ? (

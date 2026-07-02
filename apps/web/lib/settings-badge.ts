@@ -13,9 +13,9 @@ export interface DriveConnectionBadge {
 
 export function driveConnectionBadge(input: {
   envConnected: boolean;
-  drives: Array<{ status: string }>;
+  drives: Array<{ status: "active" | "frozen" }>;
 }): DriveConnectionBadge {
-  const active = input.drives.filter((drive) => drive.status !== "frozen").length;
+  const active = input.drives.filter((drive) => drive.status === "active").length;
   if (active > 0) {
     return { tone: "green", label: `已连接 ${active} 块盘` };
   }
