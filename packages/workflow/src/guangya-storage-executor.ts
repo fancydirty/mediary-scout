@@ -90,6 +90,14 @@ export interface GuangYaStorageExecutorOptions {
   /** Poll caps for an offline task (overridable so tests don't sleep). */
   taskPollMaxPolls?: number;
   taskPollIntervalMs?: number;
+  /** Subtitle-landing poll caps (transferSubtitleUrl), SEPARATE from the video
+   *  task caps above — the #85 lesson, relearned live on 光鸭 2026-07-02: a
+   *  subtitle is ~100KB and lands in seconds or effectively never, so polling it
+   *  on the video window (60×3s=180s) lets a few stuck assrt fetches silently
+   *  burn ~9 minutes inside one transferSubtitle call (搏击俱乐部). Default
+   *  16×3s≈48s, mirroring the 115 subtitle window budget. */
+  subtitleTaskPollMaxPolls?: number;
+  subtitleTaskPollIntervalMs?: number;
 }
 
 interface VideoFact {
@@ -110,6 +118,8 @@ export class GuangYaStorageExecutor implements StorageExecutor {
   private readonly videoExtensions: Set<string>;
   private readonly taskPollMaxPolls: number;
   private readonly taskPollIntervalMs: number;
+  private readonly subtitleTaskPollMaxPolls: number;
+  private readonly subtitleTaskPollIntervalMs: number;
   private nextTransferNumber = 1;
 
   constructor(options: GuangYaStorageExecutorOptions) {
@@ -122,6 +132,8 @@ export class GuangYaStorageExecutor implements StorageExecutor {
     );
     this.taskPollMaxPolls = options.taskPollMaxPolls ?? 60;
     this.taskPollIntervalMs = options.taskPollIntervalMs ?? 3000;
+    this.subtitleTaskPollMaxPolls = options.subtitleTaskPollMaxPolls ?? 16;
+    this.subtitleTaskPollIntervalMs = options.subtitleTaskPollIntervalMs ?? 3000;
   }
 
   async createDirectory(input: { name: string; parentId: string }): Promise<string> {
@@ -283,7 +295,11 @@ export class GuangYaStorageExecutor implements StorageExecutor {
         parentId: safe,
         newName: input.filename,
       });
-      const landedFileId = await this.pollTaskForFileId(taskId);
+      const landedFileId = await this.pollTaskForFileId(
+        taskId,
+        this.subtitleTaskPollMaxPolls,
+        this.subtitleTaskPollIntervalMs,
+      );
       if (!landedFileId) {
         softMissMessage = "SUBTITLE_NOT_LANDED: 离线任务在轮询窗口内未落盘(任务可能迟到,不等)";
       } else if ((await this.client.listFiles(safe)).some((item) => idOf(item) === landedFileId)) {
@@ -470,8 +486,8 @@ export class GuangYaStorageExecutor implements StorageExecutor {
    *  already breaks on any of them, so the caller's own landing check judges:
    *  transfer() diffs listVideoFiles before/after, transferSubtitleUrl verifies the
    *  returned fileId is present in the target directory. */
-  private async pollTaskForFileId(taskId: string): Promise<string> {
-    for (let i = 0; i < this.taskPollMaxPolls; i++) {
+  private async pollTaskForFileId(taskId: string, maxPolls: number, intervalMs: number): Promise<string> {
+    for (let i = 0; i < maxPolls; i++) {
       const tasks = await this.client.listTask([taskId]);
       const t = tasks.find((x) => x.taskId === taskId);
       if (!t) {
@@ -483,13 +499,13 @@ export class GuangYaStorageExecutor implements StorageExecutor {
       if (t.status >= 2) {
         return "";
       }
-      await new Promise((r) => setTimeout(r, this.taskPollIntervalMs));
+      await new Promise((r) => setTimeout(r, intervalMs));
     }
     return "";
   }
 
   private async pollTask(taskId: string): Promise<void> {
-    await this.pollTaskForFileId(taskId);
+    await this.pollTaskForFileId(taskId, this.taskPollMaxPolls, this.taskPollIntervalMs);
   }
 
   private async directoryContainsLargeVideo(directoryId: string): Promise<boolean> {

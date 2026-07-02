@@ -408,8 +408,8 @@ describe("GuangYaStorageExecutor.transferSubtitleUrl", () => {
     const executor = new GuangYaStorageExecutor({
       client,
       writeScopeDirectoryIds: [SCOPE],
-      taskPollMaxPolls: 2,
-      taskPollIntervalMs: 0,
+      subtitleTaskPollMaxPolls: 2,
+      subtitleTaskPollIntervalMs: 0,
     });
 
     const attempt = await executor.transferSubtitleUrl({
@@ -552,5 +552,77 @@ describe("GuangYaStorageExecutor.deleteFiles — non-video cleanup (真机 e2e 2
       /SAFETY_VIOLATION/,
     );
     expect(client.deleteFiles).not.toHaveBeenCalled();
+  });
+});
+
+describe("GuangYaStorageExecutor.transferSubtitleUrl poll window (真机 2026-07-02 搏击俱乐部: 视频级 60×3s 窗让 3 个卡死字幕任务静默烧 9 分钟)", () => {
+  const SUB_URL = "http://file1.assrt.net/download/715078/The.Matrix.1999.srt?_=1&-=abc&api=1";
+  const SUB_NAME = "The.Matrix.1999.srt";
+
+  it("uses the SUBTITLE poll cap, not the video task cap", async () => {
+    const listTask = vi.fn<GuangYaStorageClient["listTask"]>(async () => [
+      { taskId: "task-1", status: 1, progress: 10, fileId: "" },
+    ]);
+    const client = fakeClient({ listTask });
+    const executor = new GuangYaStorageExecutor({
+      client,
+      writeScopeDirectoryIds: [SCOPE],
+      taskPollMaxPolls: 60,
+      taskPollIntervalMs: 0,
+      subtitleTaskPollMaxPolls: 2,
+      subtitleTaskPollIntervalMs: 0,
+    });
+
+    const attempt = await executor.transferSubtitleUrl({
+      url: SUB_URL,
+      filename: SUB_NAME,
+      directoryId: SCOPE,
+      workflowRunId: "run-1",
+    });
+
+    expect(attempt.status).toBe("no_target_change");
+    expect(listTask).toHaveBeenCalledTimes(2);
+  });
+
+  it("subtitle poll cap defaults to 16 (≈48s at 3s interval, mirroring the 115 subtitle window)", async () => {
+    const listTask = vi.fn<GuangYaStorageClient["listTask"]>(async () => [
+      { taskId: "task-1", status: 1, progress: 10, fileId: "" },
+    ]);
+    const client = fakeClient({ listTask });
+    const executor = new GuangYaStorageExecutor({
+      client,
+      writeScopeDirectoryIds: [SCOPE],
+      subtitleTaskPollIntervalMs: 0,
+    });
+
+    await executor.transferSubtitleUrl({
+      url: SUB_URL,
+      filename: SUB_NAME,
+      directoryId: SCOPE,
+      workflowRunId: "run-1",
+    });
+
+    expect(listTask).toHaveBeenCalledTimes(16);
+  });
+
+  it("video transfer() keeps its own (wider) poll cap untouched", async () => {
+    const createTask = vi.fn<GuangYaStorageClient["createTask"]>(async () => "task-9");
+    const listTask = vi.fn<GuangYaStorageClient["listTask"]>(async () => [
+      { taskId: "task-9", status: 1, progress: 10, fileId: "" },
+    ]);
+    const listFiles = vi.fn<GuangYaStorageClient["listFiles"]>(async () => []);
+    const client = fakeClient({ createTask, listTask, listFiles });
+    const executor = new GuangYaStorageExecutor({
+      client,
+      writeScopeDirectoryIds: [SCOPE],
+      taskPollMaxPolls: 5,
+      taskPollIntervalMs: 0,
+      subtitleTaskPollMaxPolls: 2,
+      subtitleTaskPollIntervalMs: 0,
+    });
+
+    await executor.transfer({ workflowRunId: "run-1", directoryId: SCOPE, candidate: candidate() });
+
+    expect(listTask).toHaveBeenCalledTimes(5);
   });
 });
