@@ -119,7 +119,11 @@ export interface Storage115ExecutorOptions {
   /** Subtitle-landing window (transferSubtitleUrl). Separate from the video
    *  window: that one only confirms a 秒传 cache hit (~8s), while a subtitle is
    *  a REAL server-side HTTP fetch whose queue latency varies — live e2e
-   *  (2026-07-02, The Matrix) measured landings at ~20s and ~60s. */
+   *  (2026-07-02, The Matrix) measured landings at ~20s and ~60s.
+   *  Timing semantics: the first poll is immediate; sleeps happen only BETWEEN
+   *  polls, so the effective wait ≈ (attempts - 1) × pollMs plus listTree time
+   *  (defaults 8 & 6000ms → ~42s of sleeps). Each poll costs one depth-2
+   *  listTree, so attempts also bounds the 115 API spend per file. */
   subtitleMaterializeAttempts?: number;
   subtitleMaterializePollMs?: number;
   /** Injectable sleep (tests pass a fast/no-op). */
