@@ -114,3 +114,17 @@ it("phase order is the canonical 7-phase pipeline", () => {
     expect(percents[i]!).toBeGreaterThanOrEqual(percents[i - 1]!);
   }
 });
+
+describe("interpretTool — subtitle tools (mirror contract with buildSandboxToolSet)", () => {
+  it("viewSubtitleSnapshot → 浏览字幕候选 (pick, not the generic fallback)", () => {
+    expect(interpretTool("viewSubtitleSnapshot", {})).toEqual({ activity: "正在浏览字幕候选…", phase: "pick" });
+  });
+
+  it("transferSubtitle → 下载字幕 (organize band — post-video side work)", () => {
+    expect(interpretTool("transferSubtitle", { candidateId: 713570 })).toEqual({ activity: "正在下载字幕…", phase: "organize" });
+  });
+
+  it("renameSubtitle → 重命名字幕 (organize)", () => {
+    expect(interpretTool("renameSubtitle", { fileId: "f", newName: "Show.S01E01.ass" })).toEqual({ activity: "正在重命名字幕…", phase: "organize" });
+  });
+});

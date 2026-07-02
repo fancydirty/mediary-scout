@@ -82,6 +82,15 @@ export function interpretTool(toolName: string, args: Record<string, unknown> = 
       }
       return { activity: `已确认 ${codes.length} 集入库`, phase: "mark" };
     }
+    // Subtitle tools (assrt 活期文档 flow). They run AFTER the video landed, so
+    // they weigh in the pick/organize bands — the monotonic clamp keeps the bar
+    // honest either way; the ticker text is what the user actually reads.
+    case "viewSubtitleSnapshot":
+      return { activity: "正在浏览字幕候选…", phase: "pick" };
+    case "transferSubtitle":
+      return { activity: "正在下载字幕…", phase: "organize" };
+    case "renameSubtitle":
+      return { activity: "正在重命名字幕…", phase: "organize" };
     case "finish":
       return { activity: "正在收尾…", phase: "finalize" };
     case "reportNoCoverage":
