@@ -11,6 +11,13 @@ export function AssrtTokenForm({ tokenSet }: { tokenSet: boolean }) {
   const [result, setResult] = useState<string | null>(null);
 
   const handleSave = () => {
+    // Blank input: the server action would no-op yet report success — guard here
+    // so first-time setup never sees a misleading "保存成功".
+    if (!token.trim()) {
+      setResult("❌ 请输入 Token 后再保存");
+      setTimeout(() => setResult(null), 3000);
+      return;
+    }
     startTransition(async () => {
       const res = await saveAssrtTokenAction(token);
       setResult(res.success ? "✅ 保存成功" : `❌ ${res.message ?? "保存失败"}`);

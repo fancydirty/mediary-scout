@@ -510,6 +510,22 @@ export class Storage115Executor implements StorageExecutor {
     directoryId: string;
     workflowRunId: string;
   }): Promise<TransferAttempt> {
+    // Boundary validation: the filename comes from an EXTERNAL provider (assrt).
+    // A path-y name like "subdir/file.ass" would pollute the synthetic
+    // candidateId and make the listTree endsWith-match ambiguous — reject it
+    // before spending any API call. Soft failure (attempt, not throw): the
+    // sandbox counts it like any other landing failure.
+    if (/[\\/]/.test(input.filename)) {
+      return {
+        id: `${input.workflowRunId}_subtitle_invalid_name`,
+        workflowRunId: input.workflowRunId,
+        candidateId: `subtitle:${input.filename}`,
+        status: "failed",
+        providerMessage:
+          "SUBTITLE_INVALID_FILENAME: filename must be a bare name without path separators (路径分隔符)",
+        materializedFileIds: [],
+      };
+    }
     const safeDirectoryId = await this.assertWithinWriteScope(input.directoryId, "transfer subtitle");
     // Mirror transfer(): one number consumed per call from the SHARED transfer
     // counter (video transfers advance it too, so the suffix reflects the run's

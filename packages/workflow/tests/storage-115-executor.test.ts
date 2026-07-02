@@ -1005,6 +1005,28 @@ describe("Storage115Executor", () => {
 });
 
 describe("Storage115Executor.transferSubtitleUrl", () => {
+  it("rejects a filename containing path separators at the boundary (zero API calls)", async () => {
+    const api = new FakePan115Api({ directories: { stage: [] } });
+    let offlineCalls = 0;
+    api.addOfflineTask = async () => {
+      offlineCalls += 1;
+      return { ok: true, message: "accepted" };
+    };
+    const executor = new Storage115Executor({ api });
+
+    const attempt = await executor.transferSubtitleUrl!({
+      url: "http://file0.assrt.net/onthefly/1/evil.ass",
+      filename: "subdir/evil.ass",
+      directoryId: "stage",
+      workflowRunId: "run-test",
+    });
+
+    expect(attempt.status).toBe("failed");
+    expect(attempt.providerMessage).toMatch(/path separator|路径分隔/i);
+    expect(attempt.materializedFileIds).toEqual([]);
+    expect(offlineCalls).toBe(0);
+  });
+
   it("submits an offline task with the subtitle url, then confirms landing via listTree by filename", async () => {
     const api = new FakePan115Api({
       directories: { stage: [] },

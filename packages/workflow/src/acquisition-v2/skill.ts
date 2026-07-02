@@ -316,5 +316,5 @@ export function skillIndexForAgent(agent: "movie" | "tv"): string {
   return `You have a domain skill manual. Read a section on demand with readSkill({ section: "<name>" }) — do not act from memory when a section covers your situation.
 Read NOW, before you start: "protocol" (the Evidence→Facts→Decision + decide-the-covering-set-then-batch method) and "${own}" (your acquisition playbook).
 Re-read the moment you hit it: "search" (your first searches return junk / 0 / wrong works — the per-media-type keyword recipes), "dead-links-black-box" (a transfer fails, or every candidate title is opaque), "dedup" (the same episode lands more than once), "subtitle" (viewSubtitleSnapshot is in your toolset — external Chinese subtitles are available for this run), "mistakes" (worked right/wrong examples).
-Available sections: protocol, ${own}, search, dead-links-black-box, dedup, subtitle, mistakes.`;
+Available sections: ${SKILL_SECTION_NAMES.filter((section) => section !== (own === "movie" ? "tv" : "movie")).join(", ")}.`;
 }

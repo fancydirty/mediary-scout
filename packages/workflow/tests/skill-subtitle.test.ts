@@ -21,3 +21,23 @@ describe("subtitle skill section", () => {
     expect(tv).toContain("subtitle");
   });
 });
+
+describe("skillIndexForAgent — Available-sections line derives from the single source of truth", () => {
+  it("lists every registered section except the OTHER agent's playbook (cannot drift)", () => {
+    for (const agent of ["movie", "tv"] as const) {
+      const other = agent === "movie" ? "tv" : "movie";
+      const line = skillIndexForAgent(agent)
+        .split("\n")
+        .find((l) => l.startsWith("Available sections:"));
+      expect(line).toBeDefined();
+      const listed = line!
+        .replace("Available sections:", "")
+        .replace(/\.$/, "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .sort();
+      expect(listed).toEqual([...SKILL_SECTION_NAMES].filter((s) => s !== other).sort());
+    }
+  });
+});
