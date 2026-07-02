@@ -307,7 +307,7 @@ async function SubtitleSourceSection() {
             <Subtitles size={16} aria-hidden style={{ verticalAlign: "-2px", marginRight: 8 }} />
             字幕来源
           </h2>
-          <p className="panel-note">外挂中文字幕自动补全（assrt.net，免费）；仅对非国产内容 + 115 网盘生效</p>
+          <p className="panel-note">外挂中文字幕自动补全（assrt.net，免费）；仅对非国产内容生效，需网盘支持外链离线（目前：115）</p>
         </div>
       </div>
       <AssrtTokenForm tokenSet={tokenSet} />

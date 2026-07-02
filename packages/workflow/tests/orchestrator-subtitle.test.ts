@@ -55,15 +55,42 @@ function spyingAssrtProvider(): {
 
 /** Run a movie acquisition with the given gate inputs; return how many times
  *  assrt.search was called (the pre-warm indicator). */
+/** A FakeStorageExecutor that CAN land subtitle urls — the capability the
+ *  orchestrator gate probes for. Brand string is irrelevant; the optional
+ *  method's presence is the single source of truth. */
+class SubtitleCapableExecutor extends FakeStorageExecutor {
+  async transferSubtitleUrl(input: {
+    url: string;
+    filename: string;
+    directoryId: string;
+    workflowRunId: string;
+  }) {
+    return {
+      id: `${input.workflowRunId}_subtitle_1`,
+      workflowRunId: input.workflowRunId,
+      candidateId: `subtitle:${input.filename}`,
+      status: "succeeded" as const,
+      providerMessage: "",
+      materializedFileIds: [],
+    };
+  }
+}
+
 async function runWithGates(gates: {
   originCountries: string[];
   storageProvider: string;
   assrtToken?: string;
+  /** true → executor implements transferSubtitleUrl (e.g. 115); false → it
+   *  doesn't (e.g. quark today). */
+  subtitleCapable: boolean;
 }): Promise<number> {
   const { provider: assrtProvider, state } = spyingAssrtProvider();
+  const executorOptions = { directories: { staging: [], movie: [] } };
   await runAcquisitionV2({
     provider: emptyProvider(),
-    executor: new FakeStorageExecutor({ directories: { staging: [], movie: [] } }),
+    executor: gates.subtitleCapable
+      ? new SubtitleCapableExecutor(executorOptions)
+      : new FakeStorageExecutor(executorOptions),
     model: stopModel(),
     workflowRunId: "run-test",
     target: { kind: "movie", title: "Inception", aliases: [], year: 2010, qualityPreference: "4K" },
@@ -77,24 +104,38 @@ async function runWithGates(gates: {
   return state.searchCalls;
 }
 
-describe("runAcquisitionV2 subtitle pre-warming gates", () => {
-  it("pre-warms when assrtToken set + origin non-CN + drive 115", async () => {
-    expect(await runWithGates({ originCountries: ["US"], storageProvider: "pan115", assrtToken: "fake-token" })).toBe(1);
+describe("runAcquisitionV2 subtitle pre-warming gates (capability-based, no brand hardcode)", () => {
+  it("pre-warms when assrtToken set + origin non-CN + executor can land subtitle urls", async () => {
+    expect(
+      await runWithGates({ originCountries: ["US"], storageProvider: "pan115", assrtToken: "fake-token", subtitleCapable: true }),
+    ).toBe(1);
   });
 
   it("does NOT pre-warm when origin includes CN", async () => {
-    expect(await runWithGates({ originCountries: ["CN"], storageProvider: "pan115", assrtToken: "fake-token" })).toBe(0);
+    expect(
+      await runWithGates({ originCountries: ["CN"], storageProvider: "pan115", assrtToken: "fake-token", subtitleCapable: true }),
+    ).toBe(0);
   });
 
   it("does NOT pre-warm when assrtToken is undefined", async () => {
-    expect(await runWithGates({ originCountries: ["US"], storageProvider: "pan115" })).toBe(0);
+    expect(await runWithGates({ originCountries: ["US"], storageProvider: "pan115", subtitleCapable: true })).toBe(0);
   });
 
-  it("does NOT pre-warm when drive is quark (phase 1 = 115-only)", async () => {
-    expect(await runWithGates({ originCountries: ["US"], storageProvider: "quark", assrtToken: "fake-token" })).toBe(0);
+  it("does NOT pre-warm when the executor lacks transferSubtitleUrl (quark today) — the gate can never disagree with the executor", async () => {
+    expect(
+      await runWithGates({ originCountries: ["US"], storageProvider: "quark", assrtToken: "fake-token", subtitleCapable: false }),
+    ).toBe(0);
+  });
+
+  it("brand string is IRRELEVANT: a capable executor pre-warms even under another provider name (光鸭 lights up the day its executor implements the method)", async () => {
+    expect(
+      await runWithGates({ originCountries: ["US"], storageProvider: "guangya", assrtToken: "fake-token", subtitleCapable: true }),
+    ).toBe(1);
   });
 
   it("does NOT pre-warm when origins include CN alongside others (multi-origin)", async () => {
-    expect(await runWithGates({ originCountries: ["CN", "US"], storageProvider: "pan115", assrtToken: "fake-token" })).toBe(0);
+    expect(
+      await runWithGates({ originCountries: ["CN", "US"], storageProvider: "pan115", assrtToken: "fake-token", subtitleCapable: true }),
+    ).toBe(0);
   });
 });

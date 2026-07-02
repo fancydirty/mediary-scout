@@ -60,11 +60,12 @@ export interface StorageExecutor {
   /** The configured HARD 115 call budget — lets the agent loop derive its SOFT
    *  warning threshold from the real limit. Optional (real 115 executor only). */
   apiCallBudget?(): number;
-  /** Subtitle direct-link landing (115-only, phase 1). Submits the http url as a
-   *  115 offline task and confirms the named file landed via listTree (NOT
-   *  listVideoFiles — subtitle extensions are invisible to that path). Optional:
-   *  only the 115 executor implements it; the subtitle tool is registered only
-   *  for pan115, so a non-115 executor is never asked. */
+  /** Subtitle direct-link landing. Submits the http url as a drive offline task
+   *  and confirms the named file landed via listTree (NOT listVideoFiles —
+   *  subtitle extensions are invisible to that path). Optional AND the
+   *  capability gate: the orchestrator enables the whole subtitle flow iff this
+   *  method exists on the executor (today only 115 implements it; implementing
+   *  it on 光鸭/夸克 lights subtitles up there with zero other wiring). */
   transferSubtitleUrl?(input: {
     url: string;
     filename: string;

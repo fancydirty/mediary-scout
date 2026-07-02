@@ -197,13 +197,13 @@ export function buildSandboxToolSet(
   if (options.subtitle) {
     tools["viewSubtitleSnapshot"] = {
       description:
-        "View the system's pre-warmed assrt.net subtitle snapshot (活期文档). Read-only, free, repeatable. The system already searched assrt for this title's bare name; this returns the candidate subtitle packages (id + title + language tag). THIS TOOL APPEARING IN YOUR TOOLSET means this run needs external Chinese subtitles — read it and pick a package whose language covers your need (简/繁/双语), then transferSubtitle to land its files.",
+        "View the system's pre-warmed assrt.net subtitle snapshot (活期文档). Read-only, free, repeatable. The system already searched assrt for this title's bare name; this returns the candidate subtitle packages (id + title + language tag, plus community evidence when available: ★vote score / 字幕组 / upload time). THIS TOOL APPEARING IN YOUR TOOLSET means this run needs external Chinese subtitles — read it and pick a package whose language covers your need (简/繁/双语), weighing higher ★ and a known 字幕组 as community-validated quality, then transferSubtitle to land its files.",
       inputSchema: z.object({}),
       execute: () => Promise.resolve(sandbox.viewSubtitleSnapshot()),
     };
     tools["transferSubtitle"] = {
       description:
-        "Land a chosen assrt subtitle package's files into staging. Pass the candidateId from viewSubtitleSnapshot. The system resolves the package's filelist (per-episode .ass/.srt with SxxExx filenames) and lands each via 115's offline-task path. Returns the filenames that landed. Then RENAME each landed subtitle to match its video (same prefix, different extension) — subtitles are the ONLY files you may rename (a documented exception to the keep-original-name rule) so the scraper auto-loads them. Subtitle miss/empty filelist is a SOFT fail — it does NOT block video coverage; just proceed without subtitles.",
+        "Land a chosen assrt subtitle package's files into staging. Pass the candidateId from viewSubtitleSnapshot. The system resolves the package's filelist (per-episode .ass/.srt with SxxExx filenames) and lands each via the drive's offline-task path. Returns the filenames that landed. Then RENAME each landed subtitle to match its video (same prefix, different extension) — subtitles are the ONLY files you may rename (a documented exception to the keep-original-name rule) so the scraper auto-loads them. Subtitle miss/empty filelist is a SOFT fail — it does NOT block video coverage; just proceed without subtitles.",
       inputSchema: z.object({ candidateId: z.number().int().positive() }),
       execute: (args: { candidateId: number }) =>
         asEvidence(() => sandbox.transferSubtitle({ candidateId: args.candidateId, workflowRunId: "agent" })),

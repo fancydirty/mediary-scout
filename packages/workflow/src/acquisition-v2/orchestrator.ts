@@ -134,15 +134,19 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
 
   // Pre-warm the assrt subtitle snapshot when all three gates pass: token
   // configured, non-CN origin (国产内容 natively Chinese-spoken, no 中字 to find),
-  // and the drive is 115 (phase 1 only — quark/guangya have no subtitle landing
-  // path). Soft-fail: a flaky assrt / empty search sets an empty snapshot, never
-  // blocks the video task. When the gates don't pass, the subtitle tools are
-  // simply not registered (the agent never knows subtitles were an option).
+  // and the EXECUTOR can land external subtitle urls. The third gate is a
+  // CAPABILITY probe (transferSubtitleUrl presence), not a brand string — the
+  // day the 光鸭/夸克 executor implements the method, subtitles light up there
+  // automatically, and the gate can never disagree with what the executor can
+  // actually do (today only 115 implements it). Soft-fail: a flaky assrt /
+  // empty search sets an empty snapshot, never blocks the video task. When the
+  // gates don't pass, the subtitle tools are simply not registered (the agent
+  // never knows subtitles were an option).
   const subtitleActive =
     request.assrtToken !== undefined &&
     request.assrtToken.trim() !== "" &&
     (request.originCountries ?? []).every((c) => c !== "CN") &&
-    (request.storageProvider ?? "pan115") === "pan115";
+    typeof request.executor.transferSubtitleUrl === "function";
   if (subtitleActive) {
     const subtitleProvider: AssrtProviderPort =
       request.assrtProvider ?? new AssrtSubtitleProvider({ token: request.assrtToken! });

@@ -197,10 +197,10 @@ const MISTAKES = `# Worked right/wrong examples (the hard-won lessons)
 const SUBTITLE = `# External subtitle completion (assrt.net) — only when viewSubtitleSnapshot is in your tools
 
 ## The signal
-\`viewSubtitleSnapshot\` appearing in your toolset means THIS run needs external Chinese subtitles — the system already searched assrt.net for this title's bare name and laid the candidate packages out as a read-only 活期文档. If the tool is NOT in your toolset, this whole section does not apply — skip it (国产内容 natively Chinese-spoken, or no assrt token configured, or the drive is not 115).
+\`viewSubtitleSnapshot\` appearing in your toolset means THIS run needs external Chinese subtitles — the system already searched assrt.net for this title's bare name and laid the candidate packages out as a read-only 活期文档. If the tool is NOT in your toolset, this whole section does not apply — skip it (国产内容 natively Chinese-spoken, or no assrt token configured, or this drive cannot land external subtitle files).
 
 ## The flow (alongside, never blocking the video)
-1. viewSubtitleSnapshot() — read the candidate packages. Each shows id + title + language tag (e.g. [英 简 双语]). Pick ONE whose language covers your need (prefer 简体/双语 for a Chinese-subtitle user).
+1. viewSubtitleSnapshot() — read the candidate packages. Each shows id + title + language tag (e.g. [英 简 双语]), plus community evidence when available (★social vote score · 字幕组 · upload time). Pick ONE whose language covers your need (prefer 简体/双语 for a Chinese-subtitle user); between language-equal candidates, a higher ★ and a known 字幕组 mean the community already validated it — weigh that semantically, it is evidence, not a rule.
 2. transferSubtitle({ candidateId }) — land its files into staging. assrt's filelist is per-episode with SxxExx filenames already, so the landed files are named like "Breaking.Bad.S02E01.ass".
 3. renameSubtitle({ fileId, newName }) — rename each landed subtitle (get its fileId from inspectStaging) to match its video: same prefix as the video file, keep the subtitle extension (Show.S02E01.mkv → Show.S02E01.ass). Subtitles are the ONLY files you may rename — the documented exception — so the player auto-loads them. Everything else keeps its original name.
 4. Move the renamed subtitle with its video in the SAME moveToSeason call (its fileId rides in that season's fileIds), or let flattenMovie pull it up for a movie — exactly like a subtitle that came bundled inside the resource pack.
