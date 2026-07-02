@@ -475,29 +475,34 @@ describe("GuangYaStorageExecutor.transferSubtitleUrl", () => {
   });
 
   it("shares the transfer attempt counter with transfer() so ids never collide", async () => {
+    const listFiles = vi
+      .fn<GuangYaStorageClient["listFiles"]>()
+      // transfer(): before + after snapshots (no video lands — counter still burns)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      // transferSubtitleUrl(): presence check finds the landed subtitle
+      .mockResolvedValueOnce([
+        { fileId: "sub-file-1", parentId: SCOPE, fileName: SUB_NAME, fileSize: 88753, resType: 1 },
+      ]);
     const listTask = vi.fn<GuangYaStorageClient["listTask"]>(async () => [
       { taskId: "task-1", status: 2, progress: 100, fileId: "sub-file-1" },
     ]);
-    const listFiles = vi.fn<GuangYaStorageClient["listFiles"]>(async () => [
-      { fileId: "sub-file-1", parentId: SCOPE, fileName: SUB_NAME, fileSize: 88753, resType: 1 },
-    ]);
-    const client = fakeClient({ listTask, listFiles });
+    const client = fakeClient({ listFiles, listTask });
     const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [SCOPE] });
 
-    const first = await executor.transferSubtitleUrl({
-      url: SUB_URL,
-      filename: SUB_NAME,
-      directoryId: SCOPE,
+    const video = await executor.transfer({
       workflowRunId: "run-1",
+      directoryId: SCOPE,
+      candidate: candidate(),
     });
-    const second = await executor.transferSubtitleUrl({
+    const subtitle = await executor.transferSubtitleUrl({
       url: SUB_URL,
       filename: SUB_NAME,
       directoryId: SCOPE,
       workflowRunId: "run-1",
     });
 
-    expect(first.id).toBe("run-1_subtitle_1");
-    expect(second.id).toBe("run-1_subtitle_2");
+    expect(video.id).toBe("run-1_transfer_1");
+    expect(subtitle.id).toBe("run-1_subtitle_2");
   });
 });
