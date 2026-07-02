@@ -592,3 +592,69 @@ describe("createTmdbMetadataProvider / createTmdbSearchProvider", () => {
     expect(await provider.searchMedia({ query: "x" })).toEqual([]);
   });
 });
+
+describe("per-access timeout + timeout retry (2026-07-02 压测发现:软路由→CF Worker 基线 2.4s,4.5s 死限抖动即崩)", () => {
+  it("direct api.themoviedb.org hop keeps the fail-fast timeout; other hops (proxy) get the patient one", async () => {
+    const timeouts: Array<number | undefined> = [];
+    const provider = new TmdbMetadataProvider({
+      accesses: [
+        { baseURL: "https://api.themoviedb.org/3", readToken: "userkey" },
+        { baseURL: "https://proxy.example" },
+      ],
+      fetchJson: async (url, init) => {
+        timeouts.push(init.timeoutMs);
+        if (url.startsWith("https://api.themoviedb.org")) throw new Error("TMDB request failed with HTTP 500");
+        return movieJson(278);
+      },
+    });
+    await provider.getMovieDetails(278);
+    expect(timeouts).toEqual([4500, 12000]);
+  });
+
+  it("retries the WHOLE chain once when every access failed and at least one failure was a timeout", async () => {
+    let calls = 0;
+    const provider = new TmdbMetadataProvider({
+      accesses: [{ baseURL: "https://proxy.example" }],
+      fetchJson: async () => {
+        calls += 1;
+        if (calls === 1) {
+          throw Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+        }
+        return movieJson(278);
+      },
+    });
+    const details = await provider.getMovieDetails(278);
+    expect(details.id).toBe(278);
+    expect(calls).toBe(2); // first pass timed out, single retry pass succeeded
+  });
+
+  it("does NOT retry when the failures were not timeouts (401s keep failing fast)", async () => {
+    let calls = 0;
+    const provider = new TmdbMetadataProvider({
+      accesses: [{ baseURL: "https://proxy.example", readToken: "k" }],
+      fetchJson: async () => {
+        calls += 1;
+        throw new Error("TMDB request failed with HTTP 401");
+      },
+    });
+    await expect(provider.getMovieDetails(278)).rejects.toThrow(/access/i);
+    expect(calls).toBe(1);
+  });
+
+  it("a retry-pass success HEALS the dead-access memo — the next call goes straight through", async () => {
+    let calls = 0;
+    const provider = new TmdbMetadataProvider({
+      accesses: [{ baseURL: "https://proxy.example" }],
+      fetchJson: async () => {
+        calls += 1;
+        if (calls === 1) {
+          throw Object.assign(new Error("timeout"), { name: "TimeoutError" });
+        }
+        return movieJson(278);
+      },
+    });
+    await provider.getMovieDetails(278); // timeout → retry → success (2 calls), memo healed
+    await provider.getMovieDetails(278); // healed memo → single straight call
+    expect(calls).toBe(3);
+  });
+});
