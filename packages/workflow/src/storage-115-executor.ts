@@ -932,8 +932,14 @@ export class Storage115Executor implements StorageExecutor {
     return normalized;
   }
 
+  /** Verify against the FULL tree (listTree), not listVideoFiles: the agent's
+   *  eyes (inspectStaging/inspectTargetDir) see every file, and cleanup targets
+   *  are mostly NON-video (extra subtitles, ads, nfo). Verifying videos-only made
+   *  deleting a subtitle impossible on every drive — caught live 2026-07-02 on
+   *  光鸭, and explains the `._*.ass` AppleDouble leftover from the 黑客帝国2@115
+   *  stress test. */
   private async assertFilesBelongToDirectory(directoryId: string, fileIds: string[]): Promise<void> {
-    const verifiedFileIds = new Set((await this.listVideoFiles(directoryId)).map((file) => file.providerFileId));
+    const verifiedFileIds = new Set((await this.listTree({ directoryId })).map((file) => file.providerFileId));
     const unverifiedFileIds = fileIds.filter((fileId) => !verifiedFileIds.has(fileId));
     if (unverifiedFileIds.length === 0) {
       return;

@@ -525,3 +525,32 @@ describe("GuangYaStorageExecutor.transferSubtitleUrl", () => {
     expect(subtitle.id).toBe("run-1_subtitle_2");
   });
 });
+
+describe("GuangYaStorageExecutor.deleteFiles — non-video cleanup (真机 e2e 2026-07-02 黑客帝国3)", () => {
+  it("deletes a subtitle (non-video) file that the directory tree contains", async () => {
+    const listFiles = vi.fn<GuangYaStorageClient["listFiles"]>(async () => [
+      { fileId: "sub1", parentId: SCOPE, fileName: "多余字幕.srt", fileSize: 77944, resType: 1 },
+    ]);
+    const deleteFiles = vi.fn<GuangYaStorageClient["deleteFiles"]>(async () => {});
+    const client = fakeClient({ listFiles, deleteFiles });
+    const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [SCOPE] });
+
+    await expect(executor.deleteFiles({ directoryId: SCOPE, fileIds: ["sub1"] })).resolves.toEqual({
+      deleted: ["sub1"],
+    });
+    expect(deleteFiles).toHaveBeenCalledWith(["sub1"]);
+  });
+
+  it("still refuses ids that are nowhere in the directory tree", async () => {
+    const listFiles = vi.fn<GuangYaStorageClient["listFiles"]>(async () => [
+      { fileId: "sub1", parentId: SCOPE, fileName: "多余字幕.srt", fileSize: 77944, resType: 1 },
+    ]);
+    const client = fakeClient({ listFiles });
+    const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [SCOPE] });
+
+    await expect(executor.deleteFiles({ directoryId: SCOPE, fileIds: ["ghost"] })).rejects.toThrow(
+      /SAFETY_VIOLATION/,
+    );
+    expect(client.deleteFiles).not.toHaveBeenCalled();
+  });
+});

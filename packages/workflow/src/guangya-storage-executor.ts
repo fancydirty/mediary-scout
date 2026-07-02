@@ -546,8 +546,13 @@ export class GuangYaStorageExecutor implements StorageExecutor {
     return unparsed;
   }
 
+  /** Verify against the FULL tree (listTree), not listVideoFiles: the agent's
+   *  eyes (inspectStaging/inspectTargetDir) see every file, and cleanup targets
+   *  are mostly NON-video (extra subtitles, ads, nfo). Verifying videos-only made
+   *  deleting a subtitle impossible on every drive — caught live 2026-07-02 when
+   *  the 黑客帝国3@光鸭 run's cleanup was refused twice (SAFETY_VIOLATION). */
   private async assertFilesBelongToDirectory(directoryId: string, fileIds: string[]): Promise<void> {
-    const verified = new Set((await this.listVideoFiles(directoryId)).map((f) => f.providerFileId));
+    const verified = new Set((await this.listTree({ directoryId })).map((f) => f.providerFileId));
     const unverified = fileIds.filter((id) => !verified.has(id));
     if (unverified.length === 0) {
       return;

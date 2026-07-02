@@ -790,6 +790,32 @@ describe("Storage115Executor", () => {
     expect(api.deletes).toEqual([{ fileIds: ["file_1"] }]);
   });
 
+  it("deletes a subtitle (non-video) file — cleanup must verify against ALL files, not just videos (光鸭 e2e 2026-07-02 暴露的跨盘缺陷)", async () => {
+    const api = new FakePan115Api({
+      directories: {
+        season_1: [
+          {
+            fid: "sub_1",
+            n: "多余字幕.srt",
+            s: "88753",
+          },
+        ],
+      },
+      directoryInfo: {
+        season_1: seasonPathInfo("test_root", "season_1"),
+      },
+    });
+    const executor = new Storage115Executor({ api, writeScopeDirectoryIds: ["test_root"] });
+
+    await expect(
+      executor.deleteFiles({
+        directoryId: "season_1",
+        fileIds: ["sub_1"],
+      }),
+    ).resolves.toEqual({ deleted: ["sub_1"] });
+    expect(api.deletes).toEqual([{ fileIds: ["sub_1"] }]);
+  });
+
   it("rejects delete file ids that were not verified in the target directory", async () => {
     const api = new FakePan115Api({
       directories: {
