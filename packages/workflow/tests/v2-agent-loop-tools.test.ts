@@ -105,3 +105,15 @@ describe("buildSandboxToolSet — the agent's tool surface over the cage", () =>
     expect(summary.missing).toEqual(["S01E02"]);
   });
 });
+
+describe("readSkill description — section list derived from the single source of truth", () => {
+  it("lists EVERY registered skill section (cannot drift when sections are added)", async () => {
+    const { SKILL_SECTION_NAMES } = await import("../src/acquisition-v2/skill.js");
+    const { sandbox } = await setup();
+    const tools = buildSandboxToolSet(sandbox);
+    const description = (tools["readSkill"] as { description?: string }).description ?? "";
+    for (const section of SKILL_SECTION_NAMES) {
+      expect(description).toContain(section);
+    }
+  });
+});

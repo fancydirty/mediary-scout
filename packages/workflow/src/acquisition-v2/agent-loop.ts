@@ -1,7 +1,7 @@
 import { generateText, stepCountIs, type LanguageModel, type ToolSet } from "ai";
 import { z } from "zod";
 import type { TaskSandbox } from "./sandbox.js";
-import { readSkillSection } from "./skill.js";
+import { readSkillSection, SKILL_SECTION_NAMES } from "./skill.js";
 import {
   DEFAULT_MAX_STEPS,
   buildRepetitionStop,
@@ -102,7 +102,9 @@ export function buildSandboxToolSet(
   const tools: Record<string, unknown> = {
     readSkill: {
       description:
-        "Read a section of your domain skill manual ON DEMAND — the hard-won playbook for HOW to act. Sections: protocol, dead-links-black-box, dedup, movie, tv, mistakes. Read your sections before you act, and re-read the relevant one the moment its situation arises. Acting from memory instead of the skill is how the old agent hammered the drive and corrupted libraries.",
+        // Section list derived from SKILL_SECTION_NAMES — the single source of
+        // truth — so adding a section can never leave this description stale.
+        `Read a section of your domain skill manual ON DEMAND — the hard-won playbook for HOW to act. Sections: ${SKILL_SECTION_NAMES.join(", ")}. Read your sections before you act, and re-read the relevant one the moment its situation arises. Acting from memory instead of the skill is how the old agent hammered the drive and corrupted libraries.`,
       inputSchema: z.object({ section: z.string() }),
       execute: (args: { section: string }) =>
         Promise.resolve({ section: args.section, body: readSkillSection(args.section, options.storageProvider) }),
