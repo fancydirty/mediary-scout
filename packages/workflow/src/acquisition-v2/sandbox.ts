@@ -794,37 +794,60 @@ export class TaskSandbox {
     };
   }
 
-  /** Rename a landed subtitle file in staging (the ONE rename exception — subtitles
-   *  are renamed to match their video so scrapers auto-load them). Scope-guarded to
-   *  THIS task's staging: the fileId must currently be in staging. */
-  async renameSubtitle(input: { fileId: string; newName: string }): Promise<{ renamed: string }> {
+  /** Rename landed subtitle files in staging (the ONE rename exception — subtitles
+   *  are renamed to match their videos so scrapers auto-load them). BATCH shape:
+   *  the agent decides EVERY subtitle↔episode pairing, then submits them in ONE
+   *  call — live stress-testing (Re:Zero, 77 episodes, 2026-07-02) showed that a
+   *  one-file-per-call tool collapses at scale (the agent renamed 1 of 77 pairs
+   *  and gave up). One staging listing serves the whole batch; guards stay
+   *  per-item (source must be a subtitle in THIS staging; the new name must keep
+   *  a subtitle extension and contain no path separators) and violations are
+   *  collected per item instead of aborting the batch. */
+  async renameSubtitle(input: {
+    renames: Array<{ fileId: string; newName: string }>;
+  }): Promise<{ renamed: string[]; errors?: Array<{ fileId: string; error: string }> }> {
     if (!this.storage || !this.stagingDirectoryId) {
       throw new Error("SANDBOX: no storage/staging handle configured for subtitle rename");
     }
+    if (input.renames.length === 0) {
+      throw new Error(
+        "SANDBOX_EMPTY_RENAMES: renames must not be empty — decide every subtitle↔episode pairing first (至少一项)",
+      );
+    }
     const staging = await this.storage.listTree({ directoryId: this.stagingDirectoryId });
-    const target = staging.find((file) => file.id === input.fileId);
-    if (!target) {
-      throw new Error(`SANDBOX_FILE_NOT_IN_STAGING: ${input.fileId} is not in this task's staging`);
+    const renamed: string[] = [];
+    const errors: Array<{ fileId: string; error: string }> = [];
+    for (const { fileId, newName } of input.renames) {
+      try {
+        const target = staging.find((file) => file.id === fileId);
+        if (!target) {
+          throw new Error(`SANDBOX_FILE_NOT_IN_STAGING: ${fileId} is not in this task's staging`);
+        }
+        if (!target.isSubtitle) {
+          throw new Error(
+            `SANDBOX_NOT_A_SUBTITLE: ${fileId} is not a subtitle file; only subtitles may be renamed`,
+          );
+        }
+        if (/[\\/]/.test(newName)) {
+          throw new Error(
+            `SANDBOX_INVALID_SUBTITLE_NAME: newName must be a bare filename without path separators`,
+          );
+        }
+        if (!SUBTITLE_NAME_PATTERN.test(newName)) {
+          throw new Error(
+            `SANDBOX_INVALID_SUBTITLE_NAME: newName must keep a subtitle extension (.srt/.ass/.ssa/.sub/.idx/.vtt/.sup/.smi)`,
+          );
+        }
+        await this.storage.renameFile({
+          directoryId: this.stagingDirectoryId,
+          fileId,
+          newName,
+        });
+        renamed.push(newName);
+      } catch (error) {
+        errors.push({ fileId, error: error instanceof Error ? error.message : String(error) });
+      }
     }
-    // Enforce the "subtitles are the ONLY renameable files" rule at the tool boundary
-    // (the sandbox makes the documented mistake impossible, rather than trusting the
-    // agent): the SOURCE must be a subtitle, the NEW name must stay a subtitle (so a
-    // model slip can't disguise a video), and the new name must be a bare filename
-    // (no path separators — rename is not a move).
-    if (!target.isSubtitle) {
-      throw new Error(`SANDBOX_NOT_A_SUBTITLE: ${input.fileId} is not a subtitle file; only subtitles may be renamed`);
-    }
-    if (/[\\/]/.test(input.newName)) {
-      throw new Error(`SANDBOX_INVALID_SUBTITLE_NAME: newName must be a bare filename without path separators`);
-    }
-    if (!SUBTITLE_NAME_PATTERN.test(input.newName)) {
-      throw new Error(`SANDBOX_INVALID_SUBTITLE_NAME: newName must keep a subtitle extension (.srt/.ass/.ssa/.sub/.idx/.vtt/.sup/.smi)`);
-    }
-    await this.storage.renameFile({
-      directoryId: this.stagingDirectoryId,
-      fileId: input.fileId,
-      newName: input.newName,
-    });
-    return { renamed: input.newName };
+    return { renamed, ...(errors.length > 0 ? { errors } : {}) };
   }
 }

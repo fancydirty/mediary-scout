@@ -125,6 +125,7 @@ describe("interpretTool — subtitle tools (mirror contract with buildSandboxToo
   });
 
   it("renameSubtitle → 重命名字幕 (organize)", () => {
-    expect(interpretTool("renameSubtitle", { fileId: "f", newName: "Show.S01E01.ass" })).toEqual({ activity: "正在重命名字幕…", phase: "organize" });
+    expect(interpretTool("renameSubtitle", { renames: [{ fileId: "f", newName: "Show.S01E01.ass" }] })).toEqual({ activity: "正在重命名字幕…", phase: "organize" });
+    expect(interpretTool("renameSubtitle", { renames: [{ fileId: "a", newName: "A.ass" }, { fileId: "b", newName: "B.ass" }] })).toEqual({ activity: "正在重命名 2 个字幕…", phase: "organize" });
   });
 });

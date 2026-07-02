@@ -154,84 +154,62 @@ describe("transferSubtitle", () => {
   });
 });
 
-describe("renameSubtitle", () => {
-  it("renames a landed subtitle file in staging to a new name", async () => {
-    const { sandbox } = await createSubtitleSandbox();
-    const file = { filename: "Breaking.Bad.S02E01.SOMEGROUP.ass", url: "http://file0.assrt.net/onthefly/1/a.ass?api=1" };
-    const provider = makeAssrtProvider([{ id: 500, title: "BB", lang: "英 简 双语" }], { 500: [file] });
-    await sandbox.primeSubtitleSnapshot("BB", provider);
-    const res = await sandbox.transferSubtitle({ candidateId: 500 });
-    expect(res.status).toBe("succeeded");
-
-    // Find the landed file's id via inspectStaging, then rename it.
-    const staging = await sandbox.inspectStaging();
-    const landed = staging.find((f) => f.path.endsWith("Breaking.Bad.S02E01.SOMEGROUP.ass"));
-    expect(landed).toBeDefined();
-
-    const out = await sandbox.renameSubtitle({ fileId: landed!.id, newName: "The.Video.S02E01.ass" });
-    expect(out.renamed).toBe("The.Video.S02E01.ass");
-
-    const after = await sandbox.inspectStaging();
-    expect(after.some((f) => f.path.endsWith("The.Video.S02E01.ass"))).toBe(true);
-    expect(after.some((f) => f.path.endsWith("Breaking.Bad.S02E01.SOMEGROUP.ass"))).toBe(false);
+describe("renameSubtitle (batch, per-item guards)", () => {
+  it("renames a landed subtitle to match its video (the ONE rename exception)", async () => {
+    const { sandbox, storage, stagingDirectoryId } = await createSubtitleSandboxFull();
+    const landed = (await storage.transferSubtitleUrl({ url: "http://x/a.ass", filename: "raw.ass", intoDirectoryId: stagingDirectoryId })).materializedFileIds[0]!;
+    const out = await sandbox.renameSubtitle({ renames: [{ fileId: landed, newName: "The.Video.S02E01.ass" }] });
+    expect(out.renamed).toEqual(["The.Video.S02E01.ass"]);
+    expect(out.errors).toBeUndefined();
   });
 
-  it("throws when the fileId is not in staging (scope guard)", async () => {
+  it("collects a per-item error for a fileId not in staging", async () => {
     const { sandbox } = await createSubtitleSandbox();
-    await expect(sandbox.renameSubtitle({ fileId: "not-in-staging", newName: "x.ass" }))
-      .rejects.toThrow(/not in.*staging|SANDBOX_FILE_NOT_IN_STAGING|未.*staging/i);
+    const out = await sandbox.renameSubtitle({ renames: [{ fileId: "not-in-staging", newName: "x.ass" }] });
+    expect(out.renamed).toEqual([]);
+    expect(out.errors![0]!.error).toMatch(/NOT_IN_STAGING/i);
   });
 
-  it("rejects a newName with path separators (rename is not a move)", async () => {
-    const { sandbox } = await createSubtitleSandbox();
-    const file = { filename: "Show.S01E01.ass", url: "http://file0.assrt.net/onthefly/1/a.ass?api=1" };
-    const provider = makeAssrtProvider([{ id: 7, title: "Show", lang: "简体" }], { 7: [file] });
-    await sandbox.primeSubtitleSnapshot("Show", provider);
-    await sandbox.transferSubtitle({ candidateId: 7 });
-    const landed = (await sandbox.inspectStaging()).find((f) => f.path.endsWith("Show.S01E01.ass"));
-
-    await expect(sandbox.renameSubtitle({ fileId: landed!.id, newName: "sub/Show.S01E01.ass" }))
-      .rejects.toThrow(/SANDBOX_INVALID_SUBTITLE_NAME|path separator/i);
+  it("collects a per-item error for path separators in newName", async () => {
+    const { sandbox, storage, stagingDirectoryId } = await createSubtitleSandboxFull();
+    const landed = (await storage.transferSubtitleUrl({ url: "http://x/a.ass", filename: "raw.ass", intoDirectoryId: stagingDirectoryId })).materializedFileIds[0]!;
+    const out = await sandbox.renameSubtitle({ renames: [{ fileId: landed, newName: "sub/Show.S01E01.ass" }] });
+    expect(out.renamed).toEqual([]);
+    expect(out.errors![0]!.error).toMatch(/path separator|INVALID_SUBTITLE_NAME/i);
   });
 
-  it("rejects a newName that is not a subtitle extension (can't disguise a subtitle as a video)", async () => {
-    const { sandbox } = await createSubtitleSandbox();
-    const file = { filename: "Show.S01E01.ass", url: "http://file0.assrt.net/onthefly/1/a.ass?api=1" };
-    const provider = makeAssrtProvider([{ id: 8, title: "Show", lang: "简体" }], { 8: [file] });
-    await sandbox.primeSubtitleSnapshot("Show", provider);
-    await sandbox.transferSubtitle({ candidateId: 8 });
-    const landed = (await sandbox.inspectStaging()).find((f) => f.path.endsWith("Show.S01E01.ass"));
-
-    await expect(sandbox.renameSubtitle({ fileId: landed!.id, newName: "Show.S01E01.mkv" }))
-      .rejects.toThrow(/SANDBOX_INVALID_SUBTITLE_NAME|subtitle extension/i);
+  it("collects a per-item error when newName drops the subtitle extension (disguise guard)", async () => {
+    const { sandbox, storage, stagingDirectoryId } = await createSubtitleSandboxFull();
+    const landed = (await storage.transferSubtitleUrl({ url: "http://x/a.ass", filename: "raw.ass", intoDirectoryId: stagingDirectoryId })).materializedFileIds[0]!;
+    const out = await sandbox.renameSubtitle({ renames: [{ fileId: landed, newName: "Show.S01E01.mkv" }] });
+    expect(out.renamed).toEqual([]);
+    expect(out.errors![0]!.error).toMatch(/INVALID_SUBTITLE_NAME|subtitle extension/i);
   });
 
-  it("rejects renaming a non-subtitle file (only subtitles may be renamed)", async () => {
-    const provider = new FakeResourceProviderV2({
-      results: { title: [{ id: "vid", title: "Show S01E01" }] },
-    });
-    const storage = new Storage115Simulator({
-      packs: { vid: { files: [{ path: "Show.S01E01.mkv", sizeBytes: 900_000_000 }] } },
-      linkKinds: { vid: "pan115" },
-    });
-    const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
-    const targetSeasonDirectoryId = await storage.createDirectory({ name: "Season 1", parentId: "root" });
-    const sandbox = new TaskSandbox({
-      provider,
-      storage,
-      stagingDirectoryId,
-      targetSeasonDirectoryIds: { 1: targetSeasonDirectoryId },
-      need: ["S01E01"],
-    });
-    const snap = await sandbox.searchResources("title");
-    await sandbox.transferCandidate({ snapshotId: snap.snapshot!.id, candidateId: "vid" });
-    const video = (await sandbox.inspectStaging()).find((f) => f.path.endsWith("Show.S01E01.mkv"));
-    expect(video).toBeDefined();
-
-    await expect(sandbox.renameSubtitle({ fileId: video!.id, newName: "Show.S01E01.ass" }))
-      .rejects.toThrow(/SANDBOX_NOT_A_SUBTITLE|not a subtitle/i);
+  it("collects a per-item error when the SOURCE is not a subtitle (videos stay un-renameable)", async () => {
+    const { sandbox, storage, stagingDirectoryId } = await createSubtitleSandboxFull();
+    const video = (await storage.transferSubtitleUrl({ url: "http://x/v.mkv", filename: "video.mkv", intoDirectoryId: stagingDirectoryId })).materializedFileIds[0]!;
+    const out = await sandbox.renameSubtitle({ renames: [{ fileId: video, newName: "Show.S01E01.ass" }] });
+    expect(out.renamed).toEqual([]);
+    expect(out.errors![0]!.error).toMatch(/NOT_A_SUBTITLE|only subtitles/i);
   });
 });
+
+/** Like createSubtitleSandbox but also returns the storage + staging handle. */
+async function createSubtitleSandboxFull() {
+  const provider = new FakeResourceProviderV2({ results: { title: [] } });
+  const storage = new Storage115Simulator({ packs: {} });
+  const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
+  const targetSeasonDirectoryId = await storage.createDirectory({ name: "Season 1", parentId: "root" });
+  const sandbox = new TaskSandbox({
+    provider,
+    storage,
+    stagingDirectoryId,
+    targetSeasonDirectoryIds: { 1: targetSeasonDirectoryId },
+    need: ["S01E01"],
+  });
+  return { sandbox, storage, stagingDirectoryId };
+}
 
 describe("buildSandboxToolSet renameSubtitle registration", () => {
   it("registers renameSubtitle only when options.subtitle is true", () => {
@@ -378,5 +356,44 @@ describe("transferSubtitle — non-subtitle files are filtered at the boundary",
     expect(result.status).toBe("failed");
     expect(result.landedFilenames).toEqual([]);
     expect(result.error).toMatch(/压缩包|zip|字幕文件/i);
+  });
+});
+
+describe("renameSubtitle — batch shape (压测发现:77 集逐文件改名导致规模崩塌)", () => {
+  it("renames a whole batch in ONE call, per-item guards still enforced, one listTree for all", async () => {
+    const provider = new FakeResourceProviderV2({ results: { title: [] } });
+    class CountingListStorage extends Storage115Simulator {
+      listTreeCalls = 0;
+      override async listTree(input: { directoryId: string }) {
+        this.listTreeCalls += 1;
+        return super.listTree(input);
+      }
+    }
+    const storage = new CountingListStorage({ packs: {} });
+    const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
+    // 直接放 3 个文件进 staging:2 个字幕 + 1 个视频
+    const subA = (await storage.transferSubtitleUrl({ url: "http://x/a", filename: "ep01.ass", intoDirectoryId: stagingDirectoryId })).materializedFileIds[0]!;
+    const subB = (await storage.transferSubtitleUrl({ url: "http://x/b", filename: "ep02.ass", intoDirectoryId: stagingDirectoryId })).materializedFileIds[0]!;
+    const vid = (await storage.transferSubtitleUrl({ url: "http://x/v", filename: "ep01.mkv", intoDirectoryId: stagingDirectoryId })).materializedFileIds[0]!;
+    const sandbox = new TaskSandbox({ provider, storage, stagingDirectoryId, targetSeasonDirectoryIds: {}, need: [] });
+    storage.listTreeCalls = 0;
+
+    const result = await sandbox.renameSubtitle({
+      renames: [
+        { fileId: subA, newName: "Show.S01E01.ass" },
+        { fileId: subB, newName: "Show.S01E02.ass" },
+        { fileId: vid, newName: "Show.S01E01.mkv" }, // 视频:守卫必须拦
+      ],
+    });
+
+    expect(result.renamed).toEqual(["Show.S01E01.ass", "Show.S01E02.ass"]);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors![0]!.error).toMatch(/NOT_A_SUBTITLE|only subtitles/i);
+    expect(storage.listTreeCalls).toBe(1); // 整批一次 listTree,不逐文件烧预算
+  });
+
+  it("empty renames array is rejected loudly (agent must decide pairings first)", async () => {
+    const { sandbox } = await createSubtitleSandbox();
+    await expect(sandbox.renameSubtitle({ renames: [] })).rejects.toThrow(/empty|至少/i);
   });
 });

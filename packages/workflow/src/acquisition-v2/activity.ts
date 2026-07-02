@@ -89,8 +89,10 @@ export function interpretTool(toolName: string, args: Record<string, unknown> = 
       return { activity: "正在浏览字幕候选…", phase: "pick" };
     case "transferSubtitle":
       return { activity: "正在下载字幕…", phase: "organize" };
-    case "renameSubtitle":
-      return { activity: "正在重命名字幕…", phase: "organize" };
+    case "renameSubtitle": {
+      const count = asArray(args.renames).length;
+      return { activity: count > 1 ? `正在重命名 ${count} 个字幕…` : "正在重命名字幕…", phase: "organize" };
+    }
     case "finish":
       return { activity: "正在收尾…", phase: "finalize" };
     case "reportNoCoverage":

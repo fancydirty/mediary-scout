@@ -214,9 +214,11 @@ export function buildSandboxToolSet(
     };
     tools["renameSubtitle"] = {
       description:
-        "Rename a landed subtitle file (from transferSubtitle) to match its video: same filename prefix as the video, keep the subtitle extension (e.g. video Show.S02E01.mkv → subtitle Show.S02E01.ass). Pass the subtitle's fileId (from inspectStaging) + the newName. Subtitles are the ONLY files you may rename (the documented exception) so the scraper auto-loads them beside the video. Then move it into the season with its video via moveToSeason.",
-      inputSchema: z.object({ fileId: z.string(), newName: z.string() }),
-      execute: (args: { fileId: string; newName: string }) =>
+        "Rename landed subtitle files to match their videos, in ONE BATCH: decide EVERY subtitle↔episode pairing first (fileIds from inspectStaging), then submit them all as renames:[{fileId,newName},…] — same filename prefix as each episode's video, keep the subtitle extension (video Show.S02E01.mkv → subtitle Show.S02E01.ass; 简/繁 variants keep their .sc/.tc infix). NEVER rename one file per call — at 77 episodes that collapses; the batch is one call regardless of count. Subtitles are the ONLY files you may rename (the documented exception) so the scraper auto-loads them. Per-item guard violations come back in `errors` without aborting the rest. Then move each subtitle into its season with its video via moveToSeason.",
+      inputSchema: z.object({
+        renames: z.array(z.object({ fileId: z.string(), newName: z.string() })).min(1),
+      }),
+      execute: (args: { renames: Array<{ fileId: string; newName: string }> }) =>
         asEvidence(() => sandbox.renameSubtitle(args)),
     };
   }
