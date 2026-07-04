@@ -240,7 +240,7 @@ docker compose build --build-arg NPM_REGISTRY=https://registry.npmmirror.com
 >
 > 手动等价执行 + 校验:
 > ```bash
-> git pull
+> git pull --ff-only
 > GIT_SHA=$(git rev-parse HEAD) docker compose up -d --build
 > # 核对容器真在跑新代码(应等于上面的 HEAD):
 > docker compose exec web cat BUILD_COMMIT

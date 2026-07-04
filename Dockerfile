@@ -26,12 +26,15 @@ RUN npm config set registry "$NPM_REGISTRY" && npm ci
 # Per-commit build stamp (+ a cache-bust for the source COPY below).
 #
 # Why: self-host deploys silently kept serving OLD code after a `git pull` — #88–#98
-# saw five rebuilds in a row ship a stale image. The exact cause was NOT a builder
-# COPY-cache fault (the router's integrated BuildKit re-copies changed source correctly
-# in testing — verified 2026-07-04), so the durable fix is to make deploys SELF-VERIFYING:
-# stamp the built commit into the image as BUILD_COMMIT so scripts/deploy.sh can hard-fail
-# when the running container isn't serving HEAD — catching a stale build, a no-op `git
-# pull`, or a container that wasn't recreated, whatever the underlying cause.
+# saw five rebuilds in a row ship a stale image (the box ran a July-2 image for a whole
+# day). The exact cause was never definitively pinned (the build logs were lost): a live
+# rebuild was seen with `COPY . . CACHED` producing a stale image, yet a clean isolated
+# repro on the same router showed COPY re-copies changed source correctly — so it may
+# have been a transient poisoned build cache, a no-op `git pull`, or a container that
+# wasn't recreated. Rather than bet on one cause, the durable fix makes deploys
+# SELF-VERIFYING: stamp the built commit into the image as BUILD_COMMIT so
+# scripts/deploy.sh can hard-fail when the running container isn't serving HEAD —
+# catching ALL of those failure modes whatever the underlying cause.
 #
 # GIT_SHA doubles as a cache-bust: an ARG cache-misses on first USE (not on its
 # declaration), and a cache miss forces every LATER layer to rebuild. Placed after

@@ -18,7 +18,9 @@
 # Usage (on the host, in the repo dir):   ./scripts/deploy.sh [extra `up` args]
 set -eu
 
-cd "$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"
+# Repo root = the script's parent dir. Plain dirname (no `--`, no `cd --`) for
+# portability across /bin/sh implementations (busybox ash, dash, bash).
+cd "$(dirname "$0")/.."
 
 echo "==> git pull --ff-only"
 git pull --ff-only
@@ -37,8 +39,17 @@ docker compose up -d "$@"
 # Verify: the running container reports the commit we just built. This is the check
 # that host `git rev-parse HEAD` CANNOT give you (a stale image outlives a pulled HEAD).
 echo "==> Verifying running container commit"
-sleep 2
-RUNNING="$(docker compose exec -T web cat BUILD_COMMIT 2>/dev/null || echo '<no BUILD_COMMIT — image predates this fix; rebuild once more>')"
+# Retry rather than a fixed sleep: `up -d` returns before the container is
+# exec-able, and slow hosts need longer — a flat `sleep 2` gives false negatives.
+RUNNING=""
+i=0
+while [ "$i" -lt 15 ]; do
+  RUNNING="$(docker compose exec -T web cat BUILD_COMMIT 2>/dev/null || true)"
+  [ -n "$RUNNING" ] && break
+  i=$((i + 1))
+  sleep 1
+done
+[ -n "$RUNNING" ] || RUNNING='<no BUILD_COMMIT — image predates this fix; rebuild once more>'
 echo "    expected (HEAD):        ${GIT_SHA}"
 echo "    running container:      ${RUNNING}"
 if [ "${RUNNING}" = "${GIT_SHA}" ]; then
