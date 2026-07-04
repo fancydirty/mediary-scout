@@ -640,5 +640,234 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
         ).resolves.toBeUndefined();
       });
     });
+
+    describe("notifications", () => {
+      it("listNotifications returns a run's notification for its (account, storage) scope", async () => {
+        const repo = await fresh();
+        // The fixture run is owned by acct_default with an explicit drive here.
+        await repo.saveWorkflowRunSnapshot({
+          ...workflowPersistenceFixture(),
+          connectedStorageId: "cs_notif",
+        });
+        const got = await repo.listNotifications({
+          accountId: "acct_default",
+          connectedStorageId: "cs_notif",
+        });
+        expect(got.map((n) => n.id)).toEqual(["notification_1"]);
+      });
+
+      it("listNotifications applies a future `since` cutoff (returns []) and a scope mismatch (returns [])", async () => {
+        const repo = await fresh();
+        await repo.saveWorkflowRunSnapshot({
+          ...workflowPersistenceFixture(),
+          connectedStorageId: "cs_notif",
+        });
+        // since strictly after the notification's createdAt → filtered out.
+        expect(
+          await repo.listNotifications({
+            accountId: "acct_default",
+            connectedStorageId: "cs_notif",
+            since: "2030-01-01T00:00:00.000Z",
+          }),
+        ).toEqual([]);
+        // Wrong drive scope → not visible.
+        expect(
+          await repo.listNotifications({
+            accountId: "acct_default",
+            connectedStorageId: "cs_other",
+          }),
+        ).toEqual([]);
+      });
+
+      it("listRecentNotificationsWithAccount tags each notification with its owning account", async () => {
+        const repo = await fresh();
+        await repo.saveWorkflowRunSnapshot({
+          ...workflowPersistenceFixture(),
+          accountId: "acct_default",
+          connectedStorageId: "cs_notif",
+        });
+        const recent = await repo.listRecentNotificationsWithAccount();
+        expect(recent).toHaveLength(1);
+        expect(recent[0]?.accountId).toBe("acct_default");
+        expect(recent[0]?.connectedStorageId).toBe("cs_notif");
+        expect(recent[0]?.notification.id).toBe("notification_1");
+      });
+    });
+
+    describe("lifecycle mutations", () => {
+      // A standalone QUEUED run for a unique (season, drive) bucket, children cleared so
+      // the re-ided run passes validateWorkflowRunSnapshot.
+      const queuedRun = (over: {
+        id: string;
+        status?: "queued" | "running" | "failed" | "succeeded";
+        connectedStorageId?: string;
+        tmdbId?: number;
+        type?: "movie" | "tv" | "anime";
+        seasonNumber?: number;
+      }) => {
+        const base = workflowPersistenceFixture();
+        const seasonId = `season_${over.id}`;
+        const titleId = `title_${over.id}`;
+        return {
+          accountId: "acct_default",
+          connectedStorageId: over.connectedStorageId ?? `cs_${over.id}`,
+          title: {
+            ...base.title,
+            id: titleId,
+            tmdbId: over.tmdbId ?? base.title.tmdbId,
+            type: over.type ?? base.title.type,
+          },
+          season: {
+            ...base.season,
+            id: seasonId,
+            mediaTitleId: titleId,
+            seasonNumber: over.seasonNumber ?? base.season.seasonNumber,
+          },
+          workflowRun: {
+            ...base.workflowRun,
+            id: over.id,
+            trackedSeasonId: seasonId,
+            status: over.status ?? ("queued" as const),
+            finishedAt: over.status === "succeeded" ? base.workflowRun.finishedAt : null,
+          },
+          episodes: base.episodes.map((e) => ({ ...e, trackedSeasonId: seasonId })),
+          resourceSnapshots: [],
+          decisions: [],
+          transferAttempts: [],
+          notifications: [],
+        };
+      };
+
+      it("cancelQueuedWorkflowRun cancels a QUEUED run and it disappears from reads", async () => {
+        const repo = await fresh();
+        await repo.saveWorkflowRunSnapshot(queuedRun({ id: "cancelme", connectedStorageId: "cs_c" }));
+        const scope = { accountId: "acct_default", connectedStorageId: "cs_c" };
+        expect((await repo.cancelQueuedWorkflowRun("cancelme", scope)).status).toBe("cancelled");
+        expect(await repo.getWorkflowRunSnapshot("cancelme", scope)).toBeNull();
+        expect(await repo.listActiveWorkflowRuns(scope)).toHaveLength(0);
+      });
+
+      it("cancelQueuedWorkflowRun refuses a non-queued (succeeded) run", async () => {
+        const repo = await fresh();
+        await repo.saveWorkflowRunSnapshot(
+          queuedRun({ id: "donerun", status: "succeeded", connectedStorageId: "cs_d" }),
+        );
+        expect(
+          (
+            await repo.cancelQueuedWorkflowRun("donerun", {
+              accountId: "acct_default",
+              connectedStorageId: "cs_d",
+            })
+          ).status,
+        ).toBe("not_cancellable");
+      });
+
+      it("untrackTitle removes a tracked tv season by tmdbId + mediaKind", async () => {
+        const repo = await fresh();
+        await repo.saveWorkflowRunSnapshot(
+          queuedRun({ id: "utv", status: "succeeded", connectedStorageId: "cs_u", tmdbId: 555, type: "tv" }),
+        );
+        const scope = { accountId: "acct_default", connectedStorageId: "cs_u" };
+        const result = await repo.untrackTitle(555, scope, "tv");
+        expect(result).toEqual({ status: "untracked", removedSeasons: 1 });
+        expect(await repo.listTrackedSeasonStates(scope)).toHaveLength(0);
+      });
+
+      it("untrackTitle returns not_found for a mismatched mediaKind (movie vs tv namespace)", async () => {
+        const repo = await fresh();
+        await repo.saveWorkflowRunSnapshot(
+          queuedRun({ id: "utv2", status: "succeeded", connectedStorageId: "cs_u2", tmdbId: 777, type: "tv" }),
+        );
+        const scope = { accountId: "acct_default", connectedStorageId: "cs_u2" };
+        expect((await repo.untrackTitle(777, scope, "movie")).status).toBe("not_found");
+        // untouched
+        expect(await repo.listTrackedSeasonStates(scope)).toHaveLength(1);
+      });
+
+      it("untrackTitle returns in_flight and removes nothing when a target season has a running run", async () => {
+        const repo = await fresh();
+        await repo.saveWorkflowRunSnapshot(
+          queuedRun({ id: "urun", status: "running", connectedStorageId: "cs_u3", tmdbId: 888, type: "tv" }),
+        );
+        const scope = { accountId: "acct_default", connectedStorageId: "cs_u3" };
+        expect(await repo.untrackTitle(888, scope, "tv")).toEqual({
+          status: "in_flight",
+          removedSeasons: 0,
+        });
+        expect(await repo.listTrackedSeasonStates(scope)).toHaveLength(1);
+      });
+
+      it("retryFailedWorkflowRun requeues a failed run so it becomes claimable", async () => {
+        const repo = await fresh();
+        await repo.saveWorkflowRunSnapshot(
+          queuedRun({ id: "failed_r", status: "failed", connectedStorageId: "cs_r" }),
+        );
+        const scope = { accountId: "acct_default", connectedStorageId: "cs_r" };
+        expect((await repo.retryFailedWorkflowRun("failed_r", scope)).status).toBe("retried");
+        const after = await repo.getWorkflowRunSnapshot("failed_r", scope);
+        expect(after?.workflowRun.status).toBe("queued");
+        // Immediately claimable (counters cleared, no future nextAttemptAt).
+        const claimed = await repo.claimNextQueuedWorkflowRun({
+          kind: "type2_init",
+          now: "2030-01-01T00:00:00.000Z",
+        });
+        expect(claimed?.workflowRun.id).toBe("failed_r");
+      });
+
+      it("retryFailedWorkflowRun refuses a non-failed (queued) run", async () => {
+        const repo = await fresh();
+        await repo.saveWorkflowRunSnapshot(queuedRun({ id: "queued_r", connectedStorageId: "cs_rq" }));
+        expect(
+          (
+            await repo.retryFailedWorkflowRun("queued_r", {
+              accountId: "acct_default",
+              connectedStorageId: "cs_rq",
+            })
+          ).status,
+        ).toBe("not_retriable");
+      });
+    });
+
+    describe("backfillConnectedStorageId", () => {
+      it("pins a storage-less row to the account's primary drive and reports the count", async () => {
+        const repo = await fresh();
+        // A legacy row persisted WITHOUT connectedStorageId (→ null/sentinel).
+        await repo.saveWorkflowRunSnapshot({
+          ...workflowPersistenceFixture(),
+          accountId: "acct_default",
+          // connectedStorageId intentionally omitted
+        });
+        // The owning account has a drive to pin to.
+        await repo.upsertConnectedStorage({
+          id: "cs_primary",
+          accountId: "acct_default",
+          provider: "pan115",
+          providerUid: "uid_primary",
+          payload: { cookie: "c" },
+          createdAt: "2026-06-01T00:00:00.000Z",
+        });
+
+        // Before backfill: the concrete-drive scope sees nothing (row is unscoped).
+        expect(
+          await repo.listTrackedSeasonStates({
+            accountId: "acct_default",
+            connectedStorageId: "cs_primary",
+          }),
+        ).toHaveLength(0);
+
+        expect(await repo.backfillConnectedStorageId()).toBe(1);
+
+        // After: the row (and its episodes) are pinned to the primary drive.
+        const scoped = await repo.listTrackedSeasonStates({
+          accountId: "acct_default",
+          connectedStorageId: "cs_primary",
+        });
+        expect(scoped.map((s) => s.season.id)).toEqual(["season_1"]);
+        expect(scoped[0]?.connectedStorageId).toBe("cs_primary");
+        expect(scoped[0]?.episodes.map((e) => e.episodeCode)).toEqual(["S01E01", "S01E02"]);
+        // Idempotent.
+        expect(await repo.backfillConnectedStorageId()).toBe(0);
+      });
+    });
   });
 }

@@ -30,6 +30,7 @@ import {
   DuplicateUsernameError,
   expireWorkflowRun,
   isActiveWorkflowStatus,
+  retriedWorkflowRun,
   UNSCOPED_STORAGE,
   validateWorkflowRunSnapshot,
   withDerivedEpisodeSummaries,
@@ -675,26 +676,153 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
   }
 
   async cancelQueuedWorkflowRun(
-    _workflowRunId: string,
-    _scope?: ScopeArg,
+    workflowRunId: string,
+    scopeArg: ScopeArg = undefined,
   ): Promise<{ status: "cancelled" | "not_cancellable" }> {
-    throw new Error("not implemented");
+    const scope = normalizeScope(scopeArg);
+    return this.db.transaction((): { status: "cancelled" | "not_cancellable" } => {
+      const row = this.db
+        .prepare("SELECT payload, account_id, connected_storage_id FROM workflow_runs WHERE id = ?")
+        .get(workflowRunId) as
+        | { payload: string; account_id: string; connected_storage_id: string | null }
+        | undefined;
+      const run = row ? (JSON.parse(row.payload) as WorkflowRun) : null;
+      const owner = row?.account_id ?? DEFAULT_ACCOUNT_ID;
+      const rawStorage = row?.connected_storage_id ?? null;
+      const ownerStorage = rawStorage === UNSCOPED_STORAGE ? null : rawStorage;
+      if (!run || !scopeMatches(scope, owner, ownerStorage) || run.status !== "queued") {
+        return { status: "not_cancellable" as const };
+      }
+      const seasonId = run.trackedSeasonId;
+      // Tree model: the (season, drive) being torn down — never touch another drive.
+      const storageValue = rawStorage ?? UNSCOPED_STORAGE;
+      // The run's own children (a queued run created no 网盘 dirs — pure DB delete).
+      this.db.prepare("DELETE FROM notifications WHERE workflow_run_id = ?").run(workflowRunId);
+      this.db.prepare("DELETE FROM transfer_attempts WHERE workflow_run_id = ?").run(workflowRunId);
+      this.db.prepare("DELETE FROM agent_decisions WHERE workflow_run_id = ?").run(workflowRunId);
+      this.db.prepare("DELETE FROM agent_steps WHERE workflow_run_id = ?").run(workflowRunId);
+      this.db.prepare("DELETE FROM resource_snapshots WHERE workflow_run_id = ?").run(workflowRunId);
+      this.db.prepare("DELETE FROM workflow_runs WHERE id = ?").run(workflowRunId);
+
+      // Only tear down the tracking when no OTHER run on the SAME (season, drive)
+      // still references it. Scoped to this drive so another drive's tracking survives.
+      const others = this.db
+        .prepare(
+          "SELECT 1 FROM workflow_runs WHERE tracked_season_id = ? AND connected_storage_id = ? LIMIT 1",
+        )
+        .get(seasonId, storageValue);
+      if (!others) {
+        this.teardownSeasonScoped(seasonId, storageValue);
+      }
+      return { status: "cancelled" as const };
+    })();
+  }
+
+  /** Tear down one (season, drive): delete its episodes + tracked_seasons row, then
+   *  delete the global media_titles row only when NO tracked_seasons reference that
+   *  title anywhere (another drive tracking the same show must survive). Shared by
+   *  cancelQueuedWorkflowRun and untrackTitle. Mirrors postgres.ts. */
+  private teardownSeasonScoped(seasonId: string, storageValue: string): void {
+    this.db
+      .prepare("DELETE FROM episode_states WHERE tracked_season_id = ? AND connected_storage_id = ?")
+      .run(seasonId, storageValue);
+    const seasonRow = this.db
+      .prepare("SELECT payload FROM tracked_seasons WHERE id = ? AND connected_storage_id = ?")
+      .get(seasonId, storageValue) as { payload: string } | undefined;
+    this.db
+      .prepare("DELETE FROM tracked_seasons WHERE id = ? AND connected_storage_id = ?")
+      .run(seasonId, storageValue);
+    if (seasonRow) {
+      const season = JSON.parse(seasonRow.payload) as TrackedSeason;
+      const sibling = this.db
+        .prepare("SELECT 1 FROM tracked_seasons WHERE media_title_id = ? LIMIT 1")
+        .get(season.mediaTitleId);
+      if (!sibling) {
+        this.db.prepare("DELETE FROM media_titles WHERE id = ?").run(season.mediaTitleId);
+      }
+    }
   }
 
   async untrackTitle(
-    _tmdbId: number,
-    _scope: WorkflowScope,
-    _mediaKind: "movie" | "tv",
-    _seasonNumber?: number,
+    tmdbId: number,
+    scope: WorkflowScope,
+    mediaKind: "movie" | "tv",
+    seasonNumber?: number,
   ): Promise<{ status: "untracked" | "not_found" | "in_flight"; removedSeasons: number }> {
-    throw new Error("not implemented");
+    // Enumerate this drive's target seasons for the title (reuse scoped read).
+    // Match mediaKind too: TMDB movie/tv id namespaces collide (movie 278 ≠ tv 278),
+    // so filtering by numeric tmdbId alone would untrack the wrong title. "tv"
+    // covers both tv and anime (same tv namespace).
+    const wantMovie = mediaKind === "movie";
+    const states = (await this.listTrackedSeasonStates(scope)).filter(
+      (state) =>
+        state.title.tmdbId === tmdbId &&
+        (state.title.type === "movie") === wantMovie &&
+        (seasonNumber === undefined || state.season.seasonNumber === seasonNumber),
+    );
+    if (states.length === 0) {
+      return { status: "not_found", removedSeasons: 0 };
+    }
+    const targetSeasonIds = [...new Set(states.map((state) => state.season.id))];
+    const storageValue = scope.connectedStorageId ?? UNSCOPED_STORAGE;
+
+    return this.db.transaction(
+      (): { status: "untracked" | "not_found" | "in_flight"; removedSeasons: number } => {
+        // In-flight guard: a running run on any target season → refuse, delete nothing.
+        const hasRunning = targetSeasonIds.some((seasonId) =>
+          this.selectWorkflowRuns(seasonId, storageValue).some((run) => run.status === "running"),
+        );
+        if (hasRunning) {
+          return { status: "in_flight" as const, removedSeasons: 0 };
+        }
+        // For each season: delete all run children + runs, then tear down the season.
+        for (const seasonId of targetSeasonIds) {
+          const runIds = this.db
+            .prepare(
+              "SELECT id FROM workflow_runs WHERE tracked_season_id = ? AND connected_storage_id = ?",
+            )
+            .all(seasonId, storageValue) as Array<{ id: string }>;
+          for (const { id } of runIds) {
+            this.db.prepare("DELETE FROM notifications WHERE workflow_run_id = ?").run(id);
+            this.db.prepare("DELETE FROM transfer_attempts WHERE workflow_run_id = ?").run(id);
+            this.db.prepare("DELETE FROM agent_decisions WHERE workflow_run_id = ?").run(id);
+            this.db.prepare("DELETE FROM agent_steps WHERE workflow_run_id = ?").run(id);
+            this.db.prepare("DELETE FROM resource_snapshots WHERE workflow_run_id = ?").run(id);
+          }
+          this.db
+            .prepare(
+              "DELETE FROM workflow_runs WHERE tracked_season_id = ? AND connected_storage_id = ?",
+            )
+            .run(seasonId, storageValue);
+          this.teardownSeasonScoped(seasonId, storageValue);
+        }
+        return { status: "untracked" as const, removedSeasons: targetSeasonIds.length };
+      },
+    )();
   }
 
   async retryFailedWorkflowRun(
-    _workflowRunId: string,
-    _scope?: ScopeArg,
+    workflowRunId: string,
+    scopeArg: ScopeArg = undefined,
   ): Promise<{ status: "retried" | "not_retriable" }> {
-    throw new Error("not implemented");
+    const scope = normalizeScope(scopeArg);
+    return this.db.transaction((): { status: "retried" | "not_retriable" } => {
+      const row = this.db
+        .prepare("SELECT payload, account_id, connected_storage_id FROM workflow_runs WHERE id = ?")
+        .get(workflowRunId) as
+        | { payload: string; account_id: string; connected_storage_id: string | null }
+        | undefined;
+      const run = row ? (JSON.parse(row.payload) as WorkflowRun) : null;
+      const owner = row?.account_id ?? DEFAULT_ACCOUNT_ID;
+      const rawStorage = row?.connected_storage_id ?? null;
+      const ownerStorage = rawStorage === UNSCOPED_STORAGE ? null : rawStorage;
+      if (!run || !scopeMatches(scope, owner, ownerStorage) || run.status !== "failed") {
+        return { status: "not_retriable" as const };
+      }
+      // upsertWorkflowRun preserves account_id / connected_storage_id on conflict.
+      this.upsertWorkflowRun(retriedWorkflowRun(run, new Date().toISOString()));
+      return { status: "retried" as const };
+    })();
   }
 
   async getTrackedSeasonState(
@@ -824,19 +952,63 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     });
   }
 
-  async listNotifications(_input?: {
+  async listNotifications(input?: {
     limit?: number;
     accountId?: string;
     connectedStorageId?: string | null;
     since?: string;
   }): Promise<NotificationEvent[]> {
-    throw new Error("not implemented");
+    const scope = normalizeScope(
+      input?.accountId === undefined
+        ? undefined
+        : { accountId: input.accountId, connectedStorageId: input.connectedStorageId ?? null },
+    );
+    // Join each notification to its run's owning (account, storage), then apply the
+    // shared scope predicate (which collapses the UNSCOPED_STORAGE sentinel to null).
+    const rows = this.db
+      .prepare(
+        "SELECT n.payload AS payload, wr.account_id AS account_id, wr.connected_storage_id AS connected_storage_id " +
+          "FROM notifications n JOIN workflow_runs wr ON n.workflow_run_id = wr.id",
+      )
+      .all() as Array<{ payload: string; account_id: string; connected_storage_id: string | null }>;
+    const since = input?.since;
+    const all = rows
+      .filter((row) => {
+        const ownerAccount = row.account_id ?? DEFAULT_ACCOUNT_ID;
+        const rawStorage = row.connected_storage_id ?? null;
+        const ownerStorage = rawStorage === UNSCOPED_STORAGE ? null : rawStorage;
+        return scopeMatches(scope, ownerAccount, ownerStorage);
+      })
+      .map((row) => JSON.parse(row.payload) as NotificationEvent)
+      // ISO-8601 UTC timestamps sort lexicographically = chronologically, so a string
+      // `>=` on createdAt is a correct (inclusive) recency cutoff.
+      .filter((notification) => since === undefined || notification.createdAt >= since);
+    all.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    return all.slice(0, input?.limit ?? 100);
   }
 
-  async listRecentNotificationsWithAccount(_input?: {
+  async listRecentNotificationsWithAccount(input?: {
     limit?: number;
   }): Promise<Array<{ accountId: string; connectedStorageId: string | null; notification: NotificationEvent }>> {
-    throw new Error("not implemented");
+    // Cross-account: each notification tagged with its run's owning (account, storage).
+    const rows = this.db
+      .prepare(
+        "SELECT n.payload AS payload, wr.account_id AS account_id, wr.connected_storage_id AS connected_storage_id " +
+          "FROM notifications n JOIN workflow_runs wr ON n.workflow_run_id = wr.id",
+      )
+      .all() as Array<{ payload: string; account_id: string; connected_storage_id: string | null }>;
+    const tagged = rows.map((row) => {
+      const rawStorage = row.connected_storage_id ?? null;
+      return {
+        accountId: row.account_id ?? DEFAULT_ACCOUNT_ID,
+        connectedStorageId: rawStorage === UNSCOPED_STORAGE ? null : rawStorage,
+        notification: JSON.parse(row.payload) as NotificationEvent,
+      };
+    });
+    tagged.sort((left, right) =>
+      right.notification.createdAt.localeCompare(left.notification.createdAt),
+    );
+    return tagged.slice(0, input?.limit ?? 100);
   }
 
   async getSetting(key: string): Promise<string | null> {
@@ -870,7 +1042,59 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
   }
 
   async backfillConnectedStorageId(): Promise<number> {
-    throw new Error("not implemented");
+    // SQLite's schema makes connected_storage_id NOT NULL, so a "legacy null" row is
+    // stored as the UNSCOPED_STORAGE sentinel. Pin every sentinel row to its account's
+    // earliest-created (primary) drive; skip accounts with no drive. Mirrors the
+    // InMemory oracle: move tracked_seasons + workflow_runs + the episode bucket, and
+    // count one per moved workflow_run.
+    return this.db.transaction((): number => {
+      // Earliest-created drive per account = its primary (root) workspace.
+      const drives = this.db
+        .prepare("SELECT account_id, id FROM connected_storages ORDER BY created_at")
+        .all() as Array<{ account_id: string; id: string }>;
+      const primaryByAccount = new Map<string, string>();
+      for (const drive of drives) {
+        if (!primaryByAccount.has(drive.account_id)) {
+          primaryByAccount.set(drive.account_id, drive.id);
+        }
+      }
+
+      const runRows = this.db
+        .prepare(
+          "SELECT id, tracked_season_id, account_id FROM workflow_runs WHERE connected_storage_id = ?",
+        )
+        .all(UNSCOPED_STORAGE) as Array<{ id: string; tracked_season_id: string; account_id: string }>;
+
+      let filled = 0;
+      const movedSeasons = new Set<string>();
+      for (const run of runRows) {
+        const primary = primaryByAccount.get(run.account_id ?? DEFAULT_ACCOUNT_ID);
+        if (!primary) {
+          continue; // account has no drive — leave the legacy row untouched
+        }
+        this.db
+          .prepare("UPDATE workflow_runs SET connected_storage_id = ? WHERE id = ?")
+          .run(primary, run.id);
+        // Move the season's tracked_seasons row + episode bucket off the sentinel too,
+        // once per season, so scoped reads (which read season+drive) still find them.
+        const seasonKey = `${run.tracked_season_id} ${primary}`;
+        if (!movedSeasons.has(seasonKey)) {
+          movedSeasons.add(seasonKey);
+          this.db
+            .prepare(
+              "UPDATE tracked_seasons SET connected_storage_id = ? WHERE id = ? AND connected_storage_id = ?",
+            )
+            .run(primary, run.tracked_season_id, UNSCOPED_STORAGE);
+          this.db
+            .prepare(
+              "UPDATE episode_states SET connected_storage_id = ? WHERE tracked_season_id = ? AND connected_storage_id = ?",
+            )
+            .run(primary, run.tracked_season_id, UNSCOPED_STORAGE);
+        }
+        filled += 1;
+      }
+      return filled;
+    })();
   }
 
   private connectedStorageFromRow(row: Record<string, unknown>): ConnectedStorage {
