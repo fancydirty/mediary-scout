@@ -2,7 +2,7 @@ const TMDB_ORIGIN = "https://api.themoviedb.org/3";
 
 // Only the metadata read paths the app actually uses — keeps the worker from
 // being abusable as a general HTTP proxy. Prefix match after the leading slash.
-const ALLOWED_PREFIXES = ["movie/", "tv/", "search/", "discover/", "find/", "genre/", "configuration"];
+const ALLOWED_PREFIXES = ["movie/", "tv/", "search/", "discover/", "find/", "genre/", "configuration", "trending/"];
 
 const MOVIE_TTL_SECONDS = 7 * 24 * 60 * 60; // movie metadata is effectively static
 const SHORT_TTL_SECONDS = 60 * 60;          // tv/season/search: 追更 needs hourly freshness
@@ -77,4 +77,46 @@ export async function handleTmdbProxy(deps: HandleTmdbProxyDeps): Promise<Respon
   }
   await deps.kv.put(key, body, { expirationTtl: ttlForPath(path) });
   return new Response(body, { status: 200, headers: jsonHeaders("MISS") });
+}
+
+const TRENDING_TTL_SECONDS = 25 * 60 * 60; // > 24h 刷新间隔,断刷时兜底一小时
+
+/** The three discovery feeds the search page shows, aligned to the app's
+ *  电影/剧集/动漫 library types. Single source of truth: the Cron refresh writes
+ *  these and the frontend reads the SAME path+query, so cacheKeyFor matches. */
+export const TRENDING_FEEDS = [
+  "trending/movie/week?language=zh-CN",
+  "trending/tv/week?language=zh-CN",
+  "discover/tv?language=zh-CN&sort_by=popularity.desc&with_genres=16&with_original_language=ja",
+];
+
+export interface RunScheduledRefreshDeps {
+  kv: KvLike;
+  token: string;
+  originFetch?: typeof fetch;
+}
+
+/** Daily Cron: pre-warm each feed's KV entry so NO user open triggers a TMDB
+ *  request. Computes the key via the proxy's own cacheKeyFor (through a synthetic
+ *  Request), so it is byte-identical to what handleTmdbProxy derives for the same
+ *  feed. A feed whose origin fetch fails or throws is skipped — its prior KV value
+ *  (if any) lives on under its TTL, and one bad feed never aborts the others. */
+export async function runScheduledRefresh(deps: RunScheduledRefreshDeps): Promise<void> {
+  const originFetch = deps.originFetch ?? fetch;
+  for (const feed of TRENDING_FEEDS) {
+    const key = cacheKeyFor(new Request(`https://proxy/${feed}`));
+    try {
+      const originResponse = await originFetch(`${TMDB_ORIGIN}/${key}`, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${deps.token}`, "Content-Type": "application/json;charset=utf-8" },
+      });
+      if (!originResponse.ok) {
+        continue;
+      }
+      const body = await originResponse.text();
+      await deps.kv.put(key, body, { expirationTtl: TRENDING_TTL_SECONDS });
+    } catch {
+      // network hiccup on one feed must not abort the rest
+    }
+  }
 }

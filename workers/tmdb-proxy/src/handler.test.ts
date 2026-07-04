@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { handleTmdbProxy, type KvLike } from "./handler";
+import { handleTmdbProxy, runScheduledRefresh, TRENDING_FEEDS, type KvLike } from "./handler";
 
 function fakeKv(initial: Record<string, string> = {}): KvLike & { puts: Array<{ key: string; ttl: number | undefined }> } {
   const store = new Map(Object.entries(initial));
@@ -121,5 +121,52 @@ describe("handleTmdbProxy — KV cache", () => {
     await handleTmdbProxy({ request: new Request("https://w.example/movie/1?a=1&b=2"), kv, token: "k", originFetch: fetchOnce });
     await handleTmdbProxy({ request: new Request("https://w.example/movie/1?b=2&a=1"), kv, token: "k", originFetch: fetchOnce });
     expect(originCalls).toBe(1);
+  });
+});
+
+describe("trending discovery", () => {
+  it("allows the trending/ prefix (was 404)", async () => {
+    const res = await handleTmdbProxy({
+      request: new Request("https://w.example/trending/movie/week?language=zh-CN"),
+      kv: fakeKv(),
+      token: "k",
+      originFetch: async () => new Response(JSON.stringify({ results: [] }), { status: 200 }),
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it("runScheduledRefresh writes every feed to KV under its cacheKey with a 25h TTL, and the frontend then reads a HIT", async () => {
+    const kv = fakeKv();
+    await runScheduledRefresh({
+      kv,
+      token: "k",
+      originFetch: async () => new Response(JSON.stringify({ results: [{ id: 1 }] }), { status: 200 }),
+    });
+    expect(kv.puts).toHaveLength(TRENDING_FEEDS.length);
+    for (const put of kv.puts) {
+      expect(put.ttl).toBe(25 * 60 * 60);
+    }
+    expect(kv.puts[0]!.key.startsWith("trending/movie/week")).toBe(true);
+
+    // A subsequent frontend request for the same feed must serve the warmed KV
+    // entry WITHOUT hitting origin — proving the Cron key === proxy key.
+    const hit = await handleTmdbProxy({
+      request: new Request(`https://w.example/${TRENDING_FEEDS[0]}`),
+      kv,
+      token: "k",
+      originFetch: async () => new Response("SHOULD_NOT_FETCH", { status: 500 }),
+    });
+    expect(hit.status).toBe(200);
+    expect(hit.headers.get("X-Cache")).toBe("HIT");
+  });
+
+  it("runScheduledRefresh skips a feed whose origin fetch fails (never aborts the rest)", async () => {
+    const kv = fakeKv();
+    await runScheduledRefresh({
+      kv,
+      token: "k",
+      originFetch: async () => new Response("nope", { status: 500 }),
+    });
+    expect(kv.puts).toHaveLength(0);
   });
 });
