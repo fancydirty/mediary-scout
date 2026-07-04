@@ -275,20 +275,34 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     throw new Error("not implemented");
   }
 
-  async getSetting(_key: string): Promise<string | null> {
-    throw new Error("not implemented");
+  async getSetting(key: string): Promise<string | null> {
+    const row = this.db.prepare("SELECT value FROM app_settings WHERE key = ?").get(key) as
+      | { value: string }
+      | undefined;
+    return row?.value ?? null;
   }
 
-  async setSetting(_key: string, _value: string): Promise<void> {
-    throw new Error("not implemented");
+  async setSetting(key: string, value: string): Promise<void> {
+    this.db
+      .prepare(
+        "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+      )
+      .run(key, value);
   }
 
-  async getAccountSetting(_accountId: string, _key: string): Promise<string | null> {
-    throw new Error("not implemented");
+  async getAccountSetting(accountId: string, key: string): Promise<string | null> {
+    const row = this.db
+      .prepare("SELECT value FROM account_settings WHERE account_id = ? AND key = ?")
+      .get(accountId, key) as { value: string } | undefined;
+    return row?.value ?? null;
   }
 
-  async setAccountSetting(_accountId: string, _key: string, _value: string): Promise<void> {
-    throw new Error("not implemented");
+  async setAccountSetting(accountId: string, key: string, value: string): Promise<void> {
+    this.db
+      .prepare(
+        "INSERT INTO account_settings (account_id, key, value) VALUES (?, ?, ?) ON CONFLICT (account_id, key) DO UPDATE SET value = excluded.value",
+      )
+      .run(accountId, key, value);
   }
 
   async backfillConnectedStorageId(): Promise<number> {
