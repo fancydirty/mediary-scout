@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { DEFAULT_ACCOUNT_ID } from "./domain.js";
 import type {
   AgentStep,
   EpisodeState,
@@ -14,6 +15,7 @@ import type {
   UpsertConnectedStorageInput,
 } from "./account-credentials.js";
 import type { ScopeArg, WorkflowScope } from "./workflow-scope.js";
+import { DuplicateUsernameError } from "./repository.js";
 import type {
   PersistedWorkflowRunSnapshot,
   PersistWorkflowRunSnapshotInput,
@@ -337,44 +339,117 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     throw new Error("not implemented");
   }
 
-  async createAccount(_account: Account): Promise<void> {
-    throw new Error("not implemented");
+  private accountFromRow(row: Record<string, unknown>): Account {
+    return {
+      id: String(row.id),
+      username: String(row.username),
+      passwordHash: String(row.password_hash),
+      groupId: (row.group_id as string | null | undefined) ?? null,
+      isOwner: row.is_owner === 1,
+      createdAt: String(row.created_at),
+    };
   }
 
-  async getAccountByUsername(_username: string): Promise<Account | null> {
-    throw new Error("not implemented");
+  async createAccount(account: Account): Promise<void> {
+    try {
+      this.db
+        .prepare(
+          "INSERT INTO accounts (id, username, password_hash, group_id, is_owner, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .run(
+          account.id,
+          account.username,
+          account.passwordHash,
+          account.groupId,
+          account.isOwner ? 1 : 0,
+          account.createdAt,
+        );
+    } catch (error) {
+      if (error instanceof Error && /UNIQUE constraint failed: accounts\.username/.test(error.message)) {
+        throw new DuplicateUsernameError(account.username);
+      }
+      throw error;
+    }
   }
 
-  async getAccountById(_id: string): Promise<Account | null> {
-    throw new Error("not implemented");
+  async getAccountByUsername(username: string): Promise<Account | null> {
+    const row = this.db
+      .prepare(
+        "SELECT id, username, password_hash, group_id, is_owner, created_at FROM accounts WHERE username = ?",
+      )
+      .get(username) as Record<string, unknown> | undefined;
+    return row ? this.accountFromRow(row) : null;
+  }
+
+  async getAccountById(id: string): Promise<Account | null> {
+    const row = this.db
+      .prepare(
+        "SELECT id, username, password_hash, group_id, is_owner, created_at FROM accounts WHERE id = ?",
+      )
+      .get(id) as Record<string, unknown> | undefined;
+    return row ? this.accountFromRow(row) : null;
   }
 
   async listAccounts(): Promise<Account[]> {
-    throw new Error("not implemented");
+    const rows = this.db
+      .prepare(
+        "SELECT id, username, password_hash, group_id, is_owner, created_at FROM accounts ORDER BY created_at",
+      )
+      .all() as Array<Record<string, unknown>>;
+    return rows.map((row) => this.accountFromRow(row));
   }
 
-  async createSession(_session: Session): Promise<void> {
-    throw new Error("not implemented");
+  async createSession(session: Session): Promise<void> {
+    this.db
+      .prepare("INSERT INTO sessions (id, account_id, expires_at, created_at) VALUES (?, ?, ?, ?)")
+      .run(session.id, session.accountId, session.expiresAt, session.createdAt);
   }
 
-  async getSession(_id: string): Promise<Session | null> {
-    throw new Error("not implemented");
+  async getSession(id: string): Promise<Session | null> {
+    const row = this.db
+      .prepare("SELECT id, account_id, expires_at, created_at FROM sessions WHERE id = ?")
+      .get(id) as Record<string, unknown> | undefined;
+    return row
+      ? {
+          id: String(row.id),
+          accountId: String(row.account_id),
+          expiresAt: String(row.expires_at),
+          createdAt: String(row.created_at),
+        }
+      : null;
   }
 
-  async deleteSession(_id: string): Promise<void> {
-    throw new Error("not implemented");
+  async deleteSession(id: string): Promise<void> {
+    this.db.prepare("DELETE FROM sessions WHERE id = ?").run(id);
   }
 
-  async adoptDefaultAccount(_input: { username: string; passwordHash: string }): Promise<void> {
-    throw new Error("not implemented");
+  async adoptDefaultAccount(input: { username: string; passwordHash: string }): Promise<void> {
+    try {
+      this.db
+        .prepare("UPDATE accounts SET username = ?, password_hash = ? WHERE id = ?")
+        .run(input.username, input.passwordHash, DEFAULT_ACCOUNT_ID);
+    } catch (error) {
+      if (error instanceof Error && /UNIQUE constraint failed: accounts\.username/.test(error.message)) {
+        throw new DuplicateUsernameError(input.username);
+      }
+      throw error;
+    }
   }
 
-  async setAccountPassword(_accountId: string, _passwordHash: string): Promise<void> {
-    throw new Error("not implemented");
+  async setAccountPassword(accountId: string, passwordHash: string): Promise<void> {
+    this.db
+      .prepare("UPDATE accounts SET password_hash = ? WHERE id = ?")
+      .run(passwordHash, accountId);
   }
 
-  async deleteSessionsForAccount(_accountId: string, _exceptSessionId?: string): Promise<void> {
-    throw new Error("not implemented");
+  async deleteSessionsForAccount(accountId: string, exceptSessionId?: string): Promise<void> {
+    if (exceptSessionId === undefined) {
+      this.db.prepare("DELETE FROM sessions WHERE account_id = ?").run(accountId);
+    } else {
+      this.db
+        .prepare("DELETE FROM sessions WHERE account_id = ? AND id != ?")
+        .run(accountId, exceptSessionId);
+    }
   }
 
   async recordDeadLink(_input: {
