@@ -23,9 +23,14 @@ export const TRENDING_KINDS: Record<
   anime: {
     label: "热门动漫",
     path: "discover/tv",
+    // include_adult=false + vote_count.gte=200 是 NECESSARY:裸 popularity.desc 会
+    // 把成人/里番动画顶上首屏(popularity 被刷高、adult 标记不可靠),vote 门槛只留
+    // 主流。必须与 workers/tmdb-proxy TRENDING_FEEDS 的 anime feed 逐字一致(cacheKey)。
     query: {
+      include_adult: "false",
       language: "zh-CN",
       sort_by: "popularity.desc",
+      "vote_count.gte": "200",
       with_genres: "16",
       with_original_language: "ja",
     },

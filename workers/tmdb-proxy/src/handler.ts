@@ -87,7 +87,11 @@ const TRENDING_TTL_SECONDS = 25 * 60 * 60; // > 24h 刷新间隔,断刷时兜底
 export const TRENDING_FEEDS = [
   "trending/movie/week?language=zh-CN",
   "trending/tv/week?language=zh-CN",
-  "discover/tv?language=zh-CN&sort_by=popularity.desc&with_genres=16&with_original_language=ja",
+  // 动漫:日语动画按热度排。include_adult=false + vote_count.gte=200 是 NECESSARY,
+  // 不是可选 —— 裸 popularity.desc 会把大量成人/里番动画顶上来(其 popularity 被
+  // 刷高、adult 标记不可靠);vote_count 门槛把它们挡掉,只留主流(咒术/死神/JOJO)。
+  // 必须与 apps/web/lib/trending.ts TRENDING_KINDS.anime.query 逐字一致(cacheKey 命中)。
+  "discover/tv?include_adult=false&language=zh-CN&sort_by=popularity.desc&vote_count.gte=200&with_genres=16&with_original_language=ja",
 ];
 
 export interface RunScheduledRefreshDeps {

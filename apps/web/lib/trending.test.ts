@@ -1,5 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { mapTrendingResults } from "./trending";
+import { mapTrendingResults, TRENDING_KINDS } from "./trending";
+
+describe("trending feed contract (must match workers/tmdb-proxy TRENDING_FEEDS)", () => {
+  // The Worker Cron warms KV under cacheKeyFor(path + sorted query). The frontend
+  // reads the SAME feed. cacheKeyFor sorts params, so what must match is the param
+  // SET, captured here as the sorted querystring. If you edit one side, this fails.
+  const sortedQuery = (query: Record<string, string>) =>
+    new URLSearchParams([...Object.entries(query)].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))).toString();
+
+  it("movie feed = trending/movie/week?language=zh-CN", () => {
+    expect(TRENDING_KINDS.movie.path).toBe("trending/movie/week");
+    expect(sortedQuery(TRENDING_KINDS.movie.query)).toBe("language=zh-CN");
+  });
+
+  it("anime feed carries the adult filter + vote floor (mainstream anime only)", () => {
+    expect(TRENDING_KINDS.anime.path).toBe("discover/tv");
+    expect(sortedQuery(TRENDING_KINDS.anime.query)).toBe(
+      "include_adult=false&language=zh-CN&sort_by=popularity.desc&vote_count.gte=200&with_genres=16&with_original_language=ja",
+    );
+  });
+});
 
 describe("mapTrendingResults", () => {
   it("maps a movie result (title/release_date/poster_path)", () => {
