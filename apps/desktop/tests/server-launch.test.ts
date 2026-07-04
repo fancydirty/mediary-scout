@@ -19,6 +19,32 @@ describe("buildServerEnv", () => {
     expect(env.ELECTRON_RUN_AS_NODE).toBe("1");
     expect(env.EXISTING).toBe("keep"); // preserves the base env
   });
+
+  it("defaults to the real-product adapters so the desktop is functional (not fake/demo)", () => {
+    // Without these, the spawned server uses the fake storage executor + demo search
+    // (adapter defaults to "fake"). Match the container's docker-compose adapters so a
+    // fresh desktop performs real 115/quark/guangya acquisitions once a drive is added.
+    const env = buildServerEnv({ port: 1, sqlitePath: "/x.db", baseEnv: {} });
+    expect(env.MEDIA_TRACK_SEARCH_PROVIDER).toBe("tmdb");
+    expect(env.MEDIA_TRACK_WORKFLOW_ADAPTER).toBe("pansou");
+    expect(env.MEDIA_TRACK_STORAGE_ADAPTER).toBe("115");
+    expect(env.MEDIA_TRACK_AGENT_ADAPTER).toBe("vercel-ai"); // required when storage=115 (validateRuntimeConfig)
+  });
+
+  it("lets the launching env override an adapter default, but never the desktop-essential keys", () => {
+    const env = buildServerEnv({
+      port: 9,
+      sqlitePath: "/x.db",
+      baseEnv: {
+        MEDIA_TRACK_STORAGE_ADAPTER: "fake", // a dev may force fake mode
+        MEDIA_TRACK_SQLITE_PATH: "/hijack.db", // must NOT win over the desktop path
+        PORT: "1234", // must NOT win over the chosen port
+      },
+    });
+    expect(env.MEDIA_TRACK_STORAGE_ADAPTER).toBe("fake"); // override honored
+    expect(env.MEDIA_TRACK_SQLITE_PATH).toBe("/x.db"); // essential key wins
+    expect(env.PORT).toBe("9"); // essential key wins
+  });
 });
 
 describe("waitForHealthy", () => {
