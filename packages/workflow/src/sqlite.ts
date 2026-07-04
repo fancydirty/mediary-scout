@@ -23,6 +23,8 @@ import type {
 } from "./account-credentials.js";
 import { normalizeScope, type ScopeArg, type WorkflowScope } from "./workflow-scope.js";
 import {
+  claimableQueuedRuns,
+  claimWorkflowRun,
   cloneWorkflowValue,
   DuplicateUsernameError,
   expireWorkflowRun,
@@ -507,28 +509,103 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     return rows.map((row) => JSON.parse(row.payload) as WorkflowRun);
   }
 
-  async claimNextQueuedWorkflowRun(_input: {
+  async claimNextQueuedWorkflowRun(input: {
     kind: WorkflowKind;
     now: string;
   }): Promise<PersistedWorkflowRunSnapshot | null> {
-    throw new Error("not implemented");
+    // Read the oldest claimable queued run and flip it to running INSIDE one
+    // transaction so two ticks can't double-claim (single-writer + WAL make the
+    // read+update atomic). claimableQueuedRuns applies the nextAttemptAt gate + FIFO.
+    const claimedRunId = this.db.transaction((): string | null => {
+      const queuedRun = claimableQueuedRuns(this.allWorkflowRuns(), input.kind, input.now)[0];
+      if (!queuedRun) {
+        return null;
+      }
+      const claimedRun = claimWorkflowRun(queuedRun, input.now);
+      // upsertWorkflowRun preserves account_id / connected_storage_id on conflict.
+      this.upsertWorkflowRun(claimedRun);
+      return claimedRun.id;
+    })();
+    // Cross-account: load WITHOUT an account filter (the worker drains every
+    // account's queue; the snapshot carries its own accountId).
+    return claimedRunId ? this.loadSnapshot(claimedRunId) : null;
   }
 
   async requeueRunningWorkflowRuns(): Promise<number> {
-    throw new Error("not implemented");
+    // Crash recovery: every `running` run → `queued` (finishedAt cleared).
+    return this.db.transaction((): number => {
+      const running = this.allWorkflowRuns().filter(
+        (workflowRun) => workflowRun.status === "running",
+      );
+      for (const workflowRun of running) {
+        this.upsertWorkflowRun({ ...workflowRun, status: "queued", finishedAt: null });
+      }
+      return running.length;
+    })();
   }
 
-  async findActiveWorkflowRun(_input: {
+  async findActiveWorkflowRun(input: {
     trackedSeasonId: string;
     kind: WorkflowKind;
     accountId?: string;
     connectedStorageId?: string | null;
   }): Promise<PersistedWorkflowRunSnapshot | null> {
-    throw new Error("not implemented");
+    const scope = normalizeScope(
+      input.accountId === undefined
+        ? undefined
+        : { accountId: input.accountId, connectedStorageId: input.connectedStorageId ?? null },
+    );
+    const latest = this.selectWorkflowRunsForAccount(input.trackedSeasonId, scope.accountId)
+      .filter(
+        (workflowRun) =>
+          workflowRun.kind === input.kind && isActiveWorkflowStatus(workflowRun.status),
+      )
+      .sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
+    // getWorkflowRunSnapshot applies the storage filter (drops cross-storage).
+    return latest ? this.getWorkflowRunSnapshot(latest.id, scope) : null;
   }
 
-  async listActiveWorkflowRuns(_scope?: ScopeArg): Promise<PersistedWorkflowRunSnapshot[]> {
-    throw new Error("not implemented");
+  async listActiveWorkflowRuns(
+    scopeArg: ScopeArg = undefined,
+  ): Promise<PersistedWorkflowRunSnapshot[]> {
+    const scope = normalizeScope(scopeArg);
+    const runs = this.allWorkflowRunsForAccount(scope.accountId)
+      .filter((workflowRun) => isActiveWorkflowStatus(workflowRun.status))
+      .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+    const snapshots: PersistedWorkflowRunSnapshot[] = [];
+    for (const run of runs) {
+      try {
+        // Full scope drops runs on other storages of the same account.
+        const snapshot = await this.getWorkflowRunSnapshot(run.id, scope);
+        if (snapshot) {
+          snapshots.push(snapshot);
+        }
+      } catch {
+        // Orphaned/inconsistent run — skip rather than crash callers.
+      }
+    }
+    return snapshots;
+  }
+
+  private allWorkflowRuns(): WorkflowRun[] {
+    const rows = this.db.prepare("SELECT payload FROM workflow_runs").all() as Array<{
+      payload: string;
+    }>;
+    return rows.map((row) => JSON.parse(row.payload) as WorkflowRun);
+  }
+
+  private allWorkflowRunsForAccount(accountId: string): WorkflowRun[] {
+    const rows = this.db
+      .prepare("SELECT payload FROM workflow_runs WHERE account_id = ?")
+      .all(accountId) as Array<{ payload: string }>;
+    return rows.map((row) => JSON.parse(row.payload) as WorkflowRun);
+  }
+
+  private selectWorkflowRunsForAccount(trackedSeasonId: string, accountId: string): WorkflowRun[] {
+    const rows = this.db
+      .prepare("SELECT payload FROM workflow_runs WHERE tracked_season_id = ? AND account_id = ?")
+      .all(trackedSeasonId, accountId) as Array<{ payload: string }>;
+    return rows.map((row) => JSON.parse(row.payload) as WorkflowRun);
   }
 
   async updateWorkflowRunProgress(

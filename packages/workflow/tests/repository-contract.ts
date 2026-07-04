@@ -242,5 +242,163 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
         expect(got?.connectedStorageId).toBe("cs_keep");
       });
     });
+
+    describe("claim + active queries", () => {
+      // Build a standalone queued run for a UNIQUE (season, drive) bucket so several
+      // can coexist without tripping the same-season active-run guard. Episodes +
+      // children are cleared and re-parented so the re-ided season stays coherent
+      // (validateWorkflowRunSnapshot rejects orphaned episodes/attempts otherwise).
+      const queued = (
+        id: string,
+        over: {
+          startedAt?: string;
+          kind?: string;
+          connectedStorageId?: string;
+          nextAttemptAt?: string;
+        } = {},
+      ) => {
+        const base = workflowPersistenceFixture();
+        const seasonId = `season_${id}`;
+        return {
+          ...base,
+          connectedStorageId: over.connectedStorageId ?? `cs_${id}`,
+          season: { ...base.season, id: seasonId },
+          workflowRun: {
+            ...base.workflowRun,
+            id,
+            trackedSeasonId: seasonId,
+            status: "queued" as const,
+            finishedAt: null,
+            startedAt: over.startedAt ?? base.workflowRun.startedAt,
+            ...(over.kind ? { kind: over.kind as typeof base.workflowRun.kind } : {}),
+            ...(over.nextAttemptAt ? { nextAttemptAt: over.nextAttemptAt } : {}),
+          },
+          episodes: [],
+          resourceSnapshots: [],
+          decisions: [],
+          transferAttempts: [],
+          notifications: [],
+        };
+      };
+
+      it("claims the OLDEST queued run of the kind first, then the next, then null", async () => {
+        const repo = await fresh();
+        await repo.saveWorkflowRunSnapshot(queued("older", { startedAt: "2026-06-11T00:00:00.000Z" }));
+        await repo.saveWorkflowRunSnapshot(queued("newer", { startedAt: "2026-06-11T00:05:00.000Z" }));
+
+        const now = "2026-06-11T01:00:00.000Z";
+        const first = await repo.claimNextQueuedWorkflowRun({ kind: "type2_init", now });
+        expect(first?.workflowRun.id).toBe("older");
+        expect(first?.workflowRun.status).toBe("running");
+
+        const second = await repo.claimNextQueuedWorkflowRun({ kind: "type2_init", now });
+        expect(second?.workflowRun.id).toBe("newer");
+        expect(second?.workflowRun.status).toBe("running");
+
+        // Both drained (now running) → a third claim finds nothing queued.
+        const third = await repo.claimNextQueuedWorkflowRun({ kind: "type2_init", now });
+        expect(third).toBeNull();
+      });
+
+      it("claims an immediately-claimable run and does not pick a later gated one", async () => {
+        const repo = await fresh();
+        // A claimable run (older startedAt) alongside one gated by a FUTURE
+        // nextAttemptAt (newer startedAt). Every engine claims the claimable run:
+        //  - the gating-aware engines (SQLite/Postgres via claimableQueuedRuns) filter
+        //    the gated run out entirely;
+        //  - the InMemory oracle ignores nextAttemptAt but its FIFO-by-startedAt still
+        //    picks the older claimable run first.
+        // NOTE: the InMemory oracle does NOT honor nextAttemptAt, so a "gated-run-ALONE
+        // → null" scenario legitimately diverges across engines and is intentionally
+        // NOT asserted here — the pure gate is unit-tested in run-retry-transitions.test.ts.
+        await repo.saveWorkflowRunSnapshot(
+          queued("claimable", { startedAt: "2026-06-11T00:00:00.000Z" }),
+        );
+        await repo.saveWorkflowRunSnapshot(
+          queued("gated", {
+            startedAt: "2026-06-11T00:05:00.000Z",
+            nextAttemptAt: "2030-01-01T00:00:00.000Z",
+          }),
+        );
+
+        const claimed = await repo.claimNextQueuedWorkflowRun({
+          kind: "type2_init",
+          now: "2026-06-11T01:00:00.000Z",
+        });
+        expect(claimed?.workflowRun.id).toBe("claimable");
+      });
+
+      it("requeueRunningWorkflowRuns turns a running run back to queued and returns the count", async () => {
+        const repo = await fresh();
+        await repo.saveWorkflowRunSnapshot(queued("q1", { startedAt: "2026-06-11T00:00:00.000Z" }));
+        // Claim it → running.
+        await repo.claimNextQueuedWorkflowRun({ kind: "type2_init", now: "2026-06-11T01:00:00.000Z" });
+        expect((await repo.getWorkflowRunSnapshot("q1"))?.workflowRun.status).toBe("running");
+
+        const count = await repo.requeueRunningWorkflowRuns();
+        expect(count).toBe(1);
+        const requeued = await repo.getWorkflowRunSnapshot("q1");
+        expect(requeued?.workflowRun.status).toBe("queued");
+        expect(requeued?.workflowRun.finishedAt).toBeNull();
+      });
+
+      it("findActiveWorkflowRun matches (season, kind) and rejects a different scope", async () => {
+        const repo = await fresh();
+        const snap = queued("find", { startedAt: "2026-06-11T00:00:00.000Z" });
+        await repo.saveWorkflowRunSnapshot(snap);
+
+        const found = await repo.findActiveWorkflowRun({
+          trackedSeasonId: snap.season.id,
+          kind: "type2_init",
+          accountId: "acct_default",
+          connectedStorageId: snap.connectedStorageId,
+        });
+        expect(found?.workflowRun.id).toBe("find");
+
+        // Wrong kind → none.
+        expect(
+          await repo.findActiveWorkflowRun({
+            trackedSeasonId: snap.season.id,
+            kind: "movie_init",
+            accountId: "acct_default",
+            connectedStorageId: snap.connectedStorageId,
+          }),
+        ).toBeNull();
+        // Wrong drive scope → none.
+        expect(
+          await repo.findActiveWorkflowRun({
+            trackedSeasonId: snap.season.id,
+            kind: "type2_init",
+            accountId: "acct_default",
+            connectedStorageId: "cs_other",
+          }),
+        ).toBeNull();
+      });
+
+      it("listActiveWorkflowRuns returns queued+running for the scope, excludes terminal, newest-first", async () => {
+        const repo = await fresh();
+        const scope = { accountId: "acct_default", connectedStorageId: "cs_shared" };
+        // Two active runs (different seasons, same drive) + one terminal run.
+        await repo.saveWorkflowRunSnapshot(
+          queued("act_old", { startedAt: "2026-06-11T00:00:00.000Z", connectedStorageId: "cs_shared" }),
+        );
+        await repo.saveWorkflowRunSnapshot(
+          queued("act_new", { startedAt: "2026-06-11T00:05:00.000Z", connectedStorageId: "cs_shared" }),
+        );
+        // Terminal (succeeded) run on the same drive — must be excluded.
+        const done = queued("done", { startedAt: "2026-06-11T00:03:00.000Z", connectedStorageId: "cs_shared" });
+        await repo.saveWorkflowRunSnapshot({
+          ...done,
+          workflowRun: {
+            ...done.workflowRun,
+            status: "succeeded" as const,
+            finishedAt: "2026-06-11T00:04:00.000Z",
+          },
+        });
+
+        const active = await repo.listActiveWorkflowRuns(scope);
+        expect(active.map((snapshot) => snapshot.workflowRun.id)).toEqual(["act_new", "act_old"]);
+      });
+    });
   });
 }
