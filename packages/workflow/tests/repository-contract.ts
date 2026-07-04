@@ -539,5 +539,106 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
         ).toHaveLength(0);
       });
     });
+
+    describe("agent_steps + progress", () => {
+      const step = (ordinal: number, toolName: string) => ({
+        ordinal,
+        toolName,
+        args: { keyword: "x" },
+        activity: "搜",
+        phase: "search" as const,
+        at: "2026-06-22T00:00:00.000Z",
+      });
+
+      // NOTE: idempotency on (run, ordinal) is a PRODUCTION-engine invariant
+      // (SQLite/Postgres ON CONFLICT DO NOTHING). The InMemory oracle intentionally
+      // just pushes (no dedup), so a duplicate-ordinal append legitimately diverges
+      // across engines and is asserted engine-specifically (repository-contract-sqlite
+      // / agent-steps.pg), NOT in this shared contract.
+      it("appends steps and lists them ordered by ordinal", async () => {
+        const repo = await fresh();
+        // Persist the run so its ownership row exists for the scope-gated read below.
+        await repo.saveWorkflowRunSnapshot(workflowPersistenceFixture());
+        const runId = workflowPersistenceFixture().workflowRun.id;
+
+        await repo.appendAgentStep(runId, step(1, "transferCandidate"));
+        await repo.appendAgentStep(runId, step(0, "searchResources"));
+        const steps = await repo.listAgentSteps(runId);
+        expect(steps.map((s) => s.ordinal)).toEqual([0, 1]);
+        expect(steps[0]!.toolName).toBe("searchResources");
+      });
+
+      it("listAgentSteps is fail-closed on scope (wrong scope → [], correct scope → steps)", async () => {
+        const repo = await fresh();
+        await repo.saveWorkflowRunSnapshot(workflowPersistenceFixture());
+        const runId = workflowPersistenceFixture().workflowRun.id;
+        await repo.appendAgentStep(runId, step(0, "searchResources"));
+
+        // Wrong account → not visible → [].
+        expect(
+          await repo.listAgentSteps(runId, { accountId: "acct_other", connectedStorageId: null }),
+        ).toEqual([]);
+        // Correct scope (the fixture run is owned by acct_default, unscoped storage) → steps.
+        const visible = await repo.listAgentSteps(runId, {
+          accountId: "acct_default",
+          connectedStorageId: null,
+        });
+        expect(visible.map((s) => s.ordinal)).toEqual([0]);
+      });
+
+      it("clearAgentSteps empties the run's steps", async () => {
+        const repo = await fresh();
+        await repo.saveWorkflowRunSnapshot(workflowPersistenceFixture());
+        const runId = workflowPersistenceFixture().workflowRun.id;
+        await repo.appendAgentStep(runId, step(0, "searchResources"));
+        await repo.appendAgentStep(runId, step(1, "transferCandidate"));
+        await repo.clearAgentSteps(runId);
+        expect(await repo.listAgentSteps(runId)).toEqual([]);
+      });
+
+      it("updateWorkflowRunProgress clamps percent monotonically; unknown run is a no-op", async () => {
+        const repo = await fresh();
+        await repo.saveWorkflowRunSnapshot(workflowPersistenceFixture());
+        const runId = workflowPersistenceFixture().workflowRun.id;
+
+        await repo.updateWorkflowRunProgress(runId, {
+          activity: "转存",
+          phase: "transfer",
+          percent: 40,
+          updatedAt: "2026-06-22T00:00:10.000Z",
+        });
+        expect((await repo.getWorkflowRunSnapshot(runId))?.workflowRun.progress?.percent).toBe(40);
+
+        // Lower percent never rewinds the bar (monotonic clamp), but text follows latest.
+        await repo.updateWorkflowRunProgress(runId, {
+          activity: "整理(相位回退)",
+          phase: "organize",
+          percent: 20,
+          updatedAt: "2026-06-22T00:00:20.000Z",
+        });
+        const clamped = (await repo.getWorkflowRunSnapshot(runId))?.workflowRun.progress;
+        expect(clamped?.percent).toBe(40);
+        expect(clamped?.activity).toBe("整理(相位回退)");
+
+        // Higher percent advances.
+        await repo.updateWorkflowRunProgress(runId, {
+          activity: "完成收尾",
+          phase: "finalize",
+          percent: 70,
+          updatedAt: "2026-06-22T00:00:30.000Z",
+        });
+        expect((await repo.getWorkflowRunSnapshot(runId))?.workflowRun.progress?.percent).toBe(70);
+
+        // Unknown run → no-op (never throws).
+        await expect(
+          repo.updateWorkflowRunProgress("unknown_run", {
+            activity: "x",
+            phase: "search",
+            percent: 5,
+            updatedAt: "t",
+          }),
+        ).resolves.toBeUndefined();
+      });
+    });
   });
 }

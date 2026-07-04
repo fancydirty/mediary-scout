@@ -57,3 +57,36 @@ describe("SQLite claim honors nextAttemptAt backoff gate", () => {
     }
   });
 });
+
+// SQLite-specific: appendAgentStep is idempotent on (workflow_run_id, ordinal)
+// (ON CONFLICT DO NOTHING), so a re-appended ordinal is a no-op. The InMemory oracle
+// intentionally just pushes (no dedup), so this invariant can't live in the shared
+// contract — it's asserted directly against the PRODUCTION engine here (mirrors
+// agent-steps.pg for Postgres).
+describe("SQLite appendAgentStep is idempotent on (run, ordinal)", () => {
+  const step = (ordinal: number, toolName: string) => ({
+    ordinal,
+    toolName,
+    args: { keyword: "x" },
+    activity: "搜",
+    phase: "search" as const,
+    at: "2026-06-22T00:00:00.000Z",
+  });
+
+  it("ignores a duplicate ordinal append", async () => {
+    const repo = makeSqliteRepo();
+    try {
+      await repo.saveWorkflowRunSnapshot(workflowPersistenceFixture());
+      const runId = workflowPersistenceFixture().workflowRun.id;
+      await repo.appendAgentStep(runId, step(0, "searchResources"));
+      await repo.appendAgentStep(runId, step(1, "transferCandidate"));
+      // Re-append ordinal 0 → no new row (ON CONFLICT DO NOTHING keeps the first).
+      await repo.appendAgentStep(runId, step(0, "searchResources"));
+      const steps = await repo.listAgentSteps(runId);
+      expect(steps.map((s) => s.ordinal)).toEqual([0, 1]);
+      expect(steps[0]!.toolName).toBe("searchResources");
+    } finally {
+      repo.close();
+    }
+  });
+});

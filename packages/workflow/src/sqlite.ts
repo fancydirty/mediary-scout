@@ -610,22 +610,68 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
   }
 
   async updateWorkflowRunProgress(
-    _workflowRunId: string,
-    _progress: WorkflowRunProgress,
+    workflowRunId: string,
+    progress: WorkflowRunProgress,
   ): Promise<void> {
-    throw new Error("not implemented");
+    // Read the run's payload, clamp percent monotonically (a retry never rewinds the
+    // bar), and re-upsert. Unknown run → no-op. upsertWorkflowRun preserves the
+    // account/storage columns on conflict. Mirrors postgres.ts.
+    const row = this.db
+      .prepare("SELECT payload FROM workflow_runs WHERE id = ?")
+      .get(workflowRunId) as { payload: string } | undefined;
+    if (!row) {
+      return;
+    }
+    const run = JSON.parse(row.payload) as WorkflowRun;
+    const previousPercent = run.progress?.percent ?? 0;
+    this.upsertWorkflowRun({
+      ...run,
+      progress: { ...progress, percent: Math.max(previousPercent, progress.percent) },
+    });
   }
 
-  async appendAgentStep(_workflowRunId: string, _step: AgentStep): Promise<void> {
-    throw new Error("not implemented");
+  async appendAgentStep(workflowRunId: string, step: AgentStep): Promise<void> {
+    // Best-effort trace write (fire-and-forget at call sites). Idempotent on
+    // (workflow_run_id, ordinal) so a re-emitted step never fails an acquisition.
+    this.db
+      .prepare(
+        "INSERT INTO agent_steps (workflow_run_id, ordinal, payload) VALUES (?, ?, ?) " +
+          "ON CONFLICT (workflow_run_id, ordinal) DO NOTHING",
+      )
+      .run(workflowRunId, step.ordinal, JSON.stringify(step));
   }
 
-  async listAgentSteps(_workflowRunId: string, _scope?: ScopeArg): Promise<AgentStep[]> {
-    throw new Error("not implemented");
+  async listAgentSteps(workflowRunId: string, scopeArg: ScopeArg = undefined): Promise<AgentStep[]> {
+    // Scope gate reads ONLY the run's two ownership columns (not the full snapshot).
+    // Fail-closed: an unknown run isn't visible to any scope. No scope = raw read.
+    if (scopeArg !== undefined && !this.runMatchesScope(workflowRunId, scopeArg)) {
+      return [];
+    }
+    return this.selectChildPayloads<AgentStep>(
+      "SELECT payload FROM agent_steps WHERE workflow_run_id = ? ORDER BY ordinal",
+      workflowRunId,
+    );
   }
 
-  async clearAgentSteps(_workflowRunId: string): Promise<void> {
-    throw new Error("not implemented");
+  /** Lightweight (account, storage) visibility check: reads just the two scope
+   *  columns and applies the shared scopeMatches predicate. Fail-closed — an
+   *  unknown run is not visible to any scope. Mirrors postgres.ts. */
+  private runMatchesScope(workflowRunId: string, scopeArg: ScopeArg): boolean {
+    const scope = normalizeScope(scopeArg);
+    const owner = this.db
+      .prepare("SELECT account_id, connected_storage_id FROM workflow_runs WHERE id = ?")
+      .get(workflowRunId) as { account_id: string; connected_storage_id: string | null } | undefined;
+    if (!owner) {
+      return false;
+    }
+    const ownerAccount = owner.account_id ?? DEFAULT_ACCOUNT_ID;
+    const rawStorage = owner.connected_storage_id ?? null;
+    const ownerStorage = rawStorage === UNSCOPED_STORAGE ? null : rawStorage;
+    return scopeMatches(scope, ownerAccount, ownerStorage);
+  }
+
+  async clearAgentSteps(workflowRunId: string): Promise<void> {
+    this.db.prepare("DELETE FROM agent_steps WHERE workflow_run_id = ?").run(workflowRunId);
   }
 
   async cancelQueuedWorkflowRun(
