@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   acquireLlmPreflightError,
   customDirNamesFromEnv,
@@ -266,6 +266,23 @@ describe("isCookieSecure (the LAN/HTTP login-bounce fix, #60)", () => {
 
   it("auto: x-forwarded-proto http with a colon (http:) → insecure", () => {
     expect(isCookieSecure(req({ xfp: "http:", protocol: "http:" }))).toBe(false);
+  });
+});
+
+describe("getWorkflowRepository (desktop SQLite selection)", () => {
+  it("selects the SQLite repository when MEDIA_TRACK_SQLITE_PATH is set", async () => {
+    const prevPg = process.env.MEDIA_TRACK_POSTGRES_URL;
+    process.env.MEDIA_TRACK_SQLITE_PATH = ":memory:";
+    delete process.env.MEDIA_TRACK_POSTGRES_URL;
+    vi.resetModules();
+    try {
+      const { getWorkflowRepository } = await import("./workflow-runtime");
+      expect(getWorkflowRepository().constructor.name).toBe("SqliteWorkflowRepository");
+    } finally {
+      delete process.env.MEDIA_TRACK_SQLITE_PATH;
+      if (prevPg !== undefined) process.env.MEDIA_TRACK_POSTGRES_URL = prevPg;
+      vi.resetModules();
+    }
   });
 });
 

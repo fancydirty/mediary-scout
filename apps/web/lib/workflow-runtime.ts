@@ -36,6 +36,7 @@ import {
   runScheduledType3Monitoring,
   sendPushNotifications,
   createPostgresWorkflowRepositorySync,
+  createSqliteWorkflowRepository,
   migrateLegacyCookieToDefaultAccount,
   resolveStorageBinding,
   provisionCategoryDirs,
@@ -111,7 +112,14 @@ export function postgresConnectionString(): string {
 
 export function getWorkflowRepository(): WorkflowRepository {
   if (!repository) {
-    repository = createPostgresWorkflowRepositorySync({ connectionString: postgresConnectionString() });
+    // Desktop build: a MEDIA_TRACK_SQLITE_PATH selects the bundled SQLite repo so
+    // the app runs with no Postgres. Checked BEFORE postgresConnectionString(),
+    // which throws when MEDIA_TRACK_POSTGRES_URL is unset. Container/prod is
+    // unchanged: without the SQLite path, it still resolves the Postgres repo.
+    const sqlitePath = process.env.MEDIA_TRACK_SQLITE_PATH?.trim();
+    repository = sqlitePath
+      ? createSqliteWorkflowRepository({ path: sqlitePath })
+      : createPostgresWorkflowRepositorySync({ connectionString: postgresConnectionString() });
   }
   return repository;
 }

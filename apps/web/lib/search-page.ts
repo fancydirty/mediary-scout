@@ -19,6 +19,9 @@ import {
 
 let demoSearchCache: InMemoryMediaSearchCache | null = null;
 let durableSearchCache: PostgresMediaSearchCache | null = null;
+// Desktop (SQLite) build: no Postgres, so the durable cache degrades to in-memory
+// (a lost cache on restart is fine — a 2nd SQLite schema isn't worth it).
+let sqliteSearchCache: InMemoryMediaSearchCache | null = null;
 
 export async function getSearchView(query: string, storageId?: string): Promise<SearchPageView> {
   const repository = getWorkflowRepository();
@@ -39,6 +42,11 @@ function getSearchCache() {
   // Live TMDB searches are cached durably in SQLite (6h TTL) so casual
   // browsing never becomes an API storm; the demo provider stays in-memory.
   if (process.env.MEDIA_TRACK_SEARCH_PROVIDER === "tmdb") {
+    // Desktop (SQLite) build has no Postgres — calling postgresConnectionString()
+    // would throw, so degrade the durable cache to in-memory instead.
+    if (process.env.MEDIA_TRACK_SQLITE_PATH?.trim()) {
+      return (sqliteSearchCache ??= new InMemoryMediaSearchCache());
+    }
     durableSearchCache ??= new PostgresMediaSearchCache({ connectionString: postgresConnectionString() });
     return durableSearchCache;
   }

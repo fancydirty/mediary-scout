@@ -18,7 +18,7 @@ import {
   type LibraryWallStateValue,
   type TitleAggregateState,
 } from "./title-aggregate";
-import { PostgresMediaSearchCache } from "./tmdb-cache";
+import { InMemoryJsonCache, PostgresMediaSearchCache, type DurableJsonCache } from "./tmdb-cache";
 import {
   ensureDemoSeeded,
   getAccountScopedSettings,
@@ -90,11 +90,18 @@ const SERIES_TARGET_TTL_MS = 6 * 60 * 60 * 1000;
 const seriesTargetCache = new Map<number, { value: PreparedSeriesTarget; expiresAt: number }>();
 // L2: durable Postgres cache, so the season list + artwork survive restarts and
 // the page renders from the DB instead of re-hitting TMDB on every cold load.
-let durableTargetCache: PostgresMediaSearchCache | null = null;
-function getDurableTargetCache(): PostgresMediaSearchCache {
-  return (durableTargetCache ??= new PostgresMediaSearchCache({
-    connectionString: postgresConnectionString(),
-  }));
+let durableTargetCache: DurableJsonCache | null = null;
+function getDurableTargetCache(): DurableJsonCache {
+  if (durableTargetCache) {
+    return durableTargetCache;
+  }
+  // Desktop (SQLite) build has no Postgres — calling postgresConnectionString()
+  // would throw, so the durable L2 degrades to an in-memory JSON cache (a lost
+  // cache on restart is fine; L1 already resets per process).
+  durableTargetCache = process.env.MEDIA_TRACK_SQLITE_PATH?.trim()
+    ? new InMemoryJsonCache()
+    : new PostgresMediaSearchCache({ connectionString: postgresConnectionString() });
+  return durableTargetCache;
 }
 
 /**
