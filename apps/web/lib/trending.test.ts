@@ -13,6 +13,11 @@ describe("trending feed contract (must match workers/tmdb-proxy TRENDING_FEEDS)"
     expect(sortedQuery(TRENDING_KINDS.movie.query)).toBe("language=zh-CN");
   });
 
+  it("tv feed = trending/tv/week?language=zh-CN", () => {
+    expect(TRENDING_KINDS.tv.path).toBe("trending/tv/week");
+    expect(sortedQuery(TRENDING_KINDS.tv.query)).toBe("language=zh-CN");
+  });
+
   it("anime feed carries the adult filter + vote floor (mainstream anime only)", () => {
     expect(TRENDING_KINDS.anime.path).toBe("discover/tv");
     expect(sortedQuery(TRENDING_KINDS.anime.query)).toBe(
