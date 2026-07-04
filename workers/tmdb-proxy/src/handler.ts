@@ -24,24 +24,37 @@ function cacheKeyFor(request: Request): string {
 
 const TRENDING_TTL_SECONDS = 25 * 60 * 60; // > 24h 刷新间隔,断刷时兜底一小时
 
-/** The three discovery feeds the search page shows, aligned to the app's
- *  电影/剧集/动漫 library types. Single source of truth: the Cron refresh writes
- *  these and the frontend reads the SAME path+query, so cacheKeyFor matches. */
-export const TRENDING_FEEDS = [
-  "trending/movie/week?language=zh-CN",
-  "trending/tv/week?language=zh-CN",
-  // 动漫:日语动画按热度排。include_adult=false + vote_count.gte=200 是 NECESSARY,
-  // 不是可选 —— 裸 popularity.desc 会把大量成人/里番动画顶上来(其 popularity 被
-  // 刷高、adult 标记不可靠);vote_count 门槛把它们挡掉,只留主流(咒术/死神/JOJO)。
-  // 必须与 apps/web/lib/trending.ts TRENDING_KINDS.anime.query 逐字一致(cacheKey 命中)。
-  "discover/tv?include_adult=false&language=zh-CN&sort_by=popularity.desc&vote_count.gte=200&with_genres=16&with_original_language=ja",
-];
+/** Last-calendar-year floor (rolls yearly): the anime feed shows RECENT seasons,
+ *  not TMDB's all-time-popularity classics (全职猎人1999/死神2004…). MUST match
+ *  apps/web/lib/trending.ts animeFirstAirDateFloor. */
+export function animeFirstAirDateFloor(now: Date = new Date()): string {
+  return `${now.getUTCFullYear() - 1}-01-01`;
+}
 
-/** The cacheKeys of the daily-cadence feeds. A reactive MISS on one of these
- *  (cold KV / delayed Cron) must cache with the daily TTL — otherwise a feed that
- *  fell out of KV re-hits TMDB every hour (ttlForPath gives non-movie paths 1h).
- *  Feed-specific: an ordinary discover/tv call keeps its normal short TTL. */
-const TRENDING_FEED_KEYS = new Set(TRENDING_FEEDS.map((feed) => cacheKeyFor(new Request(`https://proxy/${feed}`))));
+/** The three discovery feeds the search page shows, aligned to 电影/剧集/动漫.
+ *  Movie/TV are TMDB weekly trending. Anime has no "trending" endpoint, so it's
+ *  discover/tv (日语动画) with a ROLLING first_air_date.gte (recent seasons only —
+ *  bare popularity.desc surfaces decade-old classics) + vote_count.gte=50 +
+ *  include_adult=false (mainstream, drops 里番/borderline). The Cron warms these
+ *  and the frontend reads the SAME feed — MUST stay byte-compatible with
+ *  apps/web/lib/trending.ts trendingFeedQuery for the same `now` (cacheKeyFor
+ *  sorts, so the param SET must match). */
+export function getTrendingFeeds(now: Date = new Date()): string[] {
+  const floor = animeFirstAirDateFloor(now);
+  return [
+    "trending/movie/week?language=zh-CN",
+    "trending/tv/week?language=zh-CN",
+    `discover/tv?first_air_date.gte=${floor}&include_adult=false&language=zh-CN&sort_by=popularity.desc&vote_count.gte=50&with_genres=16&with_original_language=ja`,
+  ];
+}
+
+/** Is this request one of the daily-cadence feeds? A reactive MISS on one must
+ *  cache with the daily TTL (else a feed that fell out of KV re-hits TMDB every
+ *  hour — ttlForPath gives non-movie paths 1h). Feed-specific: an ordinary
+ *  discover/tv call keeps its short TTL. Computed per-call (feeds roll by date). */
+function isTrendingFeedRequest(key: string, now: Date = new Date()): boolean {
+  return getTrendingFeeds(now).some((feed) => cacheKeyFor(new Request(`https://proxy/${feed}`)) === key);
+}
 
 export interface KvLike {
   get(key: string): Promise<string | null>;
@@ -96,7 +109,7 @@ export async function handleTmdbProxy(deps: HandleTmdbProxyDeps): Promise<Respon
   if (!originResponse.ok) {
     return new Response(body, { status: originResponse.status, headers: jsonHeaders("MISS") });
   }
-  const ttl = TRENDING_FEED_KEYS.has(key) ? TRENDING_TTL_SECONDS : ttlForPath(path);
+  const ttl = isTrendingFeedRequest(key) ? TRENDING_TTL_SECONDS : ttlForPath(path);
   await deps.kv.put(key, body, { expirationTtl: ttl });
   return new Response(body, { status: 200, headers: jsonHeaders("MISS") });
 }
@@ -114,7 +127,7 @@ export interface RunScheduledRefreshDeps {
  *  (if any) lives on under its TTL, and one bad feed never aborts the others. */
 export async function runScheduledRefresh(deps: RunScheduledRefreshDeps): Promise<void> {
   const originFetch = deps.originFetch ?? fetch;
-  for (const feed of TRENDING_FEEDS) {
+  for (const feed of getTrendingFeeds()) {
     const key = cacheKeyFor(new Request(`https://proxy/${feed}`));
     try {
       const originResponse = await originFetch(`${TMDB_ORIGIN}/${key}`, {

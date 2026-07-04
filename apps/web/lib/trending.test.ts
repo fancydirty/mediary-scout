@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mapTrendingResults, TRENDING_KINDS } from "./trending";
+import { animeFirstAirDateFloor, mapTrendingResults, TRENDING_KINDS, trendingFeedQuery } from "./trending";
 
 describe("trending feed contract (must match workers/tmdb-proxy TRENDING_FEEDS)", () => {
   // The Worker Cron warms KV under cacheKeyFor(path + sorted query). The frontend
@@ -18,11 +18,23 @@ describe("trending feed contract (must match workers/tmdb-proxy TRENDING_FEEDS)"
     expect(sortedQuery(TRENDING_KINDS.tv.query)).toBe("language=zh-CN");
   });
 
-  it("anime feed carries the adult filter + vote floor (mainstream anime only)", () => {
+  it("anime feed = recent (first_air_date rolls to <year-1>-01-01) + mainstream (vote_count.gte=50) + no adult", () => {
     expect(TRENDING_KINDS.anime.path).toBe("discover/tv");
-    expect(sortedQuery(TRENDING_KINDS.anime.query)).toBe(
-      "include_adult=false&language=zh-CN&sort_by=popularity.desc&vote_count.gte=200&with_genres=16&with_original_language=ja",
+    const now = new Date("2026-07-04T00:00:00Z");
+    expect(sortedQuery(trendingFeedQuery("anime", now))).toBe(
+      "first_air_date.gte=2025-01-01&include_adult=false&language=zh-CN&sort_by=popularity.desc&vote_count.gte=50&with_genres=16&with_original_language=ja",
     );
+  });
+
+  it("movie/tv feed queries carry no dynamic date (unchanged)", () => {
+    const now = new Date("2026-07-04T00:00:00Z");
+    expect(sortedQuery(trendingFeedQuery("movie", now))).toBe("language=zh-CN");
+    expect(sortedQuery(trendingFeedQuery("tv", now))).toBe("language=zh-CN");
+  });
+
+  it("anime first-air-date floor rolls with the year (last calendar year onward)", () => {
+    expect(animeFirstAirDateFloor(new Date("2026-07-04T00:00:00Z"))).toBe("2025-01-01");
+    expect(animeFirstAirDateFloor(new Date("2027-01-01T00:00:00Z"))).toBe("2026-01-01");
   });
 });
 

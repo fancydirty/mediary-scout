@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { handleTmdbProxy, runScheduledRefresh, TRENDING_FEEDS, type KvLike } from "./handler";
+import { getTrendingFeeds, handleTmdbProxy, runScheduledRefresh, type KvLike } from "./handler";
 
 function fakeKv(initial: Record<string, string> = {}): KvLike & { puts: Array<{ key: string; ttl: number | undefined }> } {
   const store = new Map(Object.entries(initial));
@@ -125,6 +125,20 @@ describe("handleTmdbProxy — KV cache", () => {
 });
 
 describe("trending discovery", () => {
+  it("anime feed = recent (first_air_date rolls to <year-1>-01-01) + vote_count.gte=50, matching the frontend", () => {
+    const now = new Date("2026-07-04T00:00:00Z");
+    const feeds = getTrendingFeeds(now);
+    expect(feeds[0]).toBe("trending/movie/week?language=zh-CN");
+    expect(feeds[1]).toBe("trending/tv/week?language=zh-CN");
+    const animeParams = new URL(`https://x/${feeds[2]}`).searchParams;
+    expect(animeParams.get("first_air_date.gte")).toBe("2025-01-01");
+    expect(animeParams.get("vote_count.gte")).toBe("50");
+    expect(animeParams.get("include_adult")).toBe("false");
+    expect(animeParams.get("with_original_language")).toBe("ja");
+    expect(animeParams.get("with_genres")).toBe("16");
+    expect(animeParams.get("sort_by")).toBe("popularity.desc");
+  });
+
   it("allows the trending/ prefix (was 404)", async () => {
     const res = await handleTmdbProxy({
       request: new Request("https://w.example/trending/movie/week?language=zh-CN"),
@@ -142,7 +156,7 @@ describe("trending discovery", () => {
       token: "k",
       originFetch: async () => new Response(JSON.stringify({ results: [{ id: 1 }] }), { status: 200 }),
     });
-    expect(kv.puts).toHaveLength(TRENDING_FEEDS.length);
+    expect(kv.puts).toHaveLength(getTrendingFeeds().length);
     for (const put of kv.puts) {
       expect(put.ttl).toBe(25 * 60 * 60);
     }
@@ -151,7 +165,7 @@ describe("trending discovery", () => {
     // A subsequent frontend request for the same feed must serve the warmed KV
     // entry WITHOUT hitting origin — proving the Cron key === proxy key.
     const hit = await handleTmdbProxy({
-      request: new Request(`https://w.example/${TRENDING_FEEDS[0]}`),
+      request: new Request(`https://w.example/${getTrendingFeeds()[0]}`),
       kv,
       token: "k",
       originFetch: async () => new Response("SHOULD_NOT_FETCH", { status: 500 }),
@@ -165,7 +179,7 @@ describe("trending discovery", () => {
     // It must still get the daily-cadence TTL, else the proxy re-hits TMDB hourly.
     const kv = fakeKv();
     await handleTmdbProxy({
-      request: new Request(`https://w.example/${TRENDING_FEEDS[1]}`), // trending/tv/week
+      request: new Request(`https://w.example/${getTrendingFeeds()[1]}`), // trending/tv/week
       kv,
       token: "k",
       originFetch: async () => new Response(JSON.stringify({ results: [] }), { status: 200 }),

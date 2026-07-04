@@ -23,14 +23,15 @@ export const TRENDING_KINDS: Record<
   anime: {
     label: "热门动漫",
     path: "discover/tv",
-    // include_adult=false + vote_count.gte=200 是 NECESSARY:裸 popularity.desc 会
-    // 把成人/里番动画顶上首屏(popularity 被刷高、adult 标记不可靠),vote 门槛只留
-    // 主流。必须与 workers/tmdb-proxy TRENDING_FEEDS 的 anime feed 逐字一致(cacheKey)。
+    // 静态参数;动态 first_air_date.gte 由 trendingFeedQuery 注入(见下)。
+    // include_adult=false + vote_count.gte=50 挡成人/里番,只留主流;first_air_date
+    // 门槛保证「近期」而非史上最热老番。必须与 workers/tmdb-proxy getTrendingFeeds
+    // 的 anime feed 同 `now` 逐字一致(cacheKey 命中)。
     query: {
       include_adult: "false",
       language: "zh-CN",
       sort_by: "popularity.desc",
-      "vote_count.gte": "200",
+      "vote_count.gte": "50",
       with_genres: "16",
       with_original_language: "ja",
     },
@@ -39,6 +40,24 @@ export const TRENDING_KINDS: Record<
 };
 
 export const TRENDING_KIND_ORDER: TrendingKind[] = ["movie", "tv", "anime"];
+
+/** Last-calendar-year floor (rolls yearly): the anime feed shows RECENT seasons,
+ *  not TMDB's all-time-popularity classics (全职猎人1999/死神2004…). MUST match
+ *  workers/tmdb-proxy handler.ts animeFirstAirDateFloor. */
+export function animeFirstAirDateFloor(now: Date = new Date()): string {
+  return `${now.getUTCFullYear() - 1}-01-01`;
+}
+
+/** The query for a feed, with the rolling first_air_date.gte injected for anime.
+ *  MUST match workers/tmdb-proxy getTrendingFeeds for the same `now` — cacheKeyFor
+ *  sorts params, so the param SET (not order) is the contract. */
+export function trendingFeedQuery(kind: TrendingKind, now: Date = new Date()): Record<string, string> {
+  const query = { ...TRENDING_KINDS[kind].query };
+  if (kind === "anime") {
+    query["first_air_date.gte"] = animeFirstAirDateFloor(now);
+  }
+  return query;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -79,7 +98,7 @@ export function mapTrendingResults(raw: unknown, kind: TrendingKind): TrendingCa
 export async function getTrending(kind: TrendingKind): Promise<TrendingCard[]> {
   try {
     const accesses = await getTmdbAccesses(getAccountScopedSettings(await getCurrentAccountId()));
-    const raw = await fetchTmdbList(accesses, TRENDING_KINDS[kind].path, TRENDING_KINDS[kind].query);
+    const raw = await fetchTmdbList(accesses, TRENDING_KINDS[kind].path, trendingFeedQuery(kind));
     return mapTrendingResults(raw, kind).slice(0, 12);
   } catch {
     return [];
