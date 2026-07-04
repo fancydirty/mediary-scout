@@ -286,6 +286,48 @@ describe("getWorkflowRepository (desktop SQLite selection)", () => {
   });
 });
 
+describe("runScheduledType3 (ignoreTimeGate — desktop first-open-of-the-day patrol)", () => {
+  // The desktop app must run the daily sweep on the first tick of a new day
+  // regardless of wall-clock time (ignoreTimeGate), while STILL running at most
+  // once per Beijing day. Container/prod keep the wall-clock gate (flag unset).
+  // Harness: an in-memory SQLite repo (real getSetting/setSetting so the day-claim
+  // is exercised for real) + a stubbed runScheduledType3Monitoring so no real
+  // drive/agent/model is needed. daily_sweep_time is pinned to "23:59" so the
+  // wall-clock gate WOULD fire regardless of when this test runs.
+  it("runs before the scheduled time but still respects once-per-day", async () => {
+    const prevPg = process.env.MEDIA_TRACK_POSTGRES_URL;
+    process.env.MEDIA_TRACK_SQLITE_PATH = ":memory:";
+    delete process.env.MEDIA_TRACK_POSTGRES_URL;
+    vi.resetModules();
+    const monitor = vi.fn(async () => []);
+    vi.doMock("@media-track/workflow", async () => {
+      const actual = await vi.importActual<typeof import("@media-track/workflow")>("@media-track/workflow");
+      return { ...actual, runScheduledType3Monitoring: monitor };
+    });
+    try {
+      const { runScheduledType3, getWorkflowRepository, DAILY_SWEEP_TIME_SETTING_KEY } = await import(
+        "./workflow-runtime"
+      );
+      // Pin the sweep time to the very end of the day so the wall-clock gate WOULD
+      // block a plain call regardless of the actual time this test runs.
+      await getWorkflowRepository().setSetting(DAILY_SWEEP_TIME_SETTING_KEY, "23:59");
+
+      const first = await runScheduledType3({ ignoreTimeGate: true });
+      expect(first.skipped).toBeUndefined(); // ran despite before-time
+      expect(monitor).toHaveBeenCalledTimes(1);
+
+      const second = await runScheduledType3({ ignoreTimeGate: true });
+      expect(second.skipped).toBe("already_swept_today"); // day gate still holds
+      expect(monitor).toHaveBeenCalledTimes(1); // not run a second time today
+    } finally {
+      delete process.env.MEDIA_TRACK_SQLITE_PATH;
+      if (prevPg !== undefined) process.env.MEDIA_TRACK_POSTGRES_URL = prevPg;
+      vi.doUnmock("@media-track/workflow");
+      vi.resetModules();
+    }
+  });
+});
+
 describe("customDirNamesFromEnv (brand-agnostic 自定义媒体库目录名)", () => {
   const env = (m: Record<string, string>) => m as unknown as NodeJS.ProcessEnv;
 

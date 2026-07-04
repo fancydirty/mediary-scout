@@ -82,12 +82,21 @@ export interface WorkerRuntime {
   isDriveConfigured?: () => Promise<boolean>;
 }
 
-async function defaultRuntime(): Promise<WorkerRuntime> {
+/**
+ * The runtime the worker drives in production. Exported so a test can assert the
+ * daily-sweep wiring (notably that MEDIA_TRACK_PATROL_IGNORE_TIME_GATE is threaded
+ * through). MEDIA_TRACK_PATROL_IGNORE_TIME_GATE=1 (the desktop build) makes the
+ * sweep run on the first tick of a new Beijing day regardless of the configured
+ * wall-clock time; unset (container/prod) keeps today's behavior — the wall-clock
+ * gate still applies.
+ */
+export async function defaultRuntime(): Promise<WorkerRuntime> {
   const { runNextQueuedWorkflow, runScheduledType3, recoverOrphanedRuns, workerHasConfiguredDrive } =
     await import("./workflow-runtime");
   return {
     runNext: () => runNextQueuedWorkflow(),
-    runScheduled: () => runScheduledType3(),
+    runScheduled: () =>
+      runScheduledType3({ ignoreTimeGate: process.env.MEDIA_TRACK_PATROL_IGNORE_TIME_GATE === "1" }),
     recover: () => recoverOrphanedRuns(),
     isDriveConfigured: () => workerHasConfiguredDrive(),
   };

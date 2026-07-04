@@ -147,3 +147,48 @@ describe("startBackgroundWorker — the in-process worker loop (auto-drive)", ()
     expect(runtime.runNext.mock.calls.length).toBeGreaterThan(afterFirst);
   });
 });
+
+describe("defaultRuntime — MEDIA_TRACK_PATROL_IGNORE_TIME_GATE wiring", () => {
+  // The desktop build sets MEDIA_TRACK_PATROL_IGNORE_TIME_GATE=1 so the daily
+  // sweep runs on the first tick of a new day regardless of the wall-clock time.
+  // Container/prod leave it unset → the wall-clock gate still applies (identical
+  // to today). Assert the flag is threaded verbatim into runScheduledType3.
+  const prev = process.env.MEDIA_TRACK_PATROL_IGNORE_TIME_GATE;
+
+  afterEach(() => {
+    if (prev === undefined) {
+      delete process.env.MEDIA_TRACK_PATROL_IGNORE_TIME_GATE;
+    } else {
+      process.env.MEDIA_TRACK_PATROL_IGNORE_TIME_GATE = prev;
+    }
+    vi.doUnmock("./workflow-runtime");
+    vi.resetModules();
+  });
+
+  async function runScheduledSpy(): Promise<ReturnType<typeof vi.fn>> {
+    const spy = vi.fn(async () => ({ outcomes: [] }));
+    vi.resetModules();
+    vi.doMock("./workflow-runtime", () => ({
+      runNextQueuedWorkflow: vi.fn(async () => ({ status: "idle" })),
+      runScheduledType3: spy,
+      recoverOrphanedRuns: vi.fn(async () => 0),
+      workerHasConfiguredDrive: vi.fn(async () => true),
+    }));
+    const { defaultRuntime } = await import("./background-worker");
+    const runtime = await defaultRuntime();
+    await runtime.runScheduled();
+    return spy;
+  }
+
+  it("flag=1 → runScheduledType3 called with { ignoreTimeGate: true }", async () => {
+    process.env.MEDIA_TRACK_PATROL_IGNORE_TIME_GATE = "1";
+    const spy = await runScheduledSpy();
+    expect(spy).toHaveBeenCalledWith({ ignoreTimeGate: true });
+  });
+
+  it("flag unset → { ignoreTimeGate: false } (container behavior unchanged)", async () => {
+    delete process.env.MEDIA_TRACK_PATROL_IGNORE_TIME_GATE;
+    const spy = await runScheduledSpy();
+    expect(spy).toHaveBeenCalledWith({ ignoreTimeGate: false });
+  });
+});
