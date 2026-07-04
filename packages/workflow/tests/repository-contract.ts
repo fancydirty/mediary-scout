@@ -400,5 +400,144 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
         expect(active.map((snapshot) => snapshot.workflowRun.id)).toEqual(["act_new", "act_old"]);
       });
     });
+
+    describe("tracked-season + episode queries", () => {
+      // A fully self-contained snapshot for a UNIQUE (title, season, drive) tuple.
+      // Re-ids the title/season/run so several coexist; children are dropped/re-parented
+      // so validateWorkflowRunSnapshot accepts the re-ided run. Episodes are carried on
+      // the fixture's default (S01E01 obtained + S01E02) unless overridden.
+      const trackedSnapshot = (over: {
+        key: string;
+        titleName?: string;
+        seasonNumber?: number;
+        accountId?: string;
+        connectedStorageId?: string;
+        startedAt?: string;
+        runId?: string;
+      }) => {
+        const base = workflowPersistenceFixture();
+        const titleId = `title_${over.key}`;
+        const seasonId = `season_${over.key}`;
+        return {
+          accountId: over.accountId ?? "acct_default",
+          connectedStorageId: over.connectedStorageId ?? "cs_default",
+          title: { ...base.title, id: titleId, title: over.titleName ?? base.title.title },
+          season: {
+            ...base.season,
+            id: seasonId,
+            mediaTitleId: titleId,
+            seasonNumber: over.seasonNumber ?? base.season.seasonNumber,
+          },
+          workflowRun: {
+            ...base.workflowRun,
+            id: over.runId ?? `run_${over.key}`,
+            trackedSeasonId: seasonId,
+            startedAt: over.startedAt ?? base.workflowRun.startedAt,
+          },
+          episodes: base.episodes.map((episode) => ({ ...episode, trackedSeasonId: seasonId })),
+          resourceSnapshots: [],
+          decisions: [],
+          transferAttempts: [],
+          notifications: [],
+        };
+      };
+
+      it("getTrackedSeasonState returns the LATEST run's state for the season", async () => {
+        const repo = await fresh();
+        const seasonKey = "latest";
+        // Two runs for the SAME (season, drive), different startedAt.
+        await repo.saveWorkflowRunSnapshot(
+          trackedSnapshot({ key: seasonKey, runId: "run_old", startedAt: "2026-06-11T00:00:00.000Z" }),
+        );
+        await repo.saveWorkflowRunSnapshot(
+          trackedSnapshot({ key: seasonKey, runId: "run_new", startedAt: "2026-06-12T00:00:00.000Z" }),
+        );
+        const state = await repo.getTrackedSeasonState(`season_${seasonKey}`, {
+          accountId: "acct_default",
+          connectedStorageId: "cs_default",
+        });
+        expect(state).not.toBeNull();
+        expect(state?.season.id).toBe(`season_${seasonKey}`);
+        expect(state?.connectedStorageId).toBe("cs_default");
+        // Episodes come from the season+drive bucket: S01E01 obtained + S01E02.
+        expect(state?.episodes.map((episode) => episode.episodeCode)).toEqual(["S01E01", "S01E02"]);
+        expect(state?.episodes.find((episode) => episode.episodeCode === "S01E01")?.obtained).toBe(true);
+        // Unknown season → null.
+        expect(
+          await repo.getTrackedSeasonState("season_missing", {
+            accountId: "acct_default",
+            connectedStorageId: "cs_default",
+          }),
+        ).toBeNull();
+      });
+
+      it("listTrackedSeasonStates returns seasons ordered by compareTrackedSeasonStates (title, season, id)", async () => {
+        const repo = await fresh();
+        await repo.saveWorkflowRunSnapshot(
+          trackedSnapshot({ key: "zulu", titleName: "Zulu", connectedStorageId: "cs_default" }),
+        );
+        await repo.saveWorkflowRunSnapshot(
+          trackedSnapshot({ key: "alpha", titleName: "Alpha", connectedStorageId: "cs_default" }),
+        );
+        const states = await repo.listTrackedSeasonStates({
+          accountId: "acct_default",
+          connectedStorageId: "cs_default",
+        });
+        expect(states.map((state) => state.title.title)).toEqual(["Alpha", "Zulu"]);
+      });
+
+      it("listTrackedSeasonStates isolates by drive scope", async () => {
+        const repo = await fresh();
+        await repo.saveWorkflowRunSnapshot(
+          trackedSnapshot({ key: "onA", connectedStorageId: "cs_A" }),
+        );
+        const onB = await repo.listTrackedSeasonStates({
+          accountId: "acct_default",
+          connectedStorageId: "cs_B",
+        });
+        expect(onB).toHaveLength(0);
+        const onA = await repo.listTrackedSeasonStates({
+          accountId: "acct_default",
+          connectedStorageId: "cs_A",
+        });
+        expect(onA.map((state) => state.season.id)).toEqual(["season_onA"]);
+      });
+
+      it("listAllTrackedSeasonStates returns seasons across accounts, each with its own accountId", async () => {
+        const repo = await fresh();
+        await repo.saveWorkflowRunSnapshot(
+          trackedSnapshot({ key: "acctA", titleName: "Alpha", accountId: "acct_A", connectedStorageId: "cs_A" }),
+        );
+        await repo.saveWorkflowRunSnapshot(
+          trackedSnapshot({ key: "acctB", titleName: "Bravo", accountId: "acct_B", connectedStorageId: "cs_B" }),
+        );
+        const all = await repo.listAllTrackedSeasonStates();
+        const bySeason = new Map(all.map((state) => [state.season.id, state]));
+        expect(bySeason.get("season_acctA")?.accountId).toBe("acct_A");
+        expect(bySeason.get("season_acctB")?.accountId).toBe("acct_B");
+        // Ordered by title.
+        expect(all.map((state) => state.title.title)).toEqual(["Alpha", "Bravo"]);
+      });
+
+      it("listEpisodeStates returns the drive's episodes for a concrete scope", async () => {
+        const repo = await fresh();
+        await repo.saveWorkflowRunSnapshot(
+          trackedSnapshot({ key: "eps", connectedStorageId: "cs_default" }),
+        );
+        const episodes = await repo.listEpisodeStates("season_eps", {
+          accountId: "acct_default",
+          connectedStorageId: "cs_default",
+        });
+        expect(episodes.map((episode) => episode.episodeCode)).toEqual(["S01E01", "S01E02"]);
+        expect(episodes.find((episode) => episode.episodeCode === "S01E01")?.obtained).toBe(true);
+        // A different drive has no episodes for this season.
+        expect(
+          await repo.listEpisodeStates("season_eps", {
+            accountId: "acct_default",
+            connectedStorageId: "cs_other",
+          }),
+        ).toHaveLength(0);
+      });
+    });
   });
 }

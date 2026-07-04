@@ -21,11 +21,12 @@ import type {
   Session,
   UpsertConnectedStorageInput,
 } from "./account-credentials.js";
-import { normalizeScope, type ScopeArg, type WorkflowScope } from "./workflow-scope.js";
+import { normalizeScope, scopeMatches, type ScopeArg, type WorkflowScope } from "./workflow-scope.js";
 import {
   claimableQueuedRuns,
   claimWorkflowRun,
   cloneWorkflowValue,
+  compareTrackedSeasonStates,
   DuplicateUsernameError,
   expireWorkflowRun,
   isActiveWorkflowStatus,
@@ -651,22 +652,130 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
   }
 
   async getTrackedSeasonState(
-    _trackedSeasonId: string,
-    _scope?: ScopeArg,
+    trackedSeasonId: string,
+    scopeArg?: ScopeArg,
   ): Promise<TrackedSeasonState | null> {
-    throw new Error("not implemented");
+    const scope = normalizeScope(scopeArg);
+    // Mirror the oracle: the LATEST run (by startedAt desc) for this season within
+    // scope defines the state; episodes come from that (season, drive) bucket.
+    const latest = this.scopedRunRows()
+      .filter(
+        (row) =>
+          row.trackedSeasonId === trackedSeasonId &&
+          scopeMatches(scope, row.accountId, row.connectedStorageId),
+      )
+      .sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
+    if (!latest) {
+      return null;
+    }
+    return this.trackedSeasonStateFromRun(latest);
   }
 
-  async listTrackedSeasonStates(_scope?: ScopeArg): Promise<TrackedSeasonState[]> {
-    throw new Error("not implemented");
+  async listTrackedSeasonStates(scopeArg?: ScopeArg): Promise<TrackedSeasonState[]> {
+    const scope = normalizeScope(scopeArg);
+    return this.latestRunPerSeason(
+      this.scopedRunRows().filter((row) => scopeMatches(scope, row.accountId, row.connectedStorageId)),
+    )
+      .map((row) => this.trackedSeasonStateFromRun(row))
+      .sort(compareTrackedSeasonStates);
   }
 
   async listAllTrackedSeasonStates(): Promise<TrackedSeasonState[]> {
-    throw new Error("not implemented");
+    // Cross-account (no scope filter): each state carries its own accountId/storage.
+    return this.latestRunPerSeason(this.scopedRunRows())
+      .map((row) => this.trackedSeasonStateFromRun(row))
+      .sort(compareTrackedSeasonStates);
   }
 
-  async listEpisodeStates(_trackedSeasonId: string, _scope?: ScopeArg): Promise<EpisodeState[]> {
-    throw new Error("not implemented");
+  async listEpisodeStates(trackedSeasonId: string, scopeArg?: ScopeArg): Promise<EpisodeState[]> {
+    // A concrete-drive scope reads that drive's bucket; an account-only scope (null
+    // storage) merges episodes across the account's drives that have this season
+    // (legacy "match all drives" semantics — mirror the InMemory oracle exactly).
+    const scope = normalizeScope(scopeArg);
+    if (scope.connectedStorageId != null) {
+      return cloneWorkflowValue(this.selectEpisodeStates(trackedSeasonId, scope.connectedStorageId));
+    }
+    const storages = new Set<string | null>();
+    for (const row of this.scopedRunRows()) {
+      if (
+        row.trackedSeasonId === trackedSeasonId &&
+        scopeMatches(scope, row.accountId, row.connectedStorageId)
+      ) {
+        storages.add(row.connectedStorageId);
+      }
+    }
+    const out: EpisodeState[] = [];
+    for (const storage of storages) {
+      out.push(...this.selectEpisodeStates(trackedSeasonId, storage ?? UNSCOPED_STORAGE));
+    }
+    return cloneWorkflowValue(out);
+  }
+
+  /** All workflow_runs as {trackedSeasonId, accountId, connectedStorageId (collapsed
+   *  UNSCOPED→null), startedAt, id} — the raw material the tracked-season queries dedup. */
+  private scopedRunRows(): Array<{
+    id: string;
+    trackedSeasonId: string;
+    accountId: string;
+    connectedStorageId: string | null;
+    startedAt: string;
+  }> {
+    const rows = this.db
+      .prepare("SELECT payload, account_id, connected_storage_id FROM workflow_runs")
+      .all() as Array<{ payload: string; account_id: string; connected_storage_id: string | null }>;
+    return rows.map((row) => {
+      const run = JSON.parse(row.payload) as WorkflowRun;
+      const rawStorage = row.connected_storage_id ?? null;
+      return {
+        id: run.id,
+        trackedSeasonId: run.trackedSeasonId,
+        accountId: row.account_id ?? DEFAULT_ACCOUNT_ID,
+        connectedStorageId: rawStorage === UNSCOPED_STORAGE ? null : rawStorage,
+        startedAt: run.startedAt,
+      };
+    });
+  }
+
+  /** Keep only the latest (startedAt desc) run row per season id. */
+  private latestRunPerSeason<T extends { trackedSeasonId: string; startedAt: string }>(rows: T[]): T[] {
+    const latest = new Map<string, T>();
+    for (const row of [...rows].sort((a, b) => b.startedAt.localeCompare(a.startedAt))) {
+      if (!latest.has(row.trackedSeasonId)) {
+        latest.set(row.trackedSeasonId, row);
+      }
+    }
+    return Array.from(latest.values());
+  }
+
+  /** Build a TrackedSeasonState from a run row: load the run's tracked_season (scoped
+   *  to its own drive) + global title, and the season+drive episode bucket. */
+  private trackedSeasonStateFromRun(row: {
+    trackedSeasonId: string;
+    accountId: string;
+    connectedStorageId: string | null;
+  }): TrackedSeasonState {
+    const storageValue = row.connectedStorageId ?? UNSCOPED_STORAGE;
+    const seasonRow = this.db
+      .prepare("SELECT payload FROM tracked_seasons WHERE id = ? AND connected_storage_id = ?")
+      .get(row.trackedSeasonId, storageValue) as { payload: string } | undefined;
+    if (!seasonRow) {
+      throw new Error(`Missing tracked season ${row.trackedSeasonId} on storage ${storageValue}`);
+    }
+    const season = JSON.parse(seasonRow.payload) as TrackedSeason;
+    const titleRow = this.db
+      .prepare("SELECT payload FROM media_titles WHERE id = ?")
+      .get(season.mediaTitleId) as { payload: string } | undefined;
+    if (!titleRow) {
+      throw new Error(`Missing media title ${season.mediaTitleId} for tracked season ${season.id}`);
+    }
+    const title = JSON.parse(titleRow.payload) as MediaTitle;
+    return cloneWorkflowValue({
+      accountId: row.accountId,
+      connectedStorageId: row.connectedStorageId,
+      title,
+      season,
+      episodes: this.selectEpisodeStates(season.id, storageValue),
+    });
   }
 
   async listNotifications(_input?: {
