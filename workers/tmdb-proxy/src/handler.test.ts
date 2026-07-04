@@ -160,6 +160,30 @@ describe("trending discovery", () => {
     expect(hit.headers.get("X-Cache")).toBe("HIT");
   });
 
+  it("a reactive MISS on a trending feed caches with the 25h TTL, not the 1h short TTL", async () => {
+    // Cold KV (cron delayed / right after deploy): the feed is fetched reactively.
+    // It must still get the daily-cadence TTL, else the proxy re-hits TMDB hourly.
+    const kv = fakeKv();
+    await handleTmdbProxy({
+      request: new Request(`https://w.example/${TRENDING_FEEDS[1]}`), // trending/tv/week
+      kv,
+      token: "k",
+      originFetch: async () => new Response(JSON.stringify({ results: [] }), { status: 200 }),
+    });
+    expect(kv.puts[0]?.ttl).toBe(25 * 60 * 60);
+
+    // A non-feed discover/tv call keeps its ordinary short TTL (feed-specific, not
+    // a blanket discover override).
+    const other = fakeKv();
+    await handleTmdbProxy({
+      request: new Request("https://w.example/discover/tv?with_genres=99"),
+      kv: other,
+      token: "k",
+      originFetch: async () => new Response("{}", { status: 200 }),
+    });
+    expect(other.puts[0]?.ttl).toBe(60 * 60);
+  });
+
   it("runScheduledRefresh skips a feed whose origin fetch fails (never aborts the rest)", async () => {
     const kv = fakeKv();
     await runScheduledRefresh({
