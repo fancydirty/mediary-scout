@@ -36,9 +36,9 @@ export function animeFirstAirDateFloor(now: Date = new Date()): string {
  *  discover/tv (日语动画) with a ROLLING first_air_date.gte (recent seasons only —
  *  bare popularity.desc surfaces decade-old classics) + vote_count.gte=50 +
  *  include_adult=false (mainstream, drops 里番/borderline). The Cron warms these
- *  and the frontend reads the SAME feed — MUST stay byte-compatible with
- *  apps/web/lib/trending.ts trendingFeedQuery for the same `now` (cacheKeyFor
- *  sorts, so the param SET must match). */
+ *  and the frontend reads the SAME feed — the contract is that the PARAM SET
+ *  (names+values) matches apps/web/lib/trending.ts trendingFeedQuery for the same
+ *  `now`; ORDER does not matter (cacheKeyFor sorts both sides before keying). */
 export function getTrendingFeeds(now: Date = new Date()): string[] {
   const floor = animeFirstAirDateFloor(now);
   return [

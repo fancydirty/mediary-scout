@@ -25,8 +25,8 @@ export const TRENDING_KINDS: Record<
     path: "discover/tv",
     // 静态参数;动态 first_air_date.gte 由 trendingFeedQuery 注入(见下)。
     // include_adult=false + vote_count.gte=50 挡成人/里番,只留主流;first_air_date
-    // 门槛保证「近期」而非史上最热老番。必须与 workers/tmdb-proxy getTrendingFeeds
-    // 的 anime feed 同 `now` 逐字一致(cacheKey 命中)。
+    // 门槛保证「近期」而非史上最热老番。契约=与 workers/tmdb-proxy getTrendingFeeds
+    // 的 anime feed 同 `now` **参数集(名+值)一致**即可,顺序无关(cacheKeyFor 两边都排序)。
     query: {
       include_adult: "false",
       language: "zh-CN",

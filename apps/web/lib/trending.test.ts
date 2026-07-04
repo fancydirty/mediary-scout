@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { animeFirstAirDateFloor, mapTrendingResults, TRENDING_KINDS, trendingFeedQuery } from "./trending";
 
-describe("trending feed contract (must match workers/tmdb-proxy TRENDING_FEEDS)", () => {
+describe("trending feed contract (must match workers/tmdb-proxy getTrendingFeeds)", () => {
   // The Worker Cron warms KV under cacheKeyFor(path + sorted query). The frontend
   // reads the SAME feed. cacheKeyFor sorts params, so what must match is the param
   // SET, captured here as the sorted querystring. If you edit one side, this fails.

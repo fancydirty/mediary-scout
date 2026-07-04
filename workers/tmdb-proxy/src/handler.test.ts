@@ -186,6 +186,18 @@ describe("trending discovery", () => {
     });
     expect(kv.puts[0]?.ttl).toBe(25 * 60 * 60);
 
+    // The DYNAMIC anime feed (first_air_date.gte rolls yearly) must get the same
+    // daily TTL on a reactive MISS — isTrendingFeedRequest recomputes the feeds,
+    // so the rolling date must still be recognized as a trending feed.
+    const animeKv = fakeKv();
+    await handleTmdbProxy({
+      request: new Request(`https://w.example/${getTrendingFeeds()[2]}`), // discover/tv anime
+      kv: animeKv,
+      token: "k",
+      originFetch: async () => new Response(JSON.stringify({ results: [] }), { status: 200 }),
+    });
+    expect(animeKv.puts[0]?.ttl).toBe(25 * 60 * 60);
+
     // A non-feed discover/tv call keeps its ordinary short TTL (feed-specific, not
     // a blanket discover override).
     const other = fakeKv();
