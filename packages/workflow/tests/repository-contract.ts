@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { DuplicateUsernameError, type WorkflowRepository } from "../src/repository.js";
 import type { Account } from "../src/account-credentials.js";
+import { workflowPersistenceFixture } from "./workflow-fixtures.js";
 
 /** A factory that yields a FRESH, empty repository and a teardown. Postgres/SQLite
  *  return async; InMemory is sync — accept both. */
@@ -173,6 +174,72 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
         expect(new Set(soon)).toEqual(new Set(["k_temp", "k_perm"]));
         const later = await repo.listDeadLinkKeys({ now: "2026-07-04T00:00:02.000Z" });
         expect(new Set(later)).toEqual(new Set(["k_perm"]));
+      });
+    });
+
+    describe("snapshot persist + reserve", () => {
+      it("persists a snapshot and reads it back with derived episode summaries", async () => {
+        const repo = await fresh();
+        const snap = workflowPersistenceFixture();
+        await repo.saveWorkflowRunSnapshot(snap);
+        const got = await repo.getWorkflowRunSnapshot(snap.workflowRun.id);
+        expect(got?.workflowRun.id).toBe(snap.workflowRun.id);
+        expect(got?.obtainedEpisodes).toContain("S01E01"); // episode 1 obtained in the fixture
+        expect(got?.obtainedEpisodes).not.toContain("S01E02");
+      });
+
+      // A snapshot whose transfer_attempts / notifications reference the run's id
+      // (validateWorkflowRunSnapshot enforces this). When a test re-ids the run, the
+      // child collections must be cleared or re-parented, exactly as the oracle's own
+      // reserve tests do (repository.test.ts). These helpers keep the run id coherent.
+      const reIded = (id: string, over: Record<string, unknown> = {}) => {
+        const base = workflowPersistenceFixture();
+        return {
+          ...base,
+          workflowRun: { ...base.workflowRun, id, status: "queued" as const, finishedAt: null },
+          resourceSnapshots: [],
+          decisions: [],
+          transferAttempts: [],
+          notifications: [],
+          ...over,
+        };
+      };
+
+      it("reserves once, then reports already_active for the same season+kind+scope", async () => {
+        const repo = await fresh();
+        expect((await repo.reserveWorkflowRun(reIded("run_a"))).status).toBe("reserved");
+        const again = await repo.reserveWorkflowRun(reIded("run_b"));
+        expect(again.status).toBe("already_active");
+      });
+
+      it("blockIfEpisodeStatesExist returns already_has_episode_state when the scoped bucket is non-empty", async () => {
+        const repo = await fresh();
+        // Seed episode states via a TERMINAL (succeeded) run so the active-run check
+        // (which precedes the episode-state check) does not short-circuit to
+        // already_active — mirrors the oracle's own already_has_episode_state test.
+        await repo.saveWorkflowRunSnapshot(workflowPersistenceFixture());
+        const blocked = await repo.reserveWorkflowRun(
+          reIded("run_d", { blockIfEpisodeStatesExist: true }),
+        );
+        expect(blocked.status).toBe("already_has_episode_state");
+      });
+
+      it("does NOT block reserving the same title on a DIFFERENT drive (cross-drive isolation)", async () => {
+        const repo = await fresh();
+        await repo.reserveWorkflowRun(reIded("run_A", { connectedStorageId: "cs_A" }));
+        const onB = await repo.reserveWorkflowRun(
+          reIded("run_B", { connectedStorageId: "cs_B", blockIfEpisodeStatesExist: true }),
+        );
+        expect(onB.status).toBe("reserved"); // cs_B is a different bucket
+      });
+
+      it("re-persist without connectedStorageId preserves the run's original storage", async () => {
+        const repo = await fresh();
+        const snap = reIded("run_e");
+        await repo.saveWorkflowRunSnapshot({ ...snap, connectedStorageId: "cs_keep" });
+        await repo.saveWorkflowRunSnapshot({ ...snap }); // omit connectedStorageId
+        const got = await repo.getWorkflowRunSnapshot("run_e");
+        expect(got?.connectedStorageId).toBe("cs_keep");
       });
     });
   });

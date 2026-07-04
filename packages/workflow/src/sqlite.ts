@@ -1,10 +1,16 @@
 import Database from "better-sqlite3";
-import { DEFAULT_ACCOUNT_ID } from "./domain.js";
+import { DEFAULT_ACCOUNT_ID, episodeNumberFromCode } from "./domain.js";
 import type {
+  AgentDecision,
   AgentStep,
   EpisodeState,
+  MediaTitle,
   NotificationEvent,
+  ResourceSnapshot,
+  TrackedSeason,
+  TransferAttempt,
   WorkflowKind,
+  WorkflowRun,
   WorkflowRunProgress,
 } from "./domain.js";
 import type { DeadLink } from "./acquisition-v2/dead-links.js";
@@ -15,8 +21,17 @@ import type {
   Session,
   UpsertConnectedStorageInput,
 } from "./account-credentials.js";
-import type { ScopeArg, WorkflowScope } from "./workflow-scope.js";
-import { DuplicateUsernameError } from "./repository.js";
+import { normalizeScope, type ScopeArg, type WorkflowScope } from "./workflow-scope.js";
+import {
+  cloneWorkflowValue,
+  DuplicateUsernameError,
+  expireWorkflowRun,
+  isActiveWorkflowStatus,
+  UNSCOPED_STORAGE,
+  validateWorkflowRunSnapshot,
+  withDerivedEpisodeSummaries,
+  workflowSnapshotFromReservation,
+} from "./repository.js";
 import type {
   PersistedWorkflowRunSnapshot,
   PersistWorkflowRunSnapshotInput,
@@ -163,19 +178,333 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     this.db.close();
   }
 
-  async saveWorkflowRunSnapshot(_input: PersistWorkflowRunSnapshotInput): Promise<void> {
-    throw new Error("not implemented");
+  async saveWorkflowRunSnapshot(input: PersistWorkflowRunSnapshotInput): Promise<void> {
+    validateWorkflowRunSnapshot(input);
+    const snapshot = cloneWorkflowValue(input);
+    // better-sqlite3 transactions are synchronous — the whole multi-table write
+    // commits atomically or rolls back on throw.
+    this.db.transaction(() => this.replaceWorkflowRunSnapshot(snapshot))();
   }
 
-  async reserveWorkflowRun(_input: ReserveWorkflowRunInput): Promise<WorkflowRunReservationResult> {
-    throw new Error("not implemented");
+  async reserveWorkflowRun(input: ReserveWorkflowRunInput): Promise<WorkflowRunReservationResult> {
+    const snapshot = cloneWorkflowValue(workflowSnapshotFromReservation(input));
+    validateWorkflowRunSnapshot(snapshot);
+    const accountId = snapshot.accountId ?? DEFAULT_ACCOUNT_ID;
+    const connectedStorageId = snapshot.connectedStorageId ?? UNSCOPED_STORAGE;
+
+    return this.db.transaction((): WorkflowRunReservationResult => {
+      this.expireStaleActiveWorkflowRuns(input);
+
+      if (input.blockIfTitleHasActiveRun === true) {
+        const titleActive = this.selectWorkflowRunsForTitle(
+          snapshot.season.mediaTitleId,
+          accountId,
+          connectedStorageId,
+        )
+          .filter((workflowRun) => isActiveWorkflowStatus(workflowRun.status))
+          .sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
+        if (titleActive) {
+          const activeSnapshot = this.loadSnapshot(titleActive.id);
+          if (!activeSnapshot) {
+            throw new Error(`Missing active workflow run ${titleActive.id}`);
+          }
+          return { status: "already_active", snapshot: activeSnapshot };
+        }
+      }
+
+      const activeRun = this.selectWorkflowRuns(snapshot.season.id, connectedStorageId)
+        .filter(
+          (workflowRun) =>
+            workflowRun.kind === snapshot.workflowRun.kind && isActiveWorkflowStatus(workflowRun.status),
+        )
+        .sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
+      if (activeRun) {
+        const activeSnapshot = this.loadSnapshot(activeRun.id);
+        if (!activeSnapshot) {
+          throw new Error(`Missing active workflow run ${activeRun.id}`);
+        }
+        return { status: "already_active", snapshot: activeSnapshot };
+      }
+
+      const existingEpisodes = this.selectEpisodeStates(snapshot.season.id, connectedStorageId);
+      if (input.blockIfEpisodeStatesExist === true && existingEpisodes.length > 0) {
+        return { status: "already_has_episode_state", episodes: existingEpisodes };
+      }
+
+      this.replaceWorkflowRunSnapshot(snapshot);
+      return {
+        status: "reserved",
+        snapshot: withDerivedEpisodeSummaries(cloneWorkflowValue(snapshot)),
+      };
+    })();
   }
 
   async getWorkflowRunSnapshot(
-    _workflowRunId: string,
-    _scope?: ScopeArg,
+    workflowRunId: string,
+    scopeArg: ScopeArg = undefined,
   ): Promise<PersistedWorkflowRunSnapshot | null> {
-    throw new Error("not implemented");
+    const scope = normalizeScope(scopeArg);
+    const snapshot = this.loadSnapshot(workflowRunId);
+    if (
+      !snapshot ||
+      snapshot.accountId !== scope.accountId ||
+      (scope.connectedStorageId != null && snapshot.connectedStorageId !== scope.connectedStorageId)
+    ) {
+      return null;
+    }
+    return snapshot;
+  }
+
+  // ----- snapshot persist + reserve helpers (mirror postgres.ts) -----
+
+  private loadSnapshot(workflowRunId: string): PersistedWorkflowRunSnapshot | null {
+    const runRow = this.db
+      .prepare("SELECT payload, account_id, connected_storage_id FROM workflow_runs WHERE id = ?")
+      .get(workflowRunId) as
+      | { payload: string; account_id: string; connected_storage_id: string | null }
+      | undefined;
+    if (!runRow) {
+      return null;
+    }
+    const workflowRun = JSON.parse(runRow.payload) as WorkflowRun;
+    const accountId = runRow.account_id ?? DEFAULT_ACCOUNT_ID;
+    // Collapse the UNSCOPED_STORAGE sentinel back to null for the domain snapshot.
+    const rawStorage = runRow.connected_storage_id ?? null;
+    const connectedStorageId = rawStorage === UNSCOPED_STORAGE ? null : rawStorage;
+
+    const seasonRow = this.db
+      .prepare("SELECT payload FROM tracked_seasons WHERE id = ?")
+      .get(workflowRun.trackedSeasonId) as { payload: string } | undefined;
+    if (!seasonRow) {
+      throw new Error(
+        `Missing tracked season ${workflowRun.trackedSeasonId} for workflow run ${workflowRun.id}`,
+      );
+    }
+    const season = JSON.parse(seasonRow.payload) as TrackedSeason;
+
+    const titleRow = this.db
+      .prepare("SELECT payload FROM media_titles WHERE id = ?")
+      .get(season.mediaTitleId) as { payload: string } | undefined;
+    if (!titleRow) {
+      throw new Error(`Missing media title ${season.mediaTitleId} for tracked season ${season.id}`);
+    }
+    const title = JSON.parse(titleRow.payload) as MediaTitle;
+
+    return withDerivedEpisodeSummaries({
+      accountId,
+      connectedStorageId,
+      title,
+      season,
+      workflowRun,
+      episodes: this.selectEpisodeStates(season.id, rawStorage ?? UNSCOPED_STORAGE),
+      resourceSnapshots: this.selectChildPayloads<ResourceSnapshot>(
+        "SELECT payload FROM resource_snapshots WHERE workflow_run_id = ? ORDER BY ordinal",
+        workflowRun.id,
+      ),
+      decisions: this.selectChildPayloads<AgentDecision>(
+        "SELECT payload FROM agent_decisions WHERE workflow_run_id = ? ORDER BY ordinal",
+        workflowRun.id,
+      ),
+      transferAttempts: this.selectChildPayloads<TransferAttempt>(
+        "SELECT payload FROM transfer_attempts WHERE workflow_run_id = ? ORDER BY ordinal",
+        workflowRun.id,
+      ),
+      notifications: this.selectChildPayloads<NotificationEvent>(
+        "SELECT payload FROM notifications WHERE workflow_run_id = ? ORDER BY ordinal",
+        workflowRun.id,
+      ),
+    });
+  }
+
+  private selectChildPayloads<T>(sql: string, workflowRunId: string): T[] {
+    const rows = this.db.prepare(sql).all(workflowRunId) as Array<{ payload: string }>;
+    return rows.map((row) => JSON.parse(row.payload) as T);
+  }
+
+  private replaceWorkflowRunSnapshot(snapshot: PersistWorkflowRunSnapshotInput): void {
+    const accountId = snapshot.accountId ?? DEFAULT_ACCOUNT_ID;
+    const connectedStorageId = snapshot.connectedStorageId ?? UNSCOPED_STORAGE;
+
+    this.db
+      .prepare(
+        "INSERT INTO media_titles (id, payload) VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET payload = excluded.payload",
+      )
+      .run(snapshot.title.id, JSON.stringify(snapshot.title));
+
+    this.upsertTrackedSeason(snapshot.season, accountId, connectedStorageId);
+    this.upsertWorkflowRun(snapshot.workflowRun, accountId, connectedStorageId);
+    this.deleteWorkflowRunChildren(snapshot.workflowRun.id, snapshot.season.id, connectedStorageId);
+
+    const insertEpisode = this.db.prepare(
+      "INSERT INTO episode_states (tracked_season_id, connected_storage_id, episode_code, payload) VALUES (?, ?, ?, ?)",
+    );
+    for (const episode of snapshot.episodes) {
+      insertEpisode.run(
+        snapshot.season.id,
+        connectedStorageId,
+        episode.episodeCode,
+        JSON.stringify(episode),
+      );
+    }
+    // Snapshot ids are content-addressed and can legitimately recur; keep
+    // persistence idempotent on the id instead of crashing on a duplicate.
+    const insertSnapshot = this.db.prepare(
+      "INSERT INTO resource_snapshots (id, workflow_run_id, ordinal, payload) VALUES (?, ?, ?, ?) ON CONFLICT (id) DO NOTHING",
+    );
+    snapshot.resourceSnapshots.forEach((resourceSnapshot, ordinal) => {
+      insertSnapshot.run(
+        resourceSnapshot.id,
+        snapshot.workflowRun.id,
+        ordinal,
+        JSON.stringify(resourceSnapshot),
+      );
+    });
+    const insertDecision = this.db.prepare(
+      "INSERT INTO agent_decisions (workflow_run_id, ordinal, snapshot_id, payload) VALUES (?, ?, ?, ?)",
+    );
+    snapshot.decisions.forEach((decision, ordinal) => {
+      insertDecision.run(snapshot.workflowRun.id, ordinal, decision.snapshotId, JSON.stringify(decision));
+    });
+    const insertTransfer = this.db.prepare(
+      "INSERT INTO transfer_attempts (id, workflow_run_id, ordinal, candidate_id, payload) VALUES (?, ?, ?, ?, ?)",
+    );
+    snapshot.transferAttempts.forEach((attempt, ordinal) => {
+      insertTransfer.run(
+        attempt.id,
+        snapshot.workflowRun.id,
+        ordinal,
+        attempt.candidateId,
+        JSON.stringify(attempt),
+      );
+    });
+    const insertNotification = this.db.prepare(
+      "INSERT INTO notifications (id, workflow_run_id, ordinal, payload) VALUES (?, ?, ?, ?)",
+    );
+    snapshot.notifications.forEach((notification, ordinal) => {
+      insertNotification.run(
+        notification.id,
+        snapshot.workflowRun.id,
+        ordinal,
+        JSON.stringify(notification),
+      );
+    });
+  }
+
+  private upsertTrackedSeason(
+    season: TrackedSeason,
+    accountId: string = DEFAULT_ACCOUNT_ID,
+    connectedStorageId: string = UNSCOPED_STORAGE,
+  ): void {
+    // account_id / connected_storage_id are part of the PK / set on insert and
+    // PRESERVED on conflict (ownership + workspace are immutable; re-saves only
+    // update payload).
+    this.db
+      .prepare(
+        "INSERT INTO tracked_seasons (id, media_title_id, account_id, connected_storage_id, payload) VALUES (?, ?, ?, ?, ?) " +
+          "ON CONFLICT (id, connected_storage_id) DO UPDATE SET media_title_id = excluded.media_title_id, payload = excluded.payload",
+      )
+      .run(season.id, season.mediaTitleId, accountId, connectedStorageId, JSON.stringify(season));
+  }
+
+  private upsertWorkflowRun(
+    workflowRun: WorkflowRun,
+    accountId: string = DEFAULT_ACCOUNT_ID,
+    connectedStorageId: string = UNSCOPED_STORAGE,
+  ): void {
+    // account_id / connected_storage_id set on insert, preserved on conflict — so
+    // claim/requeue/progress updates (which don't know the owner) never clobber it.
+    this.db
+      .prepare(
+        "INSERT INTO workflow_runs (id, tracked_season_id, account_id, connected_storage_id, payload) VALUES (?, ?, ?, ?, ?) " +
+          "ON CONFLICT (id) DO UPDATE SET tracked_season_id = excluded.tracked_season_id, payload = excluded.payload",
+      )
+      .run(
+        workflowRun.id,
+        workflowRun.trackedSeasonId,
+        accountId,
+        connectedStorageId,
+        JSON.stringify(workflowRun),
+      );
+  }
+
+  private deleteWorkflowRunChildren(
+    workflowRunId: string,
+    trackedSeasonId: string,
+    connectedStorageId: string,
+  ): void {
+    this.db.prepare("DELETE FROM notifications WHERE workflow_run_id = ?").run(workflowRunId);
+    this.db.prepare("DELETE FROM transfer_attempts WHERE workflow_run_id = ?").run(workflowRunId);
+    this.db.prepare("DELETE FROM agent_decisions WHERE workflow_run_id = ?").run(workflowRunId);
+    // NOTE: do NOT delete agent_steps here (see postgres.ts) — they're written
+    // incrementally by the trace sink and are NOT part of the snapshot.
+    this.db.prepare("DELETE FROM resource_snapshots WHERE workflow_run_id = ?").run(workflowRunId);
+    // Scope to THIS drive's episodes — never wipe another drive's episodes for the season.
+    this.db
+      .prepare("DELETE FROM episode_states WHERE tracked_season_id = ? AND connected_storage_id = ?")
+      .run(trackedSeasonId, connectedStorageId);
+  }
+
+  private expireStaleActiveWorkflowRuns(input: ReserveWorkflowRunInput): void {
+    if (!input.staleActiveRunStartedBefore) {
+      return;
+    }
+    const snapshot = workflowSnapshotFromReservation(input);
+    // Only expire stale runs on the SAME drive being reserved, and clear only that
+    // drive's episodes — never touch another drive's runs/episodes for the season.
+    const connectedStorageId = snapshot.connectedStorageId ?? UNSCOPED_STORAGE;
+    const staleRuns = this.selectWorkflowRuns(snapshot.season.id, connectedStorageId).filter(
+      (workflowRun) =>
+        workflowRun.kind === snapshot.workflowRun.kind &&
+        isActiveWorkflowStatus(workflowRun.status) &&
+        workflowRun.startedAt < input.staleActiveRunStartedBefore!,
+    );
+    for (const staleRun of staleRuns) {
+      const expiredRun = expireWorkflowRun(
+        staleRun,
+        input.staleFinishedAt ?? snapshot.workflowRun.startedAt,
+      );
+      this.upsertWorkflowRun(expiredRun);
+      this.db
+        .prepare("DELETE FROM episode_states WHERE tracked_season_id = ? AND connected_storage_id = ?")
+        .run(snapshot.season.id, connectedStorageId);
+    }
+  }
+
+  private selectEpisodeStates(trackedSeasonId: string, connectedStorageId: string): EpisodeState[] {
+    const rows = this.db
+      .prepare(
+        "SELECT payload FROM episode_states WHERE tracked_season_id = ? AND connected_storage_id = ?",
+      )
+      .all(trackedSeasonId, connectedStorageId) as Array<{ payload: string }>;
+    return rows
+      .map((row) => JSON.parse(row.payload) as EpisodeState)
+      .sort((a, b) => episodeNumberFromCode(a.episodeCode) - episodeNumberFromCode(b.episodeCode));
+  }
+
+  private selectWorkflowRuns(trackedSeasonId: string, connectedStorageId: string): WorkflowRun[] {
+    const rows = this.db
+      .prepare(
+        "SELECT payload FROM workflow_runs WHERE tracked_season_id = ? AND connected_storage_id = ?",
+      )
+      .all(trackedSeasonId, connectedStorageId) as Array<{ payload: string }>;
+    return rows.map((row) => JSON.parse(row.payload) as WorkflowRun);
+  }
+
+  private selectWorkflowRunsForTitle(
+    mediaTitleId: string,
+    accountId: string,
+    connectedStorageId: string,
+  ): WorkflowRun[] {
+    // media_titles is global (shared cache); ownership lives on tracked_seasons —
+    // so the title-level active-run lock is scoped to the reserving (account, storage).
+    const rows = this.db
+      .prepare(
+        "SELECT wr.payload AS payload FROM workflow_runs wr " +
+          "JOIN tracked_seasons ts ON wr.tracked_season_id = ts.id AND wr.connected_storage_id = ts.connected_storage_id " +
+          "WHERE ts.media_title_id = ? AND wr.account_id = ? AND wr.connected_storage_id = ?",
+      )
+      .all(mediaTitleId, accountId, connectedStorageId) as Array<{ payload: string }>;
+    return rows.map((row) => JSON.parse(row.payload) as WorkflowRun);
   }
 
   async claimNextQueuedWorkflowRun(_input: {
