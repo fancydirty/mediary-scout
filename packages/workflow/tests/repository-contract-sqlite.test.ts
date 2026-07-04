@@ -90,3 +90,45 @@ describe("SQLite appendAgentStep is idempotent on (run, ordinal)", () => {
     }
   });
 });
+
+// SQLite-specific: backfillConnectedStorageId. This is a genuine engine divergence, so
+// it can't live in the shared contract (see the note there). A null-storage persist
+// collapses to the UNSCOPED_STORAGE sentinel; SQLite's backfill targets that sentinel
+// and actively pins the row to the account's primary drive (Postgres targets literal
+// NULL and is dead code post-persist). This locks the PRODUCTION (desktop) engine.
+describe("SQLite backfillConnectedStorageId pins sentinel rows to the primary drive", () => {
+  it("pins a storage-less row (and its episodes) to the account's earliest drive, idempotently", async () => {
+    const repo = makeSqliteRepo();
+    try {
+      await repo.saveWorkflowRunSnapshot({
+        ...workflowPersistenceFixture(),
+        accountId: "acct_default",
+        // connectedStorageId intentionally omitted → sentinel
+      });
+      await repo.upsertConnectedStorage({
+        id: "cs_primary",
+        accountId: "acct_default",
+        provider: "pan115",
+        providerUid: "uid_primary",
+        payload: { cookie: "c" },
+        createdAt: "2026-06-01T00:00:00.000Z",
+      });
+
+      // Before: the concrete-drive scope sees nothing (row is unscoped).
+      expect(
+        await repo.listTrackedSeasonStates({ accountId: "acct_default", connectedStorageId: "cs_primary" }),
+      ).toHaveLength(0);
+
+      expect(await repo.backfillConnectedStorageId()).toBe(1);
+
+      const scoped = await repo.listTrackedSeasonStates({ accountId: "acct_default", connectedStorageId: "cs_primary" });
+      expect(scoped.map((s) => s.season.id)).toEqual(["season_1"]);
+      expect(scoped[0]?.connectedStorageId).toBe("cs_primary");
+      expect(scoped[0]?.episodes.map((e) => e.episodeCode)).toEqual(["S01E01", "S01E02"]);
+      // Idempotent.
+      expect(await repo.backfillConnectedStorageId()).toBe(0);
+    } finally {
+      repo.close();
+    }
+  });
+});
