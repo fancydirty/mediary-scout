@@ -1,0 +1,59 @@
+appId: sbs.dirtyfancy.mediary-scout
+productName: Mediary Scout
+
+directories:
+  output: dist-app
+  buildResources: build
+
+# The Electron app itself: compiled main/preload from tsc + the native deps
+# main.js loads (better-sqlite3 is a dep of this package; electron loads it via
+# the child only, but node_modules must be present for the rebuild + trace).
+files:
+  - dist/**
+  - package.json
+  - node_modules/**
+
+# The Next standalone server bundle, mapped so main.ts's resolveServerEntry
+# finds it at <resourcesPath>/app/apps/web/server.js.
+#
+# extraResources.from is resolved relative to THIS project dir (apps/desktop);
+# extraResources.to is resolved relative to the app's resources dir
+# (Contents/Resources on macOS === process.resourcesPath at runtime).
+#
+#   to: app                     -> Contents/Resources/app
+#   standalone/apps/web/server.js -> Contents/Resources/app/apps/web/server.js
+#
+# The standalone bundle ROOT contains apps/web/server.js, a traced node_modules,
+# and packages/workflow/dist etc. — all land under app/. Next does NOT copy
+# .next/static or public into standalone, so those are mapped explicitly.
+extraResources:
+  - from: ../web/.next/standalone
+    to: app
+    filter:
+      - "**/*"
+  - from: ../web/.next/static
+    to: app/apps/web/.next/static
+    filter:
+      - "**/*"
+  - from: ../web/public
+    to: app/apps/web/public
+    filter:
+      - "**/*"
+
+# Rebuild native deps (better-sqlite3 in THIS package's node_modules) against
+# Electron's ABI at package time. NOTE: this does NOT cover the copy of
+# better-sqlite3 that Next traced INTO the standalone bundle — see README.md
+# for the required explicit @electron/rebuild --module-dir step.
+npmRebuild: true
+
+mac:
+  category: public.app-category.entertainment
+  target:
+    - dmg
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  # v25: `notarize: true` runs notarytool and reads APPLE_ID,
+  # APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID from the environment.
+  notarize: true
