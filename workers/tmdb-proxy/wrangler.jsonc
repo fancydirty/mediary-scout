@@ -4,5 +4,8 @@
   "compatibility_date": "2026-06-01",
   "kv_namespaces": [
     { "binding": "TMDB_CACHE", "id": "252a662ac5594eec88b7c4d39fd6a5c5" }
-  ]
+  ],
+  "triggers": {
+    "crons": ["0 22 * * *"]
+  }
 }
