@@ -311,32 +311,97 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     throw new Error("not implemented");
   }
 
-  async listConnectedStorages(_accountId: string): Promise<ConnectedStorage[]> {
-    throw new Error("not implemented");
+  private connectedStorageFromRow(row: Record<string, unknown>): ConnectedStorage {
+    return {
+      id: String(row.id),
+      accountId: String(row.account_id),
+      provider: String(row.provider),
+      providerUid: String(row.provider_uid),
+      label: (row.label as string | null | undefined) ?? null,
+      payload: JSON.parse(String(row.payload)),
+      rootCid: (row.root_cid as string | null | undefined) ?? null,
+      moviesCid: (row.movies_cid as string | null | undefined) ?? null,
+      tvCid: (row.tv_cid as string | null | undefined) ?? null,
+      animeCid: (row.anime_cid as string | null | undefined) ?? null,
+      status: (row.status as "active" | "frozen" | null | undefined) ?? "active",
+      frozenReason: (row.frozen_reason as string | null | undefined) ?? null,
+      frozenAt: (row.frozen_at as string | null | undefined) ?? null,
+      createdAt: String(row.created_at),
+    };
   }
 
-  async upsertConnectedStorage(_row: UpsertConnectedStorageInput): Promise<void> {
-    throw new Error("not implemented");
+  async listConnectedStorages(accountId: string): Promise<ConnectedStorage[]> {
+    const rows = this.db
+      .prepare(
+        "SELECT id, account_id, provider, provider_uid, label, payload, root_cid, movies_cid, tv_cid, anime_cid, status, frozen_reason, frozen_at, created_at " +
+          "FROM connected_storages WHERE account_id = ? ORDER BY created_at",
+      )
+      .all(accountId) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.connectedStorageFromRow(row));
   }
 
-  async deleteConnectedStorage(_accountId: string, _storageId: string): Promise<void> {
-    throw new Error("not implemented");
+  async upsertConnectedStorage(row: UpsertConnectedStorageInput): Promise<void> {
+    // Instance-wide UNIQUE(provider, provider_uid) ownership: on conflict NEVER
+    // reassign account_id, and only refresh the row when the SAME account owns it
+    // (the WHERE makes a cross-account conflict a no-op — it can't steal or
+    // overwrite another account's 网盘). status/frozen are intentionally absent
+    // from the column list and the SET, so a re-scan preserves a frozen state.
+    this.db
+      .prepare(
+        "INSERT INTO connected_storages " +
+          "(id, account_id, provider, provider_uid, label, payload, root_cid, movies_cid, tv_cid, anime_cid, created_at) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+          "ON CONFLICT (provider, provider_uid) DO UPDATE SET " +
+          "label = excluded.label, payload = excluded.payload, " +
+          "root_cid = excluded.root_cid, movies_cid = excluded.movies_cid, tv_cid = excluded.tv_cid, anime_cid = excluded.anime_cid " +
+          "WHERE connected_storages.account_id = excluded.account_id",
+      )
+      .run(
+        row.id,
+        row.accountId,
+        row.provider,
+        row.providerUid,
+        row.label ?? null,
+        JSON.stringify(row.payload),
+        row.rootCid ?? null,
+        row.moviesCid ?? null,
+        row.tvCid ?? null,
+        row.animeCid ?? null,
+        row.createdAt,
+      );
+  }
+
+  async deleteConnectedStorage(accountId: string, storageId: string): Promise<void> {
+    // account_id in the WHERE is fail-closed: can't delete another account's drive.
+    this.db
+      .prepare("DELETE FROM connected_storages WHERE id = ? AND account_id = ?")
+      .run(storageId, accountId);
   }
 
   async findConnectedStorageByUid(
-    _provider: string,
-    _providerUid: string,
+    provider: string,
+    providerUid: string,
   ): Promise<ConnectedStorage | null> {
-    throw new Error("not implemented");
+    const row = this.db
+      .prepare(
+        "SELECT id, account_id, provider, provider_uid, label, payload, root_cid, movies_cid, tv_cid, anime_cid, status, frozen_reason, frozen_at, created_at " +
+          "FROM connected_storages WHERE provider = ? AND provider_uid = ?",
+      )
+      .get(provider, providerUid) as Record<string, unknown> | undefined;
+    return row ? this.connectedStorageFromRow(row) : null;
   }
 
   async setConnectedStorageStatus(
-    _storageId: string,
-    _status: "active" | "frozen",
-    _frozenReason: string | null,
-    _frozenAt: string | null,
+    storageId: string,
+    status: "active" | "frozen",
+    frozenReason: string | null,
+    frozenAt: string | null,
   ): Promise<void> {
-    throw new Error("not implemented");
+    this.db
+      .prepare(
+        "UPDATE connected_storages SET status = ?, frozen_reason = ?, frozen_at = ? WHERE id = ?",
+      )
+      .run(status, frozenReason, frozenAt, storageId);
   }
 
   private accountFromRow(row: Record<string, unknown>): Account {

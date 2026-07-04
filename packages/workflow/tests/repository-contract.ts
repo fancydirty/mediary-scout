@@ -107,5 +107,60 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
         expect(await repo.getSession("s2")).not.toBeNull();
       });
     });
+
+    describe("connected_storages", () => {
+      const drive = (over = {}) => ({
+        id: "cs_1",
+        accountId: "acct_a",
+        provider: "pan115",
+        providerUid: "uid1",
+        payload: { cookie: "A" },
+        createdAt: "2026-07-04T00:00:00.000Z",
+        ...over,
+      });
+
+      it("upserts and lists a drive for its account", async () => {
+        const repo = await fresh();
+        await repo.upsertConnectedStorage(drive());
+        const list = await repo.listConnectedStorages("acct_a");
+        expect(list).toHaveLength(1);
+        expect(list[0]?.provider).toBe("pan115");
+      });
+
+      it("refuses to let a different account overwrite an existing drive binding", async () => {
+        const repo = await fresh();
+        await repo.upsertConnectedStorage(drive());
+        await repo.upsertConnectedStorage(
+          drive({ id: "cs_2", accountId: "acct_b", payload: { cookie: "B" } }),
+        );
+        expect(await repo.listConnectedStorages("acct_a")).toHaveLength(1);
+        expect(await repo.listConnectedStorages("acct_b")).toHaveLength(0);
+      });
+
+      it("refresh preserves status (frozen stays frozen across re-scan)", async () => {
+        const repo = await fresh();
+        await repo.upsertConnectedStorage(drive());
+        await repo.setConnectedStorageStatus(
+          "cs_1",
+          "frozen",
+          "cookie died",
+          "2026-07-04T01:00:00.000Z",
+        );
+        await repo.upsertConnectedStorage(drive({ payload: { cookie: "refreshed" } })); // same provider/uid
+        const found = await repo.findConnectedStorageByUid("pan115", "uid1");
+        expect(found?.status).toBe("frozen");
+        expect(found?.frozenReason).toBe("cookie died");
+      });
+
+      it("finds by uid and deletes fail-closed on account", async () => {
+        const repo = await fresh();
+        await repo.upsertConnectedStorage(drive());
+        expect((await repo.findConnectedStorageByUid("pan115", "uid1"))?.id).toBe("cs_1");
+        await repo.deleteConnectedStorage("acct_WRONG", "cs_1"); // wrong account = no-op
+        expect(await repo.findConnectedStorageByUid("pan115", "uid1")).not.toBeNull();
+        await repo.deleteConnectedStorage("acct_a", "cs_1");
+        expect(await repo.findConnectedStorageByUid("pan115", "uid1")).toBeNull();
+      });
+    });
   });
 }
