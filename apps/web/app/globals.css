@@ -3247,3 +3247,89 @@ select.setting-control {
     white-space: normal;
   }
 }
+
+/* 搜索页空态「近期热门」发现区(#95)。Tab 药丸复用 .filter-pill。 */
+.trending {
+  margin-top: 8px;
+}
+.trending-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.trending-tabs {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.trending-tabs h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 500;
+}
+.trending-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-muted, #8a8a84);
+}
+.trending-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 14px;
+}
+.trending-card {
+  display: flex;
+  flex-direction: column;
+  text-decoration: none;
+  color: inherit;
+}
+.trending-poster {
+  position: relative;
+  aspect-ratio: 2 / 3;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface-1, #17171a);
+  border: 0.5px solid var(--border, #2a2a2e);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted, #6a6a66);
+}
+.trending-poster img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.trending-rank {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 500;
+}
+.trending-title {
+  margin-top: 7px;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.trending-meta {
+  margin-top: 1px;
+  font-size: 12px;
+  color: var(--text-muted, #8a8a84);
+}
+.trending-card:hover .trending-poster {
+  border-color: var(--border-strong, #3a3a40);
+}

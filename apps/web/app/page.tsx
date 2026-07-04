@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Suspense } from "react";
-import { CalendarClock, CheckCircle2, Clock3, Library, LoaderCircle, Search, TriangleAlert } from "lucide-react";
+import { CalendarClock, CheckCircle2, Clock3, Library, LoaderCircle, TriangleAlert } from "lucide-react";
 import { AcquiringPoller } from "../components/acquiring-poller";
 import { AppSidebar } from "../components/app-sidebar";
 import { RequestTrackButton } from "../components/request-track-button";
@@ -9,6 +9,8 @@ import { DemoSessionLibrary } from "../components/demo-session-library";
 import { RememberQuery } from "../components/search-memory";
 import { SearchForm } from "../components/search-form";
 import { SeasonRequestMenu } from "../components/season-request-menu";
+import { TrendingRow } from "../components/trending-row";
+import type { TrendingKind } from "../lib/trending";
 import { getSearchView } from "../lib/search-page";
 import {
   getInProgressTitles,
@@ -77,6 +79,9 @@ async function HomeSurface({
   const activeTab = stringParam(params.tab) === "library" ? "library" : "search";
   const mediaType = stringParam(params.type) || "all";
   const filter = stringParam(params.filter) || "all";
+  const trendingParam = stringParam(params.trending);
+  const activeTrending: TrendingKind =
+    trendingParam === "tv" ? "tv" : trendingParam === "anime" ? "anime" : "movie";
   // Tree model: keep searches inside the ACTIVE workspace so an acquisition lands
   // on the drive you're viewing — not silently on the primary drive. Root route
   // (no storageId) posts to "/" as before.
@@ -104,7 +109,12 @@ async function HomeSurface({
               </p>
             ) : null}
             <Suspense key={`search-${query}`} fallback={<SearchResultsSkeleton />}>
-              <SearchResults query={query} storageId={storageId} />
+              <SearchResults
+                query={query}
+                storageId={storageId}
+                activeTrending={activeTrending}
+                basePath={basePath}
+              />
             </Suspense>
           </section>
         ) : (
@@ -120,7 +130,17 @@ async function HomeSurface({
   );
 }
 
-async function SearchResults({ query, storageId }: { query: string; storageId?: string | undefined }) {
+async function SearchResults({
+  query,
+  storageId,
+  activeTrending,
+  basePath,
+}: {
+  query: string;
+  storageId?: string | undefined;
+  activeTrending: TrendingKind;
+  basePath: string;
+}) {
   const searchView = await getSearchView(query, storageId);
   // Library awareness on results: a tracked title shows WHICH seasons are
   // obtained and routes to the same title page as the library — search must
@@ -154,11 +174,7 @@ async function SearchResults({ query, storageId }: { query: string; storageId?: 
     <>
       {inProgress.length > 0 ? <AcquiringPoller /> : null}
       {searchView.state === "empty" ? (
-        <div className="quiet-state">
-          <Search size={24} aria-hidden />
-          <strong>输入目标名称</strong>
-          <span>搜索后才会请求元数据。</span>
-        </div>
+        <TrendingRow activeKind={activeTrending} basePath={basePath} />
       ) : (
         <section className="search-results" aria-label="搜索结果">
           <div className="section-heading">
