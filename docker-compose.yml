@@ -28,6 +28,11 @@ services:
       context: .
       args:
         MEDIA_TRACK_ALLOWED_ORIGINS: ${MEDIA_TRACK_ALLOWED_ORIGINS:-}
+        # Per-commit build stamp (+ source-COPY cache-bust). scripts/deploy.sh sets
+        # GIT_SHA=$(git rev-parse HEAD); the Dockerfile stamps it into the image as
+        # BUILD_COMMIT so a deploy can verify the running container serves HEAD. An unset
+        # value defaults to "unknown". See Dockerfile / docs/deploy.md 升级.
+        GIT_SHA: ${GIT_SHA:-unknown}
     depends_on:
       postgres:
         condition: service_healthy

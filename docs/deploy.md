@@ -229,5 +229,19 @@ docker compose build --build-arg NPM_REGISTRY=https://registry.npmmirror.com
 ## 升级
 
 ```bash
-git pull && docker compose up -d --build
+./scripts/deploy.sh
 ```
+
+`scripts/deploy.sh` 会 `git pull` → 重建 `web` → `up -d` → **验证跑起来的容器确实是刚拉取的 commit**(读容器内 `BUILD_COMMIT` 和 `HEAD` 比对,不一致直接报错退出)。等价于 `docker compose up -d --build`,但多了那道**自校验**,并且不用 `--no-cache`。
+
+> **为什么要自校验?** 升级最阴的失败是**静默回退**:`git pull` 之后容器仍在跑**旧代码**,而所有常规信号都在骗你——宿主 `git rev-parse HEAD` 显示的是新 commit(和容器里实际跑的代码无关),盯镜像 hash 也没用(`--no-cache` 重建每次 hash 都不同,纯粹是构建不确定性)。#88–#98 就是这样连续五次「部署成功」实则一整天跑旧代码。所以真正的护栏不是缓存技巧,而是**一道检查**:把镜像构建时刻的 commit 盖进 `BUILD_COMMIT`,部署后比对运行容器的 `BUILD_COMMIT` 是否等于 `HEAD`,不等就报错——无论病根是构建缓存、`git pull` 空转、还是容器没被重建,都会当场暴露而非静默溜过。
+>
+> `deploy.sh` 顺带传 `GIT_SHA=$(git rev-parse HEAD)` 作构建参数,Dockerfile 用它在 `COPY . .` 前触发缓存失效(ARG 在**首次使用**时 cache-miss,连带其后各层重建),每换 commit 强制重传源码 + 重建,而慢的 `npm ci` 依赖层仍走缓存。**不必 `--no-cache`**(那会把依赖层也丢掉,慢几分钟)。装了 buildx / 用内置 BuildKit 的宿主本就内容寻址、`COPY` 可靠,这层主要是给用**经典构建器**(`DOCKER_BUILDKIT=0` 或很老的 Docker)的自部署者兜底;两种构建器下都正确无副作用。
+>
+> 手动等价执行 + 校验:
+> ```bash
+> git pull
+> GIT_SHA=$(git rev-parse HEAD) docker compose up -d --build
+> # 核对容器真在跑新代码(应等于上面的 HEAD):
+> docker compose exec web cat BUILD_COMMIT
+> ```

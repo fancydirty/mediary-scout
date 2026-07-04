@@ -23,6 +23,26 @@ COPY package.json package-lock.json ./
 COPY apps/web/package.json apps/web/
 COPY packages/workflow/package.json packages/workflow/
 RUN npm config set registry "$NPM_REGISTRY" && npm ci
+# Per-commit build stamp (+ a cache-bust for the source COPY below).
+#
+# Why: self-host deploys silently kept serving OLD code after a `git pull` — #88–#98
+# saw five rebuilds in a row ship a stale image. The exact cause was NOT a builder
+# COPY-cache fault (the router's integrated BuildKit re-copies changed source correctly
+# in testing — verified 2026-07-04), so the durable fix is to make deploys SELF-VERIFYING:
+# stamp the built commit into the image as BUILD_COMMIT so scripts/deploy.sh can hard-fail
+# when the running container isn't serving HEAD — catching a stale build, a no-op `git
+# pull`, or a container that wasn't recreated, whatever the underlying cause.
+#
+# GIT_SHA doubles as a cache-bust: an ARG cache-misses on first USE (not on its
+# declaration), and a cache miss forces every LATER layer to rebuild. Placed after
+# `npm ci` (deps stay cached) and before `COPY . .`, it forces a fresh source COPY +
+# build whenever the deployed commit changes. Redundant under BuildKit's content-
+# addressed COPY, but cheap and correct — and it genuinely protects self-hosters on a
+# classic/legacy builder (`DOCKER_BUILDKIT=0`, or very old Docker) where COPY caching IS
+# unreliable. Passed per commit by scripts/deploy.sh (build.args → ${GIT_SHA}); an
+# unset value defaults to "unknown".
+ARG GIT_SHA=unknown
+RUN echo "media-track build commit: ${GIT_SHA}" && echo "${GIT_SHA}" > /app/BUILD_COMMIT
 COPY . .
 # build:web = build:workflow (tsc) + next build apps/web (output: standalone).
 # allowedOrigins is baked here — change it ⇒ rebuild (docker compose up -d --build).
@@ -46,5 +66,10 @@ COPY --from=builder /app/apps/web/public ./apps/web/public
 # script is self-contained (raw pg + scrypt), so it needs no workflow dist (which
 # standalone bundles into .next and doesn't expose as a module).
 COPY --from=builder /app/scripts/reset-password.mjs ./scripts/reset-password.mjs
+# Records the git commit this image was built from. `docker compose exec web cat
+# BUILD_COMMIT` tells you exactly which code the running container serves — the host's
+# `git rev-parse HEAD` does NOT (a stale image can outlive a pulled HEAD). scripts/deploy.sh
+# compares the two and fails loudly on mismatch, so a silent rollback can't slip through.
+COPY --from=builder /app/BUILD_COMMIT ./BUILD_COMMIT
 EXPOSE 3000
 CMD ["node", "apps/web/server.js"]
