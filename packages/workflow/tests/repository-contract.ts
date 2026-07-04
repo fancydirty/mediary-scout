@@ -162,5 +162,18 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
         expect(await repo.findConnectedStorageByUid("pan115", "uid1")).toBeNull();
       });
     });
+
+    describe("dead_links", () => {
+      it("records idempotently and hides expired non-permanent links but keeps permanent ones", async () => {
+        const repo = await fresh();
+        await repo.recordDeadLink({ key: "k_temp", kind: "magnet", reason: "r", permanent: false, ttlMs: 1000, now: "2026-07-04T00:00:00.000Z" });
+        await repo.recordDeadLink({ key: "k_temp", kind: "magnet", reason: "changed", permanent: true, now: "2026-07-04T00:00:00.000Z" }); // idempotent: ignored
+        await repo.recordDeadLink({ key: "k_perm", kind: "magnet", reason: "r", permanent: true, now: "2026-07-04T00:00:00.000Z" });
+        const soon = await repo.listDeadLinkKeys({ now: "2026-07-04T00:00:00.500Z" });
+        expect(new Set(soon)).toEqual(new Set(["k_temp", "k_perm"]));
+        const later = await repo.listDeadLinkKeys({ now: "2026-07-04T00:00:02.000Z" });
+        expect(new Set(later)).toEqual(new Set(["k_perm"]));
+      });
+    });
   });
 }

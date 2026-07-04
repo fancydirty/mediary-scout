@@ -8,6 +8,7 @@ import type {
   WorkflowRunProgress,
 } from "./domain.js";
 import type { DeadLink } from "./acquisition-v2/dead-links.js";
+import { MAGNET_DEAD_LINK_TTL_MS } from "./acquisition-v2/dead-links.js";
 import type {
   Account,
   ConnectedStorage,
@@ -517,7 +518,7 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     }
   }
 
-  async recordDeadLink(_input: {
+  async recordDeadLink(input: {
     key: string;
     kind: DeadLink["kind"];
     reason: string;
@@ -525,10 +526,25 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     ttlMs?: number;
     now?: string;
   }): Promise<void> {
-    throw new Error("not implemented");
+    const recordedAt = input.now ?? new Date().toISOString();
+    const expiresAt = input.permanent
+      ? null
+      : new Date(new Date(recordedAt).getTime() + (input.ttlMs ?? MAGNET_DEAD_LINK_TTL_MS)).toISOString();
+    // Idempotent: keep the first record (when it was first proven dead).
+    this.db
+      .prepare(
+        "INSERT INTO dead_links (key, kind, reason, permanent, expires_at, recorded_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (key) DO NOTHING",
+      )
+      .run(input.key, input.kind, input.reason, input.permanent ? 1 : 0, expiresAt, recordedAt);
   }
 
-  async listDeadLinkKeys(_options?: { now?: string }): Promise<string[]> {
-    throw new Error("not implemented");
+  async listDeadLinkKeys(options?: { now?: string }): Promise<string[]> {
+    // Permanent deaths (expires_at NULL) always filter; soft ones only until their
+    // own expiry (so an unresolvable magnet's longer TTL is honored per-record).
+    const now = options?.now ?? new Date().toISOString();
+    const rows = this.db
+      .prepare("SELECT key FROM dead_links WHERE expires_at IS NULL OR expires_at > ?")
+      .all(now) as { key: string }[];
+    return rows.map((row) => String(row.key));
   }
 }
