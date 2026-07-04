@@ -321,6 +321,21 @@ export function createTmdbSearchProvider(
   return new TmdbSearchProvider({ accesses, ...opts });
 }
 
+/** Fetch an arbitrary TMDB list path (e.g. trending/discover) through the same
+ *  user-key → proxy access chain every provider uses — the single chokepoint for
+ *  fallback + timeout + dead-access memoization. Returns the raw parsed body
+ *  (typically `{ results: [...] }`); callers map it. Lives here (not in apps/web)
+ *  because defaultFetchJson is module-private and the fallback logic must not be
+ *  duplicated. */
+export async function fetchTmdbList(
+  accesses: TmdbAccess[],
+  path: string,
+  query: Record<string, string> = {},
+  opts: { fetchJson?: TmdbFetchJson } = {},
+): Promise<unknown> {
+  return fetchViaAccessChain(accesses, path, query, opts.fetchJson ?? defaultFetchJson);
+}
+
 export function createTmdbMetadataProviderFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): TmdbMetadataProvider {
