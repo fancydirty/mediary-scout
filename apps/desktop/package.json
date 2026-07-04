@@ -1,0 +1,19 @@
+{
+  "name": "@media-track/desktop",
+  "private": true,
+  "version": "0.0.0",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "electron .",
+    "dist": "electron-builder --config electron-builder.yml"
+  },
+  "dependencies": {
+    "better-sqlite3": "*"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0",
+    "@electron/rebuild": "^3.6.0"
+  }
+}
