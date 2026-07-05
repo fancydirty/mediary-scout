@@ -8,21 +8,19 @@
 
 <p align="center">
   <a href="https://github.com/fancydirty/mediary-scout/actions/workflows/ci.yml"><img src="https://github.com/fancydirty/mediary-scout/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-see%20LICENSE-blue" alt="license"></a>
-  <img src="https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white" alt="TypeScript">
-  <img src="https://img.shields.io/badge/Next.js-black?logo=next.js&logoColor=white" alt="Next.js">
-  <img src="https://img.shields.io/badge/Postgres-4169E1?logo=postgresql&logoColor=white" alt="Postgres">
-  <img src="https://img.shields.io/badge/self--hosted-only-success" alt="self-hosted only">
+  <a href="https://github.com/fancydirty/mediary-scout/releases"><img src="https://img.shields.io/github/v/release/fancydirty/mediary-scout?display_name=tag&sort=semver" alt="Latest Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-0BSD-blue" alt="license"></a>
   <a href="https://github.com/fancydirty/mediary-scout/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen" alt="PRs welcome"></a>
-  <a href="https://mediary.dirtyfancy.sbs"><img src="https://img.shields.io/badge/demo-live-1ED760?logo=vercel&logoColor=white" alt="live demo"></a>
 </p>
 
 <p align="center">
-  <a href="#quick-start">Quick start</a> ·
-  <a href="docs/deploy.md">Deploy guide</a> ·
-  <a href="https://mediary.dirtyfancy.sbs">Live demo ↗</a> ·
+  <a href="https://github.com/fancydirty/mediary-scout/releases/latest">📥 Download for macOS</a> ·
+  <a href="https://github.com/fancydirty/mediary-scout/releases/latest">📥 Download for Windows</a> ·
+  <a href="https://mediary.dirtyfancy.sbs">🔭 Live Demo</a> ·
   <a href="README.zh-CN.md">中文文档</a>
 </p>
+
+---
 
 You ask for a movie, show, or anime; an LLM agent scouts resources across your indexers, transfers the best match into your own 115 / Quark / 光鸭 drive, verifies what landed, and keeps tracking what's still missing.
 
@@ -30,32 +28,46 @@ You ask for a movie, show, or anime; an LLM agent scouts resources across your i
 
 > *Above: the read-only [live demo](https://mediary.dirtyfancy.sbs) — search → 获取 → the agent works through search, transfer, and verification.*
 
-> **Disclaimer.** Mediary Scout is **open-source, self-hosted software**. It is **not** offered, and never will be offered, as a hosted service — you run your own instance and bring your own drive / LLM / metadata credentials. It performs the same kinds of file operations you could do by hand in your own cloud drive. See [docs/distribution-and-legal-positioning.md](docs/distribution-and-legal-positioning.md) for the project's stance.
+## Install
 
-## Contents
+### Desktop app (recommended — easiest)
 
-- [What it is](#what-it-is)
-- [Features](#features)
-- [Architecture](#architecture)
-- [Quick start](#quick-start)
-- [macOS desktop app](#macos-desktop-app)
-- [Agent API](#agent-api-agent-first-control)
-- [Deploy](#deploy)
-- [Demo](#demo)
-- [Supported drives](#supported-drives)
-- [Status & limitations](#status--limitations)
-- [Credits & upstream](#credits--upstream)
+| Platform | Download | Notes |
+|---|---|---|
+| **macOS** (Apple Silicon) | [DMG](https://github.com/fancydirty/mediary-scout/releases/latest) | Signed + notarized, no Gatekeeper warning |
+| **Windows** (x64) | [EXE installer](https://github.com/fancydirty/mediary-scout/releases/latest) | Unsigned — SmartScreen will prompt, click "run anyway" |
 
-## What it is
+1. Download and install
+2. Open the app
+3. Go to **Settings** — connect a drive, add an LLM endpoint
+4. Search a title, hit 获取 — that's it
 
-Most "media automation" either searches well but doesn't know what you're actually missing, or moves files but never verifies what landed. Mediary Scout treats acquisition as a **state problem**, driven by an agent that acts from evidence, not vibes:
+No Docker, no Postgres, no terminal. The app bundles its own SQLite data layer and runs the full engine inside an Electron shell.
 
-- **Multi-drive, brand-extensible** — 115, Quark, and 光鸭 (GuangYaPan) today, each a first-class workspace (a tree model: one account, many drives). Adding a new drive brand is a contained plugin.
-- **Agent-driven selection** — the agent reads real search results and picks by quality preference, **Chinese-subtitle** needs, and de-duplication, then verifies the transfer after it happens.
-- **Tracking & scheduled gap-fill** — season-level state machine; a scheduled sweep comes back only for shows that still have missing episodes.
-- **Cloud-native** — it **transfers** shares/magnets straight into your drive (秒传 / save), it does not download to a local disk.
+### Docker (power users — always-on server)
 
-It's for advanced self-hosters comfortable with their own cloud-drive accounts and credentials — not a one-click consumer product.
+```bash
+cp .env.example .env   # optional — most config can be set in the UI
+docker compose up -d
+```
+
+Then open `http://<host>:3000` and configure in **Settings**. Full walkthrough: **[docs/deploy.md](docs/deploy.md)**.
+
+> 🇨🇳 **Can't reach Docker Hub (mainland China)?** See **[docs/deploy.md → registry mirror](docs/deploy.md#国内构建加速连不上-docker-hub)**.
+
+### Which path?
+
+| | Desktop App | Docker |
+|---|---|---|
+| **Best for** | Personal use, Mac/Windows | NAS, server, 24/7 monitoring |
+| **Setup** | Download + open | `docker compose up -d` |
+| **Database** | SQLite (local file) | Postgres |
+| **Agent API** | ✅ | ✅ |
+| **Always-on patrol** | ❌ (runs when app is open) | ✅ |
+| **Multi-user** | ❌ | ✅ |
+| **Remote access** | Local only | Tailscale / Cloudflare Tunnel |
+
+Both paths share **one codebase** — all product logic is identical. The only difference is the data layer (SQLite vs Postgres) and the process shell (Electron vs Docker).
 
 ## Features
 
@@ -72,13 +84,57 @@ Multiple drives appear as a workspace switcher with per-brand icons:
 
 ![drive switcher](docs/images/switcher.png)
 
+## What it is
+
+Most "media automation" either searches well but doesn't know what you're actually missing, or moves files but never verifies what landed. Mediary Scout treats acquisition as a **state problem**, driven by an agent that acts from evidence, not vibes:
+
+- **Multi-drive, brand-extensible** — 115, Quark, and 光鸭 (GuangYaPan) today, each a first-class workspace (a tree model: one account, many drives). Adding a new drive brand is a contained plugin.
+- **Agent-driven selection** — the agent reads real search results and picks by quality preference, **Chinese-subtitle** needs, and de-duplication, then verifies the transfer after it happens.
+- **Tracking & scheduled gap-fill** — season-level state machine; a scheduled sweep comes back only for shows that still have missing episodes.
+- **Cloud-native** — it **transfers** shares/magnets straight into your drive (秒传 / save), it does not download to a local disk.
+
+## Supported drives
+
+Three Chinese cloud drives, each a first-class workspace:
+
+- **115** (`pan115`) — full support, including magnet via Prowlarr.
+- **Quark** (`quark`) — share-link transfer (no magnet web API).
+- **GuangYaPan / 光鸭云盘** (`guangya`) — Xunlei-family drive; **magnet / offline-download first** (transfers magnet/ed2k/BT via its offline-task API, like 115's offline path — it does **not** transfer 115/Quark/光鸭 share-links in v1). Token auth (`access_token` + `refresh_token`). Pairs well with Prowlarr. **[Setup guide](docs/deploy.md#光鸭云盘guangyapan连接)**
+
+New brands plug into a storage-brand registry; the bulk of adding one is a drive client + a storage executor for that drive's transfer API.
+
+## Agent API (agent-first control)
+
+Both the desktop app and the container expose a local HTTP API that lets any coding agent (Claude Code, Codex, opencode, …) operate Mediary Scout without opening the GUI — change settings, trigger acquisitions, check download progress.
+
+**Desktop**: automatic — on first launch the app writes a discovery file to `~/.mediary/agent.json`. **Container**: set `MEDIA_TRACK_AGENT_TOKEN` env var to opt in.
+
+Install the agent skill:
+
+```bash
+mkdir -p ~/.claude/skills/ && cp -r skills/mediary-scout ~/.claude/skills/      # or ~/.codex/skills/, ~/.config/opencode/skills/
+```
+
+Then tell your agent things like "帮我找进击的巨人第二季" or "蜘蛛侠下好了吗" or "把画质改成 high". See [`skills/mediary-scout/SKILL.md`](skills/mediary-scout/SKILL.md) for the full trigger list.
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/agent/config` | Read settings (secrets masked) |
+| `PUT` | `/api/agent/config` | Partial update (rejects masked `***` writes) |
+| `POST` | `/api/agent/acquire` | Search TMDB → queue (409 on ambiguity) |
+| `POST` | `/api/agent/patrol` | Trigger a patrol sweep |
+| `GET` | `/api/agent/library` | Tracked titles + missing episodes |
+| `GET` | `/api/agent/activity` | Active queue + recent notifications |
+
+All require `Authorization: Bearer <token>`. No token → `404` (invisible).
+
 ## Architecture
 
 A web app enqueues work; a long-running worker drives a sandboxed agent that has narrow, audited powers while the deterministic workflow owns every side effect and re-reads real state to verify.
 
 ```mermaid
 flowchart LR
-    UI["Web UI<br/>(Next.js)"] -->|enqueue| Q["Postgres queue<br/>+ run state"]
+    UI["Web UI<br/>(Next.js)"] -->|enqueue| Q["Postgres / SQLite<br/>+ run state"]
     Q --> W["In-process worker"]
     W --> AG["V2 sandbox agent"]
     AG -->|search| SRC["PanSou / Prowlarr"]
@@ -89,46 +145,22 @@ flowchart LR
     CRON["Scheduled sweep"] -->|gaps only| Q
 ```
 
-- State lives in **Postgres** the whole way, so runs are resumable across worker restarts (the agent rebuilds from real drive + DB state, not cached chat history).
+- State lives in **Postgres** (container) or **SQLite** (desktop) — runs are resumable across restarts (the agent rebuilds from real drive + DB state, not cached chat history).
 - Metadata comes from **TMDB** (with a built-in proxy fallback so it works out of the box); resource search from **PanSou** and optionally **Prowlarr** (torrent/magnet indexers).
 
-## Quick start
+## Demo
 
-Two ways to run Mediary Scout — pick what fits:
+**🔭 Try it live: [mediary.dirtyfancy.sbs](https://mediary.dirtyfancy.sbs)**
 
-### Option A: macOS desktop app (no Docker needed)
+A public, **read-only** demo — mock drives, real TMDB search across the whole catalog, and a scripted acquisition you can watch land in the library. No drive connect, no transfers, nothing persists.
 
-Download the latest DMG from [GitHub Releases](https://github.com/fancydirty/mediary-scout/releases), open it, drag to Applications. That's it — no Postgres, no Docker, no terminal. The app bundles its own SQLite data layer and runs the full engine inside an Electron shell.
-
-> The DMG is signed and notarized, so it opens without Gatekeeper warnings on macOS.
-
-Then open the app and configure in **Settings** (same as the container path — drives, LLM, TMDB, etc.).
-
-### Option B: Docker Compose (self-host on a server)
-
-The fastest path for always-on deployment (web + Postgres + a bundled PanSou):
-
-```bash
-cp .env.example .env   # optional — most config can be set in the UI
-docker compose up -d
-```
-
-> 🇨🇳 **Can't reach Docker Hub (mainland China)?** A first build failing with `auth.docker.io ... i/o timeout` / `DeadlineExceeded` means Docker Hub is blocked — **configure a registry mirror first** (Docker Desktop and Linux differ): see **[docs/deploy.md → registry mirror](docs/deploy.md#国内构建加速连不上-docker-hub)**.
-
-Then open the web UI and, in **Settings**, provide what you want to use (all bring-your-own):
-
-- **A drive** — connect 115 or Quark (QR-scan login, or paste a cookie), or 光鸭 (paste `access_token` + `refresh_token` — see [setup guide](docs/deploy.md#光鸭云盘guangyapan连接)).
-- **TMDB** — works out of the box via a proxy; add your own key for direct access.
-- **LLM** — any OpenAI-compatible endpoint (`baseURL` / `apiKey` / `modelId`). The author never sees your key.
-- **Prowlarr** *(optional)* — add your indexers for magnet/torrent sources (115 and 光鸭, which are magnet-capable; Quark has no magnet API).
-
-## Deploy
+## Deploy (Docker)
 
 Self-host on a NAS, a router (软路由), a spare PC, or a VPS — and reach it from your phone / TV via **Tailscale** or a **Cloudflare Tunnel** (no public IP needed; never expose `:3000` raw). Full walkthrough: **[docs/deploy.md](docs/deploy.md)**.
 
 ### Deploy with an agent
 
-Prefer to have an AI agent (Claude Code, Codex, opencode, …) walk you through it? Paste this prompt into it — it'll ask the right questions, then deploy for you:
+Prefer to have an AI agent walk you through it? Paste this prompt:
 
 ````markdown
 You are deploying Mediary Scout, a self-hosted media-acquisition agent. Follow the repo's docs/deploy.md. Ask the user the questions below IN ORDER, then execute.
@@ -161,81 +193,12 @@ You are deploying Mediary Scout, a self-hosted media-acquisition agent. Follow t
 - Verify it's up, report the URL, and tell them how to upgrade (`git pull && docker compose up -d --build`)
 ````
 
-## Demo
-
-**🔭 Try it live: [mediary.dirtyfancy.sbs](https://mediary.dirtyfancy.sbs)**
-
-A public, **read-only** demo — mock drives, real TMDB search across the whole catalog, and a scripted acquisition you can watch land in the library. No drive connect, no transfers, nothing persists. Built from this repo.
-
-## Supported drives
-
-Three Chinese cloud drives, each a first-class workspace:
-
-- **115** (`pan115`) — full support, including magnet via Prowlarr.
-- **Quark** (`quark`) — share-link transfer (no magnet web API).
-- **GuangYaPan / 光鸭云盘** (`guangya`) — Xunlei-family drive; **magnet / offline-download first** (transfers magnet/ed2k/BT via its offline-task API, like 115's offline path — it does **not** transfer 115/Quark/光鸭 share-links in v1). Token auth (`access_token` + `refresh_token`). Pairs well with Prowlarr. **[Setup guide](docs/deploy.md#光鸭云盘guangyapan连接)**
-
-New brands plug into a storage-brand registry; the bulk of adding one is a drive client + a storage executor for that drive's transfer API.
-
-## macOS desktop app
-
-The macOS desktop app wraps the **same Next.js + workflow engine** in an Electron shell with a SQLite data layer — one `.dmg`, zero infrastructure. It's the easiest way to run Mediary Scout on your Mac.
-
-- **Download**: [GitHub Releases](https://github.com/fancydirty/mediary-scout/releases) (Apple Silicon `.dmg`, signed + notarized)
-- **Data**: stored in `~/Library/Application Support/@media-track/desktop/mediary.db` on macOS (SQLite, WAL mode; the path follows Electron's `app.getPath("userData")`, which uses the `name` field from `apps/desktop/package.json`)
-- **Tray**: close-to-tray; the server + patrol keep running with the window hidden
-- **Agent discovery**: on first launch, writes `~/.mediary/agent.json` so coding agents can control it (see [Agent API](#agent-api-agent-first-control) below)
-- **Build from source**: see [`apps/desktop/README.md`](apps/desktop/README.md) for the full build guide (Next standalone → better-sqlite3 ABI swap → electron-builder)
-
-The desktop app and the container share **one codebase** — all product logic (UI, worker, agent, search, patrol) is identical. The only difference is the data layer (SQLite vs Postgres) and the process shell (Electron vs Docker), switched by a single env var.
-
-## Agent API (agent-first control)
-
-Both the desktop app and the container expose a local HTTP API that lets any coding agent (Claude Code, Codex, opencode, …) operate Mediary Scout without opening the GUI — change settings, trigger acquisitions, check download progress.
-
-### Enable
-
-**Desktop**: automatic. On first launch the app generates a token and writes a discovery file to `~/.mediary/agent.json`:
-
-```json
-{ "baseUrl": "http://127.0.0.1:<port>", "token": "<hex>", "version": "<app version>" }
-```
-
-**Container**: set an env var in `docker-compose.yml` to opt in:
-
-```yaml
-services:
-  web:
-    environment:
-      MEDIA_TRACK_AGENT_TOKEN: "<any-random-string>"
-```
-
-### Install the agent skill
-
-```bash
-# Claude Code / opencode / Codex — copy the skill from this repo:
-mkdir -p ~/.claude/skills/ && cp -r skills/mediary-scout ~/.claude/skills/      # or ~/.codex/skills/, ~/.config/opencode/skills/
-```
-
-Then tell your agent things like "帮我找进击的巨人第二季" or "蜘蛛侠下好了吗" or "把画质改成 high" — it reads the discovery file, calls the API, and does the rest. See [`skills/mediary-scout/SKILL.md`](skills/mediary-scout/SKILL.md) for the full trigger list and rules.
-
-### Endpoints
-
-| Method | Path | Purpose |
-|---|---|---|
-| `GET` | `/api/agent/config` | Read current settings (secrets masked) |
-| `PUT` | `/api/agent/config` | Partial update (secrets reject masked `***` writes) |
-| `POST` | `/api/agent/acquire` | Search TMDB → queue acquisition (409 on ambiguity) |
-| `POST` | `/api/agent/patrol` | Trigger a patrol sweep |
-| `GET` | `/api/agent/library` | Tracked titles + missing episodes |
-| `GET` | `/api/agent/activity` | Active queue + recent notifications |
-
-All endpoints require `Authorization: Bearer <token>`. No token configured → `404` (endpoints invisible).
+> **Disclaimer.** Mediary Scout is **open-source, self-hosted software**. It is **not** offered, and never will be offered, as a hosted service — you run your own instance and bring your own drive / LLM / metadata credentials. It performs the same kinds of file operations you could do by hand in your own cloud drive. See [docs/distribution-and-legal-positioning.md](docs/distribution-and-legal-positioning.md) for the project's stance.
 
 ## Status & limitations
 
 - Self-hosted, for advanced users; you need usable 115/Quark/光鸭 access (a membership is most practical).
-- Scheduled monitoring is most valuable on an always-on host.
+- Scheduled monitoring is most valuable on an always-on host (Docker path).
 - This is not a hosted product and ships no hosted backend.
 
 ## Credits & upstream
@@ -252,4 +215,3 @@ Not affiliated with 115, Quark, 光鸭云盘 (GuangYaPan), TMDB, or any indexer.
 
 ## Star History
 ![Star History Chart](https://api.star-history.com/svg?repos=fancydirty/mediary-scout)
-
