@@ -176,7 +176,19 @@ export const SQLITE_SCHEMA = `
 const requireNative = createRequire(import.meta.url);
 
 export function createSqliteWorkflowRepository(options: { path: string }): SqliteWorkflowRepository {
-  const DatabaseCtor = requireNative("better-sqlite3") as typeof import("better-sqlite3");
+  let DatabaseCtor: typeof import("better-sqlite3");
+  try {
+    DatabaseCtor = requireNative("better-sqlite3") as typeof import("better-sqlite3");
+  } catch (error) {
+    const cause = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      "SQLite mode is enabled (MEDIA_TRACK_SQLITE_PATH is set) but the optional native " +
+        "dependency 'better-sqlite3' could not be loaded. Install it (e.g. `npm install` " +
+        "without --no-optional) and ensure it is built for this platform's Node/Electron ABI " +
+        `(desktop builds: @electron/rebuild). Original error: ${cause}`,
+      { cause: error },
+    );
+  }
   return new SqliteWorkflowRepository(new DatabaseCtor(options.path));
 }
 
