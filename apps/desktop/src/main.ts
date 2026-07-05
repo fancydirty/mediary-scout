@@ -88,9 +88,11 @@ async function startServer(): Promise<string> {
     }
   });
   const url = `http://127.0.0.1:${port}/`;
-  // spawn() reports launch failures (missing entry ENOENT, EACCES) via an async "error"
-  // event, NOT a throw. Race it against the health wait so a failure fails FAST (surfaced
-  // once by bootstrap()'s catch) instead of an unhandled event + a 60s health timeout.
+  // Race the health wait against spawn failures AND an early child exit. spawn() reports
+  // launch failures (ENOENT/EACCES) via an async "error" event; a booted-then-crashed
+  // child (Next bundle error, missing native ABI, runtime exception) exits with a code.
+  // Either must fail FAST (surfaced once by bootstrap()'s catch, with the exit code for
+  // diagnosis) instead of hanging out the 60s health timeout with a generic message.
   await new Promise<void>((resolve, reject) => {
     let settled = false;
     const finish = (fn: () => void) => {
@@ -101,6 +103,9 @@ async function startServer(): Promise<string> {
     };
     serverProc!.once("error", (err) =>
       finish(() => reject(new Error(`无法启动服务进程：${err.message}`))),
+    );
+    serverProc!.once("exit", (code) =>
+      finish(() => reject(new Error(`服务进程启动时退出（code ${code ?? "null"}）。`))),
     );
     waitForHealthy({ probe: httpProbe(url), timeoutMs: 60_000, intervalMs: 250 }).then(
       () => finish(resolve),
