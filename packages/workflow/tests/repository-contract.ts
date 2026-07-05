@@ -251,6 +251,23 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
         const got = await repo.getWorkflowRunSnapshot("run_e");
         expect(got?.connectedStorageId).toBe("cs_keep");
       });
+
+      it("re-persist without connectedStorageId writes episodes into the run's ORIGINAL storage bucket", async () => {
+        const repo = await fresh();
+        const snap = reIded("run_f");
+        await repo.saveWorkflowRunSnapshot({ ...snap, connectedStorageId: "cs_keep" });
+        // Finalize path: re-persist omits the storage but flips episode 2 to obtained.
+        const updatedEpisodes = snap.episodes.map((episode) =>
+          episode.episodeCode === "S01E02"
+            ? { ...episode, airStatus: "aired" as const, obtained: true, verifiedFileIds: ["file_2"] }
+            : episode,
+        );
+        await repo.saveWorkflowRunSnapshot({ ...snap, episodes: updatedEpisodes });
+        const got = await repo.getWorkflowRunSnapshot("run_f");
+        // The update must land in the cs_keep bucket the run was persisted onto —
+        // not a parallel unscoped bucket that reads never resolve.
+        expect(got?.obtainedEpisodes).toContain("S01E02");
+      });
     });
 
     describe("claim + active queries", () => {
@@ -705,6 +722,17 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
         expect(recent[0]?.accountId).toBe("acct_default");
         expect(recent[0]?.connectedStorageId).toBe("cs_notif");
         expect(recent[0]?.notification.id).toBe("notification_1");
+      });
+
+      it("listRecentNotificationsWithAccount surfaces unscoped runs as null, never the internal sentinel", async () => {
+        const repo = await fresh();
+        await repo.saveWorkflowRunSnapshot({
+          ...workflowPersistenceFixture(),
+          accountId: "acct_default",
+        });
+        const recent = await repo.listRecentNotificationsWithAccount();
+        expect(recent).toHaveLength(1);
+        expect(recent[0]?.connectedStorageId).toBeNull();
       });
     });
 

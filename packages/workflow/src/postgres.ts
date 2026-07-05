@@ -834,11 +834,16 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
       "SELECT n.payload AS payload, wr.account_id AS account_id, wr.connected_storage_id AS connected_storage_id FROM notifications n " +
         "JOIN workflow_runs wr ON n.workflow_run_id = wr.id",
     );
-    const rows = result.rows.map((row) => ({
-      accountId: (row.account_id as string | undefined) ?? DEFAULT_ACCOUNT_ID,
-      connectedStorageId: (row.connected_storage_id as string | null | undefined) ?? null,
-      notification: row.payload as NotificationEvent,
-    }));
+    const rows = result.rows.map((row) => {
+      const rawStorage = (row.connected_storage_id as string | null | undefined) ?? null;
+      return {
+        accountId: (row.account_id as string | undefined) ?? DEFAULT_ACCOUNT_ID,
+        // Collapse the internal sentinel back to null, same as loadWorkflowRunSnapshot:
+        // callers must never observe UNSCOPED_STORAGE.
+        connectedStorageId: rawStorage === UNSCOPED_STORAGE ? null : rawStorage,
+        notification: row.payload as NotificationEvent,
+      };
+    });
     rows.sort((left, right) => right.notification.createdAt.localeCompare(left.notification.createdAt));
     return rows.slice(0, input?.limit ?? 100);
   }
@@ -1199,8 +1204,22 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     client: PoolClient,
     snapshot: PersistWorkflowRunSnapshotInput,
   ): Promise<void> {
-    const accountId = snapshot.accountId ?? DEFAULT_ACCOUNT_ID;
-    const connectedStorageId = snapshot.connectedStorageId ?? UNSCOPED_STORAGE;
+    // A re-persist may omit accountId/connectedStorageId (the worker finalize path
+    // doesn't re-thread them). upsertWorkflowRun preserves the stored values on
+    // conflict, but the season upsert + episode bucket delete/insert key on
+    // (id, connected_storage_id) — falling back to the unscoped sentinel would write
+    // those into a DIFFERENT bucket than reads resolve, silently dropping the update.
+    // Resolve the run's stored scope first (mirrors the InMemory oracle).
+    const existing = await client.query<{
+      account_id: string | null;
+      connected_storage_id: string | null;
+    }>("SELECT account_id, connected_storage_id FROM workflow_runs WHERE id = $1", [
+      snapshot.workflowRun.id,
+    ]);
+    const accountId =
+      snapshot.accountId ?? existing.rows[0]?.account_id ?? DEFAULT_ACCOUNT_ID;
+    const connectedStorageId =
+      snapshot.connectedStorageId ?? existing.rows[0]?.connected_storage_id ?? UNSCOPED_STORAGE;
     await this.upsert(client, "media_titles", "(id, payload)", [snapshot.title.id, json(snapshot.title)], "$1, $2::jsonb");
     await this.upsertTrackedSeason(client, snapshot.season, accountId, connectedStorageId);
     await this.upsertWorkflowRun(client, snapshot.workflowRun, accountId, connectedStorageId);

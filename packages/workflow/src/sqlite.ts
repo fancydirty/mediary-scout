@@ -339,8 +339,21 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
   }
 
   private replaceWorkflowRunSnapshot(snapshot: PersistWorkflowRunSnapshotInput): void {
-    const accountId = snapshot.accountId ?? DEFAULT_ACCOUNT_ID;
-    const connectedStorageId = snapshot.connectedStorageId ?? UNSCOPED_STORAGE;
+    // A re-persist may omit accountId/connectedStorageId (the worker finalize path
+    // doesn't re-thread them). upsertWorkflowRun preserves the stored values on
+    // conflict, but the season upsert + episode bucket delete/insert below key on
+    // (id, connected_storage_id) — falling back to the unscoped sentinel here would
+    // write those into a DIFFERENT bucket than subsequent reads resolve, silently
+    // dropping the update. Resolve the run's stored scope first (mirrors the
+    // InMemory oracle in repository.ts saveWorkflowRunSnapshot).
+    const existing = this.db
+      .prepare("SELECT account_id, connected_storage_id FROM workflow_runs WHERE id = ?")
+      .get(snapshot.workflowRun.id) as
+      | { account_id: string | null; connected_storage_id: string | null }
+      | undefined;
+    const accountId = snapshot.accountId ?? existing?.account_id ?? DEFAULT_ACCOUNT_ID;
+    const connectedStorageId =
+      snapshot.connectedStorageId ?? existing?.connected_storage_id ?? UNSCOPED_STORAGE;
 
     this.db
       .prepare(
