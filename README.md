@@ -182,7 +182,7 @@ New brands plug into a storage-brand registry; the bulk of adding one is a drive
 The macOS desktop app wraps the **same Next.js + workflow engine** in an Electron shell with a SQLite data layer — one `.dmg`, zero infrastructure. It's the easiest way to run Mediary Scout on your Mac.
 
 - **Download**: [GitHub Releases](https://github.com/fancydirty/mediary-scout/releases) (Apple Silicon `.dmg`, signed + notarized)
-- **Data**: stored in `~/Library/Application Support/Mediary Scout/mediary.db` (SQLite, WAL mode)
+- **Data**: stored in the app's userData directory — `~/Library/Application Support/Mediary Scout/mediary.db` on macOS (SQLite, WAL mode; path follows Electron's `app.getPath("userData")` convention)
 - **Tray**: close-to-tray; the server + patrol keep running with the window hidden
 - **Agent discovery**: on first launch, writes `~/.mediary/agent.json` so coding agents can control it (see [Agent API](#agent-api-agent-first-control) below)
 - **Build from source**: see [`apps/desktop/README.md`](apps/desktop/README.md) for the full build guide (Next standalone → better-sqlite3 ABI swap → electron-builder)
