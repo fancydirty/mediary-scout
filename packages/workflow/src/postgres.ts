@@ -1125,8 +1125,12 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
       return null;
     }
     const accountId = (runRow.rows[0]?.account_id as string | undefined) ?? DEFAULT_ACCOUNT_ID;
-    const connectedStorageId =
-      (runRow.rows[0]?.connected_storage_id as string | null | undefined) ?? null;
+    // Collapse the UNSCOPED_STORAGE sentinel back to null for the domain snapshot — the
+    // sentinel is an internal NOT-NULL detail and must never leak into connectedStorageId
+    // (matches SQLite + InMemory). The season/episode lookups below re-collapse via
+    // `?? UNSCOPED_STORAGE`, so scoping stays correct.
+    const rawStorage = (runRow.rows[0]?.connected_storage_id as string | null | undefined) ?? null;
+    const connectedStorageId = rawStorage === UNSCOPED_STORAGE ? null : rawStorage;
     // Scope the season to THIS run's drive: tracked_seasons PK is
     // (id, connected_storage_id), so the same season id can exist on multiple drives
     // with different per-drive payloads (storageDirectoryId, totals, status). Loading

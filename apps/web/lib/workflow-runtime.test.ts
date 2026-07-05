@@ -298,6 +298,12 @@ describe("runScheduledType3 (ignoreTimeGate — desktop first-open-of-the-day pa
     const prevPg = process.env.MEDIA_TRACK_POSTGRES_URL;
     process.env.MEDIA_TRACK_SQLITE_PATH = ":memory:";
     delete process.env.MEDIA_TRACK_POSTGRES_URL;
+    // Freeze the clock (Date only) at a fixed mid-day Beijing instant so beijingDateTime()
+    // returns a STABLE date for both calls — otherwise the test can flake across Beijing
+    // midnight (the two calls seeing different dates would break once-per-day). 04:00 UTC =
+    // 12:00 Beijing, safely < the pinned 23:59 sweep time so the wall-clock gate still applies.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-07-05T04:00:00.000Z"));
     vi.resetModules();
     const monitor = vi.fn(async () => []);
     vi.doMock("@media-track/workflow", async () => {
@@ -322,6 +328,7 @@ describe("runScheduledType3 (ignoreTimeGate — desktop first-open-of-the-day pa
     } finally {
       delete process.env.MEDIA_TRACK_SQLITE_PATH;
       if (prevPg !== undefined) process.env.MEDIA_TRACK_POSTGRES_URL = prevPg;
+      vi.useRealTimers();
       vi.doUnmock("@media-track/workflow");
       vi.resetModules();
     }

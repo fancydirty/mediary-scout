@@ -838,6 +838,22 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
       });
     });
 
+    describe("unscoped storage surfaces as null", () => {
+      it("returns connectedStorageId=null for a run persisted with no drive (sentinel is an internal detail)", async () => {
+        const repo = await fresh();
+        await repo.saveWorkflowRunSnapshot({
+          ...workflowPersistenceFixture(),
+          accountId: "acct_default",
+          // connectedStorageId omitted → collapses to the UNSCOPED_STORAGE sentinel internally.
+          transferAttempts: [],
+          notifications: [],
+        });
+        const snap = await repo.getWorkflowRunSnapshot("run_1");
+        // The domain contract says the sentinel must surface as null, never leak "__unscoped__".
+        expect(snap?.connectedStorageId).toBeNull();
+      });
+    });
+
     describe("cross-drive season payload isolation", () => {
       it("hydrates each run's snapshot with ITS drive's season payload when the same season id is tracked on two drives", async () => {
         const repo = await fresh();

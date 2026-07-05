@@ -14,6 +14,7 @@ let serverProc: ChildProcess | null = null;
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
+let serverBooted = false;
 
 // Single-instance lock: a 2nd launch focuses the existing window instead of
 // spawning a second server (which would fight over the SQLite DB + patrol).
@@ -76,12 +77,19 @@ async function startServer(): Promise<string> {
     stdio: "inherit",
   });
   serverProc.on("exit", (code) => {
-    if (!isQuitting) {
+    const wasBooted = serverBooted;
+    serverProc = null;
+    serverBooted = false;
+    refreshTray(); // reflect the stopped server in the tray menu
+    // Only surface an error for an UNEXPECTED exit AFTER a successful boot. A crash
+    // DURING startup is already reported by bootstrap()'s catch — don't double-dialog.
+    if (!isQuitting && wasBooted) {
       dialog.showErrorBox("Mediary Scout", `服务进程意外退出（code ${code ?? "null"}）。`);
     }
   });
   const url = `http://127.0.0.1:${port}/`;
   await waitForHealthy({ probe: httpProbe(url), timeoutMs: 60_000, intervalMs: 250 });
+  serverBooted = true;
   return url;
 }
 
