@@ -33,8 +33,8 @@ You ask for a movie, show, or anime; an LLM agent scouts resources across your i
 
 | Platform | Download | Notes |
 |---|---|---|
-| **macOS** (Apple Silicon) | [DMG](https://github.com/fancydirty/mediary-scout/releases/latest) | Signed + notarized, no Gatekeeper warning |
-| **Windows** (x64) | [EXE installer](https://github.com/fancydirty/mediary-scout/releases/latest) | Unsigned — SmartScreen will prompt, click "run anyway" |
+| **macOS** (Apple Silicon) | [DMG → Releases](https://github.com/fancydirty/mediary-scout/releases/latest) | Signed + notarized, no Gatekeeper warning |
+| **Windows** (x64) | [EXE installer → Releases](https://github.com/fancydirty/mediary-scout/releases/latest) | Unsigned — SmartScreen will prompt, click "run anyway" |
 
 1. Download and install
 2. Open the app
@@ -125,7 +125,7 @@ Then tell your agent things like "帮我找进击的巨人第二季" or "蜘蛛�
 | `GET` | `/api/agent/library` | Tracked titles + missing episodes |
 | `GET` | `/api/agent/activity` | Active queue + recent notifications |
 
-All require `Authorization: Bearer <token>`. No token → `404` (invisible).
+All require `Authorization: Bearer <token>`. No token configured → `404` (invisible). Wrong/missing token → `401`.
 
 ## Architecture
 

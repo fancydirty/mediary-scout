@@ -9,7 +9,7 @@ Mediary Scout 有两种部署方式:
 | 部署 | 下载 DMG,拖进 Applications | `docker compose up -d` |
 | 下载 | [GitHub Releases](https://github.com/fancydirty/mediary-scout/releases) | 本指南下方 |
 
-**桌面版**:去 [Releases](https://github.com/fancydirty/mediary-scout/releases) 下载 `.dmg`,打开,拖进 Applications,启动后在 Settings 里配网盘和 LLM 即可。详见 [README → macOS desktop app](../README.md#macos-desktop-app)。
+**桌面版**:去 [Releases](https://github.com/fancydirty/mediary-scout/releases) 下载 `.dmg` 或 `.exe`,打开安装,启动后在 Settings 里配网盘和 LLM 即可。详见 [README → Install](../README.md#install)。
 
 **Docker 版**:继续往下看。
 
