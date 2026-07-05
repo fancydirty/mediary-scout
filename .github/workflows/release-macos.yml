@@ -5,6 +5,16 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version tag to publish (e.g. v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  ELECTRON_VERSION: "33.4.11"
 
 jobs:
   build-macos:
@@ -27,7 +37,16 @@ jobs:
 
       - name: Swap better-sqlite3 to Electron ABI
         working-directory: apps/web/.next/standalone/node_modules/better-sqlite3
-        run: npx prebuild-install -r electron -t 33.4.11
+        run: npx prebuild-install -r electron -t ${{ env.ELECTRON_VERSION }}
+
+      - name: Verify ABI swap actually happened
+        run: |
+          cat > /tmp/abi-check.js <<'SCRIPT'
+          const Database = require(process.env.GITHUB_WORKSPACE + '/apps/web/.next/standalone/node_modules/better-sqlite3');
+          new Database(':memory:').exec('CREATE TABLE t(x)');
+          console.log('ABI_OK modules=' + process.versions.modules);
+          SCRIPT
+          ELECTRON_RUN_AS_NODE=1 "$(npm root)/electron/dist/Electron.app/Contents/MacOS/Electron" /tmp/abi-check.js
 
       - name: Import signing certificate
         env:
@@ -36,6 +55,7 @@ jobs:
         run: |
           echo "$MAC_CERT_P12_BASE64" | base64 --decode > /tmp/cert.p12
           security create-keychain -p build-keychain build.keychain
+          security unlock-keychain -p build-keychain build.keychain
           security import /tmp/cert.p12 -k build.keychain -P "$MAC_CERT_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
           security list-keychains -s build.keychain
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k build-keychain build.keychain
@@ -50,9 +70,20 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: npm run dist --workspace @media-track/desktop
 
+      - name: Determine release tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Upload DMG to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           files: apps/desktop/dist-app/*.dmg
           draft: true
           generate_release_notes: true
