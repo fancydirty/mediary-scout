@@ -137,9 +137,10 @@ jobs:
       - name: Verify ABI swap actually happened
         shell: pwsh
         run: |
-          "const Database = require(process.env.GITHUB_WORKSPACE + '/apps/web/.next/standalone/node_modules/better-sqlite3'); new Database(':memory:').exec('CREATE TABLE t(x)'); console.log('ABI_OK modules=' + process.versions.modules);" | Out-File -Encoding utf8 $env:TEMP/abi-check.js
+          $abiCheck = Join-Path $env:TEMP "abi-check.js"
+          "const Database = require(process.env.GITHUB_WORKSPACE + '/apps/web/.next/standalone/node_modules/better-sqlite3'); new Database(':memory:').exec('CREATE TABLE t(x)'); console.log('ABI_OK modules=' + process.versions.modules);" | Out-File -Encoding utf8 $abiCheck
           $env:ELECTRON_RUN_AS_NODE = "1"
-          & "$(npm root)/electron/dist/electron.exe" $env:TEMP/abi-check.js
+          & "$(npm root)/electron/dist/electron.exe" $abiCheck
 
       - name: Package Windows installer
         run: npm run dist --workspace @media-track/desktop
@@ -161,6 +162,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
-          target_commitish: ${{ github.sha }}
+          target_commitish: refs/tags/${{ steps.tag.outputs.tag }}
           files: apps/desktop/dist-app/*.exe
           generate_release_notes: true
