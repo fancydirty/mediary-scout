@@ -129,7 +129,7 @@ function createWindow(url: string): void {
 // A 22×22 monochrome "play" glyph as a macOS template image (black + alpha; the OS
 // recolors it for light/dark menu bars). Embedded as a data URL so the tray is VISIBLE
 // with no external asset / packaging step — close-to-tray is the primary lifecycle, so
-// an invisible icon would make the app unoperable.
+// an invisible icon would make the app inoperable.
 const TRAY_ICON_DATA_URL =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABYAAAAWCAYAAADEtGw7AAAAN0lEQVR42mNgGAUDCf7T0uD/tDSY6hb8x4FpZvB/WhpMkQX/aWX4gBo8NCJv8GeQoVMIjQLqAABeq02ztviApQAAAABJRU5ErkJggg==";
 
