@@ -276,9 +276,13 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     const rawStorage = runRow.connected_storage_id ?? null;
     const connectedStorageId = rawStorage === UNSCOPED_STORAGE ? null : rawStorage;
 
+    // Scope the season to THIS run's drive: tracked_seasons PK is
+    // (id, connected_storage_id), so the same season id can exist on multiple drives
+    // with different per-drive payloads (storageDirectoryId, totals, status). Loading
+    // by id alone could hydrate the wrong drive's season and break cross-drive isolation.
     const seasonRow = this.db
-      .prepare("SELECT payload FROM tracked_seasons WHERE id = ?")
-      .get(workflowRun.trackedSeasonId) as { payload: string } | undefined;
+      .prepare("SELECT payload FROM tracked_seasons WHERE id = ? AND connected_storage_id = ?")
+      .get(workflowRun.trackedSeasonId, rawStorage ?? UNSCOPED_STORAGE) as { payload: string } | undefined;
     if (!seasonRow) {
       throw new Error(
         `Missing tracked season ${workflowRun.trackedSeasonId} for workflow run ${workflowRun.id}`,

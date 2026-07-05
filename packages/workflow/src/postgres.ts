@@ -1127,10 +1127,14 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     const accountId = (runRow.rows[0]?.account_id as string | undefined) ?? DEFAULT_ACCOUNT_ID;
     const connectedStorageId =
       (runRow.rows[0]?.connected_storage_id as string | null | undefined) ?? null;
+    // Scope the season to THIS run's drive: tracked_seasons PK is
+    // (id, connected_storage_id), so the same season id can exist on multiple drives
+    // with different per-drive payloads (storageDirectoryId, totals, status). Loading
+    // by id alone could hydrate the wrong drive's season and break cross-drive isolation.
     const season = await this.selectOne<TrackedSeason>(
       executor,
-      "SELECT payload FROM tracked_seasons WHERE id = $1",
-      [workflowRun.trackedSeasonId],
+      "SELECT payload FROM tracked_seasons WHERE id = $1 AND connected_storage_id = $2",
+      [workflowRun.trackedSeasonId, connectedStorageId ?? UNSCOPED_STORAGE],
     );
     if (!season) {
       throw new Error(`Missing tracked season ${workflowRun.trackedSeasonId} for workflow run ${workflowRun.id}`);

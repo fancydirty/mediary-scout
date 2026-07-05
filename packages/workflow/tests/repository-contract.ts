@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { DuplicateUsernameError, type WorkflowRepository } from "../src/repository.js";
 import type { Account } from "../src/account-credentials.js";
 import { workflowPersistenceFixture } from "./workflow-fixtures.js";
@@ -12,8 +12,18 @@ export interface RepoHarness {
 
 export function runRepositoryContract(name: string, harness: RepoHarness): void {
   describe(`WorkflowRepository contract: ${name}`, () => {
+    // Track every repository a test opened and tear it down afterwards, so SQLite
+    // file handles / future engine pools don't leak across the (many) contract tests.
+    const opened: WorkflowRepository[] = [];
+    afterEach(async () => {
+      for (const repo of opened.splice(0)) {
+        await harness.teardown?.(repo);
+      }
+    });
     async function fresh(): Promise<WorkflowRepository> {
-      return await harness.make();
+      const repo = await harness.make();
+      opened.push(repo);
+      return repo;
     }
 
     describe("settings", () => {
@@ -825,6 +835,32 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
             })
           ).status,
         ).toBe("not_retriable");
+      });
+    });
+
+    describe("cross-drive season payload isolation", () => {
+      it("hydrates each run's snapshot with ITS drive's season payload when the same season id is tracked on two drives", async () => {
+        const repo = await fresh();
+        const base = workflowPersistenceFixture();
+        // Same season id ("season_1") on two drives, but DIFFERENT per-drive season
+        // payload (storageDirectoryId). tracked_seasons PK is (id, connected_storage_id),
+        // so loading the season by id alone could hydrate the WRONG drive's payload.
+        const onDrive = (storageId: string, runId: string, dir: string) => ({
+          ...base,
+          connectedStorageId: storageId,
+          workflowRun: { ...base.workflowRun, id: runId },
+          season: { ...base.season, storageDirectoryId: dir },
+          // child rows are validated to belong to workflowRun.id; drop them since we re-id the run.
+          transferAttempts: [],
+          notifications: [],
+        });
+        await repo.saveWorkflowRunSnapshot(onDrive("cs_A", "run_dirA", "dir_A"));
+        await repo.saveWorkflowRunSnapshot(onDrive("cs_B", "run_dirB", "dir_B"));
+
+        const a = await repo.getWorkflowRunSnapshot("run_dirA");
+        const b = await repo.getWorkflowRunSnapshot("run_dirB");
+        expect(a?.season.storageDirectoryId).toBe("dir_A");
+        expect(b?.season.storageDirectoryId).toBe("dir_B");
       });
     });
 
