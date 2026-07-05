@@ -581,8 +581,9 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
 
       it("listAgentSteps is fail-closed on scope (wrong scope → [], correct scope → steps)", async () => {
         const repo = await fresh();
-        await repo.saveWorkflowRunSnapshot(workflowPersistenceFixture());
-        const runId = workflowPersistenceFixture().workflowRun.id;
+        const snapshot = workflowPersistenceFixture();
+        await repo.saveWorkflowRunSnapshot(snapshot);
+        const runId = snapshot.workflowRun.id;
         await repo.appendAgentStep(runId, step(0, "searchResources"));
 
         // Wrong account → not visible → [].

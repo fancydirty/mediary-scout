@@ -1,4 +1,5 @@
-import Database from "better-sqlite3";
+import { createRequire } from "node:module";
+import type Database from "better-sqlite3";
 import { DEFAULT_ACCOUNT_ID, episodeNumberFromCode } from "./domain.js";
 import type {
   AgentDecision,
@@ -168,8 +169,15 @@ export const SQLITE_SCHEMA = `
     ON CONFLICT (id) DO NOTHING;
 `;
 
+// Lazy-load the native better-sqlite3 at CALL time (the desktop path), NOT at module
+// evaluation time. This keeps `import "@media-track/workflow"` (container, Vercel
+// serverless demo — Postgres-only) free of the native module, so those paths never pay
+// the native load and can't hard-crash on a platform where better-sqlite3 isn't built.
+const requireNative = createRequire(import.meta.url);
+
 export function createSqliteWorkflowRepository(options: { path: string }): SqliteWorkflowRepository {
-  return new SqliteWorkflowRepository(new Database(options.path));
+  const DatabaseCtor = requireNative("better-sqlite3") as typeof import("better-sqlite3");
+  return new SqliteWorkflowRepository(new DatabaseCtor(options.path));
 }
 
 export class SqliteWorkflowRepository implements WorkflowRepository {
