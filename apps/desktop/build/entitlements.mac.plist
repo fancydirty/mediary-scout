@@ -16,12 +16,10 @@
     <key>com.apple.security.cs.disable-library-validation</key>
     <true/>
     <!--
-      REQUIRED for ELECTRON_RUN_AS_NODE: hardened runtime strips dyld
-      environment variables from child processes by default. Without this
-      entitlement, the spawned server child never sees ELECTRON_RUN_AS_NODE=1
-      and launches as a normal Electron window instead of running server.js
-      under Node. This is the root cause of the signed+notarized build failing
-      to start the server child (and thus never writing ~/.mediary/agent.json).
+      Allows DYLD_* environment variables to be inherited by child processes
+      under hardened runtime. This does NOT affect ELECTRON_RUN_AS_NODE (which
+      is a regular env var, not a dyld var), but some Electron internals use
+      dyld vars for path resolution in spawned children.
     -->
     <key>com.apple.security.cs.allow-dyld-environment-variables</key>
     <true/>

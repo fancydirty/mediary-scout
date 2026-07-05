@@ -10,6 +10,8 @@ directories:
   output: dist-app
   buildResources: build
 
+afterPack: ./after-pack.js
+
 # The Electron app itself: compiled main/preload from tsc + the native deps
 # main.js loads (better-sqlite3 is a dep of this package; electron loads it via
 # the child only, but node_modules must be present for the rebuild + trace).
