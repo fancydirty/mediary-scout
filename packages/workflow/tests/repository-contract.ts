@@ -878,6 +878,39 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
         expect(a?.season.storageDirectoryId).toBe("dir_A");
         expect(b?.season.storageDirectoryId).toBe("dir_B");
       });
+
+      it("lists one tracked-season state per (season, drive), not collapsed by season id", async () => {
+        const repo = await fresh();
+        const base = workflowPersistenceFixture();
+        // season.id is drive-independent (`${title.id}_s${n}`), so the SAME season id
+        // exists on both drives. Listing must return a state PER DRIVE — collapsing by
+        // season id would drop a drive (and make the desktop sweep skip it).
+        const onDrive = (storageId: string, runId: string) => ({
+          ...base,
+          connectedStorageId: storageId,
+          workflowRun: { ...base.workflowRun, id: runId },
+          transferAttempts: [],
+          notifications: [],
+        });
+        await repo.saveWorkflowRunSnapshot(onDrive("cs_A", "run_mdA"));
+        await repo.saveWorkflowRunSnapshot(onDrive("cs_B", "run_mdB"));
+
+        // The cross-account sweep list (what runScheduledType3 patrols) must see both drives.
+        const all = await repo.listAllTrackedSeasonStates();
+        const allStorages = all
+          .filter((s) => s.season.id === base.season.id)
+          .map((s) => s.connectedStorageId)
+          .sort();
+        expect(allStorages).toEqual(["cs_A", "cs_B"]);
+
+        // The account-scoped list (all drives) must too.
+        const scoped = await repo.listTrackedSeasonStates({ accountId: "acct_default", connectedStorageId: null });
+        const scopedStorages = scoped
+          .filter((s) => s.season.id === base.season.id)
+          .map((s) => s.connectedStorageId)
+          .sort();
+        expect(scopedStorages).toEqual(["cs_A", "cs_B"]);
+      });
     });
 
     // NOTE: backfillConnectedStorageId is deliberately NOT in the shared contract.

@@ -31,6 +31,7 @@ import {
   expireWorkflowRun,
   isActiveWorkflowStatus,
   retriedWorkflowRun,
+  seasonScopeKey,
   UNSCOPED_STORAGE,
   validateWorkflowRunSnapshot,
   withDerivedEpisodeSummaries,
@@ -915,11 +916,18 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
   }
 
   /** Keep only the latest (startedAt desc) run row per season id. */
-  private latestRunPerSeason<T extends { trackedSeasonId: string; startedAt: string }>(rows: T[]): T[] {
+  private latestRunPerSeason<
+    T extends { trackedSeasonId: string; connectedStorageId: string | null; startedAt: string },
+  >(rows: T[]): T[] {
     const latest = new Map<string, T>();
     for (const row of [...rows].sort((a, b) => b.startedAt.localeCompare(a.startedAt))) {
-      if (!latest.has(row.trackedSeasonId)) {
-        latest.set(row.trackedSeasonId, row);
+      // Key by (season, drive), NOT season alone: season.id is drive-independent
+      // (`${title.id}_s${n}`), so the same season tracked on two drives is two distinct
+      // tracked entities. Collapsing by season id would drop a drive (and make the
+      // desktop sweep skip it) — Postgres keys tracked_seasons by (id, storage) too.
+      const key = seasonScopeKey(row.trackedSeasonId, row.connectedStorageId);
+      if (!latest.has(key)) {
+        latest.set(key, row);
       }
     }
     return Array.from(latest.values());
