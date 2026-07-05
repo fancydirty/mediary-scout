@@ -1,4 +1,4 @@
-import { getWorkflowRepository } from "../workflow-runtime.js";
+import { getWorkflowRepository } from "../workflow-runtime";
 
 /**
  * Agent API token: env MEDIA_TRACK_AGENT_TOKEN takes precedence over persisted
@@ -31,8 +31,7 @@ export async function verifyAgentApiToken(authHeader: string | null): Promise<bo
     return false;
   }
   const provided = match[1];
-  // Constant-time comparison: XOR all bytes, OR them together
-  if (configured.length !== provided.length) {
+  if (provided === undefined || configured.length !== provided.length) {
     return false;
   }
   let diff = 0;

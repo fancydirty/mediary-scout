@@ -16,21 +16,21 @@ import {
   PROWLARR_BASE_URL_SETTING_KEY,
   PROWLARR_API_KEY_SETTING_KEY,
   TMDB_API_KEY_SETTING_KEY,
-} from "../workflow-runtime.js";
+} from "../workflow-runtime";
 
 const PUSH_CHANNEL_KEYS = ["bark", "serverchan", "wecom", "webhook"] as const;
 type PushChannelKey = (typeof PUSH_CHANNEL_KEYS)[number];
 
 export interface AgentConfigView {
   llm: { baseURL: string | null; modelId: string | null; apiKey: string | null };
-  qualityPreference: string;
-  preferredLanguage: string;
+  qualityPreference: string | undefined;
+  preferredLanguage: string | undefined;
   dailySweepTime: string;
   pansouBaseUrl: string | null;
   prowlarr: { baseURL: string; apiKey: string | null } | null;
   tmdbApiKey: string | null;
   push: Partial<Record<PushChannelKey, string>>;
-  storages: Array<{ id: string; brand: string; name: string }>;
+  storages: Array<{ id: string; brand: string; name: string | null }>;
 }
 
 /** Mask a secret: keep last 4 chars if long enough, else full mask. */
@@ -110,8 +110,7 @@ export type AgentConfigWriteResult =
   | { ok: true; updated: string[] }
   | { ok: false; field: string; message: string };
 
-const QUALITY_VALUES = ["4K", "1080p", "720p", "any"];
-const LANGUAGE_VALUES = ["zh", "any"];
+const QUALITY_VALUES = ["high", "medium"];
 
 /**
  * Partial update: only provided fields are written. Secret fields reject
@@ -159,14 +158,7 @@ export async function writeAgentConfig(
   }
 
   if (input.preferredLanguage !== undefined) {
-    if (!LANGUAGE_VALUES.includes(input.preferredLanguage)) {
-      return {
-        ok: false,
-        field: "preferredLanguage",
-        message: `无效语言偏好，可选：${LANGUAGE_VALUES.join(" / ")}`,
-      };
-    }
-    await setAccount(PREFERRED_LANGUAGE_SETTING_KEY, input.preferredLanguage);
+    await setAccount(PREFERRED_LANGUAGE_SETTING_KEY, input.preferredLanguage.trim());
     updated.push("preferredLanguage");
   }
 

@@ -1,4 +1,4 @@
-import { getWorkflowRepository } from "../workflow-runtime.js";
+import { getWorkflowRepository } from "../workflow-runtime";
 
 /**
  * The agent API operates on the OWNER account (v1: single-agent-principal).

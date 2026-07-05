@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getAgentApiToken, verifyAgentApiToken } from "./auth.js";
+import { getAgentApiToken, verifyAgentApiToken } from "./auth";
 
 /**
  * Security-relevant gate for all /api/agent/* routes:

@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
 
   const recent = notifications.map((notification) => ({
     id: notification.id,
-    type: notification.type,
+    kind: notification.kind,
     title: notification.title,
     body: notification.body,
     createdAt: notification.createdAt,

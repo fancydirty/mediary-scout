@@ -1,5 +1,5 @@
 import { createTmdbSearchProvider, type MediaSearchProvider } from "@media-track/workflow";
-import { getTmdbAccesses, getAccountScopedSettings, queueCandidateTracking } from "../workflow-runtime.js";
+import { getTmdbAccesses, getAccountScopedSettings, queueCandidateTracking } from "../workflow-runtime";
 
 export interface AcquireInput {
   query: string;
@@ -14,7 +14,7 @@ export interface AcquireResult {
   matched?: { tmdbId: number; title: string; year: number | null; type: "tv" | "movie" };
   candidates?: Array<{ tmdbId: number; title: string; year: number | null; type: "tv" | "movie"; score: number }>;
   message: string;
-  workflowRunId?: string;
+  workflowRunId?: string | null;
   trackedSeasonId?: string;
 }
 
