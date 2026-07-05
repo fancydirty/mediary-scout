@@ -177,8 +177,6 @@ Three Chinese cloud drives, each a first-class workspace:
 
 New brands plug into a storage-brand registry; the bulk of adding one is a drive client + a storage executor for that drive's transfer API.
 
-<<<<<<< HEAD
-=======
 ## macOS desktop app
 
 The macOS desktop app wraps the **same Next.js + workflow engine** in an Electron shell with a SQLite data layer — one `.dmg`, zero infrastructure. It's the easiest way to run Mediary Scout on your Mac.
@@ -191,7 +189,6 @@ The macOS desktop app wraps the **same Next.js + workflow engine** in an Electro
 
 The desktop app and the container share **one codebase** — all product logic (UI, worker, agent, search, patrol) is identical. The only difference is the data layer (SQLite vs Postgres) and the process shell (Electron vs Docker), switched by a single env var.
 
->>>>>>> origin/main
 ## Agent API (agent-first control)
 
 Both the desktop app and the container expose a local HTTP API that lets any coding agent (Claude Code, Codex, opencode, …) operate Mediary Scout without opening the GUI — change settings, trigger acquisitions, check download progress.
