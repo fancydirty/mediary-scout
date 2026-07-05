@@ -54,6 +54,7 @@ npmRebuild: false
 
 mac:
   category: public.app-category.entertainment
+  icon: build/icon.icns
   target:
     - dmg
   hardenedRuntime: true
