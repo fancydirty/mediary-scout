@@ -84,7 +84,8 @@ From your Apple Developer account, export before packaging:
 export CSC_LINK="/absolute/path/to/DeveloperIDApplication.p12"   # base64 or file path
 export CSC_KEY_PASSWORD="<p12 password>"
 # …or reference an identity already in the login keychain:
-# export CSC_NAME="Developer ID Application: Your Name (TEAMID)"
+# export CSC_NAME="Your Name (TEAMID)"
+# (electron-builder auto-selects "Developer ID Application:" — do NOT include that prefix)
 
 # Notarization (electron-builder v25 `mac.notarize: true` reads these):
 export APPLE_ID="you@example.com"
