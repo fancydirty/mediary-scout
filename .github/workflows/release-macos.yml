@@ -77,7 +77,6 @@ jobs:
 
       - name: Package + sign + notarize DMG
         env:
-          CSC_LINK: ""
           CSC_NAME: "Developer ID Application: Qinghai Wu (P8GK36YA6D)"
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
