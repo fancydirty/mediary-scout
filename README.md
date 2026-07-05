@@ -38,6 +38,8 @@ You ask for a movie, show, or anime; an LLM agent scouts resources across your i
 - [Features](#features)
 - [Architecture](#architecture)
 - [Quick start](#quick-start)
+- [macOS desktop app](#macos-desktop-app)
+- [Agent API](#agent-api-agent-first-control)
 - [Deploy](#deploy)
 - [Demo](#demo)
 - [Supported drives](#supported-drives)
@@ -92,7 +94,19 @@ flowchart LR
 
 ## Quick start
 
-The fastest path is Docker Compose (web + Postgres + a bundled PanSou):
+Two ways to run Mediary Scout — pick what fits:
+
+### Option A: macOS desktop app (no Docker needed)
+
+Download the latest DMG from [GitHub Releases](https://github.com/fancydirty/mediary-scout/releases), open it, drag to Applications. That's it — no Postgres, no Docker, no terminal. The app bundles its own SQLite data layer and runs the full engine inside an Electron shell.
+
+> The DMG is signed and notarized, so it opens without Gatekeeper warnings on macOS.
+
+Then open the app and configure in **Settings** (same as the container path — drives, LLM, TMDB, etc.).
+
+### Option B: Docker Compose (self-host on a server)
+
+The fastest path for always-on deployment (web + Postgres + a bundled PanSou):
 
 ```bash
 cp .env.example .env   # optional — most config can be set in the UI
@@ -162,6 +176,18 @@ Three Chinese cloud drives, each a first-class workspace:
 - **GuangYaPan / 光鸭云盘** (`guangya`) — Xunlei-family drive; **magnet / offline-download first** (transfers magnet/ed2k/BT via its offline-task API, like 115's offline path — it does **not** transfer 115/Quark/光鸭 share-links in v1). Token auth (`access_token` + `refresh_token`). Pairs well with Prowlarr. **[Setup guide](docs/deploy.md#光鸭云盘guangyapan连接)**
 
 New brands plug into a storage-brand registry; the bulk of adding one is a drive client + a storage executor for that drive's transfer API.
+
+## macOS desktop app
+
+The macOS desktop app wraps the **same Next.js + workflow engine** in an Electron shell with a SQLite data layer — one `.dmg`, zero infrastructure. It's the easiest way to run Mediary Scout on your Mac.
+
+- **Download**: [GitHub Releases](https://github.com/fancydirty/mediary-scout/releases) (Apple Silicon `.dmg`, signed + notarized)
+- **Data**: stored in `~/Library/Application Support/@media-track/desktop/mediary.db` (SQLite, WAL mode)
+- **Tray**: close-to-tray; the server + patrol keep running with the window hidden
+- **Agent discovery**: on first launch, writes `~/.mediary/agent.json` so coding agents can control it (see [Agent API](#agent-api-agent-first-control) below)
+- **Build from source**: see [`apps/desktop/README.md`](apps/desktop/README.md) for the full build guide (Next standalone → better-sqlite3 ABI swap → electron-builder)
+
+The desktop app and the container share **one codebase** — all product logic (UI, worker, agent, search, patrol) is identical. The only difference is the data layer (SQLite vs Postgres) and the process shell (Electron vs Docker), switched by a single env var.
 
 ## Agent API (agent-first control)
 

@@ -1,5 +1,20 @@
 # Deploy Mediary Scout
 
+Mediary Scout 有两种部署方式:
+
+| | macOS 桌面版 | Docker Compose (服务器) |
+|---|---|---|
+| 适合 | Mac 用户,不想折腾 Docker | NAS / 软路由 / VPS / 闲置 PC |
+| 数据层 | SQLite(本地文件) | Postgres |
+| 部署 | 下载 DMG,拖进 Applications | `docker compose up -d` |
+| 下载 | [GitHub Releases](https://github.com/fancydirty/mediary-scout/releases) | 本指南下方 |
+
+**桌面版**:去 [Releases](https://github.com/fancydirty/mediary-scout/releases) 下载 `.dmg`,打开,拖进 Applications,启动后在 Settings 里配网盘和 LLM 即可。详见 [README → macOS desktop app](../README.md#macos-desktop-app)。
+
+**Docker 版**:继续往下看。
+
+---
+
 > **English summary.** Self-host with one command — `docker compose up -d` brings up web (Next.js + in-process worker) + Postgres + a bundled PanSou. Open `http://<host>:3000`, go to Settings, scan-login your 115 / Quark drive (or paste a 光鸭 / GuangYaPan `access_token` + `refresh_token`), add an OpenAI-compatible LLM endpoint, and you're running. To reach it from your phone / TV / on the go, use **Tailscale** (private mesh — safest) or a **Cloudflare Tunnel** (public HTTPS, no public IP). **Never expose `:3000` raw to the internet.** Full walkthrough below (Chinese).
 
 一行命令起整套:**web(Next + 进程内 worker)+ Postgres + 自带 PanSou**。本指南覆盖:选宿主 → compose 起服务 → 从自己的设备访问 → 安全/升级。
