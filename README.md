@@ -163,6 +163,49 @@ Three Chinese cloud drives, each a first-class workspace:
 
 New brands plug into a storage-brand registry; the bulk of adding one is a drive client + a storage executor for that drive's transfer API.
 
+## Agent API (agent-first control)
+
+Both the desktop app and the container expose a local HTTP API that lets any coding agent (Claude Code, Codex, opencode, …) operate Mediary Scout without opening the GUI — change settings, trigger acquisitions, check download progress.
+
+### Enable
+
+**Desktop**: automatic. On first launch the app generates a token and writes a discovery file to `~/.mediary/agent.json`:
+
+```json
+{ "baseUrl": "http://127.0.0.1:<port>", "token": "<hex>", "version": "<app version>" }
+```
+
+**Container**: set an env var in `docker-compose.yml` to opt in:
+
+```yaml
+services:
+  web:
+    environment:
+      MEDIA_TRACK_AGENT_TOKEN: "<any-random-string>"
+```
+
+### Install the agent skill
+
+```bash
+# Claude Code / opencode / Codex — copy the skill from this repo:
+mkdir -p ~/.claude/skills/ && cp -r skills/mediary-scout ~/.claude/skills/      # or ~/.codex/skills/, ~/.config/opencode/skills/
+```
+
+Then tell your agent things like "帮我找进击的巨人第二季" or "蜘蛛侠下好了吗" or "把画质改成 high" — it reads the discovery file, calls the API, and does the rest. See [`skills/mediary-scout/SKILL.md`](skills/mediary-scout/SKILL.md) for the full trigger list and rules.
+
+### Endpoints
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/agent/config` | Read current settings (secrets masked) |
+| `PUT` | `/api/agent/config` | Partial update (secrets reject masked `***` writes) |
+| `POST` | `/api/agent/acquire` | Search TMDB → queue acquisition (409 on ambiguity) |
+| `POST` | `/api/agent/patrol` | Trigger a patrol sweep |
+| `GET` | `/api/agent/library` | Tracked titles + missing episodes |
+| `GET` | `/api/agent/activity` | Active queue + recent notifications |
+
+All endpoints require `Authorization: Bearer <token>`. No token configured → `404` (endpoints invisible).
+
 ## Status & limitations
 
 - Self-hosted, for advanced users; you need usable 115/Quark/光鸭 access (a membership is most practical).

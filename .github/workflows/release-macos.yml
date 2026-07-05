@@ -98,5 +98,4 @@ jobs:
           tag_name: ${{ steps.tag.outputs.tag }}
           target_commitish: ${{ github.sha }}
           files: apps/desktop/dist-app/*.dmg
-          draft: true
           generate_release_notes: true
