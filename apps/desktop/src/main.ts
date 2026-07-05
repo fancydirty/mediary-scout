@@ -29,6 +29,15 @@ if (!gotLock) {
     }
   });
 
+  // macOS: clicking the Dock icon after the window was closed-to-tray should bring
+  // it back (the standard "activate" gesture), not require a relaunch.
+  app.on("activate", () => {
+    if (mainWindow) {
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
+
   app.on("before-quit", () => {
     isQuitting = true;
   });
@@ -91,9 +100,17 @@ function createWindow(url: string): void {
   void mainWindow.loadURL(url);
 }
 
+// A 22×22 monochrome "play" glyph as a macOS template image (black + alpha; the OS
+// recolors it for light/dark menu bars). Embedded as a data URL so the tray is VISIBLE
+// with no external asset / packaging step — close-to-tray is the primary lifecycle, so
+// an invisible icon would make the app unoperable.
+const TRAY_ICON_DATA_URL =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABYAAAAWCAYAAADEtGw7AAAAN0lEQVR42mNgGAUDCf7T0uD/tDSY6hb8x4FpZvB/WhpMkQX/aWX4gBo8NCJv8GeQoVMIjQLqAABeq02ztviApQAAAABJRU5ErkJggg==";
+
 function createTray(): void {
-  // An empty image is a valid (if invisible) tray icon; a real asset is added at packaging.
-  tray = new Tray(nativeImage.createEmpty());
+  const icon = nativeImage.createFromDataURL(TRAY_ICON_DATA_URL);
+  icon.setTemplateImage(true); // macOS: auto-recolor for the menu bar
+  tray = new Tray(icon);
   tray.setToolTip("Mediary Scout");
   refreshTray();
 }
