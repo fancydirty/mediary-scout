@@ -568,8 +568,9 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
       it("appends steps and lists them ordered by ordinal", async () => {
         const repo = await fresh();
         // Persist the run so its ownership row exists for the scope-gated read below.
-        await repo.saveWorkflowRunSnapshot(workflowPersistenceFixture());
-        const runId = workflowPersistenceFixture().workflowRun.id;
+        const snapshot = workflowPersistenceFixture();
+        await repo.saveWorkflowRunSnapshot(snapshot);
+        const runId = snapshot.workflowRun.id;
 
         await repo.appendAgentStep(runId, step(1, "transferCandidate"));
         await repo.appendAgentStep(runId, step(0, "searchResources"));

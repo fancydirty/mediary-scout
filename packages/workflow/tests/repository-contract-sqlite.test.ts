@@ -75,8 +75,9 @@ describe("SQLite appendAgentStep is idempotent on (run, ordinal)", () => {
   it("ignores a duplicate ordinal append", async () => {
     const repo = makeSqliteRepo();
     try {
-      await repo.saveWorkflowRunSnapshot(workflowPersistenceFixture());
-      const runId = workflowPersistenceFixture().workflowRun.id;
+      const snapshot = workflowPersistenceFixture();
+      await repo.saveWorkflowRunSnapshot(snapshot);
+      const runId = snapshot.workflowRun.id;
       await repo.appendAgentStep(runId, step(0, "searchResources"));
       await repo.appendAgentStep(runId, step(1, "transferCandidate"));
       // Re-append ordinal 0 → no new row (ON CONFLICT DO NOTHING keeps the first).

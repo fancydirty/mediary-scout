@@ -428,9 +428,10 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
       payload: WorkflowRun;
       account_id: string;
       connected_storage_id: string | null;
-    }>("SELECT payload, account_id, connected_storage_id FROM workflow_runs WHERE tracked_season_id = $1", [
-      input.trackedSeasonId,
-    ]);
+    }>(
+      "SELECT payload, account_id, connected_storage_id FROM workflow_runs WHERE tracked_season_id = $1 AND account_id = $2",
+      [input.trackedSeasonId, scope.accountId],
+    );
     const latest = result.rows
       .filter((row) => {
         const rawStorage = row.connected_storage_id ?? null;
