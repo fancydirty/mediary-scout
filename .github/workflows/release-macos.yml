@@ -99,3 +99,68 @@ jobs:
           target_commitish: ${{ github.sha }}
           files: apps/desktop/dist-app/*.dmg
           generate_release_notes: true
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout tag commit (workflow_dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        run: |
+          git fetch --tags
+          if (git rev-parse "refs/tags/${{ inputs.tag }}" 2>$null) {
+            git checkout "${{ inputs.tag }}"
+          } else {
+            Write-Error "Tag ${{ inputs.tag }} does not exist"
+            exit 1
+          }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build Next standalone server
+        run: npm run build:web
+
+      - name: Build desktop TypeScript
+        run: npm run build --workspace @media-track/desktop
+
+      - name: Swap better-sqlite3 to Electron ABI
+        working-directory: apps/web/.next/standalone/node_modules/better-sqlite3
+        run: npx prebuild-install -r electron -t ${{ env.ELECTRON_VERSION }}
+
+      - name: Verify ABI swap actually happened
+        shell: pwsh
+        run: |
+          "const Database = require(process.env.GITHUB_WORKSPACE + '/apps/web/.next/standalone/node_modules/better-sqlite3'); new Database(':memory:').exec('CREATE TABLE t(x)'); console.log('ABI_OK modules=' + process.versions.modules);" | Out-File -Encoding utf8 $env:TEMP/abi-check.js
+          $env:ELECTRON_RUN_AS_NODE = "1"
+          & "$(npm root)/electron/dist/electron.exe" $env:TEMP/abi-check.js
+
+      - name: Package Windows installer
+        run: npm run dist --workspace @media-track/desktop
+        env:
+          CSC_LINK: ""
+          CSC_KEY_PASSWORD: ""
+
+      - name: Determine release tag
+        id: tag
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload installer to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          files: apps/desktop/dist-app/*.exe
+          generate_release_notes: true
