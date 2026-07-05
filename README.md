@@ -14,8 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/fancydirty/mediary-scout/releases/latest">📥 Download for macOS</a> ·
-  <a href="https://github.com/fancydirty/mediary-scout/releases/latest">📥 Download for Windows</a> ·
+  <a href="https://github.com/fancydirty/mediary-scout/releases/latest">📥 Download</a> ·
   <a href="https://mediary.dirtyfancy.sbs">🔭 Live Demo</a> ·
   <a href="README.zh-CN.md">中文文档</a>
 </p>
@@ -61,13 +60,13 @@ Then open `http://<host>:3000` and configure in **Settings**. Full walkthrough: 
 |---|---|---|
 | **Best for** | Personal use, Mac/Windows | NAS, server, 24/7 monitoring |
 | **Setup** | Download + open | `docker compose up -d` |
-| **Database** | SQLite (local file) | Postgres |
+| **Database** | SQLite (default) | Postgres (default; SQLite via `MEDIA_TRACK_SQLITE_PATH`) |
 | **Agent API** | ✅ | ✅ |
 | **Always-on patrol** | ❌ (runs when app is open) | ✅ |
 | **Multi-user** | ❌ | ✅ |
 | **Remote access** | Local only | Tailscale / Cloudflare Tunnel |
 
-Both paths share **one codebase** — all product logic is identical. The only difference is the data layer (SQLite vs Postgres) and the process shell (Electron vs Docker).
+Both paths share **one codebase** — all product logic is identical. The data layer (SQLite vs Postgres) is selected by the `MEDIA_TRACK_SQLITE_PATH` env var, not the process shell — desktop sets it automatically, Docker defaults to Postgres.
 
 ## Features
 
