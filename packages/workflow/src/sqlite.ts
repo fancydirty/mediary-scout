@@ -532,7 +532,10 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     // transaction so two ticks can't double-claim (single-writer + WAL make the
     // read+update atomic). claimableQueuedRuns applies the nextAttemptAt gate + FIFO.
     const claimedRunId = this.db.transaction((): string | null => {
-      const queuedRun = claimableQueuedRuns(this.allWorkflowRuns(), input.kind, input.now)[0];
+      // Prefilter to queued runs of this kind in SQL (json_extract) rather than
+      // scanning every run each tick; claimableQueuedRuns then applies the
+      // nextAttemptAt backoff gate + FIFO on that small set.
+      const queuedRun = claimableQueuedRuns(this.queuedRunsOfKind(input.kind), input.kind, input.now)[0];
       if (!queuedRun) {
         return null;
       }
@@ -612,6 +615,16 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     const rows = this.db.prepare("SELECT payload FROM workflow_runs").all() as Array<{
       payload: string;
     }>;
+    return rows.map((row) => JSON.parse(row.payload) as WorkflowRun);
+  }
+
+  private queuedRunsOfKind(kind: WorkflowKind): WorkflowRun[] {
+    const rows = this.db
+      .prepare(
+        "SELECT payload FROM workflow_runs " +
+          "WHERE json_extract(payload, '$.status') = 'queued' AND json_extract(payload, '$.kind') = ?",
+      )
+      .all(kind) as Array<{ payload: string }>;
     return rows.map((row) => JSON.parse(row.payload) as WorkflowRun);
   }
 

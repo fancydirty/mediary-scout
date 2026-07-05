@@ -600,8 +600,9 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
 
       it("clearAgentSteps empties the run's steps", async () => {
         const repo = await fresh();
-        await repo.saveWorkflowRunSnapshot(workflowPersistenceFixture());
-        const runId = workflowPersistenceFixture().workflowRun.id;
+        const snapshot = workflowPersistenceFixture();
+        await repo.saveWorkflowRunSnapshot(snapshot);
+        const runId = snapshot.workflowRun.id;
         await repo.appendAgentStep(runId, step(0, "searchResources"));
         await repo.appendAgentStep(runId, step(1, "transferCandidate"));
         await repo.clearAgentSteps(runId);
@@ -610,8 +611,9 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
 
       it("updateWorkflowRunProgress clamps percent monotonically; unknown run is a no-op", async () => {
         const repo = await fresh();
-        await repo.saveWorkflowRunSnapshot(workflowPersistenceFixture());
-        const runId = workflowPersistenceFixture().workflowRun.id;
+        const snapshot = workflowPersistenceFixture();
+        await repo.saveWorkflowRunSnapshot(snapshot);
+        const runId = snapshot.workflowRun.id;
 
         await repo.updateWorkflowRunProgress(runId, {
           activity: "转存",

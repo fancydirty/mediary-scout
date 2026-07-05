@@ -50,27 +50,48 @@ async function postgresReachable(): Promise<boolean> {
 
 const reachable = await postgresReachable();
 
-if (!reachable) {
-  describe.skip("WorkflowRepository contract: Postgres (no DB reachable)", () => {
-    it("skipped — set MEDIA_TRACK_TEST_POSTGRES_ADMIN_URL (or run a local dev Postgres) to run", () => {});
+// Provision a dedicated throwaway database. If PG is reachable but the user lacks
+// CREATEDB (common on managed/shared instances), CREATE DATABASE throws — capture it
+// and skip cleanly instead of hard-failing the whole test file at import time.
+interface PgHarness {
+  dbName: string;
+  repository: ReturnType<typeof createPostgresWorkflowRepositorySync>;
+  resetPool: pg.Pool;
+}
+let harness: PgHarness | null = null;
+let setupError: string | null = null;
+
+if (reachable) {
+  const dbName = `wf_contract_${Date.now()}`.toLowerCase();
+  try {
+    const admin = new pg.Client({ connectionString: ADMIN_URL });
+    await admin.connect();
+    await admin.query(`CREATE DATABASE ${dbName}`);
+    await admin.end();
+    const dbUrl = (() => {
+      const u = new URL(ADMIN_URL);
+      u.pathname = `/${dbName}`;
+      return u.toString();
+    })();
+    harness = {
+      dbName,
+      repository: createPostgresWorkflowRepositorySync({ connectionString: dbUrl }),
+      resetPool: new pg.Pool({ connectionString: dbUrl }),
+    };
+  } catch (error) {
+    setupError = error instanceof Error ? error.message : String(error);
+  }
+}
+
+if (!harness) {
+  const reason = !reachable
+    ? "no DB reachable — set MEDIA_TRACK_TEST_POSTGRES_ADMIN_URL (or run a local dev Postgres)"
+    : `could not provision a test database (the admin user needs CREATEDB): ${setupError}`;
+  describe.skip(`WorkflowRepository contract: Postgres (${reason})`, () => {
+    it("skipped", () => {});
   });
 } else {
-  // A dedicated throwaway database so the contract never touches dev data.
-  const dbName = `wf_contract_${Date.now()}`.toLowerCase();
-  const admin = new pg.Client({ connectionString: ADMIN_URL });
-  await admin.connect();
-  await admin.query(`CREATE DATABASE ${dbName}`);
-  await admin.end();
-
-  const dbUrl = (() => {
-    const u = new URL(ADMIN_URL);
-    u.pathname = `/${dbName}`;
-    return u.toString();
-  })();
-
-  const repository = createPostgresWorkflowRepositorySync({ connectionString: dbUrl });
-  // A private pool for the TRUNCATE reset (the repository owns its own pool).
-  const resetPool = new pg.Pool({ connectionString: dbUrl });
+  const { dbName, repository, resetPool } = harness;
 
   async function truncateAll(): Promise<void> {
     await resetPool.query(`TRUNCATE TABLE ${TABLES.join(", ")} RESTART IDENTITY CASCADE`);
