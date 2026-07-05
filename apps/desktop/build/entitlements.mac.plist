@@ -16,10 +16,11 @@
     <key>com.apple.security.cs.disable-library-validation</key>
     <true/>
     <!--
-      Allows DYLD_* environment variables to be inherited by child processes
-      under hardened runtime. This does NOT affect ELECTRON_RUN_AS_NODE (which
-      is a regular env var, not a dyld var), but some Electron internals use
-      dyld vars for path resolution in spawned children.
+      Allows DYLD_* environment variables to pass through to child processes
+      under hardened runtime. Kept for compatibility with Electron internals
+      that may use dyld vars for path resolution. This does NOT affect
+      ELECTRON_RUN_AS_NODE (a regular env var) — the RunAsNode fuse in
+      after-pack.js handles that.
     -->
     <key>com.apple.security.cs.allow-dyld-environment-variables</key>
     <true/>

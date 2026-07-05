@@ -1,10 +1,11 @@
 const { flipFuses, FuseVersion, FuseV1Options } = require("@electron/fuses");
 
 exports.default = async function afterPack(context) {
-  const appDir = context.appOutDir;
-  const electronBinary = process.platform === "darwin"
-    ? `${appDir}/Contents/MacOS/Mediary Scout`
-    : `${appDir}/Mediary Scout.exe`;
+  const platform = context.electronPlatformName;
+  const productName = context.packager.appInfo.productFilename;
+  const electronBinary = platform === "darwin"
+    ? `${context.appOutDir}/${productName}.app/Contents/MacOS/${productName}`
+    : `${context.appOutDir}/${productName}.exe`;
 
   await flipFuses(electronBinary, {
     version: FuseVersion.V1,
