@@ -2,6 +2,7 @@
   "name": "@media-track/desktop",
   "private": true,
   "version": "0.0.0",
+  "type": "commonjs",
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
