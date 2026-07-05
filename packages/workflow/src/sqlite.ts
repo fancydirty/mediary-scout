@@ -562,13 +562,19 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
         ? undefined
         : { accountId: input.accountId, connectedStorageId: input.connectedStorageId ?? null },
     );
-    const latest = this.selectWorkflowRunsForAccount(input.trackedSeasonId, scope.accountId)
+    // Scope-filter (account + storage) BEFORE picking the latest: with drive-independent
+    // season ids the same season can be active on multiple drives, so taking the latest
+    // across all drives and THEN dropping cross-storage could return null even though a
+    // scoped active run exists on an older drive. Mirror the InMemory oracle.
+    const latest = this.scopedRunRows()
       .filter(
-        (workflowRun) =>
-          workflowRun.kind === input.kind && isActiveWorkflowStatus(workflowRun.status),
+        (row) =>
+          row.trackedSeasonId === input.trackedSeasonId &&
+          scopeMatches(scope, row.accountId, row.connectedStorageId) &&
+          row.kind === input.kind &&
+          isActiveWorkflowStatus(row.status),
       )
       .sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
-    // getWorkflowRunSnapshot applies the storage filter (drops cross-storage).
     return latest ? this.getWorkflowRunSnapshot(latest.id, scope) : null;
   }
 
@@ -605,13 +611,6 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     const rows = this.db
       .prepare("SELECT payload FROM workflow_runs WHERE account_id = ?")
       .all(accountId) as Array<{ payload: string }>;
-    return rows.map((row) => JSON.parse(row.payload) as WorkflowRun);
-  }
-
-  private selectWorkflowRunsForAccount(trackedSeasonId: string, accountId: string): WorkflowRun[] {
-    const rows = this.db
-      .prepare("SELECT payload FROM workflow_runs WHERE tracked_season_id = ? AND account_id = ?")
-      .all(trackedSeasonId, accountId) as Array<{ payload: string }>;
     return rows.map((row) => JSON.parse(row.payload) as WorkflowRun);
   }
 
@@ -898,6 +897,8 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     accountId: string;
     connectedStorageId: string | null;
     startedAt: string;
+    kind: WorkflowRun["kind"];
+    status: WorkflowRun["status"];
   }> {
     const rows = this.db
       .prepare("SELECT payload, account_id, connected_storage_id FROM workflow_runs")
@@ -911,6 +912,8 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
         accountId: row.account_id ?? DEFAULT_ACCOUNT_ID,
         connectedStorageId: rawStorage === UNSCOPED_STORAGE ? null : rawStorage,
         startedAt: run.startedAt,
+        kind: run.kind,
+        status: run.status,
       };
     });
   }

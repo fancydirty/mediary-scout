@@ -911,6 +911,30 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
           .sort();
         expect(scopedStorages).toEqual(["cs_A", "cs_B"]);
       });
+
+      it("findActiveWorkflowRun returns the SCOPED drive's active run, not null, when a newer active run exists on another drive", async () => {
+        const repo = await fresh();
+        const base = workflowPersistenceFixture();
+        const activeOn = (storageId: string, runId: string, startedAt: string) => ({
+          ...base,
+          connectedStorageId: storageId,
+          workflowRun: { ...base.workflowRun, id: runId, status: "queued" as const, finishedAt: null, startedAt },
+          transferAttempts: [],
+          notifications: [],
+        });
+        // drive A has an OLDER active run; drive B has a NEWER active run (same season+kind).
+        await repo.saveWorkflowRunSnapshot(activeOn("cs_A", "run_fa_A", "2026-07-01T00:00:00.000Z"));
+        await repo.saveWorkflowRunSnapshot(activeOn("cs_B", "run_fa_B", "2026-07-02T00:00:00.000Z"));
+
+        const found = await repo.findActiveWorkflowRun({
+          trackedSeasonId: base.season.id,
+          kind: base.workflowRun.kind,
+          accountId: "acct_default",
+          connectedStorageId: "cs_A",
+        });
+        // Must scope-filter FIRST: return cs_A's run, not the newer cs_B run (and not null).
+        expect(found?.workflowRun.id).toBe("run_fa_A");
+      });
     });
 
     // NOTE: backfillConnectedStorageId is deliberately NOT in the shared contract.
