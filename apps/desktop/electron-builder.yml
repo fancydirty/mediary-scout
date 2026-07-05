@@ -64,3 +64,8 @@ mac:
   # v25: `notarize: true` runs notarytool and reads APPLE_ID,
   # APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID from the environment.
   notarize: true
+
+win:
+  target:
+    - nsis
+  icon: build/icon.png
