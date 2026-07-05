@@ -25,7 +25,9 @@ export function trayMenuState(input: { openAtLogin: boolean; serverReady: boolea
   return {
     items: [
       { id: "open", label: "打开 Mediary Scout", type: "normal", enabled: true },
-      { id: "status", label: input.serverReady ? "● 运行中" : "○ 启动中…", type: "normal", enabled: false },
+      // The tray is only created after the server boots, so serverReady=false means the
+      // server has STOPPED/crashed — not "starting". Show a stopped label, not a spinner.
+      { id: "status", label: input.serverReady ? "● 运行中" : "○ 已停止", type: "normal", enabled: false },
       { id: "openAtLogin", label: "开机自启", type: "checkbox", enabled: true, checked: input.openAtLogin },
       { id: "quit", label: "退出", type: "normal", enabled: true },
     ],

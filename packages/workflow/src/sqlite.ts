@@ -967,26 +967,24 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
         ? undefined
         : { accountId: input.accountId, connectedStorageId: input.connectedStorageId ?? null },
     );
-    // Join each notification to its run's owning (account, storage), then apply the
-    // shared scope predicate (which collapses the UNSCOPED_STORAGE sentinel to null).
+    // Push the (account, storage) scope + `since` cutoff into SQL — matching Postgres —
+    // so we don't scan every account's notifications and filter in JS. A concrete-storage
+    // scope compares the raw column (an unscoped/sentinel row can't match a concrete drive);
+    // an account-only scope passes null → the `? IS NULL` arm matches all of the account's
+    // drives. ISO-8601 UTC sorts lexicographically = chronologically, so string `>=` on
+    // json_extract(createdAt) is a correct inclusive recency cutoff.
+    const since = input?.since ?? null;
     const rows = this.db
       .prepare(
-        "SELECT n.payload AS payload, wr.account_id AS account_id, wr.connected_storage_id AS connected_storage_id " +
-          "FROM notifications n JOIN workflow_runs wr ON n.workflow_run_id = wr.id",
+        "SELECT n.payload AS payload FROM notifications n " +
+          "JOIN workflow_runs wr ON n.workflow_run_id = wr.id " +
+          "WHERE wr.account_id = ? AND (? IS NULL OR wr.connected_storage_id = ?) " +
+          "AND (? IS NULL OR json_extract(n.payload, '$.createdAt') >= ?)",
       )
-      .all() as Array<{ payload: string; account_id: string; connected_storage_id: string | null }>;
-    const since = input?.since;
-    const all = rows
-      .filter((row) => {
-        const ownerAccount = row.account_id ?? DEFAULT_ACCOUNT_ID;
-        const rawStorage = row.connected_storage_id ?? null;
-        const ownerStorage = rawStorage === UNSCOPED_STORAGE ? null : rawStorage;
-        return scopeMatches(scope, ownerAccount, ownerStorage);
-      })
-      .map((row) => JSON.parse(row.payload) as NotificationEvent)
-      // ISO-8601 UTC timestamps sort lexicographically = chronologically, so a string
-      // `>=` on createdAt is a correct (inclusive) recency cutoff.
-      .filter((notification) => since === undefined || notification.createdAt >= since);
+      .all(scope.accountId, scope.connectedStorageId, scope.connectedStorageId, since, since) as Array<{
+      payload: string;
+    }>;
+    const all = rows.map((row) => JSON.parse(row.payload) as NotificationEvent);
     all.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
     return all.slice(0, input?.limit ?? 100);
   }

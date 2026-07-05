@@ -10,9 +10,12 @@ import type { WorkflowRepository } from "../src/repository.js";
  * (Postgres is production truth). Skips cleanly when no Postgres is reachable so
  * DB-less CI stays green; run locally against the dev Postgres to verify parity.
  */
+// This test CREATE/DROPs a throwaway database, so it deliberately does NOT fall back to
+// MEDIA_TRACK_POSTGRES_URL (the runtime/prod connection) — pointing that at a shared or
+// production DB and running the suite must never let it create/drop databases there. Use
+// an explicit test-only admin URL, else the local dev default (which requires CREATEDB).
 const ADMIN_URL =
   process.env.MEDIA_TRACK_TEST_POSTGRES_ADMIN_URL ??
-  process.env.MEDIA_TRACK_POSTGRES_URL ??
   "postgresql://mediatrack:mediatrack@localhost:5432/postgres";
 
 // Every table the workflow schema owns — TRUNCATE between make()s for a fresh repo.
@@ -49,7 +52,7 @@ const reachable = await postgresReachable();
 
 if (!reachable) {
   describe.skip("WorkflowRepository contract: Postgres (no DB reachable)", () => {
-    it("skipped — set MEDIA_TRACK_POSTGRES_URL to a reachable Postgres to run", () => {});
+    it("skipped — set MEDIA_TRACK_TEST_POSTGRES_ADMIN_URL (or run a local dev Postgres) to run", () => {});
   });
 } else {
   // A dedicated throwaway database so the contract never touches dev data.

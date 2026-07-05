@@ -127,7 +127,10 @@ function refreshTray(): void {
   if (!tray) return;
   const state = trayMenuState({
     openAtLogin: app.getLoginItemSettings().openAtLogin,
-    serverReady: serverProc !== null,
+    // Use serverBooted, not `serverProc !== null`: the process is non-null the instant
+    // spawn() returns (before the health check passes), so serverProc would falsely show
+    // "running" during startup / after an early crash.
+    serverReady: serverBooted,
   });
   const template: MenuItemConstructorOptions[] = state.items.map((item: TrayItem) => ({
     id: item.id,
