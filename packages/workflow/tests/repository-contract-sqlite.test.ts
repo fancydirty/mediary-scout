@@ -1,14 +1,13 @@
-import { tmpdir } from "node:os";
-import { mkdtempSync } from "node:fs";
-import { join } from "node:path";
 import { describe, it, expect } from "vitest";
 import { createSqliteWorkflowRepository, SqliteWorkflowRepository } from "../src/sqlite.js";
 import { runRepositoryContract } from "./repository-contract.js";
 import { workflowPersistenceFixture } from "./workflow-fixtures.js";
 
+// Use an in-memory DB per repo: the contract needs a fresh empty store, not file
+// semantics, so ":memory:" avoids leaving hundreds of /tmp/ms-sqlite-* dirs behind.
+// (better-sqlite3 gives each connection its own private in-memory database.)
 function makeSqliteRepo(): SqliteWorkflowRepository {
-  const dir = mkdtempSync(join(tmpdir(), "ms-sqlite-"));
-  return createSqliteWorkflowRepository({ path: join(dir, "test.db") });
+  return createSqliteWorkflowRepository({ path: ":memory:" });
 }
 
 runRepositoryContract("SQLite", {

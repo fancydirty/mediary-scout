@@ -185,10 +185,14 @@ export class InMemoryJsonCache implements DurableJsonCache {
       this.values.delete(key);
       return null;
     }
-    return entry.value as T;
+    // Return a fresh clone so a caller mutating the result can't corrupt the cached
+    // object (the Postgres-backed cache rehydrates from jsonb on every read — match it).
+    return structuredClone(entry.value) as T;
   }
 
   async setJson(key: string, value: unknown, ttlMs?: number): Promise<void> {
-    this.values.set(key, { value, expiresAt: Date.now() + (ttlMs ?? this.ttlMs) });
+    // Snapshot on write too, so a caller mutating the object AFTER setJson doesn't
+    // retroactively change what's cached.
+    this.values.set(key, { value: structuredClone(value), expiresAt: Date.now() + (ttlMs ?? this.ttlMs) });
   }
 }

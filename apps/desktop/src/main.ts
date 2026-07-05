@@ -88,7 +88,25 @@ async function startServer(): Promise<string> {
     }
   });
   const url = `http://127.0.0.1:${port}/`;
-  await waitForHealthy({ probe: httpProbe(url), timeoutMs: 60_000, intervalMs: 250 });
+  // spawn() reports launch failures (missing entry ENOENT, EACCES) via an async "error"
+  // event, NOT a throw. Race it against the health wait so a failure fails FAST (surfaced
+  // once by bootstrap()'s catch) instead of an unhandled event + a 60s health timeout.
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const finish = (fn: () => void) => {
+      if (!settled) {
+        settled = true;
+        fn();
+      }
+    };
+    serverProc!.once("error", (err) =>
+      finish(() => reject(new Error(`无法启动服务进程：${err.message}`))),
+    );
+    waitForHealthy({ probe: httpProbe(url), timeoutMs: 60_000, intervalMs: 250 }).then(
+      () => finish(resolve),
+      (err: unknown) => finish(() => reject(err instanceof Error ? err : new Error(String(err)))),
+    );
+  });
   serverBooted = true;
   return url;
 }
@@ -137,7 +155,9 @@ function refreshTray(): void {
     label: item.label,
     type: item.type,
     enabled: item.enabled,
-    checked: item.checked,
+    // Only set `checked` when the item actually has it (exactOptionalPropertyTypes forbids
+    // passing an explicit `undefined` to an optional-only prop).
+    ...(item.checked !== undefined ? { checked: item.checked } : {}),
     click: () => handleTrayClick(item.id),
   }));
   tray.setContextMenu(Menu.buildFromTemplate(template));
