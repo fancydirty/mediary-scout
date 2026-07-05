@@ -39,8 +39,9 @@ export async function getSearchView(query: string, storageId?: string): Promise<
 }
 
 function getSearchCache() {
-  // Live TMDB searches are cached durably in SQLite (6h TTL) so casual
-  // browsing never becomes an API storm; the demo provider stays in-memory.
+  // Live TMDB searches are cached durably in Postgres (6h TTL) so casual browsing
+  // never becomes an API storm; the desktop (SQLite) build degrades this to in-memory
+  // (below), and the demo provider stays in-memory too.
   if (process.env.MEDIA_TRACK_SEARCH_PROVIDER === "tmdb") {
     // Desktop (SQLite) build has no Postgres — calling postgresConnectionString()
     // would throw, so degrade the durable cache to in-memory instead.

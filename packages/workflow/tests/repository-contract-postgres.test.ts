@@ -41,10 +41,13 @@ async function postgresReachable(): Promise<boolean> {
   const client = new pg.Client({ connectionString: ADMIN_URL, connectionTimeoutMillis: 1500 });
   try {
     await client.connect();
-    await client.end();
     return true;
   } catch {
     return false;
+  } finally {
+    // Always release the socket (best-effort) so a partial connect can't leak a
+    // handle and make Vitest hang on open sockets.
+    await client.end().catch(() => {});
   }
 }
 
@@ -65,9 +68,14 @@ if (reachable) {
   const dbName = `wf_contract_${Date.now()}`.toLowerCase();
   try {
     const admin = new pg.Client({ connectionString: ADMIN_URL });
-    await admin.connect();
-    await admin.query(`CREATE DATABASE ${dbName}`);
-    await admin.end();
+    try {
+      await admin.connect();
+      await admin.query(`CREATE DATABASE ${dbName}`);
+    } finally {
+      // Close the admin socket even if CREATE DATABASE throws (e.g. no CREATEDB),
+      // so a skipped suite can't leak a connection and keep the process alive.
+      await admin.end().catch(() => {});
+    }
     const dbUrl = (() => {
       const u = new URL(ADMIN_URL);
       u.pathname = `/${dbName}`;
