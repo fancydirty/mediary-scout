@@ -172,7 +172,7 @@ Both the desktop app and the container expose a local HTTP API that lets any cod
 **Desktop**: automatic. On first launch the app generates a token and writes a discovery file to `~/.mediary/agent.json`:
 
 ```json
-{ "baseUrl": "http://127.0.0.1:<port>", "token": "<hex>", "version": "0.0.0" }
+{ "baseUrl": "http://127.0.0.1:<port>", "token": "<hex>", "version": "<app version>" }
 ```
 
 **Container**: set an env var in `docker-compose.yml` to opt in:
@@ -188,7 +188,7 @@ services:
 
 ```bash
 # Claude Code / opencode / Codex — copy the skill from this repo:
-cp -r skills/mediary-scout ~/.claude/skills/      # or ~/.codex/skills/, ~/.config/opencode/skills/
+mkdir -p ~/.claude/skills/ && cp -r skills/mediary-scout ~/.claude/skills/      # or ~/.codex/skills/, ~/.config/opencode/skills/
 ```
 
 Then tell your agent things like "帮我找进击的巨人第二季" or "蜘蛛侠下好了吗" or "把画质改成 high" — it reads the discovery file, calls the API, and does the rest. See [`skills/mediary-scout/SKILL.md`](skills/mediary-scout/SKILL.md) for the full trigger list and rules.
