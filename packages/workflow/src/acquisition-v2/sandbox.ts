@@ -11,6 +11,7 @@ import type { ResourceProviderV2, ResourceSnapshotV2 } from "./fake-provider.js"
 import type { SimTreeFile, StorageV2, TransferAttemptResult } from "./storage-115-simulator.js";
 import { isSystemicTransferBlockMessage } from "./transfer-block.js";
 import { animeSearchTabooWarnings, type SearchProfile } from "./search-profile.js";
+import type { AuditEvent } from "../domain.js";
 
 /** Quality / subtitle / source tokens that PanSou share titles almost never carry,
  *  so appending them collapses recall (实测归零). Case-insensitive; word-ish so
@@ -162,6 +163,8 @@ export class TaskSandbox {
   private subtitleSnapshot: AssrtCandidate[] | null = null;
   /** 病3: 待消化的上一大快照（换词搜索时提醒一次，随即清空）。 */
   private pendingDigest: { keyword: string; count: number } | null = null;
+  /** 病4: 本任务的审计事件（no_coverage 上报/dedup 重复/禁忌词警告）。runner 持久化到 workflowRun.auditEvents。 */
+  private readonly auditEvents: AuditEvent[] = [];
 
   constructor(options: TaskSandboxOptions) {
     this.provider = options.provider;
@@ -239,6 +242,13 @@ export class TaskSandbox {
     const tabooWarnings = this.profile
       ? animeSearchTabooWarnings({ keyword: effectiveKeyword, profile: this.profile, titleTerms: this.titleTerms })
       : [];
+    if (tabooWarnings.length > 0) {
+      this.auditEvents.push({
+        type: "search_taboo_warning",
+        message: `搜索词「${effectiveKeyword}」触发动漫禁忌词警告 ${tabooWarnings.length} 条`,
+        data: { keyword: effectiveKeyword, warnings: tabooWarnings },
+      });
+    }
 
     // 病3: take the digestion hint — only when switching keywords (the current
     // normalized keyword differs from the pending one). The stored keyword is the
@@ -258,6 +268,11 @@ export class TaskSandbox {
     if (cachedSnapshot) {
       const count = (this.searchCountByKeyword.get(normalized) ?? 1) + 1;
       this.searchCountByKeyword.set(normalized, count);
+      this.auditEvents.push({
+        type: "search_dedup",
+        message: `重复搜索「${effectiveKeyword}」第 ${count} 次`,
+        data: { keyword: effectiveKeyword, count },
+      });
       return {
         snapshot: cachedSnapshot,
         deduped: true,
@@ -682,7 +697,16 @@ export class TaskSandbox {
         "SANDBOX_NO_PROVIDER_EVIDENCE: cannot report no-coverage before any real search ran (§9 infrastructure failure)",
       );
     }
+    this.auditEvents.push({
+      type: "no_coverage_reported",
+      message: `agent 上报无覆盖：${reason}（已搜索 ${this.seenKeywords.size} 个词）`,
+      data: { reason, searchesPerformed: this.seenKeywords.size },
+    });
     return { reason, searchesPerformed: this.seenKeywords.size };
+  }
+
+  auditTrail(): AuditEvent[] {
+    return [...this.auditEvents];
   }
 
   /** Pre-warm a raw search (system-initiated, does NOT consume agent's distinct

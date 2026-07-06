@@ -1,5 +1,5 @@
 import type { LanguageModel } from "ai";
-import type { AgentDecision, ResourceSnapshot, TransferAttempt } from "../domain.js";
+import type { AgentDecision, AuditEvent, ResourceSnapshot, TransferAttempt } from "../domain.js";
 import type { ResourceProvider, StorageExecutor } from "../ports.js";
 import type { AcquisitionAgentResult } from "./agent-loop.js";
 import type { AgentToolEvent } from "./activity.js";
@@ -85,6 +85,7 @@ export interface AcquisitionV2Outcome {
 
 export interface RunAcquisitionV2Result extends AcquisitionAgentResult {
   outcome: AcquisitionV2Outcome;
+  auditEvents: AuditEvent[];
 }
 
 export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promise<RunAcquisitionV2Result> {
@@ -216,7 +217,7 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     coverageMet: result.coverage.coverageMet,
     reason: result.text,
   });
-  return { ...result, outcome: { resourceSnapshots, decisions, transferAttempts } };
+  return { ...result, outcome: { resourceSnapshots, decisions, transferAttempts }, auditEvents: sandbox.auditTrail() };
 }
 
 /**

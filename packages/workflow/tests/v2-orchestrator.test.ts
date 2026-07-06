@@ -234,4 +234,31 @@ describe("runAcquisitionV2 — raw snapshot pre-warming integration", () => {
     expect(searches[0]).toBe("流浪地球"); // 预热
     expect(promptChecked).toBe(true);
   });
+
+  it("auditEvents surface from sandbox through orchestrator (病4)", async () => {
+    const provider: ResourceProvider = { search: async ({ keyword }) => emptySnapshot(keyword) };
+    const executor = new FakeStorageExecutor({ directories: { staging: [], season: [] } });
+
+    const result = await runAcquisitionV2({
+      provider,
+      executor,
+      model: searchThenReportModel(),
+      workflowRunId: "test-audit",
+      target: {
+        kind: "tv",
+        title: "Show",
+        aliases: [],
+        seasons: [1],
+        missingEpisodes: ["S01E01"],
+        qualityPreference: "high",
+      },
+      stagingDirectoryId: "staging_dir",
+      targetSeasonDirectoryIds: { 1: "season1_dir" },
+    });
+
+    // The agent searches "Show" which was pre-warmed, hitting dedup → search_dedup event.
+    // This proves audit events flow from sandbox → orchestrator → workflow → bridge.
+    expect(result.auditEvents.some((e) => e.type === "search_dedup")).toBe(true);
+    expect(result.auditEvents[0]?.message).toContain("重复搜索");
+  });
 });

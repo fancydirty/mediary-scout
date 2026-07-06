@@ -34,7 +34,7 @@ function searchThenReportModel() {
   return new MockLanguageModelV3({
     doGenerate: async () => {
       i += 1;
-      if (i === 1) return tool("searchResources", { keyword: "show" });
+      if (i === 1) return tool("searchResources", { keyword: "示例剧" });
       if (i === 2) return tool("reportNoCoverage", { reason: "no candidates" });
       return { content: [{ type: "text" as const, text: "done" }], finishReason: { unified: "stop" as const, raw: "stop" as const }, usage: USAGE, warnings: [] };
     },
@@ -70,6 +70,26 @@ describe("runTvAcquisitionV2 — single TV entry over the V2 engine", () => {
     expect(result.seasons[0]!.season.storageDirectoryId).not.toBe("");
     expect(result.notification.kind).toBe("no_coverage");
     expect(result.notification.trigger).toBe("user");
+  });
+
+  it("no_coverage run surfaces auditEvents (病4 end-to-end persistence)", async () => {
+    const storage = new FakeStorageExecutor();
+    const result = await runTvAcquisitionV2({
+      title,
+      mode: "type2",
+      seasons: [{ seasonNumber: 1, totalEpisodes: 3, latestAiredEpisode: 3, qualityPreference: "4K" }],
+      categoryParentId: "tv_root",
+      resourceProvider: emptyProvider(),
+      storage,
+      model: searchThenReportModel(),
+      workflowRunId: "run-tv-2",
+      now: () => "2026-06-15T00:00:00.000Z",
+    });
+
+    expect(result.status).toBe("no_coverage");
+    // The agent searches "示例剧" which was pre-warmed, hitting dedup → search_dedup event.
+    // This proves audit events flow sandbox → orchestrator → workflow → bridge → runner.
+    expect(result.auditEvents.some((e) => e.type === "search_dedup")).toBe(true);
   });
 
   it("no-op type3 patrol (nothing missing) → succeeded, the model is never invoked", async () => {

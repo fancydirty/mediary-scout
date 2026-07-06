@@ -117,7 +117,7 @@ export function bridgeV2WorkflowToResult(input: {
     transferAttempts: v2.outcome.transferAttempts,
     notification,
     notifications: [notification],
-    auditEvents: [],
+    auditEvents: v2.auditEvents,
   };
 }
 

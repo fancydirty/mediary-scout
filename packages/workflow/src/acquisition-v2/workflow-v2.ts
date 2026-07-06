@@ -1,5 +1,6 @@
 import type { LanguageModel } from "ai";
 import type { ResourceProvider, StorageExecutor } from "../ports.js";
+import type { AuditEvent } from "../domain.js";
 import {
   ensureSeasonAcquisitionDirectories,
   withStagingCleanup,
@@ -73,6 +74,7 @@ export interface RunAcquisitionV2WorkflowResult {
    *  the notification's true per-episode size. Absent when the read failed/empty. */
   landedFileCount?: number;
   landedBytes?: number;
+  auditEvents: AuditEvent[];
 }
 
 const EMPTY_OUTCOME: AcquisitionV2Outcome = { resourceSnapshots: [], decisions: [], transferAttempts: [] };
@@ -115,6 +117,7 @@ export async function runAcquisitionV2Workflow(
       stillMissing: [],
       obtained: before.obtained,
       providerAhead: before.providerAhead,
+      auditEvents: [],
     };
   }
 
@@ -171,6 +174,7 @@ export async function runAcquisitionV2Workflow(
     stillMissing: after.missing,
     obtained: after.obtained,
     providerAhead: after.providerAhead,
+    auditEvents: v2.auditEvents,
     ...(landed ? { landedFileCount: landed.fileCount, landedBytes: landed.totalBytes } : {}),
   };
     },

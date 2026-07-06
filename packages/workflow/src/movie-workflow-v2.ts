@@ -116,6 +116,7 @@ export async function runMovieAcquisitionV2(
     snapshots: v2.outcome.resourceSnapshots,
     attempts: v2.outcome.transferAttempts,
     decisions: v2.outcome.decisions,
+    auditEvents: v2.auditEvents,
     // 中文字幕软兜底: the agent landed a raw match with no confirmed 中字 → flag it.
     subtitleFallback: obtained && v2.coverage.subtitleFallback,
     ...(landed ? { landed } : {}),
@@ -132,6 +133,7 @@ function buildResult(input: {
   snapshots: ResourceSnapshot[];
   attempts: TransferAttempt[];
   decisions: AgentDecision[];
+  auditEvents: AuditEvent[];
   /** Landed via the 中文字幕 last-resort fallback (no confirmed 中字) → notification flag. */
   subtitleFallback?: boolean;
   landed?: LandedSize;
@@ -173,7 +175,6 @@ function buildResult(input: {
     trigger: "user",
     report,
   };
-  const auditEvents: AuditEvent[] = [];
 
   return {
     status: input.status,
@@ -185,6 +186,6 @@ function buildResult(input: {
     decisions: input.decisions,
     notification,
     notifications: [notification],
-    auditEvents,
+    auditEvents: input.auditEvents,
   };
 }

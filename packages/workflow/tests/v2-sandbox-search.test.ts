@@ -310,3 +310,30 @@ describe("searchResources 大快照消化提醒（病3）", () => {
     expect(second.digestHint).not.toContain("ghost in the shell");
   });
 });
+
+describe("sandbox 审计事件收集（病4）", () => {
+  it("no_coverage 上报、dedup 重复、禁忌词警告 三类事件入 auditTrail", async () => {
+    const provider = new FakeResourceProviderV2({
+      results: { "攻壳机动队": [{ id: "c1", title: "t" }], "攻壳机动队 2020": [] },
+    });
+    const sandbox = new TaskSandbox({ provider, titleTerms: ["攻壳机动队"], searchProfile: "jp-anime" });
+    await sandbox.searchResources("攻壳机动队");
+    await sandbox.searchResources("攻壳机动队"); // dedup
+    await sandbox.searchResources("攻壳机动队 2020"); // taboo 年份
+    await sandbox.reportNoCoverage("确无资源");
+
+    const trail = sandbox.auditTrail();
+    expect(trail.some((e) => e.type === "no_coverage_reported" && e.data?.reason === "确无资源")).toBe(true);
+    expect(trail.some((e) => e.type === "search_dedup" && e.data?.count === 2)).toBe(true);
+    expect(trail.some((e) => e.type === "search_taboo_warning")).toBe(true);
+    // 每个事件都有人类可读 message（AuditEvent 契约）。
+    expect(trail.every((e) => typeof e.message === "string" && e.message.length > 0)).toBe(true);
+  });
+
+  it("被 §9 拒绝的上报不产生 no_coverage_reported 事件", async () => {
+    const provider = new FakeResourceProviderV2({ results: {} });
+    const sandbox = new TaskSandbox({ provider, titleTerms: ["x"] });
+    await expect(sandbox.reportNoCoverage("premature")).rejects.toThrow("SANDBOX_NO_PROVIDER_EVIDENCE");
+    expect(sandbox.auditTrail()).toEqual([]);
+  });
+});
