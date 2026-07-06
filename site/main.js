@@ -28,6 +28,16 @@ async function wireDownloads() {
     a.querySelector("[data-dl-label]").textContent = it.label;
     if (i === 0) a.querySelector("[data-dl-ver]").textContent = version;
   });
+
+  // Wire the final CTA button
+  const cta = document.querySelector("[data-dl-cta]");
+  if (cta && items[0]) {
+    cta.href = items[0].url;
+    const label = cta.querySelector("[data-dl-label]");
+    if (label) {
+      label.textContent = `下载 Mediary Scout（${items[0].label}）`;
+    }
+  }
 }
 
 async function wireStars() {
@@ -162,8 +172,25 @@ function initHowScrolly() {
   setScene(0);
 }
 
+function initFAQ() {
+  const faqs = document.querySelectorAll("details.faq");
+  if (faqs.length === 0) return;
+
+  // Ensure exclusive accordion behavior (fallback for browsers without name attribute support)
+  faqs.forEach((d) => {
+    d.addEventListener("toggle", () => {
+      if (d.open) {
+        faqs.forEach((o) => {
+          if (o !== d) o.open = false;
+        });
+      }
+    });
+  });
+}
+
 wireDownloads();
 wireStars();
 wirePosters();
 initHowScrolly();
 initFeatureReveal();
+initFAQ();

@@ -747,3 +747,272 @@ section {
     transform: none;
   }
 }
+
+/* Demo section */
+#demo {
+  padding: 80px 0;
+  text-align: center;
+}
+
+#demo h2 {
+  font-size: 32px;
+  font-weight: 700;
+  margin: 0 0 12px 0;
+}
+
+.demo-sub {
+  font-size: 14px;
+  color: var(--text-muted);
+  margin: 0 0 40px 0;
+}
+
+.demo-window {
+  max-width: 900px;
+  margin: 0 auto 32px;
+  background: var(--bg-surface);
+  border: 1px solid var(--bg-card-alt);
+  border-radius: 12px;
+  box-shadow: var(--shadow-dialog);
+  padding: 12px 12px 0;
+  overflow: hidden;
+}
+
+.demo-dots {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.demo-window img {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 6px 6px 0 0;
+}
+
+.demo-cta {
+  display: flex;
+  justify-content: center;
+}
+
+/* Deploy section */
+#deploy {
+  padding: 80px 0;
+}
+
+#deploy h2 {
+  font-size: 32px;
+  font-weight: 700;
+  margin: 0 0 48px 0;
+  text-align: center;
+}
+
+.deploy-split {
+  display: grid;
+  grid-template-columns: 1fr 1px 1fr;
+  gap: 40px;
+  align-items: center;
+}
+
+.deploy-col {
+  padding: 8px 0;
+}
+
+.deploy-eyebrow {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  color: #4d4d4d;
+  letter-spacing: 1px;
+  margin-bottom: 8px;
+}
+
+.deploy-eyebrow-green {
+  color: var(--accent);
+}
+
+.deploy-col b {
+  display: block;
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.deploy-col p {
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1.6;
+  margin: 0 0 12px 0;
+}
+
+.deploy-code {
+  display: block;
+  background: var(--bg-raised);
+  color: var(--accent);
+  padding: 10px 16px;
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.deploy-link {
+  color: var(--text-muted);
+  font-size: 13px;
+  text-decoration: none;
+  transition: color .15s ease;
+}
+
+.deploy-link:hover {
+  color: var(--text);
+}
+
+.deploy-divider {
+  height: 100%;
+  background: linear-gradient(180deg, transparent, #242424 25%, #242424 75%, transparent);
+}
+
+@media (max-width: 860px) {
+  .deploy-split {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto;
+    gap: 32px;
+  }
+
+  .deploy-divider {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, #242424 25%, #242424 75%, transparent);
+  }
+}
+
+/* FAQ section */
+#faq {
+  padding: 80px 0;
+}
+
+#faq h2 {
+  font-size: 32px;
+  font-weight: 700;
+  margin: 0 0 32px 0;
+  text-align: center;
+}
+
+.faq {
+  position: relative;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.faq + .faq::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, #242424 25%, #242424 75%, transparent);
+}
+
+.faq summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 18px 0;
+  font-weight: 700;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--text);
+  font-size: 15px;
+}
+
+.faq summary::-webkit-details-marker {
+  display: none;
+}
+
+.faq .chev {
+  transition: transform .22s ease;
+  flex: none;
+  color: var(--text-muted);
+}
+
+.faq[open] .chev {
+  transform: rotate(180deg);
+}
+
+.faq .faq-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows .22s ease;
+}
+
+.faq[open] .faq-body {
+  grid-template-rows: 1fr;
+}
+
+.faq .faq-body > p {
+  overflow: hidden;
+  margin: 0 0 16px;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .faq .faq-body,
+  .faq .chev {
+    transition: none;
+  }
+}
+
+/* Final CTA section */
+#cta {
+  padding: 80px 0;
+  text-align: center;
+}
+
+#cta h2 {
+  font-size: 32px;
+  font-weight: 700;
+  margin: 0 0 32px 0;
+}
+
+.cta-final-row {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.cta-big {
+  padding: 16px 36px;
+  font-size: 16px;
+}
+
+.cta-github {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Footer additions */
+.tmdb-attr {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.tmdb-logo {
+  width: 60px;
+  height: auto;
+  display: block;
+  margin-bottom: 6px;
+}
+
+.tmdb-attr p {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 0;
+}

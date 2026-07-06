@@ -212,22 +212,126 @@
 
   <!-- Demo section: GIF + CTA to demo.dirtyfancy.sbs -->
   <section id="demo">
-    <!-- Future content: Task 7 -->
+    <div class="container">
+      <h2>不装也能玩</h2>
+      <p class="demo-sub">只读回放，不用注册不用装，点开就看。</p>
+      <div class="demo-window">
+        <div class="demo-dots">
+          <div class="dot dot-red"></div>
+          <div class="dot dot-orange"></div>
+          <div class="dot dot-green"></div>
+        </div>
+        <img loading="lazy" src="assets/demo.gif" alt="Mediary Scout 在线 demo 回放：搜索到入库全流程">
+      </div>
+      <div class="demo-cta">
+        <a class="pill cta-outline" href="https://demo.dirtyfancy.sbs">打开在线 Demo，看它跑一单</a>
+      </div>
+    </div>
   </section>
 
   <!-- Desktop vs Docker comparison cards -->
   <section id="deploy">
-    <!-- Future content: Task 8 -->
+    <div class="container">
+      <h2>装在电脑，或装在服务器</h2>
+      <div class="deploy-split">
+        <div class="deploy-col">
+          <div class="deploy-eyebrow deploy-eyebrow-green">DESKTOP</div>
+          <b>双击就能用（推荐）</b>
+          <p>macOS 签名公证 / Windows 安装向导 · 数据存你自己电脑</p>
+        </div>
+        <div class="deploy-divider"></div>
+        <div class="deploy-col">
+          <div class="deploy-eyebrow">DOCKER</div>
+          <b>NAS · 服务器 · 24 小时巡检</b>
+          <p>全家多账号合用</p>
+          <code class="deploy-code">docker compose up -d</code>
+          <a class="deploy-link" href="https://github.com/fancydirty/mediary-scout#docker-%E8%87%AA%E9%83%A8%E7%BD%B2">README 里有「让 AI 替你部署」的提示词 →</a>
+        </div>
+      </div>
+    </div>
   </section>
 
   <!-- FAQ accordion with <details name="faq"> -->
   <section id="faq">
-    <!-- Future content: Task 9 -->
+    <div class="container">
+      <h2>你可能想问</h2>
+      <details name="faq" class="faq">
+        <summary>
+          它会乱动我的网盘吗？
+          <svg class="chev" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M4 6L8 10L12 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </summary>
+        <div class="faq-body">
+          <p>只做你手动也能做的转存和整理，全程每一步可见，凭证只在你自己的实例里。</p>
+        </div>
+      </details>
+      <details name="faq" class="faq">
+        <summary>
+          账号密码存在哪？
+          <svg class="chev" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M4 6L8 10L12 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </summary>
+        <div class="faq-body">
+          <p>你自己电脑（桌面版）或你自己的服务器，作者碰不到。</p>
+        </div>
+      </details>
+      <details name="faq" class="faq">
+        <summary>
+          要花钱吗？
+          <svg class="chev" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M4 6L8 10L12 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </summary>
+        <div class="faq-body">
+          <p>软件免费开源；你需要自己的网盘账号和一个 AI 服务的 key（任意 OpenAI 兼容接口）。</p>
+        </div>
+      </details>
+      <details name="faq" class="faq">
+        <summary>
+          支持哪些网盘？
+          <svg class="chev" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M4 6L8 10L12 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </summary>
+        <div class="faq-body">
+          <p>115、夸克、光鸭；网盘层是插件化接口，欢迎 PR 加新品牌。</p>
+        </div>
+      </details>
+      <details name="faq" class="faq">
+        <summary>
+          Windows 提示「已保护你的电脑」？
+          <svg class="chev" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M4 6L8 10L12 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </summary>
+        <div class="faq-body">
+          <p>未签名所致（个人开发者证书太贵），点「更多信息 → 仍要运行」即可；每个安装包发布前都经过 CI 真机安装验证。</p>
+        </div>
+      </details>
+    </div>
   </section>
 
   <!-- Final CTA -->
   <section id="cta">
-    <!-- Future content: Task 10 -->
+    <div class="container">
+      <h2>现在就把追剧交出去</h2>
+      <div class="cta-final-row">
+        <a class="pill cta-main cta-big" data-dl-cta href="https://github.com/fancydirty/mediary-scout/releases/latest">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" width="20" height="20">
+            <path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09l.01-.01zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/>
+          </svg>
+          <span data-dl-label>下载 Mediary Scout（macOS）</span>
+        </a>
+        <a class="pill cta-outline cta-github" href="https://github.com/fancydirty/mediary-scout">
+          <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" width="20" height="20">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+          GitHub
+        </a>
+      </div>
+    </div>
   </section>
 
   </main>
@@ -251,9 +355,15 @@
       <div>
         <p class="footer-small">
           AGPL 开源<br>
-          工程细节与测试门禁见 GitHub<br>
-          <!-- TMDB attribution will be added in a later task -->
+          工程细节与测试门禁见 GitHub
         </p>
+        <div class="tmdb-attr">
+          <svg viewBox="0 0 273.4 35.5" aria-label="TMDB" class="tmdb-logo">
+            <path fill="#01d277" d="M19.3 0H4.7C2.1 0 0 2.1 0 4.7v26.1c0 2.6 2.1 4.7 4.7 4.7h14.6c2.6 0 4.7-2.1 4.7-4.7V4.7C24 2.1 21.9 0 19.3 0zm0 31.2H4.7V4.3h14.6v26.9z"/>
+            <path fill="#fff" d="M273.4 12.3h-8.5V6.8h-5.4v5.5h-3.2v4.7h3.2v9.4c0 5.2 2.8 7 7.1 7 1.8 0 3.3-.3 4.4-.7v-4.6c-.8.3-1.7.4-2.6.4-1.7 0-2.9-.6-2.9-3.2v-8.3h8.5v-4.7h.4zM170.5 12.3c-2.1-1.2-4.6-1.8-7.3-1.8-6.3 0-10.7 4.2-10.7 10.5s4.4 10.5 10.7 10.5c2.7 0 5.2-.6 7.3-1.8v-4.9c-1.9 1.3-4.1 2-6.5 2-3.6 0-6.1-2.4-6.1-5.8s2.5-5.8 6.1-5.8c2.4 0 4.6.7 6.5 2v-4.9zM241.3 6.8h-5.4v5.5h-3.2v4.7h3.2v9.4c0 5.2 2.8 7 7.1 7 1.8 0 3.3-.3 4.4-.7v-4.6c-.8.3-1.7.4-2.6.4-1.7 0-2.9-.6-2.9-3.2v-8.3h5.5v-4.7h-5.5V6.8h-.6zM212.1 10.5c-5.8 0-10.2 4.3-10.2 10.5s4.4 10.5 10.2 10.5 10.2-4.3 10.2-10.5-4.4-10.5-10.2-10.5zm0 16.2c-3.1 0-4.8-2.5-4.8-5.7s1.7-5.7 4.8-5.7 4.8 2.5 4.8 5.7-1.7 5.7-4.8 5.7zM141.3 10.5c-2.8 0-5.1 1.1-6.6 3.1V6.8h-5.4v24.4h5.4V19.8c0-3.1 1.6-4.8 4.4-4.8s4.1 1.7 4.1 4.8v11.4h5.4V18.4c0-4.9-2.9-7.9-7.3-7.9zM183.5 10.5c-5.8 0-10.2 4.3-10.2 10.5s4.4 10.5 10.2 10.5 10.2-4.3 10.2-10.5-4.4-10.5-10.2-10.5zm0 16.2c-3.1 0-4.8-2.5-4.8-5.7s1.7-5.7 4.8-5.7 4.8 2.5 4.8 5.7-1.7 5.7-4.8 5.7zM113.6 10.5c-2.6 0-4.8 1-6.4 2.8V6.8h-5.4v24.4h5.4V20c0-3.3 1.8-5.1 4.9-5.1 2.8 0 4.4 1.7 4.4 4.8v11.5h5.4V18.4c0-4.9-3.2-7.9-8.3-7.9zM80.3 10.5c-2.6 0-4.8 1-6.4 2.8v-2.1h-5.4v20.1h5.4V20c0-3.3 1.8-5.1 4.9-5.1 2.8 0 4.4 1.7 4.4 4.8v11.5h5.4V18.4c0-4.9-3.2-7.9-8.3-7.9zM56.5 15.3c1.9 0 3.6.7 4.9 1.9v5.5c-1.3 1.2-2.9 1.9-4.9 1.9-3.4 0-5.8-2.4-5.8-5.8s2.4-5.5 5.8-5.5zm10.3 4.3c0-5.8-4.2-9.1-9.6-9.1-6 0-10.6 4.2-10.6 10.5s4.6 10.5 10.6 10.5c2.4 0 4.7-.6 6.6-1.8v-4.9c-1.7 1.3-3.7 2-5.8 2-3 0-5.5-1.7-6.1-4.6h15v-2.6h-.1z"/>
+          </svg>
+          <p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
+        </div>
       </div>
     </div>
   </footer>
