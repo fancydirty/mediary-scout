@@ -204,13 +204,18 @@ jobs:
               Get-ChildItem $d -Filter "better-sqlite3*" | ForEach-Object { Write-Host "NEXT_NM: $($_.FullName) LinkType=$($_.LinkType) Target=$($_.Target)" }
             }
           }
-          # Replace every copy the packaged app can dereference: real files under
-          # the standalone tree, anything reachable through links, and the root
-          # node_modules copy (the ultimate target of the hashed junctions).
-          $paths = @("apps/web/.next/standalone")
-          if (Test-Path "node_modules/better-sqlite3") { $paths += "node_modules/better-sqlite3" }
-          $targets = Get-ChildItem -Path $paths -Recurse -FollowSymlink -Filter "better_sqlite3.node" -ErrorAction SilentlyContinue |
-            Select-Object -ExpandProperty FullName -Unique
+          # Replace every copy the packaged app can dereference: real files in
+          # the standalone tree (plain -Recurse skips reparse points, so this
+          # stays inside the tree), the resolved targets of Turbopack's hashed
+          # link entries (enumerated explicitly, not by following links), and
+          # the root node_modules copy (the junctions' ultimate target).
+          $targets = @(Get-ChildItem -Path "apps/web/.next/standalone" -Recurse -Filter "better_sqlite3.node" -ErrorAction SilentlyContinue |
+            Select-Object -ExpandProperty FullName)
+          $targets += @(Get-Item "apps/web/.next/standalone/apps/web/.next/node_modules/better-sqlite3-*/build/Release/better_sqlite3.node" -ErrorAction SilentlyContinue |
+            Select-Object -ExpandProperty FullName)
+          $rootCopy = "node_modules/better-sqlite3/build/Release/better_sqlite3.node"
+          if (Test-Path $rootCopy) { $targets += (Resolve-Path $rootCopy).Path }
+          $targets = @($targets | Select-Object -Unique)
           if (-not $targets) { throw "no better_sqlite3.node found to replace" }
           foreach ($t in $targets) {
             Write-Host "Replacing $t"
@@ -227,16 +232,20 @@ jobs:
           $env:ELECTRON_RUN_AS_NODE = "1"
           & "$(npm root)/electron/dist/electron.exe" $abiCheck
           if ($LASTEXITCODE -ne 0) { throw "electron ABI check failed" }
-          # Every copy reachable from the standalone tree (INCLUDING through
-          # junctions/symlinks, which electron-builder dereferences at package
-          # time) must be byte-identical to the swapped one.
+          # Every copy the packaged app can dereference (real files in the
+          # standalone tree + the resolved targets of the hashed link entries +
+          # the root node_modules copy) must be byte-identical to the swapped one.
           $ref = (Get-FileHash "apps/web/.next/standalone/node_modules/better-sqlite3/build/Release/better_sqlite3.node").Hash
-          $paths = @("apps/web/.next/standalone")
-          if (Test-Path "node_modules/better-sqlite3") { $paths += "node_modules/better-sqlite3" }
-          Get-ChildItem -Path $paths -Recurse -FollowSymlink -Filter "better_sqlite3.node" -ErrorAction SilentlyContinue | ForEach-Object {
-            $h = (Get-FileHash $_.FullName).Hash
-            Write-Host "$h  $($_.FullName)"
-            if ($h -ne $ref) { throw "ABI swap missed a copy: $($_.FullName)" }
+          $files = @(Get-ChildItem -Path "apps/web/.next/standalone" -Recurse -Filter "better_sqlite3.node" -ErrorAction SilentlyContinue |
+            Select-Object -ExpandProperty FullName)
+          $files += @(Get-Item "apps/web/.next/standalone/apps/web/.next/node_modules/better-sqlite3-*/build/Release/better_sqlite3.node" -ErrorAction SilentlyContinue |
+            Select-Object -ExpandProperty FullName)
+          $rootCopy = "node_modules/better-sqlite3/build/Release/better_sqlite3.node"
+          if (Test-Path $rootCopy) { $files += (Resolve-Path $rootCopy).Path }
+          foreach ($f in ($files | Select-Object -Unique)) {
+            $h = (Get-FileHash $f).Hash
+            Write-Host "$h  $f"
+            if ($h -ne $ref) { throw "ABI swap missed a copy: $f" }
           }
 
       - name: Package Windows installer
@@ -256,13 +265,11 @@ jobs:
           if (-not $installer) { throw "no installer exe found in dist-app" }
           Write-Host "Installing $($installer.FullName)"
           Start-Process -FilePath $installer.FullName -ArgumentList "/S" -Wait
-          # electron-builder's per-user NSIS installs under LOCALAPPDATA\Programs —
-          # check there with bounded depth first, fall back to a broad search.
+          # electron-builder's per-user NSIS always installs under
+          # LOCALAPPDATA\Programs — bounded-depth search there only; if the
+          # install location ever changes this fails loud and we update it.
           $exe = Get-ChildItem -Path "$env:LOCALAPPDATA\Programs" -Recurse -Depth 2 -Filter "Mediary Scout.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
-          if (-not $exe) {
-            $exe = Get-ChildItem -Path "$env:LOCALAPPDATA","$env:PROGRAMFILES","${env:PROGRAMFILES(x86)}" -Recurse -Filter "Mediary Scout.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
-          }
-          if (-not $exe) { throw "installed Mediary Scout.exe not found" }
+          if (-not $exe) { throw "installed Mediary Scout.exe not found under $env:LOCALAPPDATA\Programs" }
           Write-Host "EXE: $exe"
           $env:ELECTRON_ENABLE_LOGGING = "1"
           $proc = Start-Process -FilePath $exe -PassThru -RedirectStandardOutput "$env:TEMP\electron-stdout.txt" -RedirectStandardError "$env:TEMP\electron-stderr.txt"
