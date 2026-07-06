@@ -4,6 +4,21 @@ const TMDB_ORIGIN = "https://api.themoviedb.org/3";
 // being abusable as a general HTTP proxy. Prefix match after the leading slash.
 const ALLOWED_PREFIXES = ["movie/", "tv/", "search/", "discover/", "find/", "genre/", "configuration", "trending/"];
 
+const CORS_ALLOWED_ORIGINS = new Set([
+  "https://mediary.dirtyfancy.sbs",
+  "https://demo.dirtyfancy.sbs",
+  "http://localhost:8788",
+  "http://127.0.0.1:8788",
+]);
+
+function corsHeadersFor(request: Request): Record<string, string> {
+  const origin = request.headers.get("Origin");
+  if (origin !== null && CORS_ALLOWED_ORIGINS.has(origin)) {
+    return { "Access-Control-Allow-Origin": origin, Vary: "Origin" };
+  }
+  return {};
+}
+
 const MOVIE_TTL_SECONDS = 7 * 24 * 60 * 60; // movie metadata is effectively static
 const SHORT_TTL_SECONDS = 60 * 60;          // tv/season/search: 追更 needs hourly freshness
 
@@ -76,8 +91,8 @@ function isAllowed(path: string): boolean {
   return ALLOWED_PREFIXES.some((prefix) => path === prefix || path.startsWith(prefix));
 }
 
-function jsonHeaders(cache: "HIT" | "MISS"): Record<string, string> {
-  return { "Content-Type": "application/json;charset=utf-8", "X-Cache": cache };
+function jsonHeaders(cache: "HIT" | "MISS", request: Request): Record<string, string> {
+  return { "Content-Type": "application/json;charset=utf-8", "X-Cache": cache, ...corsHeadersFor(request) };
 }
 
 export async function handleTmdbProxy(deps: HandleTmdbProxyDeps): Promise<Response> {
@@ -96,7 +111,7 @@ export async function handleTmdbProxy(deps: HandleTmdbProxyDeps): Promise<Respon
   const key = cacheKeyFor(request);
   const cached = await deps.kv.get(key);
   if (cached !== null) {
-    return new Response(cached, { status: 200, headers: jsonHeaders("HIT") });
+    return new Response(cached, { status: 200, headers: jsonHeaders("HIT", request) });
   }
 
   const originUrl = `${TMDB_ORIGIN}/${key}`;
@@ -107,11 +122,11 @@ export async function handleTmdbProxy(deps: HandleTmdbProxyDeps): Promise<Respon
 
   const body = await originResponse.text();
   if (!originResponse.ok) {
-    return new Response(body, { status: originResponse.status, headers: jsonHeaders("MISS") });
+    return new Response(body, { status: originResponse.status, headers: jsonHeaders("MISS", request) });
   }
   const ttl = isTrendingFeedRequest(key) ? TRENDING_TTL_SECONDS : ttlForPath(path);
   await deps.kv.put(key, body, { expirationTtl: ttl });
-  return new Response(body, { status: 200, headers: jsonHeaders("MISS") });
+  return new Response(body, { status: 200, headers: jsonHeaders("MISS", request) });
 }
 
 export interface RunScheduledRefreshDeps {

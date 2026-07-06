@@ -49,3 +49,4 @@ docs/blog/
 apps/desktop/dist-app/
 .playwright-cli/
 .superpowers/
+.wrangler/

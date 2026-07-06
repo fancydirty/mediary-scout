@@ -220,3 +220,32 @@ describe("trending discovery", () => {
     expect(kv.puts).toHaveLength(0);
   });
 });
+
+describe("CORS for the landing site", () => {
+  it("echoes an allowlisted Origin and sets Vary: Origin", async () => {
+    // build deps exactly like neighboring tests do, with KV pre-seeded:
+    // key "trending/movie/week?language=zh-CN" -> "{\"ok\":1}"
+    const kv = fakeKv({ "trending/movie/week?language=zh-CN": '{"ok":1}' });
+    const res = await handleTmdbProxy({
+      request: new Request("https://w.example/trending/movie/week?language=zh-CN", {
+        headers: { Origin: "https://mediary.dirtyfancy.sbs" },
+      }),
+      kv,
+      token: "t",
+    });
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("https://mediary.dirtyfancy.sbs");
+    expect(res.headers.get("Vary")).toBe("Origin");
+  });
+
+  it("does NOT set CORS for an unknown Origin", async () => {
+    const kv = fakeKv({ "trending/movie/week?language=zh-CN": '{"ok":1}' });
+    const res = await handleTmdbProxy({
+      request: new Request("https://w.example/trending/movie/week?language=zh-CN", {
+        headers: { Origin: "https://evil.example" },
+      }),
+      kv,
+      token: "t",
+    });
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBeNull();
+  });
+});
