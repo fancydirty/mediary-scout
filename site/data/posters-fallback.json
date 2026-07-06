@@ -1,0 +1,933 @@
+{
+  "feeds": [
+    {
+      "page": 1,
+      "results": [
+        {
+          "adult": false,
+          "backdrop_path": "/diOZbaDnB2CIilwd0527AB1qMvW.jpg",
+          "id": 1339713,
+          "title": "痴迷",
+          "original_title": "Obsession",
+          "overview": "在折断神秘的“心愿柳”以赢得暗恋对象的心之后，一个对爱情充满幻想的人如愿以偿地得到了自己想要的一切，但很快他发现，有些欲望需要付出黑暗而可怕的代价。",
+          "poster_path": "/mW8QTP2wNE1LF0MtHAyTTjhzg3L.jpg",
+          "media_type": "movie",
+          "original_language": "en",
+          "genre_ids": [
+            27,
+            53
+          ],
+          "popularity": 738.4558,
+          "release_date": "2026-05-13",
+          "softcore": false,
+          "video": false,
+          "vote_average": 8.231,
+          "vote_count": 2032
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/jLuGZc84MvPYCQomQg9DI72mstt.jpg",
+          "id": 1202033,
+          "title": "福尔摩斯小姐3",
+          "original_title": "Enola Holmes 3",
+          "overview": "侦探伊诺拉·福尔摩斯前往马耳他探险，并打算在那里结婚，但夏洛克的失踪令其卷入一桩危险的案件。",
+          "poster_path": "/fqwwPwdpKpgTWXmo16wjleJDalX.jpg",
+          "media_type": "movie",
+          "original_language": "en",
+          "genre_ids": [
+            12,
+            80,
+            9648
+          ],
+          "popularity": 187.123,
+          "release_date": "2026-06-30",
+          "softcore": false,
+          "video": false,
+          "vote_average": 7.018,
+          "vote_count": 220
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/Af907x5h9W1wVis8XrSd7ynTWuy.jpg",
+          "id": 1314481,
+          "title": "穿普拉达的女王2",
+          "original_title": "The Devil Wears Prada 2",
+          "overview": "　　随着传统出版业的式微，时尚女王米兰达在职业生涯中迎来新挑战。她不得不与手握广告预算的曾经的助理，如今已是奢侈品牌集团高管的艾米莉正面交锋。两人在行业变局中展开了一场关乎权力与生存的较量。",
+          "poster_path": "/zGQyw7v2dvb2FNDdVUJFcaPrD5y.jpg",
+          "media_type": "movie",
+          "original_language": "en",
+          "genre_ids": [
+            35,
+            18
+          ],
+          "popularity": 353.1912,
+          "release_date": "2026-04-29",
+          "softcore": false,
+          "video": false,
+          "vote_average": 6.967,
+          "vote_count": 1220
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/mCpwRayjXMFzKHbjbzc5JRKfq1O.jpg",
+          "id": 1083381,
+          "title": "后室",
+          "original_title": "Backrooms",
+          "overview": "一位心理治疗师的病人，在一次诡异的事故中“切入”到了一个超越现实的奇异维度。为了带回病人，这位治疗师不得不亲自踏入那片无边无际、充满黄色壁纸和嗡嗡荧光灯响声的未知迷宫。",
+          "poster_path": "/7flxvNLk48fvJel8zHDGqMFvQ9C.jpg",
+          "media_type": "movie",
+          "original_language": "en",
+          "genre_ids": [
+            27,
+            9648,
+            878
+          ],
+          "popularity": 549.6631,
+          "release_date": "2026-05-27",
+          "softcore": false,
+          "video": false,
+          "vote_average": 6.832,
+          "vote_count": 887
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/xMoXsOgF0hBP7iVj7ZPIrFtTeL3.jpg",
+          "id": 1315772,
+          "title": "小黄人与大怪兽",
+          "original_title": "Minions & Monsters",
+          "overview": "为了拍摄心中理想的怪兽电影，这群萌趣活宝四处物色演员，竟然真的集齐了各式怪兽，上演疯狂大乱斗！",
+          "poster_path": "/y4JWxHZ1dMisqbHhX7ytOAK3wwv.jpg",
+          "media_type": "movie",
+          "original_language": "en",
+          "genre_ids": [
+            12,
+            16,
+            35,
+            10751,
+            14
+          ],
+          "popularity": 201.3444,
+          "release_date": "2026-06-24",
+          "softcore": false,
+          "video": false,
+          "vote_average": 6.462,
+          "vote_count": 105
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/4D1pdB27uph7J8HQzNf8QvvH9bn.jpg",
+          "id": 1084244,
+          "title": "玩具总动员5",
+          "original_title": "Toy Story 5",
+          "overview": "胡迪、巴斯光年、翠斯等“元老级”玩具将跟随小主人邦妮的成长脚步，共同迎接数字时代下的全新挑战。随着无所不能的科技产品逐渐走进童年世界，一批充满科技感的崭新角色也随之重磅亮相：青蛙造型的智能平板小荷、憨态可掬的导航玩具小不丢、活力十足的抓拍好手小拍侠，以及自带笑点的臭屁小机灵。当身边的同龄朋友们开始沉浸在科技玩具带来的“电子陪伴”中，而玩具伙伴们也迎来了前所未有的生存难题：在屏幕占据注意力的时代，玩具的时代真的结束了吗？在“被取代”危机的当下，这群玩具伙伴还能否携手，帮助邦妮找回属于自己的真实友谊与快乐？",
+          "poster_path": "/oo46YfPuMcV9t7KsTiaMVUVRjvJ.jpg",
+          "media_type": "movie",
+          "original_language": "en",
+          "genre_ids": [
+            16,
+            10751,
+            35,
+            12
+          ],
+          "popularity": 510.8593,
+          "release_date": "2026-06-17",
+          "softcore": false,
+          "video": false,
+          "vote_average": 7.409,
+          "vote_count": 471
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/iyW6c3kvzFo37Gi0BJgr5EBh8a.jpg",
+          "id": 1368314,
+          "title": "鬼上车",
+          "original_title": "Passenger",
+          "overview": "　　一对年轻情侣目睹了一场血肉横飞的高速公路惨剧后，原以为只是路上的惊魂插曲，却未曾想到，一个名为“凶灵”的恶魔早已悄然潜入他们的房车。当这个不散的恶灵开始步步紧逼，誓要将两人拖入地狱深渊时，原本浪漫的房车旅行彻底沦为一场挣脱不得的梦魇之旅。",
+          "poster_path": "/l9YUbeh0W8B4NjLJee7bsLqdQL1.jpg",
+          "media_type": "movie",
+          "original_language": "en",
+          "genre_ids": [
+            27,
+            53
+          ],
+          "popularity": 11.9315,
+          "release_date": "2026-05-20",
+          "softcore": false,
+          "video": false,
+          "vote_average": 6.2,
+          "vote_count": 77
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/54KIfdTEzOliHDKx0OkzYGqAICx.jpg",
+          "id": 1081003,
+          "title": "超级少女",
+          "original_title": "Supergirl",
+          "overview": "当一位冷酷无情、突如其来的劲敌突袭家园，“超级少女”卡拉·佐-艾尔不得不与一位意想不到的同伴结盟，横跨星际，踏上一段交织复仇与正义的壮阔征途。",
+          "poster_path": "/mTfjvvBUaDmexYEPwVqBFsYYh8.jpg",
+          "media_type": "movie",
+          "original_language": "en",
+          "genre_ids": [
+            28,
+            12,
+            878
+          ],
+          "popularity": 161.3008,
+          "release_date": "2026-06-24",
+          "softcore": false,
+          "video": false,
+          "vote_average": 6.275,
+          "vote_count": 362
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/m3Pom6pbD51bBv3syz8NMHda3fz.jpg",
+          "id": 1368337,
+          "title": "奥德赛",
+          "original_title": "The Odyssey",
+          "overview": "特洛伊战争结束后，伊萨卡国王奥德修斯踏上了返回家乡的艰险旅程。",
+          "poster_path": "/3O6ufZBBjLB29NpJOe8awMzQ4XN.jpg",
+          "media_type": "movie",
+          "original_language": "en",
+          "genre_ids": [
+            12,
+            28,
+            14
+          ],
+          "popularity": 65.105,
+          "release_date": "2026-07-06",
+          "softcore": false,
+          "video": false,
+          "vote_average": 7.3,
+          "vote_count": 3
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/t6O6XWelu27BD0OmIDCCufZZT6d.jpg",
+          "id": 1301421,
+          "title": "绵羊侦探团",
+          "original_title": "The Sheep Detectives",
+          "overview": "影片改编自莱奥妮·斯万的畅销小说。牧羊人乔治最爱给羊群读侦探小说，没想到自己有一天会离奇死亡。他留下的3000万巨额遗产，让每个人貌似都有犯罪动机。警察毫无头绪之时，羊群们决定“不务正业”迈出牧场，追查牧羊人“躺平”真相！它们秉承着遇见麻烦就吃草，嗅到危险就躺倒的哲学，却迎来了一个意想不到的结果……",
+          "poster_path": "/n4hv5lQvuXBdNyJAAelDnwv6Emw.jpg",
+          "media_type": "movie",
+          "original_language": "en",
+          "genre_ids": [
+            9648,
+            35,
+            10751
+          ],
+          "popularity": 178.2462,
+          "release_date": "2026-04-30",
+          "softcore": false,
+          "video": false,
+          "vote_average": 7.8,
+          "vote_count": 697
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/ufSwlnECLoUbBjPrFqEQcWBzHwc.jpg",
+          "id": 936075,
+          "title": "迈克尔·杰克逊：巨星之路",
+          "original_title": "Michael",
+          "overview": "　　本片将通过一段从未展现过的深度视角，真实记录传奇巨星迈克尔·杰克逊的复杂人生。影片不仅再现了他最具标志性的艺术表演瞬间，更深入挖掘了他的内心世界——从天才神童的成长阵痛到全球偶像背后的争议与坚韧，全面呈现这位伟大艺术家的辉煌与坎坷。",
+          "poster_path": "/1hPSbiyfAhtWAIBf2XtDPA0NyvS.jpg",
+          "media_type": "movie",
+          "original_language": "en",
+          "genre_ids": [
+            10402,
+            18
+          ],
+          "popularity": 219.5762,
+          "release_date": "2026-04-22",
+          "softcore": false,
+          "video": false,
+          "vote_average": 8.704,
+          "vote_count": 3302
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/c6BPbkO5Npt1OdwttAxCFo06wtH.jpg",
+          "id": 1108427,
+          "title": "海洋奇缘：启航",
+          "original_title": "Moana",
+          "overview": "海的召唤，从未停止。熟悉的旋律响起，属于“莫阿娜”的冒险，再次扬帆启航。",
+          "poster_path": "/9BnjnrfoZbeNjwXICd8Sax8zKeH.jpg",
+          "media_type": "movie",
+          "original_language": "en",
+          "genre_ids": [
+            10751,
+            14,
+            35,
+            12
+          ],
+          "popularity": 48.1991,
+          "release_date": "2026-07-08",
+          "softcore": false,
+          "video": false,
+          "vote_average": 7.9,
+          "vote_count": 6
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/qJ2KSHJhlFvASBMLbGuP7OFMaFg.jpg",
+          "id": 1413976,
+          "title": "公民义警",
+          "original_title": "Citizen Vigilante",
+          "overview": "男主角桑德斯是一名义警，他追捕罪犯、伸张正义，成为社交媒体红人和公众眼中的英雄，但当地警察局长认为他是社会的威胁，打算将他打倒。",
+          "poster_path": "/ydEgw9vDABo4hiHsP29BVtMRTfS.jpg",
+          "media_type": "movie",
+          "original_language": "en",
+          "genre_ids": [
+            53,
+            28,
+            80
+          ],
+          "popularity": 266.4206,
+          "release_date": "2026-06-19",
+          "softcore": false,
+          "video": false,
+          "vote_average": 6.624,
+          "vote_count": 182
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/vjMvFSmGUxEtqVdaZgvFee9XkZl.jpg",
+          "id": 969681,
+          "title": "蜘蛛侠：崭新之日",
+          "original_title": "Spider-Man: Brand New Day",
+          "overview": "重建普通生活后，彼得一边在大学完成学业、一边从事兼职以维持生计，同时仍肩负着守护纽约街头的蜘蛛侠责任。然而，当一个神秘力量从内部腐蚀这座城市的安全与秩序，彼得被迫再次披上战衣。他必须在强大的敌人与昔日纽带之间找到平衡，并重新定义英雄的意义。",
+          "poster_path": "/9zFVOpQ0QSg0pOHQdFtNj7NDamp.jpg",
+          "media_type": "movie",
+          "original_language": "en",
+          "genre_ids": [
+            878,
+            28,
+            12
+          ],
+          "popularity": 87.1957,
+          "release_date": "2026-07-29",
+          "softcore": false,
+          "video": false,
+          "vote_average": 0.0,
+          "vote_count": 0
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/8Tfys3mDZVp4tNoH2ktm06a0Tau.jpg",
+          "id": 687163,
+          "title": "挽救计划",
+          "original_title": "Project Hail Mary",
+          "overview": "太阳正在被“吃”掉，绝望吞噬地球。一名“平凡”的中学教师背负全人类的希望，踏上“太空不归路”。末路孤旅中，他意外遇到一位外星萌友，一个同样身陷绝境的外星工程师，这对“宇宙搭子”成了两个文明最后的救命稻草。他们能否在资源紧缺的情况下攻克重重科学谜 题，寻回唯一的希望火种？",
+          "poster_path": "/qf8HaEGNUFXU6nVAq9BVEk4Tiqb.jpg",
+          "media_type": "movie",
+          "original_language": "en",
+          "genre_ids": [
+            878,
+            12
+          ],
+          "popularity": 157.6035,
+          "release_date": "2026-03-15",
+          "softcore": false,
+          "video": false,
+          "vote_average": 8.675,
+          "vote_count": 5703
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/bdwv8Hsu4Bnz8aRbH5MQ9clQ0DG.jpg",
+          "id": 1397385,
+          "title": "人生大弟震",
+          "original_title": "Little Brother",
+          "overview": "古怪的“弟弟”再次意外出现后，这个著名房地产经纪人精心打造的生活被彻底颠覆。",
+          "poster_path": "/5FBD0YNRdssZI6yNA2Ky8qCK2Or.jpg",
+          "media_type": "movie",
+          "original_language": "en",
+          "genre_ids": [
+            35
+          ],
+          "popularity": 114.8005,
+          "release_date": "2026-06-18",
+          "softcore": false,
+          "video": false,
+          "vote_average": 6.423,
+          "vote_count": 183
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/piV2OnzTZCyGBP9JCjlHIgKGlfo.jpg",
+          "id": 454639,
+          "title": "宇宙巨人：希曼崛起",
+          "original_title": "Masters of the Universe",
+          "overview": "亚当（尼古拉斯·加利齐纳 饰）在神秘圣剑的召唤下，尘封十五年的异世界王子身份觉醒，平凡人生被彻底颠覆。他跨越时空重返埃坦尼亚，但故乡早已在骷髅王的统治下分崩离析。为拯救曾经的家园与现在的世界，亚当必须再次拔出圣剑，喊出那句响彻寰宇的咒语——“赐予我力量吧！我是希曼！”",
+          "poster_path": "/ijjRROhfvpO5TYFRM8jII64yTDS.jpg",
+          "media_type": "movie",
+          "original_language": "en",
+          "genre_ids": [
+            28,
+            14,
+            878
+          ],
+          "popularity": 61.132,
+          "release_date": "2026-06-03",
+          "softcore": false,
+          "video": false,
+          "vote_average": 6.982,
+          "vote_count": 371
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/sT5Inhc0aaReSZoufWgfJTQUbKp.jpg",
+          "id": 1340206,
+          "title": "调音师",
+          "original_title": "Tuner",
+          "overview": "　　一位才华横溢的钢琴调音师，发现自己精湛的钢琴调音技艺可以用于破解保险箱，由此他的生活发生了翻天覆地的变化。",
+          "poster_path": "/29YqkGW6ztW3jbe0Nse6TwcXbhs.jpg",
+          "media_type": "movie",
+          "original_language": "en",
+          "genre_ids": [
+            80,
+            18,
+            53
+          ],
+          "popularity": 48.2155,
+          "release_date": "2026-05-21",
+          "softcore": false,
+          "video": false,
+          "vote_average": 7.1,
+          "vote_count": 139
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/s6ly8laenkHWlIBRkLSfIuEMLC6.jpg",
+          "id": 1275779,
+          "title": "揭秘日",
+          "original_title": "Disclosure Day",
+          "overview": "如果有人告诉你，我们并非宇宙中唯一的智慧生命，并且向你展示、证明了这一点，你会感到恐惧吗？今年夏天，真相将属于七十亿人。我们正一步步接近……揭秘日。",
+          "poster_path": "/mVjtYjFiSKFsdsKpb2e8fi6vMY3.jpg",
+          "media_type": "movie",
+          "original_language": "en",
+          "genre_ids": [
+            878,
+            53
+          ],
+          "popularity": 654.323,
+          "release_date": "2026-06-10",
+          "softcore": false,
+          "video": false,
+          "vote_average": 6.67,
+          "vote_count": 796
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/2wbXwwEseGuVAfnmYvVopkBPbAl.jpg",
+          "id": 1266127,
+          "title": "准备好了没2：我来了",
+          "original_title": "Ready or Not: Here I Come",
+          "overview": "　　格蕾丝侥幸逃过勒多马斯家族的追杀后，发现游戏并未结束，而是进入了下一阶段，这次她疏远已久的妹妹也被卷入其中。面临四个敌对家族猎杀的格蕾丝必须活下来、保护妹妹，同时争夺掌控世界的议会王座。",
+          "poster_path": "/vwpQhAyMhP7GpX5NIn0ak3cRZEr.jpg",
+          "media_type": "movie",
+          "original_language": "en",
+          "genre_ids": [
+            53,
+            27,
+            35
+          ],
+          "popularity": 41.4245,
+          "release_date": "2026-03-19",
+          "softcore": false,
+          "video": false,
+          "vote_average": 7.646,
+          "vote_count": 1192
+        }
+      ],
+      "total_pages": 500,
+      "total_results": 10000
+    },
+    {
+      "page": 1,
+      "results": [
+        {
+          "adult": false,
+          "backdrop_path": "/uTWhbLc7Bj4qNSdW3ZvZKL8cOHv.jpg",
+          "id": 125988,
+          "name": "末日地堡",
+          "original_name": "Silo",
+          "overview": "该剧基于休·豪伊所著同名畅销科幻系列小说改编，在一个满目疮痍、有毒物质遍布的未来世界中，成千上万的人居住在深埋在地下的巨大筒仓里。在警长违反了一项基本规则以及有些居民神秘死亡后，工程师朱丽叶开始揭开惊人的秘密和筒仓的真相。",
+          "poster_path": "/xoM3lntYJzZwOBJJs5O1ix0jyfe.jpg",
+          "media_type": "tv",
+          "original_language": "en",
+          "genre_ids": [
+            10765,
+            18
+          ],
+          "popularity": 202.6294,
+          "first_air_date": "2023-05-04",
+          "softcore": false,
+          "vote_average": 8.2,
+          "vote_count": 2167,
+          "origin_country": [
+            "US"
+          ]
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/577eXC8wFQT0eUrJcgznSiFPRmk.jpg",
+          "id": 94997,
+          "name": "权力的游戏前传：龙族",
+          "original_name": "House of the Dragon",
+          "overview": "在维斯特洛大陆，坦格利安家族的衰落被公之于众。一场内战即将爆发，这场战争将被称为“血龙狂舞”。",
+          "poster_path": "/w5iFwPk6h9fv3zxLN2QkxVEVyBw.jpg",
+          "media_type": "tv",
+          "original_language": "en",
+          "genre_ids": [
+            10765,
+            18,
+            10759
+          ],
+          "popularity": 418.9,
+          "first_air_date": "2022-08-21",
+          "softcore": false,
+          "vote_average": 8.357,
+          "vote_count": 6461,
+          "origin_country": [
+            "US"
+          ]
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/xLdw1xdHocKYFFvx7w41NchXMfJ.jpg",
+          "id": 124364,
+          "name": "梦魇绝镇",
+          "original_name": "FROM",
+          "overview": "本剧讲述美国中部一个噩梦般的小镇会困住所有走进来的人，而不甘愿留下来的人在找寻出路的同时，他们还得面对日落后出没的怪物。",
+          "poster_path": "/q0aZ89NDGXxzJeJtJIvpxZmD5e3.jpg",
+          "media_type": "tv",
+          "original_language": "en",
+          "genre_ids": [
+            9648,
+            18,
+            10765
+          ],
+          "popularity": 632.0936,
+          "first_air_date": "2022-02-20",
+          "softcore": false,
+          "vote_average": 8.504,
+          "vote_count": 3920,
+          "origin_country": [
+            "US"
+          ]
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/2rmK7mnchw9Xr3XdiTFSxTTLXqv.jpg",
+          "id": 37854,
+          "name": "航海王",
+          "original_name": "ワンピース",
+          "overview": "拥有财富、名声、势力，拥有整个世界的海贼王 – 哥尔·D·罗杰，他在临刑前的一句话，让人们趋之若鹜奔向大海。“想要我的财宝吗？想要的话可以全部给你，去找吧！我把所有财宝都放在那里。”于是所有男子汉航向伟大的航路追逐梦想，世界开始迎接“大海贼时代”。",
+          "poster_path": "/f9AFdxegmmWOghgw9E6ebICkstl.jpg",
+          "media_type": "tv",
+          "original_language": "ja",
+          "genre_ids": [
+            10759,
+            35,
+            16
+          ],
+          "popularity": 44.4634,
+          "first_air_date": "1999-10-20",
+          "softcore": false,
+          "vote_average": 8.744,
+          "vote_count": 5391,
+          "origin_country": [
+            "JP"
+          ]
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/qIMNDToguvTIaVReD8GgeDgfXVr.jpg",
+          "id": 253960,
+          "name": "气体人第一号",
+          "original_name": "ガス人間",
+          "overview": "本作是以1960年上映的东宝特摄电影『ガス人間第1号』《气体人第一号》（导演：本多猪四郎，编剧：木村武）为原作，由日韩的创作者以现代视角重新构建的完全原创故事重启作品。\n\n当一位嘉宾评论员在直播中肿胀爆炸时，这种前所未有、难以想象的犯罪令全世界陷入震惊。在这起可怕的谋杀背后，是一个似乎凭空消失的人：气体人。由于没有人能够掌握他的真实身份，这个未知者宣布将执行一系列针对性暗杀行动。他在每一次无法解释的攻击中逃避身份识别和抓捕，全国逐渐笼罩在恐慌之下。",
+          "poster_path": "/jRINbGiI9wjM9gwxw4IT5G0ErlU.jpg",
+          "media_type": "tv",
+          "original_language": "ja",
+          "genre_ids": [
+            10765,
+            80
+          ],
+          "popularity": 87.8917,
+          "first_air_date": "2026-07-02",
+          "softcore": false,
+          "vote_average": 8.048,
+          "vote_count": 21,
+          "origin_country": [
+            "JP",
+            "KR"
+          ]
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/iDnTAeR2WNA62XQG0ivtteDSjd5.jpg",
+          "id": 138502,
+          "name": "X战警97",
+          "original_name": "X-Men '97",
+          "overview": "由变种人组成的X战警利用他们不可思议的天赋，保护一个痛恨又恐惧他们的世界，接受前所未有的挑战，并面临出乎意料的危险新未来。",
+          "poster_path": "/pmNPP4TdwTXl6FgCY8ppOIu096A.jpg",
+          "media_type": "tv",
+          "original_language": "en",
+          "genre_ids": [
+            16,
+            10759,
+            10765
+          ],
+          "popularity": 78.3901,
+          "first_air_date": "2024-03-20",
+          "softcore": false,
+          "vote_average": 8.6,
+          "vote_count": 714,
+          "origin_country": [
+            "US"
+          ]
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/g1LJLlmWP74zv9yXKEXm7g9p10O.jpg",
+          "id": 296206,
+          "name": "金特务：本色回归",
+          "original_name": "김부장",
+          "overview": "改编自同名网络漫画，讲述的是原本只想平凡当个父亲的金部长，在挚爱的女儿突然失踪后，不得不揭开自己极力隐藏的真实身份，为了救回女儿不惜一切的故事。",
+          "poster_path": "/qhQDBIuzNHru06O3q3Q9IC0Nam3.jpg",
+          "media_type": "tv",
+          "original_language": "ko",
+          "genre_ids": [
+            10759,
+            80,
+            18
+          ],
+          "popularity": 228.7333,
+          "first_air_date": "2026-06-26",
+          "softcore": false,
+          "vote_average": 7.8,
+          "vote_count": 16,
+          "origin_country": [
+            "KR"
+          ]
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/wh5agdl3b7fqC7mSjsCkHx4fMAs.jpg",
+          "id": 299167,
+          "name": "达顿牧场",
+          "original_name": "Dutton Ranch",
+          "overview": "抛开《黄石》时期经历的阴影，Beth和Rip努力共筑未来，但他们遭遇了残酷的新现实，以及一家不择手段、只为保住自己帝国的无情敌对牧场。在南得克萨斯州，血脉之深远胜于一切，宽恕转瞬即逝，而生存的代价，或许正是你的灵魂。",
+          "poster_path": "/5flBkpyqwxyq69HzRnV6XL8nOUa.jpg",
+          "media_type": "tv",
+          "original_language": "en",
+          "genre_ids": [
+            37,
+            18
+          ],
+          "popularity": 258.8428,
+          "first_air_date": "2026-05-15",
+          "softcore": false,
+          "vote_average": 9.259,
+          "vote_count": 367,
+          "origin_country": [
+            "US"
+          ]
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/j9fRIimor0AMFJR9kjZubXcABzZ.jpg",
+          "id": 94664,
+          "name": "无职转生：到了异世界就拿出真本事",
+          "original_name": "無職転生 ～異世界行ったら本気だす～",
+          "overview": "“我要在这个异世界拿出真本事！”34岁童贞且无职的家里蹲男子，在父母的葬礼当天被赶出家门后，在路上被一辆卡车所撞死。意识清醒后，他发现自己居然作为一个刚出生的婴儿转生到了剑与魔法的异世界！像废物一样活过了前世的男子，发誓要作为少年·鲁迪乌斯在异世界以认真的态度好好活下去！等待着鲁迪乌斯的是，与娇小魔术师、有着精灵长耳又很男孩子气的美少女、凶暴的傲娇大小姐以及其他性格各异的人们之间的邂逅，当然也还有残酷的冒险与战斗。新的人生就要开始了！“人生重来型”幻想冒险谭，在此开幕！",
+          "poster_path": "/wMSO4QgEyUhnf1XLIpz5w371xtb.jpg",
+          "media_type": "tv",
+          "original_language": "ja",
+          "genre_ids": [
+            10759,
+            16,
+            10765
+          ],
+          "popularity": 206.845,
+          "first_air_date": "2021-01-11",
+          "softcore": false,
+          "vote_average": 8.523,
+          "vote_count": 1519,
+          "origin_country": [
+            "JP"
+          ]
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/aJtG4txtmiRHwAAqENQHZvBs6kY.jpg",
+          "id": 136315,
+          "name": "熊家餐馆",
+          "original_name": "The Bear",
+          "overview": "年轻的厨师卡米与一群毛手毛脚的帮厨一起努力改造“芝加哥原味牛肉三明治店”。在此过程中，他的内心也经历了变化，最后所有人变得亲如家人。",
+          "poster_path": "/7y1ibpkTwlKYrxFbq3lh2RgIB1k.jpg",
+          "media_type": "tv",
+          "original_language": "en",
+          "genre_ids": [
+            18,
+            35
+          ],
+          "popularity": 102.4843,
+          "first_air_date": "2022-06-23",
+          "softcore": false,
+          "vote_average": 8.131,
+          "vote_count": 1786,
+          "origin_country": [
+            "US"
+          ]
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/fcdYPWdwbQynogpa79QLw1ukRvN.jpg",
+          "id": 254420,
+          "name": "艾丽",
+          "original_name": "Elle",
+          "overview": "在艾丽·伍兹离开舒适圈入学哈佛前，我们回到 1995 年，看她在波涛汹涌的高中校园生活中，面对假面闺密、禁忌恋情，留下让人不敢直视的时尚黑历史。并看这段青涩岁月的意外插曲，如何把艾丽塑造成我们熟知并热爱的经典女主角。",
+          "poster_path": "/kWlGge7cWOTp0qZnYCRfUo0BTP9.jpg",
+          "media_type": "tv",
+          "original_language": "en",
+          "genre_ids": [
+            35,
+            18
+          ],
+          "popularity": 74.6749,
+          "first_air_date": "2026-07-01",
+          "softcore": false,
+          "vote_average": 8.071,
+          "vote_count": 21,
+          "origin_country": [
+            "CA",
+            "US"
+          ]
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/xUB3xFMgsHgPmdWnUWkHTJ03vHa.jpg",
+          "id": 82452,
+          "name": "降世神通：最后的气宗",
+          "original_name": "Avatar: The Last Airbender",
+          "overview": "人称“神通王”的小男孩必须掌握四种元素之力，以拯救战火纷飞的世界，击败一心阻碍他的冷酷敌人。",
+          "poster_path": "/6yRBwqaKcFlp9TBIuZgLvJip8hA.jpg",
+          "media_type": "tv",
+          "original_language": "en",
+          "genre_ids": [
+            10759,
+            10765,
+            18,
+            10751
+          ],
+          "popularity": 241.3157,
+          "first_air_date": "2024-02-22",
+          "softcore": false,
+          "vote_average": 7.809,
+          "vote_count": 1200,
+          "origin_country": [
+            "US"
+          ]
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/5BDNWWHweQL0q1fmTv7gmRXfnl4.jpg",
+          "id": 60625,
+          "name": "瑞克和莫蒂",
+          "original_name": "Rick and Morty",
+          "overview": "一名反社会人格的天才科学家拉着他天性胆怯的孙子一同进行疯狂又危险的跨宇宙探险的故事。瑞克·桑切斯和女儿贝丝一家同住，他经常带着她、女婿杰瑞、孙女桑美和孙子莫蒂一同踏上大胆的星系冒险之旅。",
+          "poster_path": "/nbLginNBtPaqz12tSvMjzvxuPFJ.jpg",
+          "media_type": "tv",
+          "original_language": "en",
+          "genre_ids": [
+            16,
+            35,
+            10765,
+            10759
+          ],
+          "popularity": 152.9319,
+          "first_air_date": "2013-12-02",
+          "softcore": false,
+          "vote_average": 8.677,
+          "vote_count": 11055,
+          "origin_country": [
+            "US"
+          ]
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/5p423VlhPXf7681XyZCL4khIJLl.jpg",
+          "id": 278043,
+          "name": "正相反的你与我",
+          "original_name": "正反対な君と僕",
+          "overview": "时刻精力旺盛但很在意周围目光的女生——铃木。沉默寡言但能清楚表达自己想法的男生——谷。这部恋爱喜剧描绘的是性格完全相反的二人互相尊重，逐渐加深了解的过程，以及与朋友们度过的校园生活。",
+          "poster_path": "/zrE9zyK2iikJ8F2ls8YRCZD8wEi.jpg",
+          "media_type": "tv",
+          "original_language": "ja",
+          "genre_ids": [
+            16,
+            35
+          ],
+          "popularity": 18.8983,
+          "first_air_date": "2026-01-11",
+          "softcore": false,
+          "vote_average": 8.4,
+          "vote_count": 68,
+          "origin_country": [
+            "JP"
+          ]
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/z0R6ToCsMMkLwuQXjzzdd1QCdJv.jpg",
+          "id": 278178,
+          "name": "我会找到你",
+          "original_name": "I Will Find You",
+          "overview": "一名父亲因被误判杀害亲生儿子而入狱，却在得知儿子可能仍然活着后，展开一场绝望的救子行动。",
+          "poster_path": "/xlmw7sjlcnBGpp8NK18YBD6soz3.jpg",
+          "media_type": "tv",
+          "original_language": "en",
+          "genre_ids": [
+            18,
+            9648,
+            80
+          ],
+          "popularity": 113.5175,
+          "first_air_date": "2026-06-18",
+          "softcore": false,
+          "vote_average": 8.203,
+          "vote_count": 195,
+          "origin_country": [
+            "US"
+          ]
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/fx5JyhFvPn1GSm5ITtNNM6hmpUa.jpg",
+          "id": 153217,
+          "name": "二十世纪电气目录",
+          "original_name": "二十世紀電氣目録-ユーレカ・エヴリカ-",
+          "overview": "故事发生在明治四十年（1907 年）在京都伏见居住的百川稻子什么都不擅长，每天都被父亲责骂，对于她来说的救赎就是祈祷神佛，某天一如往常她前往伏见稻荷神社参拜神明，遇到了一位自由奔放的少年坂本喜八，坂本喜八对稻子说不要信这些看不见的东西，从今之后将是电气时代。而此时稻子的 父亲对稻子说了关于结婚的事情，而且是父亲单方面决定的，稻子本来是放弃抵抗认为自己的价值就是如此，但坂本喜八打开了稻子想要离开这个家的心声，带着稻子离开了这个封闭的家。阻止结婚的方法是找出奇书《二十世纪电气目录》，那是喜八童年时代写下的关于电气的预言书，而喜八过去的哥哥清六带走这本书之后下落不明，喜八和稻子为了寻找这本奇书在京都和滋贺等地逃窜，消失的“电气目录”和其背后隐藏的秘密都等待揭开。",
+          "poster_path": "/canvlHpMsrzmGXbJDgjfapqODg1.jpg",
+          "media_type": "tv",
+          "original_language": "ja",
+          "genre_ids": [
+            16,
+            18,
+            10765
+          ],
+          "popularity": 8.5164,
+          "first_air_date": "2026-07-05",
+          "softcore": false,
+          "vote_average": 0.0,
+          "vote_count": 0,
+          "origin_country": [
+            "JP"
+          ]
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/7ZruEnSnHD6Jx5mF0hBt1E306Vt.jpg",
+          "id": 65942,
+          "name": "Re：从零开始的异世界生活",
+          "original_name": "Re:ゼロから始める異世界生活",
+          "overview": "在异世界陷入迷茫的普通高中生菜月昴，邂逅了一位银发的美少女。但想助她一臂之力的昴，却一次次地遭遇敌袭，背叛、暴力，甚至是死亡……“死亡回归”——无力的少年拥有的唯一能力，能将死后时间倒转回一开始。使用了这般力量，便会失去过去的回忆，可为了守护最重要的人们，昴必须抗争到底。“即使你忘却了我，我也不会遗忘你。”",
+          "poster_path": "/a1pMK4456dF2j5B9xvkjMEGiOOw.jpg",
+          "media_type": "tv",
+          "original_language": "ja",
+          "genre_ids": [
+            16,
+            10759,
+            10765,
+            18,
+            9648
+          ],
+          "popularity": 85.1179,
+          "first_air_date": "2016-04-04",
+          "softcore": false,
+          "vote_average": 7.941,
+          "vote_count": 682,
+          "origin_country": [
+            "JP"
+          ]
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/feISh3qoREwIPWbSaLqqumbmh7m.jpg",
+          "id": 322055,
+          "name": "检察官的提案",
+          "original_name": "검사실의 제안",
+          "overview": "曾因“杀人犯之子”的标签饱受欺凌的李彩河，在洗清冤屈后成为一名八级检察院调查员。他被分配到檀岘分局，努力开启新生活，却意外与曾帮助过他的检察官朱泰善重逢。朱泰善性格完美主义且敏感古怪，在一次共同值夜班后，他对李彩河产生了浓厚兴趣。为了调查一桩悬而未决的谋杀案，朱泰善提议李彩河担任自己的专属调查员。两人在压抑又充满张力的办公环境下，展开了一场徘徊于职场正义与禁忌情感之间的危险博弈。",
+          "poster_path": "/4A5Sl89zZ0WRKj5QrhMxgBFiQYc.jpg",
+          "media_type": "tv",
+          "original_language": "ko",
+          "genre_ids": [
+            9648,
+            80,
+            18
+          ],
+          "popularity": 167.0702,
+          "first_air_date": "2026-06-25",
+          "softcore": false,
+          "vote_average": 10.0,
+          "vote_count": 1,
+          "origin_country": [
+            "KR"
+          ]
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/5fq2lbecTwvpitm7WHfQGa0VGXh.jpg",
+          "id": 206484,
+          "name": "诛仙",
+          "original_name": "诛仙",
+          "overview": "一夜间惨变孤儿的张小凡被青云门收为弟子，经过五年刻苦修炼，他在师门七脉会武上大放异彩，后被派往空桑山打探魔教行迹，旅程中，他与师姐陆雪琪遭遇危难，并结识救护了魔教女子碧瑶，同时，新的危险也在前方等待着他。",
+          "poster_path": "/kSC8drFvUBrcnHe6bz6zwvrnoeo.jpg",
+          "media_type": "tv",
+          "original_language": "zh",
+          "genre_ids": [
+            16,
+            10759
+          ],
+          "popularity": 32.5879,
+          "first_air_date": "2022-08-02",
+          "softcore": false,
+          "vote_average": 8.091,
+          "vote_count": 22,
+          "origin_country": [
+            "CN"
+          ]
+        },
+        {
+          "adult": false,
+          "backdrop_path": "/6t2FvBr9DS8MOq0m5FAwPBCdAW5.jpg",
+          "id": 220102,
+          "name": "暗影蜘蛛侠",
+          "original_name": "Spider-Noir",
+          "overview": "私家侦探本·莱利接下几桩看似单纯的案子，没想到黑帮分子、怪物，以及一位神秘的蛇蝎美人织起一张阴谋之网，让他必须面对过去，那个纽约唯一超级英雄的身份：蜘蛛侠。",
+          "poster_path": "/f2dyNx2eWY8Ccmko94DPEfeE361.jpg",
+          "media_type": "tv",
+          "original_language": "en",
+          "genre_ids": [
+            18,
+            9648,
+            80
+          ],
+          "popularity": 54.0628,
+          "first_air_date": "2026-05-25",
+          "softcore": false,
+          "vote_average": 8.47,
+          "vote_count": 652,
+          "origin_country": [
+            "US"
+          ]
+        }
+      ],
+      "total_pages": 500,
+      "total_results": 10000
+    }
+  ]
+}

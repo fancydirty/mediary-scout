@@ -53,4 +53,9 @@ describe("postersFrom", () => {
   it("坏 feed（null/无 results）跳过不炸", () => {
     expect(postersFrom([null, {}], 5)).toEqual([]);
   });
+  it("limit <= 0 返回空数组", () => {
+    const data = { results: [{ poster_path: "/a.jpg", title: "甲" }] };
+    expect(postersFrom([data], 0)).toEqual([]);
+    expect(postersFrom([data], -1)).toEqual([]);
+  });
 });

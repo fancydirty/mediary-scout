@@ -1,4 +1,4 @@
-import { detectPlatform, orderDownloads, formatStars } from "./lib.mjs";
+import { detectPlatform, orderDownloads, formatStars, postersFrom } from "./lib.mjs";
 
 const REPO = "fancydirty/mediary-scout";
 const STARS_FALLBACK = 968;
@@ -34,6 +34,53 @@ async function wireStars() {
   let n = STARS_FALLBACK;
   try { n = (await fetchJson(`https://api.github.com/repos/${REPO}`)).stargazers_count; } catch {}
   document.querySelectorAll("[data-stars]").forEach((el) => { el.textContent = `★ ${formatStars(n)}`; });
+}
+
+async function wirePosters() {
+  const wall = document.querySelector(".poster-wall");
+  if (!wall) return;
+  const base = "https://media-track-tmdb-proxy.fancydirty.workers.dev";
+  let feeds;
+  try {
+    feeds = await Promise.all([
+      fetchJson(`${base}/trending/movie/week?language=zh-CN`),
+      fetchJson(`${base}/trending/tv/week?language=zh-CN`),
+    ]);
+  } catch {
+    try {
+      feeds = (await fetchJson("./data/posters-fallback.json")).feeds;
+    } catch {
+      console.warn("poster feeds unavailable; poster wall stays empty");
+      return;
+    }
+  }
+  wall.innerHTML = postersFrom(feeds, 18)
+    .map((p) => `<img loading="lazy" src="${p.url}" alt="${p.title} 海报">`)
+    .join("");
+}
+
+function initBentoReveal() {
+  const cells = document.querySelectorAll('.bento-cell');
+  if (cells.length === 0) return;
+
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduced) {
+    cells.forEach((cell) => cell.classList.add('visible'));
+    return;
+  }
+
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach((entry, idx) => {
+      if (entry.isIntersecting) {
+        setTimeout(() => {
+          entry.target.classList.add('visible');
+        }, idx * 50);
+        io.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.1 });
+
+  cells.forEach((cell) => io.observe(cell));
 }
 
 function initHowScrolly() {
@@ -117,4 +164,6 @@ function initHowScrolly() {
 
 wireDownloads();
 wireStars();
+wirePosters();
 initHowScrolly();
+initBentoReveal();

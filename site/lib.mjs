@@ -22,6 +22,7 @@ export function formatStars(n) {
 }
 
 export function postersFrom(feeds, limit) {
+  if (limit <= 0) return [];
   const out = [];
   for (const feed of feeds) {
     for (const r of feed?.results ?? []) {
