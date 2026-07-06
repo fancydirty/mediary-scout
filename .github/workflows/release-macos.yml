@@ -135,9 +135,13 @@ jobs:
         run: |
           $bsqDir = "apps/web/.next/standalone/node_modules/better-sqlite3"
           $buildDir = Join-Path $bsqDir "build/Release"
-          $url = "https://github.com/WiseLibs/better-sqlite3/releases/download/v12.11.1/better-sqlite3-v12.11.1-electron-v130-win32-x64.tar.gz"
-          $tmpFile = Join-Path $env:TEMP "bsq.tar.gz"
+          $bsqVersion = (Get-Content "$bsqDir/package.json" | ConvertFrom-Json).version
+          $abiMap = @{ "33.4.11" = 130 }
+          $abi = $abiMap[$env:ELECTRON_VERSION]
+          if (-not $abi) { throw "No ABI mapping for Electron $env:ELECTRON_VERSION — update the abiMap" }
+          $url = "https://github.com/WiseLibs/better-sqlite3/releases/download/v$bsqVersion/better-sqlite3-v$bsqVersion-electron-v$abi-win32-x64.tar.gz"
           Write-Host "Downloading $url"
+          $tmpFile = Join-Path $env:TEMP "bsq.tar.gz"
           Invoke-WebRequest -Uri $url -OutFile $tmpFile
           $extractDir = Join-Path $env:TEMP "bsq-extract"
           New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
@@ -151,10 +155,9 @@ jobs:
       - name: Verify ABI swap actually happened
         shell: pwsh
         run: |
-          $bsqPath = "apps/web/.next/standalone/node_modules/better-sqlite3"
+          $bsqPath = (Resolve-Path "apps/web/.next/standalone/node_modules/better-sqlite3").Path -replace '\\','/'
           $abiCheck = Join-Path $env:TEMP "abi-check.js"
-          $requirePath = (Resolve-Path $bsqPath).Path
-          "const Database = require('$requirePath'.replace(/\\\\/g,'/')); new Database(':memory:').exec('CREATE TABLE t(x)'); console.log('ABI_OK modules=' + process.versions.modules);" | Out-File -Encoding utf8 $abiCheck
+          "const Database = require('$bsqPath'); new Database(':memory:').exec('CREATE TABLE t(x)'); console.log('ABI_OK modules=' + process.versions.modules);" | Out-File -Encoding utf8 $abiCheck
           $env:ELECTRON_RUN_AS_NODE = "1"
           & "$(npm root)/electron/dist/electron.exe" $abiCheck
 
