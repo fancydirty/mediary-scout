@@ -370,4 +370,45 @@ describe("CORS for the landing site", () => {
     expect(res.headers.get("Access-Control-Allow-Origin")).toBeNull();
     expect(res.headers.get("Vary")).toBeNull();
   });
+
+  it("echoes ACAO + Vary on the 405 branch for an allowlisted Origin (inspectable error, not an opaque CORS TypeError)", async () => {
+    const res = await handleTmdbProxy({
+      request: new Request("https://w.example/movie/278", {
+        method: "POST",
+        headers: { Origin: "https://mediary.dirtyfancy.sbs" },
+      }),
+      kv: fakeKv(),
+      token: "t",
+      originFetch: async () => new Response("{}"),
+    });
+    expect(res.status).toBe(405);
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("https://mediary.dirtyfancy.sbs");
+    expect(res.headers.get("Vary")).toBe("Origin");
+  });
+
+  it("echoes ACAO + Vary on the 404 branch for an allowlisted Origin hitting a non-allowlisted path", async () => {
+    const res = await handleTmdbProxy({
+      request: new Request("https://w.example/account/secret", {
+        headers: { Origin: "https://mediary.dirtyfancy.sbs" },
+      }),
+      kv: fakeKv(),
+      token: "t",
+      originFetch: async () => new Response("{}"),
+    });
+    expect(res.status).toBe(404);
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("https://mediary.dirtyfancy.sbs");
+    expect(res.headers.get("Vary")).toBe("Origin");
+  });
+
+  it("sets neither ACAO nor Vary on a 404 when the request has no Origin header", async () => {
+    const res = await handleTmdbProxy({
+      request: new Request("https://w.example/account/secret"),
+      kv: fakeKv(),
+      token: "t",
+      originFetch: async () => new Response("{}"),
+    });
+    expect(res.status).toBe(404);
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBeNull();
+    expect(res.headers.get("Vary")).toBeNull();
+  });
 });

@@ -126,7 +126,9 @@ export async function handleTmdbProxy(deps: HandleTmdbProxyDeps): Promise<Respon
   const originFetch = deps.originFetch ?? fetch;
 
   if (request.method !== "GET") {
-    return new Response("Method Not Allowed", { status: 405 });
+    // CORS on error branches: without ACAO an allowlisted origin sees an opaque
+    // CORS TypeError instead of an inspectable 405/404 (debuggability, not caching).
+    return new Response("Method Not Allowed", { status: 405, headers: corsHeadersFor(request) });
   }
 
   const path = pathOf(request);
@@ -134,7 +136,7 @@ export async function handleTmdbProxy(deps: HandleTmdbProxyDeps): Promise<Respon
     return handleImageProxy(path.slice("img/".length), originFetch);
   }
   if (!isAllowed(path)) {
-    return new Response("Not Found", { status: 404 });
+    return new Response("Not Found", { status: 404, headers: corsHeadersFor(request) });
   }
 
   const key = cacheKeyFor(request);
