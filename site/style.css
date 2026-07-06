@@ -513,125 +513,177 @@ section {
   }
 }
 
-/* Features Bento Grid */
+/* Features v4 — poster wall is the ONLY solid block; everything else flat */
 #features {
   padding: 80px 0;
+  overflow: hidden; /* contains the off-canvas ambient glow */
 }
 
 #features h2 {
   font-size: 32px;
   font-weight: 700;
-  margin: 0 0 32px 0;
+  margin: 0 0 48px 0;
   text-align: center;
 }
 
-.bento {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  grid-auto-rows: 96px;
-  gap: 12px;
-}
-
-.bento-cell {
-  background: var(--bg-surface);
-  border: 1px solid var(--bg-card-alt);
-  border-radius: 12px;
-  padding: 16px;
-  opacity: 0;
-  transform: translateY(20px);
-  transition: opacity 0.2s ease, transform 0.2s ease;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.bento-cell.visible {
-  opacity: 1;
-  transform: none;
-}
-
-.bento-cell h3 {
-  font-size: 16px;
-  font-weight: 700;
-  margin: 0 0 8px 0;
-  color: var(--text);
-}
-
-.bento-cell p {
-  font-size: 13px;
-  color: var(--text-muted);
-  margin: 0;
-  line-height: 1.5;
-}
-
-/* Explicit cell placement — auto-flow alone leaves a 2-slot hole
-   (14 content units for 16 slots in rows 1-4), so the hero poster wall
-   spans 4 rows: left column 2×4 + right column (2×2, two 1×1, 2×1)
-   packs a perfect 4×4 block; trust bar spans row 5. */
-.bento-posters { grid-column: 1 / 3; grid-row: 1 / 5; }
-.bento-episodes { grid-column: 3 / 5; grid-row: 1 / 3; }
-.bento-multi { grid-column: 3 / 5; grid-row: 4; }
-.trust-bar { grid-column: 1 / 5; }
-
-/* Poster wall cell */
-.bento-posters {
+.feat-split {
+  display: flex;
+  gap: 40px;
+  align-items: stretch;
   position: relative;
-  overflow: hidden;
-  padding: 0;
+}
+
+/* Green ambient glow behind/outside the wall, lower-left (echoes hero) */
+.feat-glow {
+  position: absolute;
+  left: -12%;
+  bottom: -14%;
+  width: 52%;
+  height: 68%;
+  background: radial-gradient(ellipse, rgba(30, 215, 96, 0.09), transparent 65%);
+  pointer-events: none;
+}
+
+.feat-wall-col {
+  flex: 1.1;
   min-width: 0;
+  position: relative;
+}
+
+.feat-wall {
+  position: relative;
+  height: 420px;
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--bg-surface);
+  /* top-edge 1px highlight + deep ambient drop shadow */
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), rgba(0, 0, 0, 0.55) 0 18px 40px -12px;
 }
 
 .poster-wall {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 6px;
-  transform: rotate(-2deg) scale(1.15);
-  height: 100%;
-  min-width: 0;
+  transform: rotate(-2deg) scale(1.18);
+  /* slow breathing drift; `translate` composes with the transform above */
+  animation: drift 26s ease-in-out infinite alternate;
+}
+
+@keyframes drift {
+  from { translate: 0 0; }
+  to { translate: 0 -26px; }
 }
 
 .poster-wall img {
   width: 100%;
-  height: auto;
-  border-radius: 6px;
+  height: 96px;
+  object-fit: cover;
+  border-radius: 4px;
   display: block;
 }
 
 .poster-overlay {
   position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  padding: 24px 16px 16px;
-  background: linear-gradient(to top, rgba(18, 18, 18, 0.92), transparent);
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 16px;
+  background: linear-gradient(180deg, transparent 42%, rgba(18, 18, 18, 0.96));
+}
+
+.feat-eyebrow {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10.5px;
+  color: var(--accent);
+  letter-spacing: 1px;
 }
 
 .poster-overlay h3 {
-  font-size: 16px;
-  font-weight: 700;
-  margin: 0 0 4px 0;
   color: var(--text);
+  font-weight: 800;
+  font-size: 16px;
+  letter-spacing: -0.3px;
+  margin: 3px 0 0;
 }
 
 .poster-overlay p {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin: 0;
+  color: #8f8f8f;
+  font-size: 11px;
+  margin: 3px 0 0;
 }
 
-/* Episode tracking cell — small inline squares per mockup, not grid-stretched */
+/* Editorial feature column — numerals + hairlines, zero boxes */
+.feat-list {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.feat-item {
+  position: relative;
+  padding: 16px 0;
+  opacity: 0;
+  transform: translateY(14px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.feat-item.visible {
+  opacity: 1;
+  transform: none;
+}
+
+.feat-item:first-child { padding-top: 0; }
+.feat-item:last-child { padding-bottom: 0; }
+
+/* center-fading hairline separators (NOT solid border-top) */
+.feat-item + .feat-item::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, #242424 25%, #242424 75%, transparent);
+}
+
+.feat-num {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  color: #4d4d4d;
+  letter-spacing: 1px;
+}
+
+.feat-item b {
+  display: block;
+  color: var(--text);
+  font-size: 15.5px;
+  font-weight: 700;
+  letter-spacing: -0.2px;
+  margin-top: 4px;
+}
+
+.feat-item > span {
+  color: #9a9a9a;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 .episode-grid {
-  margin: 4px 0 10px;
+  margin: 8px 0 4px;
   line-height: 0;
 }
 
 .ep {
-  width: 16px;
-  height: 16px;
-  border-radius: 3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
   display: inline-block;
-  margin: 1.5px;
-  background: #2b2b2b;
-  border: 1px dashed #4d4d4d;
+  margin: 1px;
+  background: #252525;
+  border: 1px dashed #3d3d3d;
 }
 
 .ep.got {
@@ -639,90 +691,58 @@ section {
   border-color: var(--accent);
 }
 
-/* Trust bar */
-.trust-bar {
+/* Trust line — flat label voice, no container */
+.feat-trust {
+  margin-top: 44px;
+}
+
+.feat-hairline {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, #2a2a2a 25%, #2a2a2a 75%, transparent);
+}
+
+.trust-row {
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  gap: 16px;
+  padding: 18px 8px 0;
+  font-size: 11px;
+  letter-spacing: 2.2px;
+  text-transform: uppercase;
+  color: #8a8a8a;
 }
 
-.trust-item {
-  flex: 1;
-  text-align: center;
-}
-
-.trust-value {
-  font-size: 15px;
-  font-weight: 900;
-  color: var(--text);
-  margin-bottom: 4px;
-}
-
-.trust-item:first-child .trust-value {
+.trust-row .trust-green {
   color: var(--accent);
 }
 
-.trust-label {
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
 @media (max-width: 768px) {
-  .bento {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .feat-split {
+    flex-direction: column;
+    gap: 28px;
   }
 
-  /* Restack: full-width cells flow in DOM order; small cells pair up */
-  .bento-posters {
-    grid-column: 1 / -1;
-    grid-row: auto / span 3;
+  .feat-wall {
+    height: 260px;
   }
 
-  .bento-episodes {
-    grid-column: 1 / -1;
-    grid-row: auto / span 2;
-  }
-
-  .bento-multi {
-    grid-column: 1 / -1;
-    grid-row: auto;
-  }
-
-  /* Trust bar wraps 2×2 on mobile; needs 2 grid rows of height —
-     a single 96px row can't hold two lines of value+label items */
-  .trust-bar {
-    grid-column: 1 / -1;
-    grid-row: auto / span 2;
+  .trust-row {
     flex-wrap: wrap;
-    align-content: center;
+    gap: 14px 0;
+    padding: 16px 0 0;
   }
 
-  .trust-item {
-    flex-basis: calc(50% - 8px);
+  .trust-row span {
+    flex-basis: 50%;
     min-width: 0;
   }
 }
 
-@media (max-width: 480px) {
-  .bento {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .bento-cell,
-  .bento-posters,
-  .bento-episodes,
-  .bento-multi {
-    grid-column: 1 / -1;
-  }
-
-  /* Trust bar keeps its 2×2 wrap ("1 col except trust bar") —
-     column-stacking inside a fixed-height row would wrap into
-     side-by-side columns and clip */
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .bento-cell {
+  .poster-wall {
+    animation: none;
+  }
+
+  .feat-item {
     opacity: 1;
     transform: none;
   }

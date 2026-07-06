@@ -150,65 +150,61 @@
     </div>
   </section>
 
-  <!-- Bento feature grid: TMDB poster wall + episode tracking + trust bar -->
+  <!-- Features v4: poster wall solo block + flat editorial column + label-voice trust line -->
   <section id="features">
     <div class="container">
       <h2>不只是下载，是一个正经媒体库</h2>
-      <div class="bento">
-        <!-- Big cell: Real TMDB poster wall (left column, spans 4 rows to pack tight) -->
-        <div class="bento-cell bento-posters">
-          <div class="poster-wall"></div>
-          <div class="poster-overlay">
-            <h3>你的网盘，长出一个正经媒体库</h3>
-            <p>真海报、真元数据，来自 TMDB</p>
+      <div class="feat-split">
+        <div class="feat-glow" aria-hidden="true"></div>
+
+        <!-- The ONLY solid block: tilted TMDB poster wall -->
+        <div class="feat-wall-col">
+          <div class="feat-wall">
+            <div class="poster-wall"></div>
+            <div class="poster-overlay">
+              <div class="feat-eyebrow">LIBRARY</div>
+              <h3>你的网盘，长出一个正经媒体库</h3>
+              <p>真海报、真元数据，来自 TMDB · 本周热映</p>
+            </div>
           </div>
         </div>
 
-        <!-- Wide cell: Episode tracking (2 cols × 2 rows) -->
-        <div class="bento-cell bento-episodes">
-          <h3>知道你缺哪几集，只补缺的</h3>
-          <div class="episode-grid">
-            <i class="ep got"></i><i class="ep got"></i><i class="ep got"></i><i class="ep got"></i>
-            <i class="ep got"></i><i class="ep got"></i><i class="ep got"></i><i class="ep got"></i>
-            <i class="ep"></i><i class="ep"></i><i class="ep"></i><i class="ep"></i>
+        <!-- Flat editorial feature column: mono numerals, hairlines, no boxes -->
+        <div class="feat-list">
+          <div class="feat-item">
+            <div class="feat-num">01</div>
+            <b>知道你缺哪几集，只补缺的</b>
+            <div class="episode-grid">
+              <i class="ep got"></i><i class="ep got"></i><i class="ep got"></i><i class="ep got"></i><i class="ep got"></i><i class="ep got"></i><i class="ep got"></i><i class="ep got"></i><i class="ep"></i><i class="ep"></i><i class="ep"></i><i class="ep"></i>
+            </div>
+            <span>S01 · 8/12 已入库，追更自动补新集</span>
           </div>
-          <p>S01 · 8/12 已入库 —— 巡检只为还有缺口的剧出动，追更自动补新集</p>
+          <div class="feat-item">
+            <div class="feat-num">02</div>
+            <b>115 · 夸克 · 光鸭，直落网盘</b>
+            <span>转存不下载，不占你电脑一寸硬盘</span>
+          </div>
+          <div class="feat-item">
+            <div class="feat-num">03</div>
+            <b>缺字幕？自动配</b>
+            <span>没字幕的老片，自己找外挂字幕配好改名</span>
+          </div>
+          <div class="feat-item">
+            <div class="feat-num">04</div>
+            <b>一个实例，全家合用</b>
+            <span>各自注册、各绑各的网盘、各看各的库</span>
+          </div>
         </div>
+      </div>
 
-        <!-- Small cells (1 col × 1 row each) -->
-        <div class="bento-cell">
-          <h3>115 · 夸克 · 光鸭</h3>
-          <p>转存直落网盘，不占本地硬盘</p>
-        </div>
-        <div class="bento-cell">
-          <h3>缺字幕？自动配</h3>
-          <p>没字幕的老片，它自己找外挂字幕配好改名</p>
-        </div>
-
-        <!-- Wide cell: Multi-user (2 cols × 1 row) -->
-        <div class="bento-cell bento-multi">
-          <h3>一个实例，全家合用</h3>
-          <p>各自注册、各绑各的网盘、各看各的库——给爸妈也开一个号</p>
-        </div>
-
-        <!-- Trust bar (4 cols × 1 row, 人话版) -->
-        <div class="bento-cell trust-bar">
-          <div class="trust-item">
-            <div class="trust-value">开源免费</div>
-            <div class="trust-label">AGPL 协议</div>
-          </div>
-          <div class="trust-item">
-            <div class="trust-value">凭证只存你自己电脑</div>
-            <div class="trust-label">不上传第三方</div>
-          </div>
-          <div class="trust-item">
-            <div class="trust-value">不下载不占硬盘</div>
-            <div class="trust-label">直接存网盘</div>
-          </div>
-          <div class="trust-item">
-            <div class="trust-value">挑不到合格资源就直说</div>
-            <div class="trust-label">不塞垃圾</div>
-          </div>
+      <!-- Trust line: flat label voice, no container -->
+      <div class="feat-trust">
+        <div class="feat-hairline" aria-hidden="true"></div>
+        <div class="trust-row">
+          <span class="trust-green">开源免费</span>
+          <span>凭证只存你自己电脑</span>
+          <span>不下载不占硬盘</span>
+          <span>挑不到合格资源就直说</span>
         </div>
       </div>
     </div>

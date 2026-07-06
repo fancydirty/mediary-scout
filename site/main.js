@@ -59,13 +59,13 @@ async function wirePosters() {
     .join("");
 }
 
-function initBentoReveal() {
-  const cells = document.querySelectorAll('.bento-cell');
-  if (cells.length === 0) return;
+function initFeatureReveal() {
+  const items = document.querySelectorAll('.feat-item');
+  if (items.length === 0) return;
 
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (reduced) {
-    cells.forEach((cell) => cell.classList.add('visible'));
+    items.forEach((item) => item.classList.add('visible'));
     return;
   }
 
@@ -74,13 +74,13 @@ function initBentoReveal() {
       if (entry.isIntersecting) {
         setTimeout(() => {
           entry.target.classList.add('visible');
-        }, idx * 50);
+        }, idx * 60);
         io.unobserve(entry.target);
       }
     });
   }, { threshold: 0.1 });
 
-  cells.forEach((cell) => io.observe(cell));
+  items.forEach((item) => io.observe(item));
 }
 
 function initHowScrolly() {
@@ -166,4 +166,4 @@ wireDownloads();
 wireStars();
 wirePosters();
 initHowScrolly();
-initBentoReveal();
+initFeatureReveal();
