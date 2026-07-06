@@ -563,6 +563,15 @@ section {
   line-height: 1.5;
 }
 
+/* Explicit cell placement — auto-flow alone leaves a 2-slot hole
+   (14 content units for 16 slots in rows 1-4), so the hero poster wall
+   spans 4 rows: left column 2×4 + right column (2×2, two 1×1, 2×1)
+   packs a perfect 4×4 block; trust bar spans row 5. */
+.bento-posters { grid-column: 1 / 3; grid-row: 1 / 5; }
+.bento-episodes { grid-column: 3 / 5; grid-row: 1 / 3; }
+.bento-multi { grid-column: 3 / 5; grid-row: 4; }
+.trust-bar { grid-column: 1 / 5; }
+
 /* Poster wall cell */
 .bento-posters {
   position: relative;
@@ -609,17 +618,18 @@ section {
   margin: 0;
 }
 
-/* Episode tracking cell */
+/* Episode tracking cell — small inline squares per mockup, not grid-stretched */
 .episode-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 6px;
-  margin-bottom: 12px;
+  margin: 4px 0 10px;
+  line-height: 0;
 }
 
 .ep {
-  aspect-ratio: 1;
-  border-radius: 4px;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  display: inline-block;
+  margin: 1.5px;
   background: #2b2b2b;
   border: 1px dashed #4d4d4d;
 }
@@ -663,12 +673,29 @@ section {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .bento-cell[style*="span 4"] {
-    grid-column: span 2 !important;
+  /* Restack: full-width cells flow in DOM order; small cells pair up */
+  .bento-posters {
+    grid-column: 1 / -1;
+    grid-row: auto / span 3;
   }
 
+  .bento-episodes {
+    grid-column: 1 / -1;
+    grid-row: auto / span 2;
+  }
+
+  .bento-multi {
+    grid-column: 1 / -1;
+    grid-row: auto;
+  }
+
+  /* Trust bar wraps 2×2 on mobile; needs 2 grid rows of height —
+     a single 96px row can't hold two lines of value+label items */
   .trust-bar {
+    grid-column: 1 / -1;
+    grid-row: auto / span 2;
     flex-wrap: wrap;
+    align-content: center;
   }
 
   .trust-item {
@@ -682,23 +709,16 @@ section {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .bento-cell[style*="span"] {
-    grid-column: span 1 !important;
+  .bento-cell,
+  .bento-posters,
+  .bento-episodes,
+  .bento-multi {
+    grid-column: 1 / -1;
   }
 
-  .bento-cell[style*="span 4"] {
-    grid-column: span 1 !important;
-  }
-
-  .trust-bar {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .trust-item {
-    flex-basis: auto;
-    min-width: 0;
-  }
+  /* Trust bar keeps its 2×2 wrap ("1 col except trust bar") —
+     column-stacking inside a fixed-height row would wrap into
+     side-by-side columns and clip */
 }
 
 @media (prefers-reduced-motion: reduce) {
