@@ -48,3 +48,4 @@ docs/blog/
 .omo/
 apps/desktop/dist-app/
 .playwright-cli/
+.superpowers/
