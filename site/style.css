@@ -5,8 +5,10 @@
   --text:#fff; --text-muted:#b3b3b3; --border:#4d4d4d; --border-outline:#7c7c7c;
   --shadow-dialog:rgba(0,0,0,.5) 0 8px 24px; --shadow-card:rgba(0,0,0,.3) 0 8px 8px;
   --font:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+  --border-subtle:#242424;
 }
-* { box-sizing:border-box; } body { margin:0; background:var(--bg-base); color:var(--text); font-family:var(--font); }
+* { box-sizing:border-box; } body { margin:0; background:var(--bg-base); color:var(--text); font-family:var(--font); line-height:1.5; }
+.skip-link{position:absolute;top:-40px;left:0;background:var(--accent);color:#000;padding:8px 16px;border-radius:0 0 4px 0;font-weight:700;text-decoration:none;z-index:200}.skip-link:focus{top:0}
 .pill { border-radius:9999px; font-weight:700; cursor:pointer; transition:transform .15s ease, background .15s ease; }
 .pill:hover { transform:scale(1.03); } .pill:active { background:var(--accent-press); }
 :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
@@ -83,7 +85,7 @@ nav .container {
 
 /* Footer */
 footer {
-  border-top: 1px solid #242424;
+  border-top: 1px solid var(--border-subtle);
   padding: 48px 0 32px;
   margin-top: 80px;
 }
