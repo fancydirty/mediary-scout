@@ -5,6 +5,8 @@ describe("detectPlatform", () => {
   it("mac UA → mac", () => { expect(detectPlatform("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)")).toBe("mac"); });
   it("windows UA → win", () => { expect(detectPlatform("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")).toBe("win"); });
   it("other → other", () => { expect(detectPlatform("Mozilla/5.0 (X11; Linux x86_64)")).toBe("other"); });
+  it("iPhone UA（like Mac OS X）→ other，不是 mac", () => { expect(detectPlatform("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15")).toBe("other"); });
+  it("iPad UA → other", () => { expect(detectPlatform("Mozilla/5.0 (iPad; CPU OS 16_6 like Mac OS X) AppleWebKit/605.1.15")).toBe("other"); });
 });
 
 describe("orderDownloads", () => {

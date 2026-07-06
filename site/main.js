@@ -68,7 +68,7 @@ async function wirePosters() {
       const img = document.createElement("img");
       img.loading = "lazy";
       img.src = p.url;
-      img.alt = `${p.title} 海报`;
+      img.alt = p.title ? `${p.title} 海报` : "影视海报";
       return img;
     }),
   );

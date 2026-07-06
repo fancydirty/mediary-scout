@@ -109,12 +109,12 @@ async function handleImageProxy(rest: string, originFetch: typeof fetch): Promis
   if (!IMG_PATH_RE.test(rest)) {
     return new Response("Not Found", { status: 404, headers: { "Cache-Control": "no-store" } });
   }
-  const originResponse = await originFetch(`${TMDB_IMAGE_ORIGIN}/${rest}`, {
-    method: "GET",
-    // Explicit edge caching for the subrequest — don't rely on Cloudflare's
-    // default file-extension rules.
-    cf: { cacheTtl: 31536000, cacheEverything: true },
-  } as RequestInit);
+  // NOTE: no cf cache overrides on purpose. cacheEverything+cacheTtl would
+  // pin origin 404s/5xx at the edge for a year, and per-status TTLs
+  // (cacheTtlByStatus) are Enterprise-only. Default rules cache jpg/png by
+  // extension honoring origin headers, with short negative caching — the
+  // right behavior here.
+  const originResponse = await originFetch(`${TMDB_IMAGE_ORIGIN}/${rest}`, { method: "GET" });
   const headers: Record<string, string> = {
     "Cache-Control": originResponse.ok ? "public, max-age=31536000, immutable" : "no-store",
   };

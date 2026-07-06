@@ -1,4 +1,6 @@
 export function detectPlatform(ua) {
+  // iOS UAs contain "like Mac OS X" — they must not classify as mac.
+  if (/iPhone|iPad|iPod/.test(ua)) return "other";
   if (/Macintosh|Mac OS X/.test(ua)) return "mac";
   if (/Windows/.test(ua)) return "win";
   return "other";
