@@ -11,8 +11,16 @@ async function fetchJson(url, ms = 4000) {
 
 async function wireDownloads() {
   let release;
-  try { release = await fetchJson(`https://api.github.com/repos/${REPO}/releases/latest`); }
-  catch { release = await fetchJson("./data/release-fallback.json"); }
+  try {
+    release = await fetchJson(`https://api.github.com/repos/${REPO}/releases/latest`);
+  } catch {
+    try {
+      release = await fetchJson("./data/release-fallback.json");
+    } catch {
+      console.warn("release info unavailable; keeping static download links");
+      return; // HTML's hardcoded hrefs (releases/latest page) stay usable
+    }
+  }
   const { version, items } = orderDownloads(release, detectPlatform(navigator.userAgent));
   document.querySelectorAll("[data-dl]").forEach((a, i) => {
     const it = items[i]; if (!it) return;
