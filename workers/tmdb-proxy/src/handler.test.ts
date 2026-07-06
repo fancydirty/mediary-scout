@@ -25,6 +25,7 @@ describe("handleTmdbProxy — proxy & guards", () => {
       originFetch: async () => new Response("{}"),
     });
     expect(res.status).toBe(405);
+    expect(res.headers.get("Allow")).toBe("GET");
   });
 
   it("rejects non-allowlisted paths with 404", async () => {
@@ -289,6 +290,7 @@ describe("poster image proxy", () => {
       originFetch: async () => new Response("nope", { status: 200 }),
     });
     expect(res.status).toBe(405);
+    expect(res.headers.get("Allow")).toBe("GET");
   });
 
   it("allows underscores in filenames (future-proofing)", async () => {
@@ -384,6 +386,7 @@ describe("CORS for the landing site", () => {
       originFetch: async () => new Response("{}"),
     });
     expect(res.status).toBe(405);
+    expect(res.headers.get("Allow")).toBe("GET");
     expect(res.headers.get("Access-Control-Allow-Origin")).toBe("https://mediary.dirtyfancy.sbs");
     expect(res.headers.get("Vary")).toBe("Origin");
   });

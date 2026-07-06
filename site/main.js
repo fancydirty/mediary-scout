@@ -3,8 +3,15 @@ import { detectPlatform, orderDownloads, formatStars, postersFrom, WORKER_BASE }
 const REPO = "fancydirty/mediary-scout";
 const STARS_FALLBACK = 968;
 
+function timeoutSignal(ms) {
+  if (typeof AbortSignal.timeout === "function") return AbortSignal.timeout(ms);
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), ms);
+  return controller.signal;
+}
+
 async function fetchJson(url, ms = 4000) {
-  const res = await fetch(url, { signal: AbortSignal.timeout(ms) });
+  const res = await fetch(url, { signal: timeoutSignal(ms) });
   if (!res.ok) throw new Error(String(res.status));
   return res.json();
 }

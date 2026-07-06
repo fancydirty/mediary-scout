@@ -136,7 +136,7 @@ export async function handleTmdbProxy(deps: HandleTmdbProxyDeps): Promise<Respon
   if (request.method !== "GET") {
     // CORS on error branches: without ACAO an allowlisted origin sees an opaque
     // CORS TypeError instead of an inspectable 405/404 (debuggability, not caching).
-    return new Response("Method Not Allowed", { status: 405, headers: corsHeadersFor(request) });
+    return new Response("Method Not Allowed", { status: 405, headers: { ...corsHeadersFor(request), Allow: "GET" } });
   }
 
   const path = pathOf(request);
