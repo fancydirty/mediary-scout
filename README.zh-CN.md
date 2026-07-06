@@ -14,13 +14,14 @@
   <img src="https://img.shields.io/badge/Postgres-4169E1?logo=postgresql&logoColor=white" alt="Postgres">
   <img src="https://img.shields.io/badge/self--hosted-only-success" alt="self-hosted only">
   <a href="https://github.com/fancydirty/mediary-scout/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen" alt="PRs welcome"></a>
-  <a href="https://mediary.dirtyfancy.sbs"><img src="https://img.shields.io/badge/demo-live-1ED760?logo=vercel&logoColor=white" alt="live demo"></a>
+  <a href="https://demo.mediaryscout.app"><img src="https://img.shields.io/badge/demo-live-1ED760?logo=vercel&logoColor=white" alt="live demo"></a>
 </p>
 
 <p align="center">
   <a href="#快速开始">快速开始</a> ·
   <a href="docs/deploy.md">部署指南</a> ·
-  <a href="https://mediary.dirtyfancy.sbs">在线 Demo ↗</a> ·
+  <a href="https://mediaryscout.app">🌐 官网</a> ·
+  <a href="https://demo.mediaryscout.app">在线 Demo ↗</a> ·
   <a href="README.md">English</a>
 </p>
 
@@ -28,7 +29,7 @@
 
 ![Mediary Scout — 搜片 → 点获取 → agent 自动搜索、转存、验证落进你的网盘](docs/images/demo.gif)
 
-> *上图:只读 [在线 demo](https://mediary.dirtyfancy.sbs) —— 搜片 → 获取 → agent 走完搜索、转存、验证。*
+> *上图:只读 [在线 demo](https://demo.mediaryscout.app) —— 搜片 → 获取 → agent 走完搜索、转存、验证。*
 
 > **免责声明。** Mediary Scout 是**开源、自部署**软件,**不提供、也永远不会提供托管服务** —— 你自己跑实例、自带网盘 / LLM / 元数据凭证。它做的就是你本可以在自己网盘里手动完成的那些文件操作。项目定位详见 [docs/distribution-and-legal-positioning.md](docs/distribution-and-legal-positioning.md)。
 
@@ -149,7 +150,7 @@ docker compose up -d
 
 ## Demo
 
-**🔭 在线体验:[mediary.dirtyfancy.sbs](https://mediary.dirtyfancy.sbs)**
+**🔭 在线体验:[demo.mediaryscout.app](https://demo.mediaryscout.app)**
 
 公开的**只读** demo —— mock 网盘、真实 TMDB 全库搜索、点「获取」看一次脚本化获取落进媒体库。不连真盘、不转存、什么都不持久。由本仓库构建。
 

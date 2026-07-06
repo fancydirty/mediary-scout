@@ -15,7 +15,8 @@
 
 <p align="center">
   <a href="https://github.com/fancydirty/mediary-scout/releases/latest">📥 Download</a> ·
-  <a href="https://mediary.dirtyfancy.sbs">🔭 Live Demo</a> ·
+  <a href="https://mediaryscout.app">🌐 Website</a> ·
+  <a href="https://demo.mediaryscout.app">🔭 Live Demo</a> ·
   <a href="README.zh-CN.md">中文文档</a>
 </p>
 
@@ -25,7 +26,7 @@ You ask for a movie, show, or anime; an LLM agent scouts resources across your i
 
 ![Mediary Scout — search a title, hit 获取, and the agent searches, transfers, and verifies it into your drive](docs/images/demo.gif)
 
-> *Above: the read-only [live demo](https://mediary.dirtyfancy.sbs) — search → 获取 → the agent works through search, transfer, and verification.*
+> *Above: the read-only [live demo](https://demo.mediaryscout.app) — search → 获取 → the agent works through search, transfer, and verification.*
 
 ## Install
 
@@ -151,7 +152,7 @@ flowchart LR
 
 ## Demo
 
-**🔭 Try it live: [mediary.dirtyfancy.sbs](https://mediary.dirtyfancy.sbs)**
+**🔭 Try it live: [demo.mediaryscout.app](https://demo.mediaryscout.app)**
 
 A public, **read-only** demo — mock drives, real TMDB search across the whole catalog, and a scripted acquisition you can watch land in the library. No drive connect, no transfers, nothing persists.
 
