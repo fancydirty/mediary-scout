@@ -45,6 +45,7 @@ nav .container {
   font-weight: 700;
   font-size: 18px;
   color: var(--text);
+  white-space: nowrap;
 }
 .nav-right {
   display: flex;
@@ -60,6 +61,7 @@ nav .container {
   color: var(--text-muted);
   text-decoration: none;
   transition: color .15s ease;
+  white-space: nowrap;
 }
 .nav-links a:hover {
   color: var(--text);
@@ -81,6 +83,16 @@ nav .container {
   font-size: 13px;
   background: var(--bg-card);
   color: var(--text);
+  white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+  .nav-links {
+    display: none;
+  }
+  .nav-right {
+    gap: 16px;
+  }
 }
 
 /* Footer */
