@@ -54,13 +54,23 @@ jobs:
         run: |
           (cd apps/web/.next/standalone/node_modules/better-sqlite3 && npx prebuild-install -r electron -t ${{ env.ELECTRON_VERSION }})
           SRC="apps/web/.next/standalone/node_modules/better-sqlite3/build/Release/better_sqlite3.node"
-          # -L follows the symlinked hashed copies Turbopack emits under
-          # standalone/apps/web/.next/node_modules/ (electron-builder
-          # dereferences them at package time, so their targets must be swapped)
-          find -L apps/web/.next/standalone -name "better_sqlite3.node" | while read -r f; do
+          # Real copies in the standalone tree (null-delimited; no -L so the
+          # traversal stays inside the tree)
+          find apps/web/.next/standalone -name "better_sqlite3.node" -print0 | while IFS= read -r -d '' f; do
             [ "$f" -ef "$SRC" ] && continue
             echo "Replacing $f"
             cp "$SRC" "$f"
+          done
+          # Turbopack's hashed entries under .next/node_modules are LINKS
+          # (electron-builder dereferences them at package time) — write through
+          # each link's resolved path so the target gets the swapped binary
+          # wherever it actually lives.
+          for d in apps/web/.next/standalone/apps/web/.next/node_modules/better-sqlite3-*; do
+            t="$d/build/Release/better_sqlite3.node"
+            [ -e "$t" ] || continue
+            [ "$t" -ef "$SRC" ] && continue
+            echo "Replacing $t (via link)"
+            cp "$SRC" "$t"
           done
 
       - name: Verify ABI swap actually happened
@@ -71,17 +81,26 @@ jobs:
           console.log('ABI_OK modules=' + process.versions.modules);
           SCRIPT
           ELECTRON_RUN_AS_NODE=1 "$(npm root)/electron/dist/Electron.app/Contents/MacOS/Electron" /tmp/abi-check.js
-          # Every copy in the standalone tree must be byte-identical to the
-          # swapped one — fails loud if Turbopack grows another copy we missed.
+          # Every copy the packaged app can dereference (real files in the
+          # standalone tree + the resolved targets of Turbopack's hashed link
+          # entries) must be byte-identical to the swapped one.
           SRC="apps/web/.next/standalone/node_modules/better-sqlite3/build/Release/better_sqlite3.node"
           REF=$(shasum -a 256 "$SRC" | cut -d' ' -f1)
-          find -L apps/web/.next/standalone -name "better_sqlite3.node" | while read -r f; do
-            H=$(shasum -a 256 "$f" | cut -d' ' -f1)
-            echo "$H  $f"
+          check() {
+            H=$(shasum -a 256 "$1" | cut -d' ' -f1)
+            echo "$H  $1"
             if [ "$H" != "$REF" ]; then
-              echo "::error::ABI swap missed a copy: $f"
+              echo "::error::ABI swap missed a copy: $1"
               exit 1
             fi
+          }
+          find apps/web/.next/standalone -name "better_sqlite3.node" -print0 | while IFS= read -r -d '' f; do
+            check "$f"
+          done
+          for d in apps/web/.next/standalone/apps/web/.next/node_modules/better-sqlite3-*; do
+            t="$d/build/Release/better_sqlite3.node"
+            [ -e "$t" ] || continue
+            check "$t"
           done
 
       - name: Import signing certificate
@@ -237,7 +256,12 @@ jobs:
           if (-not $installer) { throw "no installer exe found in dist-app" }
           Write-Host "Installing $($installer.FullName)"
           Start-Process -FilePath $installer.FullName -ArgumentList "/S" -Wait
-          $exe = Get-ChildItem -Path "$env:LOCALAPPDATA","$env:PROGRAMFILES","${env:PROGRAMFILES(x86)}" -Recurse -Filter "Mediary Scout.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          # electron-builder's per-user NSIS installs under LOCALAPPDATA\Programs —
+          # check there with bounded depth first, fall back to a broad search.
+          $exe = Get-ChildItem -Path "$env:LOCALAPPDATA\Programs" -Recurse -Depth 2 -Filter "Mediary Scout.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $exe) {
+            $exe = Get-ChildItem -Path "$env:LOCALAPPDATA","$env:PROGRAMFILES","${env:PROGRAMFILES(x86)}" -Recurse -Filter "Mediary Scout.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          }
           if (-not $exe) { throw "installed Mediary Scout.exe not found" }
           Write-Host "EXE: $exe"
           $env:ELECTRON_ENABLE_LOGGING = "1"
