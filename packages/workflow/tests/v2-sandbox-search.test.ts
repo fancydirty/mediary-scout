@@ -223,4 +223,24 @@ describe("searchResources dedup 强提示（病2a）", () => {
     const fresh = await sandbox.searchResources("攻壳机动队");
     expect(fresh.repeatNotice).toBeUndefined();
   });
+
+  it("空结果快照的重复提示同样报次数与「共 0 候选」", async () => {
+    const provider = new FakeResourceProviderV2({ results: { "攻壳机动队": [] } });
+    const sandbox = new TaskSandbox({ provider, titleTerms: ["攻壳机动队"] });
+    await sandbox.searchResources("攻壳机动队");
+    const second = await sandbox.searchResources("攻壳机动队");
+    expect(second.repeatNotice).toContain("第 2 次");
+    expect(second.repeatNotice).toContain("共 0 候选");
+  });
+
+  it("带画质词的重复搜索:提示引用剥离后的有效词,不是 raw 原词", async () => {
+    const sandbox = makeSandbox();
+    await sandbox.searchResources("攻壳机动队");
+    // 画质词被 C5 剥离 → 有效词与第 1 次相同 → dedup 命中,计为第 2 次
+    const second = await sandbox.searchResources("攻壳机动队 1080P");
+    expect(second.deduped).toBe(true);
+    expect(second.repeatNotice).toContain("第 2 次");
+    expect(second.repeatNotice).toContain("攻壳机动队");
+    expect(second.repeatNotice).not.toContain("1080");
+  });
 });

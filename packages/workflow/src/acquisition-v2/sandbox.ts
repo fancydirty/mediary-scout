@@ -97,7 +97,8 @@ export interface SearchToolResult {
   /** Set when quality/subtitle tokens were stripped from the agent's keyword
    *  (C5 guardrail): tells the agent the words were dropped and raw recalls more. */
   notice?: string;
-  /** 病2a: dedup 命中时的显式强提示（含第 N 次计数）。模型必须看见「这是重复」。 */
+  /** Set when a deduped search is repeated: escalating warning with repeat count.
+   *  病2a: 模型必须看见「这是重复」。 */
   repeatNotice?: string;
 }
 
@@ -228,7 +229,7 @@ export class TaskSandbox {
       return {
         snapshot: cachedSnapshot,
         deduped: true,
-        repeatNotice: this.repeatNotice(keyword, count, cachedSnapshot.candidates.length),
+        repeatNotice: this.repeatNotice(effectiveKeyword, count, cachedSnapshot.candidates.length),
         ...(notice ? { notice } : {}),
       };
     }
