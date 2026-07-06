@@ -142,4 +142,47 @@ describe("runAcquisitionAgent — the real AI SDK tool-loop over the sandbox", (
     expect(result.coverage.coverageMet).toBe(false);
     expect(result.coverage.missing).toEqual(["S01E01"]);
   });
+
+  it("病1: 成功 reportNoCoverage 后循环立即收束 — 不再有后续步（攻壳 2.5min 尾巴重放）", async () => {
+    const { sandbox } = await setup(["S01E01"]);
+    // 先真搜一次，让 §9 证据护栏放行 no-coverage 上报。
+    await sandbox.searchResources("lycoris recoil");
+    // 攻壳式脚本：报告无覆盖后，模型还想 readSkill、二次上报、finish——都不应该发生。
+    const model = scriptedModel([
+      { tool: "reportNoCoverage", input: { reason: "提供方无该作品资源" } },
+      { tool: "readSkill", input: { section: "无覆盖上报" } },
+      { tool: "reportNoCoverage", input: { reason: "再次确认无资源" } },
+      { tool: "finish", input: {} },
+      { text: "done" },
+    ]);
+    const result = await runAcquisitionAgent({
+      sandbox,
+      model,
+      system: "You acquire media into the scoped sandbox.",
+      prompt: "Ensure S01E01 is obtained.",
+      maxSteps: 20,
+    });
+    // 报告成功的那一步就是最后一步。
+    expect(result.steps).toBe(1);
+    expect(result.coverage.coverageMet).toBe(false);
+  });
+
+  it("病1: 无搜索证据的 reportNoCoverage 被拒（{error}）→ 循环继续", async () => {
+    const { sandbox } = await setup(["S01E01"]);
+    // 不预搜——§9 护栏会 throw，asEvidence 转成 {error} 返回。
+    const model = scriptedModel([
+      { tool: "reportNoCoverage", input: { reason: "premature" } },
+      { text: "guard refused my report; stopping." },
+    ]);
+    const result = await runAcquisitionAgent({
+      sandbox,
+      model,
+      system: "You acquire media into the scoped sandbox.",
+      prompt: "Ensure S01E01 is obtained.",
+      maxSteps: 10,
+    });
+    // 第 1 步被拒后模型还能走到第 2 步输出文本（循环没被 stop 砍断）。
+    expect(result.steps).toBe(2);
+    expect(result.text).toMatch(/stopping/);
+  });
 });

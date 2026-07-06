@@ -12,6 +12,7 @@ import {
   buildRepetitionStop,
   buildSystemicBlockStop,
   hasSystemicTransferBlock,
+  hasSuccessfulNoCoverageReport,
   reflectionSystemOverride,
   toStepSignature,
 } from "../src/index.js";
@@ -206,5 +207,37 @@ describe("prepareStepSystemOverride (composes step-cap + budget nudges)", () => 
 describe("DEFAULT_MAX_STEPS", () => {
   it("is 60 (raised from the old 40 that killed 一人之下)", () => {
     expect(DEFAULT_MAX_STEPS).toBe(60);
+  });
+});
+
+describe("hasSuccessfulNoCoverageReport — 病1: 报后即停", () => {
+  it("成功的 reportNoCoverage 结果 → true", () => {
+    const steps = [
+      {
+        toolCalls: [{ toolName: "reportNoCoverage", input: { reason: "no results" } }],
+        toolResults: [{ output: { reason: "no results", searchesPerformed: 3 } }],
+      },
+    ];
+    expect(hasSuccessfulNoCoverageReport(steps)).toBe(true);
+  });
+
+  it("被 §9 护栏拒绝（{error} 结果）→ false（循环继续）", () => {
+    const steps = [
+      {
+        toolCalls: [{ toolName: "reportNoCoverage", input: { reason: "premature" } }],
+        toolResults: [{ output: { error: "SANDBOX_NO_PROVIDER_EVIDENCE: ..." } }],
+      },
+    ];
+    expect(hasSuccessfulNoCoverageReport(steps)).toBe(false);
+  });
+
+  it("其他工具的成功结果 → false", () => {
+    const steps = [
+      {
+        toolCalls: [{ toolName: "searchResources", input: { keyword: "x" } }],
+        toolResults: [{ output: { snapshot: { id: "s1" } } }],
+      },
+    ];
+    expect(hasSuccessfulNoCoverageReport(steps)).toBe(false);
   });
 });

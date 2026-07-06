@@ -6,6 +6,7 @@ import {
   DEFAULT_MAX_STEPS,
   buildRepetitionStop,
   buildSystemicBlockStop,
+  buildNoCoverageStop,
   prepareStepSystemOverride,
 } from "./agent-loop-guards.js";
 import { interpretTool, type AgentToolEvent } from "./activity.js";
@@ -185,7 +186,7 @@ export function buildSandboxToolSet(
     },
     reportNoCoverage: {
       description:
-        "Honestly report you cannot cover the target. Valid only after a real search ran; backs the report with real provider evidence.",
+        "Honestly report you cannot cover the target. Valid only after a real search ran; backs the report with real provider evidence. TERMINAL: a successful report ENDS the task immediately — do NOT call finish after it, and do NOT report twice.",
       inputSchema: z.object({ reason: z.string() }),
       execute: (args: { reason: string }) => asEvidence(() => sandbox.reportNoCoverage(args.reason)),
     },
@@ -234,7 +235,9 @@ export interface AcquisitionAgentRequest {
   model: LanguageModel;
   system: string;
   prompt: string;
-  /** Hard ceiling on tool-loop steps (the model still terminates earlier via finish/reportNoCoverage). */
+  /** Hard ceiling on tool-loop steps. The loop also ends earlier when the model
+   *  stops calling tools, or when a stop fires (repetition / systemic block /
+   *  successful reportNoCoverage — the terminal no-coverage declaration). */
   maxSteps?: number;
   /** Movie task → expose the movie-only transferUntilLanded tool. */
   movie?: boolean;
@@ -286,9 +289,10 @@ export async function runAcquisitionAgent(
     system: request.system,
     prompt: request.prompt,
     tools,
-    // Three stops: step cap (cost/runaway), repetition (agent crazy), and systemic
-    // transfer block (account quota/auth — every candidate will fail, stop grinding).
-    stopWhen: [stepCountIs(maxSteps), buildRepetitionStop(), buildSystemicBlockStop()],
+    // Four stops: step cap (cost/runaway), repetition (agent crazy), systemic
+    // transfer block (account quota/auth — every candidate will fail, stop grinding),
+    // and successful reportNoCoverage (terminal declaration — no second report).
+    stopWhen: [stepCountIs(maxSteps), buildRepetitionStop(), buildSystemicBlockStop(), buildNoCoverageStop()],
     // Last ~10 steps before the cap: inject a calm "wrap up + clean staging" nudge
     // so a step-capped run doesn't leave the 一人之下-style half-done mess.
     prepareStep: ({ stepNumber }) => {

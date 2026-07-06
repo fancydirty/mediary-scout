@@ -141,6 +141,35 @@ export function buildSystemicBlockStop<TOOLS extends ToolSet = ToolSet>(): StopC
 }
 
 /**
+ * 病1 fix (2026-07-06 GITS incident): reportNoCoverage was registered as an
+ * ordinary evidence tool, so an honest no-coverage report did NOT end the run —
+ * the model idled, re-read skills, and double-reported (2.5 min of dead tail).
+ * A SUCCESSFUL report (the sandbox's §9 evidence check passed — output carries
+ * no `error`) is a terminal declaration: stop the loop immediately. A REFUSED
+ * report ({error: SANDBOX_NO_PROVIDER_EVIDENCE...}) keeps the loop alive — that
+ * refusal is an infrastructure guard, not an honest result.
+ */
+export function hasSuccessfulNoCoverageReport(steps: ReadonlyArray<StepLike>): boolean {
+  for (const step of steps) {
+    if (!(step.toolCalls ?? []).some((c) => c.toolName === "reportNoCoverage")) {
+      continue;
+    }
+    for (const result of step.toolResults ?? []) {
+      const output = result.output as { error?: unknown; reason?: unknown } | undefined;
+      if (output && output.error === undefined && output.reason !== undefined) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/** A StopCondition that ends the loop once the agent has successfully reported no coverage. */
+export function buildNoCoverageStop<TOOLS extends ToolSet = ToolSet>(): StopCondition<TOOLS> {
+  return ({ steps }) => hasSuccessfulNoCoverageReport(steps as ReadonlyArray<StepLike>);
+}
+
+/**
  * The reflection nudge, as a pure decision: within the last REMIND_WITHIN_STEPS
  * steps before the cap, return the base system text + reminder (to override the
  * step's system message); otherwise undefined (no override). Pure → unit-testable.
