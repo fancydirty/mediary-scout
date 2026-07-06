@@ -6,6 +6,8 @@
   --shadow-dialog:rgba(0,0,0,.5) 0 8px 24px; --shadow-card:rgba(0,0,0,.3) 0 8px 8px;
   --font:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
   --border-subtle:#242424;
+  --dot-red:#f3727f; --dot-orange:#ffa42b;
+  --hairline-gradient:linear-gradient(90deg, transparent, #242424 25%, #242424 75%, transparent);
 }
 * { box-sizing:border-box; } body { margin:0; background:var(--bg-base); color:var(--text); font-family:var(--font); line-height:1.5; }
 .skip-link{position:absolute;top:-40px;left:0;background:var(--accent);color:#000;padding:8px 16px;border-radius:0 0 4px 0;font-weight:700;text-decoration:none;z-index:200}.skip-link:focus{top:0}
@@ -24,6 +26,12 @@ nav {
   z-index: 100;
   background: transparent;
   padding: 16px 0;
+  transition: background 200ms ease, border-color 200ms ease;
+}
+nav.nav-scrolled {
+  background: rgba(18, 18, 18, 0.86);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
 }
 nav .container {
   display: flex;
@@ -260,11 +268,11 @@ section {
 }
 
 .dot-red {
-  background: #f3727f;
+  background: var(--dot-red);
 }
 
 .dot-orange {
-  background: #ffa42b;
+  background: var(--dot-orange);
 }
 
 .dot-green {
@@ -303,6 +311,7 @@ section {
   }
 }
 
+/* !important needed to beat the global reduced-motion animation kill */
 @media (prefers-reduced-motion: reduce) {
   .tk-line {
     opacity: 1 !important;
@@ -646,7 +655,11 @@ section {
   left: 0;
   right: 0;
   height: 1px;
-  background: linear-gradient(90deg, transparent, #242424 25%, #242424 75%, transparent);
+}
+
+/* Apply the hairline gradient to the ::before pseudo-element */
+.feat-item + .feat-item::before {
+  background: var(--hairline-gradient);
 }
 
 .feat-num {
@@ -881,7 +894,7 @@ section {
 
   .deploy-divider {
     height: 1px;
-    background: linear-gradient(90deg, transparent, #242424 25%, #242424 75%, transparent);
+    background: var(--hairline-gradient);
   }
 }
 
@@ -911,7 +924,7 @@ section {
   left: 0;
   right: 0;
   height: 1px;
-  background: linear-gradient(90deg, transparent, #242424 25%, #242424 75%, transparent);
+  background: var(--hairline-gradient);
 }
 
 .faq summary {

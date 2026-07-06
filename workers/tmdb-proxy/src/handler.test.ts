@@ -288,6 +288,21 @@ describe("poster image proxy", () => {
     });
     expect(res.status).toBe(405);
   });
+
+  it("allows underscores in filenames (future-proofing)", async () => {
+    let seenUrl = "";
+    const res = await handleTmdbProxy({
+      request: new Request("https://w.example/img/t/p/w342/abc_123.jpg"),
+      kv: fakeKv(),
+      token: "k",
+      originFetch: async (url) => {
+        seenUrl = String(url);
+        return new Response(new Uint8Array([0xff]), { status: 200 });
+      },
+    });
+    expect(res.status).toBe(200);
+    expect(seenUrl).toBe("https://image.tmdb.org/t/p/w342/abc_123.jpg");
+  });
 });
 
 describe("CORS for the landing site", () => {

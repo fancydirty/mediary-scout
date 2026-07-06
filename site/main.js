@@ -188,9 +188,33 @@ function initFAQ() {
   });
 }
 
+function initNavScroll() {
+  const nav = document.querySelector("nav");
+  if (!nav) return;
+
+  let ticking = false;
+
+  function checkScroll() {
+    const scrolled = window.scrollY > 8;
+    nav.classList.toggle("nav-scrolled", scrolled);
+    ticking = false;
+  }
+
+  window.addEventListener("scroll", () => {
+    if (!ticking) {
+      requestAnimationFrame(checkScroll);
+      ticking = true;
+    }
+  }, { passive: true });
+
+  // Check initial state
+  checkScroll();
+}
+
 wireDownloads();
 wireStars();
 wirePosters();
 initHowScrolly();
 initFeatureReveal();
 initFAQ();
+initNavScroll();

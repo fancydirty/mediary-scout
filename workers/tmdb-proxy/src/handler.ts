@@ -4,7 +4,7 @@ const TMDB_IMAGE_ORIGIN = "https://image.tmdb.org";
 // Poster image proxy: image.tmdb.org is GFW-blocked for mainland visitors, so
 // the landing site loads posters through the worker. Tight shape allowlist
 // (two sizes, hash-like filename) keeps this from being a general image proxy.
-const IMG_PATH_RE = /^t\/p\/(w342|w500)\/[A-Za-z0-9]+\.(jpg|png)$/;
+const IMG_PATH_RE = /^t\/p\/(w342|w500)\/[A-Za-z0-9_]+\.(jpg|png)$/;
 
 // Only the metadata read paths the app actually uses — keeps the worker from
 // being abusable as a general HTTP proxy. Prefix match after the leading slash.
