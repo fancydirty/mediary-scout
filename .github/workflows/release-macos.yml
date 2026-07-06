@@ -282,7 +282,7 @@ jobs:
             if (Test-Path $manifest) {
               try {
                 $baseUrl = (Get-Content $manifest | ConvertFrom-Json).baseUrl
-                $resp = Invoke-WebRequest -Uri $baseUrl -UseBasicParsing -TimeoutSec 5
+                $resp = Invoke-WebRequest -Uri $baseUrl -TimeoutSec 5
                 if ($resp.StatusCode -eq 200) { $healthy = $true; break }
               } catch {}
             }
