@@ -49,6 +49,12 @@ nav .container {
   display: block;
   flex-shrink: 0;
 }
+/* CSS owns the disc color via the accent token; the SVG fill attribute is only
+   the pre-CSS fallback. The dark stroke stays hardcoded — it's the brand's
+   second color with no token, kept identical to the app icon. */
+.logo-mark > circle {
+  fill: var(--accent);
+}
 .wordmark {
   font-weight: 700;
   font-size: 18px;
