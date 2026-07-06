@@ -182,7 +182,7 @@ jobs:
           # reparse points — electron-builder dereferences them at package time).
           foreach ($d in @("apps/web/.next/node_modules", "apps/web/.next/standalone/apps/web/.next/node_modules")) {
             if (Test-Path $d) {
-              Get-ChildItem $d | ForEach-Object { Write-Host "NEXT_NM: $($_.FullName) LinkType=$($_.LinkType) Target=$($_.Target)" }
+              Get-ChildItem $d -Filter "better-sqlite3*" | ForEach-Object { Write-Host "NEXT_NM: $($_.FullName) LinkType=$($_.LinkType) Target=$($_.Target)" }
             }
           }
           # Replace every copy the packaged app can dereference: real files under
@@ -225,6 +225,44 @@ jobs:
         env:
           CSC_LINK: ""
           CSC_KEY_PASSWORD: ""
+
+      # Release gate: install the freshly-built exe on this runner and require
+      # the app to actually boot and serve HTTP 200 before anything is
+      # uploaded. Catches packaging-level breakage (e.g. wrong-ABI native
+      # modules) that build-time checks can't see.
+      - name: Smoke test installer (install + launch + health)
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -Path "apps/desktop/dist-app" -Filter "*.exe" | Select-Object -First 1
+          if (-not $installer) { throw "no installer exe found in dist-app" }
+          Write-Host "Installing $($installer.FullName)"
+          Start-Process -FilePath $installer.FullName -ArgumentList "/S" -Wait
+          $exe = Get-ChildItem -Path "$env:LOCALAPPDATA","$env:PROGRAMFILES","${env:PROGRAMFILES(x86)}" -Recurse -Filter "Mediary Scout.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $exe) { throw "installed Mediary Scout.exe not found" }
+          Write-Host "EXE: $exe"
+          $env:ELECTRON_ENABLE_LOGGING = "1"
+          $proc = Start-Process -FilePath $exe -PassThru -RedirectStandardOutput "$env:TEMP\electron-stdout.txt" -RedirectStandardError "$env:TEMP\electron-stderr.txt"
+          $manifest = Join-Path $env:USERPROFILE ".mediary\agent.json"
+          $deadline = (Get-Date).AddSeconds(120)
+          $healthy = $false
+          while ((Get-Date) -lt $deadline) {
+            if (Test-Path $manifest) {
+              try {
+                $baseUrl = (Get-Content $manifest | ConvertFrom-Json).baseUrl
+                $resp = Invoke-WebRequest -Uri $baseUrl -UseBasicParsing -TimeoutSec 5
+                if ($resp.StatusCode -eq 200) { $healthy = $true; break }
+              } catch {}
+            }
+            Start-Sleep -Seconds 3
+          }
+          if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+          Write-Host "=== ELECTRON STDERR (first 40 lines) ==="
+          Get-Content "$env:TEMP\electron-stderr.txt" -ErrorAction SilentlyContinue | Select-Object -First 40
+          if (Select-String -Path "$env:TEMP\electron-stderr.txt" -Pattern "NODE_MODULE_VERSION" -Quiet) {
+            throw "ABI mismatch in packaged app"
+          }
+          if (-not $healthy) { throw "installed app never answered 200 on its baseUrl within 120s" }
+          Write-Host "SMOKE OK: $baseUrl answered 200"
 
       - name: Determine release tag
         id: tag
