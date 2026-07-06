@@ -336,4 +336,24 @@ describe("sandbox 审计事件收集（病4）", () => {
     await expect(sandbox.reportNoCoverage("premature")).rejects.toThrow("SANDBOX_NO_PROVIDER_EVIDENCE");
     expect(sandbox.auditTrail()).toEqual([]);
   });
+
+  it("§9 证据基含系统预搜：prime 过的任务可诚实上报，无需冗余 fresh 搜索", async () => {
+    // 提示词明令 agent 别重搜 raw（viewResourceSnapshot 免费）；预搜本身就是
+    // 一次真 provider 搜索。只认 agent 自己的 fresh 搜索会把守规矩 agent 的
+    // 诚实上报拒掉，逼它多烧轮次——正是病1 要杀的死尾巴。
+    const provider = new FakeResourceProviderV2({ results: {} });
+    const sandbox = new TaskSandbox({ provider, titleTerms: ["攻壳机动队"] });
+    await sandbox.primeRawSnapshot("攻壳机动队");
+    const report = await sandbox.reportNoCoverage("raw 快照无该作品覆盖");
+    expect(report.searchesPerformed).toBe(1);
+    expect(sandbox.auditTrail().some((e) => e.type === "no_coverage_reported")).toBe(true);
+  });
+
+  it("§9 证据基含 dedup 复搜：agent 复搜 prime 词后上报同样放行", async () => {
+    const provider = new FakeResourceProviderV2({ results: {} });
+    const sandbox = new TaskSandbox({ provider, titleTerms: ["攻壳机动队"] });
+    await sandbox.primeRawSnapshot("攻壳机动队");
+    await sandbox.searchResources("攻壳机动队"); // dedup 命中，seenKeywords 不变
+    await expect(sandbox.reportNoCoverage("确无资源")).resolves.toMatchObject({ searchesPerformed: 1 });
+  });
 });

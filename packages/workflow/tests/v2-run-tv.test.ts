@@ -87,8 +87,12 @@ describe("runTvAcquisitionV2 — single TV entry over the V2 engine", () => {
     });
 
     expect(result.status).toBe("no_coverage");
-    // The agent searches "示例剧" which was pre-warmed, hitting dedup → search_dedup event.
-    // This proves audit events flow sandbox → orchestrator → workflow → bridge → runner.
+    // The PRIMARY event: the honest no-coverage report itself must be in the
+    // bridged auditEvents — this mirrors the live acceptance criterion for 病4.
+    expect(result.auditEvents.some((e) => e.type === "no_coverage_reported")).toBe(true);
+    // Secondary: the agent searches "示例剧" which was pre-warmed, hitting dedup →
+    // search_dedup event. Both together prove multi-event flow
+    // sandbox → orchestrator → workflow → bridge → runner.
     expect(result.auditEvents.some((e) => e.type === "search_dedup")).toBe(true);
   });
 

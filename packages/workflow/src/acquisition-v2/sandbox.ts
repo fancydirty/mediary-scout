@@ -690,19 +690,27 @@ export class TaskSandbox {
 
   /** The agent honestly reports it cannot cover the target. This is only valid
    *  when a real provider search actually ran (§9): reporting no-coverage without
-   *  ever searching is an infrastructure failure, not an honest result. */
+   *  ever searching is an infrastructure failure, not an honest result.
+   *
+   *  Evidence base = the agent's own fresh searches ∪ every keyword a snapshot
+   *  was observed for — which includes the system's raw pre-warm. The prompt
+   *  tells the agent NOT to re-search the raw keyword (viewResourceSnapshot is
+   *  free), and even a re-search hits dedup without touching seenKeywords — so
+   *  counting only seenKeywords refused a well-behaved agent's honest report on
+   *  a truly-uncovered title and forced wasted turns (the 病1-style dead tail). */
   async reportNoCoverage(reason: string): Promise<{ reason: string; searchesPerformed: number }> {
-    if (this.seenKeywords.size === 0) {
+    const evidenceKeywords = new Set([...this.seenKeywords, ...this.snapshotByKeyword.keys()]);
+    if (evidenceKeywords.size === 0) {
       throw new Error(
         "SANDBOX_NO_PROVIDER_EVIDENCE: cannot report no-coverage before any real search ran (§9 infrastructure failure)",
       );
     }
     this.auditEvents.push({
       type: "no_coverage_reported",
-      message: `agent 上报无覆盖：${reason}（已搜索 ${this.seenKeywords.size} 个词）`,
-      data: { reason, searchesPerformed: this.seenKeywords.size },
+      message: `agent 上报无覆盖：${reason}（已搜索 ${evidenceKeywords.size} 个词，含系统预搜）`,
+      data: { reason, searchesPerformed: evidenceKeywords.size },
     });
-    return { reason, searchesPerformed: this.seenKeywords.size };
+    return { reason, searchesPerformed: evidenceKeywords.size };
   }
 
   auditTrail(): AuditEvent[] {
