@@ -292,6 +292,8 @@ export async function runAcquisitionAgent(
     // Four stops: step cap (cost/runaway), repetition (agent crazy), systemic
     // transfer block (account quota/auth — every candidate will fail, stop grinding),
     // and successful reportNoCoverage (terminal declaration — no second report).
+    // The stops are independent and OR'd — each fires under disjoint conditions,
+    // so their ordering in this array is not semantic.
     stopWhen: [stepCountIs(maxSteps), buildRepetitionStop(), buildSystemicBlockStop(), buildNoCoverageStop()],
     // Last ~10 steps before the cap: inject a calm "wrap up + clean staging" nudge
     // so a step-capped run doesn't leave the 一人之下-style half-done mess.

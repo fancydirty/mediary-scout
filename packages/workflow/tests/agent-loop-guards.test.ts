@@ -240,4 +240,14 @@ describe("hasSuccessfulNoCoverageReport — 病1: 报后即停", () => {
     ];
     expect(hasSuccessfulNoCoverageReport(steps)).toBe(false);
   });
+
+  it("output 非对象（字符串/null）→ false", () => {
+    const steps = [
+      {
+        toolCalls: [{ toolName: "reportNoCoverage", input: { reason: "x" } }],
+        toolResults: [{ output: "some string error" }, { output: null }],
+      },
+    ];
+    expect(hasSuccessfulNoCoverageReport(steps)).toBe(false);
+  });
 });

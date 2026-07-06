@@ -155,7 +155,12 @@ export function hasSuccessfulNoCoverageReport(steps: ReadonlyArray<StepLike>): b
       continue;
     }
     for (const result of step.toolResults ?? []) {
-      const output = result.output as { error?: unknown; reason?: unknown } | undefined;
+      // NOTE: TransferToolResult carries systemicBlock.reason at a NESTED level;
+      // this shallow cast only sees top-level fields, so a systemic-block result
+      // can never trip the reason check.
+      const output = result.output as
+        | { error?: unknown; reason?: unknown; searchesPerformed?: number }
+        | undefined;
       if (output && output.error === undefined && output.reason !== undefined) {
         return true;
       }
