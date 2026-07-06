@@ -12,9 +12,13 @@ export interface PanSouFetchInit {
   body: string;
   /** Per-request abort deadline — a stalled PanSou upstream must degrade to
    *  "fewer candidates this poll", never hang the run (2026-07-06 incident:
-   *  4.5 min pre-agent stall; same failure class as the TMDB hang #68). */
-  timeoutMs: number;
+   *  4.5 min pre-agent stall; same failure class as the TMDB hang #68).
+   *  Optional so existing PanSouFetchJson call sites stay source-compatible;
+   *  defaultFetchJson falls back to DEFAULT_REQUEST_TIMEOUT_MS. */
+  timeoutMs?: number;
 }
+
+const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
 
 export type PanSouFetchJson = (url: string, init: PanSouFetchInit) => Promise<unknown>;
 
@@ -63,7 +67,7 @@ export class PanSouResourceProvider implements ResourceProvider {
     this.searchPollMs = options.searchPollMs ?? 2500;
     this.wait = options.wait ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.allowedTypes = options.allowedTypes ? new Set(options.allowedTypes) : null;
-    this.requestTimeoutMs = options.requestTimeoutMs ?? 20_000;
+    this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   }
 
   private async fetchFacts(keyword: string): Promise<PanSouLinkFact[]> {
@@ -146,7 +150,7 @@ async function defaultFetchJson(url: string, init: PanSouFetchInit): Promise<unk
     method: init.method,
     headers: init.headers,
     body: init.body,
-    signal: AbortSignal.timeout(init.timeoutMs),
+    signal: AbortSignal.timeout(init.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS),
   });
   if (!response.ok) {
     throw new Error(`PanSou search failed with HTTP ${response.status}`);
