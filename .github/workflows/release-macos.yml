@@ -46,9 +46,19 @@ jobs:
       - name: Build desktop TypeScript
         run: npm run build --workspace @media-track/desktop
 
-      - name: Swap better-sqlite3 to Electron ABI
-        working-directory: apps/web/.next/standalone/node_modules/better-sqlite3
-        run: npx prebuild-install -r electron -t ${{ env.ELECTRON_VERSION }}
+      # Turbopack also emits a hashed copy of better-sqlite3 under
+      # standalone/apps/web/.next/node_modules/ and the generated server code
+      # requires THAT copy — so every better_sqlite3.node in the standalone
+      # tree must be swapped, not just node_modules/better-sqlite3/.
+      - name: Swap better-sqlite3 to Electron ABI (all copies)
+        run: |
+          (cd apps/web/.next/standalone/node_modules/better-sqlite3 && npx prebuild-install -r electron -t ${{ env.ELECTRON_VERSION }})
+          SRC="apps/web/.next/standalone/node_modules/better-sqlite3/build/Release/better_sqlite3.node"
+          find apps/web/.next/standalone -name "better_sqlite3.node" | while read -r f; do
+            [ "$f" -ef "$SRC" ] && continue
+            echo "Replacing $f"
+            cp "$SRC" "$f"
+          done
 
       - name: Verify ABI swap actually happened
         run: |
@@ -58,6 +68,18 @@ jobs:
           console.log('ABI_OK modules=' + process.versions.modules);
           SCRIPT
           ELECTRON_RUN_AS_NODE=1 "$(npm root)/electron/dist/Electron.app/Contents/MacOS/Electron" /tmp/abi-check.js
+          # Every copy in the standalone tree must be byte-identical to the
+          # swapped one — fails loud if Turbopack grows another copy we missed.
+          SRC="apps/web/.next/standalone/node_modules/better-sqlite3/build/Release/better_sqlite3.node"
+          REF=$(shasum -a 256 "$SRC" | cut -d' ' -f1)
+          find apps/web/.next/standalone -name "better_sqlite3.node" | while read -r f; do
+            H=$(shasum -a 256 "$f" | cut -d' ' -f1)
+            echo "$H  $f"
+            if [ "$H" != "$REF" ]; then
+              echo "::error::ABI swap missed a copy: $f"
+              exit 1
+            fi
+          done
 
       - name: Import signing certificate
         env:
@@ -130,11 +152,14 @@ jobs:
       - name: Build desktop TypeScript
         run: npm run build --workspace @media-track/desktop
 
-      - name: Swap better-sqlite3 to Electron ABI
+      # Turbopack also emits a hashed copy of better-sqlite3 under
+      # standalone/apps/web/.next/node_modules/ and the generated server code
+      # requires THAT copy — so every better_sqlite3.node in the standalone
+      # tree must be swapped, not just node_modules/better-sqlite3/.
+      - name: Swap better-sqlite3 to Electron ABI (all copies)
         shell: pwsh
         run: |
           $bsqDir = "apps/web/.next/standalone/node_modules/better-sqlite3"
-          $buildDir = Join-Path $bsqDir "build/Release"
           $bsqVersion = (Get-Content "$bsqDir/package.json" | ConvertFrom-Json).version
           $abiMap = @{ "33.4.11" = 130 }
           $abi = $abiMap[$env:ELECTRON_VERSION]
@@ -148,8 +173,12 @@ jobs:
           tar -xzf $tmpFile -C $extractDir
           $nodeFile = Get-ChildItem -Path $extractDir -Recurse -Filter "better_sqlite3.node" | Select-Object -First 1
           if (-not $nodeFile) { throw "better_sqlite3.node not found in archive" }
-          Write-Host "Copying $($nodeFile.FullName) -> $buildDir"
-          Copy-Item -Path $nodeFile.FullName -Destination $buildDir -Force
+          $targets = Get-ChildItem -Path "apps/web/.next/standalone" -Recurse -Filter "better_sqlite3.node"
+          if (-not $targets) { throw "no better_sqlite3.node found under standalone" }
+          foreach ($t in $targets) {
+            Write-Host "Replacing $($t.FullName)"
+            Copy-Item -Path $nodeFile.FullName -Destination $t.FullName -Force
+          }
           Remove-Item $tmpFile, $extractDir -Recurse -Force
 
       - name: Verify ABI swap actually happened
@@ -160,6 +189,15 @@ jobs:
           "const Database = require('$bsqPath'); new Database(':memory:').exec('CREATE TABLE t(x)'); console.log('ABI_OK modules=' + process.versions.modules);" | Out-File -Encoding utf8 $abiCheck
           $env:ELECTRON_RUN_AS_NODE = "1"
           & "$(npm root)/electron/dist/electron.exe" $abiCheck
+          if ($LASTEXITCODE -ne 0) { throw "electron ABI check failed" }
+          # Every copy in the standalone tree must be byte-identical to the
+          # swapped one — fails loud if Turbopack grows another copy we missed.
+          $ref = (Get-FileHash "apps/web/.next/standalone/node_modules/better-sqlite3/build/Release/better_sqlite3.node").Hash
+          Get-ChildItem -Path "apps/web/.next/standalone" -Recurse -Filter "better_sqlite3.node" | ForEach-Object {
+            $h = (Get-FileHash $_.FullName).Hash
+            Write-Host "$h  $($_.FullName)"
+            if ($h -ne $ref) { throw "ABI swap missed a copy: $($_.FullName)" }
+          }
 
       - name: Package Windows installer
         run: npm run dist --workspace @media-track/desktop
