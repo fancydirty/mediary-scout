@@ -43,11 +43,11 @@ nav .container {
   align-items: center;
   gap: 12px;
 }
-.logo-dot {
+.logo-mark {
   width: 24px;
   height: 24px;
-  border-radius: 50%;
-  background: var(--accent);
+  display: block;
+  flex-shrink: 0;
 }
 .wordmark {
   font-weight: 700;
