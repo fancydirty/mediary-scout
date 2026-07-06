@@ -131,14 +131,30 @@ jobs:
         run: npm run build --workspace @media-track/desktop
 
       - name: Swap better-sqlite3 to Electron ABI
-        working-directory: apps/web/.next/standalone/node_modules/better-sqlite3
-        run: npx prebuild-install -r electron -t ${{ env.ELECTRON_VERSION }}
+        shell: pwsh
+        run: |
+          $bsqDir = "apps/web/.next/standalone/node_modules/better-sqlite3"
+          $buildDir = Join-Path $bsqDir "build/Release"
+          $url = "https://github.com/WiseLibs/better-sqlite3/releases/download/v12.11.1/better-sqlite3-v12.11.1-electron-v130-win32-x64.tar.gz"
+          $tmpFile = Join-Path $env:TEMP "bsq.tar.gz"
+          Write-Host "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile $tmpFile
+          $extractDir = Join-Path $env:TEMP "bsq-extract"
+          New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
+          tar -xzf $tmpFile -C $extractDir
+          $nodeFile = Get-ChildItem -Path $extractDir -Recurse -Filter "better_sqlite3.node" | Select-Object -First 1
+          if (-not $nodeFile) { throw "better_sqlite3.node not found in archive" }
+          Write-Host "Copying $($nodeFile.FullName) -> $buildDir"
+          Copy-Item -Path $nodeFile.FullName -Destination $buildDir -Force
+          Remove-Item $tmpFile, $extractDir -Recurse -Force
 
       - name: Verify ABI swap actually happened
         shell: pwsh
         run: |
+          $bsqPath = "apps/web/.next/standalone/node_modules/better-sqlite3"
           $abiCheck = Join-Path $env:TEMP "abi-check.js"
-          "const Database = require(process.env.GITHUB_WORKSPACE + '/apps/web/.next/standalone/node_modules/better-sqlite3'); new Database(':memory:').exec('CREATE TABLE t(x)'); console.log('ABI_OK modules=' + process.versions.modules);" | Out-File -Encoding utf8 $abiCheck
+          $requirePath = (Resolve-Path $bsqPath).Path
+          "const Database = require('$requirePath'.replace(/\\\\/g,'/')); new Database(':memory:').exec('CREATE TABLE t(x)'); console.log('ABI_OK modules=' + process.versions.modules);" | Out-File -Encoding utf8 $abiCheck
           $env:ELECTRON_RUN_AS_NODE = "1"
           & "$(npm root)/electron/dist/electron.exe" $abiCheck
 
