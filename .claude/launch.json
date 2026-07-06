@@ -2,6 +2,12 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "site-static",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "4173", "-d", "site"],
+      "port": 4173
+    },
+    {
       "name": "media-track-web",
       "runtimeExecutable": "env",
       "runtimeArgs": [
