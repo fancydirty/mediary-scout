@@ -276,7 +276,9 @@ jobs:
           $manifest = Join-Path $env:USERPROFILE ".mediary\agent.json"
           $deadline = (Get-Date).AddSeconds(120)
           $healthy = $false
+          $crashed = $false
           while ((Get-Date) -lt $deadline) {
+            if ($proc.HasExited) { $crashed = $true; break }
             if (Test-Path $manifest) {
               try {
                 $baseUrl = (Get-Content $manifest | ConvertFrom-Json).baseUrl
@@ -292,6 +294,7 @@ jobs:
           if (Select-String -Path "$env:TEMP\electron-stderr.txt" -Pattern "NODE_MODULE_VERSION" -Quiet) {
             throw "ABI mismatch in packaged app"
           }
+          if ($crashed) { throw "Electron process exited early with code $($proc.ExitCode)" }
           if (-not $healthy) { throw "installed app never answered 200 on its baseUrl within 120s" }
           Write-Host "SMOKE OK: $baseUrl answered 200"
 
