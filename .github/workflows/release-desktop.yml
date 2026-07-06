@@ -327,7 +327,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
-          target_commitish: ${{ github.sha }}
           files: |
             dist/*.dmg
             dist/*.exe
