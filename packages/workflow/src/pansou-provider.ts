@@ -10,6 +10,10 @@ export interface PanSouFetchInit {
   method: "POST";
   headers: Record<string, string>;
   body: string;
+  /** Per-request abort deadline — a stalled PanSou upstream must degrade to
+   *  "fewer candidates this poll", never hang the run (2026-07-06 incident:
+   *  4.5 min pre-agent stall; same failure class as the TMDB hang #68). */
+  timeoutMs: number;
 }
 
 export type PanSouFetchJson = (url: string, init: PanSouFetchInit) => Promise<unknown>;
@@ -24,6 +28,8 @@ export interface PanSouResourceProviderOptions {
   searchPollMs?: number;
   /** Injectable sleep (tests pass a no-op). */
   wait?: (ms: number) => Promise<void>;
+  /** Abort a single search request after this many ms (default 20s). */
+  requestTimeoutMs?: number;
   /** Restrict returned candidates to these link types (per-brand: a quark drive
    *  gets ["quark"], a 115 drive ["115","magnet"]). Undefined = no filter. */
   allowedTypes?: ResourceType[];
@@ -47,6 +53,7 @@ export class PanSouResourceProvider implements ResourceProvider {
   private readonly searchPollMs: number;
   private readonly wait: (ms: number) => Promise<void>;
   private readonly allowedTypes: Set<ResourceType> | null;
+  private readonly requestTimeoutMs: number;
 
   constructor(options: PanSouResourceProviderOptions) {
     this.baseURL = options.baseURL.replace(/\/+$/, "");
@@ -56,6 +63,7 @@ export class PanSouResourceProvider implements ResourceProvider {
     this.searchPollMs = options.searchPollMs ?? 2500;
     this.wait = options.wait ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.allowedTypes = options.allowedTypes ? new Set(options.allowedTypes) : null;
+    this.requestTimeoutMs = options.requestTimeoutMs ?? 20_000;
   }
 
   private async fetchFacts(keyword: string): Promise<PanSouLinkFact[]> {
@@ -66,6 +74,7 @@ export class PanSouResourceProvider implements ResourceProvider {
         "User-Agent": "clawd-media-track/1.0",
       },
       body: JSON.stringify({ kw: keyword, res: "all" }),
+      timeoutMs: this.requestTimeoutMs,
     });
     const facts = isPanSouSuccessResponse(response) ? collectLinkFacts(response.data.results) : [];
     // Per-brand filter: a quark drive only sees quark links; a 115 drive only
@@ -137,6 +146,7 @@ async function defaultFetchJson(url: string, init: PanSouFetchInit): Promise<unk
     method: init.method,
     headers: init.headers,
     body: init.body,
+    signal: AbortSignal.timeout(init.timeoutMs),
   });
   if (!response.ok) {
     throw new Error(`PanSou search failed with HTTP ${response.status}`);
