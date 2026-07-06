@@ -107,7 +107,7 @@ function isAllowed(path: string): boolean {
  *  tags, which need none). Anything off the strict shape allowlist is 404. */
 async function handleImageProxy(rest: string, originFetch: typeof fetch): Promise<Response> {
   if (!IMG_PATH_RE.test(rest)) {
-    return new Response("Not Found", { status: 404 });
+    return new Response("Not Found", { status: 404, headers: { "Cache-Control": "no-store" } });
   }
   const originResponse = await originFetch(`${TMDB_IMAGE_ORIGIN}/${rest}`, { method: "GET" });
   const headers: Record<string, string> = {

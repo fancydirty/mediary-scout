@@ -257,6 +257,7 @@ describe("poster image proxy", () => {
         originFetch,
       });
       expect(res.status).toBe(404);
+      expect(res.headers.get("Cache-Control")).toBe("no-store");
     }
     expect(originCalls).toBe(0);
   });
@@ -275,6 +276,7 @@ describe("poster image proxy", () => {
         originFetch,
       });
       expect(res.status).toBe(404);
+      expect(res.headers.get("Cache-Control")).toBe("no-store");
     }
     expect(originCalls).toBe(0);
   });
