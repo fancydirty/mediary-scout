@@ -1,0 +1,97 @@
+name: Diagnose Windows build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build Next standalone server
+        run: npm run build:web
+
+      - name: Build desktop TypeScript
+        run: npm run build --workspace @media-track/desktop
+
+      - name: Swap better-sqlite3 to Electron ABI
+        shell: pwsh
+        run: |
+          $bsqDir = "apps/web/.next/standalone/node_modules/better-sqlite3"
+          $buildDir = Join-Path $bsqDir "build/Release"
+          $bsqVersion = (Get-Content "$bsqDir/package.json" | ConvertFrom-Json).version
+          $abiMap = @{ "33.4.11" = 130 }
+          $abi = $abiMap[$env:ELECTRON_VERSION]
+          if (-not $abi) { throw "No ABI mapping for Electron $env:ELECTRON_VERSION — update the abiMap" }
+          $url = "https://github.com/WiseLibs/better-sqlite3/releases/download/v$bsqVersion/better-sqlite3-v$bsqVersion-electron-v$abi-win32-x64.tar.gz"
+          Write-Host "Downloading $url"
+          $tmpFile = Join-Path $env:TEMP "bsq.tar.gz"
+          Invoke-WebRequest -Uri $url -OutFile $tmpFile
+          $extractDir = Join-Path $env:TEMP "bsq-extract"
+          New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
+          tar -xzf $tmpFile -C $extractDir
+          $nodeFile = Get-ChildItem -Path $extractDir -Recurse -Filter "better_sqlite3.node" | Select-Object -First 1
+          if (-not $nodeFile) { throw "better_sqlite3.node not found in archive" }
+          Write-Host "Copying $($nodeFile.FullName) -> $buildDir"
+          Copy-Item -Path $nodeFile.FullName -Destination $buildDir -Force
+          Remove-Item $tmpFile, $extractDir -Recurse -Force
+        env:
+          ELECTRON_VERSION: "33.4.11"
+
+      - name: Package Windows installer
+        run: npm run dist --workspace @media-track/desktop
+        env:
+          CSC_LINK: ""
+          CSC_KEY_PASSWORD: ""
+
+      - name: Install the built app
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -Path "apps/desktop/dist-app" -Filter "*.exe" | Select-Object -First 1
+          Write-Host "Installing $($installer.FullName)"
+          Start-Process -FilePath $installer.FullName -ArgumentList "/S" -Wait
+
+      - name: Find installed exe + server.js
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path "$env:LOCALAPPDATA\Programs" -Recurse -Filter "Mediary Scout.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $exe) { $exe = Get-ChildItem -Path "$env:PROGRAMFILES","${env:PROGRAMFILES(x86)}" -Recurse -Filter "Mediary Scout.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName }
+          Write-Host "EXE: $exe"
+          $dir = Split-Path (Split-Path $exe)
+          $serverJs = Join-Path $dir "resources\app\apps\web\server.js"
+          Write-Host "SERVER: $serverJs"
+          Write-Host "SERVER_EXISTS: $(Test-Path $serverJs)"
+
+          # Check better-sqlite3 binary
+          $bsqFiles = Get-ChildItem -Path $dir -Recurse -Filter "better_sqlite3.node" -ErrorAction SilentlyContinue
+          foreach ($b in $bsqFiles) {
+            Write-Host "BSQLITE: $($b.FullName) SIZE: $($b.Length)"
+          }
+
+          # Run server child manually and capture ALL output
+          $db = Join-Path $env:APPDATA "@media-track\desktop\mediary.db"
+          $env:ELECTRON_RUN_AS_NODE = "1"
+          $env:MEDIA_TRACK_SQLITE_PATH = $db
+          $env:MEDIA_TRACK_SEARCH_PROVIDER = "tmdb"
+          $env:MEDIA_TRACK_WORKFLOW_ADAPTER = "pansou"
+          $env:MEDIA_TRACK_STORAGE_ADAPTER = "115"
+          $env:MEDIA_TRACK_AGENT_ADAPTER = "vercel-ai"
+          $env:HOSTNAME = "127.0.0.1"
+          $env:PORT = "59999"
+          Write-Host "=== Starting server child ==="
+          $proc = Start-Process -FilePath $exe -ArgumentList $serverJs -NoNewWindow -PassThru -RedirectStandardOutput "$env:TEMP\server-stdout.txt" -RedirectStandardError "$env:TEMP\server-stderr.txt"
+          Start-Sleep -Seconds 15
+          Write-Host "=== STDOUT ==="
+          Get-Content "$env:TEMP\server-stdout.txt" -ErrorAction SilentlyContinue | Select-Object -First 30
+          Write-Host "=== STDERR ==="
+          Get-Content "$env:TEMP\server-stderr.txt" -ErrorAction SilentlyContinue | Select-Object -First 30
+          Write-Host "=== PROCESS EXIT: $($proc.HasExited) CODE: $($proc.ExitCode) ==="
+          if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
