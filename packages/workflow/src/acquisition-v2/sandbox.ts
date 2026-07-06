@@ -10,6 +10,7 @@ import type { AssrtCandidate, AssrtSubtitleFile, AssrtProviderPort } from "../su
 import type { ResourceProviderV2, ResourceSnapshotV2 } from "./fake-provider.js";
 import type { SimTreeFile, StorageV2, TransferAttemptResult } from "./storage-115-simulator.js";
 import { isSystemicTransferBlockMessage } from "./transfer-block.js";
+import { animeSearchTabooWarnings, type SearchProfile } from "./search-profile.js";
 
 /** Quality / subtitle / source tokens that PanSou share titles almost never carry,
  *  so appending them collapses recall (实测归零). Case-insensitive; word-ish so
@@ -81,6 +82,9 @@ export interface TaskSandboxOptions {
    *  the orchestrator pre-warms a subtitle snapshot and the agent gets
    *  viewSubtitleSnapshot / transferSubtitle tools. Undefined = no subtitle flow. */
   subtitleProvider?: AssrtProviderPort;
+  /** The task's fine-grained search profile — enables the anime taboo-keyword
+   *  validator (warnings only, never blocking). 病2b。 */
+  searchProfile?: SearchProfile;
 }
 
 export interface SearchToolResult {
@@ -100,6 +104,9 @@ export interface SearchToolResult {
   /** Set when a deduped search is repeated: escalating warning with repeat count.
    *  病2a: 模型必须看见「这是重复」。 */
   repeatNotice?: string;
+  /** Anime taboo-keyword validator warnings (year / subtype word / suspected
+   *  cross-series token). Warnings only — the search still runs. 病2b。 */
+  warnings?: string[];
 }
 
 export interface TransferToolResult {
@@ -127,6 +134,7 @@ export class TaskSandbox {
   private readonly subtitleFallback: boolean;
   /** Reserve-zone threshold (movie 8+2) — undefined disables the reserve zone. */
   private readonly softThreshold: number | undefined;
+  private readonly profile: SearchProfile | undefined;
   private readonly seenKeywords = new Set<string>();
   private readonly snapshotByKeyword = new Map<string, ResourceSnapshotV2>();
   /** 每个（规范化）关键词被搜索的次数——prime 记 1，agent fresh 记 1，dedup 命中递增。 */
@@ -157,6 +165,7 @@ export class TaskSandbox {
     this.softThreshold = this.subtitleFallback ? MOVIE_SEARCH_SOFT_THRESHOLD : undefined;
     this.storage = options.storage;
     this.stagingDirectoryId = options.stagingDirectoryId;
+    this.profile = options.searchProfile;
     this.seasonDirs = new Map(
       Object.entries(options.targetSeasonDirectoryIds ?? {}).map(([season, id]) => [Number(season), id]),
     );
@@ -218,6 +227,11 @@ export class TaskSandbox {
     const normalized = normalizeSearchKeyword(effectiveKeyword);
     const notice = stripped.stripped ? STRIP_NOTICE : undefined;
 
+    // 病2b: anime taboo-keyword validator (warnings only, after title gate, before dedup).
+    const tabooWarnings = this.profile
+      ? animeSearchTabooWarnings({ keyword: effectiveKeyword, profile: this.profile, titleTerms: this.titleTerms })
+      : [];
+
     // Check dedup FIRST — if this keyword was already searched (either by agent
     // or by system pre-warming), return the cached snapshot without hitting the
     // provider or consuming budget. This covers both agent re-searches and agent
@@ -231,6 +245,7 @@ export class TaskSandbox {
         deduped: true,
         repeatNotice: this.repeatNotice(effectiveKeyword, count, cachedSnapshot.candidates.length),
         ...(notice ? { notice } : {}),
+        ...(tabooWarnings.length > 0 ? { warnings: tabooWarnings } : {}),
       };
     }
 
@@ -260,6 +275,7 @@ export class TaskSandbox {
       snapshot,
       ...(decision === "reserve" ? { note: this.reserveNote() } : {}),
       ...(notice ? { notice } : {}),
+      ...(tabooWarnings.length > 0 ? { warnings: tabooWarnings } : {}),
     };
   }
 

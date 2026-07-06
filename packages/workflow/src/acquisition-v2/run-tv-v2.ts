@@ -78,6 +78,7 @@ export async function runTvAcquisitionV2(request: RunTvAcquisitionV2Request): Pr
     })),
     qualityPreference: request.seasons[0]!.qualityPreference,
     searchHints: getSearchRecipe(profile),
+    searchProfile: profile,
     ...(qualityGuidance === "" ? {} : { qualityGuidance }),
     ...(request.priorObtained === undefined ? {} : { priorObtained: request.priorObtained }),
     ...(request.searchBudget === undefined ? {} : { searchBudget: request.searchBudget }),

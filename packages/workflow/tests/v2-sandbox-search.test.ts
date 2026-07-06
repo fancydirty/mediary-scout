@@ -244,3 +244,28 @@ describe("searchResources dedup 强提示（病2a）", () => {
     expect(second.repeatNotice).not.toContain("1080");
   });
 });
+
+describe("searchResources anime 禁忌词警告接线（病2b）", () => {
+  it("anime profile 的 sandbox 对含年份关键词附加 warnings（不阻断，快照照常返回）", async () => {
+    const provider = new FakeResourceProviderV2({
+      results: { "攻壳机动队 2020": [{ id: "c1", title: "攻壳机动队 SAC_2045" }] },
+    });
+    const sandbox = new TaskSandbox({
+      provider,
+      titleTerms: ["攻壳机动队"],
+      searchProfile: "jp-anime",
+    });
+    const result = await sandbox.searchResources("攻壳机动队 2020");
+    expect(result.snapshot).toBeDefined(); // 不阻断
+    expect(result.warnings?.some((w) => w.includes("年份"))).toBe(true);
+  });
+
+  it("未传 searchProfile（旧调用方）→ 无 warnings 字段", async () => {
+    const provider = new FakeResourceProviderV2({
+      results: { "默杀 2024": [{ id: "c1", title: "默杀 2024" }] },
+    });
+    const sandbox = new TaskSandbox({ provider, titleTerms: ["默杀"] });
+    const result = await sandbox.searchResources("默杀 2024");
+    expect(result.warnings).toBeUndefined();
+  });
+});

@@ -181,3 +181,54 @@ export function getQualityGuidance(
     tail
   );
 }
+
+const ANIME_PROFILES: ReadonlySet<SearchProfile> = new Set([
+  "jp-anime",
+  "cn-anime",
+  "us-anime",
+  "generic-anime",
+]);
+
+/**
+ * 病2b（2026-07-06 攻壳事故）：动漫搜索纪律从「提示词里的禁忌」升级为校验器
+ * ——但只 WARN 不阻断（个别老番年份真有用、罗马音兜底是配方明令的合法手段;
+ * 硬拒会误伤，警告 + 模型自辩即可）。检查三条已立纪律：
+ *  ① 动漫忌年份（jp: 脆且偏; cn: 危险、拉同名真人版）
+ *  ② 子类型词（番剧/动画/动漫）几乎必砍召回——唯一例外 cn-anime 的 +国漫
+ *  ③ 片名之外的拉丁附加词疑似跨系列（ARISE 拉走整个平行系列）
+ */
+export function animeSearchTabooWarnings(input: {
+  keyword: string;
+  profile: SearchProfile;
+  titleTerms: readonly string[];
+}): string[] {
+  if (!ANIME_PROFILES.has(input.profile)) {
+    return [];
+  }
+  const warnings: string[] = [];
+  const lowerTerms = input.titleTerms.map((t) => t.toLowerCase());
+
+  if (/(?:19|20)\d{2}/.test(input.keyword)) {
+    warnings.push(
+      "⚠️ 关键词含 4 位年份——动漫忌年份（召回归零或拉同名真人版，见搜索配方）。除非你有明确证据这是必要消歧，否则去掉年份重搜。",
+    );
+  }
+
+  const subtypeWords = ["番剧", "动画", "动漫", "国漫"].filter((w) => input.keyword.includes(w));
+  for (const word of subtypeWords) {
+    if (word === "国漫" && input.profile === "cn-anime") {
+      continue; // 配方明令的真实 tag 消歧词（GM-Team 季包）。
+    }
+    warnings.push(`⚠️ 关键词含子类型词「${word}」——几乎必砍召回（咒术回战 番剧→0，见搜索配方）。用裸标题。`);
+  }
+
+  for (const match of input.keyword.matchAll(/[A-Za-z][A-Za-z0-9'&-]{2,}/g)) {
+    const token = match[0].toLowerCase();
+    if (!lowerTerms.some((term) => term.includes(token))) {
+      warnings.push(
+        `⚠️ 关键词带了片名之外的附加词「${match[0]}」——若这是另一部系列作品名（前传/剧场版/衍生），它不在本次目标内，会把搜索拉去隔壁系列；若这是本作官方别名/罗马音则可忽略本警告。`,
+      );
+    }
+  }
+  return warnings;
+}

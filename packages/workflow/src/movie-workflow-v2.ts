@@ -83,6 +83,7 @@ export async function runMovieAcquisitionV2(
     stagingDirectoryId: movieDirectoryId,
     targetMovieDirectoryId: movieDirectoryId,
     searchHints: getSearchRecipe("movie"), // movie search is origin-independent
+    searchProfile: "movie",
     ...(getQualityGuidance("movie", request.qualityPreference) === ""
       ? {}
       : { qualityGuidance: getQualityGuidance("movie", request.qualityPreference) }),

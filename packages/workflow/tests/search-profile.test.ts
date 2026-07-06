@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { getQualityGuidance, getSearchRecipe, searchProfile, SEARCH_PROFILES } from "../src/index.js";
+import {
+  animeSearchTabooWarnings,
+  getQualityGuidance,
+  getSearchRecipe,
+  searchProfile,
+  SEARCH_PROFILES,
+} from "../src/index.js";
 
 describe("getSearchRecipe — post-deep-research recipe", () => {
   it("us-tv leads with 裸中文名 (NOT the old 别裸搜/+美剧), and forbids +美剧", () => {
@@ -134,5 +140,49 @@ describe("getQualityGuidance", () => {
     expect(g).toContain("破一档");
     // still avoids 原盘/REMUX/ISO even for subs (no unlimited bump)
     expect(g).toMatch(/原盘|REMUX|ISO/);
+  });
+});
+
+describe("animeSearchTabooWarnings（病2b — 硬规则转校验器，警告不阻断）", () => {
+  const titleTerms = ["新攻壳机动队", "攻壳机动队", "Ghost in the Shell"];
+
+  it("动漫 + 4位年份 → 年份警告（攻壳事故的「2020」）", () => {
+    const w = animeSearchTabooWarnings({ keyword: "攻壳机动队 2020", profile: "jp-anime", titleTerms });
+    expect(w.some((x) => x.includes("年份"))).toBe(true);
+  });
+
+  it("动漫 + 片名外的拉丁附加词 → 疑似跨系列警告（攻壳事故的「ARISE」）", () => {
+    const w = animeSearchTabooWarnings({ keyword: "攻壳机动队 ARISE", profile: "jp-anime", titleTerms });
+    expect(w.some((x) => x.includes("ARISE"))).toBe(true);
+  });
+
+  it("拉丁词是片名/别名的一部分 → 不警告（正当的英文名升级）", () => {
+    const w = animeSearchTabooWarnings({ keyword: "Ghost in the Shell", profile: "jp-anime", titleTerms });
+    expect(w).toEqual([]);
+  });
+
+  it("动漫 + 子类型词(番剧) → 警告", () => {
+    const w = animeSearchTabooWarnings({ keyword: "攻壳机动队 番剧", profile: "jp-anime", titleTerms });
+    expect(w.some((x) => x.includes("番剧"))).toBe(true);
+  });
+
+  it("国漫例外：cn-anime 的 +国漫 是配方明令的消歧词，不警告", () => {
+    const w = animeSearchTabooWarnings({ keyword: "一人之下 国漫", profile: "cn-anime", titleTerms: ["一人之下"] });
+    expect(w).toEqual([]);
+  });
+
+  it("cn-anime 年份照警（配方明言年份危险：拉同名真人版）", () => {
+    const w = animeSearchTabooWarnings({ keyword: "一人之下 2021", profile: "cn-anime", titleTerms: ["一人之下"] });
+    expect(w.some((x) => x.includes("年份"))).toBe(true);
+  });
+
+  it("非动漫 profile → 永远空（年份是真人片的合法收窄键）", () => {
+    const w = animeSearchTabooWarnings({ keyword: "默杀 2024", profile: "movie", titleTerms: ["默杀"] });
+    expect(w).toEqual([]);
+  });
+
+  it("干净的裸标题 → 空", () => {
+    const w = animeSearchTabooWarnings({ keyword: "攻壳机动队", profile: "jp-anime", titleTerms });
+    expect(w).toEqual([]);
   });
 });
