@@ -12,11 +12,13 @@ const CORS_ALLOWED_ORIGINS = new Set([
 ]);
 
 function corsHeadersFor(request: Request): Record<string, string> {
-  const origin = request.headers.get("Origin");
+  const origin = request.headers.get("Origin"); // case-insensitive per Fetch spec
   if (origin !== null && CORS_ALLOWED_ORIGINS.has(origin)) {
     return { "Access-Control-Allow-Origin": origin, Vary: "Origin" };
   }
-  return {};
+  // Vary must be emitted for ANY request carrying an Origin, even when no ACAO
+  // is granted — caches must know the response differs by origin (CORS spec).
+  return origin !== null ? { Vary: "Origin" } : {};
 }
 
 const MOVIE_TTL_SECONDS = 7 * 24 * 60 * 60; // movie metadata is effectively static

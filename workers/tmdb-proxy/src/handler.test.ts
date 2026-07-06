@@ -237,7 +237,7 @@ describe("CORS for the landing site", () => {
     expect(res.headers.get("Vary")).toBe("Origin");
   });
 
-  it("does NOT set CORS for an unknown Origin", async () => {
+  it("does NOT set CORS for an unknown Origin, but still varies on Origin", async () => {
     const kv = fakeKv({ "trending/movie/week?language=zh-CN": '{"ok":1}' });
     const res = await handleTmdbProxy({
       request: new Request("https://w.example/trending/movie/week?language=zh-CN", {
@@ -247,5 +247,32 @@ describe("CORS for the landing site", () => {
       token: "t",
     });
     expect(res.headers.get("Access-Control-Allow-Origin")).toBeNull();
+    // CORS spec: caches must be told the response varies by Origin even when
+    // no ACAO is emitted, else a cached no-ACAO response poisons allowed origins.
+    expect(res.headers.get("Vary")).toBe("Origin");
+  });
+
+  it("sets CORS on the MISS path too (cold KV, allowlisted Origin)", async () => {
+    const res = await handleTmdbProxy({
+      request: new Request("https://w.example/trending/movie/week?language=zh-CN", {
+        headers: { Origin: "https://mediary.dirtyfancy.sbs" },
+      }),
+      kv: fakeKv(),
+      token: "t",
+      originFetch: async () => new Response('{"ok":1}', { status: 200 }),
+    });
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("https://mediary.dirtyfancy.sbs");
+    expect(res.headers.get("Vary")).toBe("Origin");
+  });
+
+  it("sets neither ACAO nor Vary when the request has no Origin header", async () => {
+    const kv = fakeKv({ "trending/movie/week?language=zh-CN": '{"ok":1}' });
+    const res = await handleTmdbProxy({
+      request: new Request("https://w.example/trending/movie/week?language=zh-CN"),
+      kv,
+      token: "t",
+    });
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBeNull();
+    expect(res.headers.get("Vary")).toBeNull();
   });
 });
