@@ -173,3 +173,54 @@ describe("TaskSandbox — searchResources (system-budgeted, dedup, snapshot-boun
     expect(calls).toBe(1);
   });
 });
+
+describe("searchResources dedup 强提示（病2a）", () => {
+  function makeSandbox() {
+    const provider = new FakeResourceProviderV2({
+      results: { "攻壳机动队": [{ id: "c1", title: "攻壳机动队 SAC 全集" }, { id: "c2", title: "攻壳机动队 剧场版" }] },
+    });
+    return new TaskSandbox({ provider, titleTerms: ["攻壳机动队"] });
+  }
+
+  it("第 2 次同词搜索返回带次数与候选数的强提示", async () => {
+    const sandbox = makeSandbox();
+    await sandbox.searchResources("攻壳机动队");
+    const second = await sandbox.searchResources("攻壳机动队");
+    expect(second.deduped).toBe(true);
+    expect(second.repeatNotice).toContain("第 2 次");
+    expect(second.repeatNotice).toContain("2 候选");
+    expect(second.repeatNotice).toContain("换实质不同的新词");
+  });
+
+  it("第 3 次起提示升级为「再重复将视为无进展」", async () => {
+    const sandbox = makeSandbox();
+    await sandbox.searchResources("攻壳机动队");
+    await sandbox.searchResources("攻壳机动队");
+    const third = await sandbox.searchResources("攻壳机动队");
+    expect(third.repeatNotice).toContain("第 3 次");
+    expect(third.repeatNotice).toContain("再重复将视为无进展");
+  });
+
+  it("第 5 次起提示文本固定（不再带递增计数）——让 repetition-stop 的 4 连相同还能命中", async () => {
+    const sandbox = makeSandbox();
+    for (let i = 0; i < 4; i++) await sandbox.searchResources("攻壳机动队");
+    const fifth = await sandbox.searchResources("攻壳机动队");
+    const sixth = await sandbox.searchResources("攻壳机动队");
+    expect(fifth.repeatNotice).toBe(sixth.repeatNotice);
+    expect(fifth.repeatNotice).toContain("已重复多次");
+  });
+
+  it("复搜系统预搜(prime)的 raw 词同样计数（prime 记为第 1 次）", async () => {
+    const sandbox = makeSandbox();
+    await sandbox.primeRawSnapshot("攻壳机动队");
+    const first = await sandbox.searchResources("攻壳机动队");
+    expect(first.deduped).toBe(true);
+    expect(first.repeatNotice).toContain("第 2 次");
+  });
+
+  it("新词 fresh 搜索不带 repeatNotice", async () => {
+    const sandbox = makeSandbox();
+    const fresh = await sandbox.searchResources("攻壳机动队");
+    expect(fresh.repeatNotice).toBeUndefined();
+  });
+});

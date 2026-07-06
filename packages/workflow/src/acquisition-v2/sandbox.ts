@@ -97,6 +97,8 @@ export interface SearchToolResult {
   /** Set when quality/subtitle tokens were stripped from the agent's keyword
    *  (C5 guardrail): tells the agent the words were dropped and raw recalls more. */
   notice?: string;
+  /** 病2a: dedup 命中时的显式强提示（含第 N 次计数）。模型必须看见「这是重复」。 */
+  repeatNotice?: string;
 }
 
 export interface TransferToolResult {
@@ -126,6 +128,8 @@ export class TaskSandbox {
   private readonly softThreshold: number | undefined;
   private readonly seenKeywords = new Set<string>();
   private readonly snapshotByKeyword = new Map<string, ResourceSnapshotV2>();
+  /** 每个（规范化）关键词被搜索的次数——prime 记 1，agent fresh 记 1，dedup 命中递增。 */
+  private readonly searchCountByKeyword = new Map<string, number>();
   private readonly observedSnapshots = new Map<string, ResourceSnapshotV2>();
   private readonly obtainedCodes = new Set<string>();
   /** Set when the agent landed a movie via the 中文字幕 last-resort fallback (no
@@ -219,7 +223,14 @@ export class TaskSandbox {
     // searching a keyword that was pre-warmed.
     const cachedSnapshot = this.snapshotByKeyword.get(normalized);
     if (cachedSnapshot) {
-      return { snapshot: cachedSnapshot, deduped: true, ...(notice ? { notice } : {}) };
+      const count = (this.searchCountByKeyword.get(normalized) ?? 1) + 1;
+      this.searchCountByKeyword.set(normalized, count);
+      return {
+        snapshot: cachedSnapshot,
+        deduped: true,
+        repeatNotice: this.repeatNotice(keyword, count, cachedSnapshot.candidates.length),
+        ...(notice ? { notice } : {}),
+      };
     }
 
     const decision = decideSearchGate({
@@ -242,6 +253,7 @@ export class TaskSandbox {
     this.seenKeywords.add(normalized);
     const snapshot = await this.provider.search(effectiveKeyword);
     this.snapshotByKeyword.set(normalized, snapshot);
+    this.searchCountByKeyword.set(normalized, 1);
     this.observedSnapshots.set(snapshot.id, snapshot);
     return {
       snapshot,
@@ -264,6 +276,17 @@ export class TaskSandbox {
   private reserveNote(): string {
     const reserve = this.searchBudget - (this.softThreshold ?? this.searchBudget);
     return `⚠️ 中字搜索预算(${this.softThreshold})已用满,还剩 ${reserve} 次预留。用它做最后的裸名/抖动复搜;若仍找不到带中字的版本、但已确认正确影片的 raw 名匹配,就直接 transferCandidate 兜底落它(markObtained 带 subtitleFallback,系统标注「可能无中字」),不要 reportNoCoverage —— 有正片胜过没有,且该版实际未必无中字。`;
+  }
+
+  /** 病2a: dedup 强提示。第 2 次报次数；第 3-4 次升级警告；第 5 次起文本固定——
+   *  固定是刻意的：递增计数会让重复步骤的 result 每次不同，反而令 repetition-stop
+   *  的「4 连相同」永远不命中。 */
+  private repeatNotice(keyword: string, count: number, candidateCount: number): string {
+    if (count >= 5) {
+      return `⚠️ 「${keyword}」已重复多次搜索，结果不会再变（共 ${candidateCount} 候选）。这已被视为无进展：立即基于已有证据决策（transferCandidate 或 reportNoCoverage）。`;
+    }
+    const escalation = count >= 3 ? "再重复将视为无进展。" : "";
+    return `⚠️ 「${keyword}」已是第 ${count} 次搜索（结果与上次相同，共 ${candidateCount} 候选）。换实质不同的新词，或立即基于已有证据决策。${escalation}`;
   }
 
   /** Whether a snapshot id was actually observed in this task — the gate for
@@ -629,6 +652,7 @@ export class TaskSandbox {
 
     // Record in dedup map so agent re-searching this keyword hits dedup
     this.snapshotByKeyword.set(normalized, snapshot);
+    this.searchCountByKeyword.set(normalized, 1);
 
     // Record in observed snapshots so transferCandidate can resolve candidate ids
     this.observedSnapshots.set(snapshot.id, snapshot);
