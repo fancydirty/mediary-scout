@@ -1,4 +1,4 @@
-name: Release macOS Desktop
+name: Release Desktop
 
 on:
   push:
@@ -11,7 +11,7 @@ on:
         required: true
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   ELECTRON_VERSION: "33.4.11"
@@ -127,22 +127,13 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: npm run dist --workspace @media-track/desktop
 
-      - name: Determine release tag
-        id: tag
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Upload DMG to GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          target_commitish: ${{ github.sha }}
-          files: apps/desktop/dist-app/*.dmg
-          generate_release_notes: true
+          name: macos-dmg
+          path: apps/desktop/dist-app/*.dmg
+          if-no-files-found: error
+          retention-days: 7
 
   build-windows:
     runs-on: windows-latest
@@ -298,9 +289,27 @@ jobs:
           if (-not $healthy) { throw "installed app never answered 200 on its baseUrl within 120s" }
           Write-Host "SMOKE OK: $baseUrl answered 200"
 
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: apps/desktop/dist-app/*.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  # Atomic release gate: nothing reaches the Releases page unless BOTH
+  # platform builds (including the Windows install-and-boot smoke test)
+  # succeeded. Publishing from a single job prevents the mixed-version
+  # state where a fresh DMG sits next to a stale EXE because one
+  # platform's gate failed after the other had already uploaded.
+  release:
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
       - name: Determine release tag
         id: tag
-        shell: bash
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
@@ -308,9 +317,19 @@ jobs:
             echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Upload Windows installer to GitHub Release
+      - name: Download platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Upload DMG + installer to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
-          files: apps/desktop/dist-app/*.exe
+          target_commitish: ${{ github.sha }}
+          files: |
+            dist/*.dmg
+            dist/*.exe
+          fail_on_unmatched_files: true
           generate_release_notes: true
