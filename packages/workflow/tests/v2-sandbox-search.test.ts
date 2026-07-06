@@ -296,4 +296,17 @@ describe("searchResources 大快照消化提醒（病3）", () => {
     const second = await sandbox.searchResources("Ghost in the Shell");
     expect(second.digestHint).toBeUndefined();
   });
+
+  it("提示引用原大小写的有效词（与 repeatNotice 口径一致），不是小写规范形", async () => {
+    const latinMany = Array.from({ length: 12 }, (_, i) => ({ id: `g${i}`, title: `GITS pack ${i}` }));
+    const provider = new FakeResourceProviderV2({
+      // FakeResourceProviderV2 normalizes fixture keys, so the lowercase key still matches.
+      results: { "ghost in the shell": latinMany, "攻壳机动队": [{ id: "a", title: "t" }] },
+    });
+    const sandbox = new TaskSandbox({ provider, titleTerms: ["攻壳机动队", "Ghost in the Shell"] });
+    await sandbox.searchResources("Ghost in the Shell");
+    const second = await sandbox.searchResources("攻壳机动队");
+    expect(second.digestHint).toContain("Ghost in the Shell");
+    expect(second.digestHint).not.toContain("ghost in the shell");
+  });
 });

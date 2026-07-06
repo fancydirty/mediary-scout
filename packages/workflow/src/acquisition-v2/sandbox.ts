@@ -241,9 +241,11 @@ export class TaskSandbox {
       : [];
 
     // 病3: take the digestion hint — only when switching keywords (the current
-    // normalized keyword differs from the pending one).
+    // normalized keyword differs from the pending one). The stored keyword is the
+    // EFFECTIVE (original-case) form for display — case-consistent with
+    // repeatNotice — so the comparison normalizes it first.
     const digestHint =
-      this.pendingDigest && this.pendingDigest.keyword !== normalized
+      this.pendingDigest && normalizeSearchKeyword(this.pendingDigest.keyword) !== normalized
         ? `提示：上一快照「${this.pendingDigest.keyword}」有 ${this.pendingDigest.count} 个候选尚未筛过（viewResourceSnapshot 免费）；先消化再换词通常更快。`
         : undefined;
     if (digestHint) this.pendingDigest = null;
@@ -289,9 +291,11 @@ export class TaskSandbox {
     this.searchCountByKeyword.set(normalized, 1);
     this.observedSnapshots.set(snapshot.id, snapshot);
 
-    // 病3: register a large fresh snapshot for later digestion hint.
+    // 病3: register a large fresh snapshot for later digestion hint. Store the
+    // effective (original-case) keyword for display; the trigger comparison
+    // normalizes it.
     if (snapshot.candidates.length >= LARGE_SNAPSHOT_DIGEST_THRESHOLD) {
-      this.pendingDigest = { keyword: normalized, count: snapshot.candidates.length };
+      this.pendingDigest = { keyword: effectiveKeyword, count: snapshot.candidates.length };
     }
 
     return {
