@@ -36,5 +36,85 @@ async function wireStars() {
   document.querySelectorAll("[data-stars]").forEach((el) => { el.textContent = `★ ${formatStars(n)}`; });
 }
 
+function initHowScrolly() {
+  const wrap = document.querySelector('.how-wrap');
+  if (!wrap) return;
+
+  const lines = wrap.querySelectorAll('.how-line');
+  const captions = wrap.querySelectorAll('.how-caption');
+  const eps = wrap.querySelectorAll('.how-eps i[data-fill]');
+  const counter = wrap.querySelector('.how-count');
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  let currentScene = 0;
+
+  function setScene(n) {
+    currentScene = n;
+
+    lines.forEach((line) => {
+      const need = +line.dataset.need;
+      line.classList.remove('on', 'done');
+
+      if (need < 3 && n >= need) {
+        line.classList.add('on');
+      }
+      if (need === 3 && n >= 3) {
+        line.classList.add('done');
+      }
+    });
+
+    captions.forEach((cap) => {
+      cap.classList.toggle('on', +cap.dataset.cap === n);
+    });
+
+    eps.forEach((ep) => {
+      ep.classList.toggle('got', n >= 3);
+    });
+
+    if (counter) {
+      counter.textContent = n >= 3 ? '12' : '8';
+    }
+  }
+
+  if (reduced) {
+    setScene(3);
+    captions.forEach((cap) => cap.classList.add('on'));
+    return;
+  }
+
+  const markers = Array.from(wrap.querySelectorAll('.how-marker'));
+  const intersecting = new Map(); // Track intersection state of each marker
+
+  const io = new IntersectionObserver((entries) => {
+    // Update intersection state for each entry
+    entries.forEach((entry) => {
+      const scene = +entry.target.dataset.scene;
+      intersecting.set(scene, entry.isIntersecting);
+    });
+
+    // Find the highest scene that's currently intersecting
+    let maxScene = -1;
+    for (let i = 0; i <= 3; i++) {
+      if (intersecting.get(i)) {
+        maxScene = i;
+      }
+    }
+
+    // If no scene is intersecting, default to scene 0
+    if (maxScene >= 0) {
+      setScene(maxScene);
+    } else {
+      setScene(0);
+    }
+  }, {
+    rootMargin: '-40% 0px -40% 0px',
+    threshold: 0
+  });
+
+  markers.forEach((marker) => io.observe(marker));
+  setScene(0);
+}
+
 wireDownloads();
 wireStars();
+initHowScrolly();
