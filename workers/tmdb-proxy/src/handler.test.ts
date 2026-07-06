@@ -400,6 +400,19 @@ describe("CORS for the landing site", () => {
     expect(res.headers.get("Vary")).toBe("Origin");
   });
 
+  it("echoes ACAO for the new mediaryscout.app origin (domain migration)", async () => {
+    const kv = fakeKv({ "trending/movie/week?language=zh-CN": '{"ok":1}' });
+    const res = await handleTmdbProxy({
+      request: new Request("https://w.example/trending/movie/week?language=zh-CN", {
+        headers: { Origin: "https://mediaryscout.app" },
+      }),
+      kv,
+      token: "t",
+    });
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("https://mediaryscout.app");
+    expect(res.headers.get("Vary")).toBe("Origin");
+  });
+
   it("sets neither ACAO nor Vary on a 404 when the request has no Origin header", async () => {
     const res = await handleTmdbProxy({
       request: new Request("https://w.example/account/secret"),

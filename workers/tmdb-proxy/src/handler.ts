@@ -11,6 +11,9 @@ const IMG_PATH_RE = /^t\/p\/(w342|w500)\/[A-Za-z0-9_]+\.(jpg|png)$/;
 const ALLOWED_PREFIXES = ["movie/", "tv/", "search/", "discover/", "find/", "genre/", "configuration", "trending/"];
 
 const CORS_ALLOWED_ORIGINS = new Set([
+  "https://mediaryscout.app",
+  "https://demo.mediaryscout.app",
+  // Old .sbs origins kept during the domain transition (will 301 to mediaryscout.app).
   "https://mediary.dirtyfancy.sbs",
   "https://demo.dirtyfancy.sbs",
   "http://localhost:8788",
