@@ -221,6 +221,75 @@ describe("trending discovery", () => {
   });
 });
 
+describe("poster image proxy", () => {
+  it("proxies an allowlisted poster path, passing body/Content-Type through with an immutable Cache-Control", async () => {
+    let seenUrl = "";
+    const res = await handleTmdbProxy({
+      request: new Request("https://w.example/img/t/p/w342/abc123.jpg"),
+      kv: fakeKv(),
+      token: "authorkey",
+      originFetch: async (url) => {
+        seenUrl = String(url);
+        return new Response(new Uint8Array([0xff, 0xd8, 0xff, 0xe0]), {
+          status: 200,
+          headers: { "Content-Type": "image/jpeg" },
+        });
+      },
+    });
+    expect(res.status).toBe(200);
+    expect(seenUrl).toBe("https://image.tmdb.org/t/p/w342/abc123.jpg");
+    expect(res.headers.get("Content-Type")).toBe("image/jpeg");
+    expect(res.headers.get("Cache-Control")).toBe("public, max-age=31536000, immutable");
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array([0xff, 0xd8, 0xff, 0xe0]));
+  });
+
+  it("rejects sizes outside the allowlist (original, w9999) with 404 and never hits origin", async () => {
+    let originCalls = 0;
+    const originFetch: typeof fetch = async () => {
+      originCalls += 1;
+      return new Response("nope", { status: 200 });
+    };
+    for (const path of ["/img/t/p/original/abc.jpg", "/img/t/p/w9999/abc.jpg"]) {
+      const res = await handleTmdbProxy({
+        request: new Request(`https://w.example${path}`),
+        kv: fakeKv(),
+        token: "k",
+        originFetch,
+      });
+      expect(res.status).toBe(404);
+    }
+    expect(originCalls).toBe(0);
+  });
+
+  it("rejects path shenanigans (traversal, non-t/p shapes) with 404 and never hits origin", async () => {
+    let originCalls = 0;
+    const originFetch: typeof fetch = async () => {
+      originCalls += 1;
+      return new Response("nope", { status: 200 });
+    };
+    for (const path of ["/img/t/p/w342/../../secret", "/img/x/y/z.jpg"]) {
+      const res = await handleTmdbProxy({
+        request: new Request(`https://w.example${path}`),
+        kv: fakeKv(),
+        token: "k",
+        originFetch,
+      });
+      expect(res.status).toBe(404);
+    }
+    expect(originCalls).toBe(0);
+  });
+
+  it("rejects POST to an img path with 405 (existing method gate fires first)", async () => {
+    const res = await handleTmdbProxy({
+      request: new Request("https://w.example/img/t/p/w342/abc.jpg", { method: "POST" }),
+      kv: fakeKv(),
+      token: "k",
+      originFetch: async () => new Response("nope", { status: 200 }),
+    });
+    expect(res.status).toBe(405);
+  });
+});
+
 describe("CORS for the landing site", () => {
   it("echoes an allowlisted Origin and sets Vary: Origin", async () => {
     // build deps exactly like neighboring tests do, with KV pre-seeded:
