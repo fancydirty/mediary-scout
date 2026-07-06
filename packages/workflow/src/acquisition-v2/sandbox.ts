@@ -24,6 +24,9 @@ const SUBTITLE_NAME_PATTERN = /\.(srt|ass|ssa|sub|idx|vtt|sup|smi)$/i;
 const STRIP_NOTICE =
   "已从关键词移除画质/字幕词(如 4K/1080p/蓝光/中字/字幕):PanSou 是通配符匹配,加这些只会把召回打成子集或归零,raw 裸标题召回最全。已改用裸标题搜索。";
 
+/** Threshold for large snapshot digestion hint (病3). */
+const LARGE_SNAPSHOT_DIGEST_THRESHOLD = 10;
+
 /** Strip quality/subtitle tokens from a search keyword and fold the resulting
  *  whitespace. `stripped` is true ONLY when an actual QUALITY_SUBTITLE_TOKEN was
  *  removed — NOT when mere whitespace was collapsed (so "奥本海默   第二季" does
@@ -107,6 +110,9 @@ export interface SearchToolResult {
   /** Anime taboo-keyword validator warnings (year / subtype word / suspected
    *  cross-series token). Warnings only — the search still runs. 病2b。 */
   warnings?: string[];
+  /** One-shot reminder that the PREVIOUS large snapshot (≥10 candidates) is
+   *  still unfiltered when the agent switches keywords. 病3: 先消化再换词。 */
+  digestHint?: string;
 }
 
 export interface TransferToolResult {
@@ -154,6 +160,8 @@ export class TaskSandbox {
   /** Pre-warmed assrt candidates (id + title + lang), like rawSnapshot for video.
    *  Reassigned by primeSubtitleSnapshot, so NOT readonly. */
   private subtitleSnapshot: AssrtCandidate[] | null = null;
+  /** 病3: 待消化的上一大快照（换词搜索时提醒一次，随即清空）。 */
+  private pendingDigest: { keyword: string; count: number } | null = null;
 
   constructor(options: TaskSandboxOptions) {
     this.provider = options.provider;
@@ -232,6 +240,14 @@ export class TaskSandbox {
       ? animeSearchTabooWarnings({ keyword: effectiveKeyword, profile: this.profile, titleTerms: this.titleTerms })
       : [];
 
+    // 病3: take the digestion hint — only when switching keywords (the current
+    // normalized keyword differs from the pending one).
+    const digestHint =
+      this.pendingDigest && this.pendingDigest.keyword !== normalized
+        ? `提示：上一快照「${this.pendingDigest.keyword}」有 ${this.pendingDigest.count} 个候选尚未筛过（viewResourceSnapshot 免费）；先消化再换词通常更快。`
+        : undefined;
+    if (digestHint) this.pendingDigest = null;
+
     // Check dedup FIRST — if this keyword was already searched (either by agent
     // or by system pre-warming), return the cached snapshot without hitting the
     // provider or consuming budget. This covers both agent re-searches and agent
@@ -246,6 +262,7 @@ export class TaskSandbox {
         repeatNotice: this.repeatNotice(effectiveKeyword, count, cachedSnapshot.candidates.length),
         ...(notice ? { notice } : {}),
         ...(tabooWarnings.length > 0 ? { warnings: tabooWarnings } : {}),
+        ...(digestHint ? { digestHint } : {}),
       };
     }
 
@@ -271,11 +288,18 @@ export class TaskSandbox {
     this.snapshotByKeyword.set(normalized, snapshot);
     this.searchCountByKeyword.set(normalized, 1);
     this.observedSnapshots.set(snapshot.id, snapshot);
+
+    // 病3: register a large fresh snapshot for later digestion hint.
+    if (snapshot.candidates.length >= LARGE_SNAPSHOT_DIGEST_THRESHOLD) {
+      this.pendingDigest = { keyword: normalized, count: snapshot.candidates.length };
+    }
+
     return {
       snapshot,
       ...(decision === "reserve" ? { note: this.reserveNote() } : {}),
       ...(notice ? { notice } : {}),
       ...(tabooWarnings.length > 0 ? { warnings: tabooWarnings } : {}),
+      ...(digestHint ? { digestHint } : {}),
     };
   }
 

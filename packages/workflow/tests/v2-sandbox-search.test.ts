@@ -269,3 +269,31 @@ describe("searchResources anime 禁忌词警告接线（病2b）", () => {
     expect(result.warnings).toBeUndefined();
   });
 });
+
+describe("searchResources 大快照消化提醒（病3）", () => {
+  const many = Array.from({ length: 58 }, (_, i) => ({ id: `c${i}`, title: `攻壳机动队 SAC 第${i}包` }));
+
+  it("上一搜索 ≥10 候选、紧接换词搜 → 新结果前置消化提醒（一次）", async () => {
+    const provider = new FakeResourceProviderV2({
+      results: { "攻殻機動隊": many, "攻壳机动队 arise": [{ id: "x", title: "ARISE" }] },
+    });
+    const sandbox = new TaskSandbox({ provider, titleTerms: ["攻壳机动队", "攻殻機動隊", "ARISE"] });
+    await sandbox.searchResources("攻殻機動隊");
+    const second = await sandbox.searchResources("攻壳机动队 ARISE");
+    expect(second.digestHint).toContain("攻殻機動隊");
+    expect(second.digestHint).toContain("58");
+    // 只提示一次/快照：
+    const third = await sandbox.searchResources("攻殻機動隊");
+    expect(third.digestHint).toBeUndefined();
+  });
+
+  it("小快照(<10)不触发", async () => {
+    const provider = new FakeResourceProviderV2({
+      results: { "攻壳机动队": [{ id: "a", title: "t" }], "ghost in the shell": [{ id: "b", title: "t2" }] },
+    });
+    const sandbox = new TaskSandbox({ provider, titleTerms: ["攻壳机动队", "Ghost in the Shell"] });
+    await sandbox.searchResources("攻壳机动队");
+    const second = await sandbox.searchResources("Ghost in the Shell");
+    expect(second.digestHint).toBeUndefined();
+  });
+});
