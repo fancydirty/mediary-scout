@@ -64,9 +64,15 @@ async function wirePosters() {
       return;
     }
   }
-  wall.innerHTML = postersFrom(feeds, 18)
-    .map((p) => `<img loading="lazy" src="${p.url}" alt="${p.title} 海报">`)
-    .join("");
+  wall.replaceChildren(
+    ...postersFrom(feeds, 18).map((p) => {
+      const img = document.createElement("img");
+      img.loading = "lazy";
+      img.src = p.url;
+      img.alt = `${p.title} 海报`;
+      return img;
+    }),
+  );
 }
 
 function initFeatureReveal() {

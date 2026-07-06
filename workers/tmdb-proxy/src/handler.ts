@@ -108,7 +108,7 @@ async function handleImageProxy(rest: string, originFetch: typeof fetch): Promis
   }
   const originResponse = await originFetch(`${TMDB_IMAGE_ORIGIN}/${rest}`, { method: "GET" });
   const headers: Record<string, string> = {
-    "Cache-Control": "public, max-age=31536000, immutable",
+    "Cache-Control": originResponse.ok ? "public, max-age=31536000, immutable" : "no-store",
   };
   const contentType = originResponse.headers.get("Content-Type");
   if (contentType !== null) {

@@ -303,6 +303,17 @@ describe("poster image proxy", () => {
     expect(res.status).toBe(200);
     expect(seenUrl).toBe("https://image.tmdb.org/t/p/w342/abc_123.jpg");
   });
+
+  it("does NOT cache non-OK image responses (no-store, not immutable)", async () => {
+    const res = await handleTmdbProxy({
+      request: new Request("https://w.example/img/t/p/w342/valid_shape.jpg"),
+      kv: fakeKv(),
+      token: "k",
+      originFetch: async () => new Response("nope", { status: 404 }),
+    });
+    expect(res.status).toBe(404);
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+  });
 });
 
 describe("CORS for the landing site", () => {
