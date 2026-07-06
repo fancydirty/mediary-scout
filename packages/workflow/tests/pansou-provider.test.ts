@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { afterEach, describe, expect, it } from "vitest";
 import { PanSouResourceProvider } from "../src/index.js";
 
 describe("PanSouResourceProvider", () => {
@@ -288,4 +290,47 @@ describe("PanSouResourceProvider", () => {
     expect(calls).toBe(3);
     expect(waits).toEqual([2500, 2500]);
   });
+});
+
+// 2026-07-06 field incident: a stalled PanSou instance hung the pre-agent
+// search for 4.5 minutes because the default fetch had no timeout — the
+// same failure class as the TMDB hang (#68). This pins the bounded-wait
+// contract so a dead upstream degrades to "fewer candidates", never a
+// frozen run. Uses a real HTTP server (not a fake fetchJson) because the
+// timeout lives in defaultFetchJson itself.
+describe("PanSouResourceProvider request timeout", () => {
+  let server: Server | undefined;
+
+  afterEach(async () => {
+    if (!server) return;
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) =>
+      server!.close((err) => (err ? reject(err) : resolve())),
+    );
+    server = undefined;
+  });
+
+  it("returns an empty snapshot instead of hanging when the server never responds", async () => {
+    server = createServer(() => {
+      // Accept the request and go silent — no headers, no body, no end.
+    });
+    await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+
+    const provider = new PanSouResourceProvider({
+      baseURL: `http://127.0.0.1:${port}`,
+      requestTimeoutMs: 200,
+      maxSearchAttempts: 2,
+      searchPollMs: 1,
+    });
+
+    const startedAt = Date.now();
+    const snapshot = await provider.search({ keyword: "闪灵" });
+    const elapsedMs = Date.now() - startedAt;
+
+    expect(snapshot.candidates).toEqual([]);
+    // One stalled attempt aborts at ~200ms and the poll loop bails on the
+    // error path; well under a second proves the wait is bounded.
+    expect(elapsedMs).toBeLessThan(2000);
+  }, 10_000);
 });
