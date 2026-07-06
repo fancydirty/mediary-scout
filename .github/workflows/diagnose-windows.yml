@@ -38,13 +38,24 @@ jobs:
           tar -xzf $tmpFile -C $extractDir
           $nodeFile = Get-ChildItem -Path $extractDir -Recurse -Filter "better_sqlite3.node" | Select-Object -First 1
           if (-not $nodeFile) { throw "better_sqlite3.node not found in archive" }
-          # Replace ALL copies — Turbopack emits a hashed copy under
-          # standalone/apps/web/.next/node_modules/ that the server actually loads.
-          $targets = Get-ChildItem -Path "apps/web/.next/standalone" -Recurse -Filter "better_sqlite3.node"
-          if (-not $targets) { throw "no better_sqlite3.node found under standalone" }
+          # Show what Turbopack's hashed node_modules entries actually are
+          foreach ($d in @("apps/web/.next/node_modules", "apps/web/.next/standalone/apps/web/.next/node_modules")) {
+            if (Test-Path $d) {
+              Get-ChildItem $d | ForEach-Object { Write-Host "NEXT_NM: $($_.FullName) LinkType=$($_.LinkType) Target=$($_.Target)" }
+            }
+          }
+          # Replace every copy the packaged app can dereference: real files under
+          # the standalone tree, anything reachable through links (-FollowSymlink;
+          # plain -Recurse skips reparse points), and the root node_modules copy
+          # (the ultimate target of the hashed junctions in this hoisted monorepo).
+          $paths = @("apps/web/.next/standalone")
+          if (Test-Path "node_modules/better-sqlite3") { $paths += "node_modules/better-sqlite3" }
+          $targets = Get-ChildItem -Path $paths -Recurse -FollowSymlink -Filter "better_sqlite3.node" -ErrorAction SilentlyContinue |
+            Select-Object -ExpandProperty FullName -Unique
+          if (-not $targets) { throw "no better_sqlite3.node found to replace" }
           foreach ($t in $targets) {
-            Write-Host "Replacing $($t.FullName)"
-            Copy-Item -Path $nodeFile.FullName -Destination $t.FullName -Force
+            Write-Host "Replacing $t"
+            Copy-Item -Path $nodeFile.FullName -Destination $t -Force
           }
           Remove-Item $tmpFile, $extractDir -Recurse -Force
 
@@ -83,11 +94,26 @@ jobs:
           foreach ($b in $bsqFiles) { Write-Host "BSQLITE: $($b.FullName) SIZE: $($b.Length)" }
 
           # Run Electron main process with full logging
-          Write-Host "=== Running Electron main process (20s) ==="
+          Write-Host "=== Running Electron main process ==="
           $env:ELECTRON_ENABLE_LOGGING = "1"
           $env:MEDIA_TRACK_SQLITE_PATH = Join-Path $env:APPDATA "@media-track\desktop\mediary.db"
           $proc = Start-Process -FilePath $exe -PassThru -RedirectStandardOutput "$env:TEMP\electron-stdout.txt" -RedirectStandardError "$env:TEMP\electron-stderr.txt"
-          Start-Sleep -Seconds 20
+
+          # Poll for real health: agent.json appears, then its baseUrl answers 200
+          $manifest = Join-Path $env:USERPROFILE ".mediary\agent.json"
+          $deadline = (Get-Date).AddSeconds(90)
+          $healthy = $false
+          while ((Get-Date) -lt $deadline) {
+            if (Test-Path $manifest) {
+              try {
+                $baseUrl = (Get-Content $manifest | ConvertFrom-Json).baseUrl
+                $resp = Invoke-WebRequest -Uri $baseUrl -UseBasicParsing -TimeoutSec 5
+                if ($resp.StatusCode -eq 200) { $healthy = $true; break }
+              } catch {}
+            }
+            Start-Sleep -Seconds 3
+          }
+
           Write-Host "=== ELECTRON STDOUT (first 40 lines) ==="
           Get-Content "$env:TEMP\electron-stdout.txt" -ErrorAction SilentlyContinue | Select-Object -First 40
           Write-Host "=== ELECTRON STDERR (first 40 lines) ==="
@@ -95,6 +121,12 @@ jobs:
           Write-Host "=== PROCESS ALIVE: $(-not $proc.HasExited) ==="
           if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
 
-          # Check ports
           Write-Host "=== Listening ports ==="
           netstat -ano | findstr "LISTENING" | findstr "127.0.0.1"
+
+          # Hard pass/fail gates — a green run must mean the app actually works
+          if (Select-String -Path "$env:TEMP\electron-stderr.txt" -Pattern "NODE_MODULE_VERSION" -Quiet) {
+            throw "ABI mismatch still present in stderr"
+          }
+          if (-not $healthy) { throw "server never answered 200 on its baseUrl within 90s" }
+          Write-Host "=== HEALTH OK: $baseUrl answered 200 ==="

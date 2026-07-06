@@ -54,7 +54,10 @@ jobs:
         run: |
           (cd apps/web/.next/standalone/node_modules/better-sqlite3 && npx prebuild-install -r electron -t ${{ env.ELECTRON_VERSION }})
           SRC="apps/web/.next/standalone/node_modules/better-sqlite3/build/Release/better_sqlite3.node"
-          find apps/web/.next/standalone -name "better_sqlite3.node" | while read -r f; do
+          # -L follows the symlinked hashed copies Turbopack emits under
+          # standalone/apps/web/.next/node_modules/ (electron-builder
+          # dereferences them at package time, so their targets must be swapped)
+          find -L apps/web/.next/standalone -name "better_sqlite3.node" | while read -r f; do
             [ "$f" -ef "$SRC" ] && continue
             echo "Replacing $f"
             cp "$SRC" "$f"
@@ -72,7 +75,7 @@ jobs:
           # swapped one — fails loud if Turbopack grows another copy we missed.
           SRC="apps/web/.next/standalone/node_modules/better-sqlite3/build/Release/better_sqlite3.node"
           REF=$(shasum -a 256 "$SRC" | cut -d' ' -f1)
-          find apps/web/.next/standalone -name "better_sqlite3.node" | while read -r f; do
+          find -L apps/web/.next/standalone -name "better_sqlite3.node" | while read -r f; do
             H=$(shasum -a 256 "$f" | cut -d' ' -f1)
             echo "$H  $f"
             if [ "$H" != "$REF" ]; then
@@ -173,11 +176,26 @@ jobs:
           tar -xzf $tmpFile -C $extractDir
           $nodeFile = Get-ChildItem -Path $extractDir -Recurse -Filter "better_sqlite3.node" | Select-Object -First 1
           if (-not $nodeFile) { throw "better_sqlite3.node not found in archive" }
-          $targets = Get-ChildItem -Path "apps/web/.next/standalone" -Recurse -Filter "better_sqlite3.node"
-          if (-not $targets) { throw "no better_sqlite3.node found under standalone" }
+          # Show what Turbopack's hashed node_modules entries actually are
+          # (on Windows they are junctions/symlinks whose ABSOLUTE target is the
+          # hoisted ROOT node_modules, and Get-ChildItem -Recurse does not enter
+          # reparse points — electron-builder dereferences them at package time).
+          foreach ($d in @("apps/web/.next/node_modules", "apps/web/.next/standalone/apps/web/.next/node_modules")) {
+            if (Test-Path $d) {
+              Get-ChildItem $d | ForEach-Object { Write-Host "NEXT_NM: $($_.FullName) LinkType=$($_.LinkType) Target=$($_.Target)" }
+            }
+          }
+          # Replace every copy the packaged app can dereference: real files under
+          # the standalone tree, anything reachable through links, and the root
+          # node_modules copy (the ultimate target of the hashed junctions).
+          $paths = @("apps/web/.next/standalone")
+          if (Test-Path "node_modules/better-sqlite3") { $paths += "node_modules/better-sqlite3" }
+          $targets = Get-ChildItem -Path $paths -Recurse -FollowSymlink -Filter "better_sqlite3.node" -ErrorAction SilentlyContinue |
+            Select-Object -ExpandProperty FullName -Unique
+          if (-not $targets) { throw "no better_sqlite3.node found to replace" }
           foreach ($t in $targets) {
-            Write-Host "Replacing $($t.FullName)"
-            Copy-Item -Path $nodeFile.FullName -Destination $t.FullName -Force
+            Write-Host "Replacing $t"
+            Copy-Item -Path $nodeFile.FullName -Destination $t -Force
           }
           Remove-Item $tmpFile, $extractDir -Recurse -Force
 
@@ -190,10 +208,13 @@ jobs:
           $env:ELECTRON_RUN_AS_NODE = "1"
           & "$(npm root)/electron/dist/electron.exe" $abiCheck
           if ($LASTEXITCODE -ne 0) { throw "electron ABI check failed" }
-          # Every copy in the standalone tree must be byte-identical to the
-          # swapped one — fails loud if Turbopack grows another copy we missed.
+          # Every copy reachable from the standalone tree (INCLUDING through
+          # junctions/symlinks, which electron-builder dereferences at package
+          # time) must be byte-identical to the swapped one.
           $ref = (Get-FileHash "apps/web/.next/standalone/node_modules/better-sqlite3/build/Release/better_sqlite3.node").Hash
-          Get-ChildItem -Path "apps/web/.next/standalone" -Recurse -Filter "better_sqlite3.node" | ForEach-Object {
+          $paths = @("apps/web/.next/standalone")
+          if (Test-Path "node_modules/better-sqlite3") { $paths += "node_modules/better-sqlite3" }
+          Get-ChildItem -Path $paths -Recurse -FollowSymlink -Filter "better_sqlite3.node" -ErrorAction SilentlyContinue | ForEach-Object {
             $h = (Get-FileHash $_.FullName).Hash
             Write-Host "$h  $($_.FullName)"
             if ($h -ne $ref) { throw "ABI swap missed a copy: $($_.FullName)" }
