@@ -21,9 +21,12 @@ export function formatStars(n) {
   return n >= 1000 ? `${(n / 1000).toFixed(1).replace(/\.0$/, "")}k` : String(n);
 }
 
+// Single source of truth for the proxy worker host (also imported by main.js).
+export const WORKER_BASE = "https://media-track-tmdb-proxy.fancydirty.workers.dev";
+
 // Posters route through the worker's /img proxy: image.tmdb.org is GFW-blocked
 // for ordinary mainland visitors (direct URLs only load behind a proxy).
-const POSTER_BASE = "https://media-track-tmdb-proxy.fancydirty.workers.dev/img/t/p/w342";
+const POSTER_BASE = `${WORKER_BASE}/img/t/p/w342`;
 
 export function postersFrom(feeds, limit) {
   if (limit <= 0) return [];

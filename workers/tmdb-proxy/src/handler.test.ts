@@ -224,12 +224,14 @@ describe("trending discovery", () => {
 describe("poster image proxy", () => {
   it("proxies an allowlisted poster path, passing body/Content-Type through with an immutable Cache-Control", async () => {
     let seenUrl = "";
+    let seenInit: RequestInit | undefined;
     const res = await handleTmdbProxy({
       request: new Request("https://w.example/img/t/p/w342/abc123.jpg"),
       kv: fakeKv(),
       token: "authorkey",
-      originFetch: async (url) => {
+      originFetch: async (url, init) => {
         seenUrl = String(url);
+        seenInit = init;
         return new Response(new Uint8Array([0xff, 0xd8, 0xff, 0xe0]), {
           status: 200,
           headers: { "Content-Type": "image/jpeg" },
@@ -238,6 +240,9 @@ describe("poster image proxy", () => {
     });
     expect(res.status).toBe(200);
     expect(seenUrl).toBe("https://image.tmdb.org/t/p/w342/abc123.jpg");
+    const cf = (seenInit as { cf?: { cacheTtl?: number; cacheEverything?: boolean } } | undefined)?.cf;
+    expect(cf?.cacheTtl).toBe(31536000);
+    expect(cf?.cacheEverything).toBe(true);
     expect(res.headers.get("Content-Type")).toBe("image/jpeg");
     expect(res.headers.get("Cache-Control")).toBe("public, max-age=31536000, immutable");
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array([0xff, 0xd8, 0xff, 0xe0]));

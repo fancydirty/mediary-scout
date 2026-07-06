@@ -1,4 +1,4 @@
-import { detectPlatform, orderDownloads, formatStars, postersFrom } from "./lib.mjs";
+import { detectPlatform, orderDownloads, formatStars, postersFrom, WORKER_BASE } from "./lib.mjs";
 
 const REPO = "fancydirty/mediary-scout";
 const STARS_FALLBACK = 968;
@@ -49,12 +49,11 @@ async function wireStars() {
 async function wirePosters() {
   const wall = document.querySelector(".poster-wall");
   if (!wall) return;
-  const base = "https://media-track-tmdb-proxy.fancydirty.workers.dev";
   let feeds;
   try {
     feeds = await Promise.all([
-      fetchJson(`${base}/trending/movie/week?language=zh-CN`),
-      fetchJson(`${base}/trending/tv/week?language=zh-CN`),
+      fetchJson(`${WORKER_BASE}/trending/movie/week?language=zh-CN`),
+      fetchJson(`${WORKER_BASE}/trending/tv/week?language=zh-CN`),
     ]);
   } catch {
     try {
