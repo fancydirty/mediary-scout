@@ -21,6 +21,7 @@ function v2Result(over: Partial<RunAcquisitionV2WorkflowResult>): RunAcquisition
     stillMissing: [],
     obtained: [],
     providerAhead: [],
+    auditEvents: [],
     ...over,
   };
 }
@@ -203,6 +204,7 @@ describe("bridgeV2WorkflowToResult — V2 facts → per-season WorkflowResult sh
         obtained: ["S01E01", "S01E02", "S01E03"],
         stillMissing: ["S02E01", "S02E02", "S02E03"],
         providerAhead: [],
+        auditEvents: [],
       },
       workflowRunId: "run-x",
       now: () => "2026-06-15T00:00:00.000Z",
