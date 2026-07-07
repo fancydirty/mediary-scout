@@ -1,13 +1,13 @@
 {
-  "tag_name": "v1.1.0",
+  "tag_name": "v1.2.0",
   "assets": [
     {
-      "name": "Mediary.Scout-1.1.0-arm64.dmg",
-      "browser_download_url": "https://github.com/fancydirty/mediary-scout/releases/download/v1.1.0/Mediary.Scout-1.1.0-arm64.dmg"
+      "name": "Mediary.Scout-1.2.0-arm64.dmg",
+      "browser_download_url": "https://github.com/fancydirty/mediary-scout/releases/download/v1.2.0/Mediary.Scout-1.2.0-arm64.dmg"
     },
     {
-      "name": "Mediary.Scout.Setup.1.1.0.exe",
-      "browser_download_url": "https://github.com/fancydirty/mediary-scout/releases/download/v1.1.0/Mediary.Scout.Setup.1.1.0.exe"
+      "name": "Mediary.Scout.Setup.1.2.0.exe",
+      "browser_download_url": "https://github.com/fancydirty/mediary-scout/releases/download/v1.2.0/Mediary.Scout.Setup.1.2.0.exe"
     }
   ]
 }
