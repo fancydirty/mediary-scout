@@ -29,24 +29,23 @@ async function wireDownloads() {
     }
   }
   const { version, items } = orderDownloads(release, detectPlatform(navigator.userAgent));
-  // Map by platform NAME, not items order: orderDownloads reverses items for Windows
-  // visitors, but every button's icon + label is platform-fixed in the HTML (order
-  // [mac, win] in both the hero and the final CTA). Indexing by items would swap
-  // the href under the wrong icon on Windows.
+  // Map by platform NAME via each button's explicit data-dl-platform, not by DOM
+  // order: orderDownloads reverses items for Windows visitors, and every button's
+  // icon/label is platform-fixed in the HTML. Reading the platform off the element
+  // keeps the href under the right icon even if buttons are reordered/added.
   const byPlatform = Object.fromEntries(items.map((it) => [it.platform, it]));
-  const fixedOrder = ["mac", "win"];
 
-  // Hero buttons (macOS shows the version).
-  document.querySelectorAll("[data-dl]").forEach((a, i) => {
-    const it = byPlatform[fixedOrder[i]]; if (!it) return;
+  // Hero buttons (the macOS one also shows the version).
+  document.querySelectorAll("[data-dl]").forEach((a) => {
+    const it = byPlatform[a.dataset.dlPlatform]; if (!it) return;
     a.href = it.url;
     const label = a.querySelector("[data-dl-label]"); if (label) label.textContent = it.label;
-    const ver = a.querySelector("[data-dl-ver]"); if (ver && i === 0) ver.textContent = version;
+    const ver = a.querySelector("[data-dl-ver]"); if (ver && a.dataset.dlPlatform === "mac") ver.textContent = version;
   });
 
-  // Final-CTA buttons (static labels, same fixed [mac, win] order).
-  document.querySelectorAll("[data-dl-cta]").forEach((btn, i) => {
-    const it = byPlatform[fixedOrder[i]];
+  // Final-CTA buttons (static labels).
+  document.querySelectorAll("[data-dl-cta]").forEach((btn) => {
+    const it = byPlatform[btn.dataset.dlPlatform];
     if (it) btn.href = it.url;
   });
 }
