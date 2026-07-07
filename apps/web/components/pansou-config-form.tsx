@@ -30,7 +30,7 @@ export function PanSouConfigForm({
     <div className="push-form">
       {isDesktop ? (
         <p className="panel-note" style={{ marginBottom: 6 }}>
-          桌面端<b>不含</b> PanSou 容器，当前默认指向作者的公共实例（资源有限、偶尔不稳）。想要更丰富的网盘源（尤其 115 分享、4K），请自建一个配好频道的 PanSou 实例，把地址填在下方。
+          桌面端<b>不含</b> PanSou 容器。未在下方配置时，默认指向作者的公共实例（资源有限、偶尔不稳）。想要更丰富的网盘源（尤其 115 分享、4K），建议自建一个配好频道的 PanSou 实例，把地址填在下方。
           {" "}
           <a href={PANSOU_SELF_HOST_TUTORIAL_URL} target="_blank" rel="noopener noreferrer">
             查看自建教程 <ExternalLink size={12} style={{ verticalAlign: "-1px" }} />

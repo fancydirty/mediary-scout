@@ -278,7 +278,7 @@ async function ResourceProviderSection() {
             资源提供商
           </h2>
           <p className="panel-note">
-            agent 搜资源的来源；PanSou（网盘）{isDesktop ? "需自建实例" : "默认内置"}
+            agent 搜资源的来源；PanSou（网盘）{isDesktop ? "建议自建实例" : "默认内置"}
             {showProwlarr ? "，Prowlarr（磁力/PT）可选加挂，二者结果合并" : "（夸克盘不支持磁力，已隐藏 Prowlarr）"}
           </p>
         </div>
