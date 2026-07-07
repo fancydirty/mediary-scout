@@ -955,23 +955,30 @@ section {
   color: var(--text-muted);
 }
 
-.faq[open] .chev {
+.faq.is-open .chev {
   transform: rotate(180deg);
 }
 
+/* Smooth accordion via max-height (bulletproof, every browser). initFAQ keeps
+   native [open] set permanently so the content is always laid out (native
+   <details> stops laying out closed content, which would break the transition);
+   the collapse is driven by the .is-open class, not [open]. overflow:hidden clips
+   the answer as max-height animates. The open max-height only needs to exceed the
+   tallest answer — the ease curve maps to it, and for these short answers reads as
+   a quick, smooth slide. */
 .faq .faq-body {
-  display: grid;
-  grid-template-rows: 0fr;
-  transition: grid-template-rows .22s ease;
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height .3s ease;
 }
 
-.faq[open] .faq-body {
-  grid-template-rows: 1fr;
+.faq.is-open .faq-body {
+  max-height: 320px;
 }
 
 .faq .faq-body > p {
-  overflow: hidden;
-  margin: 0 0 16px;
+  margin: 0;
+  padding: 2px 0 18px;
   color: var(--text-muted);
   font-size: 14px;
   line-height: 1.7;
@@ -1022,16 +1029,19 @@ section {
   border-top: 1px solid var(--border-subtle);
 }
 
+/* Wordmark aspect ratio is ~7.7:1 (viewBox 273.4×35.5). At 60px it rendered ~8px
+   tall and read as illegible garble; 140px → ~18px, a clean, legible TMDB mark. */
 .tmdb-logo {
-  width: 60px;
+  width: 140px;
   height: auto;
   display: block;
-  margin-bottom: 6px;
+  margin-bottom: 10px;
 }
 
 .tmdb-attr p {
   color: var(--text-muted);
-  font-size: 11px;
-  line-height: 1.5;
+  font-size: 12px;
+  line-height: 1.6;
   margin: 0;
+  max-width: 320px;
 }

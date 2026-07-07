@@ -36,15 +36,15 @@ async function wireDownloads() {
     if (i === 0) a.querySelector("[data-dl-ver]").textContent = version;
   });
 
-  // Wire the final CTA button
-  const cta = document.querySelector("[data-dl-cta]");
-  if (cta && items[0]) {
-    cta.href = items[0].url;
-    const label = cta.querySelector("[data-dl-label]");
-    if (label) {
-      label.textContent = `下载 Mediary Scout（${items[0].label}）`;
-    }
-  }
+  // Wire the two final-CTA download buttons. Order is FIXED (mac, win) with static
+  // labels — match each button to its platform's url by name, not by items order
+  // (items flips for win visitors). Falls back to the releases page per orderDownloads.
+  const urlByPlatform = Object.fromEntries(items.map((it) => [it.platform, it.url]));
+  const ctaOrder = ["mac", "win"]; // matches the HTML button order
+  document.querySelectorAll("[data-dl-cta]").forEach((btn, i) => {
+    const url = urlByPlatform[ctaOrder[i]];
+    if (url) btn.href = url;
+  });
 }
 
 async function wireStars() {
@@ -185,17 +185,26 @@ function initHowScrolly() {
 }
 
 function initFAQ() {
-  const faqs = document.querySelectorAll("details.faq");
+  const faqs = [...document.querySelectorAll("details.faq")];
   if (faqs.length === 0) return;
 
-  // Ensure exclusive accordion behavior (fallback for browsers without name attribute support)
+  // Keep native [open] set permanently so the content is always laid out (native
+  // <details> stops laying out closed content, which breaks any height/grid-rows
+  // transition). Visibility is driven by the .is-open class + a CSS grid-rows
+  // transition (0fr↔1fr auto-animates both ways). preventDefault takes over the
+  // native instant toggle; exclusivity closes the others.
+  // No-JS degradation: [open] is never set, so native click-to-toggle still works.
+  faqs.forEach((d) => { d.open = true; });
+
   faqs.forEach((d) => {
-    d.addEventListener("toggle", () => {
-      if (d.open) {
-        faqs.forEach((o) => {
-          if (o !== d) o.open = false;
-        });
-      }
+    d.querySelector("summary").addEventListener("click", (e) => {
+      e.preventDefault();
+      const willOpen = !d.classList.contains("is-open");
+      faqs.forEach((o) => o.classList.remove("is-open")); // exclusivity
+      if (willOpen) d.classList.add("is-open");
+      // Belt-and-suspenders: keep [open] set so content stays laid out even if a
+      // browser let the native toggle through — visibility is the .is-open class's job.
+      faqs.forEach((o) => { o.open = true; });
     });
   });
 }

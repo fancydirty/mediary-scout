@@ -63,8 +63,8 @@
   <!-- Hero section: title, CTAs, ticker window -->
   <section id="hero">
     <div class="container">
-      <h1>追剧，只剩<em>点一下</em></h1>
-      <p class="hero-sub">搜到你想看的，点一下——剩下的交给 agent：找资源、存网盘、回读核对。</p>
+      <h1>自建网盘的媒体获取 <em>agent</em></h1>
+      <p class="hero-sub">指定一部影视，agent 跨源检索、择优转存进你的网盘、回读核对，并持续追踪缺集。凭证据，不凭感觉。</p>
 
       <div class="cta-row">
         <a class="pill cta-main" data-dl href="https://github.com/fancydirty/mediary-scout/releases/latest">
@@ -79,10 +79,10 @@
           </svg>
           <span data-dl-label>Windows</span> <span data-dl-ver hidden></span>
         </a>
-        <a class="pill cta-outline" href="https://demo.mediaryscout.app">▶ 在线试玩</a>
+        <a class="pill cta-outline" href="https://demo.mediaryscout.app">在线 Demo</a>
       </div>
 
-      <p class="hero-note">免费开源 · 也可 docker 自部署 ↓</p>
+      <p class="hero-note">AGPL 开源 · 桌面版双击即用 · 也可 docker 自部署</p>
 
       <div class="ticker-window">
         <div class="ticker-dots">
@@ -91,11 +91,11 @@
           <div class="dot dot-green"></div>
         </div>
         <div class="ticker-content">
-          <div class="tk-line">▸ 正在搜罗全网资源…找到 37 个候选</div>
-          <div class="tk-line">▸ 挑中 2160p · 中文字幕 · 体积正常的那个</div>
-          <div class="tk-line">▸ 正在存进你的网盘…（不经过你的电脑）</div>
-          <div class="tk-line">▸ 回头打开网盘核对：真的到了，没缺没坏</div>
-          <div class="tk-line done">✓ 已入库 · 打开网盘直接看</div>
+          <div class="tk-line">▸ 跨源检索 · 命中 37 个候选</div>
+          <div class="tk-line">▸ 择优 · 2160p · 中文字幕 · 体积合理</div>
+          <div class="tk-line">▸ 转存至你的网盘 · 不经本地</div>
+          <div class="tk-line">▸ 回读核对 · 完整无损</div>
+          <div class="tk-line done">✓ 已入库</div>
         </div>
       </div>
     </div>
@@ -111,7 +111,7 @@
   <!-- Scrollytelling "它正在工作": 4-act sticky window + intersection observer -->
   <section id="how">
     <div class="container">
-      <h2>agent 是怎么干活的</h2>
+      <h2>agent 如何完成一次获取</h2>
       <div class="how-wrap">
         <div class="how-marker" data-scene="0"></div>
         <div class="how-marker" data-scene="1"></div>
@@ -127,10 +127,10 @@
             </div>
             <div class="how-search"><svg width="13" height="13" viewBox="0 0 18 18" fill="none" aria-hidden="true" style="vertical-align: middle; display: inline-block;"><circle cx="9" cy="9" r="5.5" stroke="currentColor" stroke-width="1.8"/><line x1="13" y1="13" x2="16.5" y2="16.5" stroke="currentColor" stroke-width="1.8"/></svg> 闪灵<span class="how-cursor">▏</span></div>
             <div class="how-ticker">
-              <div class="how-line" data-need="1">▸ 搜罗全网资源找到 37 个候选</div>
-              <div class="how-line" data-need="1">▸ 挑中 2160p·中文字幕</div>
-              <div class="how-line" data-need="2">▸ 存进你的网盘不经过你的电脑</div>
-              <div class="how-line" data-need="2">▸ 回头核对真的到了</div>
+              <div class="how-line" data-need="1">▸ 跨源检索 · 命中 37 个候选</div>
+              <div class="how-line" data-need="1">▸ 择优 · 2160p · 中文字幕</div>
+              <div class="how-line" data-need="2">▸ 转存至你的网盘 · 不经本地</div>
+              <div class="how-line" data-need="2">▸ 回读核对 · 完整无损</div>
               <div class="how-line" data-need="3">✓ 已入库</div>
             </div>
             <div class="how-eps">
@@ -142,20 +142,20 @@
           </div>
           <div class="how-captions">
             <div class="how-caption" data-cap="0">
-              <b>搜到，点一下</b>
-              <span>搜到你想看的，点一下获取。完事，该干嘛干嘛去。</span>
+              <b>检索与指定</b>
+              <span>搜到目标，点获取。agent 接管，你无需值守。</span>
             </div>
             <div class="how-caption" data-cap="1">
-              <b>它去找、去挑</b>
-              <span>画质、中文字幕、假资源，都替你把过关——挑不到合格的就直说，不塞垃圾给你。</span>
+              <b>择优</b>
+              <span>按画质、中文字幕、去重与真伪逐一筛选；无合格资源则如实报告，不塞垃圾。</span>
             </div>
             <div class="how-caption" data-cap="2">
-              <b>存进你自己的网盘</b>
-              <span>不下载到电脑、不占硬盘。存完还回头核对一遍，真到了才算数。</span>
+              <b>转存与核对</b>
+              <span>秒传 / 离线转存进你的网盘，不经本地磁盘；转存后回读真实文件，确认完整无损。</span>
             </div>
             <div class="how-caption" data-cap="3">
-              <b>追更的剧，缺的集自己回来</b>
-              <span>它记得你每部剧缺哪几集，出了新集自动补上。</span>
+              <b>持续追踪</b>
+              <span>季级状态机记录每部剧的缺集；定时巡检只在有新集时唤起 agent 补齐。</span>
             </div>
           </div>
         </div>
@@ -166,7 +166,7 @@
   <!-- Features v4: poster wall solo block + flat editorial column + label-voice trust line -->
   <section id="features">
     <div class="container">
-      <h2>不只是下载，是一个正经媒体库</h2>
+      <h2>不止获取，更是媒体库的状态管理</h2>
       <div class="feat-split">
         <div class="feat-glow" aria-hidden="true"></div>
 
@@ -176,8 +176,8 @@
             <div class="poster-wall"></div>
             <div class="poster-overlay">
               <div class="feat-eyebrow">LIBRARY</div>
-              <h3>你的网盘，长出一个正经媒体库</h3>
-              <p>真海报、真元数据，来自 TMDB · 本周热映</p>
+              <h3>你的网盘之上，一个结构化媒体库</h3>
+              <p>海报与元数据来自 TMDB</p>
             </div>
           </div>
         </div>
@@ -186,8 +186,8 @@
         <div class="feat-list">
           <div class="feat-item">
             <div class="feat-num">01</div>
-            <b>追更交给 agent</b>
-            <span>剧更新了，agent 自己去找、自己存进网盘。缺哪几集它记着，补齐为止。</span>
+            <b>追更</b>
+            <span>季级状态机跟踪缺集；剧集更新后 agent 自动检索、转存，直至补齐。</span>
             <div class="episode-grid">
               <i class="ep got"></i><i class="ep got"></i><i class="ep got"></i><i class="ep got"></i><i class="ep got"></i><i class="ep got"></i><i class="ep got"></i><i class="ep got"></i><i class="ep"></i><i class="ep"></i><i class="ep"></i><i class="ep"></i>
             </div>
@@ -195,18 +195,18 @@
           </div>
           <div class="feat-item">
             <div class="feat-num">02</div>
-            <b>找资源的活它来干</b>
-            <span>agent 全网搜罗，挑画质、挑中字、避开假资源。挑不到合格的会直说。</span>
+            <b>择优检索</b>
+            <span>跨源检索，按画质、中文字幕、去重与真伪筛选；无合格资源如实报告。</span>
           </div>
           <div class="feat-item">
             <div class="feat-num">03</div>
-            <b>存在你自己的网盘</b>
-            <span>115 / 夸克 / 光鸭，转存不下载，不占硬盘。缺字幕的它自动配。</span>
+            <b>转存进你的网盘</b>
+            <span>115 / 夸克 / 光鸭，秒传 / 离线转存，不占本地磁盘；缺字幕自动补配。</span>
           </div>
           <div class="feat-item">
             <div class="feat-num">04</div>
-            <b>全家可以分开用</b>
-            <span>一个实例各自注册，各绑各的网盘、各看各的库。</span>
+            <b>多账户隔离</b>
+            <span>同一实例，各自注册、各绑网盘、各看各库。</span>
           </div>
         </div>
       </div>
@@ -215,10 +215,10 @@
       <div class="feat-trust">
         <div class="feat-hairline" aria-hidden="true"></div>
         <div class="trust-row">
-          <span class="trust-green">开源免费</span>
-          <span>凭证只存你自己电脑</span>
-          <span>不下载不占硬盘</span>
-          <span>挑不到合格资源就直说</span>
+          <span class="trust-green">AGPL 开源</span>
+          <span>凭证仅存于你的实例</span>
+          <span>转存不落本地</span>
+          <span>无合格资源即如实报告</span>
         </div>
       </div>
     </div>
@@ -227,8 +227,8 @@
   <!-- Demo section: GIF + CTA to demo.mediaryscout.app -->
   <section id="demo">
     <div class="container">
-      <h2>不装也能玩</h2>
-      <p class="demo-sub">只读回放，不用注册不用装，点开就看。</p>
+      <h2>只读演示，无需安装</h2>
+      <p class="demo-sub">脚本化回放：真实 TMDB 检索，mock 网盘，不写入任何数据。</p>
       <div class="demo-window">
         <div class="demo-dots">
           <div class="dot dot-red"></div>
@@ -238,7 +238,7 @@
         <img loading="lazy" src="assets/demo.gif" alt="Mediary Scout 在线 demo 回放：搜索到入库全流程">
       </div>
       <div class="demo-cta">
-        <a class="pill cta-outline" href="https://demo.mediaryscout.app">打开在线 Demo，看它跑一单</a>
+        <a class="pill cta-outline" href="https://demo.mediaryscout.app">打开在线 Demo</a>
       </div>
     </div>
   </section>
@@ -246,12 +246,12 @@
   <!-- Desktop vs Docker comparison cards -->
   <section id="deploy">
     <div class="container">
-      <h2>装在电脑，或装在服务器</h2>
+      <h2>桌面，或服务器</h2>
       <div class="deploy-split">
         <div class="deploy-col">
           <div class="deploy-eyebrow deploy-eyebrow-green">DESKTOP</div>
-          <b>双击就能用（推荐）</b>
-          <p>macOS 签名公证 / Windows 安装向导 · 数据存你自己电脑</p>
+          <b>桌面版（推荐）</b>
+          <p>macOS 签名公证 / Windows 安装向导 · 数据存于本机</p>
         </div>
         <div class="deploy-divider"></div>
         <div class="deploy-col">
@@ -265,11 +265,11 @@
     </div>
   </section>
 
-  <!-- FAQ accordion with <details name="faq"> -->
+  <!-- FAQ accordion: exclusivity + smooth grid-rows animation driven by JS (.is-open) -->
   <section id="faq">
     <div class="container">
       <h2>你可能想问</h2>
-      <details name="faq" class="faq">
+      <details class="faq">
         <summary>
           它会乱动我的网盘吗？
           <svg class="chev" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -280,7 +280,7 @@
           <p>只做你手动也能做的转存和整理，全程每一步可见，凭证只在你自己的实例里。</p>
         </div>
       </details>
-      <details name="faq" class="faq">
+      <details class="faq">
         <summary>
           账号密码存在哪？
           <svg class="chev" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -291,7 +291,7 @@
           <p>你自己电脑（桌面版）或你自己的服务器，作者碰不到。</p>
         </div>
       </details>
-      <details name="faq" class="faq">
+      <details class="faq">
         <summary>
           要花钱吗？
           <svg class="chev" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -302,7 +302,7 @@
           <p>软件免费开源；你需要自己的网盘账号和一个 AI 服务的 key（任意 OpenAI 兼容接口）。</p>
         </div>
       </details>
-      <details name="faq" class="faq">
+      <details class="faq">
         <summary>
           支持哪些网盘？
           <svg class="chev" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -313,7 +313,7 @@
           <p>115、夸克、光鸭；网盘层是插件化接口，欢迎 PR 加新品牌。</p>
         </div>
       </details>
-      <details name="faq" class="faq">
+      <details class="faq">
         <summary>
           Windows 提示「已保护你的电脑」？
           <svg class="chev" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -330,13 +330,19 @@
   <!-- Final CTA -->
   <section id="cta">
     <div class="container">
-      <h2>觉得有用就试试</h2>
+      <h2>开始使用</h2>
       <div class="cta-final-row">
         <a class="pill cta-main cta-big" data-dl-cta href="https://github.com/fancydirty/mediary-scout/releases/latest">
           <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" width="20" height="20">
             <path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09l.01-.01zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/>
           </svg>
-          <span data-dl-label>下载 Mediary Scout（macOS）</span>
+          <span data-dl-cta-label>下载 macOS 版</span>
+        </a>
+        <a class="pill cta-dark cta-big" data-dl-cta href="https://github.com/fancydirty/mediary-scout/releases/latest">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" width="20" height="20">
+            <path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/>
+          </svg>
+          <span data-dl-cta-label>下载 Windows 版</span>
         </a>
         <a class="pill cta-outline cta-github" href="https://github.com/fancydirty/mediary-scout">
           <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" width="20" height="20">
