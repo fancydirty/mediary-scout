@@ -971,11 +971,13 @@ section {
 .faq::details-content {
   height: 0;
   overflow: hidden;
+  content-visibility: hidden;
   transition: height .3s ease, content-visibility .3s allow-discrete;
 }
 
 .faq[open]::details-content {
   height: auto;
+  content-visibility: visible;
 }
 
 .faq .faq-body > p {
