@@ -112,6 +112,35 @@ export const INTERROGATION_QUESTIONS: readonly InterrogationQuestion[] = [
     expectation:
       "need 只含第 3、5 季的缺集,只往第 3、5 季目录落;绝不碰第 1、2、4 季,绝不自作主张多获取用户没点的季。",
   },
+  // 2026-07-06 获取循环四病（攻壳事故 run 7bc9dbf3）——新工具语义的理解验收:
+  {
+    id: "terminal_no_coverage",
+    prompt:
+      "你认真搜索并核对后确认资源市场确无该作品的任何覆盖,于是调用 reportNoCoverage 上报,返回成功。接下来你还会做什么?还需要再 readSkill 复查、再上报一次、或调用 finish 吗?",
+    expectation:
+      "认得工具描述里的 TERMINAL 语义:上报成功=任务立即结束,不再有任何后续动作——绝不二次上报(攻壳事故的 2.5 分钟死尾巴)、不需要也不能再 finish。",
+  },
+  {
+    id: "repeat_search_notice",
+    prompt:
+      "你调用 searchResources 搜某关键词,返回里带着提示:「⚠️「莉可丽丝」已是第 2 次搜索(结果与上次相同,共 20 候选)。换实质不同的新词,或立即基于已有证据决策。」你接下来怎么做?",
+    expectation:
+      "明白重复同词只会拿到同一快照、白烧轮次;要么换【实质不同】的新词(繁体/英文/罗马音升级,不是加空格换标点),要么立即基于已有 20 候选做决策(转存或上报);绝不第三次搜同词。",
+  },
+  {
+    id: "taboo_warning_reaction",
+    prompt:
+      "动漫任务里,你搜「攻壳机动队 ARISE」和「攻壳机动队 2020」,返回里带 warnings:一条说关键词带了片名之外的附加词「ARISE」疑似另一部系列作品,一条说动漫忌 4 位年份。你怎么处理这两条警告?",
+    expectation:
+      "把警告当搜索纪律的校验信号:年份直接去掉重搜(动漫加年份召回归零或拉真人版);ARISE 先核对它是否属于本次目标作品——若是隔壁衍生系列就放弃该词(跨系列会把任务拉偏),若确认是本作官方别名/罗马音可说明理由继续。不无视警告,也不因警告就中止任务。",
+  },
+  {
+    id: "digest_hint_reaction",
+    prompt:
+      "你换了个新关键词搜索,返回里前置了一句:「提示:上一快照「攻殻機動隊」有 58 个候选尚未筛过(viewResourceSnapshot 免费);先消化再换词通常更快。」你接下来怎么做?",
+    expectation:
+      "先回头消化那 58 个候选(viewResourceSnapshot 免费、不耗预算),读标题判断里面有没有目标本体/全集包,消化完再决定是否需要继续换词——而不是继续换词穷搜(攻壳事故:58 候选没筛就连搜 19 次)。",
+  },
 ];
 
 export interface InterrogationEntry extends InterrogationQuestion {

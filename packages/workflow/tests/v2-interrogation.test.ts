@@ -31,6 +31,11 @@ describe("§6a interrogation harness (verify '聪明' before spending real money
         "ongoing_plus_completed_gap",
         "unobtainable_completed_gap",
         "only_some_remaining_seasons",
+        // 2026-07-06 获取循环四病（攻壳事故）新语义:
+        "terminal_no_coverage",
+        "repeat_search_notice",
+        "taboo_warning_reaction",
+        "digest_hint_reaction",
       ]),
     );
   });

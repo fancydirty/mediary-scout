@@ -80,6 +80,9 @@ describe("runMovieAcquisitionV2 — obtained comes from the AGENT'S coverage, ne
     expect(result.episodes[0]!.obtained).toBe(false);
     expect(result.notification.kind).toBe("no_coverage");
     expect(result.season.storageDirectoryId).toContain("movies_root"); // movie dir verify-or-created
+    // 病4: the movie path's bridged auditEvents carry the honest report — parity
+    // with the TV e2e (sandbox → orchestrator → movie workflow persistence).
+    expect(result.auditEvents.some((e) => e.type === "no_coverage_reported")).toBe(true);
   });
 
   it("transfers systemically BLOCKED (配额不足) → honest 转存失败 report, NOT 暂未找到资源 (别甩锅)", async () => {
