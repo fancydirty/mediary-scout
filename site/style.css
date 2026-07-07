@@ -961,12 +961,13 @@ section {
   transform: rotate(180deg);
 }
 
-/* Smooth accordion with zero JS: the ::details-content pseudo animates height 0↔auto
-   (interpolate-size on :root unlocks the keyword), driven purely by native [open] —
-   so exclusivity (name="faq"), a11y (aria-expanded), and the no-JS toggle are all
-   native and correct. Engines without ::details-content / interpolate-size ignore
-   these rules and fall back to the native instant toggle (still functional + a11y-
-   correct). allow-discrete keeps content-visibility from cutting the collapse short. */
+/* Smooth accordion driven purely by native [open]: the ::details-content pseudo
+   animates height 0↔auto (interpolate-size on :root unlocks the keyword). a11y
+   (aria-expanded) and the click toggle are native; exclusivity is native
+   details[name] with a tiny JS toggle-listener fallback (see initFAQ) for older
+   engines. Engines without ::details-content / interpolate-size ignore these rules
+   and fall back to the native instant toggle (still functional + a11y-correct).
+   allow-discrete keeps content-visibility from cutting the collapse short. */
 .faq::details-content {
   height: 0;
   overflow: hidden;

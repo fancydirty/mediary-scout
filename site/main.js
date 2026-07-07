@@ -188,8 +188,20 @@ function initHowScrolly() {
   setScene(0);
 }
 
-// FAQ needs no JS: native <details name="faq"> gives exclusivity + correct a11y,
-// and the smooth open/close is pure CSS (::details-content + interpolate-size).
+function initFAQ() {
+  const faqs = [...document.querySelectorAll("details.faq")];
+  if (faqs.length === 0) return;
+  // Exclusivity is native via <details name="faq"> (Chrome 120+ / FF 130+ / Safari
+  // 17.2+). This toggle listener is a progressive-enhancement FALLBACK for older
+  // engines without name-grouping: when one opens, close the others. It drives the
+  // native [open], so a11y semantics and the CSS ::details-content animation stay
+  // fully native/correct. No effect where name-grouping already handles it.
+  faqs.forEach((d) => {
+    d.addEventListener("toggle", () => {
+      if (d.open) faqs.forEach((o) => { if (o !== d) o.open = false; });
+    });
+  });
+}
 
 function initNavScroll() {
   const nav = document.querySelector("nav");
@@ -219,4 +231,5 @@ wireStars();
 wirePosters();
 initHowScrolly();
 initFeatureReveal();
+initFAQ();
 initNavScroll();

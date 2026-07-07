@@ -267,7 +267,8 @@
 
   <!-- FAQ accordion: native <details name="faq"> for exclusivity + a11y; smooth
        open/close via CSS ::details-content + interpolate-size (instant fallback on
-       engines without them). Zero JS — semantics stay fully native. -->
+       engines without them). initFAQ() adds only a toggle-listener exclusivity
+       fallback for engines without details[name] grouping — semantics stay native. -->
   <section id="faq">
     <div class="container">
       <h2>你可能想问</h2>
