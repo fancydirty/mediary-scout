@@ -188,12 +188,17 @@ function initFAQ() {
   const faqs = [...document.querySelectorAll("details.faq")];
   if (faqs.length === 0) return;
 
+  // Progressive enhancement gate: the .js class scopes the collapse CSS (max-height
+  // + visibility). WITHOUT JS, that CSS never applies, so the native <details>
+  // click-toggle reveals answers normally (no-JS fallback, nothing hidden).
+  document.documentElement.classList.add("js");
+
   // Keep native [open] set permanently so the content is always laid out (native
-  // <details> stops laying out closed content, which breaks any height/grid-rows
-  // transition). Visibility is driven by the .is-open class + a CSS grid-rows
-  // transition (0fr↔1fr auto-animates both ways). preventDefault takes over the
-  // native instant toggle; exclusivity closes the others.
-  // No-JS degradation: [open] is never set, so native click-to-toggle still works.
+  // <details> stops laying out closed content, which would break the max-height
+  // transition). The visible/collapsed state is driven by the .is-open class + a
+  // CSS max-height transition; collapsed bodies are visibility:hidden so screen
+  // readers don't read "closed" answers. preventDefault takes over the native
+  // instant toggle; exclusivity closes the others.
   faqs.forEach((d) => { d.open = true; });
 
   faqs.forEach((d) => {
@@ -202,9 +207,7 @@ function initFAQ() {
       const willOpen = !d.classList.contains("is-open");
       faqs.forEach((o) => o.classList.remove("is-open")); // exclusivity
       if (willOpen) d.classList.add("is-open");
-      // Belt-and-suspenders: keep [open] set so content stays laid out even if a
-      // browser let the native toggle through — visibility is the .is-open class's job.
-      faqs.forEach((o) => { o.open = true; });
+      faqs.forEach((o) => { o.open = true; }); // keep content laid out regardless
     });
   });
 }

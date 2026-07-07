@@ -965,15 +965,22 @@ section {
    the collapse is driven by the .is-open class, not [open]. overflow:hidden clips
    the answer as max-height animates. The open max-height only needs to exceed the
    tallest answer — the ease curve maps to it, and for these short answers reads as
-   a quick, smooth slide. */
-.faq .faq-body {
+   a quick, smooth slide.
+   Scoped under .js so that WITHOUT JavaScript none of this applies and the native
+   <details> click-toggle reveals answers normally. visibility:hidden on a collapsed
+   body keeps "closed" answers out of the accessibility tree (transitioned discretely
+   so it flips to visible on open and back to hidden only after the collapse). */
+.js .faq .faq-body {
   max-height: 0;
   overflow: hidden;
-  transition: max-height .3s ease;
+  visibility: hidden;
+  transition: max-height .3s ease, visibility 0s linear .3s;
 }
 
-.faq.is-open .faq-body {
-  max-height: 320px;
+.js .faq.is-open .faq-body {
+  max-height: 500px;
+  visibility: visible;
+  transition: max-height .3s ease, visibility 0s;
 }
 
 .faq .faq-body > p {
