@@ -955,7 +955,11 @@ section {
   color: var(--text-muted);
 }
 
-.faq.is-open .chev {
+/* JS mode: chevron follows .is-open. No-JS mode: [open] is not forced (initFAQ
+   never ran), so the native toggle's [open] drives it — scoped to html:not(.js)
+   so JS mode (where [open] is permanently true) doesn't rotate every chevron. */
+.faq.is-open .chev,
+html:not(.js) .faq[open] .chev {
   transform: rotate(180deg);
 }
 

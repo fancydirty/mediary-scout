@@ -29,21 +29,25 @@ async function wireDownloads() {
     }
   }
   const { version, items } = orderDownloads(release, detectPlatform(navigator.userAgent));
+  // Map by platform NAME, not items order: orderDownloads reverses items for Windows
+  // visitors, but every button's icon + label is platform-fixed in the HTML (order
+  // [mac, win] in both the hero and the final CTA). Indexing by items would swap
+  // the href under the wrong icon on Windows.
+  const byPlatform = Object.fromEntries(items.map((it) => [it.platform, it]));
+  const fixedOrder = ["mac", "win"];
+
+  // Hero buttons (macOS shows the version).
   document.querySelectorAll("[data-dl]").forEach((a, i) => {
-    const it = items[i]; if (!it) return;
+    const it = byPlatform[fixedOrder[i]]; if (!it) return;
     a.href = it.url;
-    a.querySelector("[data-dl-label]").textContent = it.label;
-    if (i === 0) a.querySelector("[data-dl-ver]").textContent = version;
+    const label = a.querySelector("[data-dl-label]"); if (label) label.textContent = it.label;
+    const ver = a.querySelector("[data-dl-ver]"); if (ver && i === 0) ver.textContent = version;
   });
 
-  // Wire the two final-CTA download buttons. Order is FIXED (mac, win) with static
-  // labels — match each button to its platform's url by name, not by items order
-  // (items flips for win visitors). Falls back to the releases page per orderDownloads.
-  const urlByPlatform = Object.fromEntries(items.map((it) => [it.platform, it.url]));
-  const ctaOrder = ["mac", "win"]; // matches the HTML button order
+  // Final-CTA buttons (static labels, same fixed [mac, win] order).
   document.querySelectorAll("[data-dl-cta]").forEach((btn, i) => {
-    const url = urlByPlatform[ctaOrder[i]];
-    if (url) btn.href = url;
+    const it = byPlatform[fixedOrder[i]];
+    if (it) btn.href = it.url;
   });
 }
 
@@ -199,15 +203,32 @@ function initFAQ() {
   // CSS max-height transition; collapsed bodies are visibility:hidden so screen
   // readers don't read "closed" answers. preventDefault takes over the native
   // instant toggle; exclusivity closes the others.
-  faqs.forEach((d) => { d.open = true; });
+  faqs.forEach((d) => {
+    const summary = d.querySelector("summary");
+    if (!summary) return; // malformed markup — leave this one to native behavior
+    d.open = true;
+    summary.setAttribute("aria-expanded", "false"); // real state lives here, not [open]
+  });
+
+  // Sync the a11y disclosure state to the .is-open class (not the always-true
+  // [open]) so assistive tech announces the correct expanded/collapsed item.
+  function syncAria() {
+    faqs.forEach((o) => {
+      const s = o.querySelector("summary");
+      if (s) s.setAttribute("aria-expanded", o.classList.contains("is-open") ? "true" : "false");
+    });
+  }
 
   faqs.forEach((d) => {
-    d.querySelector("summary").addEventListener("click", (e) => {
+    const summary = d.querySelector("summary");
+    if (!summary) return;
+    summary.addEventListener("click", (e) => {
       e.preventDefault();
       const willOpen = !d.classList.contains("is-open");
       faqs.forEach((o) => o.classList.remove("is-open")); // exclusivity
       if (willOpen) d.classList.add("is-open");
       faqs.forEach((o) => { o.open = true; }); // keep content laid out regardless
+      syncAria();
     });
   });
 }
