@@ -4,7 +4,16 @@ import { useState, useTransition } from "react";
 import { Check, ExternalLink, LoaderCircle } from "lucide-react";
 import { savePanSouBaseUrlAction } from "../app/actions";
 
-export function PanSouConfigForm({ baseURL: initialBaseURL }: { baseURL: string }) {
+const PANSOU_SELF_HOST_TUTORIAL_URL =
+  "https://github.com/fancydirty/mediary-scout/blob/main/docs/pansou-self-host.md";
+
+export function PanSouConfigForm({
+  baseURL: initialBaseURL,
+  isDesktop = false,
+}: {
+  baseURL: string;
+  isDesktop?: boolean;
+}) {
   const [isPending, startTransition] = useTransition();
   const [baseURL, setBaseURL] = useState(initialBaseURL);
   const [result, setResult] = useState<string | null>(null);
@@ -19,9 +28,19 @@ export function PanSouConfigForm({ baseURL: initialBaseURL }: { baseURL: string 
 
   return (
     <div className="push-form">
-      <p className="panel-note" style={{ marginBottom: 6 }}>
-        PanSou 是默认的网盘资源搜索源（已内置、开箱即用）。docker compose 部署会自动指向自带的 PanSou 容器；想换成别的实例或公共域名时在此手填覆盖。留空则回退到环境变量 / 公共默认实例。
-      </p>
+      {isDesktop ? (
+        <p className="panel-note" style={{ marginBottom: 6 }}>
+          桌面端<b>不含</b> PanSou 容器，当前默认指向作者的公共实例（资源有限、偶尔不稳）。想要更丰富的网盘源（尤其 115 分享、4K），请自建一个配好频道的 PanSou 实例，把地址填在下方。
+          {" "}
+          <a href={PANSOU_SELF_HOST_TUTORIAL_URL} target="_blank" rel="noopener noreferrer">
+            查看自建教程 <ExternalLink size={12} style={{ verticalAlign: "-1px" }} />
+          </a>
+        </p>
+      ) : (
+        <p className="panel-note" style={{ marginBottom: 6 }}>
+          PanSou 是默认的网盘资源搜索源（已内置、开箱即用）。docker compose 部署会自动指向自带的 PanSou 容器；想换成别的实例或公共域名时在此手填覆盖。留空则回退到环境变量 / 公共默认实例。
+        </p>
+      )}
       <p className="push-help" style={{ marginBottom: 12 }}>
         了解 PanSou{" "}
         <a href="https://github.com/fish2018/pansou" target="_blank" rel="noopener noreferrer">
