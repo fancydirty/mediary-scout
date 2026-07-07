@@ -256,7 +256,7 @@ export class TaskSandbox {
     // repeatNotice — so the comparison normalizes it first.
     const digestHint =
       this.pendingDigest && normalizeSearchKeyword(this.pendingDigest.keyword) !== normalized
-        ? `提示：上一快照「${this.pendingDigest.keyword}」有 ${this.pendingDigest.count} 个候选尚未筛过（viewResourceSnapshot 免费）；先消化再换词通常更快。`
+        ? `提示：上一快照「${this.pendingDigest.keyword}」有 ${this.pendingDigest.count} 个候选尚未筛过——候选列表就在你此前那次 searchResources 的返回里，回读不花预算；先消化再换词通常更快。`
         : undefined;
     if (digestHint) this.pendingDigest = null;
 

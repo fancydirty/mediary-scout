@@ -282,6 +282,11 @@ describe("searchResources 大快照消化提醒（病3）", () => {
     const second = await sandbox.searchResources("攻壳机动队 ARISE");
     expect(second.digestHint).toContain("攻殻機動隊");
     expect(second.digestHint).toContain("58");
+    // 提示必须指对地方：待消化的永远是 agent 自己的搜索快照（prime 从不注册
+    // pendingDigest），其候选列表在先前 searchResources 的返回里——而
+    // viewResourceSnapshot 只能看 raw 预搜快照，指过去就是指错。
+    expect(second.digestHint).not.toContain("viewResourceSnapshot");
+    expect(second.digestHint).toContain("回读");
     // 只提示一次/快照：
     const third = await sandbox.searchResources("攻殻機動隊");
     expect(third.digestHint).toBeUndefined();

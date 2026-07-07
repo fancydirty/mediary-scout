@@ -151,6 +151,15 @@ describe("animeSearchTabooWarnings（病2b — 硬规则转校验器，警告不
     expect(w.some((x) => x.includes("年份"))).toBe(true);
   });
 
+  it("年份是正牌标题的一部分 → 豁免（SAC_2045 / 2046 这类片名自带年份数字）", () => {
+    // 问询判卷抓出的误伤面：MiMo 的合法升级词「攻殻機動隊 SAC_2045」会被年份
+    // 规则误警——2045 就是官方标题的一部分。出现在任一 titleTerm 里的 4 位数字
+    // 不是禁忌年份，是名字。
+    const terms = ["攻壳机动队 SAC_2045", "攻殻機動隊 SAC_2045", "Ghost in the Shell: SAC_2045"];
+    const w = animeSearchTabooWarnings({ keyword: "攻殻機動隊 SAC_2045", profile: "jp-anime", titleTerms: terms });
+    expect(w.some((x) => x.includes("年份"))).toBe(false);
+  });
+
   it("动漫 + 片名外的拉丁附加词 → 疑似跨系列警告（攻壳事故的「ARISE」）", () => {
     const w = animeSearchTabooWarnings({ keyword: "攻壳机动队 ARISE", profile: "jp-anime", titleTerms });
     expect(w.some((x) => x.includes("ARISE"))).toBe(true);

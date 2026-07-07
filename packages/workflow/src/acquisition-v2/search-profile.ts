@@ -208,7 +208,12 @@ export function animeSearchTabooWarnings(input: {
   const warnings: string[] = [];
   const lowerTerms = input.titleTerms.map((t) => t.toLowerCase());
 
-  if (/(?:19|20)\d{2}/.test(input.keyword)) {
+  // 出现在片名/别名里的 4 位数字不是禁忌年份，是名字本身（SAC_2045 / 2046 /
+  // Blade Runner 2049）——问询判卷抓出的误伤面，豁免。
+  const foreignYears = [...input.keyword.matchAll(/(?:19|20)\d{2}/g)]
+    .map((m) => m[0])
+    .filter((year) => !input.titleTerms.some((term) => term.includes(year)));
+  if (foreignYears.length > 0) {
     warnings.push(
       "⚠️ 关键词含 4 位年份——动漫忌年份（召回归零或拉同名真人版，见搜索配方）。除非你有明确证据这是必要消歧，否则去掉年份重搜。",
     );

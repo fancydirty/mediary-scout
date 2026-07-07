@@ -137,9 +137,9 @@ export const INTERROGATION_QUESTIONS: readonly InterrogationQuestion[] = [
   {
     id: "digest_hint_reaction",
     prompt:
-      "你换了个新关键词搜索,返回里前置了一句:「提示:上一快照「攻殻機動隊」有 58 个候选尚未筛过(viewResourceSnapshot 免费);先消化再换词通常更快。」你接下来怎么做?",
+      "你换了个新关键词搜索,返回里前置了一句:「提示:上一快照「攻殻機動隊」有 58 个候选尚未筛过——候选列表就在你此前那次 searchResources 的返回里,回读不花预算;先消化再换词通常更快。」你接下来怎么做?",
     expectation:
-      "先回头消化那 58 个候选(viewResourceSnapshot 免费、不耗预算),读标题判断里面有没有目标本体/全集包,消化完再决定是否需要继续换词——而不是继续换词穷搜(攻壳事故:58 候选没筛就连搜 19 次)。",
+      "先回头消化那 58 个候选(回读自己先前 searchResources 返回的候选列表,不花预算),读标题判断里面有没有目标本体/全集包,消化完再决定是否需要继续换词——而不是继续换词穷搜(攻壳事故:58 候选没筛就连搜 19 次)。",
   },
 ];
 
