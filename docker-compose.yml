@@ -21,6 +21,11 @@ services:
     # From ghcr.io — a Docker Hub registry mirror does NOT cover this. If ghcr is
     # blocked (mainland China), set PANSOU_IMAGE in .env to a ghcr mirror/proxy.
     image: ${PANSOU_IMAGE:-ghcr.io/fish2018/pansou-web:latest}
+    # Good channel/plugin defaults (115 + 网盘源 Telegram channels). WITHOUT this,
+    # a fresh pansou-web indexes only magnet channels and returns ZERO 115 shares —
+    # the agent then never sees the good 网盘 4K/REMUX resources. See the file header.
+    env_file:
+      - deploy/pansou.channels.env
     restart: unless-stopped
 
   web:

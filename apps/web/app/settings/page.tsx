@@ -39,6 +39,7 @@ import {
   PROWLARR_API_KEY_SETTING_KEY,
   PANSOU_BASE_URL_SETTING_KEY,
   resolveGlobalWorkspace,
+  resolveIsDesktop,
 } from "../../lib/workflow-runtime";
 import { brandSupportsProwlarr } from "@media-track/workflow";
 import { isDemoMode } from "../../lib/demo-mode";
@@ -266,6 +267,7 @@ async function ResourceProviderSection() {
   // setups (no connected_storages rows) so we never hide it from a working 115.
   const drives = await getAccountConnectedStorages();
   const showProwlarr = drives.length === 0 || drives.some((drive) => brandSupportsProwlarr(drive.provider));
+  const isDesktop = resolveIsDesktop();
 
   return (
     <section className="panel" style={{ maxWidth: 720, marginTop: 24 }}>
@@ -276,12 +278,12 @@ async function ResourceProviderSection() {
             资源提供商
           </h2>
           <p className="panel-note">
-            agent 搜资源的来源；PanSou（网盘）默认内置
+            agent 搜资源的来源；PanSou（网盘）{isDesktop ? "建议自建实例" : "默认内置"}
             {showProwlarr ? "，Prowlarr（磁力/PT）可选加挂，二者结果合并" : "（夸克盘不支持磁力，已隐藏 Prowlarr）"}
           </p>
         </div>
       </div>
-      <PanSouConfigForm baseURL={pansouBaseURL} />
+      <PanSouConfigForm baseURL={pansouBaseURL} isDesktop={isDesktop} />
       {showProwlarr ? (
         <>
           <div style={{ height: 18 }} />

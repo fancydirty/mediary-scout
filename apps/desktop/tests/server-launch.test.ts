@@ -17,6 +17,7 @@ describe("buildServerEnv", () => {
     expect(env.HOSTNAME).toBe("127.0.0.1");
     expect(env.MEDIA_TRACK_PATROL_IGNORE_TIME_GATE).toBe("1");
     expect(env.ELECTRON_RUN_AS_NODE).toBe("1");
+    expect(env.MEDIA_TRACK_DESKTOP).toBe("1"); // desktop shell identity → honest PanSou copy
     expect(env.EXISTING).toBe("keep"); // preserves the base env
   });
 

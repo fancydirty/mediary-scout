@@ -10,6 +10,7 @@ import {
   movieTargetFromTmdbId,
   PANSOU_BASE_URL_SETTING_KEY,
   DEFAULT_PANSOU_BASE_URL,
+  resolveIsDesktop,
   getTmdbAccesses,
   LLM_BASE_URL_SETTING_KEY,
   LLM_MODEL_ID_SETTING_KEY,
@@ -17,6 +18,19 @@ import {
   PROWLARR_BASE_URL_SETTING_KEY,
   TMDB_API_KEY_SETTING_KEY,
 } from "./workflow-runtime";
+
+describe("resolveIsDesktop", () => {
+  it("MEDIA_TRACK_DESKTOP=1 → true (Electron server-launch sets this)", () => {
+    expect(resolveIsDesktop({ MEDIA_TRACK_DESKTOP: "1" })).toBe(true);
+  });
+  it("unset → false (docker/web)", () => {
+    expect(resolveIsDesktop({})).toBe(false);
+  });
+  it("other value → false (only exact \"1\" counts)", () => {
+    expect(resolveIsDesktop({ MEDIA_TRACK_DESKTOP: "0" })).toBe(false);
+    expect(resolveIsDesktop({ MEDIA_TRACK_DESKTOP: "true" })).toBe(false);
+  });
+});
 
 function repoWith(value: string | null) {
   return { getSetting: async () => value };
