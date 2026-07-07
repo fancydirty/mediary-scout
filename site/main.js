@@ -188,50 +188,8 @@ function initHowScrolly() {
   setScene(0);
 }
 
-function initFAQ() {
-  const faqs = [...document.querySelectorAll("details.faq")];
-  if (faqs.length === 0) return;
-
-  // Progressive enhancement gate: the .js class scopes the collapse CSS (max-height
-  // + visibility). WITHOUT JS, that CSS never applies, so the native <details>
-  // click-toggle reveals answers normally (no-JS fallback, nothing hidden).
-  document.documentElement.classList.add("js");
-
-  // Keep native [open] set permanently so the content is always laid out (native
-  // <details> stops laying out closed content, which would break the max-height
-  // transition). The visible/collapsed state is driven by the .is-open class + a
-  // CSS max-height transition; collapsed bodies are visibility:hidden so screen
-  // readers don't read "closed" answers. preventDefault takes over the native
-  // instant toggle; exclusivity closes the others.
-  faqs.forEach((d) => {
-    const summary = d.querySelector("summary");
-    if (!summary) return; // malformed markup — leave this one to native behavior
-    d.open = true;
-    summary.setAttribute("aria-expanded", "false"); // real state lives here, not [open]
-  });
-
-  // Sync the a11y disclosure state to the .is-open class (not the always-true
-  // [open]) so assistive tech announces the correct expanded/collapsed item.
-  function syncAria() {
-    faqs.forEach((o) => {
-      const s = o.querySelector("summary");
-      if (s) s.setAttribute("aria-expanded", o.classList.contains("is-open") ? "true" : "false");
-    });
-  }
-
-  faqs.forEach((d) => {
-    const summary = d.querySelector("summary");
-    if (!summary) return;
-    summary.addEventListener("click", (e) => {
-      e.preventDefault();
-      const willOpen = !d.classList.contains("is-open");
-      faqs.forEach((o) => o.classList.remove("is-open")); // exclusivity
-      if (willOpen) d.classList.add("is-open");
-      faqs.forEach((o) => { o.open = true; }); // keep content laid out regardless
-      syncAria();
-    });
-  });
-}
+// FAQ needs no JS: native <details name="faq"> gives exclusivity + correct a11y,
+// and the smooth open/close is pure CSS (::details-content + interpolate-size).
 
 function initNavScroll() {
   const nav = document.querySelector("nav");
@@ -261,5 +219,4 @@ wireStars();
 wirePosters();
 initHowScrolly();
 initFeatureReveal();
-initFAQ();
 initNavScroll();

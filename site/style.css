@@ -8,6 +8,8 @@
   --border-subtle:#242424;
   --dot-red:#f3727f; --dot-orange:#ffa42b;
   --hairline-gradient:linear-gradient(90deg, transparent, #242424 25%, #242424 75%, transparent);
+  /* Unlocks the height:0↔auto animation for the FAQ ::details-content (Chromium 129+). */
+  interpolate-size: allow-keywords;
 }
 * { box-sizing:border-box; } body { margin:0; background:var(--bg-base); color:var(--text); font-family:var(--font); line-height:1.5; }
 .skip-link{position:absolute;top:-40px;left:0;background:var(--accent);color:#000;padding:8px 16px;border-radius:0 0 4px 0;font-weight:700;text-decoration:none;z-index:200}.skip-link:focus{top:0}
@@ -955,36 +957,24 @@ section {
   color: var(--text-muted);
 }
 
-/* JS mode: chevron follows .is-open. No-JS mode: [open] is not forced (initFAQ
-   never ran), so the native toggle's [open] drives it — scoped to html:not(.js)
-   so JS mode (where [open] is permanently true) doesn't rotate every chevron. */
-.faq.is-open .chev,
-html:not(.js) .faq[open] .chev {
+.faq[open] .chev {
   transform: rotate(180deg);
 }
 
-/* Smooth accordion via max-height (bulletproof, every browser). initFAQ keeps
-   native [open] set permanently so the content is always laid out (native
-   <details> stops laying out closed content, which would break the transition);
-   the collapse is driven by the .is-open class, not [open]. overflow:hidden clips
-   the answer as max-height animates. The open max-height only needs to exceed the
-   tallest answer — the ease curve maps to it, and for these short answers reads as
-   a quick, smooth slide.
-   Scoped under .js so that WITHOUT JavaScript none of this applies and the native
-   <details> click-toggle reveals answers normally. visibility:hidden on a collapsed
-   body keeps "closed" answers out of the accessibility tree (transitioned discretely
-   so it flips to visible on open and back to hidden only after the collapse). */
-.js .faq .faq-body {
-  max-height: 0;
+/* Smooth accordion with zero JS: the ::details-content pseudo animates height 0↔auto
+   (interpolate-size on :root unlocks the keyword), driven purely by native [open] —
+   so exclusivity (name="faq"), a11y (aria-expanded), and the no-JS toggle are all
+   native and correct. Engines without ::details-content / interpolate-size ignore
+   these rules and fall back to the native instant toggle (still functional + a11y-
+   correct). allow-discrete keeps content-visibility from cutting the collapse short. */
+.faq::details-content {
+  height: 0;
   overflow: hidden;
-  visibility: hidden;
-  transition: max-height .3s ease, visibility 0s linear .3s;
+  transition: height .3s ease, content-visibility .3s allow-discrete;
 }
 
-.js .faq.is-open .faq-body {
-  max-height: 500px;
-  visibility: visible;
-  transition: max-height .3s ease, visibility 0s;
+.faq[open]::details-content {
+  height: auto;
 }
 
 .faq .faq-body > p {
@@ -996,7 +986,7 @@ html:not(.js) .faq[open] .chev {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .faq .faq-body,
+  .faq::details-content,
   .faq .chev {
     transition: none;
   }

@@ -265,12 +265,13 @@
     </div>
   </section>
 
-  <!-- FAQ accordion: JS-driven exclusivity + smooth max-height animation (.is-open);
-       collapse CSS is .js-scoped so native <details> toggle works without JS -->
+  <!-- FAQ accordion: native <details name="faq"> for exclusivity + a11y; smooth
+       open/close via CSS ::details-content + interpolate-size (instant fallback on
+       engines without them). Zero JS — semantics stay fully native. -->
   <section id="faq">
     <div class="container">
       <h2>你可能想问</h2>
-      <details class="faq">
+      <details name="faq" class="faq">
         <summary>
           它会乱动我的网盘吗？
           <svg class="chev" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -281,7 +282,7 @@
           <p>只做你手动也能做的转存和整理，全程每一步可见，凭证只在你自己的实例里。</p>
         </div>
       </details>
-      <details class="faq">
+      <details name="faq" class="faq">
         <summary>
           账号密码存在哪？
           <svg class="chev" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -292,7 +293,7 @@
           <p>你自己电脑（桌面版）或你自己的服务器，作者碰不到。</p>
         </div>
       </details>
-      <details class="faq">
+      <details name="faq" class="faq">
         <summary>
           要花钱吗？
           <svg class="chev" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -303,7 +304,7 @@
           <p>软件免费开源；你需要自己的网盘账号和一个 AI 服务的 key（任意 OpenAI 兼容接口）。</p>
         </div>
       </details>
-      <details class="faq">
+      <details name="faq" class="faq">
         <summary>
           支持哪些网盘？
           <svg class="chev" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -314,7 +315,7 @@
           <p>115、夸克、光鸭；网盘层是插件化接口，欢迎 PR 加新品牌。</p>
         </div>
       </details>
-      <details class="faq">
+      <details name="faq" class="faq">
         <summary>
           Windows 提示「已保护你的电脑」？
           <svg class="chev" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
