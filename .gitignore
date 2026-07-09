@@ -50,3 +50,7 @@ apps/desktop/dist-app/
 .playwright-cli/
 .superpowers/
 .wrangler/
+
+# 本地推广草稿与素材（docs/promo/README.md 自述不入公共 repo）
+docs/promo/
+docs/images/devto-cover.*

@@ -350,15 +350,30 @@ describe("runScheduledType3（per-slot 认领 + 合并补跑）", () => {
     expect(await claims(repository)).toEqual({ date: "2026-07-09", slots: ["06:00"] });
   });
 
-  it("已全部认领 → already_swept_today，不再跑", async () => {
+  it("两 slot 之间（第一个已认领）→ before_scheduled_time + 下一个 slot（今天还会再跑，别谎报 already_swept）", async () => {
     const repository = await boot(
       { daily_sweep_times: TIMES, last_sweep_claims: JSON.stringify({ date: "2026-07-09", slots: ["06:00"] }) },
       "2026-07-09T06:31",
     );
     const result = await rt.runScheduledType3();
-    expect(result.skipped).toBe("already_swept_today");
+    expect(result.skipped).toBe("before_scheduled_time");
+    expect(result.scheduledFor).toBe("21:00");
     expect(monitor).not.toHaveBeenCalled();
     expect(await claims(repository)).toEqual({ date: "2026-07-09", slots: ["06:00"] });
+  });
+
+  it("最后一个 slot 之后且全部已认领 → already_swept_today", async () => {
+    const repository = await boot(
+      {
+        daily_sweep_times: TIMES,
+        last_sweep_claims: JSON.stringify({ date: "2026-07-09", slots: ["06:00", "21:00"] }),
+      },
+      "2026-07-09T22:00",
+    );
+    const result = await rt.runScheduledType3();
+    expect(result.skipped).toBe("already_swept_today");
+    expect(monitor).not.toHaveBeenCalled();
+    expect(repository).toBeTruthy();
   });
 
   it("全部未到点 → before_scheduled_time + 下一个 slot", async () => {
@@ -416,11 +431,12 @@ describe("runScheduledType3（per-slot 认领 + 合并补跑）", () => {
     expect((await repository.getSetting(rt.LAST_SWEEP_CLAIMS_SETTING_KEY)) ?? null).toBeNull();
   });
 
-  it("升级迁移：legacy last_sweep_date=今天 → 今天已到点的 slot 视为已认领（不重扫）", async () => {
+  it("升级迁移：legacy last_sweep_date=今天 → 已到点的 slot 视为已认领（不重扫），未到的 slot 照常预告", async () => {
     await boot({ daily_sweep_times: TIMES, last_sweep_date: "2026-07-09" }, "2026-07-09T12:00");
     const result = await rt.runScheduledType3();
-    expect(result.skipped).toBe("already_swept_today");
-    expect(monitor).not.toHaveBeenCalled();
+    expect(monitor).not.toHaveBeenCalled(); // 升级当日绝不按新语义重扫
+    expect(result.skipped).toBe("before_scheduled_time"); // 21:00 今天还会照常跑
+    expect(result.scheduledFor).toBe("21:00");
   });
 
   it("成功后写 last_sweep_completed_at（含定时路径）", async () => {

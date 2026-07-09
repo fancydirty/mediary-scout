@@ -1246,11 +1246,13 @@ export async function runScheduledType3(options?: {
     priorClaims = await readSweepClaims(repository, date);
     const due = times.filter((slot) => hhmm >= slot && !priorClaims.includes(slot));
     if (due.length === 0) {
-      if (times.some((slot) => hhmm >= slot)) {
-        return { skipped: "already_swept_today", outcomes: [] };
+      // 还有未到点的 slot → 今天还会再跑，如实报 before_scheduled_time + 下一个
+      // 时间点；只有过了最后一个 slot 且全部认领过才是 already_swept_today。
+      const next = times.find((slot) => slot > hhmm);
+      if (next) {
+        return { skipped: "before_scheduled_time", scheduledFor: next, outcomes: [] };
       }
-      const next = times.find((slot) => slot > hhmm) ?? times[0]!;
-      return { skipped: "before_scheduled_time", scheduledFor: next, outcomes: [] };
+      return { skipped: "already_swept_today", outcomes: [] };
     }
     // 先认领后跑（含本次到期的全部 slot）：并发触发只会 no-op；整体失败在 catch
     // 里回滚到 priorClaims，下一个 tick 重试今天而不是等到明天。
