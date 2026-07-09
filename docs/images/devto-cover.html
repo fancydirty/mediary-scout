@@ -1,0 +1,76 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:1000px; height:420px; }
+  body {
+    background:#121212;
+    color:#fff;
+    font-family:-apple-system,"Helvetica Neue",Helvetica,Arial,sans-serif;
+    position:relative;
+    overflow:hidden;
+  }
+  /* site hero glow */
+  .glow {
+    position:absolute; inset:0;
+    background:radial-gradient(120% 95% at 22% -25%, rgba(30,215,96,.30), rgba(30,215,96,.05) 44%, #121212 74%);
+  }
+  .frame {
+    position:absolute; inset:0;
+    padding:52px 60px;
+    display:flex; flex-direction:column; justify-content:space-between;
+  }
+  .brand { display:flex; align-items:center; gap:12px; }
+  .brand svg { display:block; }
+  .brand .name { font-size:22px; font-weight:600; letter-spacing:-0.01em; }
+  .headline {
+    font-size:66px; font-weight:700; line-height:1.04; letter-spacing:-0.03em;
+  }
+  .headline .g { color:#1ed760; }
+  .sub {
+    margin-top:22px;
+    font-size:21px; line-height:1.42; font-weight:400;
+    color:#b3b3b3; max-width:760px; letter-spacing:-0.01em;
+  }
+  .foot { display:flex; align-items:center; gap:14px; }
+  .foot .rule { flex:0 0 40px; height:2px; background:#1ed760; }
+  .foot .tags {
+    font-family:"SF Mono",ui-monospace,Menlo,Monaco,"Courier New",monospace;
+    font-size:15px; color:#7c7c7c; letter-spacing:0.02em;
+  }
+  .foot .tags b { color:#b3b3b3; font-weight:500; }
+</style>
+</head>
+<body>
+  <div class="glow"></div>
+  <div class="frame">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" width="34" height="34" aria-hidden="true">
+        <circle cx="16" cy="16" r="16" fill="#1ED760"/>
+        <g transform="translate(4,4)" fill="none" stroke="#0B3B1E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/>
+          <path d="m14.31 8 5.74 9.94"/>
+          <path d="M9.69 8h11.48"/>
+          <path d="m7.38 12 5.74-9.94"/>
+          <path d="M9.69 16 3.95 6.06"/>
+          <path d="M14.31 16H2.83"/>
+          <path d="m16.62 12-5.74 9.94"/>
+        </g>
+      </svg>
+      <span class="name">Mediary Scout</span>
+    </div>
+
+    <div>
+      <div class="headline">The agent proposes.<br><span class="g">The workflow decides.</span></div>
+      <div class="sub">A probabilistic core, wrapped in deterministic plumbing that owns every irreversible action, gates every number the model emits, and verifies against the real world.</div>
+    </div>
+
+    <div class="foot">
+      <span class="rule"></span>
+      <span class="tags"><b>LLM agents</b> · giving a model real side-effect powers · <b>open source</b></span>
+    </div>
+  </div>
+</body>
+</html>

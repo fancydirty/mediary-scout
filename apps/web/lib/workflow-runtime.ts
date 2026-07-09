@@ -1170,7 +1170,42 @@ export async function queueCandidateSeries(
   };
 }
 
+/** Legacy 单日一次闸的 key——仅供升级迁移读，不再写入。 */
 export const LAST_SWEEP_DATE_SETTING_KEY = "last_sweep_date";
+export const LAST_SWEEP_CLAIMS_SETTING_KEY = "last_sweep_claims";
+export const LAST_SWEEP_COMPLETED_AT_SETTING_KEY = "last_sweep_completed_at";
+
+interface SweepClaims {
+  date: string;
+  slots: string[];
+}
+
+/** 今天已认领的时间点。升级迁移：只有 legacy last_sweep_date=今天时，视「已到点
+ *  的 slot 全部已认领」，避免升级当日按新语义重扫一遍。 */
+async function readSweepClaims(
+  repository: { getSetting(key: string): Promise<string | null> },
+  today: string,
+): Promise<string[]> {
+  const raw = (await repository.getSetting(LAST_SWEEP_CLAIMS_SETTING_KEY))?.trim();
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as Partial<SweepClaims>;
+      if (parsed.date === today && Array.isArray(parsed.slots)) {
+        return parsed.slots.filter((slot): slot is string => typeof slot === "string");
+      }
+    } catch {
+      // 烂 JSON 当无认领
+    }
+    return [];
+  }
+  const legacyDate = (await repository.getSetting(LAST_SWEEP_DATE_SETTING_KEY))?.trim();
+  if (legacyDate === today) {
+    const times = await getDailySweepTimes(repository);
+    const { hhmm } = beijingDateTime();
+    return times.filter((slot) => hhmm >= slot);
+  }
+  return [];
+}
 
 /** Beijing wall-clock "date" (YYYY-MM-DD) and "HH:MM" right now. */
 function beijingDateTime(): { date: string; hhmm: string } {
@@ -1188,43 +1223,43 @@ function beijingDateTime(): { date: string; hhmm: string } {
 }
 
 /**
- * The daily 巡检. The configured sweep time is the single source of truth: any
- * trigger (Vercel cron, self-hosted scheduler, manual) just pings this, and the
- * gate runs the sweep at most once per Beijing day, only once the clock has
- * reached the user-configured time — so the Settings time is authoritative
- * regardless of how often the trigger fires. `force` bypasses the gate for
- * on-demand "sweep now".
+ * 每日巡检（per-slot 认领 + 合并补跑）。任何触发源（worker tick / cron / 手动）都
+ * 打这里：每次找出「已到点且今天未认领」的时间点，一次性全部认领并只跑一次 sweep
+ * ——常开机器各 slot 准点触发；迟启动（桌面）自动补跑一次；错过整天不重放。桌面与
+ * 容器同一语义（原 ignoreTimeGate 特例已退役）。`force` 跑完整 sweep 但不认领任何
+ * slot（run-now 不得吞掉计划任务）。
  */
 export async function runScheduledType3(options?: {
   force?: boolean;
-  ignoreTimeGate?: boolean;
 }): Promise<{
   outcomes: Awaited<ReturnType<typeof runScheduledType3Monitoring>>;
   skipped?: "already_swept_today" | "before_scheduled_time";
   scheduledFor?: string;
 }> {
   const repository = getWorkflowRepository();
-  let claimedDay = false;
+  let claimedNow: string[] = [];
+  let priorClaims: string[] = [];
+  let claimDate = "";
   if (!options?.force) {
-    const target = await getDailySweepTime(repository);
+    const times = await getDailySweepTimes(repository);
     const { date, hhmm } = beijingDateTime();
-    const lastDate = (await repository.getSetting(LAST_SWEEP_DATE_SETTING_KEY))?.trim();
-    if (date === lastDate) {
-      return { skipped: "already_swept_today", outcomes: [] };
+    priorClaims = await readSweepClaims(repository, date);
+    const due = times.filter((slot) => hhmm >= slot && !priorClaims.includes(slot));
+    if (due.length === 0) {
+      if (times.some((slot) => hhmm >= slot)) {
+        return { skipped: "already_swept_today", outcomes: [] };
+      }
+      const next = times.find((slot) => slot > hhmm) ?? times[0]!;
+      return { skipped: "before_scheduled_time", scheduledFor: next, outcomes: [] };
     }
-    // Desktop's "first open of the day" trigger passes ignoreTimeGate to bypass
-    // ONLY this wall-clock guard — the once-per-day guard above still holds, so
-    // the sweep stays idempotent within a Beijing day. Container/prod never set
-    // the flag, so the configured sweep time remains authoritative there.
-    if (!options?.ignoreTimeGate && hhmm < target) {
-      return { skipped: "before_scheduled_time", scheduledFor: target, outcomes: [] };
-    }
-    // Claim the day BEFORE running, so a second near-simultaneous trigger no-ops
-    // instead of launching a duplicate sweep. If the sweep then fails wholesale
-    // (cookie hydration, agent-node init, infra), we RELEASE the claim below so
-    // the next ping retries today rather than skipping until tomorrow.
-    await repository.setSetting(LAST_SWEEP_DATE_SETTING_KEY, date);
-    claimedDay = true;
+    // 先认领后跑（含本次到期的全部 slot）：并发触发只会 no-op；整体失败在 catch
+    // 里回滚到 priorClaims，下一个 tick 重试今天而不是等到明天。
+    claimDate = date;
+    claimedNow = due;
+    await repository.setSetting(
+      LAST_SWEEP_CLAIMS_SETTING_KEY,
+      JSON.stringify({ date, slots: [...priorClaims, ...due].sort() }),
+    );
   }
   const startedAt = new Date().toISOString();
   let result: Awaited<ReturnType<typeof runScheduledType3Monitoring>>;
@@ -1248,15 +1283,20 @@ export async function runScheduledType3(options?: {
       resolveAccountContext: buildAccountContextResolver(),
       ...(sync ? { syncSeasonMetadata: sync } : {}),
     });
+    await repository.setSetting(LAST_SWEEP_COMPLETED_AT_SETTING_KEY, new Date().toISOString());
     await pushNotificationsSince(repository, startedAt);
     return { outcomes: result };
   } catch (error) {
-    // The sweep failed before completing — release today's claim so the next
-    // ping retries instead of skipping until tomorrow. Per-season failures are
-    // swallowed inside the monitor, so this only fires on infra-level errors.
-    if (claimedDay) {
+    // The sweep failed before completing — release THIS call's claims (keep the
+    // prior ones) so the next ping retries today's due slots instead of skipping
+    // until tomorrow. Per-season failures are swallowed inside the monitor, so
+    // this only fires on infra-level errors.
+    if (claimedNow.length > 0) {
       try {
-        await repository.setSetting(LAST_SWEEP_DATE_SETTING_KEY, "");
+        await repository.setSetting(
+          LAST_SWEEP_CLAIMS_SETTING_KEY,
+          JSON.stringify({ date: claimDate, slots: priorClaims }),
+        );
       } catch {
         // best-effort release; nothing else to do
       }

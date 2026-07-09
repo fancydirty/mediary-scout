@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   acquireLlmPreflightError,
   customDirNamesFromEnv,
@@ -300,52 +300,133 @@ describe("getWorkflowRepository (desktop SQLite selection)", () => {
   });
 });
 
-describe("runScheduledType3 (ignoreTimeGate — desktop first-open-of-the-day patrol)", () => {
-  // The desktop app must run the daily sweep on the first tick of a new day
-  // regardless of wall-clock time (ignoreTimeGate), while STILL running at most
-  // once per Beijing day. Container/prod keep the wall-clock gate (flag unset).
-  // Harness: an in-memory SQLite repo (real getSetting/setSetting so the day-claim
-  // is exercised for real) + a stubbed runScheduledType3Monitoring so no real
-  // drive/agent/model is needed. daily_sweep_time is pinned to "23:59" so the
-  // wall-clock gate WOULD fire regardless of when this test runs.
-  it("runs before the scheduled time but still respects once-per-day", async () => {
-    const prevPg = process.env.MEDIA_TRACK_POSTGRES_URL;
+describe("runScheduledType3（per-slot 认领 + 合并补跑）", () => {
+  // 每 tick 认领全部「已到点且今天未认领」的时间点、只跑一次 sweep —— 常开机器各
+  // slot 准点触发；迟启动（桌面）自动补跑一次；错过整天不重放。桌面与容器同一语义
+  // （原 MEDIA_TRACK_PATROL_IGNORE_TIME_GATE 特例已退役）。
+  // Harness 沿用旧 desktop describe：内存 SQLite 真 get/setSetting、fake Date 钉
+  // 北京钟（UTC+8）、stub runScheduledType3Monitoring 免真盘真模型。
+  const monitor = vi.fn(async () => []);
+  const prevPg = process.env.MEDIA_TRACK_POSTGRES_URL;
+  let rt: typeof import("./workflow-runtime");
+
+  const boot = async (settings: Record<string, string>, beijingISO: string) => {
+    monitor.mockClear();
+    monitor.mockImplementation(async () => []);
     process.env.MEDIA_TRACK_SQLITE_PATH = ":memory:";
     delete process.env.MEDIA_TRACK_POSTGRES_URL;
-    // Freeze the clock (Date only) at a fixed mid-day Beijing instant so beijingDateTime()
-    // returns a STABLE date for both calls — otherwise the test can flake across Beijing
-    // midnight (the two calls seeing different dates would break once-per-day). 04:00 UTC =
-    // 12:00 Beijing, safely < the pinned 23:59 sweep time so the wall-clock gate still applies.
     vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(new Date("2026-07-05T04:00:00.000Z"));
+    vi.setSystemTime(new Date(`${beijingISO}:00.000+08:00`));
     vi.resetModules();
-    const monitor = vi.fn(async () => []);
     vi.doMock("@media-track/workflow", async () => {
       const actual = await vi.importActual<typeof import("@media-track/workflow")>("@media-track/workflow");
       return { ...actual, runScheduledType3Monitoring: monitor };
     });
-    try {
-      const { runScheduledType3, getWorkflowRepository, DAILY_SWEEP_TIME_SETTING_KEY } = await import(
-        "./workflow-runtime"
-      );
-      // Pin the sweep time to the very end of the day so the wall-clock gate WOULD
-      // block a plain call regardless of the actual time this test runs.
-      await getWorkflowRepository().setSetting(DAILY_SWEEP_TIME_SETTING_KEY, "23:59");
-
-      const first = await runScheduledType3({ ignoreTimeGate: true });
-      expect(first.skipped).toBeUndefined(); // ran despite before-time
-      expect(monitor).toHaveBeenCalledTimes(1);
-
-      const second = await runScheduledType3({ ignoreTimeGate: true });
-      expect(second.skipped).toBe("already_swept_today"); // day gate still holds
-      expect(monitor).toHaveBeenCalledTimes(1); // not run a second time today
-    } finally {
-      delete process.env.MEDIA_TRACK_SQLITE_PATH;
-      if (prevPg !== undefined) process.env.MEDIA_TRACK_POSTGRES_URL = prevPg;
-      vi.useRealTimers();
-      vi.doUnmock("@media-track/workflow");
-      vi.resetModules();
+    rt = await import("./workflow-runtime");
+    const repository = rt.getWorkflowRepository();
+    for (const [key, value] of Object.entries(settings)) {
+      await repository.setSetting(key, value);
     }
+    return repository;
+  };
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.doUnmock("@media-track/workflow");
+    delete process.env.MEDIA_TRACK_SQLITE_PATH;
+    if (prevPg !== undefined) process.env.MEDIA_TRACK_POSTGRES_URL = prevPg;
+    vi.resetModules();
+  });
+
+  const TIMES = JSON.stringify(["06:00", "21:00"]);
+  const claims = async (repository: { getSetting(k: string): Promise<string | null> }) =>
+    JSON.parse((await repository.getSetting(rt.LAST_SWEEP_CLAIMS_SETTING_KEY)) ?? "{}");
+
+  it("到点未认领 → 跑一次并认领该 slot", async () => {
+    const repository = await boot({ daily_sweep_times: TIMES }, "2026-07-09T06:30");
+    const result = await rt.runScheduledType3();
+    expect(result.skipped).toBeUndefined();
+    expect(monitor).toHaveBeenCalledTimes(1);
+    expect(await claims(repository)).toEqual({ date: "2026-07-09", slots: ["06:00"] });
+  });
+
+  it("已全部认领 → already_swept_today，不再跑", async () => {
+    const repository = await boot(
+      { daily_sweep_times: TIMES, last_sweep_claims: JSON.stringify({ date: "2026-07-09", slots: ["06:00"] }) },
+      "2026-07-09T06:31",
+    );
+    const result = await rt.runScheduledType3();
+    expect(result.skipped).toBe("already_swept_today");
+    expect(monitor).not.toHaveBeenCalled();
+    expect(await claims(repository)).toEqual({ date: "2026-07-09", slots: ["06:00"] });
+  });
+
+  it("全部未到点 → before_scheduled_time + 下一个 slot", async () => {
+    await boot({ daily_sweep_times: TIMES }, "2026-07-09T05:00");
+    const result = await rt.runScheduledType3();
+    expect(result.skipped).toBe("before_scheduled_time");
+    expect(result.scheduledFor).toBe("06:00");
+    expect(monitor).not.toHaveBeenCalled();
+  });
+
+  it("迟启动补跑：两个 slot 都过期 → 只跑一次、两个一起认领（合并）", async () => {
+    const repository = await boot({ daily_sweep_times: TIMES }, "2026-07-09T22:15");
+    await rt.runScheduledType3();
+    expect(monitor).toHaveBeenCalledTimes(1);
+    expect(await claims(repository)).toEqual({ date: "2026-07-09", slots: ["06:00", "21:00"] });
+  });
+
+  it("第二个 slot 到点（第一个已认领）→ 再跑一次，追加认领", async () => {
+    const repository = await boot(
+      { daily_sweep_times: TIMES, last_sweep_claims: JSON.stringify({ date: "2026-07-09", slots: ["06:00"] }) },
+      "2026-07-09T21:00",
+    );
+    await rt.runScheduledType3();
+    expect(monitor).toHaveBeenCalledTimes(1);
+    expect(await claims(repository)).toEqual({ date: "2026-07-09", slots: ["06:00", "21:00"] });
+  });
+
+  it("跨日：昨天的认领不算数，今天照常跑并重置", async () => {
+    const repository = await boot(
+      {
+        daily_sweep_times: TIMES,
+        last_sweep_claims: JSON.stringify({ date: "2026-07-08", slots: ["06:00", "21:00"] }),
+      },
+      "2026-07-09T06:05",
+    );
+    await rt.runScheduledType3();
+    expect(monitor).toHaveBeenCalledTimes(1);
+    expect(await claims(repository)).toEqual({ date: "2026-07-09", slots: ["06:00"] });
+  });
+
+  it("sweep 整体失败 → 释放本次认领、保留已有认领", async () => {
+    const repository = await boot(
+      { daily_sweep_times: TIMES, last_sweep_claims: JSON.stringify({ date: "2026-07-09", slots: ["06:00"] }) },
+      "2026-07-09T21:02",
+    );
+    monitor.mockRejectedValueOnce(new Error("infra boom"));
+    await expect(rt.runScheduledType3()).rejects.toThrow("infra boom");
+    expect(await claims(repository)).toEqual({ date: "2026-07-09", slots: ["06:00"] });
+  });
+
+  it("force 手动跑不认领任何 slot（run-now 不吞计划）", async () => {
+    const repository = await boot({ daily_sweep_times: TIMES }, "2026-07-09T05:00");
+    await rt.runScheduledType3({ force: true });
+    expect(monitor).toHaveBeenCalledTimes(1);
+    expect((await repository.getSetting(rt.LAST_SWEEP_CLAIMS_SETTING_KEY)) ?? null).toBeNull();
+  });
+
+  it("升级迁移：legacy last_sweep_date=今天 → 今天已到点的 slot 视为已认领（不重扫）", async () => {
+    await boot({ daily_sweep_times: TIMES, last_sweep_date: "2026-07-09" }, "2026-07-09T12:00");
+    const result = await rt.runScheduledType3();
+    expect(result.skipped).toBe("already_swept_today");
+    expect(monitor).not.toHaveBeenCalled();
+  });
+
+  it("成功后写 last_sweep_completed_at（含定时路径）", async () => {
+    const repository = await boot({ daily_sweep_times: TIMES }, "2026-07-09T06:30");
+    await rt.runScheduledType3();
+    expect(await repository.getSetting(rt.LAST_SWEEP_COMPLETED_AT_SETTING_KEY)).toBeTruthy();
   });
 });
 

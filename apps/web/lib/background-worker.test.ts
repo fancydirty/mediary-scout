@@ -148,19 +148,11 @@ describe("startBackgroundWorker — the in-process worker loop (auto-drive)", ()
   });
 });
 
-describe("defaultRuntime — MEDIA_TRACK_PATROL_IGNORE_TIME_GATE wiring", () => {
-  // The desktop build sets MEDIA_TRACK_PATROL_IGNORE_TIME_GATE=1 so the daily
-  // sweep runs on the first tick of a new day regardless of the wall-clock time.
-  // Container/prod leave it unset → the wall-clock gate still applies (identical
-  // to today). Assert the flag is threaded verbatim into runScheduledType3.
-  const prev = process.env.MEDIA_TRACK_PATROL_IGNORE_TIME_GATE;
-
+describe("defaultRuntime — 巡检调度接线（IGNORE_TIME_GATE 特例已退役）", () => {
+  // per-slot 认领语义下桌面与容器同一入口：runScheduledType3 无参调用，闸全在
+  // 内核里。曾经的 MEDIA_TRACK_PATROL_IGNORE_TIME_GATE 桌面特例（零点巡检 bug 源头）
+  // 已删除——这里锁死它不复活。
   afterEach(() => {
-    if (prev === undefined) {
-      delete process.env.MEDIA_TRACK_PATROL_IGNORE_TIME_GATE;
-    } else {
-      process.env.MEDIA_TRACK_PATROL_IGNORE_TIME_GATE = prev;
-    }
     vi.doUnmock("./workflow-runtime");
     vi.resetModules();
   });
@@ -180,15 +172,13 @@ describe("defaultRuntime — MEDIA_TRACK_PATROL_IGNORE_TIME_GATE wiring", () => 
     return spy;
   }
 
-  it("flag=1 → runScheduledType3 called with { ignoreTimeGate: true }", async () => {
+  it("runScheduled → runScheduledType3 无参调用（无 ignoreTimeGate，即使 env 残留 flag）", async () => {
     process.env.MEDIA_TRACK_PATROL_IGNORE_TIME_GATE = "1";
-    const spy = await runScheduledSpy();
-    expect(spy).toHaveBeenCalledWith({ ignoreTimeGate: true });
-  });
-
-  it("flag unset → { ignoreTimeGate: false } (container behavior unchanged)", async () => {
-    delete process.env.MEDIA_TRACK_PATROL_IGNORE_TIME_GATE;
-    const spy = await runScheduledSpy();
-    expect(spy).toHaveBeenCalledWith({ ignoreTimeGate: false });
+    try {
+      const spy = await runScheduledSpy();
+      expect(spy).toHaveBeenCalledWith();
+    } finally {
+      delete process.env.MEDIA_TRACK_PATROL_IGNORE_TIME_GATE;
+    }
   });
 });

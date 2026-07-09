@@ -32,7 +32,6 @@ export function buildServerEnv(input: { port: number; sqlitePath: string; baseEn
     HOSTNAME: "127.0.0.1",
     PORT: String(input.port),
     MEDIA_TRACK_SQLITE_PATH: input.sqlitePath,
-    MEDIA_TRACK_PATROL_IGNORE_TIME_GATE: "1",
     // Desktop shell identity — the settings UI reads this (resolveIsDesktop) to
     // show honest PanSou copy: unlike compose, desktop bundles NO PanSou container.
     MEDIA_TRACK_DESKTOP: "1",

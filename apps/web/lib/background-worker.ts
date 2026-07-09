@@ -84,19 +84,16 @@ export interface WorkerRuntime {
 
 /**
  * The runtime the worker drives in production. Exported so a test can assert the
- * daily-sweep wiring (notably that MEDIA_TRACK_PATROL_IGNORE_TIME_GATE is threaded
- * through). MEDIA_TRACK_PATROL_IGNORE_TIME_GATE=1 (the desktop build) makes the
- * sweep run on the first tick of a new Beijing day regardless of the configured
- * wall-clock time; unset (container/prod) keeps today's behavior — the wall-clock
- * gate still applies.
+ * daily-sweep wiring. 调度闸全在 runScheduledType3 内核（per-slot 认领 + 合并补跑）
+ * ——桌面与容器同一语义，无任何 env 特例（曾经的 MEDIA_TRACK_PATROL_IGNORE_TIME_GATE
+ * 是桌面零点巡检 bug 的源头，已退役）。
  */
 export async function defaultRuntime(): Promise<WorkerRuntime> {
   const { runNextQueuedWorkflow, runScheduledType3, recoverOrphanedRuns, workerHasConfiguredDrive } =
     await import("./workflow-runtime");
   return {
     runNext: () => runNextQueuedWorkflow(),
-    runScheduled: () =>
-      runScheduledType3({ ignoreTimeGate: process.env.MEDIA_TRACK_PATROL_IGNORE_TIME_GATE === "1" }),
+    runScheduled: () => runScheduledType3(),
     recover: () => recoverOrphanedRuns(),
     isDriveConfigured: () => workerHasConfiguredDrive(),
   };

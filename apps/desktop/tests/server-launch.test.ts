@@ -10,12 +10,13 @@ describe("pickFreePort", () => {
 });
 
 describe("buildServerEnv", () => {
-  it("sets SQLite path, loopback host, port, patrol gate, and run-as-node", () => {
+  it("sets SQLite path, loopback host, port, and run-as-node", () => {
     const env = buildServerEnv({ port: 4123, sqlitePath: "/data/app.db", baseEnv: { EXISTING: "keep" } });
     expect(env.MEDIA_TRACK_SQLITE_PATH).toBe("/data/app.db");
     expect(env.PORT).toBe("4123");
     expect(env.HOSTNAME).toBe("127.0.0.1");
-    expect(env.MEDIA_TRACK_PATROL_IGNORE_TIME_GATE).toBe("1");
+    // 巡检零点 bug 的源头特例已退役：per-slot 认领语义下桌面无需任何调度 flag。
+    expect(env.MEDIA_TRACK_PATROL_IGNORE_TIME_GATE).toBeUndefined();
     expect(env.ELECTRON_RUN_AS_NODE).toBe("1");
     expect(env.MEDIA_TRACK_DESKTOP).toBe("1"); // desktop shell identity → honest PanSou copy
     expect(env.EXISTING).toBe("keep"); // preserves the base env
