@@ -15,6 +15,7 @@ import { AssrtTokenForm } from "../../components/assrt-token-form";
 import { ProwlarrConfigForm } from "../../components/prowlarr-config-form";
 import { PanSouConfigForm } from "../../components/pansou-config-form";
 import { DailySweepForm } from "../../components/daily-sweep-form";
+import { SettingsTabs } from "../../components/settings-tabs";
 import { PasswordChangeForm } from "../../components/password-change-form";
 import { AccountAdminPanel } from "../../components/account-admin-panel";
 import { GitHubNameplate } from "../../components/github-nameplate";
@@ -76,41 +77,61 @@ export default function SettingsPage({
             </p>
           </div>
         ) : (
-          <>
-            <Suspense fallback={<div className="skeleton skeleton-heading" />}>
-              <Pan115Section />
-            </Suspense>
-            <Suspense fallback={<div className="skeleton skeleton-heading" />}>
-              <PreferredLanguageSection />
-            </Suspense>
-            <Suspense fallback={<div className="skeleton skeleton-heading" />}>
-              <QualityPreferenceSection />
-            </Suspense>
-            <Suspense fallback={<div className="skeleton skeleton-heading" />}>
-              <LlmConfigSection />
-            </Suspense>
-            <Suspense fallback={<div className="skeleton skeleton-heading" />}>
-              <TmdbApiKeySection />
-            </Suspense>
-            <Suspense fallback={<div className="skeleton skeleton-heading" />}>
-              <ResourceProviderSection />
-            </Suspense>
-            <Suspense fallback={<div className="skeleton skeleton-heading" />}>
-              <SubtitleSourceSection />
-            </Suspense>
-            <Suspense fallback={<div className="skeleton skeleton-heading" />}>
-              <DailySweepSection />
-            </Suspense>
-            <Suspense fallback={<div className="skeleton skeleton-heading" />}>
-              <PushNotificationSection />
-            </Suspense>
-            <Suspense fallback={null}>
-              <PasswordChangeSection />
-            </Suspense>
-            <Suspense fallback={null}>
-              <AccountManagementSection />
-            </Suspense>
-          </>
+          <Suspense fallback={<div className="skeleton skeleton-heading" />}>
+            <SettingsTabs
+              drives={
+                <Suspense fallback={<div className="skeleton skeleton-heading" />}>
+                  <Pan115Section />
+                </Suspense>
+              }
+              services={
+                <>
+                  <Suspense fallback={<div className="skeleton skeleton-heading" />}>
+                    <LlmConfigSection />
+                  </Suspense>
+                  <Suspense fallback={<div className="skeleton skeleton-heading" />}>
+                    <TmdbApiKeySection />
+                  </Suspense>
+                  <Suspense fallback={<div className="skeleton skeleton-heading" />}>
+                    <ResourceProviderSection />
+                  </Suspense>
+                  <Suspense fallback={<div className="skeleton skeleton-heading" />}>
+                    <SubtitleSourceSection />
+                  </Suspense>
+                </>
+              }
+              preferences={
+                <>
+                  <Suspense fallback={<div className="skeleton skeleton-heading" />}>
+                    <PreferredLanguageSection />
+                  </Suspense>
+                  <Suspense fallback={<div className="skeleton skeleton-heading" />}>
+                    <QualityPreferenceSection />
+                  </Suspense>
+                </>
+              }
+              patrol={
+                <>
+                  <Suspense fallback={<div className="skeleton skeleton-heading" />}>
+                    <DailySweepSection />
+                  </Suspense>
+                  <Suspense fallback={<div className="skeleton skeleton-heading" />}>
+                    <PushNotificationSection />
+                  </Suspense>
+                </>
+              }
+              account={
+                <>
+                  <Suspense fallback={null}>
+                    <PasswordChangeSection />
+                  </Suspense>
+                  <Suspense fallback={null}>
+                    <AccountManagementSection />
+                  </Suspense>
+                </>
+              }
+            />
+          </Suspense>
         )}
         <GitHubNameplate />
       </main>
