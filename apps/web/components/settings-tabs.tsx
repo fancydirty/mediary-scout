@@ -43,7 +43,9 @@ export function SettingsTabs(props: {
       const check = () => setAccountVisible(node.childElementCount > 0);
       check();
       observer = new MutationObserver(check);
-      observer.observe(node, { childList: true, subtree: true });
+      // 只看直接子元素：account 两个 section 流出即成为 slot 的直接 child，
+      // subtree 只会放大无关触发。
+      observer.observe(node, { childList: true });
     }
     return () => {
       window.removeEventListener("hashchange", readHash);
@@ -54,6 +56,9 @@ export function SettingsTabs(props: {
   const active = resolveSettingsTab(searchParams.get("tab"), accountVisible, hash);
 
   const select = (tab: SettingsTabId) => {
+    // 显式选 tab 即废弃 legacy hash 提示：router.replace(replaceState) 清 URL
+    // 片段但不触发 hashchange，不清状态的话旧 #password 会把默认 tab 拽回 account。
+    setHash(undefined);
     const query = settingsTabQuery(new URLSearchParams(searchParams), tab);
     router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
   };
