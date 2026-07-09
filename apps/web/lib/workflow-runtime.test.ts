@@ -377,3 +377,36 @@ describe("customDirNamesFromEnv (brand-agnostic 自定义媒体库目录名)", (
     ).toEqual({ tvName: "剧集" });
   });
 })
+
+describe("getDailySweepTimes（多时间点 + 迁移回退）", () => {
+  const repo = (settings: Record<string, string>) => ({
+    getSetting: async (key: string) => settings[key] ?? null,
+  });
+
+  it("解析 JSON 数组：去重、升序、剔除非法项", async () => {
+    const { getDailySweepTimes } = await import("./workflow-runtime");
+    const times = await getDailySweepTimes(
+      repo({ daily_sweep_times: JSON.stringify(["21:00", "06:00", "21:00", "bogus", "25:00"]) }),
+    );
+    expect(times).toEqual(["06:00", "21:00"]);
+  });
+
+  it("超过 6 个只保留前 6（升序后）", async () => {
+    const { getDailySweepTimes } = await import("./workflow-runtime");
+    const eight = ["01:00", "02:00", "03:00", "04:00", "05:00", "06:00", "07:00", "08:00"];
+    const times = await getDailySweepTimes(repo({ daily_sweep_times: JSON.stringify(eight) }));
+    expect(times).toEqual(eight.slice(0, 6));
+  });
+
+  it("新 key 缺失 → 回退 legacy 单值 daily_sweep_time", async () => {
+    const { getDailySweepTimes } = await import("./workflow-runtime");
+    expect(await getDailySweepTimes(repo({ daily_sweep_time: "08:30" }))).toEqual(["08:30"]);
+  });
+
+  it("两个 key 都没有/新 key 是烂 JSON → 默认 [\"06:00\"]", async () => {
+    const { getDailySweepTimes } = await import("./workflow-runtime");
+    expect(await getDailySweepTimes(repo({}))).toEqual(["06:00"]);
+    expect(await getDailySweepTimes(repo({ daily_sweep_times: "not-json" }))).toEqual(["06:00"]);
+    expect(await getDailySweepTimes(repo({ daily_sweep_times: "[]" }))).toEqual(["06:00"]);
+  });
+});

@@ -918,12 +918,42 @@ export const DAILY_SWEEP_TIME_SETTING_KEY = "daily_sweep_time";
 export const DEFAULT_DAILY_SWEEP_TIME = "06:00";
 
 /** The configured daily-sweep time as "HH:MM" (Beijing), or the 06:00 default
- *  when unset/malformed. The self-hosted scheduler fires run-type3 at this time. */
+ *  when unset/malformed. Legacy single-value key — kept as the migration
+ *  fallback for getDailySweepTimes. */
 export async function getDailySweepTime(
   repository: { getSetting(key: string): Promise<string | null> },
 ): Promise<string> {
   const value = (await repository.getSetting(DAILY_SWEEP_TIME_SETTING_KEY))?.trim();
   return value && /^\d{2}:\d{2}$/.test(value) ? value : DEFAULT_DAILY_SWEEP_TIME;
+}
+
+export const DAILY_SWEEP_TIMES_SETTING_KEY = "daily_sweep_times";
+export const MAX_DAILY_SWEEP_TIMES = 6;
+
+const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/**
+ * 巡检时间点列表（北京 "HH:MM"，升序去重，1~6 个）。读取顺序：
+ * daily_sweep_times(JSON 数组) → legacy daily_sweep_time 单值 → 默认 ["06:00"]。
+ */
+export async function getDailySweepTimes(
+  repository: { getSetting(key: string): Promise<string | null> },
+): Promise<string[]> {
+  const raw = (await repository.getSetting(DAILY_SWEEP_TIMES_SETTING_KEY))?.trim();
+  if (raw) {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        const valid = [...new Set(parsed.filter((t): t is string => typeof t === "string" && HHMM_RE.test(t)))]
+          .sort()
+          .slice(0, MAX_DAILY_SWEEP_TIMES);
+        if (valid.length > 0) return valid;
+      }
+    } catch {
+      // 烂 JSON 走回退
+    }
+  }
+  return [await getDailySweepTime(repository)];
 }
 
 function parseMovieCandidateId(candidateId: string): number | null {
