@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { LoaderCircle, Plus, X } from "lucide-react";
 import { saveDailySweepTimesAction } from "../app/actions";
 
@@ -9,6 +10,7 @@ import { saveDailySweepTimesAction } from "../app/actions";
  * 失败回滚。上限/去重/格式由服务端 action 再校验一遍。
  */
 export function DailySweepForm({ initial, max }: { initial: string[]; max: number }) {
+  const router = useRouter();
   const [times, setTimes] = useState(initial);
   const [draft, setDraft] = useState("12:00");
   const [isPending, startTransition] = useTransition();
@@ -22,12 +24,15 @@ export function DailySweepForm({ initial, max }: { initial: string[]; max: numbe
         setNote(`❌ ${res.message}`);
       } else {
         setNote("✅ 已保存");
+        // 「下次巡检 HH:MM」是服务端渲染的兄弟区块——刷新才能跟上新时间点。
+        router.refresh();
       }
       setTimeout(() => setNote(null), 3000);
     });
   };
 
   const apply = (next: string[]) => {
+    if (next.length === times.length && next.every((t, i) => t === times[i])) return;
     const previous = times;
     setTimes(next);
     persist(next, previous);
