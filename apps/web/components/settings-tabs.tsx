@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import {
   SETTINGS_TABS,
   resolveSettingsTab,
@@ -23,7 +23,6 @@ export function SettingsTabs(props: {
   patrol: ReactNode;
   account: ReactNode;
 }) {
-  const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const accountRef = useRef<HTMLDivElement | null>(null);
@@ -56,11 +55,15 @@ export function SettingsTabs(props: {
   const active = resolveSettingsTab(searchParams.get("tab"), accountVisible, hash);
 
   const select = (tab: SettingsTabId) => {
-    // 显式选 tab 即废弃 legacy hash 提示：router.replace(replaceState) 清 URL
-    // 片段但不触发 hashchange，不清状态的话旧 #password 会把默认 tab 拽回 account。
+    // 显式选 tab 即废弃 legacy hash 提示：replaceState 清 URL 片段但不触发
+    // hashchange，不清状态的话旧 #password 会把默认 tab 拽回 account。
     setHash(undefined);
     const query = settingsTabQuery(new URLSearchParams(searchParams), tab);
-    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+    // 浅路由（官方 Native History API 姿势）：tab 状态只有客户端消费、面板全部
+    // 常挂载，用 router.replace 会走一次 RSC 服务器往返且高亮要等提交——高延迟
+    // 链路（CF Tunnel）下每次点击都卡。原生 replaceState 与 useSearchParams
+    // 保持同步，零网络、即时切换。
+    window.history.replaceState(null, "", query ? `${pathname}?${query}` : pathname);
   };
 
   const panels: Array<{ id: SettingsTabId; content: ReactNode }> = [
