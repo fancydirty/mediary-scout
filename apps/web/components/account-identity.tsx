@@ -2,6 +2,7 @@
 
 import { useTransition } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { LogOut, KeyRound, Users, LoaderCircle } from "lucide-react";
 
 /**
@@ -12,6 +13,11 @@ import { LogOut, KeyRound, Users, LoaderCircle } from "lucide-react";
 export function AccountIdentity({ username, isOwner }: { username: string; isOwner: boolean }) {
   const [isPending, startTransition] = useTransition();
   const initial = username.trim().charAt(0).toUpperCase() || "?";
+  // Preserve the active workspace (?w) like the sidebar's globalNavHref does —
+  // otherwise opening 账号 settings from a non-primary drive resets the context.
+  const w = useSearchParams().get("w");
+  const accountHref = (hash: string) =>
+    `/settings?tab=account${w ? `&w=${encodeURIComponent(w)}` : ""}${hash}`;
 
   const logout = () => {
     startTransition(async () => {
@@ -30,12 +36,12 @@ export function AccountIdentity({ username, isOwner }: { username: string; isOwn
         {isOwner ? <span className="account-identity-owner">站主</span> : null}
       </summary>
       <div className="account-identity-menu">
-        <Link className="account-identity-item" href="/settings?tab=account#password">
+        <Link className="account-identity-item" href={accountHref("#password")}>
           <KeyRound size={14} aria-hidden />
           修改密码
         </Link>
         {isOwner ? (
-          <Link className="account-identity-item" href="/settings?tab=account#accounts">
+          <Link className="account-identity-item" href={accountHref("#accounts")}>
             <Users size={14} aria-hidden />
             账号管理
           </Link>

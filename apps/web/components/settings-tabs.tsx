@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   SETTINGS_TABS,
@@ -56,26 +56,44 @@ export function SettingsTabs(props: {
     { id: "account", content: props.account },
   ];
 
+  // WAI-ARIA tabs pattern: same-page state, not page navigation — so
+  // tablist/tab/tabpanel + aria-selected (not aria-current), arrows move tabs.
+  const visibleTabs = SETTINGS_TABS.filter((tab) => tab.id !== "account" || accountVisible);
+  const onTablistKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+    event.preventDefault();
+    const index = visibleTabs.findIndex((tab) => tab.id === active);
+    const step = event.key === "ArrowRight" ? 1 : -1;
+    const next = visibleTabs[(index + step + visibleTabs.length) % visibleTabs.length]!;
+    select(next.id);
+    document.getElementById(`settings-tab-${next.id}`)?.focus();
+  };
+
   return (
     <>
-      <nav className="settings-tabs" aria-label="设置分区">
-        {SETTINGS_TABS.map((tab) =>
-          tab.id === "account" && !accountVisible ? null : (
-            <button
-              key={tab.id}
-              type="button"
-              className={`settings-tab${active === tab.id ? " is-active" : ""}`}
-              aria-current={active === tab.id ? "page" : undefined}
-              onClick={() => select(tab.id)}
-            >
-              {tab.label}
-            </button>
-          ),
-        )}
-      </nav>
+      <div className="settings-tabs" role="tablist" aria-label="设置分区" onKeyDown={onTablistKeyDown}>
+        {visibleTabs.map((tab) => (
+          <button
+            key={tab.id}
+            id={`settings-tab-${tab.id}`}
+            type="button"
+            role="tab"
+            className={`settings-tab${active === tab.id ? " is-active" : ""}`}
+            aria-selected={active === tab.id}
+            aria-controls={`settings-panel-${tab.id}`}
+            tabIndex={active === tab.id ? 0 : -1}
+            onClick={() => select(tab.id)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
       {panels.map((panel) => (
         <div
           key={panel.id}
+          id={`settings-panel-${panel.id}`}
+          role="tabpanel"
+          aria-labelledby={`settings-tab-${panel.id}`}
           ref={panel.id === "account" ? accountRef : undefined}
           hidden={active !== panel.id}
         >
