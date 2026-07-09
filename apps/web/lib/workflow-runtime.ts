@@ -1192,7 +1192,8 @@ async function readSweepClaims(
     try {
       const parsed = JSON.parse(raw) as Partial<SweepClaims>;
       if (parsed.date === today && Array.isArray(parsed.slots)) {
-        return parsed.slots.filter((slot): slot is string => typeof slot === "string");
+        // 读时归一（过滤非法/去重/排序）：手改坏值不进内存、也不会在回滚时被写回。
+        return [...new Set(parsed.slots.filter((slot): slot is string => typeof slot === "string" && HHMM_RE.test(slot)))].sort();
       }
     } catch {
       // 烂 JSON 当无认领

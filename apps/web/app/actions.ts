@@ -413,10 +413,13 @@ export async function saveDailySweepTimesAction(times: string[]): Promise<PushSe
     return { success: false, message: "至少保留一个时间点" };
   }
   const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
-  const clean = [...new Set(times.filter((t) => typeof t === "string" && HHMM.test(t)))].sort();
-  if (clean.length === 0) {
+  // trim 后逐项校验；任何一项非法就整体拒绝——静默丢弃会让「已保存」和实际
+  // 存储不一致（自定义客户端发脏值时尤其误导）。
+  const trimmed = times.map((t) => (typeof t === "string" ? t.trim() : ""));
+  if (trimmed.some((t) => !HHMM.test(t))) {
     return { success: false, message: "时间格式应为 HH:MM" };
   }
+  const clean = [...new Set(trimmed)].sort();
   try {
     const { getWorkflowRepository, DAILY_SWEEP_TIMES_SETTING_KEY, MAX_DAILY_SWEEP_TIMES } = await import(
       "../lib/workflow-runtime"
