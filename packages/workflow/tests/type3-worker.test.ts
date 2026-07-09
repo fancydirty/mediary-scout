@@ -235,6 +235,34 @@ describe("runScheduledType3Monitoring (V2 engine)", () => {
     ]);
   });
 
+  it("no-op patrol of a still-airing season persists an already_current notification (routine, folds in UI)", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const { title, season } = trackedFixture();
+    // Still airing: 2 of 3 episodes aired, both already obtained — nothing to do.
+    season.totalEpisodes = 3;
+    season.latestAiredEpisode = 2;
+    await seedTrackedSeason({ repository, title, season, obtainedCodes: ["S01E01", "S01E02"] });
+    const storage = new FakeStorageExecutor();
+    await seedV2Season(storage, title, season, ["S01E01", "S01E02"]);
+
+    await runScheduledType3Monitoring({
+      repository,
+      resourceProvider: emptyProvider(),
+      storage,
+      model: throwingModel(), // no gap → the agent must never be invoked
+      storageParentDirectoryId: "library_root",
+      now: fixedNow,
+      createWorkflowRunId: () => "run_airing_noop",
+    });
+
+    const notifications = await repository.listNotifications();
+    const patrol = notifications.filter((notification) => notification.workflowRunId === "run_airing_noop");
+    expect(patrol).toHaveLength(1);
+    expect(patrol[0]!.kind).toBe("already_current");
+    expect(patrol[0]!.trigger).toBe("scheduled");
+    expect(patrol[0]!.report?.status).toBe("airing");
+  });
+
   it("skips a season that already has an active workflow run", async () => {
     const repository = new InMemoryWorkflowRepository();
     const { title, season } = trackedFixture();

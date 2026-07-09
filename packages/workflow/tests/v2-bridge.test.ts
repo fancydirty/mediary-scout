@@ -126,6 +126,63 @@ describe("bridgeV2WorkflowToResult — V2 facts → per-season WorkflowResult sh
     expect(result.notification.trigger).toBe("scheduled");
   });
 
+  it("type3 patrol no-op: airing 且本次无新增 → kind already_current（例行巡检折叠降噪）", () => {
+    const result = bridgeV2WorkflowToResult({
+      title,
+      mode: "type3",
+      // 追更中：已播 4/12，S01E01-E04 全在库，无缺无新增（金特务场景）
+      seasons: [{ seasonNumber: 1, totalEpisodes: 12, latestAiredEpisode: 4, qualityPreference: "4K", status: "active" }],
+      v2: v2Result({
+        missingBefore: [],
+        obtained: ["S01E01", "S01E02", "S01E03", "S01E04"],
+        stillMissing: [],
+      }),
+      workflowRunId: "run-noop",
+      now: () => "2026-07-09T00:00:00.000Z",
+    });
+
+    expect(result.notification.kind).toBe("already_current");
+    expect(result.notification.trigger).toBe("scheduled");
+    expect(result.notification.report?.status).toBe("airing");
+    expect(result.notification.report?.newlyObtained).toEqual([]);
+  });
+
+  it("type3 patrol: airing 但本次真收到新集 → 仍是 episodes_restored（不许把有效更新降噪掉）", () => {
+    const result = bridgeV2WorkflowToResult({
+      title,
+      mode: "type3",
+      seasons: [{ seasonNumber: 1, totalEpisodes: 12, latestAiredEpisode: 5, qualityPreference: "4K", status: "active" }],
+      v2: v2Result({
+        missingBefore: ["S01E05"],
+        obtained: ["S01E01", "S01E02", "S01E03", "S01E04", "S01E05"],
+        stillMissing: [],
+      }),
+      workflowRunId: "run-gain",
+      now: () => "2026-07-09T00:00:00.000Z",
+    });
+
+    expect(result.notification.kind).toBe("episodes_restored");
+    expect(result.notification.report?.newlyObtained).toEqual(["E05"]);
+  });
+
+  it("type3 patrol: 有已播缺集（partial）→ 仍是 episodes_restored（真缺集不降噪）", () => {
+    const result = bridgeV2WorkflowToResult({
+      title,
+      mode: "type3",
+      seasons: [{ seasonNumber: 1, totalEpisodes: 12, latestAiredEpisode: 6, qualityPreference: "4K", status: "active" }],
+      v2: v2Result({
+        missingBefore: ["S01E05", "S01E06"],
+        obtained: ["S01E01", "S01E02", "S01E03", "S01E04", "S01E05"],
+        stillMissing: ["S01E06"],
+      }),
+      workflowRunId: "run-partial",
+      now: () => "2026-07-09T00:00:00.000Z",
+    });
+
+    expect(result.notification.report?.status).toBe("partial");
+    expect(result.notification.kind).toBe("episodes_restored");
+  });
+
   // The finale graduation promised by season-sync.ts ("only the finale — all
   // obtained — graduates it to completed"). Callers pass the persisted status
   // through, so without graduating HERE an active season stays active forever:

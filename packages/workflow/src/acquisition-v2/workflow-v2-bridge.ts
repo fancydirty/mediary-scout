@@ -279,7 +279,13 @@ function buildNotification(input: {
             ? "no_coverage"
             : report.status === "complete"
               ? "tracking_completed"
-              : "episodes_restored",
+              : // 例行巡检查过、追更中且本季无新增 = 无事发生：already_current 让
+                // 通知页折叠成一张例行巡检卡、digest 归入「其余已是最新」，不再每日
+                // 刷屏。airing 构造上保证 realMissing 为空（notification-report.ts
+                // buildSeasonReport），有新增的 airing 必须保持 episodes_restored。
+                report.status === "airing" && newlyObtained.length === 0
+                ? "already_current"
+                : "episodes_restored",
       title: `${report.titleName} ${report.seasonLabel}`,
       body: formatReportPushText(report),
       createdAt: input.now(),
