@@ -31,14 +31,24 @@ export function SettingsTabs(props: {
   const [hash, setHash] = useState<string | undefined>(undefined);
 
   useEffect(() => {
-    setHash(window.location.hash || undefined);
+    // Hash 只能挂载后读 + 订阅变化：SSR 渲染不知道 hash，若用 lazy initializer
+    // 从 window.location.hash 初始化会造成 hydration mismatch——一帧回落是
+    // hydration-safe 的代价。
+    const readHash = () => setHash(window.location.hash || undefined);
+    readHash();
+    window.addEventListener("hashchange", readHash);
     const node = accountRef.current;
-    if (!node) return;
-    const check = () => setAccountVisible(node.childElementCount > 0);
-    check();
-    const observer = new MutationObserver(check);
-    observer.observe(node, { childList: true, subtree: true });
-    return () => observer.disconnect();
+    let observer: MutationObserver | undefined;
+    if (node) {
+      const check = () => setAccountVisible(node.childElementCount > 0);
+      check();
+      observer = new MutationObserver(check);
+      observer.observe(node, { childList: true, subtree: true });
+    }
+    return () => {
+      window.removeEventListener("hashchange", readHash);
+      observer?.disconnect();
+    };
   }, []);
 
   const active = resolveSettingsTab(searchParams.get("tab"), accountVisible, hash);
