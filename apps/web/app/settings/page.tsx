@@ -439,15 +439,18 @@ async function DailySweepSection() {
   const { hhmm } = beijingDateTime();
 
   const nextSlot = times.find((slot) => slot > hhmm) ?? times[0]!;
-  const lastLabel = lastSweepAt
-    ? new Intl.DateTimeFormat("zh-CN", {
-        timeZone: "Asia/Shanghai",
-        month: "numeric",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      }).format(new Date(lastSweepAt))
-    : "尚未巡检";
+  // 坏 ISO 串（手改/旧版遗留）会让 format() 抛 RangeError 炸掉整页 SSR——先验有效性。
+  const lastSweepDate = lastSweepAt ? new Date(lastSweepAt) : null;
+  const lastLabel =
+    lastSweepDate && Number.isFinite(lastSweepDate.getTime())
+      ? new Intl.DateTimeFormat("zh-CN", {
+          timeZone: "Asia/Shanghai",
+          month: "numeric",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        }).format(lastSweepDate)
+      : "尚未巡检";
 
   return (
     <section className="panel" style={{ maxWidth: 720, marginTop: 24 }}>

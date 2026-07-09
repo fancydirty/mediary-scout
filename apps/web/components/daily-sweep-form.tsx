@@ -34,6 +34,9 @@ export function DailySweepForm({ initial, max }: { initial: string[]; max: numbe
   };
 
   const add = (value: string) => {
+    // <input type="time"> 可被清空成 ""——客户端先做同款格式校验，别让空 chip
+    // 污染本地状态（服务端 action 会拒，但拒之前 UI 已经闪了）。
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) return;
     const next = [...new Set([...times, value])].sort();
     if (next.length === times.length || next.length > max) return;
     apply(next);
