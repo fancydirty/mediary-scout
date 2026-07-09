@@ -77,7 +77,11 @@ export function SettingsTabs(props: {
   const onTablistKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
     event.preventDefault();
-    const index = visibleTabs.findIndex((tab) => tab.id === active);
+    // Roving tabindex：方向键以「焦点所在 tab」为基准，不是 active——back/forward
+    // 或账号 tab 迟到显现时两者会分离，按 active 起跳会从错误位置移动。
+    const focusedId = (event.target as HTMLElement).id?.replace("settings-tab-", "");
+    const focusedIndex = visibleTabs.findIndex((tab) => tab.id === focusedId);
+    const index = focusedIndex >= 0 ? focusedIndex : visibleTabs.findIndex((tab) => tab.id === active);
     const step = event.key === "ArrowRight" ? 1 : -1;
     const next = visibleTabs[(index + step + visibleTabs.length) % visibleTabs.length]!;
     select(next.id);
