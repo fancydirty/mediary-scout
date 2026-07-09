@@ -3333,3 +3333,42 @@ select.setting-control {
 .trending-card:hover .trending-poster {
   border-color: var(--border-strong, #3a3a40);
 }
+
+/* Settings tabs — Spotify 艺人页式下划线 tab（spec §2，用户拍板 B 方案） */
+.settings-tabs {
+  display: flex;
+  gap: 22px;
+  margin-top: 18px;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.settings-tab {
+  appearance: none;
+  background: none;
+  border: none;
+  padding: 0 0 9px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  white-space: nowrap;
+}
+
+.settings-tab:hover {
+  color: var(--text);
+}
+
+.settings-tab.is-active {
+  color: var(--text);
+  font-weight: 600;
+  border-bottom-color: var(--accent);
+}
+
+@media (max-width: 860px) {
+  .settings-tabs {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+}
