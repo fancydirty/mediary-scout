@@ -506,4 +506,10 @@ describe("getDailySweepTimes（多时间点 + 迁移回退）", () => {
     expect(await getDailySweepTimes(repo({ daily_sweep_times: "not-json" }))).toEqual(["06:00"]);
     expect(await getDailySweepTimes(repo({ daily_sweep_times: "[]" }))).toEqual(["06:00"]);
   });
+
+  it("legacy 单值也做范围校验：99:99 之类非法值回默认（否则 slot 永远到不了点）", async () => {
+    const { getDailySweepTimes, getDailySweepTime } = await import("./workflow-runtime");
+    expect(await getDailySweepTime(repo({ daily_sweep_time: "99:99" }))).toBe("06:00");
+    expect(await getDailySweepTimes(repo({ daily_sweep_time: "25:00" }))).toEqual(["06:00"]);
+  });
 });

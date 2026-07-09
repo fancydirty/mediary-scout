@@ -924,7 +924,8 @@ export async function getDailySweepTime(
   repository: { getSetting(key: string): Promise<string | null> },
 ): Promise<string> {
   const value = (await repository.getSetting(DAILY_SWEEP_TIME_SETTING_KEY))?.trim();
-  return value && /^\d{2}:\d{2}$/.test(value) ? value : DEFAULT_DAILY_SWEEP_TIME;
+  // 范围校验（不只是格式）：99:99 之类脏值当默认处理，否则 slot 永远到不了点。
+  return value && HHMM_RE.test(value) ? value : DEFAULT_DAILY_SWEEP_TIME;
 }
 
 export const DAILY_SWEEP_TIMES_SETTING_KEY = "daily_sweep_times";
@@ -1254,13 +1255,16 @@ export async function runScheduledType3(options?: {
       }
       return { skipped: "already_swept_today", outcomes: [] };
     }
-    // 先认领后跑（含本次到期的全部 slot）：并发触发只会 no-op；整体失败在 catch
-    // 里回滚到 priorClaims，下一个 tick 重试今天而不是等到明天。
+    // 先认领后跑（含本次到期的全部 slot）。认领是普通 setSetting（非原子 CAS），
+    // 极端并发双触发理论上可能都读到旧认领而各跑一次——进程内 worker 是单例串行
+    // tick，外部 ping 撞车时下游 per-season reserveWorkflowRun 保证幂等（重复
+    // sweep 的 run 全部 skipped_active），故不为此引入跨引擎原子机制。整体失败在
+    // catch 里回滚到 priorClaims，下一个 tick 重试今天而不是等到明天。
     claimDate = date;
     claimedNow = due;
     await repository.setSetting(
       LAST_SWEEP_CLAIMS_SETTING_KEY,
-      JSON.stringify({ date, slots: [...priorClaims, ...due].sort() }),
+      JSON.stringify({ date, slots: [...new Set([...priorClaims, ...due])].sort() }),
     );
   }
   const startedAt = new Date().toISOString();
