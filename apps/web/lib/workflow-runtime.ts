@@ -1208,7 +1208,7 @@ async function readSweepClaims(
 }
 
 /** Beijing wall-clock "date" (YYYY-MM-DD) and "HH:MM" right now. */
-function beijingDateTime(): { date: string; hhmm: string } {
+export function beijingDateTime(): { date: string; hhmm: string } {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Shanghai",
     year: "numeric",

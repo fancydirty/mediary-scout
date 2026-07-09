@@ -1,47 +1,94 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Check, LoaderCircle } from "lucide-react";
-import { saveDailySweepTimeAction } from "../app/actions";
+import { LoaderCircle, Plus, X } from "lucide-react";
+import { saveDailySweepTimesAction } from "../app/actions";
 
 /**
- * Configure the time-of-day (Beijing) the daily 巡检 sweep runs. The self-hosted
- * scheduler reads this setting and fires the sweep at the chosen time.
+ * 巡检时间点 chips（1~6 个，北京时间）。即改即存：添加/删除立即持久化整个列表，
+ * 失败回滚。上限/去重/格式由服务端 action 再校验一遍。
  */
-export function DailySweepForm({ initial }: { initial: string }) {
+export function DailySweepForm({ initial, max }: { initial: string[]; max: number }) {
+  const [times, setTimes] = useState(initial);
+  const [draft, setDraft] = useState("12:00");
   const [isPending, startTransition] = useTransition();
-  const [value, setValue] = useState(initial);
-  const [result, setResult] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
 
-  const handleSave = () => {
+  const persist = (next: string[], previous: string[]) => {
     startTransition(async () => {
-      const res = await saveDailySweepTimeAction(value);
-      setResult(res.success ? "✅ 保存成功" : `❌ ${res.message}`);
-      setTimeout(() => setResult(null), 3000);
+      const res = await saveDailySweepTimesAction(next);
+      if (!res.success) {
+        setTimes(previous);
+        setNote(`❌ ${res.message}`);
+      } else {
+        setNote("✅ 已保存");
+      }
+      setTimeout(() => setNote(null), 3000);
     });
+  };
+
+  const apply = (next: string[]) => {
+    const previous = times;
+    setTimes(next);
+    persist(next, previous);
+  };
+
+  const add = (value: string) => {
+    const next = [...new Set([...times, value])].sort();
+    if (next.length === times.length || next.length > max) return;
+    apply(next);
+  };
+
+  const remove = (value: string) => {
+    if (times.length <= 1) return;
+    apply(times.filter((t) => t !== value));
   };
 
   return (
     <div className="push-form">
-      <p className="panel-note" style={{ marginBottom: 12 }}>
-        每天到这个时间（北京时间），系统会自动巡检所有追踪中的剧集，获取新播出或仍缺失的集数。
-      </p>
-      <div className="setting-row">
-        <input
-          type="time"
-          className="setting-control"
-          value={value}
-          onChange={(event) => setValue(event.target.value)}
-          aria-label="每日巡检时间"
-        />
-        <button type="button" className="primary-button" onClick={handleSave} disabled={isPending}>
-          {isPending ? <LoaderCircle size={14} className="spin" aria-hidden /> : <Check size={14} aria-hidden />}
-          保存
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        {times.map((time) => (
+          <span key={time} className="sweep-chip">
+            {time}
+            {times.length > 1 ? (
+              <button
+                type="button"
+                className="sweep-chip-remove"
+                aria-label={`删除 ${time}`}
+                disabled={isPending}
+                onClick={() => remove(time)}
+              >
+                <X size={12} aria-hidden />
+              </button>
+            ) : null}
+          </span>
+        ))}
+        {times.length < max ? (
+          <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+            <input
+              type="time"
+              className="setting-control"
+              style={{ width: 120 }}
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              aria-label="新增巡检时间"
+            />
+            <button type="button" className="primary-button" disabled={isPending} onClick={() => add(draft)}>
+              {isPending ? <LoaderCircle size={14} className="spin" aria-hidden /> : <Plus size={14} aria-hidden />}
+              添加时间
+            </button>
+          </span>
+        ) : null}
+        <button type="button" className="sweep-preset" disabled={isPending} onClick={() => apply(["06:00", "21:00"])}>
+          预设：早晚各一次
         </button>
       </div>
-      {result ? (
-        <p className="panel-note" style={{ marginTop: 10 }}>
-          {result}
+      <p className="panel-note" style={{ marginTop: 10 }}>
+        最多 {max} 个时间点（北京时间）。到点时应用未运行？下次启动会自动补跑一次。
+      </p>
+      {note ? (
+        <p className="panel-note" style={{ marginTop: 6 }}>
+          {note}
         </p>
       ) : null}
     </div>

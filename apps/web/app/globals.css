@@ -3372,3 +3372,45 @@ select.setting-control {
     scrollbar-width: none;
   }
 }
+
+/* 巡检时间点 chips（daily-sweep-form） */
+.sweep-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: 6px 8px 6px 14px;
+  font-size: 14px;
+}
+
+.sweep-chip-remove {
+  appearance: none;
+  border: none;
+  background: #333;
+  color: var(--text-muted);
+  border-radius: var(--radius-pill);
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+
+.sweep-chip-remove:hover {
+  color: var(--text);
+}
+
+.sweep-preset {
+  appearance: none;
+  border: none;
+  background: none;
+  color: var(--info);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+}

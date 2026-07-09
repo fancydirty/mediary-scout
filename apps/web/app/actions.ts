@@ -407,21 +407,39 @@ export async function clearPushChannelAction(key: string): Promise<PushSettingsA
   }
 }
 
-export async function saveDailySweepTimeAction(time: string): Promise<PushSettingsActionResult> {
+export async function saveDailySweepTimesAction(times: string[]): Promise<PushSettingsActionResult> {
   assertNotDemo();
-  if (!/^\d{2}:\d{2}$/.test(time)) {
+  if (!Array.isArray(times) || times.length === 0) {
+    return { success: false, message: "至少保留一个时间点" };
+  }
+  const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+  const clean = [...new Set(times.filter((t) => typeof t === "string" && HHMM.test(t)))].sort();
+  if (clean.length === 0) {
     return { success: false, message: "时间格式应为 HH:MM" };
   }
-  const [hours, minutes] = time.split(":").map(Number);
-  if (hours! > 23 || minutes! > 59) {
-    return { success: false, message: "时间超出范围" };
+  const { getWorkflowRepository, DAILY_SWEEP_TIMES_SETTING_KEY, MAX_DAILY_SWEEP_TIMES } = await import(
+    "../lib/workflow-runtime"
+  );
+  if (clean.length > MAX_DAILY_SWEEP_TIMES) {
+    return { success: false, message: `最多 ${MAX_DAILY_SWEEP_TIMES} 个时间点` };
   }
   try {
-    const { getWorkflowRepository, DAILY_SWEEP_TIME_SETTING_KEY } = await import("../lib/workflow-runtime");
-    await getWorkflowRepository().setSetting(DAILY_SWEEP_TIME_SETTING_KEY, time);
+    await getWorkflowRepository().setSetting(DAILY_SWEEP_TIMES_SETTING_KEY, JSON.stringify(clean));
     return { success: true };
   } catch (error) {
     return { success: false, message: `保存失败：${String(error)}` };
+  }
+}
+
+/** 手动触发一次全量巡检（force：跑完整 sweep 但不认领定时 slot，run-now 不吞计划）。 */
+export async function runPatrolNowAction(): Promise<PushSettingsActionResult & { checked?: number }> {
+  assertNotDemo();
+  try {
+    const { runScheduledType3 } = await import("../lib/workflow-runtime");
+    const result = await runScheduledType3({ force: true });
+    return { success: true, checked: result.outcomes.length };
+  } catch (error) {
+    return { success: false, message: `巡检失败：${String(error)}` };
   }
 }
 

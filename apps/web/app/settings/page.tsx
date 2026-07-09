@@ -15,6 +15,7 @@ import { AssrtTokenForm } from "../../components/assrt-token-form";
 import { ProwlarrConfigForm } from "../../components/prowlarr-config-form";
 import { PanSouConfigForm } from "../../components/pansou-config-form";
 import { DailySweepForm } from "../../components/daily-sweep-form";
+import { PatrolNowButton } from "../../components/patrol-now-button";
 import { SettingsTabs } from "../../components/settings-tabs";
 import { PasswordChangeForm } from "../../components/password-change-form";
 import { AccountAdminPanel } from "../../components/account-admin-panel";
@@ -26,7 +27,10 @@ import {
   getCurrentAccountSummary,
   isMultiUserEnabled,
   listManagedAccounts,
-  getDailySweepTime,
+  getDailySweepTimes,
+  MAX_DAILY_SWEEP_TIMES,
+  LAST_SWEEP_COMPLETED_AT_SETTING_KEY,
+  beijingDateTime,
   getPan115ConnectionStatus,
   getWorkflowRepository,
   PREFERRED_LANGUAGE_SETTING_KEY,
@@ -430,7 +434,20 @@ async function Pan115Section() {
 async function DailySweepSection() {
   await connection();
   const repository = getWorkflowRepository();
-  const initial = await getDailySweepTime(repository);
+  const times = await getDailySweepTimes(repository);
+  const lastSweepAt = await repository.getSetting(LAST_SWEEP_COMPLETED_AT_SETTING_KEY);
+  const { hhmm } = beijingDateTime();
+
+  const nextSlot = times.find((slot) => slot > hhmm) ?? times[0]!;
+  const lastLabel = lastSweepAt
+    ? new Intl.DateTimeFormat("zh-CN", {
+        timeZone: "Asia/Shanghai",
+        month: "numeric",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      }).format(new Date(lastSweepAt))
+    : "尚未巡检";
 
   return (
     <section className="panel" style={{ maxWidth: 720, marginTop: 24 }}>
@@ -440,10 +457,26 @@ async function DailySweepSection() {
             <CalendarClock size={16} aria-hidden style={{ verticalAlign: "-2px", marginRight: 8 }} />
             每日定时巡检
           </h2>
-          <p className="panel-note">每天定时自动追更：检查已追踪剧集，获取新播出或仍缺失的集数</p>
+          <p className="panel-note">在这些时间点自动追更：检查已追踪剧集，获取新播出或仍缺失的集数</p>
         </div>
       </div>
-      <DailySweepForm initial={initial} />
+      <DailySweepForm initial={times} max={MAX_DAILY_SWEEP_TIMES} />
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 16,
+          marginTop: 16,
+          paddingTop: 14,
+          borderTop: "1px solid #2a2a2a",
+          flexWrap: "wrap",
+        }}
+      >
+        <PatrolNowButton />
+        <span className="push-help" style={{ marginLeft: "auto" }}>
+          上次巡检 {lastLabel} · 下次巡检 {nextSlot}
+        </span>
+      </div>
     </section>
   );
 }
