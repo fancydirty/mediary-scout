@@ -30,12 +30,12 @@ export function AccountIdentity({ username, isOwner }: { username: string; isOwn
         {isOwner ? <span className="account-identity-owner">站主</span> : null}
       </summary>
       <div className="account-identity-menu">
-        <Link className="account-identity-item" href="/settings#password">
+        <Link className="account-identity-item" href="/settings?tab=account#password">
           <KeyRound size={14} aria-hidden />
           修改密码
         </Link>
         {isOwner ? (
-          <Link className="account-identity-item" href="/settings#accounts">
+          <Link className="account-identity-item" href="/settings?tab=account#accounts">
             <Users size={14} aria-hidden />
             账号管理
           </Link>
