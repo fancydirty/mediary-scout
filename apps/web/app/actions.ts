@@ -417,13 +417,13 @@ export async function saveDailySweepTimesAction(times: string[]): Promise<PushSe
   if (clean.length === 0) {
     return { success: false, message: "时间格式应为 HH:MM" };
   }
-  const { getWorkflowRepository, DAILY_SWEEP_TIMES_SETTING_KEY, MAX_DAILY_SWEEP_TIMES } = await import(
-    "../lib/workflow-runtime"
-  );
-  if (clean.length > MAX_DAILY_SWEEP_TIMES) {
-    return { success: false, message: `最多 ${MAX_DAILY_SWEEP_TIMES} 个时间点` };
-  }
   try {
+    const { getWorkflowRepository, DAILY_SWEEP_TIMES_SETTING_KEY, MAX_DAILY_SWEEP_TIMES } = await import(
+      "../lib/workflow-runtime"
+    );
+    if (clean.length > MAX_DAILY_SWEEP_TIMES) {
+      return { success: false, message: `最多 ${MAX_DAILY_SWEEP_TIMES} 个时间点` };
+    }
     await getWorkflowRepository().setSetting(DAILY_SWEEP_TIMES_SETTING_KEY, JSON.stringify(clean));
     return { success: true };
   } catch (error) {
