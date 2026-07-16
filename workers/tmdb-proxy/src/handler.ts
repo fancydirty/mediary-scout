@@ -33,6 +33,47 @@ function corsHeadersFor(request: Request): Record<string, string> {
 const MOVIE_TTL_SECONDS = 7 * 24 * 60 * 60; // movie metadata is effectively static
 const SHORT_TTL_SECONDS = 60 * 60;          // tv/season/search: 追更 needs hourly freshness
 
+/** 2026-07-16 incident: TMDB's origin flapped (hangs + instant 504s) for 1h+ and
+ *  the worker — whose origin fetch had NO timeout — stalled every live path with
+ *  it. Absorption contract: bound the origin fetch, and keep every cached body
+ *  around past its freshness window so an outage degrades to stale data instead
+ *  of an error. Stale is only served when origin is outage-shaped (network
+ *  failure/timeout/5xx/429) — semantic answers like 404 pass through. */
+const STALE_TAIL_SECONDS = 14 * 24 * 60 * 60;
+const DEFAULT_UPSTREAM_TIMEOUT_MS = 3500; // below the app client's 4.5s budget
+
+/** KV value envelope. Legacy entries are the raw TMDB body (a JSON object with
+ *  none of these fields) — parseEnvelope returns null for them and they serve
+ *  as fresh until their own physical TTL cycles them out. */
+interface CacheEnvelope {
+  v: 1;
+  freshUntil: number; // epoch ms
+  body: string;
+}
+
+function parseEnvelope(raw: string): CacheEnvelope | null {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      (parsed as { v?: unknown }).v === 1 &&
+      typeof (parsed as { freshUntil?: unknown }).freshUntil === "number" &&
+      typeof (parsed as { body?: unknown }).body === "string"
+    ) {
+      return parsed as unknown as CacheEnvelope;
+    }
+  } catch {
+    // legacy non-JSON value
+  }
+  return null;
+}
+
+function envelopeFor(body: string, freshTtlSeconds: number, nowMs: number): string {
+  const envelope: CacheEnvelope = { v: 1, freshUntil: nowMs + freshTtlSeconds * 1000, body };
+  return JSON.stringify(envelope);
+}
+
 function ttlForPath(path: string): number {
   return path.startsWith("movie/") ? MOVIE_TTL_SECONDS : SHORT_TTL_SECONDS;
 }
@@ -92,6 +133,10 @@ export interface HandleTmdbProxyDeps {
   kv: KvLike;
   token: string;
   originFetch?: typeof fetch;
+  /** Bound on the origin fetch (default 3.5s — below the app client's 4.5s). */
+  upstreamTimeoutMs?: number;
+  /** Clock (epoch ms) for envelope freshness; injectable for tests. */
+  now?: () => number;
 }
 
 function pathOf(request: Request): string {
@@ -105,7 +150,11 @@ function isAllowed(path: string): boolean {
 /** Binary passthrough for poster images. No KV (binary content; the immutable
  *  Cache-Control lets the CF edge cache own it) and no CORS (loaded via <img>
  *  tags, which need none). Anything off the strict shape allowlist is 404. */
-async function handleImageProxy(rest: string, originFetch: typeof fetch): Promise<Response> {
+async function handleImageProxy(
+  rest: string,
+  originFetch: typeof fetch,
+  timeoutMs: number,
+): Promise<Response> {
   if (!IMG_PATH_RE.test(rest)) {
     return new Response("Not Found", { status: 404, headers: { "Cache-Control": "no-store" } });
   }
@@ -114,7 +163,17 @@ async function handleImageProxy(rest: string, originFetch: typeof fetch): Promis
   // (cacheTtlByStatus) are Enterprise-only. Default rules cache jpg/png by
   // extension honoring origin headers, with short negative caching — the
   // right behavior here.
-  const originResponse = await originFetch(`${TMDB_IMAGE_ORIGIN}/${rest}`, { method: "GET" });
+  let originResponse: Response;
+  try {
+    originResponse = await originFetch(`${TMDB_IMAGE_ORIGIN}/${rest}`, {
+      method: "GET",
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch {
+    // A hung image origin must not hold the request open — the <img> breaks
+    // and the browser retries on the next paint; nothing to serve stale here.
+    return new Response("Bad Gateway", { status: 502, headers: { "Cache-Control": "no-store" } });
+  }
   const headers: Record<string, string> = {
     "Cache-Control": originResponse.ok ? "public, max-age=31536000, immutable" : "no-store",
   };
@@ -125,7 +184,7 @@ async function handleImageProxy(rest: string, originFetch: typeof fetch): Promis
   return new Response(originResponse.body, { status: originResponse.status, headers });
 }
 
-function jsonHeaders(cache: "HIT" | "MISS", request: Request): Record<string, string> {
+function jsonHeaders(cache: "HIT" | "MISS" | "STALE", request: Request): Record<string, string> {
   return { "Content-Type": "application/json;charset=utf-8", "X-Cache": cache, ...corsHeadersFor(request) };
 }
 
@@ -139,32 +198,61 @@ export async function handleTmdbProxy(deps: HandleTmdbProxyDeps): Promise<Respon
     return new Response("Method Not Allowed", { status: 405, headers: { ...corsHeadersFor(request), Allow: "GET" } });
   }
 
+  const timeoutMs = deps.upstreamTimeoutMs ?? DEFAULT_UPSTREAM_TIMEOUT_MS;
+  const now = deps.now ?? Date.now;
+
   const path = pathOf(request);
   if (path.startsWith("img/")) {
-    return handleImageProxy(path.slice("img/".length), originFetch);
+    return handleImageProxy(path.slice("img/".length), originFetch, timeoutMs);
   }
   if (!isAllowed(path)) {
     return new Response("Not Found", { status: 404, headers: corsHeadersFor(request) });
   }
 
   const key = cacheKeyFor(request);
-  const cached = await deps.kv.get(key);
-  if (cached !== null) {
-    return new Response(cached, { status: 200, headers: jsonHeaders("HIT", request) });
+  const cachedRaw = await deps.kv.get(key);
+  let staleBody: string | null = null;
+  if (cachedRaw !== null) {
+    const cached = parseEnvelope(cachedRaw);
+    if (cached === null || now() < cached.freshUntil) {
+      // Legacy raw value (fresh until its own physical TTL) or a fresh envelope.
+      return new Response(cached === null ? cachedRaw : cached.body, {
+        status: 200,
+        headers: jsonHeaders("HIT", request),
+      });
+    }
+    staleBody = cached.body;
   }
 
   const originUrl = `${TMDB_ORIGIN}/${key}`;
-  const originResponse = await originFetch(originUrl, {
-    method: "GET",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json;charset=utf-8" },
-  });
+  let originResponse: Response;
+  let body: string;
+  try {
+    originResponse = await originFetch(originUrl, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json;charset=utf-8" },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    body = await originResponse.text();
+  } catch (error) {
+    if (staleBody !== null) {
+      return new Response(staleBody, { status: 200, headers: jsonHeaders("STALE", request) });
+    }
+    return new Response(JSON.stringify({ error: "tmdb_upstream_unreachable", detail: String(error) }), {
+      status: 504,
+      headers: jsonHeaders("MISS", request),
+    });
+  }
 
-  const body = await originResponse.text();
   if (!originResponse.ok) {
+    // Outage-shaped statuses degrade to stale; semantic answers (404 …) pass through.
+    if (staleBody !== null && (originResponse.status >= 500 || originResponse.status === 429)) {
+      return new Response(staleBody, { status: 200, headers: jsonHeaders("STALE", request) });
+    }
     return new Response(body, { status: originResponse.status, headers: jsonHeaders("MISS", request) });
   }
   const ttl = isTrendingFeedRequest(key) ? TRENDING_TTL_SECONDS : ttlForPath(path);
-  await deps.kv.put(key, body, { expirationTtl: ttl });
+  await deps.kv.put(key, envelopeFor(body, ttl, now()), { expirationTtl: ttl + STALE_TAIL_SECONDS });
   return new Response(body, { status: 200, headers: jsonHeaders("MISS", request) });
 }
 
@@ -172,6 +260,9 @@ export interface RunScheduledRefreshDeps {
   kv: KvLike;
   token: string;
   originFetch?: typeof fetch;
+  /** Bound per feed fetch — one hung feed must not eat the cron invocation. */
+  upstreamTimeoutMs?: number;
+  now?: () => number;
 }
 
 /** Daily Cron: pre-warm each feed's KV entry so NO user open triggers a TMDB
@@ -181,18 +272,23 @@ export interface RunScheduledRefreshDeps {
  *  (if any) lives on under its TTL, and one bad feed never aborts the others. */
 export async function runScheduledRefresh(deps: RunScheduledRefreshDeps): Promise<void> {
   const originFetch = deps.originFetch ?? fetch;
+  const timeoutMs = deps.upstreamTimeoutMs ?? DEFAULT_UPSTREAM_TIMEOUT_MS;
+  const now = deps.now ?? Date.now;
   for (const feed of getTrendingFeeds()) {
     const key = cacheKeyFor(new Request(`https://proxy/${feed}`));
     try {
       const originResponse = await originFetch(`${TMDB_ORIGIN}/${key}`, {
         method: "GET",
         headers: { Authorization: `Bearer ${deps.token}`, "Content-Type": "application/json;charset=utf-8" },
+        signal: AbortSignal.timeout(timeoutMs),
       });
       if (!originResponse.ok) {
         continue;
       }
       const body = await originResponse.text();
-      await deps.kv.put(key, body, { expirationTtl: TRENDING_TTL_SECONDS });
+      await deps.kv.put(key, envelopeFor(body, TRENDING_TTL_SECONDS, now()), {
+        expirationTtl: TRENDING_TTL_SECONDS + STALE_TAIL_SECONDS,
+      });
     } catch {
       // network hiccup on one feed must not abort the rest
     }

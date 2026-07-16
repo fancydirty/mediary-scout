@@ -108,8 +108,9 @@ describe("handleTmdbProxy — KV cache", () => {
       token: "k",
       originFetch: async () => new Response("{}", { status: 200 }),
     });
-    expect(movieKv.puts[0]?.ttl).toBe(7 * 24 * 60 * 60);
-    expect(tvKv.puts[0]?.ttl).toBe(60 * 60);
+    // Physical TTL = freshness window + the 14d stale tail kept for outage fallback.
+    expect(movieKv.puts[0]?.ttl).toBe(7 * 24 * 60 * 60 + 14 * 24 * 60 * 60);
+    expect(tvKv.puts[0]?.ttl).toBe(60 * 60 + 14 * 24 * 60 * 60);
   });
 
   it("normalizes query order so the cache key is stable", async () => {
@@ -122,6 +123,162 @@ describe("handleTmdbProxy — KV cache", () => {
     await handleTmdbProxy({ request: new Request("https://w.example/movie/1?a=1&b=2"), kv, token: "k", originFetch: fetchOnce });
     await handleTmdbProxy({ request: new Request("https://w.example/movie/1?b=2&a=1"), kv, token: "k", originFetch: fetchOnce });
     expect(originCalls).toBe(1);
+  });
+});
+
+describe("handleTmdbProxy — upstream flap absorption (timeout + stale fallback)", () => {
+  // 2026-07-16 incident: TMDB's origin flapped for 1h+ — the worker's origin
+  // fetch hung with NO timeout, every live-fetch path stalled until the client
+  // gave up, and (search having no stale to fall back on) every default-config
+  // instance's search crashed. These tests pin the absorption contract.
+
+  /** An origin that never answers but honors AbortSignal — proves the handler
+   *  actually wires a timeout signal into originFetch. */
+  const hangingFetch: typeof fetch = (_url, init) =>
+    new Promise((_resolve, reject) => {
+      const signal = (init as RequestInit | undefined)?.signal;
+      if (!signal) {
+        reject(new Error("handler passed no AbortSignal to originFetch"));
+        return;
+      }
+      signal.addEventListener("abort", () => reject(signal.reason));
+    });
+
+  function envelope(body: string, freshUntil: number): string {
+    return JSON.stringify({ v: 1, freshUntil, body });
+  }
+
+  it("cold MISS + hanging origin → fast 504 JSON error, bounded by the injected timeout", async () => {
+    const started = Date.now();
+    const res = await handleTmdbProxy({
+      request: new Request("https://w.example/search/multi?query=bebop", {
+        headers: { Origin: "https://mediaryscout.app" },
+      }),
+      kv: fakeKv(),
+      token: "k",
+      originFetch: hangingFetch,
+      upstreamTimeoutMs: 20,
+    });
+    expect(res.status).toBe(504);
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(await res.json()).toMatchObject({ error: "tmdb_upstream_unreachable" });
+    // The failure must stay debuggable from the landing site (CORS on error branch).
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("https://mediaryscout.app");
+  });
+
+  it("stale envelope + failing origin → serves the stale body with X-Cache: STALE", async () => {
+    const kv = fakeKv({ "movie/278": envelope('{"id":278}', 1_000) });
+    const res = await handleTmdbProxy({
+      request: new Request("https://w.example/movie/278"),
+      kv,
+      token: "k",
+      originFetch: hangingFetch,
+      upstreamTimeoutMs: 20,
+      now: () => 2_000,
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("X-Cache")).toBe("STALE");
+    expect(await res.json()).toEqual({ id: 278 });
+  });
+
+  it("stale envelope + origin 5xx/429 → STALE; semantic 404 passes through instead", async () => {
+    for (const status of [500, 503, 429]) {
+      const kv = fakeKv({ "movie/278": envelope('{"id":278}', 1_000) });
+      const res = await handleTmdbProxy({
+        request: new Request("https://w.example/movie/278"),
+        kv,
+        token: "k",
+        originFetch: async () => new Response("upstream sad", { status }),
+        now: () => 2_000,
+      });
+      expect(res.headers.get("X-Cache")).toBe("STALE");
+      expect(await res.json()).toEqual({ id: 278 });
+    }
+    // A real TMDB 404 is an answer, not an outage — never masked by stale data.
+    const kv = fakeKv({ "movie/278": envelope('{"id":278}', 1_000) });
+    const notFound = await handleTmdbProxy({
+      request: new Request("https://w.example/movie/278"),
+      kv,
+      token: "k",
+      originFetch: async () => new Response('{"status_message":"gone"}', { status: 404 }),
+      now: () => 2_000,
+    });
+    expect(notFound.status).toBe(404);
+  });
+
+  it("stale envelope + healthy origin → refreshes: MISS response and a rewritten envelope", async () => {
+    const kv = fakeKv({ "movie/278": envelope('{"id":1}', 1_000) });
+    const res = await handleTmdbProxy({
+      request: new Request("https://w.example/movie/278"),
+      kv,
+      token: "k",
+      originFetch: async () => new Response('{"id":2}', { status: 200 }),
+      now: () => 2_000,
+    });
+    expect(res.headers.get("X-Cache")).toBe("MISS");
+    expect(await res.json()).toEqual({ id: 2 });
+    const stored = JSON.parse((await kv.get("movie/278"))!);
+    expect(stored).toMatchObject({ v: 1, body: '{"id":2}' });
+    expect(stored.freshUntil).toBe(2_000 + 7 * 24 * 60 * 60 * 1000);
+  });
+
+  it("fresh envelope → HIT without touching origin", async () => {
+    const kv = fakeKv({ "movie/278": envelope('{"id":278}', 10_000) });
+    let originCalls = 0;
+    const res = await handleTmdbProxy({
+      request: new Request("https://w.example/movie/278"),
+      kv,
+      token: "k",
+      originFetch: async () => {
+        originCalls += 1;
+        return new Response("{}", { status: 200 });
+      },
+      now: () => 2_000,
+    });
+    expect(res.headers.get("X-Cache")).toBe("HIT");
+    expect(await res.json()).toEqual({ id: 278 });
+    expect(originCalls).toBe(0);
+  });
+
+  it("legacy raw KV value (pre-envelope) still serves as HIT", async () => {
+    const kv = fakeKv({ "movie/278": '{"id":278}' });
+    const res = await handleTmdbProxy({
+      request: new Request("https://w.example/movie/278"),
+      kv,
+      token: "k",
+      originFetch: async () => new Response("SHOULD_NOT_FETCH", { status: 500 }),
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("X-Cache")).toBe("HIT");
+    expect(await res.json()).toEqual({ id: 278 });
+  });
+
+  it("a successful MISS writes an envelope whose physical TTL = fresh TTL + 14d stale tail", async () => {
+    const kv = fakeKv();
+    await handleTmdbProxy({
+      request: new Request("https://w.example/movie/278"),
+      kv,
+      token: "k",
+      originFetch: async () => new Response('{"id":278}', { status: 200 }),
+      now: () => 2_000,
+    });
+    expect(kv.puts[0]?.ttl).toBe(7 * 24 * 60 * 60 + 14 * 24 * 60 * 60);
+    const stored = JSON.parse((await kv.get("movie/278"))!);
+    expect(stored).toMatchObject({ v: 1, body: '{"id":278}' });
+  });
+
+  it("/img with a hanging origin → fast 502, no-store", async () => {
+    const started = Date.now();
+    const res = await handleTmdbProxy({
+      request: new Request("https://w.example/img/t/p/w342/abc.jpg"),
+      kv: fakeKv(),
+      token: "k",
+      originFetch: hangingFetch,
+      upstreamTimeoutMs: 20,
+    });
+    expect(res.status).toBe(502);
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
   });
 });
 
@@ -159,7 +316,7 @@ describe("trending discovery", () => {
     });
     expect(kv.puts).toHaveLength(getTrendingFeeds().length);
     for (const put of kv.puts) {
-      expect(put.ttl).toBe(25 * 60 * 60);
+      expect(put.ttl).toBe(25 * 60 * 60 + 14 * 24 * 60 * 60);
     }
     expect(kv.puts[0]!.key.startsWith("trending/movie/week")).toBe(true);
 
@@ -185,7 +342,7 @@ describe("trending discovery", () => {
       token: "k",
       originFetch: async () => new Response(JSON.stringify({ results: [] }), { status: 200 }),
     });
-    expect(kv.puts[0]?.ttl).toBe(25 * 60 * 60);
+    expect(kv.puts[0]?.ttl).toBe(25 * 60 * 60 + 14 * 24 * 60 * 60);
 
     // The DYNAMIC anime feed (first_air_date.gte rolls yearly) must get the same
     // daily TTL on a reactive MISS — isTrendingFeedRequest recomputes the feeds,
@@ -197,7 +354,7 @@ describe("trending discovery", () => {
       token: "k",
       originFetch: async () => new Response(JSON.stringify({ results: [] }), { status: 200 }),
     });
-    expect(animeKv.puts[0]?.ttl).toBe(25 * 60 * 60);
+    expect(animeKv.puts[0]?.ttl).toBe(25 * 60 * 60 + 14 * 24 * 60 * 60);
 
     // A non-feed discover/tv call keeps its ordinary short TTL (feed-specific, not
     // a blanket discover override).
@@ -208,7 +365,7 @@ describe("trending discovery", () => {
       token: "k",
       originFetch: async () => new Response("{}", { status: 200 }),
     });
-    expect(other.puts[0]?.ttl).toBe(60 * 60);
+    expect(other.puts[0]?.ttl).toBe(60 * 60 + 14 * 24 * 60 * 60);
   });
 
   it("runScheduledRefresh skips a feed whose origin fetch fails (never aborts the rest)", async () => {
