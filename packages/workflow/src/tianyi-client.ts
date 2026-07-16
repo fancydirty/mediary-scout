@@ -131,6 +131,7 @@ export class TianyiClient {
   private readonly fetchImpl: TianyiFetch;
   private readonly sleepFn: (ms: number) => Promise<void>;
   private readonly onCredentialRefresh: ((creds: TianyiCredential) => void | Promise<void>) | undefined;
+  private noCachSeq = 0;
 
   constructor(opts: TianyiClientOptions) {
     this.sessionKey = opts.sessionKey?.trim() ?? "";
@@ -150,6 +151,7 @@ export class TianyiClient {
     retried = false,
   ): Promise<Record<string, unknown>> {
     const q = new URLSearchParams(params);
+    q.set("noCach", this.nextNoCach());
     q.set("sessionKey", this.sessionKey);
     const res = await this.fetchImpl(`${WEB_BASE}${path}?${q.toString()}`, {
       method: "GET",
@@ -158,18 +160,31 @@ export class TianyiClient {
     return this.unwrap(res, path, () => this.webGet(path, params, true), retried);
   }
 
+  /** POST 也把 sessionKey + noCach 放 QUERY(探针 web() 对 GET/POST 一视同仁),body 仅带
+   *  caller 的 form 字段。sessionKey 放 body 会被真网络拒绝(探针证 query 才对)。 */
   private async webPost(
     path: string,
     form: Record<string, string>,
     retried = false,
   ): Promise<Record<string, unknown>> {
-    const body = new URLSearchParams({ ...form, sessionKey: this.sessionKey }).toString();
-    const res = await this.fetchImpl(`${WEB_BASE}${path}`, {
+    const q = new URLSearchParams();
+    q.set("noCach", this.nextNoCach());
+    q.set("sessionKey", this.sessionKey);
+    const body = new URLSearchParams(form).toString();
+    const res = await this.fetchImpl(`${WEB_BASE}${path}?${q.toString()}`, {
       method: "POST",
       headers: { ...this.webHeaders(), "Content-Type": "application/x-www-form-urlencoded" },
       body,
     });
     return this.unwrap(res, path, () => this.webPost(path, form, true), retried);
+  }
+
+  /** 缓存穿透 token(探针用 Math.random());WEB GET 会缓存,不带则 SHARE_SAVE 后
+   *  listFiles 回读可能拿到陈旧空列表→执行器 before/after diff 误判 no_target_change。
+   *  Date.now()+单调计数器保证同毫秒内也唯一。 */
+  private nextNoCach(): string {
+    this.noCachSeq += 1;
+    return `${Date.now()}-${this.noCachSeq}`;
   }
 
   private webHeaders(): Record<string, string> {
@@ -263,7 +278,9 @@ export class TianyiClient {
   }
 
   /** POST api.cloud.189.cn/getSessionForPC.action?...&accessToken=<at> → 全套 session。
-   *  参数 lift 自 wes-lin/cloud189-sdk getSessionForPC + 探针 clientSuffix。返回 null=失败。 */
+   *  参数 lift 自 wes-lin/cloud189-sdk getSessionForPC + 探针 clientSuffix。返回 null=失败。
+   *  ⚠️ 此处带了 appId,而 QR redirectURL 变体不带 appId;两条探针都没跑过 accessToken 变体
+   *  (只跑过 redirectURL 变体)。若 T10 live-e2e 会话续期失败,第一件事就是去掉这里的 appId 再试。 */
   private async exchangeAccessTokenForSession(accessToken: string): Promise<{
     sessionKey: string;
     accessToken: string;

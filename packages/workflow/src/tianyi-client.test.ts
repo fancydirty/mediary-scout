@@ -79,6 +79,7 @@ describe("TianyiClient WEB face", () => {
     const items = await c.listFiles("-11");
     expect(calls[0]).toContain("sessionKey=SK");
     expect(calls[0]).toContain("folderId=-11");
+    expect(calls[0]).toContain("noCach="); // R2: cache-bust on every WEB call
     expect(items).toEqual([
       { id: "111222333444555666", name: "Movies", size: 0, md5: "", isFolder: true },
       { id: "924511245739356595", name: "a.mkv", size: 42, md5: "AB", isFolder: false },
@@ -204,6 +205,11 @@ describe("TianyiClient SHARE_SAVE chain", () => {
         expect(params.get("type")).toBe("SHARE_SAVE");
         expect(params.get("shareId")).toBe("123456789012345678");
         expect(params.get("targetFolderId")).toBe("-11");
+        // R1: POST auth lives in the QUERY (probe-proven), NOT the body.
+        expect(url).toContain("sessionKey=SK");
+        expect(params.get("sessionKey")).toBeNull();
+        // R2: cache-bust on the POST query too.
+        expect(url).toContain("noCach=");
         return raw('{"res_code":0,"taskId":987654321098765432}');
       }
       if (url.includes("checkBatchTask")) {
@@ -257,9 +263,10 @@ describe("TianyiClient SHARE_SAVE chain", () => {
         seq.push("manage");
         const p = new URLSearchParams(init.body);
         const tis = JSON.parse(p.get("taskInfos") ?? "[]");
-        expect(tis[0].dealWay).toBe(1);
+        expect(tis[0].dealWay).toBe(1); // R3: probe adds BOTH dealWay:1 …
+        expect(tis[0].isConflict).toBe(1); // R3: … AND isConflict:1
         expect(tis[0].fileId).toBe("924511245739356595");
-        expect(p.get("targetFolderId")).toBe("111222333444555666");
+        expect(p.get("targetFolderId")).toBe("111222333444555666"); // R3: from getConflictTaskInfo
         return raw('{"res_code":0}');
       }
       if (url.includes("checkBatchTask")) {
