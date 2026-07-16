@@ -85,6 +85,14 @@ describe("TianyiClient WEB face", () => {
     ]);
   });
 
+  it("rejects loudly on a non-JSON HTTP-error body (must NOT collapse a 502/WAF page into [])", async () => {
+    // Upstream outage / gateway HTML must fail loud, never masquerade as an empty
+    // directory — the TMDB-outage-as-empty bug this codebase was burned by.
+    const fetchImpl = fetchStub(() => ({ status: 502, body: "<html>gateway timeout</html>" }));
+    const c = new TianyiClient({ sessionKey: "SK", accessToken: "AT", refreshToken: "RT", fetchImpl });
+    await expect(c.listFiles("-11")).rejects.toThrow(/TIANYI_HTTP_FAILED/);
+  });
+
   it("self-heals a dead session: re-mints via getSessionForPC, persists creds, retries the call", async () => {
     const refreshed: unknown[] = [];
     let sessionMinted = false;
@@ -212,14 +220,16 @@ describe("TianyiClient SHARE_SAVE chain", () => {
   });
 
   it("SHARE_SAVE with failedCount>0 reports partial failure (被和谐文件)", async () => {
+    // int64-bearing responses are RAW JSON strings (exact digits) — never bare JS
+    // number literals, which JS rounds before the stub could stringify them.
+    const raw = (text: string) => ({ status: 200, text });
     const fetchImpl = vi.fn<TianyiFetch>(async (url) => {
-      const body = (v: unknown) => ({ status: 200, text: JSON.stringify(v) });
       if (url.includes("getShareInfoByCodeV2"))
-        return body({ res_code: 0, shareId: 123456789012345678, fileId: 924511245739356595, shareMode: 1, needAccessCode: 0 });
+        return raw('{"res_code":0,"shareId":123456789012345678,"fileId":924511245739356595,"shareMode":1,"needAccessCode":0}');
       if (url.includes("listShareDir"))
-        return body({ res_code: 0, fileListAO: { folderList: [], fileList: [{ id: 924511245739356595, name: "x.mkv", size: 1e9, md5: "M" }] } });
-      if (url.includes("createBatchTask")) return body({ res_code: 0, taskId: 987654321098765432 });
-      if (url.includes("checkBatchTask")) return body({ res_code: 0, taskStatus: 4, successedCount: 0, failedCount: 1 });
+        return raw('{"res_code":0,"fileListAO":{"folderList":[],"fileList":[{"id":924511245739356595,"name":"x.mkv","size":1000000000,"md5":"M"}]}}');
+      if (url.includes("createBatchTask")) return raw('{"res_code":0,"taskId":987654321098765432}');
+      if (url.includes("checkBatchTask")) return raw('{"res_code":0,"taskStatus":4,"successedCount":0,"failedCount":1}');
       throw new Error("unexpected " + url);
     });
     const c = new TianyiClient({ sessionKey: "SK", accessToken: "AT", refreshToken: "RT", fetchImpl });
@@ -265,11 +275,11 @@ describe("TianyiClient SHARE_SAVE chain", () => {
   });
 
   it("returns ok:false for an empty / dead share (no files listed)", async () => {
+    const raw = (text: string) => ({ status: 200, text });
     const fetchImpl = vi.fn<TianyiFetch>(async (url) => {
-      const body = (v: unknown) => ({ status: 200, text: JSON.stringify(v) });
       if (url.includes("getShareInfoByCodeV2"))
-        return body({ res_code: 0, shareId: 123456789012345678, fileId: 924511245739356595, shareMode: 1, needAccessCode: 0 });
-      if (url.includes("listShareDir")) return body({ res_code: 0, fileListAO: { folderList: [], fileList: [] } });
+        return raw('{"res_code":0,"shareId":123456789012345678,"fileId":924511245739356595,"shareMode":1,"needAccessCode":0}');
+      if (url.includes("listShareDir")) return raw('{"res_code":0,"fileListAO":{"folderList":[],"fileList":[]}}');
       throw new Error("unexpected " + url);
     });
     const c = new TianyiClient({ sessionKey: "SK", accessToken: "AT", refreshToken: "RT", fetchImpl });
@@ -313,7 +323,7 @@ describe("TianyiClient directory write ops", () => {
       if (url.includes("createBatchTask")) {
         seq.push("create");
         expect(p.get("type")).toBe("DELETE");
-        return { status: 200, body: { res_code: 0, taskId: 987654321098765432 } };
+        return { status: 200, body: '{"res_code":0,"taskId":987654321098765432}' };
       }
       if (url.includes("checkBatchTask")) {
         seq.push("check");
@@ -344,7 +354,7 @@ describe("TianyiClient directory write ops", () => {
       if (url.includes("createBatchTask")) {
         type = p.get("type") ?? "";
         target = p.get("targetFolderId") ?? "";
-        return { status: 200, body: { res_code: 0, taskId: 987654321098765432 } };
+        return { status: 200, body: '{"res_code":0,"taskId":987654321098765432}' };
       }
       if (url.includes("checkBatchTask")) return { status: 200, body: { res_code: 0, taskStatus: 4 } };
       throw new Error("unexpected " + url);

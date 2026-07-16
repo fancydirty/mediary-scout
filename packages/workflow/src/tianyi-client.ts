@@ -38,7 +38,12 @@ const DEFAULT_TASK_POLL_INTERVAL_MS = 1500;
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** id 字段名:天翼这些字段是 18 位 int64,JSON.parse 前必须先转字符串防精度丢失。
- *  ⚠️ 全 client 唯一的解析入口,任何响应都走它。字段清单以真跑通的探针脚本为准。 */
+ *  ⚠️ 全 client 唯一的解析入口,任何响应都走它。字段清单以真跑通的探针脚本为准。
+ *  ⚠️ INVARIANT: every name here is ALWAYS an integer id — NEVER a quantity/float
+ *  (size/sizeBytes/capacity/…). Adding a numeric-but-non-id field would quote a
+ *  16+-digit float (or an id that legitimately needs to stay a number) with the
+ *  same regex, producing invalid JSON → parseTianyiJson returns null → the call
+ *  fails loud. Only add fields that are pure opaque int64 identifiers. */
 const BIGINT_ID_FIELDS = /"(id|fileId|shareId|taskId|targetFolderId|parentId|pId|shareDirFileId)":(\d{16,})/g;
 
 /** 唯一 JSON 解析入口:先把大整数 id 字段加引号转字符串,再 parse。见文件头「root cause」。 */
@@ -183,7 +188,15 @@ export class TianyiClient {
     retried: boolean,
   ): Promise<Record<string, unknown>> {
     const parsed = parseTianyiJson(res.text);
-    const data = (parsed ?? {}) as Record<string, unknown>;
+    // Fail LOUD on a non-JSON body (transient 502/429, WAF/gateway HTML page).
+    // Never collapse null → {} → "res_code undefined = success", or an upstream
+    // outage would masquerade as an empty directory / "分享为空" (the TMDB-outage
+    // -as-empty bug this codebase was burned by). A valid JSON object with no
+    // res_code is still treated as success below (some endpoints omit it).
+    if (parsed === null) {
+      throw new Error(`TIANYI_HTTP_FAILED: status=${res.status} non-JSON body`);
+    }
+    const data = parsed as Record<string, unknown>;
     const code = data["res_code"];
     const message = String(data["res_message"] ?? "");
     if (isSessionDead(code, message)) {
