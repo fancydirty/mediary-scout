@@ -605,7 +605,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 async function defaultTianyiFetch(url: string, init: TianyiHttpInit): Promise<{ status: number; text: string }> {
-  const requestInit: RequestInit = { method: init.method, headers: init.headers };
+  // HARD project rule "新外部HTTP一律带超时": a bare fetch with no AbortController hung
+  // the whole app in the PanSou incident. 20s matches the WEB-face probes' budget.
+  const requestInit: RequestInit = {
+    method: init.method,
+    headers: init.headers,
+    signal: AbortSignal.timeout(20_000),
+  };
   if (init.body !== undefined) {
     requestInit.body = init.body;
   }

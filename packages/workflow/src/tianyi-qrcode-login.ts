@@ -169,7 +169,7 @@ export class TianyiQrLoginClient {
       { method: "POST", body: formBody({ appId: APP_ID }), headers: FORM_CONTENT_TYPE },
       jar,
     );
-    const u = asRecord(parseJson(uuidRes.text));
+    const u = parseJsonOrThrow(uuidRes, "getUUID.do");
     const uuid = stringValue(u["uuid"]);
     if (!uuid) {
       throw new Error("TIANYI_QR_UUID_FAILED: getUUID.do returned no uuid");
@@ -221,7 +221,13 @@ export class TianyiQrLoginClient {
     const state = asRecord(parsed);
     const status = numberValue(state["status"]);
     if (status === 0) {
-      return { status: "confirmed", redirectUrl: stringValue(state["redirectUrl"]), cookies };
+      // numberValue coerces null/""/[] → 0, so a status:0 alone is NOT enough to
+      // trust: a real confirm ALWAYS carries a redirectUrl (it's what we exchange).
+      // Gate on it — no redirectUrl → not a real confirm, fall through to waiting.
+      const redirectUrl = stringValue(state["redirectUrl"]);
+      if (redirectUrl) {
+        return { status: "confirmed", redirectUrl, cookies };
+      }
     }
     if (status === -11002) {
       return { status: "scanned", cookies };
@@ -331,7 +337,7 @@ export class TianyiQrLoginClient {
       { method: "POST", headers: { Accept: "application/json;charset=UTF-8" } },
       jar,
     );
-    const data = asRecord(parseJson(res.text));
+    const data = parseJsonOrThrow(res, "getSessionForPC.action");
     const sessionKey = stringValue(data["sessionKey"]);
     if (!sessionKey) {
       throw new Error(
@@ -443,10 +449,24 @@ function parseJson(text: string): unknown {
   }
 }
 
+/** Parse a JSON body or fail LOUD carrying the HTTP status — never let a 502/WAF
+ *  HTML page masquerade as a missing field (misattribution). NOTE: pollStatus
+ *  deliberately does NOT use this — polling must tolerate gateway hiccups → waiting. */
+function parseJsonOrThrow(res: TianyiQrRawResponse, label: string): Record<string, unknown> {
+  const parsed = parseJson(res.text);
+  if (parsed === null) {
+    throw new Error(`TIANYI_QR_HTTP_FAILED: status=${res.status} non-JSON body from ${label}`);
+  }
+  return asRecord(parsed);
+}
+
 async function defaultRawFetch(url: string, init: TianyiQrRequestInit): Promise<TianyiQrRawResponse> {
+  // HARD project rule: new external HTTP ALWAYS carries a timeout (a bare fetch hung
+  // the whole app in the PanSou incident). 20s matches the probes' 15–20s budget.
   const res = await fetch(url, {
     method: init.method,
     redirect: "manual",
+    signal: AbortSignal.timeout(20_000),
     ...(init.headers ? { headers: init.headers } : {}),
     ...(init.body !== undefined ? { body: init.body } : {}),
   });

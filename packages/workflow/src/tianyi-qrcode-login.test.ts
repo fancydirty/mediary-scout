@@ -88,6 +88,20 @@ describe("TianyiQrLoginClient.pollStatus (v1-critical 4-state mapping)", () => {
     expect((await c.pollStatus(sessionFixture())).status).toBe("waiting");
   });
 
+  it("does NOT false-confirm on {status: null} (numberValue coerces null→0)", async () => {
+    // A garbled/empty status must never map to confirmed — the confirm branch
+    // requires a real redirectUrl, which a null-status response cannot carry.
+    const rawFetch = vi.fn<TianyiQrRawFetch>(async () => makeRaw({ text: JSON.stringify({ status: null }) }));
+    const c = new TianyiQrLoginClient({ rawFetch });
+    expect((await c.pollStatus(sessionFixture())).status).toBe("waiting");
+  });
+
+  it("does NOT confirm on status 0 with an empty redirectUrl", async () => {
+    const rawFetch = vi.fn<TianyiQrRawFetch>(async () => makeRaw({ text: JSON.stringify({ status: 0, redirectUrl: "" }) }));
+    const c = new TianyiQrLoginClient({ rawFetch });
+    expect((await c.pollStatus(sessionFixture())).status).toBe("waiting");
+  });
+
   it("POSTs qrcodeLoginState.do with cookie jar + encryuuid + concat date + Referer/Reqid/lt; threads harvested cookies", async () => {
     let seen: { url: string; init: TianyiQrRequestInit } | undefined;
     const rawFetch = vi.fn<TianyiQrRawFetch>(async (url: string, init: TianyiQrRequestInit) => {
@@ -208,6 +222,17 @@ describe("TianyiQrLoginClient.getQrSession (unifyLoginForPC → getUUID)", () =>
     const c = new TianyiQrLoginClient({ rawFetch });
     await expect(c.getQrSession()).rejects.toThrow(/TIANYI_QR_UUID_FAILED/);
   });
+
+  it("fails LOUD (not 'no uuid') when getUUID.do returns a non-JSON 502/WAF body", async () => {
+    // A gateway HTML page must surface as an HTTP error carrying the status, not be
+    // misattributed as a missing uuid field (mirrors tianyi-client's unwrap discipline).
+    const rawFetch = vi.fn<TianyiQrRawFetch>(async (url: string) => {
+      if (url.includes("unifyLoginForPC")) return makeRaw({ text: `lt = "L"; paramId = "P"; reqId = "R";` });
+      return makeRaw({ status: 502, text: "<html>gateway timeout</html>" });
+    });
+    const c = new TianyiQrLoginClient({ rawFetch });
+    await expect(c.getQrSession()).rejects.toThrow(/TIANYI_QR_HTTP_FAILED: status=502/);
+  });
 });
 
 // ── exchangeSession: getSessionForPC(redirectURL) → 7-field session ───────────
@@ -263,6 +288,37 @@ describe("TianyiQrLoginClient.exchangeSession (getSessionForPC)", () => {
     await expect(c.exchangeSession(sessionFixture(), "https://x")).rejects.toThrow(
       /TIANYI_SESSION_EXCHANGE_FAILED/,
     );
+  });
+
+  it("fails LOUD (not 'no sessionKey') when getSessionForPC returns a non-JSON 502/WAF body", async () => {
+    const rawFetch = vi.fn<TianyiQrRawFetch>(async () => makeRaw({ status: 502, text: "<html>bad gateway</html>" }));
+    const c = new TianyiQrLoginClient({ rawFetch });
+    await expect(c.exchangeSession(sessionFixture(), "https://x")).rejects.toThrow(
+      /TIANYI_QR_HTTP_FAILED: status=502/,
+    );
+  });
+});
+
+// ── formatTianyiDate: lock the exact YYYY-MM-DDHH:mm:ss.SSS format deterministically
+describe("qrcodeLoginState date format (YYYY-MM-DDHH:mm:ss.SSS)", () => {
+  it("zero-pads month/day/hour and pads ms to 3 digits, with day+hour concatenated", async () => {
+    // Fix the clock: month index 0 → -01, single-digit day 5 → -05, hour 3 → 03,
+    // ms 5 → .005. Exercised through the real pollStatus wiring (local-tz stable
+    // because both construction and formatting use local getters).
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date(2026, 0, 5, 3, 7, 9, 5));
+      let body = "";
+      const rawFetch = vi.fn<TianyiQrRawFetch>(async (_url: string, init: TianyiQrRequestInit) => {
+        body = init.body ?? "";
+        return makeRaw({ text: JSON.stringify({ status: -106 }) });
+      });
+      const c = new TianyiQrLoginClient({ rawFetch });
+      await c.pollStatus(sessionFixture());
+      expect(new URLSearchParams(body).get("date")).toBe("2026-01-0503:07:09.005");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
