@@ -238,7 +238,11 @@ export async function handleTmdbProxy(deps: HandleTmdbProxyDeps): Promise<Respon
     if (staleBody !== null) {
       return new Response(staleBody, { status: 200, headers: jsonHeaders("STALE", request) });
     }
-    return new Response(JSON.stringify({ error: "tmdb_upstream_unreachable", detail: String(error) }), {
+    // Public endpoint: keep the error contract to a stable enum — raw error
+    // strings stay in the worker log (wrangler tail), never in the response.
+    console.error(`tmdb origin fetch failed for ${key}: ${String(error)}`);
+    const reason = error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network";
+    return new Response(JSON.stringify({ error: "tmdb_upstream_unreachable", reason }), {
       status: 504,
       headers: jsonHeaders("MISS", request),
     });

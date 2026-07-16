@@ -161,7 +161,9 @@ describe("handleTmdbProxy — upstream flap absorption (timeout + stale fallback
     });
     expect(res.status).toBe(504);
     expect(Date.now() - started).toBeLessThan(2000);
-    expect(await res.json()).toMatchObject({ error: "tmdb_upstream_unreachable" });
+    // Exact body: a stable public contract — an enum reason, and NO raw error
+    // detail (a public endpoint must not leak internal runtime strings).
+    expect(await res.json()).toEqual({ error: "tmdb_upstream_unreachable", reason: "timeout" });
     // The failure must stay debuggable from the landing site (CORS on error branch).
     expect(res.headers.get("Access-Control-Allow-Origin")).toBe("https://mediaryscout.app");
   });
