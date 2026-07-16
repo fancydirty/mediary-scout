@@ -104,6 +104,14 @@ export interface TianyiItem {
   isFolder: boolean;
 }
 
+/** A DELETE/MOVE batch-task entry: id + folderness (+ name when the caller has
+ *  one at hand). See batchTaskInfos for why isFolder is load-bearing. */
+export interface TianyiBatchEntry {
+  id: string;
+  name?: string;
+  isFolder: boolean;
+}
+
 /** SHARE_SAVE 的结果:ok=真正落盘且无文件被拦;failed=被和谐/失败文件数。 */
 export interface TianyiSaveResult {
   ok: boolean;
@@ -507,20 +515,36 @@ export class TianyiClient {
     });
   }
 
-  async batchDelete(fileIds: string[]): Promise<void> {
-    if (fileIds.length === 0) {
+  /** DELETE/MOVE taskInfos entry. ⚠️ isFolder is LOAD-BEARING (probe
+   *  tianyi-save-bigint.mjs cleanup, line ~81): a FOLDER was really deleted with
+   *  {fileId, fileName, isFolder: 1} — hardcoding isFolder: 0 silently deletes
+   *  nothing for a dir. fileName rides along when the caller knows it; the probe
+   *  always sent it, and whether 天翼 accepts a name-less folder DELETE is
+   *  UNVERIFIED (T10 live e2e must delete a real wrapper dir to confirm). */
+  private static batchTaskInfos(entries: TianyiBatchEntry[]): string {
+    return JSON.stringify(
+      entries.map((e) => ({
+        fileId: e.id,
+        ...(e.name ? { fileName: e.name } : {}),
+        isFolder: e.isFolder ? 1 : 0,
+      })),
+    );
+  }
+
+  async batchDelete(entries: TianyiBatchEntry[]): Promise<void> {
+    if (entries.length === 0) {
       return;
     }
-    const taskInfos = JSON.stringify(fileIds.map((id) => ({ fileId: id, isFolder: 0 })));
+    const taskInfos = TianyiClient.batchTaskInfos(entries);
     const d = await this.webPost("/api/open/batch/createBatchTask.action", { type: "DELETE", taskInfos });
     await this.pollGenericTask(strId(d["taskId"]), "DELETE");
   }
 
-  async moveFiles(input: { fileIds: string[]; targetFolderId: string }): Promise<void> {
-    if (input.fileIds.length === 0) {
+  async moveFiles(input: { entries: TianyiBatchEntry[]; targetFolderId: string }): Promise<void> {
+    if (input.entries.length === 0) {
       return;
     }
-    const taskInfos = JSON.stringify(input.fileIds.map((id) => ({ fileId: id, isFolder: 0 })));
+    const taskInfos = TianyiClient.batchTaskInfos(input.entries);
     const d = await this.webPost("/api/open/batch/createBatchTask.action", {
       type: "MOVE",
       taskInfos,
@@ -529,6 +553,10 @@ export class TianyiClient {
     await this.pollGenericTask(strId(d["taskId"]), "MOVE");
   }
 
+  /** Fail LOUD, mirroring pollBatchTask: a DELETE/MOVE that never started
+   *  (no taskId), completed with failedCount>0, or never reached status 4 within
+   *  the poll window must NOT look like success — silent-success here left the
+   *  executor reporting {removed:true} over a zombie wrapper dir. */
   private async pollGenericTask(
     taskId: string,
     type: string,
@@ -536,15 +564,20 @@ export class TianyiClient {
     intervalMs = DEFAULT_TASK_POLL_INTERVAL_MS,
   ): Promise<void> {
     if (!taskId) {
-      return;
+      throw new Error(`TIANYI_${type}_FAILED: createBatchTask 未返回 taskId`);
     }
     for (let i = 0; i < maxPolls; i++) {
       const d = await this.webPost("/api/open/batch/checkBatchTask.action", { type, taskId });
       if (numOf(d["taskStatus"]) === 4) {
+        const failed = numOf(d["failedCount"]);
+        if (failed > 0) {
+          throw new Error(`TIANYI_${type}_FAILED: ${failed} 项失败(failedCount>0)`);
+        }
         return;
       }
       await this.sleepFn(intervalMs);
     }
+    throw new Error(`TIANYI_${type}_FAILED: 轮询超时(任务未完成)`);
   }
 }
 

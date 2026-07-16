@@ -74,6 +74,17 @@ describe("parseTianyiShareUrl", () => {
     });
   });
 
+  it("strips the URL fragment before parsing the accessCode (both forms)", () => {
+    expect(parseTianyiShareUrl("https://cloud.189.cn/t/QzUnmqBvYr2q?accessCode=x8fd#frag")).toEqual({
+      shareCode: "QzUnmqBvYr2q",
+      accessCode: "x8fd",
+    });
+    expect(parseTianyiShareUrl("https://cloud.189.cn/web/share?code=AbCd12&pwd=1234#x")).toEqual({
+      shareCode: "AbCd12",
+      accessCode: "1234",
+    });
+  });
+
   it("returns null for a non-天翼 url", () => {
     expect(parseTianyiShareUrl("https://pan.quark.cn/s/abc123")).toBeNull();
   });
@@ -154,6 +165,46 @@ describe("TianyiStorageExecutor.transfer", () => {
     expect(attempt.materializedFileIds).toEqual([]);
   });
 
+  it("reports failed when saveShare returns ok:false with an EMPTY message (never reclassified as success/no_target_change)", async () => {
+    const saveShare = vi.fn<TianyiClient["saveShare"]>(async () => ({ ok: false, failed: 0, message: "" }));
+    const client = fakeClient({ saveShare });
+    const executor = makeExecutor(client);
+
+    const attempt = await executor.transfer({
+      workflowRunId: "run-1",
+      directoryId: SCOPE,
+      candidate: candidate(),
+    });
+
+    expect(attempt.status).toBe("failed");
+    expect(attempt.providerMessage).not.toBe("");
+  });
+
+  it("partial 和谐: status stays failed while materializedFileIds still carries the landed ids", async () => {
+    // failed>0 with SOME files landed — downstream (sandbox/agent-loop guards)
+    // depends on exactly this combination: failed status + non-empty landed ids.
+    let landed = false;
+    const listFiles = vi.fn<TianyiClient["listFiles"]>(async () =>
+      landed ? [file("landed-1", "Show.S01E02.1080p.mkv")] : [],
+    );
+    const saveShare = vi.fn<TianyiClient["saveShare"]>(async () => {
+      landed = true;
+      return { ok: false, failed: 1, message: "1 个文件被拦(可能被和谐)" };
+    });
+    const client = fakeClient({ listFiles, saveShare });
+    const executor = makeExecutor(client);
+
+    const attempt = await executor.transfer({
+      workflowRunId: "run-1",
+      directoryId: SCOPE,
+      candidate: candidate(),
+    });
+
+    expect(attempt.status).toBe("failed");
+    expect(attempt.providerMessage).toMatch(/被拦/);
+    expect(attempt.materializedFileIds).toEqual(["landed-1"]);
+  });
+
   it("reports failed on an unparseable share url", async () => {
     const client = fakeClient();
     const executor = makeExecutor(client);
@@ -227,10 +278,14 @@ describe("TianyiStorageExecutor.createDirectory", () => {
     await expect(executor.createDirectory({ name: "Movies", parentId: "root" })).resolves.toBe("fresh-dir");
     expect(createFolder).toHaveBeenCalledWith({ name: "Movies", parentId: "root" });
 
-    // derived scope covers the CREATE branch too
+    // derived scope covers the CREATE branch too. The port only hands ids, so
+    // entries go name-less with isFolder:false (moved things are always files).
     const moved = await executor.moveFiles({ fileIds: ["f1"], targetDirectoryId: "fresh-dir" });
     expect(moved).toEqual({ moved: ["f1"] });
-    expect(client.moveFiles).toHaveBeenCalledWith({ fileIds: ["f1"], targetFolderId: "fresh-dir" });
+    expect(client.moveFiles).toHaveBeenCalledWith({
+      entries: [{ id: "f1", isFolder: false }],
+      targetFolderId: "fresh-dir",
+    });
   });
 
   it("refuses createDirectory under an out-of-scope parent (WRITE_SCOPE_VIOLATION)", async () => {
@@ -270,7 +325,9 @@ describe("TianyiStorageExecutor write-scope guard (derived scope)", () => {
     expect(subdirs.map((d) => d.id)).toContain(wrapperId);
 
     await expect(executor.removeDirectory(wrapperId)).resolves.toEqual({ removed: true });
-    expect(batchDelete).toHaveBeenCalledWith([wrapperId]);
+    // Folder delete MUST carry isFolder:true (probe-verified: isFolder:0 on a dir
+    // deletes nothing). Name is unknown at this call site — sent name-less.
+    expect(batchDelete).toHaveBeenCalledWith([{ id: wrapperId, isFolder: true }]);
   });
 
   it("does NOT widen scope by listing an OUT-of-scope dir (read ≠ write)", async () => {
@@ -305,10 +362,10 @@ describe("TianyiStorageExecutor.flattenDirectory", () => {
     fs.set("wrap", [file("v1", "Movie.2020.mkv"), file("nfo", "info.nfo", 100)]);
     fs.set("junk", [file("ad", "ad.txt", 100)]);
     const listFiles = vi.fn<TianyiClient["listFiles"]>(async (dirId) => fs.get(dirId ?? "") ?? []);
-    const moveFiles = vi.fn<TianyiClient["moveFiles"]>(async ({ fileIds, targetFolderId }) => {
-      for (const id of fileIds) {
+    const moveFiles = vi.fn<TianyiClient["moveFiles"]>(async ({ entries, targetFolderId }) => {
+      for (const entry of entries) {
         for (const items of fs.values()) {
-          const idx = items.findIndex((i) => i.id === id);
+          const idx = items.findIndex((i) => i.id === entry.id);
           if (idx >= 0) {
             const [moved] = items.splice(idx, 1);
             if (moved) {
@@ -324,10 +381,31 @@ describe("TianyiStorageExecutor.flattenDirectory", () => {
     const result = await executor.flattenDirectory(SCOPE);
 
     expect(result.moved).toEqual(["v1"]);
-    expect(moveFiles).toHaveBeenCalledWith({ fileIds: ["v1"], targetFolderId: SCOPE });
-    // "wrap" lost its only large video to the move; "junk" never had one — both go.
-    expect([...result.removed].sort()).toEqual(["junk", "wrap"]);
-    expect(batchDelete).toHaveBeenCalledWith(result.removed);
+    // The flatten call site KNOWS folderness+name from its own listing — both ride along.
+    expect(moveFiles).toHaveBeenCalledWith({
+      entries: [{ id: "v1", name: "Movie.2020.mkv", isFolder: false }],
+      targetFolderId: SCOPE,
+    });
+    // "wrap" lost its only large video to the move; "junk" never had one — both go,
+    // as FOLDER entries (isFolder:true + name, probe-verified shape).
+    expect(result.removed).toEqual(["wrap", "junk"]);
+    expect(batchDelete).toHaveBeenCalledWith([
+      { id: "wrap", name: "Movie.2020.1080p", isFolder: true },
+      { id: "junk", name: "ads", isFolder: true },
+    ]);
+  });
+
+  it("fails loud when the DELETE batch task reports failure (no zombie wrappers masquerading as success)", async () => {
+    const fs = new Map<string, TianyiItem[]>();
+    fs.set(SCOPE, [folder("junk", "ads")]);
+    fs.set("junk", []);
+    const listFiles = vi.fn<TianyiClient["listFiles"]>(async (dirId) => fs.get(dirId ?? "") ?? []);
+    const batchDelete = vi.fn<TianyiClient["batchDelete"]>(async () => {
+      throw new Error("TIANYI_DELETE_FAILED: 1 项失败(failedCount>0)");
+    });
+    const executor = makeExecutor(fakeClient({ listFiles, batchDelete }));
+
+    await expect(executor.flattenDirectory(SCOPE)).rejects.toThrow(/TIANYI_DELETE_FAILED/);
   });
 });
 
@@ -340,7 +418,8 @@ describe("TianyiStorageExecutor.deleteFiles", () => {
     await expect(executor.deleteFiles({ directoryId: SCOPE, fileIds: ["sub1"] })).resolves.toEqual({
       deleted: ["sub1"],
     });
-    expect(batchDelete).toHaveBeenCalledWith(["sub1"]);
+    // File entries: isFolder:false; the name is free from the just-walked tree.
+    expect(batchDelete).toHaveBeenCalledWith([{ id: "sub1", name: "多余字幕.srt", isFolder: false }]);
   });
 
   it("refuses ids that are nowhere in the directory tree (SAFETY_VIOLATION)", async () => {

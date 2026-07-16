@@ -28,7 +28,7 @@ import type { PackageTreeFile, ResourceCandidate, TransferAttempt, TransferStatu
 import { episodeCodeFromFileName } from "./episode-code.js";
 import type { StorageExecutor, UnparsedVideoFile } from "./ports.js";
 import { isTianyiAuthError } from "./tianyi-client.js";
-import type { TianyiClient, TianyiItem } from "./tianyi-client.js";
+import type { TianyiBatchEntry, TianyiClient, TianyiItem } from "./tianyi-client.js";
 
 const MAX_RECURSIVE_COLLECT_DEPTH = 6;
 const DEFAULT_MIN_VIDEO_SIZE_BYTES = 10 * 1024 * 1024;
@@ -160,8 +160,10 @@ export class TianyiStorageExecutor implements StorageExecutor {
         accessCode,
         targetFolderId: safe,
       });
-      if (!result.ok && result.message) {
-        providerMessage = result.message; // failedCount>0 (和谐) / dead share / poll timeout
+      if (!result.ok) {
+        // ok:false with an EMPTY message must never be reclassified as
+        // success/no_target_change — fall back to a loud generic reason.
+        providerMessage = result.message || "SHARE_SAVE failed(provider 未给原因)"; // failedCount>0 (和谐) / dead share / poll timeout
       }
     } catch (error) {
       // Auth failures must surface so the worker freezes the drive — never absorbed.
@@ -201,13 +203,20 @@ export class TianyiStorageExecutor implements StorageExecutor {
     const moveCandidates = videos.filter(
       (v) => v.sourceDirectoryId !== safeDirectoryId && v.sizeBytes >= this.minVideoSizeBytes,
     );
-    const moved = moveCandidates.map((v) => v.file.providerFileId);
-    if (moved.length > 0) {
-      await this.client.moveFiles({ fileIds: moved, targetFolderId: safeDirectoryId });
+    // This call site KNOWS each item's folderness+name from its own listing —
+    // pass both (batch taskInfos want isFolder, probe-verified; see TianyiBatchEntry).
+    const moveEntries: TianyiBatchEntry[] = moveCandidates.map((v) => ({
+      id: v.file.providerFileId,
+      name: v.file.name,
+      isFolder: false,
+    }));
+    const moved = moveEntries.map((e) => e.id);
+    if (moveEntries.length > 0) {
+      await this.client.moveFiles({ entries: moveEntries, targetFolderId: safeDirectoryId });
     }
 
     const rootItems = await this.client.listFiles(safeDirectoryId);
-    const removableDirectoryIds: string[] = [];
+    const removableDirectories: TianyiBatchEntry[] = [];
     for (const item of rootItems) {
       if (!isDirectory(item)) {
         continue;
@@ -217,13 +226,13 @@ export class TianyiStorageExecutor implements StorageExecutor {
         continue;
       }
       if (!(await this.directoryContainsLargeVideo(childId))) {
-        removableDirectoryIds.push(childId);
+        removableDirectories.push({ id: childId, name: nameOf(item), isFolder: true });
       }
     }
-    if (removableDirectoryIds.length > 0) {
-      await this.client.batchDelete(removableDirectoryIds);
+    if (removableDirectories.length > 0) {
+      await this.client.batchDelete(removableDirectories);
     }
-    return { moved, removed: removableDirectoryIds };
+    return { moved, removed: removableDirectories.map((e) => e.id) };
   }
 
   async removeDirectory(directoryId: string): Promise<{ removed: boolean }> {
@@ -231,7 +240,11 @@ export class TianyiStorageExecutor implements StorageExecutor {
     if (this.protectedDirectoryIds.has(safe) || this.writeScopeDirectoryIds.has(safe)) {
       throw new Error(`SAFETY_VIOLATION: refusing to remove protected/root directory fileId=${safe}`);
     }
-    await this.client.batchDelete([safe]);
+    // isFolder:true is probe-verified (isFolder:0 on a dir deletes nothing). This
+    // call site only has the id, so the entry goes WITHOUT fileName — the probe
+    // always sent one and whether 天翼 accepts a name-less folder DELETE is
+    // UNVERIFIED: T10 live e2e must delete a real wrapper dir to confirm.
+    await this.client.batchDelete([{ id: safe, isFolder: true }]);
     return { removed: true };
   }
 
@@ -325,7 +338,12 @@ export class TianyiStorageExecutor implements StorageExecutor {
       return { moved: [] };
     }
     const safeTargetId = this.assertWithinWriteScope(input.targetDirectoryId, "move files into");
-    await this.client.moveFiles({ fileIds: input.fileIds, targetFolderId: safeTargetId });
+    // The port only hands ids; moved things are always FILES (videos into season
+    // dirs), so entries go name-less with isFolder:false.
+    await this.client.moveFiles({
+      entries: input.fileIds.map((id) => ({ id, isFolder: false })),
+      targetFolderId: safeTargetId,
+    });
     return { moved: input.fileIds };
   }
 
@@ -334,8 +352,16 @@ export class TianyiStorageExecutor implements StorageExecutor {
       return { deleted: [] };
     }
     const safeDirectoryId = this.assertWithinWriteScope(input.directoryId, "delete files");
-    await this.assertFilesBelongToDirectory(safeDirectoryId, input.fileIds);
-    await this.client.batchDelete(input.fileIds);
+    const treeFiles = await this.assertFilesBelongToDirectory(safeDirectoryId, input.fileIds);
+    // Names are free from the just-walked tree (basename of the path); every id
+    // passed the verification above, i.e. it IS one of these tree FILES.
+    const nameById = new Map(treeFiles.map((f) => [f.providerFileId, basenameOf(f.path)]));
+    await this.client.batchDelete(
+      input.fileIds.map((id) => {
+        const name = nameById.get(id);
+        return { id, ...(name ? { name } : {}), isFolder: false };
+      }),
+    );
     return { deleted: input.fileIds };
   }
 
@@ -397,12 +423,18 @@ export class TianyiStorageExecutor implements StorageExecutor {
    *  eyes (inspectStaging/inspectTargetDir) see every file, and cleanup targets
    *  are mostly NON-video (extra subtitles, ads, nfo). Verifying videos-only made
    *  deleting a subtitle impossible on every drive — caught live 2026-07-02 on
-   *  光鸭 (黑客帝国3 cleanup refused twice). */
-  private async assertFilesBelongToDirectory(directoryId: string, fileIds: string[]): Promise<void> {
-    const verified = new Set((await this.listTree({ directoryId })).map((f) => f.providerFileId));
+   *  光鸭 (黑客帝国3 cleanup refused twice). Returns the walked tree so the
+   *  caller can reuse it (e.g. deleteFiles harvests fileName for taskInfos)
+   *  instead of walking twice. */
+  private async assertFilesBelongToDirectory(
+    directoryId: string,
+    fileIds: string[],
+  ): Promise<PackageTreeFile[]> {
+    const treeFiles = await this.listTree({ directoryId });
+    const verified = new Set(treeFiles.map((f) => f.providerFileId));
     const unverified = fileIds.filter((id) => !verified.has(id));
     if (unverified.length === 0) {
-      return;
+      return treeFiles;
     }
     throw new Error(
       "SAFETY_VIOLATION: refusing to delete unverified file ids from target directory; " +
@@ -470,16 +502,20 @@ interface ParsedTianyiShare {
 }
 
 /** 天翼分享链两种形态:`cloud.189.cn/t/<code>[?accessCode=xx]` 与
- *  `cloud.189.cn/web/share?code=<code>[&accessCode=xx]`(pwd 亦作访问码参数)。 */
+ *  `cloud.189.cn/web/share?code=<code>[&accessCode=xx]`(pwd 亦作访问码参数)。
+ *  Fragment is stripped BEFORE query parsing — `?accessCode=x8fd#frag` must
+ *  yield "x8fd", not "x8fd#frag" (quark's parser gets this via its `[?#]`
+ *  capture; here the split does it). */
 export function parseTianyiShareUrl(url: string): ParsedTianyiShare | null {
-  const t = /cloud\.189\.cn\/t\/([0-9a-zA-Z]+)/.exec(url);
+  const noFragment = url.split("#")[0] ?? url;
+  const t = /cloud\.189\.cn\/t\/([0-9a-zA-Z]+)/.exec(noFragment);
   if (t?.[1]) {
-    const params = new URLSearchParams(url.split("?")[1] ?? "");
+    const params = new URLSearchParams(noFragment.split("?")[1] ?? "");
     return { shareCode: t[1], accessCode: params.get("accessCode") ?? params.get("pwd") ?? "" };
   }
-  const w = /cloud\.189\.cn\/web\/share\?[^#]*\bcode=([0-9a-zA-Z]+)/.exec(url);
+  const w = /cloud\.189\.cn\/web\/share\?[^#]*\bcode=([0-9a-zA-Z]+)/.exec(noFragment);
   if (w?.[1]) {
-    const params = new URLSearchParams(url.split("?")[1] ?? "");
+    const params = new URLSearchParams(noFragment.split("?")[1] ?? "");
     return { shareCode: w[1], accessCode: params.get("accessCode") ?? params.get("pwd") ?? "" };
   }
   return null;
@@ -527,6 +563,11 @@ function sizeOf(item: TianyiItem): number {
 function isVideoName(name: string, videoExtensions: Set<string>): boolean {
   const lower = name.toLowerCase();
   return [...videoExtensions].some((ext) => lower.endsWith(ext));
+}
+
+/** Basename of a listTree path ("Sub/dir/多余字幕.srt" → "多余字幕.srt"). */
+function basenameOf(path: string): string {
+  return path.slice(path.lastIndexOf("/") + 1);
 }
 
 function normalizeId(directoryId: string): string {

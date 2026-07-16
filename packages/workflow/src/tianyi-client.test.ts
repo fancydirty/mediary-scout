@@ -323,28 +323,39 @@ describe("TianyiClient directory write ops", () => {
     expect(seen).toEqual({ fileId: "924511245739356595", name: "S01E01.mkv" });
   });
 
-  it("batchDelete creates a DELETE batch task and polls to completion", async () => {
+  it("batchDelete sends probe-verified taskInfos ({fileId,fileName?,isFolder:1|0}) and polls to completion", async () => {
     const seq: string[] = [];
+    let taskInfos = "";
     const fetchImpl = fetchStub((url, init) => {
       const p = new URLSearchParams(init.body);
       if (url.includes("createBatchTask")) {
         seq.push("create");
         expect(p.get("type")).toBe("DELETE");
+        taskInfos = p.get("taskInfos") ?? "";
         return { status: 200, body: '{"res_code":0,"taskId":987654321098765432}' };
       }
       if (url.includes("checkBatchTask")) {
         seq.push("check");
         expect(p.get("type")).toBe("DELETE");
-        return { status: 200, body: { res_code: 0, taskStatus: 4 } };
+        return { status: 200, body: { res_code: 0, taskStatus: 4, failedCount: 0 } };
       }
       throw new Error("unexpected " + url);
     });
     const c = new TianyiClient({ sessionKey: "SK", accessToken: "AT", refreshToken: "RT", fetchImpl, sleepImpl: async () => {} });
-    await c.batchDelete(["924511245739356595"]);
+    await c.batchDelete([
+      { id: "924511245739356595", name: "mediary-tianyi-probe", isFolder: true },
+      { id: "111", isFolder: false },
+    ]);
     expect(seq).toEqual(["create", "check"]);
+    // Probe ground truth (tianyi-save-bigint.mjs cleanup, line ~81): a FOLDER was
+    // really deleted with {fileId, fileName, isFolder: 1}; isFolder: 0 killed nothing.
+    expect(JSON.parse(taskInfos)).toEqual([
+      { fileId: "924511245739356595", fileName: "mediary-tianyi-probe", isFolder: 1 },
+      { fileId: "111", isFolder: 0 },
+    ]);
   });
 
-  it("batchDelete is a no-op for an empty id list", async () => {
+  it("batchDelete is a no-op for an empty entry list", async () => {
     const fetchImpl = fetchStub(() => {
       throw new Error("must not call the network");
     });
@@ -353,22 +364,65 @@ describe("TianyiClient directory write ops", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it("moveFiles creates a MOVE batch task to targetFolderId", async () => {
+  it("batchDelete THROWS when the DELETE task completes with failedCount>0 (never silent success)", async () => {
+    const fetchImpl = fetchStub((url) => {
+      if (url.includes("createBatchTask")) return { status: 200, body: '{"res_code":0,"taskId":987654321098765432}' };
+      if (url.includes("checkBatchTask")) return { status: 200, body: { res_code: 0, taskStatus: 4, failedCount: 1 } };
+      throw new Error("unexpected " + url);
+    });
+    const c = new TianyiClient({ sessionKey: "SK", accessToken: "AT", refreshToken: "RT", fetchImpl, sleepImpl: async () => {} });
+    await expect(c.batchDelete([{ id: "9", isFolder: true }])).rejects.toThrow(/TIANYI_DELETE_FAILED/);
+  });
+
+  it("batchDelete THROWS on poll exhaustion (task never reaches status 4)", async () => {
+    const fetchImpl = fetchStub((url) => {
+      if (url.includes("createBatchTask")) return { status: 200, body: '{"res_code":0,"taskId":987654321098765432}' };
+      if (url.includes("checkBatchTask")) return { status: 200, body: { res_code: 0, taskStatus: 1 } };
+      throw new Error("unexpected " + url);
+    });
+    const c = new TianyiClient({ sessionKey: "SK", accessToken: "AT", refreshToken: "RT", fetchImpl, sleepImpl: async () => {} });
+    await expect(c.batchDelete([{ id: "9", isFolder: true }])).rejects.toThrow(/TIANYI_DELETE_FAILED/);
+  });
+
+  it("moveFiles creates a MOVE batch task with {fileId,fileName?,isFolder} taskInfos to targetFolderId", async () => {
     let type = "";
     let target = "";
+    let taskInfos = "";
     const fetchImpl = fetchStub((url, init) => {
       const p = new URLSearchParams(init.body);
       if (url.includes("createBatchTask")) {
         type = p.get("type") ?? "";
         target = p.get("targetFolderId") ?? "";
+        taskInfos = p.get("taskInfos") ?? "";
         return { status: 200, body: '{"res_code":0,"taskId":987654321098765432}' };
       }
-      if (url.includes("checkBatchTask")) return { status: 200, body: { res_code: 0, taskStatus: 4 } };
+      if (url.includes("checkBatchTask")) return { status: 200, body: { res_code: 0, taskStatus: 4, failedCount: 0 } };
       throw new Error("unexpected " + url);
     });
     const c = new TianyiClient({ sessionKey: "SK", accessToken: "AT", refreshToken: "RT", fetchImpl, sleepImpl: async () => {} });
-    await c.moveFiles({ fileIds: ["1", "2"], targetFolderId: "-11" });
+    await c.moveFiles({
+      entries: [
+        { id: "1", isFolder: false },
+        { id: "2", name: "ep2.mkv", isFolder: false },
+      ],
+      targetFolderId: "-11",
+    });
     expect(type).toBe("MOVE");
     expect(target).toBe("-11");
+    expect(JSON.parse(taskInfos)).toEqual([
+      { fileId: "1", isFolder: 0 },
+      { fileId: "2", fileName: "ep2.mkv", isFolder: 0 },
+    ]);
+  });
+
+  it("moveFiles THROWS when createBatchTask returns no taskId (a MOVE that never started must not look like success)", async () => {
+    const fetchImpl = fetchStub((url) => {
+      if (url.includes("createBatchTask")) return { status: 200, body: { res_code: 0 } };
+      throw new Error("unexpected " + url);
+    });
+    const c = new TianyiClient({ sessionKey: "SK", accessToken: "AT", refreshToken: "RT", fetchImpl, sleepImpl: async () => {} });
+    await expect(
+      c.moveFiles({ entries: [{ id: "1", isFolder: false }], targetFolderId: "-11" }),
+    ).rejects.toThrow(/TIANYI_MOVE_FAILED/);
   });
 });
