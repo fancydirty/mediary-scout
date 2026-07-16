@@ -187,6 +187,9 @@ async function SearchResults({
               当前部署环境连不上 TMDB，内置代理也不通。国内网络未配置代理时常见——
               给部署主机（或容器）配置可访问外网的代理后重试。
             </span>
+            {/* Deliberately a full-reload <a>, not <Link>: retry must re-run the
+                server render (re-probe TMDB). A client-side navigation to the
+                SAME URL can be served from the router cache as a no-op. */}
             <a className="primary-button" href={`${basePath}?q=${encodeURIComponent(searchView.query)}`}>
               重试
             </a>

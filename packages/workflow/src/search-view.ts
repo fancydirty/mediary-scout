@@ -129,7 +129,7 @@ export async function getSearchPageView(input: {
         state: "provider_error",
         cacheStatus: "miss",
         candidates: [],
-        providerError: String(error),
+        providerError: describeError(error),
       };
     }
     await input.cache.set(query, candidates);
@@ -147,6 +147,22 @@ export async function getSearchPageView(input: {
 
 function normalizeSearchQuery(query: string): string {
   return query.trim().replace(/\s+/g, " ");
+}
+
+/** The diagnostic line must stay readable for ANY throw shape: bare String()
+ *  renders non-Error objects as "[object Object]". */
+function describeError(error: unknown): string {
+  if (error instanceof Error) {
+    return `${error.name}: ${error.message}`;
+  }
+  if (typeof error === "object" && error !== null) {
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return String(error);
+    }
+  }
+  return String(error);
 }
 
 async function toCandidateCard(

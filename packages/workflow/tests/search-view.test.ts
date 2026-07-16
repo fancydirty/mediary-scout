@@ -73,6 +73,24 @@ describe("getSearchPageView", () => {
     expect(view.providerError).toContain("TMDB access(es) failed");
   });
 
+  it("formats a non-Error provider throw into a readable diagnostic (not [object Object])", async () => {
+    const provider: MediaSearchProvider = {
+      async searchMedia() {
+        throw { code: "ECONNRESET" };
+      },
+    };
+
+    const view = await getSearchPageView({
+      query: "翘楚",
+      provider,
+      cache: new InMemoryMediaSearchCache(),
+      repository: new InMemoryWorkflowRepository(),
+    });
+
+    expect(view.state).toBe("provider_error");
+    expect(view.providerError).toBe('{"code":"ECONNRESET"}');
+  });
+
   it("does NOT cache a provider failure — the next search retries the provider", async () => {
     const cache = new InMemoryMediaSearchCache();
     const repository = new InMemoryWorkflowRepository();
