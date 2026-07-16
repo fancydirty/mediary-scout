@@ -64,8 +64,10 @@ function parseEnvelope(raw: string): CacheEnvelope | null {
       return parsed as unknown as CacheEnvelope;
     }
   } catch {
-    // legacy non-JSON value
+    // Not JSON at all — fall through.
   }
+  // Reaching here usually means a LEGACY value: a raw TMDB body, which is valid
+  // JSON but fails the envelope shape check above (no v/freshUntil/body).
   return null;
 }
 
@@ -240,7 +242,8 @@ export async function handleTmdbProxy(deps: HandleTmdbProxyDeps): Promise<Respon
     }
     // Public endpoint: keep the error contract to a stable enum — raw error
     // strings stay in the worker log (wrangler tail), never in the response.
-    console.error(`tmdb origin fetch failed for ${key}: ${String(error)}`);
+    // Log only the path: the querystring carries user search terms.
+    console.error(`tmdb origin fetch failed for ${key.split("?")[0]}: ${String(error)}`);
     const reason = error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network";
     return new Response(JSON.stringify({ error: "tmdb_upstream_unreachable", reason }), {
       status: 504,

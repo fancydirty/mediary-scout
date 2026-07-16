@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { getTrendingFeeds, handleTmdbProxy, runScheduledRefresh, type KvLike } from "./handler";
 
 function fakeKv(initial: Record<string, string> = {}): KvLike & { puts: Array<{ key: string; ttl: number | undefined }> } {
@@ -149,6 +149,7 @@ describe("handleTmdbProxy — upstream flap absorption (timeout + stale fallback
   }
 
   it("cold MISS + hanging origin → fast 504 JSON error, bounded by the injected timeout", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const started = Date.now();
     const res = await handleTmdbProxy({
       request: new Request("https://w.example/search/multi?query=bebop", {
@@ -166,6 +167,12 @@ describe("handleTmdbProxy — upstream flap absorption (timeout + stale fallback
     expect(await res.json()).toEqual({ error: "tmdb_upstream_unreachable", reason: "timeout" });
     // The failure must stay debuggable from the landing site (CORS on error branch).
     expect(res.headers.get("Access-Control-Allow-Origin")).toBe("https://mediaryscout.app");
+    // Server-side log keeps the failing endpoint but NEVER the query values —
+    // user search terms must not land in the worker log on every upstream flap.
+    const logged = errSpy.mock.calls.map((args) => args.join(" ")).join("\n");
+    expect(logged).toContain("search/multi");
+    expect(logged).not.toContain("bebop");
+    errSpy.mockRestore();
   });
 
   it("stale envelope + failing origin → serves the stale body with X-Cache: STALE", async () => {
