@@ -2,6 +2,14 @@
   "name": "media-track-tmdb-proxy",
   "main": "src/index.ts",
   "compatibility_date": "2026-06-01",
+  // Custom domain: *.workers.dev is blocked wholesale by several mainland ISPs
+  // (#83) and this proxy is the default (often only) metadata channel. The
+  // workers.dev URL stays enabled so older app releases keep working —
+  // workers_dev MUST stay explicit: declaring routes silently disables the
+  // workers.dev subdomain otherwise (bit us on 2026-07-16: every live instance
+  // still pointing at the old URL went 404 until the redeploy).
+  "workers_dev": true,
+  "routes": [{ "pattern": "tmdb-proxy.mediaryscout.app", "custom_domain": true }],
   "kv_namespaces": [
     { "binding": "TMDB_CACHE", "id": "252a662ac5594eec88b7c4d39fd6a5c5" }
   ],

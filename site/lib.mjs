@@ -24,7 +24,9 @@ export function formatStars(n) {
 }
 
 // Single source of truth for the proxy worker host (also imported by main.js).
-export const WORKER_BASE = "https://media-track-tmdb-proxy.fancydirty.workers.dev";
+// Custom domain (NOT *.workers.dev, which several mainland ISPs block — #83):
+// the GFW-side visitor is exactly who the poster proxy exists for.
+export const WORKER_BASE = "https://tmdb-proxy.mediaryscout.app";
 
 // Posters route through the worker's /img proxy: image.tmdb.org is GFW-blocked
 // for ordinary mainland visitors (direct URLs only load behind a proxy).
