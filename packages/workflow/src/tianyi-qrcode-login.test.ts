@@ -2,13 +2,34 @@ import { describe, it, expect, vi } from "vitest";
 import type {
   TianyiQrSession,
   TianyiQrStatus,
-  TianyiQrFetchJson,
   TianyiQrRawFetch,
+  TianyiQrRawResponse,
   TianyiQrRequestInit,
 } from "./tianyi-qrcode-login.js";
 import { TianyiQrLoginClient } from "./tianyi-qrcode-login.js";
 
-/** A minimal QR session with all phase-machine fields populated. */
+const RETURN_URL = "https://m.cloud.189.cn/zhuanti/2020/loginErrorPc/index.html";
+
+interface StubResponse {
+  status?: number;
+  text?: string;
+  setCookie?: string[];
+  location?: string | null;
+}
+
+/** Build a TianyiQrRawResponse from a compact spec (exposes Location + Set-Cookie
+ *  so the client's cookie-jar threading is actually exercised, not just shape). */
+function makeRaw(r: StubResponse): TianyiQrRawResponse {
+  return {
+    status: r.status ?? 200,
+    text: r.text ?? "",
+    headers: {
+      get: (name: string): string | null => (name.toLowerCase() === "location" ? (r.location ?? null) : null),
+      getSetCookie: (): string[] => r.setCookie ?? [],
+    },
+  };
+}
+
 function sessionFixture(): TianyiQrSession {
   return {
     uuid: "U",
@@ -18,12 +39,13 @@ function sessionFixture(): TianyiQrSession {
     lt: "L",
     appId: "8025431004",
     clientType: "10020",
-    returnUrl: "",
-    qrcodeContent: "",
+    returnUrl: RETURN_URL,
+    cookies: [["COOKIE_A", "1"]],
+    qrcodeContent: "U",
   };
 }
 
-// ── pollStatus: THE v1-critical piece (the plan locks this 4-state mapping) ────
+// ── pollStatus: THE v1-critical 4-state mapping (probe-verified, spec §登录) ────
 describe("TianyiQrLoginClient.pollStatus (v1-critical 4-state mapping)", () => {
   const cases: Array<[number, TianyiQrStatus]> = [
     [-106, "waiting"],
@@ -33,49 +55,47 @@ describe("TianyiQrLoginClient.pollStatus (v1-critical 4-state mapping)", () => {
   ];
   for (const [code, phase] of cases) {
     it(`maps qrcodeLoginState status ${code} → ${phase}`, async () => {
-      const fetchJson = vi.fn<TianyiQrFetchJson>(async () => ({
-        status: code,
-        redirectUrl: code === 0 ? "https://cloud.189.cn/api/portal/loginUrl.action?redirectURL=x" : "",
-      }));
-      const c = new TianyiQrLoginClient({ fetchJson });
-      const r = await c.pollStatus({
-        uuid: "U",
-        encryuuid: "E",
-        paramId: "P",
-        reqId: "R",
-        lt: "L",
-        appId: "8025431004",
-        clientType: "10020",
-        returnUrl: "",
-      });
+      const rawFetch = vi.fn<TianyiQrRawFetch>(async () =>
+        makeRaw({
+          text: JSON.stringify({ status: code, redirectUrl: code === 0 ? "https://cloud.189.cn/grant" : "" }),
+        }),
+      );
+      const c = new TianyiQrLoginClient({ rawFetch });
+      const r = await c.pollStatus(sessionFixture());
       expect(r.status).toBe(phase);
     });
   }
 
   it("carries redirectUrl through on confirmed (needed to exchange the session)", async () => {
-    const fetchJson = vi.fn<TianyiQrFetchJson>(async () => ({ status: 0, redirectUrl: "https://cloud.189.cn/grant" }));
-    const c = new TianyiQrLoginClient({ fetchJson });
+    const rawFetch = vi.fn<TianyiQrRawFetch>(async () =>
+      makeRaw({ text: JSON.stringify({ status: 0, redirectUrl: "https://cloud.189.cn/grant" }) }),
+    );
+    const c = new TianyiQrLoginClient({ rawFetch });
     const r = await c.pollStatus(sessionFixture());
     expect(r.status).toBe("confirmed");
     expect(r.redirectUrl).toBe("https://cloud.189.cn/grant");
   });
 
   it("treats an unknown status code as still-waiting (never a false-confirm)", async () => {
-    const fetchJson = vi.fn<TianyiQrFetchJson>(async () => ({ status: -999 }));
-    const c = new TianyiQrLoginClient({ fetchJson });
+    const rawFetch = vi.fn<TianyiQrRawFetch>(async () => makeRaw({ text: JSON.stringify({ status: -999 }) }));
+    const c = new TianyiQrLoginClient({ rawFetch });
     expect((await c.pollStatus(sessionFixture())).status).toBe("waiting");
   });
 
-  it("POSTs qrcodeLoginState.do with the exact form fields + Referer/Reqid/lt headers", async () => {
-    let seenUrl = "";
-    let seenInit: TianyiQrRequestInit | undefined;
-    const fetchJson = vi.fn<TianyiQrFetchJson>(async (url: string, init: TianyiQrRequestInit) => {
-      seenUrl = url;
-      seenInit = init;
-      return { status: -106 };
+  it("treats a non-JSON poll body as still-waiting (never a false-confirm)", async () => {
+    const rawFetch = vi.fn<TianyiQrRawFetch>(async () => makeRaw({ text: "<html>gateway</html>" }));
+    const c = new TianyiQrLoginClient({ rawFetch });
+    expect((await c.pollStatus(sessionFixture())).status).toBe("waiting");
+  });
+
+  it("POSTs qrcodeLoginState.do with cookie jar + encryuuid + concat date + Referer/Reqid/lt; threads harvested cookies", async () => {
+    let seen: { url: string; init: TianyiQrRequestInit } | undefined;
+    const rawFetch = vi.fn<TianyiQrRawFetch>(async (url: string, init: TianyiQrRequestInit) => {
+      seen = { url, init };
+      return makeRaw({ text: JSON.stringify({ status: -11002 }), setCookie: ["POLLCK=zzz; Path=/"] });
     });
-    const c = new TianyiQrLoginClient({ fetchJson });
-    await c.pollStatus({
+    const c = new TianyiQrLoginClient({ rawFetch });
+    const r = await c.pollStatus({
       uuid: "UU",
       encryuuid: "EE",
       paramId: "PP",
@@ -84,48 +104,59 @@ describe("TianyiQrLoginClient.pollStatus (v1-critical 4-state mapping)", () => {
       appId: "8025431004",
       clientType: "10020",
       returnUrl: "https://ret",
+      cookies: [["SESS", "abc"]],
     });
-    expect(seenUrl).toContain("/api/logbox/oauth2/qrcodeLoginState.do");
-    const form = new URLSearchParams(seenInit?.body ?? "");
+    expect(seen?.url).toContain("/api/logbox/oauth2/qrcodeLoginState.do");
+    const form = new URLSearchParams(seen?.init.body ?? "");
     expect(form.get("uuid")).toBe("UU");
-    expect(form.get("encryuuid")).toBe("EE");
+    expect(form.get("encryuuid")).toBe("EE"); // encryuuid, NOT encodeuuid
     expect(form.get("paramId")).toBe("PP");
     expect(form.get("appId")).toBe("8025431004");
     expect(form.get("clientType")).toBe("10020");
     expect(form.get("returnUrl")).toBe("https://ret");
-    // date format YYYY-MM-DDHH:mm:ss.SSS — day and time with NO separator (spec §登录).
+    // date format YYYY-MM-DDHH:mm:ss.SSS — day and time concatenated, NO separator.
     expect(form.get("date")).toMatch(/^\d{4}-\d{2}-\d{2}\d{2}:\d{2}:\d{2}\.\d{3}$/);
     expect(form.get("timeStamp")).toMatch(/^\d+$/);
-    expect(seenInit?.headers?.Reqid).toBe("RR");
-    expect(seenInit?.headers?.lt).toBe("LL");
-    expect(seenInit?.headers?.Referer).toContain("open.e.189.cn");
+    expect(seen?.init.headers?.Referer).toBe("https://open.e.189.cn"); // no trailing slash (probe)
+    expect(seen?.init.headers?.Reqid).toBe("RR");
+    expect(seen?.init.headers?.lt).toBe("LL");
+    expect(seen?.init.headers?.Cookie).toContain("SESS=abc"); // jar sent
+    expect(r.status).toBe("scanned");
+    expect(r.cookies).toContainEqual(["SESS", "abc"]); // jar preserved
+    expect(r.cookies).toContainEqual(["POLLCK", "zzz"]); // + newly harvested
   });
 });
 
-// ── getQrSession: unifyLoginForPC (HTML regex) → getUUID → qrcodeContent ───────
+// ── getQrSession: unifyLoginForPC (regex + cookies) → getUUID → BARE uuid ──────
 describe("TianyiQrLoginClient.getQrSession (unifyLoginForPC → getUUID)", () => {
-  it("parses lt/reqId/paramId, gets a uuid, builds the qrClinentLogin QR content", async () => {
-    const rawUrls: string[] = [];
-    const rawFetch = vi.fn<TianyiQrRawFetch>(async (url: string) => {
-      rawUrls.push(url);
-      return {
-        status: 200,
-        text: `<html><script>var lt = "LT_TOKEN"; var reqId = "REQ_1"; var paramId = "PARAM_9";</script></html>`,
-        headers: { get: () => null },
-      };
+  it("parses lt/reqId/paramId, returns the BARE uuid as qrcodeContent, captures the cookie jar", async () => {
+    const calls: Array<{ url: string; init: TianyiQrRequestInit }> = [];
+    const rawFetch = vi.fn<TianyiQrRawFetch>(async (url: string, init: TianyiQrRequestInit) => {
+      calls.push({ url, init });
+      if (url.includes("unifyLoginForPC")) {
+        return makeRaw({
+          text: `<html><script>var lt = "LT_TOKEN"; var reqId = "REQ_1"; var paramId = "PARAM_9";</script></html>`,
+          setCookie: ["LOGIN_COOKIE=abc; Path=/"],
+        });
+      }
+      if (url.includes("getUUID.do")) {
+        return makeRaw({
+          text: JSON.stringify({ result: "0", uuid: "UUID_ABC", encodeuuid: "ENC", encryuuid: "ENCRY_XYZ" }),
+          setCookie: ["UUID_CK=def; Path=/"],
+        });
+      }
+      throw new Error("unexpected " + url);
     });
-    const jsonUrls: string[] = [];
-    const fetchJson = vi.fn<TianyiQrFetchJson>(async (url: string, init: TianyiQrRequestInit) => {
-      jsonUrls.push(url);
-      expect(init.headers?.Reqid).toBe("REQ_1");
-      expect(init.headers?.lt).toBe("LT_TOKEN");
-      return { result: "0", uuid: "UUID_ABC", encryuuid: "ENCRY_XYZ" };
-    });
-    const c = new TianyiQrLoginClient({ fetchJson, rawFetch });
+    const c = new TianyiQrLoginClient({ rawFetch });
     const s = await c.getQrSession();
-    expect(rawUrls[0]).toContain("/api/portal/unifyLoginForPC.action");
-    expect(rawUrls[0]).toContain("appId=8025431004");
-    expect(jsonUrls[0]).toContain("/api/logbox/oauth2/getUUID.do");
+    const unify = calls.find((x) => x.url.includes("unifyLoginForPC"));
+    const uuidCall = calls.find((x) => x.url.includes("getUUID.do"));
+    expect(unify?.url).toContain("/api/portal/unifyLoginForPC.action");
+    expect(unify?.url).toContain("appId=8025431004");
+    expect(unify?.url).toContain("clientType=10020");
+    // getUUID carries the unifyLoginForPC cookie (jar threaded), form appId only.
+    expect(uuidCall?.init.headers?.Cookie).toContain("LOGIN_COOKIE=abc");
+    expect(new URLSearchParams(uuidCall?.init.body ?? "").get("appId")).toBe("8025431004");
     expect(s.uuid).toBe("UUID_ABC");
     expect(s.encryuuid).toBe("ENCRY_XYZ");
     expect(s.lt).toBe("LT_TOKEN");
@@ -133,76 +164,85 @@ describe("TianyiQrLoginClient.getQrSession (unifyLoginForPC → getUUID)", () =>
     expect(s.paramId).toBe("PARAM_9");
     expect(s.appId).toBe("8025431004");
     expect(s.clientType).toBe("10020");
-    expect(s.qrcodeContent).toBe(
-      "https://open.e.189.cn/api/account/qrClinentLogin.do?paras=new_uuid=UUID_ABC|8025431004",
-    );
+    expect(s.qrcodeContent).toBe("UUID_ABC"); // BARE uuid — genQRCode encodes u.uuid (probe)
+    expect(s.cookies).toContainEqual(["LOGIN_COOKIE", "abc"]);
+    expect(s.cookies).toContainEqual(["UUID_CK", "def"]);
   });
 
-  it("also accepts JSON-shaped login params (\"lt\":\"..\") from the page body", async () => {
-    const rawFetch = vi.fn<TianyiQrRawFetch>(async () => ({
-      status: 200,
-      text: `{"lt":"JLT","reqId":"JRQ","paramId":"JPM"}`,
-      headers: { get: () => null },
-    }));
-    const fetchJson = vi.fn<TianyiQrFetchJson>(async () => ({ uuid: "JU", encryuuid: "JE" }));
-    const c = new TianyiQrLoginClient({ fetchJson, rawFetch });
+  it("follows unifyLoginForPC redirects (≤6 hops), harvesting cookies at each hop", async () => {
+    const rawFetch = vi.fn<TianyiQrRawFetch>(async (url: string) => {
+      if (url.includes("unifyLoginForPC")) {
+        return makeRaw({
+          status: 302,
+          location: "https://open.e.189.cn/api/logbox/oauth2/unifyAccountLogin.do?x=1",
+          setCookie: ["HOP1=a; Path=/"],
+        });
+      }
+      if (url.includes("unifyAccountLogin.do")) {
+        return makeRaw({ text: `lt = "L2"; paramId = "P2"; reqId = "R2";`, setCookie: ["HOP2=b; Path=/"] });
+      }
+      if (url.includes("getUUID.do")) {
+        return makeRaw({ text: JSON.stringify({ uuid: "UU2", encryuuid: "EE2" }) });
+      }
+      throw new Error("unexpected " + url);
+    });
+    const c = new TianyiQrLoginClient({ rawFetch });
     const s = await c.getQrSession();
-    expect(s.lt).toBe("JLT");
-    expect(s.paramId).toBe("JPM");
-    expect(s.uuid).toBe("JU");
+    expect(s.lt).toBe("L2");
+    expect(s.paramId).toBe("P2");
+    expect(s.cookies).toContainEqual(["HOP1", "a"]);
+    expect(s.cookies).toContainEqual(["HOP2", "b"]);
   });
 
-  it("throws if the login page carries no lt/paramId (unexpected page)", async () => {
-    const rawFetch = vi.fn<TianyiQrRawFetch>(async () => ({
-      status: 200,
-      text: "<html>nope</html>",
-      headers: { get: () => null },
-    }));
-    const fetchJson = vi.fn<TianyiQrFetchJson>(async () => ({}));
-    const c = new TianyiQrLoginClient({ fetchJson, rawFetch });
+  it("throws TIANYI_QR_INIT_FAILED if the login page carries no lt/paramId", async () => {
+    const rawFetch = vi.fn<TianyiQrRawFetch>(async () => makeRaw({ text: "<html>nope</html>" }));
+    const c = new TianyiQrLoginClient({ rawFetch });
     await expect(c.getQrSession()).rejects.toThrow(/TIANYI_QR_INIT_FAILED/);
   });
 
-  it("throws if getUUID.do returns no uuid", async () => {
-    const rawFetch = vi.fn<TianyiQrRawFetch>(async () => ({
-      status: 200,
-      text: `lt = "L"; reqId = "R"; paramId = "P";`,
-      headers: { get: () => null },
-    }));
-    const fetchJson = vi.fn<TianyiQrFetchJson>(async () => ({ result: "-1" }));
-    const c = new TianyiQrLoginClient({ fetchJson, rawFetch });
+  it("throws TIANYI_QR_UUID_FAILED if getUUID.do returns no uuid", async () => {
+    const rawFetch = vi.fn<TianyiQrRawFetch>(async (url: string) => {
+      if (url.includes("unifyLoginForPC")) return makeRaw({ text: `lt = "L"; paramId = "P"; reqId = "R";` });
+      return makeRaw({ text: JSON.stringify({ result: "-1" }) });
+    });
+    const c = new TianyiQrLoginClient({ rawFetch });
     await expect(c.getQrSession()).rejects.toThrow(/TIANYI_QR_UUID_FAILED/);
   });
 });
 
-// ── exchangeSession: getSessionForPC(redirectURL) → 7-field TianyiSession ──────
+// ── exchangeSession: getSessionForPC(redirectURL) → 7-field session ───────────
 describe("TianyiQrLoginClient.exchangeSession (getSessionForPC)", () => {
-  it("calls getSessionForPC with redirectURL + fixed PC params, returns the 7-field session", async () => {
-    let seenUrl = "";
-    const fetchJson = vi.fn<TianyiQrFetchJson>(async (url: string) => {
-      seenUrl = url;
-      return {
-        res_code: 0,
-        sessionKey: "SK-36",
-        sessionSecret: "SS-32",
-        accessToken: "AT-32",
-        refreshToken: "RT-32",
-        familySessionKey: "FSK-43",
-        familySessionSecret: "FSS-32",
-        loginName: "13800138000",
-        keepAlive: 1,
-      };
+  it("calls getSessionForPC with redirectURL + TELEPC suffix (NO appId), sends the jar, returns 7 fields", async () => {
+    let seen: { url: string; init: TianyiQrRequestInit } | undefined;
+    const rawFetch = vi.fn<TianyiQrRawFetch>(async (url: string, init: TianyiQrRequestInit) => {
+      seen = { url, init };
+      return makeRaw({
+        text: JSON.stringify({
+          res_code: 0,
+          sessionKey: "SK-36",
+          sessionSecret: "SS-32",
+          accessToken: "AT-32",
+          refreshToken: "RT-32",
+          familySessionKey: "FSK-43",
+          familySessionSecret: "FSS-32",
+          loginName: "13800138000",
+          keepAlive: 1,
+        }),
+      });
     });
-    const c = new TianyiQrLoginClient({ fetchJson });
+    const c = new TianyiQrLoginClient({ rawFetch });
     const session = await c.exchangeSession(
-      sessionFixture(),
+      { ...sessionFixture(), cookies: [["SESS", "xyz"]] },
       "https://cloud.189.cn/api/portal/loginUrl.action?redirectURL=deep",
     );
-    expect(seenUrl).toContain("api.cloud.189.cn/getSessionForPC.action");
-    expect(seenUrl).toContain("appId=8025431004");
-    expect(seenUrl).toContain("clientType=TELEPC");
-    expect(seenUrl).toContain("channelId=web_cloud.189.cn");
-    expect(seenUrl).toContain("redirectURL=");
+    expect(seen?.url).toContain("api.cloud.189.cn/getSessionForPC.action");
+    expect(seen?.url).toContain("clientType=TELEPC");
+    expect(seen?.url).toContain("version=6.2");
+    expect(seen?.url).toContain("channelId=web_cloud.189.cn");
+    expect(seen?.url).toContain("rand=");
+    expect(seen?.url).toContain("redirectURL=");
+    expect(seen?.url).not.toContain("appId="); // probe's clientSuffix has NO appId
+    expect(seen?.init.headers?.Cookie).toContain("SESS=xyz"); // jar threaded to the exchange
     // One login yields BOTH personal + family credentials (spec §session 字段).
     expect(session).toEqual({
       sessionKey: "SK-36",
@@ -216,75 +256,74 @@ describe("TianyiQrLoginClient.exchangeSession (getSessionForPC)", () => {
   });
 
   it("throws when getSessionForPC returns no sessionKey (login expired)", async () => {
-    const fetchJson = vi.fn<TianyiQrFetchJson>(async () => ({ res_code: -1, res_message: "login expired" }));
-    const c = new TianyiQrLoginClient({ fetchJson });
+    const rawFetch = vi.fn<TianyiQrRawFetch>(async () =>
+      makeRaw({ text: JSON.stringify({ res_code: -1, res_message: "login expired" }) }),
+    );
+    const c = new TianyiQrLoginClient({ rawFetch });
     await expect(c.exchangeSession(sessionFixture(), "https://x")).rejects.toThrow(
       /TIANYI_SESSION_EXCHANGE_FAILED/,
     );
   });
 });
 
-// ── loginBySson: SSON cookie fallback (reference-derived, shape-level test) ────
+// ── loginBySson: SSON cookie fallback (reference-derived; shape + jar threaded) ─
 describe("TianyiQrLoginClient.loginBySson (SSON fallback — reference-derived)", () => {
-  it("does unifyLoginForPC → loginBySsoCooike(with SSON cookie) → getSessionForPC", async () => {
-    const rawUrls: string[] = [];
-    const cookies: Array<string | undefined> = [];
+  it("does unifyLoginForPC → loginBySsoCooike(Cookie has SSON + jar) → getSessionForPC", async () => {
+    const calls: Array<{ url: string; init: TianyiQrRequestInit }> = [];
     const rawFetch = vi.fn<TianyiQrRawFetch>(async (url: string, init: TianyiQrRequestInit) => {
-      rawUrls.push(url);
+      calls.push({ url, init });
       if (url.includes("unifyLoginForPC")) {
-        return { status: 200, text: `lt = "LT1"; reqId = "RQ1"; paramId = "PM1";`, headers: { get: () => null } };
+        return makeRaw({ text: `lt = "LT1"; paramId = "PM1"; reqId = "RQ1";`, setCookie: ["UNI=1; Path=/"] });
       }
-      cookies.push(init.headers?.Cookie);
-      return {
-        status: 200,
-        text: JSON.stringify({
-          result: 0,
-          toUrl: "https://cloud.189.cn/api/portal/loginUrl.action?redirectURL=grant",
-        }),
-        headers: { get: () => null },
-      };
+      if (url.includes("loginBySsoCooike")) {
+        return makeRaw({
+          text: JSON.stringify({
+            result: 0,
+            toUrl: "https://cloud.189.cn/api/portal/loginUrl.action?redirectURL=grant",
+          }),
+        });
+      }
+      if (url.includes("getSessionForPC")) {
+        return makeRaw({
+          text: JSON.stringify({
+            res_code: 0,
+            sessionKey: "SK",
+            sessionSecret: "SS",
+            accessToken: "AT",
+            refreshToken: "RT",
+            familySessionKey: "FSK",
+            familySessionSecret: "FSS",
+            loginName: "LOGIN",
+          }),
+        });
+      }
+      throw new Error("unexpected " + url);
     });
-    const jsonUrls: string[] = [];
-    const fetchJson = vi.fn<TianyiQrFetchJson>(async (url: string) => {
-      jsonUrls.push(url);
-      return {
-        res_code: 0,
-        sessionKey: "SK",
-        sessionSecret: "SS",
-        accessToken: "AT",
-        refreshToken: "RT",
-        familySessionKey: "FSK",
-        familySessionSecret: "FSS",
-        loginName: "LOGIN",
-      };
-    });
-    const c = new TianyiQrLoginClient({ fetchJson, rawFetch });
+    const c = new TianyiQrLoginClient({ rawFetch });
     const session = await c.loginBySson("MY_SSON_COOKIE");
-    expect(rawUrls.some((u) => u.includes("unifyLoginForPC"))).toBe(true);
-    expect(rawUrls.some((u) => u.includes("loginBySsoCooike"))).toBe(true);
-    expect(cookies).toContain("SSON=MY_SSON_COOKIE");
-    expect(jsonUrls.some((u) => u.includes("getSessionForPC"))).toBe(true);
+    const sso = calls.find((x) => x.url.includes("loginBySsoCooike"));
+    const exch = calls.find((x) => x.url.includes("getSessionForPC"));
+    expect(calls.some((x) => x.url.includes("unifyLoginForPC"))).toBe(true);
+    expect(sso?.init.headers?.Cookie).toContain("SSON=MY_SSON_COOKIE");
+    expect(sso?.init.headers?.Cookie).toContain("UNI=1"); // login jar threaded
+    expect(exch?.url).toContain("redirectURL=");
     expect(session.sessionKey).toBe("SK");
     expect(session.loginName).toBe("LOGIN");
   });
 
   it("rejects an empty SSON before touching the network", async () => {
-    const rawFetch = vi.fn<TianyiQrRawFetch>(async () => ({ status: 200, text: "", headers: { get: () => null } }));
-    const fetchJson = vi.fn<TianyiQrFetchJson>(async () => ({}));
-    const c = new TianyiQrLoginClient({ fetchJson, rawFetch });
+    const rawFetch = vi.fn<TianyiQrRawFetch>(async () => makeRaw({}));
+    const c = new TianyiQrLoginClient({ rawFetch });
     await expect(c.loginBySson("  ")).rejects.toThrow(/TIANYI_SSON_LOGIN_FAILED/);
     expect(rawFetch).not.toHaveBeenCalled();
   });
 
   it("throws when loginBySsoCooike yields no redirect (bad/expired SSON)", async () => {
     const rawFetch = vi.fn<TianyiQrRawFetch>(async (url: string) => {
-      if (url.includes("unifyLoginForPC")) {
-        return { status: 200, text: `lt = "L"; reqId = "R"; paramId = "P";`, headers: { get: () => null } };
-      }
-      return { status: 200, text: JSON.stringify({ result: -1, msg: "SSON invalid" }), headers: { get: () => null } };
+      if (url.includes("unifyLoginForPC")) return makeRaw({ text: `lt = "L"; paramId = "P"; reqId = "R";` });
+      return makeRaw({ text: JSON.stringify({ result: -1, msg: "SSON invalid" }) });
     });
-    const fetchJson = vi.fn<TianyiQrFetchJson>(async () => ({}));
-    const c = new TianyiQrLoginClient({ fetchJson, rawFetch });
+    const c = new TianyiQrLoginClient({ rawFetch });
     await expect(c.loginBySson("BAD")).rejects.toThrow(/TIANYI_SSON_LOGIN_FAILED/);
   });
 });
