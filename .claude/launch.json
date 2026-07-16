@@ -37,6 +37,22 @@
       "port": 3002
     },
     {
+      "name": "web-gfw-sim",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "MEDIA_TRACK_POSTGRES_URL=postgresql://mediatrack:mediatrack@localhost:5432/media_track",
+        "MEDIA_TRACK_DEMO_SEED=0",
+        "MEDIA_TRACK_SEARCH_PROVIDER=tmdb",
+        "TMDB_READ_TOKEN=",
+        "TMDB_PROXY_BASE_URL=https://192.0.2.1",
+        "npm",
+        "run",
+        "dev:web"
+      ],
+      "autoPort": true,
+      "port": 3003
+    },
+    {
       "name": "web-multiuser",
       "runtimeExecutable": "env",
       "runtimeArgs": [

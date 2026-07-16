@@ -3,7 +3,7 @@ import type { EpisodeState, MediaType, TrackedSeason, WorkflowKind } from "./dom
 import type { WorkflowRepository } from "./repository.js";
 import { normalizeScope, type ScopeArg } from "./workflow-scope.js";
 
-export type SearchPageState = "empty" | "ready";
+export type SearchPageState = "empty" | "ready" | "provider_error";
 export type SearchCacheStatus = "none" | "hit" | "miss";
 export type SearchActionState =
   | "can_request"
@@ -73,6 +73,9 @@ export interface SearchPageView {
   state: SearchPageState;
   cacheStatus: SearchCacheStatus;
   candidates: SearchCandidateCard[];
+  /** Only when state === "provider_error": the underlying provider failure, for
+   *  a diagnostic line in the UI and the reporter's issue. */
+  providerError?: string;
 }
 
 export class InMemoryMediaSearchCache implements MediaSearchCache {
@@ -112,8 +115,23 @@ export async function getSearchPageView(input: {
   }
 
   const cached = await input.cache.get(query);
-  const candidates = cached ?? (await input.provider.searchMedia({ query }));
-  if (!cached) {
+  let candidates = cached;
+  if (!candidates) {
+    // A deployment that cannot reach ANY TMDB access (GFW-blocked network: direct
+    // API and the workers.dev proxy both dead — issue #134) makes the provider
+    // throw. Degrade to a dedicated view state instead of crashing the page, and
+    // do NOT cache the failure so the next search retries.
+    try {
+      candidates = await input.provider.searchMedia({ query });
+    } catch (error) {
+      return {
+        query,
+        state: "provider_error",
+        cacheStatus: "miss",
+        candidates: [],
+        providerError: String(error),
+      };
+    }
     await input.cache.set(query, candidates);
   }
 

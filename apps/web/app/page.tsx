@@ -175,6 +175,26 @@ async function SearchResults({
       {inProgress.length > 0 ? <AcquiringPoller /> : null}
       {searchView.state === "empty" ? (
         <TrendingRow activeKind={activeTrending} basePath={basePath} />
+      ) : searchView.state === "provider_error" ? (
+        // Every TMDB access (direct + proxy) is unreachable from this deployment —
+        // a GFW-blocked network without a proxy (issue #134). Degrade with
+        // actionable guidance instead of letting the server component 500.
+        <section className="search-results" aria-label="搜索结果">
+          <div className="quiet-state compact" role="alert">
+            <TriangleAlert size={22} aria-hidden />
+            <strong>搜索暂时不可用：连不上元数据服务（TMDB）</strong>
+            <span>
+              当前部署环境连不上 TMDB，内置代理也不通。国内网络未配置代理时常见——
+              给部署主机（或容器）配置可访问外网的代理后重试。
+            </span>
+            <a className="primary-button" href={`${basePath}?q=${encodeURIComponent(searchView.query)}`}>
+              重试
+            </a>
+            {searchView.providerError ? (
+              <span className="panel-note">{searchView.providerError}</span>
+            ) : null}
+          </div>
+        </section>
       ) : (
         <section className="search-results" aria-label="搜索结果">
           <div className="section-heading">

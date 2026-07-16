@@ -48,6 +48,74 @@ describe("getSearchPageView", () => {
     });
   });
 
+  it("degrades to provider_error instead of crashing when every TMDB access is unreachable (issue #134)", async () => {
+    // A GFW-blocked deployment (direct TMDB AND the workers.dev proxy both
+    // unreachable) makes the provider throw — the page must degrade, not 500.
+    const provider: MediaSearchProvider = {
+      async searchMedia() {
+        throw new Error("All 1 TMDB access(es) failed: TypeError: fetch failed");
+      },
+    };
+
+    const view = await getSearchPageView({
+      query: "星际牛仔",
+      provider,
+      cache: new InMemoryMediaSearchCache(),
+      repository: new InMemoryWorkflowRepository(),
+    });
+
+    expect(view).toMatchObject({
+      query: "星际牛仔",
+      state: "provider_error",
+      cacheStatus: "miss",
+      candidates: [],
+    });
+    expect(view.providerError).toContain("TMDB access(es) failed");
+  });
+
+  it("does NOT cache a provider failure — the next search retries the provider", async () => {
+    const cache = new InMemoryMediaSearchCache();
+    const repository = new InMemoryWorkflowRepository();
+    let fail = true;
+    const provider: MediaSearchProvider = {
+      async searchMedia() {
+        if (fail) throw new Error("fetch failed");
+        return [qiaochuCandidate()];
+      },
+    };
+
+    const failed = await getSearchPageView({ query: "翘楚", provider, cache, repository });
+    expect(failed.state).toBe("provider_error");
+
+    fail = false;
+    const recovered = await getSearchPageView({ query: "翘楚", provider, cache, repository });
+    expect(recovered.state).toBe("ready");
+    // cacheStatus "miss" proves the earlier failure was not cached as a result.
+    expect(recovered.cacheStatus).toBe("miss");
+    expect(recovered.candidates).toHaveLength(1);
+  });
+
+  it("still serves a warm cache when the provider is down", async () => {
+    const cache = new InMemoryMediaSearchCache();
+    await cache.set("翘楚", [qiaochuCandidate()]);
+    const provider: MediaSearchProvider = {
+      async searchMedia() {
+        throw new Error("fetch failed");
+      },
+    };
+
+    const view = await getSearchPageView({
+      query: "翘楚",
+      provider,
+      cache,
+      repository: new InMemoryWorkflowRepository(),
+    });
+
+    expect(view.state).toBe("ready");
+    expect(view.cacheStatus).toBe("hit");
+    expect(view.candidates).toHaveLength(1);
+  });
+
   it("maps provider candidates into UI cards with requestable action state", async () => {
     const provider = countingSearchProvider([qiaochuCandidate()]);
 
