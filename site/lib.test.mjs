@@ -44,8 +44,8 @@ describe("postersFrom", () => {
   it("取 poster_path 非空前 N 个拼 worker 图片代理 w342 URL（image.tmdb.org 被墙），movie/tv 标题都认", () => {
     const data = { results: [{ poster_path: "/a.jpg", title: "甲" }, { poster_path: null }, { poster_path: "/b.jpg", name: "乙" }] };
     expect(postersFrom([data], 2)).toEqual([
-      { url: "https://media-track-tmdb-proxy.fancydirty.workers.dev/img/t/p/w342/a.jpg", title: "甲" },
-      { url: "https://media-track-tmdb-proxy.fancydirty.workers.dev/img/t/p/w342/b.jpg", title: "乙" }]);
+      { url: "https://tmdb-proxy.mediaryscout.app/img/t/p/w342/a.jpg", title: "甲" },
+      { url: "https://tmdb-proxy.mediaryscout.app/img/t/p/w342/b.jpg", title: "乙" }]);
   });
   it("跨 feed 收集且尊重 limit", () => {
     const f1 = { results: [{ poster_path: "/1.jpg", title: "一" }] };

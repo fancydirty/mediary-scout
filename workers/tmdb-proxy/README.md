@@ -12,11 +12,13 @@ npx wrangler kv namespace create TMDB_CACHE --config workers/tmdb-proxy/wrangler
 grep '^TMDB_READ_TOKEN=' .env | cut -d= -f2- | tr -d '"' \
   | npx wrangler secret put TMDB_READ_TOKEN --config workers/tmdb-proxy/wrangler.jsonc
 
-# 3. 部署,记下输出的 https://<name>.<account>.workers.dev URL
+# 3. 部署。wrangler.jsonc 里声明了 custom domain(tmdb-proxy.mediaryscout.app,
+#    要求该 zone 在同一 Cloudflare 账号),部署时自动建 DNS + 证书;
+#    workers.dev URL 同时保留,旧版本客户端继续可用
 npx wrangler deploy --config workers/tmdb-proxy/wrangler.jsonc
 ```
 
-把部署 URL 填入 `apps/web/lib/workflow-runtime.ts` 的 `DEFAULT_TMDB_PROXY_BASE_URL`。
+把部署 URL 填入 `apps/web/lib/workflow-runtime.ts` 的 `DEFAULT_TMDB_PROXY_BASE_URL`(用 custom domain 而非 `*.workers.dev`——后者在部分国内运营商被整域阻断,见 #83)。
 
 ## 校验
 

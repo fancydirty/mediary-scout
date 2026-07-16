@@ -839,8 +839,11 @@ export async function getAssrtToken(
 }
 
 /** Author-deployed CF Worker that proxies TMDB with the author's key (KV-cached).
- *  env TMDB_PROXY_BASE_URL overrides it (e.g. a user who self-hosts the worker). */
-export const DEFAULT_TMDB_PROXY_BASE_URL = "https://media-track-tmdb-proxy.fancydirty.workers.dev";
+ *  env TMDB_PROXY_BASE_URL overrides it (e.g. a user who self-hosts the worker).
+ *  Custom domain, NOT the *.workers.dev alias — several mainland ISPs block the
+ *  whole workers.dev zone (#83), and this default is the ONLY metadata channel
+ *  for a tokenless user. The workers.dev URL still serves older releases. */
+export const DEFAULT_TMDB_PROXY_BASE_URL = "https://tmdb-proxy.mediaryscout.app";
 
 /** Ordered TMDB access channels: user's own key (direct) → env token (direct) →
  *  the proxy Worker (always last, no token — the Worker injects the author's).
