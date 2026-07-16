@@ -240,11 +240,13 @@ export async function handleTmdbProxy(deps: HandleTmdbProxyDeps): Promise<Respon
     if (staleBody !== null) {
       return new Response(staleBody, { status: 200, headers: jsonHeaders("STALE", request) });
     }
-    // Public endpoint: keep the error contract to a stable enum — raw error
-    // strings stay in the worker log (wrangler tail), never in the response.
-    // Log only the path: the querystring carries user search terms.
-    console.error(`tmdb origin fetch failed for ${key.split("?")[0]}: ${String(error)}`);
-    const reason = error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network";
+    // Public endpoint: keep the error contract to a stable enum. The log gets
+    // only the path (the querystring carries user search terms) and the error
+    // NAME — never the raw message, which some runtimes stuff the full request
+    // URL into.
+    const kind = error instanceof Error ? error.name : "unknown";
+    console.error(`tmdb origin fetch failed for ${key.split("?")[0]}: ${kind}`);
+    const reason = kind === "TimeoutError" ? "timeout" : "network";
     return new Response(JSON.stringify({ error: "tmdb_upstream_unreachable", reason }), {
       status: 504,
       headers: jsonHeaders("MISS", request),

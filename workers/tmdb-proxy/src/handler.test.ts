@@ -167,11 +167,14 @@ describe("handleTmdbProxy — upstream flap absorption (timeout + stale fallback
     expect(await res.json()).toEqual({ error: "tmdb_upstream_unreachable", reason: "timeout" });
     // The failure must stay debuggable from the landing site (CORS on error branch).
     expect(res.headers.get("Access-Control-Allow-Origin")).toBe("https://mediaryscout.app");
-    // Server-side log keeps the failing endpoint but NEVER the query values —
-    // user search terms must not land in the worker log on every upstream flap.
+    // Server-side log keeps the failing endpoint + a coarse error kind, and
+    // NEVER query values or the raw error string (some runtimes embed the full
+    // request URL — and thus user search terms — in error messages).
     const logged = errSpy.mock.calls.map((args) => args.join(" ")).join("\n");
     expect(logged).toContain("search/multi");
+    expect(logged).toContain("TimeoutError");
     expect(logged).not.toContain("bebop");
+    expect(logged).not.toContain("aborted"); // fragment of the raw message
     errSpy.mockRestore();
   });
 
