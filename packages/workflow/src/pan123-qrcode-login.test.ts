@@ -52,6 +52,16 @@ describe("Pan123QrLoginClient.pollStatus (loginStatus 0/1/2/3/4 mapping)", () =>
     expect(r.token).toBe("TK90");
   });
 
+  it("token OVERRIDES a conflicting non-confirm loginStatus (token check precedes the switch)", async () => {
+    // loginStatus 4 alone maps to expired, but a non-empty token is the primary
+    // confirm signal and must win — this pins token-first ahead of the map.
+    const c = new Pan123QrLoginClient({
+      fetchImpl: jsonFetch({ code: 0, data: { loginStatus: 4, token: "TK90" } }),
+    });
+    const r = await c.pollStatus({ uniID: "U1" });
+    expect(r).toEqual({ status: "confirmed", token: "TK90" });
+  });
+
   it("does NOT attach a token key when not confirmed (exactOptionalPropertyTypes)", async () => {
     const c = new Pan123QrLoginClient({ fetchImpl: jsonFetch({ code: 0, data: { loginStatus: 1 } }) });
     const r = await c.pollStatus({ uniID: "U1" });
