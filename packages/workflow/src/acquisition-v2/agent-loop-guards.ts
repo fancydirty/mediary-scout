@@ -174,6 +174,31 @@ export function buildNoCoverageStop<TOOLS extends ToolSet = ToolSet>(): StopCond
   return ({ steps }) => hasSuccessfulNoCoverageReport(steps as ReadonlyArray<StepLike>);
 }
 
+/** Whether any step carries a SUCCESSFUL finish result (the coverage summary,
+ *  error-free). Mirrors hasSuccessfulNoCoverageReport: finish is the symmetric
+ *  terminal declaration — 复联4 live (2026-07-17) showed the model calling finish
+ *  ×3 in a row (~2 wasted steps) because only reportNoCoverage had a mechanical
+ *  stop. An {error} finish result does NOT stop (premature call stays recoverable). */
+export function hasSuccessfulFinish(steps: ReadonlyArray<StepLike>): boolean {
+  for (const step of steps) {
+    if (!(step.toolCalls ?? []).some((c) => c.toolName === "finish")) {
+      continue;
+    }
+    for (const result of step.toolResults ?? []) {
+      const output = result.output as { error?: unknown; coverageMet?: unknown } | undefined;
+      if (output && output.error === undefined && output.coverageMet !== undefined) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/** A StopCondition that ends the loop once the agent has successfully declared finish. */
+export function buildFinishStop<TOOLS extends ToolSet = ToolSet>(): StopCondition<TOOLS> {
+  return ({ steps }) => hasSuccessfulFinish(steps as ReadonlyArray<StepLike>);
+}
+
 /**
  * The reflection nudge, as a pure decision: within the last REMIND_WITHIN_STEPS
  * steps before the cap, return the base system text + reminder (to override the

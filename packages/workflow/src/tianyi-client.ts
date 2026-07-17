@@ -605,7 +605,13 @@ function isSessionDead(code: unknown, message: string): boolean {
   if (code === "InvalidSessionKey") {
     return true;
   }
-  return /userSessionBO is null|InvalidSessionKey|会话失效|sessionKey.*invalid|check ip error/i.test(message);
+  // ⚠️ "sessionKey invalid" must stay ADJACENT (no `.*`): the dead-share envelope
+  // (live 2026-07-17, res_code "ShareNotFound") reads "shareUserRightcheck() -
+  // sessionKey=null, shareId=…, share not found or invalid." — a greedy
+  // /sessionKey.*invalid/ spanned that whole clause and misread a DEAD SHARE as a
+  // dead session (pointless renew + TIANYI_AUTH_FAILED, which the systemic-block
+  // vocabulary then treats as an account-level block).
+  return /userSessionBO is null|InvalidSessionKey|会话失效|sessionKey invalid|check ip error/i.test(message);
 }
 
 function mergeTianyiListing(fileListAO: unknown): TianyiItem[] {

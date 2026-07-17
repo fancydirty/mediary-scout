@@ -12,6 +12,7 @@ import {
   buildRepetitionStop,
   buildSystemicBlockStop,
   hasSystemicTransferBlock,
+  hasSuccessfulFinish,
   hasSuccessfulNoCoverageReport,
   reflectionSystemOverride,
   toStepSignature,
@@ -207,6 +208,40 @@ describe("prepareStepSystemOverride (composes step-cap + budget nudges)", () => 
 describe("DEFAULT_MAX_STEPS", () => {
   it("is 60 (raised from the old 40 that killed 一人之下)", () => {
     expect(DEFAULT_MAX_STEPS).toBe(60);
+  });
+});
+
+describe("hasSuccessfulFinish — finish 后即停(复联4 live:finish ×3 尾巴)", () => {
+  it("成功的 finish 结果(带 coverageMet)→ true", () => {
+    const steps = [
+      {
+        toolCalls: [{ toolName: "finish", input: {} }],
+        toolResults: [
+          { output: { coverageMet: true, obtained: ["MOVIE"], missing: [], subtitleFallback: true } },
+        ],
+      },
+    ];
+    expect(hasSuccessfulFinish(steps)).toBe(true);
+  });
+
+  it("finish 带 {error} 结果 → false(循环继续,可恢复)", () => {
+    const steps = [
+      {
+        toolCalls: [{ toolName: "finish", input: {} }],
+        toolResults: [{ output: { error: "SANDBOX: not ready" } }],
+      },
+    ];
+    expect(hasSuccessfulFinish(steps)).toBe(false);
+  });
+
+  it("其他工具的成功结果 → false", () => {
+    const steps = [
+      {
+        toolCalls: [{ toolName: "markObtained", input: { codes: ["MOVIE"] } }],
+        toolResults: [{ output: { confirmed: ["MOVIE"] } }],
+      },
+    ];
+    expect(hasSuccessfulFinish(steps)).toBe(false);
   });
 });
 

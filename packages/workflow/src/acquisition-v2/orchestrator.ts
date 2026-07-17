@@ -215,7 +215,14 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     transferAttempts,
     resourceSnapshots,
     coverageMet: result.coverage.coverageMet,
-    reason: result.text,
+    // The finish terminal stop ends the loop AT the finish step, so a successful
+    // run has no closing free-text turn — fall back to the honest coverage summary
+    // so persisted decisions never carry an empty reason.
+    reason:
+      result.text ||
+      (result.coverage.coverageMet
+        ? `已完成:obtained=${result.coverage.obtained.join(",") || "-"}(finish 终结即停)`
+        : result.text),
   });
   return { ...result, outcome: { resourceSnapshots, decisions, transferAttempts }, auditEvents: sandbox.auditTrail() };
 }

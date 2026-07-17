@@ -189,6 +189,35 @@ describe("TianyiClient WEB face", () => {
     await c.listFiles("-11").catch((e) => expect(isTianyiAuthError(e)).toBe(false));
   });
 
+  it("dead-share ShareNotFound (shareUserRightcheck mentions sessionKey=null) is a DEAD LINK, not a session death", async () => {
+    // Ground truth (live 2026-07-17, replayed against real cloud.189.cn with a
+    // cancelled share): getShareInfoByCodeV2 returns res_code "ShareNotFound" with
+    //   "shareUserRightcheck() - sessionKey=null, shareId=…, share not found or invalid. "
+    // The greedy /sessionKey.*invalid/ used to span "sessionKey=null, … or invalid"
+    // → misread a dead share as session-dead → pointless renew → TIANYI_AUTH_FAILED
+    // (which the systemic-block vocabulary then treats as an ACCOUNT-level block).
+    const calls: string[] = [];
+    const fetchImpl = fetchStub((url) => {
+      calls.push(url);
+      if (url.includes("getSessionForPC") || url.includes("refreshToken.do")) {
+        return { status: 200, body: { res_code: 0, sessionKey: "SK2", accessToken: "AT2", refreshToken: "RT2" } };
+      }
+      return {
+        status: 200,
+        body: {
+          res_code: "ShareNotFound",
+          res_message:
+            "shareUserRightcheck() - sessionKey=null, shareId=99900011122233344, share not found or invalid. ",
+        },
+      };
+    });
+    const c = new TianyiClient({ sessionKey: "SK", accessToken: "AT", refreshToken: "RT", fetchImpl });
+    await expect(c.getShareInfo("deadcode01")).rejects.toThrow(/ShareNotFound/);
+    await c.getShareInfo("deadcode01").catch((e) => expect(isTianyiAuthError(e)).toBe(false));
+    // A dead share must never trigger the session self-heal round-trip.
+    expect(calls.some((u) => u.includes("getSessionForPC") || u.includes("refreshToken.do"))).toBe(false);
+  });
+
   it("detects the errorCode/errorMsg auth envelope (HTTP 400 InvalidSessionKey / IP mismatch) and self-heals — never returns []", async () => {
     // Ground truth from real cloud.189.cn with an expired/IP-mismatched session:
     // HTTP 400 + {"errorCode":"InvalidSessionKey","errorMsg":"check ip error - curIp=…, cookiesIp=…"}

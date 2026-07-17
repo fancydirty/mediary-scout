@@ -81,7 +81,10 @@ describe("runAcquisitionAgent — the real AI SDK tool-loop over the sandbox", (
 
     expect(result.coverage.coverageMet).toBe(true);
     expect(result.coverage.obtained).toEqual(["S01E01"]);
-    expect(result.text).toMatch(/Covered/);
+    // finish is TERMINAL (mechanical stop): the loop ends AT the finish step, so
+    // the scripted closing free-text turn ("Covered") is never reached — coverage
+    // comes from the sandbox, not the model's prose. (复联4 live: finish ×3 tail.)
+    expect(result.text).toBe("");
     expect(result.steps).toBeGreaterThanOrEqual(3);
   });
 

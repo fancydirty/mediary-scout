@@ -6,6 +6,7 @@ import {
   DEFAULT_MAX_STEPS,
   buildRepetitionStop,
   buildSystemicBlockStop,
+  buildFinishStop,
   buildNoCoverageStop,
   prepareStepSystemOverride,
 } from "./agent-loop-guards.js";
@@ -180,7 +181,8 @@ export function buildSandboxToolSet(
         asEvidence(() => sandbox.markObtained(args)),
     },
     finish: {
-      description: "Declare the task done. Returns the honest coverage summary (what is obtained, what remains).",
+      description:
+        "Declare the task done. Returns the honest coverage summary (what is obtained, what remains). TERMINAL: a successful finish ENDS the task immediately — do all clean-up BEFORE calling it, and never call it twice.",
       inputSchema: z.object({}),
       execute: () => asEvidence(() => sandbox.finish()),
     },
@@ -289,12 +291,19 @@ export async function runAcquisitionAgent(
     system: request.system,
     prompt: request.prompt,
     tools,
-    // Four stops: step cap (cost/runaway), repetition (agent crazy), systemic
+    // Five stops: step cap (cost/runaway), repetition (agent crazy), systemic
     // transfer block (account quota/auth — every candidate will fail, stop grinding),
-    // and successful reportNoCoverage (terminal declaration — no second report).
-    // The stops are independent and OR'd — each fires under disjoint conditions,
-    // so their ordering in this array is not semantic.
-    stopWhen: [stepCountIs(maxSteps), buildRepetitionStop(), buildSystemicBlockStop(), buildNoCoverageStop()],
+    // successful reportNoCoverage (terminal declaration — no second report), and
+    // successful finish (the symmetric terminal declaration — 复联4 live showed
+    // finish ×3 tail steps without a mechanical stop). The stops are independent
+    // and OR'd — each fires under disjoint conditions, so ordering is not semantic.
+    stopWhen: [
+      stepCountIs(maxSteps),
+      buildRepetitionStop(),
+      buildSystemicBlockStop(),
+      buildNoCoverageStop(),
+      buildFinishStop(),
+    ],
     // Last ~10 steps before the cap: inject a calm "wrap up + clean staging" nudge
     // so a step-capped run doesn't leave the 一人之下-style half-done mess.
     prepareStep: ({ stepNumber }) => {
