@@ -83,6 +83,19 @@ describe("POST /api/tianyi/qrcode/confirm — error mapping", () => {
     expect(res.status).toBe(400);
   });
 
+  it("returns 400 (never reaches the exchange) when a cookie carries a CR/LF header injection", async () => {
+    const evil = { ...fakeSession, cookies: [["JSESSIONID", "abc\r\nX-Injected: 1"]] };
+    const res = await POST(req({ session: evil, redirectUrl: "https://cloud.189.cn/r?x=1" }));
+    expect(res.status).toBe(400);
+    expect(completeTianyiQrLogin).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 when redirectUrl is not https", async () => {
+    const res = await POST(req({ session: fakeSession, redirectUrl: "http://evil.example.com/r" }));
+    expect(res.status).toBe(400);
+    expect(completeTianyiQrLogin).not.toHaveBeenCalled();
+  });
+
   it("returns 400 (not 502) when the request body is invalid JSON", async () => {
     const r = new NextRequest("http://localhost/api/tianyi/qrcode/confirm", {
       method: "POST",

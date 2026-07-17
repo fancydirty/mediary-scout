@@ -1,6 +1,7 @@
 import { isDemoMode } from "../../../../../lib/demo-mode";
 import { NextResponse, type NextRequest } from "next/server";
 import { completeTianyiQrLogin, StorageOwnedByOtherAccountError } from "../../../../../lib/workflow-runtime";
+import { validateTianyiQrSession, validateTianyiRedirectUrl } from "../../../../../lib/tianyi-qr-session";
 import type { TianyiQrSession } from "@media-track/workflow";
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
@@ -14,14 +15,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     session?: TianyiQrSession;
     redirectUrl?: string;
   } | null;
-  if (!body?.session || typeof body.session !== "object") {
-    return NextResponse.json({ ok: false, error: "missing session" }, { status: 400 });
+  const sessionValid = validateTianyiQrSession(body?.session);
+  if (!sessionValid.ok) {
+    return NextResponse.json({ ok: false, error: sessionValid.error }, { status: 400 });
   }
-  if (!body.redirectUrl || typeof body.redirectUrl !== "string") {
-    return NextResponse.json({ ok: false, error: "missing redirectUrl" }, { status: 400 });
+  const redirectValid = validateTianyiRedirectUrl(body?.redirectUrl);
+  if (!redirectValid.ok) {
+    return NextResponse.json({ ok: false, error: redirectValid.error }, { status: 400 });
   }
   try {
-    const result = await completeTianyiQrLogin(body.session, body.redirectUrl);
+    const result = await completeTianyiQrLogin(body!.session as TianyiQrSession, body!.redirectUrl as string);
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {
     if (error instanceof StorageOwnedByOtherAccountError) {
