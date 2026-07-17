@@ -214,6 +214,11 @@ function normalizeResourceType(rawType: string, url: string): ResourceType | nul
   if (rawType === "quark" || url.includes("pan.quark.cn/s/")) {
     return "quark";
   }
+  // 123 share shapes mirror parsePan123ShareUrl (pan123-storage-executor):
+  // multi-mirror domains 123pan/123684/123865/123912 · com/cn, path /s/<key>.
+  if (rawType === "123" || /123(?:684|865|912|pan)\.(?:com|cn)\/s\//.test(url)) {
+    return "123";
+  }
   // 天翼 share shapes mirror parseTianyiShareUrl (tianyi-storage-executor):
   // cloud.189.cn/t/<code> (the probe-confirmed PanSou link shape) and
   // cloud.189.cn/web/share?…code=<code> (the ?code= is required — the executor

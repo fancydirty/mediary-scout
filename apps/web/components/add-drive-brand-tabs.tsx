@@ -7,12 +7,15 @@ import { QuarkCookieConnect } from "./quark-cookie-connect";
 import { GuangYaTokenConnect } from "./guangya-token-connect";
 import { TianyiQrConnect } from "./tianyi-qr-connect";
 import { TianyiSsonConnect } from "./tianyi-sson-connect";
+import { Pan123QrConnect } from "./pan123-qr-connect";
+import { Pan123TokenConnect } from "./pan123-token-connect";
 
-type Brand = "pan115" | "quark" | "guangya" | "tianyi";
+type Brand = "pan115" | "quark" | "guangya" | "tianyi" | "pan123";
 
-/** Settings "添加网盘": pick a brand, then connect it. 115/夸克/天翼 scan a QR
- *  (夸克折叠 cookie 粘贴回退、天翼折叠 SSON 粘贴回退——QR 的凭证兑换是易碎跳),光鸭粘
- *  token。Each bound drive becomes its own isolated workspace (tree model). */
+/** Settings "添加网盘": pick a brand, then connect it. 115/夸克/天翼/123 scan a QR
+ *  (夸克折叠 cookie 粘贴回退、天翼折叠 SSON 粘贴回退、123 折叠粘 token 回退——QR 的
+ *  凭证兑换是易碎跳),光鸭粘 token。Each bound drive becomes its own isolated
+ *  workspace (tree model). */
 export function AddDriveBrandTabs() {
   const [brand, setBrand] = useState<Brand>("pan115");
 
@@ -51,6 +54,14 @@ export function AddDriveBrandTabs() {
         >
           天翼云盘
         </button>
+        <button
+          type="button"
+          className={brand === "pan123" ? "primary-button" : "secondary-button"}
+          onClick={() => setBrand("pan123")}
+          aria-pressed={brand === "pan123"}
+        >
+          123网盘
+        </button>
       </div>
       {brand === "pan115" ? (
         <Pan115QrConnect />
@@ -65,6 +76,18 @@ export function AddDriveBrandTabs() {
             </summary>
             <div style={{ marginTop: 10 }}>
               <TianyiSsonConnect />
+            </div>
+          </details>
+        </div>
+      ) : brand === "pan123" ? (
+        <div>
+          <Pan123QrConnect />
+          <details style={{ marginTop: 12 }}>
+            <summary className="panel-note" style={{ cursor: "pointer" }}>
+              扫码不行？手动粘 token
+            </summary>
+            <div style={{ marginTop: 10 }}>
+              <Pan123TokenConnect />
             </div>
           </details>
         </div>

@@ -62,6 +62,14 @@ describe("classifyTransferBlock", () => {
     expect(block!.reason).toContain("配额");
   });
 
+  it("flags a 容量 (storage-full) block — 123 free-tier (15GB 级) drives really fill up", () => {
+    const block = classifyTransferBlock([
+      attempt({ providerMessage: "网盘容量不足，无法保存" }),
+    ]);
+    expect(block).not.toBeNull();
+    expect(block!.reason).toContain("容量");
+  });
+
   it("ignores non-failed attempts — a no_target_change carrying a matching message must NOT flag a block", () => {
     expect(
       classifyTransferBlock([
@@ -77,6 +85,13 @@ describe("isSystemicTransferBlockMessage (per-message predicate, reused by the s
     expect(isSystemicTransferBlockMessage("登录超时，请重新登录。")).toBe(true);
     expect(isSystemicTransferBlockMessage("PAN115_AUTH_FAILED: 登录超时")).toBe(true);
     expect(isSystemicTransferBlockMessage("额度已用完")).toBe(true);
+    // 容量 (storage full) is an account-level block too — the 123 skill text
+    // promises systemicBlock for it, so the detector must actually match it.
+    expect(isSystemicTransferBlockMessage("网盘容量不足，无法保存")).toBe(true);
+    expect(isSystemicTransferBlockMessage("容量已满")).toBe(true);
+    // …but a PER-FILE size-limit error mentioning 容量 is NOT account-level: other
+    // (smaller) candidates can still succeed, so it must keep iterating.
+    expect(isSystemicTransferBlockMessage("单文件容量超过上限，无法保存")).toBe(false);
   });
 
   it("is false for dead-link messages (they iterate to the next candidate, not stop)", () => {
@@ -84,6 +99,8 @@ describe("isSystemicTransferBlockMessage (per-message predicate, reused by the s
     expect(isSystemicTransferBlockMessage("分享已取消")).toBe(false);
     expect(isSystemicTransferBlockMessage("错误的链接")).toBe(false);
     expect(isSystemicTransferBlockMessage("分享不存在")).toBe(false);
+    // 123 saveShare's guaranteed dead-share message — dead link, NOT systemic
+    expect(isSystemicTransferBlockMessage("分享为空 / 已失效(share empty / dead)")).toBe(false);
   });
 
   it("is false for empty / whitespace / undefined", () => {

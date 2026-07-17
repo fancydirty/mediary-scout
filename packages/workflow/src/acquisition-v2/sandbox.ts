@@ -437,12 +437,14 @@ export class TaskSandbox {
    *  FIRST that 秒传-lands; the rest are abandoned. The candidate SET is the agent's
    *  semantic choice (a wildcard search returns same-named DIFFERENT works — never
    *  iterate the raw result set); the system only burns through the dead links in
-   *  that vetted, ordered set. 115 SHARE LINKS ONLY: only a 115 share fails loud
-   *  (链接已过期/错误的链接/分享已取消 come back at once), so iterate-on-failure is
-   *  sound; a magnet's success is only knowable via the landing point, so magnets
-   *  are rejected — use transferCandidate + inspectStaging for those. TV/anime
-   *  never gets this tool (it must not be confused with multi-resource season
-   *  coverage). Refused once coverage is met. Force-rereads staging. */
+   *  that vetted, ordered set. FAIL-LOUD SHARE LINKS ONLY (115/夸克/天翼/123
+   *  转存分享): every share-transfer brand fails loud on a dead link (链接已过期/
+   *  分享已取消/分享不存在 come back at once), so iterate-on-failure is sound; a
+   *  magnet's success is only knowable via the landing point, so magnets (and
+   *  unknown links) are rejected — use transferCandidate + inspectStaging for
+   *  those. TV/anime never gets this tool (it must not be confused with
+   *  multi-resource season coverage). Refused once coverage is met.
+   *  Force-rereads staging. */
   async transferUntilLanded(input: { candidateIds: string[] }): Promise<{
     landed: SimTreeFile[];
     transferredCandidateId: string | null;
@@ -474,10 +476,10 @@ export class TaskSandbox {
       }
     }
     for (const candidateId of input.candidateIds) {
-      if (this.storage.candidateLinkKind(candidateId) !== "pan115") {
+      if (this.storage.candidateLinkKind(candidateId) !== "share") {
         throw new Error(
-          `SANDBOX_TRANSFER_UNTIL_LANDED_REQUIRES_PAN115: ${candidateId} is not a 115 share link ` +
-            "(use transferCandidate for magnets and verify via the landing point)",
+          `SANDBOX_TRANSFER_UNTIL_LANDED_REQUIRES_SHARE_LINK: ${candidateId} is not a fail-loud share link ` +
+            "(115/夸克/天翼/123 转存分享) — use transferCandidate for magnets and verify via the landing point",
         );
       }
     }
@@ -507,6 +509,16 @@ export class TaskSandbox {
       // files yet mark the attempt failed (e.g. quark); trust the landing point.
       if (attempt.materializedFileIds.length === 0 && isSystemicTransferBlockMessage(attempt.providerMessage)) {
         systemicBlock = { reason: attempt.providerMessage!.trim() };
+        break;
+      }
+      // no_target_change with nothing landed: on an async-copy brand (123's
+      // fire-copy + settle window) this can be a FALSE miss — the server-side copy
+      // may land AFTER the window. Burning the next candidate now could double-land
+      // the film once the slow copy arrives, so STOP and hand judgment back to the
+      // agent (its runbook: re-read via inspectStaging BEFORE re-transferring or
+      // writing the candidate off). Loud dead links (non-ntc) keep iterating —
+      // their death is proven, not pending.
+      if (attempt.noTargetChange === true && attempt.materializedFileIds.length === 0) {
         break;
       }
     }

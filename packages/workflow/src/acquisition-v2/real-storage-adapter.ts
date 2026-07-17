@@ -1,5 +1,8 @@
 import type { TransferAttempt } from "../domain.js";
+import { parsePan123ShareUrl } from "../pan123-storage-executor.js";
 import type { StorageExecutor } from "../ports.js";
+import { parseQuarkShareUrl } from "../quark-storage-executor.js";
+import { parseTianyiShareUrl } from "../tianyi-storage-executor.js";
 import type { CandidateRegistry } from "./candidate-registry.js";
 import { deadLinkKey, deadLinkReason, UNRESOLVED_MAGNET_DEAD_LINK_TTL_MS, type DeadLinkStore } from "./dead-links.js";
 import type { SimTreeFile, StorageV2, TransferAttemptResult } from "./storage-115-simulator.js";
@@ -42,12 +45,23 @@ export class RealStorageV2 implements StorageV2 {
     return [...this.recordedAttempts];
   }
 
-  /** Classify a candidate's link from its recorded payload url: a 115 share (fails
-   *  loud) vs a magnet (silent — success only via the landing point) vs unknown.
-   *  transferUntilLanded uses this to stay 115-only. */
-  candidateLinkKind(candidateId: string): "pan115" | "magnet" | "unknown" {
+  /** Classify a candidate's link from its recorded payload url: a fail-loud
+   *  转存分享 (115/夸克/天翼/123 — a dead share errors back immediately) vs a
+   *  magnet (silent — success only via the landing point) vs unknown.
+   *  transferUntilLanded iterates ONLY "share" candidates (its loop is sound only
+   *  when death is loud). Brand share shapes are delegated to each brand's OWN
+   *  parser — the same one its executor transfers with — so this classifier can
+   *  never drift from what actually transfers (no second domain list). */
+  candidateLinkKind(candidateId: string): "share" | "magnet" | "unknown" {
     const url = String(this.registry.get(candidateId)?.providerPayload?.["url"] ?? "");
-    if (PAN115_SHARE_URL.test(url)) return "pan115";
+    if (
+      PAN115_SHARE_URL.test(url) ||
+      parseQuarkShareUrl(url) !== null ||
+      parseTianyiShareUrl(url) !== null ||
+      parsePan123ShareUrl(url) !== null
+    ) {
+      return "share";
+    }
     if (/^magnet:/i.test(url)) return "magnet";
     return "unknown";
   }
@@ -106,9 +120,12 @@ export class RealStorageV2 implements StorageV2 {
     // Only a real materialization counts as success; no_target_change (115 has no
     // cached copy) is a miss the agent must recover from, surfaced as failed +
     // an empty reread. Layer-1: surface providerMessage so the agent sees WHY.
+    // The noTargetChange flag rides along so brand-agnostic callers can tell a
+    // silent-late async copy (123 — possible FALSE miss) from a loud dead link.
     return {
       status: attempt.status === "succeeded" ? "succeeded" : "failed",
       materializedFileIds: attempt.materializedFileIds,
+      ...(attempt.status === "no_target_change" ? { noTargetChange: true as const } : {}),
       ...(attempt.providerMessage ? { providerMessage: attempt.providerMessage } : {}),
     };
   }

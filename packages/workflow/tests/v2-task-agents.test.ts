@@ -130,6 +130,27 @@ describe("transferModelLine — brand transfer model in the prompt", () => {
     expect(line).not.toBe(transferModelLine({}));
   });
 
+  it("pan123: 转存分享链 / 无磁力 model (秒传复制, share-copy), distinct from quark/tianyi/guangya/default", () => {
+    const line = transferModelLine({ storageProvider: "pan123" });
+    expect(line).toBeTruthy();
+    expect(line.length).toBeGreaterThan(0);
+    expect(line).toMatch(/123网盘/);
+    // a 转存分享链 drive (share-copy, like 夸克/天翼 — NOT a magnet/offline drive)
+    expect(line).toMatch(/分享链|转存分享/);
+    expect(line).toContain("123pan.com");
+    expect(line).toMatch(/秒传/);
+    // no magnet/offline API (v1) — a magnet fails loud with the pan123 sentinel
+    expect(line).toContain("PAN123_NO_MAGNET");
+    expect(line).not.toMatch(/QUARK_NO_MAGNET|GUANGYA_ONLY_MAGNET|TIANYI_NO_MAGNET/);
+    // dead-share fail-loud signals the 123 executor actually surfaces
+    expect(line).toMatch(/分享不存在|已取消|提取码错误|链接失效/);
+    // distinct from the quark/tianyi/guangya lines and the default (115) empty line
+    expect(line).not.toBe(transferModelLine({ storageProvider: "quark" }));
+    expect(line).not.toBe(transferModelLine({ storageProvider: "tianyi" }));
+    expect(line).not.toBe(transferModelLine({ storageProvider: "guangya" }));
+    expect(line).not.toBe(transferModelLine({}));
+  });
+
   it("115 (default) injects no extra transfer-model line", () => {
     expect(transferModelLine({})).toBe("");
     expect(transferModelLine({ storageProvider: "pan115" })).toBe("");
@@ -186,7 +207,7 @@ describe("Movie system prompt carries movie-specific invariants", () => {
     [/\.iso|原盘|BDMV|disc image/i, "reject 原盘/ISO/BDMV disc images — need a playable video"],
     [/LAST (action|step)|never mark before|in place|only after/i, "mark is the LAST step, only after the film is in place"],
     [/flattenMovie/, "flattenMovie is the movie extraction"],
-    [/transferUntilLanded/, "transferUntilLanded for ranked 115 shares / dead links"],
+    [/transferUntilLanded/, "transferUntilLanded for ranked shares / dead links"],
   ])("mentions %s (%s)", (re) => {
     expect(prompt).toMatch(re);
   });

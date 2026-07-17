@@ -51,11 +51,48 @@ describe("brand-aware storage skill", () => {
     expect(tianyi).not.toContain("41006");
   });
 
+  it("getStorageSkill('pan123') teaches 转存 (秒传复制), 无磁力, PAN123_NO_MAGNET, and fail-loud share signals; does NOT throw", () => {
+    const pan123 = getStorageSkill("pan123");
+    expect(pan123).toBeTruthy();
+    expect(pan123.length).toBeGreaterThan(0);
+    // share-transfer drive (share/get 列文件 → file/copy/async 秒传复制), like 夸克/天翼
+    expect(pan123).toContain("转存分享");
+    expect(pan123).toMatch(/秒传/);
+    expect(pan123).toContain("123网盘");
+    expect(pan123).toContain("123pan.com");
+    // mirror share domains are real (123684/123865/123912) — the agent must not
+    // reject a candidate just because it is not on the main domain
+    expect(pan123).toMatch(/123684|镜像/);
+    // no magnet/offline API on 123 (v1) — a magnet fails loud with this sentinel
+    expect(pan123).toMatch(/无磁力|NO magnet/i);
+    expect(pan123).toContain("PAN123_NO_MAGNET");
+    // a dead / cancelled / wrong-code share fails LOUD (switch candidate)
+    expect(pan123).toMatch(/分享不存在|已取消|已失效|已过期|提取码错误|链接失效/);
+    // the ONE dead-share message the code itself guarantees (saveShare's empty/dead
+    // reply) must be in the examples — the rest await T10 live calibration
+    expect(pan123).toContain("分享为空 / 已失效");
+    // transferUntilLanded accepts every fail-loud 转存分享 brand (the sandbox gate
+    // rejects only magnets/unknown) — the arm recommends it for a movie, exactly
+    // like the quark/tianyi arms, and must NOT carry the old Do-NOT-use warning
+    expect(pan123).toMatch(/transferUntilLanded[^.]*(burns through|automatically)/);
+    expect(pan123).not.toMatch(/Do NOT use transferUntilLanded/i);
+    expect(pan123).not.toMatch(/115-share-only|it is 115/);
+    expect(pan123).toContain("transferCandidate");
+    // the third outcome (settle window exhausted on a big async copy) is taught:
+    // re-read before re-transferring or burning the candidate
+    expect(pan123).toContain("no_target_change");
+    // black-box gate keeps the publish-time heuristic (早于最新集=基本不含)
+    expect(pan123).toMatch(/publish time|发布时间/i);
+    // must NOT carry other brands' fail-loud codes / sentinels
+    expect(pan123).not.toContain("41006");
+    expect(pan123).not.toMatch(/TIANYI_NO_MAGNET|QUARK_NO_MAGNET|GUANGYA_ONLY_MAGNET/);
+  });
+
   it("getStorageSkill throws for an unknown brand", () => {
     expect(() => getStorageSkill("baidu")).toThrowError(/unknown storage brand/i);
   });
 
-  it.each(["pan115", "quark", "guangya", "tianyi"])(
+  it.each(["pan115", "quark", "guangya", "tianyi", "pan123"])(
     "%s teaches the systemic-block STOP rule (quota/auth = account problem, not a dead link)",
     (brand) => {
       const skill = getStorageSkill(brand);
@@ -75,6 +112,7 @@ describe("brand-aware storage skill", () => {
     expect(readSkillSection("dead-links-black-box", "pan115")).toBe(getStorageSkill("pan115"));
     expect(readSkillSection("dead-links-black-box", "guangya")).toBe(getStorageSkill("guangya"));
     expect(readSkillSection("dead-links-black-box", "tianyi")).toBe(getStorageSkill("tianyi"));
+    expect(readSkillSection("dead-links-black-box", "pan123")).toBe(getStorageSkill("pan123"));
     // defaults to 115 when no brand is given (single-user / legacy)
     expect(readSkillSection("dead-links-black-box")).toBe(getStorageSkill("pan115"));
   });

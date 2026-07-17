@@ -11,6 +11,9 @@ import { GuangYaClient } from "./guangya-client.js";
 import type { GuangYaClientOptions } from "./guangya-client.js";
 import { GuangYaStorageExecutor } from "./guangya-storage-executor.js";
 import { createProtectedPan115CookieStorageExecutorFromEnv } from "./pan115-storage-factory.js";
+import { Pan123Client } from "./pan123-client.js";
+import type { Pan123Credential } from "./pan123-client.js";
+import { Pan123StorageExecutor } from "./pan123-storage-executor.js";
 import type { StorageExecutor } from "./ports.js";
 import { QuarkCookieClient } from "./quark-cookie-client.js";
 import { QuarkStorageExecutor } from "./quark-storage-executor.js";
@@ -24,7 +27,7 @@ export function createExecutorForBrand(input: {
    *  authenticates with a token blob instead — pass `credential` for those. */
   cookie?: string;
   /** Opaque credential blob for token-auth brands (光鸭: {accessToken,refreshToken,deviceId};
-   *  天翼: {sessionKey,accessToken,refreshToken,familySessionKey?}). */
+   *  天翼: {sessionKey,accessToken,refreshToken,familySessionKey?}; 123: {token}). */
   credential?: unknown;
   /** The drive's write-scope directory ids (rootCid + Movies/TV/Anime). */
   scopeCids: string[];
@@ -70,6 +73,15 @@ export function createExecutorForBrand(input: {
     }
     return new GuangYaStorageExecutor({
       client: new GuangYaClient(clientOptions),
+      writeScopeDirectoryIds: input.scopeCids,
+    });
+  }
+  if (input.provider === "pan123") {
+    const c = (input.credential ?? {}) as Partial<Pan123Credential>;
+    // 纯 token 模型:v1 无凭证刷新(web 面无 refresh 端点,401 → Pan123AuthError
+    // → registry isAuthError 冻结重扫),故不接 onCredentialRefresh。
+    return new Pan123StorageExecutor({
+      client: new Pan123Client({ token: c.token ?? "" }),
       writeScopeDirectoryIds: input.scopeCids,
     });
   }

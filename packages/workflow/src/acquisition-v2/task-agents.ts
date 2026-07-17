@@ -57,9 +57,9 @@ export interface TaskAgentPromptOptions {
   /** Rendered quality-preference guidance (召回后选片优先级, from getQualityGuidance);
    *  "" / undefined = 不限 → no quality block injected. */
   qualityGuidance?: string;
-  /** The run's drive brand ("pan115" | "quark" | "guangya" | "tianyi") — selects the
-   *  brand transfer model in the prompt and the brand-specific dead-links skill
-   *  section (transferModelLine / getStorageSkill). Default 115. */
+  /** The run's drive brand ("pan115" | "quark" | "guangya" | "tianyi" | "pan123") —
+   *  selects the brand transfer model in the prompt and the brand-specific
+   *  dead-links skill section (transferModelLine / getStorageSkill). Default 115. */
   storageProvider?: string;
   /** When true, the agent loop registers the subtitle tools (viewSubtitleSnapshot +
    *  transferSubtitle). Set by orchestrator when the subtitle gates pass. */
@@ -82,9 +82,10 @@ export interface TaskAgentPromptOptions {
 }
 
 /** A brand-specific transfer-model note. 夸克 differs from 115 (转存分享链 / 无磁力),
- *  光鸭 differs again (磁力/离线, 无秒传/分享转存), and 天翼 mirrors 夸克 (转存分享链 /
- *  无磁力, SHARE_SAVE), so make each explicit; 115 keeps the existing in-prompt
- *  guidance (no extra line). Exported for unit coverage. */
+ *  光鸭 differs again (磁力/离线, 无秒传/分享转存), 天翼 mirrors 夸克 (转存分享链 /
+ *  无磁力, SHARE_SAVE), and 123 mirrors them too (转存分享链 / 秒传复制 / 无磁力 v1),
+ *  so make each explicit; 115 keeps the existing in-prompt guidance (no extra
+ *  line). Exported for unit coverage. */
 export function transferModelLine(options: TaskAgentPromptOptions): string {
   if (options.storageProvider === "quark") {
     return `\nTRANSFER MODEL — 夸克网盘 (this drive): every candidate is a 夸克分享链 (转存分享链, the 秒传 equivalent). 夸克 has NO magnet / offline-download API, so there are NO magnet candidates and a magnet would fail loud (QUARK_NO_MAGNET); ignore any 115/magnet wording — it does not apply here. A dead/expired share fails LOUD (分享不存在 / 已取消 / 已过期 / 提取码错误) — switch to the next covering 夸克分享. Read the "dead-links-black-box" skill section: on this drive it is the 夸克 version.`;
@@ -94,6 +95,9 @@ export function transferModelLine(options: TaskAgentPromptOptions): string {
   }
   if (options.storageProvider === "tianyi") {
     return `\nTRANSFER MODEL — 天翼云盘 (this drive): every candidate is a 天翼分享链 (cloud.189.cn/t/<code>, a 转存分享链 — the 115-秒传 equivalent): the system SHARE_SAVE's the share's files into staging. 天翼 has NO magnet / offline-download API, so there are NO magnet candidates and a magnet would fail loud (TIANYI_NO_MAGNET); ignore any 115/magnet wording — it does not apply here. A dead/expired share fails LOUD (分享不存在 / 已失效 / 已过期 / 需要提取码 / ShareNotFound) — switch to the next covering 天翼分享. Read the "dead-links-black-box" skill section: on this drive it is the 天翼 version.`;
+  }
+  if (options.storageProvider === "pan123") {
+    return `\nTRANSFER MODEL — 123网盘 (this drive): every candidate is a 123 分享链 (123pan.com/s/<key>, a 转存分享链 — the 115-秒传 equivalent): the system copies the share's files into staging via 秒传复制 (server-side async copy; the bounded settle-polling is built in). 123 has NO magnet / offline-download API (v1), so there are NO magnet candidates and a magnet would fail loud (PAN123_NO_MAGNET); ignore any 115/magnet wording — it does not apply here. A dead/expired share fails LOUD (分享不存在 / 已取消 / 提取码错误 / 链接失效) — switch to the next covering 123 分享. Read the "dead-links-black-box" skill section: on this drive it is the 123 version.`;
   }
   return "";
 }
@@ -214,7 +218,7 @@ You own the COMPLETE acquisition judgment for ONE movie: target正片 identifica
 Identity (the hard part): the candidate must be THIS film, not a remake, sequel, prequel, or same-IP different film. Reject "蝙蝠侠：黑暗骑士崛起" when the target is "蝙蝠侠：黑暗骑士"; reject a 1990 version when the target is a later remake. When identity is unclear, do not transfer speculatively.
 Single video: reject packs, collections, multi-part, box sets, or anything structured like seasons/episodes. ALSO reject disc images — a 蓝光原盘 / ISO / BDMV full-disc dump (often 50–100GB+, isVideo=false) is NOT a usable film: you need ONE playable video file (mkv/mp4/ts). Prefer a 4K REMUX or 4K video over a 原盘/ISO even when the disc image is nominally higher quality; if the only candidate is a disc image, take a lower-quality VIDEO version instead. Among confirmed identity matches prefer the highest quality VIDEO stated transparently (4K REMUX/video > 1080p > 720p). Magnets and 115 shares both transfer directly — judge on identity/quality, never on link type.
 
-Dead links are the norm — many 115 shares are expired/cancelled (链接已过期 / 分享已取消 / 错误的链接). When you have RANKED several 115-share candidates that are all the SAME target film (best resource first), hand that ORDERED list to transferUntilLanded({candidateIds:[...]}): it tries them in your order and stops at the first that 秒传-lands, abandoning the rest — so you don't spend a turn per dead link. It is 115-shares ONLY and the SET must be your vetted choice (a keyword search mixes in same-named DIFFERENT works — e.g. a variety show or an unrelated cartoon — which you must exclude FIRST). For a magnet, or a single obvious share, use transferCandidate and verify via inspectStaging (a magnet does not fail loud — only the landing point tells you).
+Dead links are the norm — many shares are expired/cancelled (链接已过期 / 分享已取消 / 错误的链接). When you have RANKED several share candidates that are all the SAME target film (best resource first), hand that ORDERED list to transferUntilLanded({candidateIds:[...]}): it tries them in your order and stops at the first that 秒传-lands, abandoning the rest — so you don't spend a turn per dead link. It takes fail-loud SHARE links ONLY (115/夸克/天翼/123 转存分享 — never magnets) and the SET must be your vetted choice (a keyword search mixes in same-named DIFFERENT works — e.g. a variety show or an unrelated cartoon — which you must exclude FIRST). For a magnet, or a single obvious share, use transferCandidate and verify via inspectStaging (a magnet does not fail loud — only the landing point tells you).
 
 SYSTEMIC BLOCK (别甩锅): transferUntilLanded / transferCandidate may return \`systemicBlock: { reason: "..." }\` — the transfer failed with "云下载配额不足" / "登录超时" / "VIP" / "鉴权". **立即停,不要再转存**. The resource EXISTS; the ACCOUNT is blocked (quota / auth / VIP). Every candidate will fail. DO NOT keep transferring, DO NOT report "no resource". Report honestly: the resource was found, the account cannot transfer it (actionable: top up / re-login). This is NOT a dead link (dead links iterate; a systemic block STOPS).
 ${languageLine({ ...options, subtitleFallback: true })}
@@ -224,7 +228,7 @@ ${qualityGuidanceBlock(options)}
 Your loop (you drive it; the system only orchestrates the tool calls). A MOVIE is simple — there is NO season distribution and NO separate staging to discard (the film lands in the movie directory and flattenMovie cleans the wrapper in place). At EVERY decision point lay out Evidence → Facts → Decision (read your skill's "protocol" section); once a transfer has LANDED, do NOT keep searching/transferring — verify and finish.
 1. searchResources — bare title first; re-keyword (add the original/English name or "全集") only if weak. Stop the moment you can identify the one correct film.
 2. Decide the ONE correct film (right title AND year, not a remake / same-IP other film / a same-keyword different work) and RANK its candidate links best-first.
-3. Transfer it: transferUntilLanded over your ranked 115 shares (it burns through the dead ones), or transferCandidate for a single share / a magnet.
+3. Transfer it: transferUntilLanded over your ranked shares (it burns through the dead ones), or transferCandidate for a single share / a magnet.
 4. inspectStaging — read the TRUE landed files and confirm it IS the film.
 5. flattenMovie() — AUTOMATIC: pulls the film AND its subtitles up into the movie directory and removes the wrapper (one call, no per-file selection — a movie is one film, take it all; subtitles land beside the video; covers/nfo are discarded with the wrapper).
 6. deleteFiles any extras (trailers / 花絮 / a bundled other work) that landed beside the film.

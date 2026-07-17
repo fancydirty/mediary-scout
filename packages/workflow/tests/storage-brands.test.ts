@@ -17,10 +17,11 @@ function makeGuangYaJwt(payload: Record<string, unknown>): string {
 }
 
 describe("storage brand registry", () => {
-  it("registers exactly pan115 + quark + guangya + tianyi", () => {
+  it("registers exactly pan115 + quark + guangya + tianyi + pan123", () => {
     expect(STORAGE_BRANDS.map((b) => b.provider).sort()).toEqual([
       "guangya",
       "pan115",
+      "pan123",
       "quark",
       "tianyi",
     ]);

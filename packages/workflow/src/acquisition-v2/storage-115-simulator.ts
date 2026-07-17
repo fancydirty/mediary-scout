@@ -27,6 +27,14 @@ export interface TransferAttemptResult {
    *  surfaces this so the agent sees WHY a transfer failed and can distinguish a
    *  systemic account block from an ordinary dead link. */
   providerMessage?: string;
+  /** True when the executor reported no_target_change: the 转存 itself went through
+   *  but nothing new appeared in the target within the settle window. On an
+   *  async-copy brand (123's fire-copy) this can be a FALSE miss — the server-side
+   *  copy may land AFTER the window — so callers that iterate on failure
+   *  (transferUntilLanded) must STOP rather than burn the next candidate (a late
+   *  copy plus a second transfer = the film landed twice). Status stays collapsed
+   *  to "failed" for existing consumers. */
+  noTargetChange?: true;
 }
 
 /** What a candidate transfer would land — files keyed by their path relative to
@@ -56,11 +64,12 @@ const SUBTITLE_EXTENSIONS = /\.(srt|ass|ssa|sub|idx|vtt|sup|smi)$/i;
 export interface StorageV2 {
   createDirectory(input: { name: string; parentId: string }): Promise<string>;
   transferCandidate(input: { candidateId: string; intoDirectoryId: string }): Promise<TransferAttemptResult>;
-  /** A candidate's link kind. Only a 115 share fails LOUD (链接已过期/错误的链接/
-   *  分享已取消 come back immediately); a magnet's success is only knowable by the
-   *  landing point appearing. So `transferUntilLanded` (which iterates on failure)
-   *  is 115-only and uses this to reject magnets up front. */
-  candidateLinkKind(candidateId: string): "pan115" | "magnet" | "unknown";
+  /** A candidate's link kind. Every 转存分享 brand (115/夸克/天翼/123) fails LOUD
+   *  on a dead link (链接已过期/分享已取消/分享不存在 come back immediately); a
+   *  magnet's success is only knowable by the landing point appearing. So
+   *  `transferUntilLanded` (which iterates on failure) accepts only "share"
+   *  candidates and uses this to reject magnets/unknown links up front. */
+  candidateLinkKind(candidateId: string): "share" | "magnet" | "unknown";
   listTree(input: { directoryId: string }): Promise<SimTreeFile[]>;
   /** Recursive list of subdirectories under a directory (path relative to it) —
    *  the source of the wrapper-dir handle flatten removes. */
@@ -88,7 +97,7 @@ export class Storage115Simulator implements StorageV2 {
   private readonly dirs = new Map<string, Dir>();
   private readonly files = new Map<string, File>();
   private readonly packs: Map<string, PackSpec>;
-  private readonly linkKinds: Map<string, "pan115" | "magnet">;
+  private readonly linkKinds: Map<string, "share" | "magnet">;
   private readonly failureMessages: Map<string, string>;
   private readonly apiBudget: number;
   private sequence = 0;
@@ -97,9 +106,9 @@ export class Storage115Simulator implements StorageV2 {
   constructor(
     options: {
       packs?: Record<string, PackSpec>;
-      /** Per-candidate link kind (default "unknown"). Only matters for the 115-only
-       *  transferUntilLanded; ordinary transferCandidate ignores it. */
-      linkKinds?: Record<string, "pan115" | "magnet">;
+      /** Per-candidate link kind (default "unknown"). Only matters for the
+       *  share-links-only transferUntilLanded; ordinary transferCandidate ignores it. */
+      linkKinds?: Record<string, "share" | "magnet">;
       /** Per-candidate loud failure message (quota / auth / dead link). Models the
        *  心灵奇旅 free-account case: the resource exists (pack present) but every
        *  transfer fails with "云下载配额不足". A candidate with no pack AND no explicit
@@ -117,7 +126,7 @@ export class Storage115Simulator implements StorageV2 {
     this.apiBudget = options.apiBudget ?? Number.POSITIVE_INFINITY;
   }
 
-  candidateLinkKind(candidateId: string): "pan115" | "magnet" | "unknown" {
+  candidateLinkKind(candidateId: string): "share" | "magnet" | "unknown" {
     return this.linkKinds.get(candidateId) ?? "unknown";
   }
 

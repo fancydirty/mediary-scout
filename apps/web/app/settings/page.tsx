@@ -356,7 +356,7 @@ async function Pan115Section() {
             <Cable size={16} aria-hidden style={{ verticalAlign: "-2px", marginRight: 8 }} />
             网盘连接
           </h2>
-          <p className="panel-note">连接 115（扫码）、夸克（粘贴 cookie）、光鸭（粘贴 token）或天翼（扫码）；凭证持久化到数据库，自动用于后续转存。每块盘是独立工作区</p>
+          <p className="panel-note">连接 115（扫码）、夸克（粘贴 cookie）、光鸭（粘贴 token）、天翼（扫码）或 123网盘（扫码／粘 token）；凭证持久化到数据库，自动用于后续转存。每块盘是独立工作区</p>
         </div>
         {(() => {
           // #93: derive the header badge from ALL drives — 115-only status made
@@ -388,7 +388,7 @@ async function Pan115Section() {
             {drives.map((drive) => (
               <li key={drive.id} className="setting-row" style={{ justifyContent: "space-between" }}>
                 <span>
-                  {drive.provider === "pan115" ? "115网盘" : drive.provider === "quark" ? "夸克网盘" : drive.provider === "guangya" ? "光鸭云盘" : drive.provider === "tianyi" ? "天翼云盘" : drive.provider}
+                  {drive.provider === "pan115" ? "115网盘" : drive.provider === "quark" ? "夸克网盘" : drive.provider === "guangya" ? "光鸭云盘" : drive.provider === "tianyi" ? "天翼云盘" : drive.provider === "pan123" ? "123网盘" : drive.provider}
                   <span className="push-help"> · 账号 {drive.providerUid}</span>
                   {drive.connectedAt ? (
                     <span className="push-help"> · 连接于 {drive.connectedAt.slice(0, 16).replace("T", " ")}</span>
@@ -408,7 +408,7 @@ async function Pan115Section() {
                   <TestConnectionButton storageId={drive.id} />
                   <UnbindStorageButton
                     storageId={drive.id}
-                    label={drive.provider === "pan115" ? "115网盘" : drive.provider === "quark" ? "夸克网盘" : drive.provider === "guangya" ? "光鸭云盘" : drive.provider === "tianyi" ? "天翼云盘" : drive.provider}
+                    label={drive.provider === "pan115" ? "115网盘" : drive.provider === "quark" ? "夸克网盘" : drive.provider === "guangya" ? "光鸭云盘" : drive.provider === "tianyi" ? "天翼云盘" : drive.provider === "pan123" ? "123网盘" : drive.provider}
                   />
                 </span>
               </li>
@@ -419,7 +419,7 @@ async function Pan115Section() {
 
       <p className="panel-note" style={{ marginBottom: 8 }}>
         {drives.length > 0
-          ? "添加另一块网盘（115／夸克／光鸭／天翼）——不同账号即新增一块独立工作区；绑到已连的同一账号会自动刷新登录"
+          ? "添加另一块网盘（115／夸克／光鸭／天翼／123）——不同账号即新增一块独立工作区；绑到已连的同一账号会自动刷新登录"
           : "添加你的第一块网盘"}
       </p>
       <AddDriveBrandTabs />

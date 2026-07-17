@@ -45,6 +45,7 @@ import {
   allowedResourceTypesForKinds,
   parseQuarkUid,
   parseTianyiUid,
+  parsePan123Uid,
   generateGuangYaDeviceId,
   GuangYaClient,
   type ResolveAccountWorkerContext,
@@ -1800,7 +1801,7 @@ async function probeStorageConnection(
   // testConnection (an existing drive). Omitted at first-connect (no row yet).
   onCredentialRefresh?: ((creds: unknown) => Promise<void>) | undefined,
 ): Promise<void> {
-  const { Pan115CookieClient, QuarkCookieClient, TianyiClient } = await import("@media-track/workflow");
+  const { Pan115CookieClient, Pan123Client, QuarkCookieClient, TianyiClient } = await import("@media-track/workflow");
   if (provider === "guangya") {
     const blob = (credential ?? {}) as { accessToken?: string; refreshToken?: string; deviceId?: string };
     // Token-auth: validateToken() does account/v1/user/me + refresh-retry on 401;
@@ -1838,6 +1839,15 @@ async function probeStorageConnection(
       ...(blob.familySessionKey === undefined ? {} : { familySessionKey: blob.familySessionKey }),
       ...(onCredentialRefresh ? { onCredentialRefresh } : {}),
     }).listFiles("-11");
+    return;
+  }
+  if (provider === "pan123") {
+    const blob = (credential ?? {}) as { token?: string };
+    // 纯 token(v1 无刷新——web 面无 refresh 端点):listFiles("0") 验根可读。
+    // maxPages:1 守住 cheap-read 契约——验活只需第一页,不为存量大账号全量翻页。
+    // 死 token → Pan123Client 抛 Pan123AuthError → registry isAuthError 冻结。
+    // onCredentialRefresh 不接(client 无该 option),签名里的参数对 pan123 闲置。
+    await new Pan123Client({ token: blob.token ?? "" }).listFiles("0", { maxPages: 1 });
     return;
   }
   if (provider === "quark") {
@@ -2683,4 +2693,78 @@ export async function connectTianyiSson(sson: string): Promise<{ providerUid: st
     );
   }
   return bindTianyiConnectedStorage(session);
+}
+
+/**
+ * 123网盘:把扫码/粘贴拿到的 90 天 token 绑定为当前账号的一块新盘(brand "pan123")。
+ * QR 与粘 token 两入口都收敛到这里(镜像 bindTianyiConnectedStorage)。
+ * - providerUid = parsePan123Uid(token)(解 JWT payload 的稳定数字用户 id)。解不出
+ *   = token 不是合法 123 JWT,直接报错。
+ * - 纯 token 模型:v1 无凭证轮换(makeTokenPersister 对 pan123 永不触发),credential
+ *   blob 只有 {token};durable 元数据照约定放 payload.meta。
+ */
+async function bindPan123ConnectedStorage(rawToken: string): Promise<{ providerUid: string }> {
+  const token = rawToken.trim();
+  const providerUid = parsePan123UidOrThrow(token);
+  return bindTokenConnectedStorage({
+    provider: "pan123",
+    providerUid,
+    credentialBlob: { token },
+    meta: { connectedAt: new Date().toISOString() },
+  });
+}
+
+/** 本地(纯函数零网络)从 123 登录 token 解稳定数字用户 id;解不出 = 不是合法 123
+ *  JWT,抛精准错误。connect 两入口在触网 probe 前先走这里——垃圾输入不发给 123
+ *  (否则 401 → 误导性的「确认 token 完整且未过期」措辞盖掉真原因)。 */
+function parsePan123UidOrThrow(token: string): string {
+  const providerUid = parsePan123Uid(token);
+  if (!providerUid) {
+    throw new Error("无法从该 token 识别 123网盘账号（不是有效的 123 登录 token）；请重新扫码或粘贴完整 token。");
+  }
+  return providerUid;
+}
+
+/**
+ * 123 扫码登录完成:前端轮询 result 拿到 90 天 token 后,confirm 路由把 token 传来,
+ * 这里直接绑定(123 无天翼那种 exchange 步骤——token 即最终凭证)。先本地解 uid 拦
+ * 垃圾 token,再 probe 一次验活,防扫码流程异常拿到坏 token 入库。导出供 QR confirm
+ * API 路由(T8)调用。
+ */
+export async function completePan123QrLogin(token: string): Promise<{ providerUid: string }> {
+  const trimmed = token.trim();
+  if (!trimmed) {
+    throw new Error("扫码登录未返回 token，请重新扫码。");
+  }
+  // 先本地解 uid(零网络,垃圾 token 得到精准错误),再验活、再绑(bind 留在 try 外,
+  // StorageOwnedByOtherAccountError 原样上抛给路由 409)。
+  parsePan123UidOrThrow(trimmed);
+  try {
+    await probeStorageConnection("pan123", "", null, { token: trimmed });
+  } catch (error) {
+    throw new Error(
+      `无法用该扫码 token 连接 123网盘（请重新扫码）：${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  return bindPan123ConnectedStorage(trimmed);
+}
+
+/**
+ * 123 粘 token 兜底:用户从浏览器 localStorage/抓包粘贴 90 天 token(扫码不便时的回退)。
+ * 空/解不出 uid 直接报错(不触网);probe 验活后绑定。
+ */
+export async function connectPan123Token(rawToken: string): Promise<{ providerUid: string }> {
+  const trimmed = rawToken.trim();
+  if (!trimmed) {
+    throw new Error("请粘贴 123网盘登录 token。");
+  }
+  parsePan123UidOrThrow(trimmed);
+  try {
+    await probeStorageConnection("pan123", "", null, { token: trimmed });
+  } catch (error) {
+    throw new Error(
+      `无法用该 token 连接 123网盘（请确认 token 完整且未过期）：${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  return bindPan123ConnectedStorage(trimmed);
 }

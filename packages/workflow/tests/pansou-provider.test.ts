@@ -179,6 +179,44 @@ describe("PanSouResourceProvider", () => {
     ]);
   });
 
+  it("recognizes 123 links by rawType and by 123 mirror-domain share-url shape", async () => {
+    const fetchJson = async () => ({
+      code: 0,
+      data: {
+        results: [
+          {
+            title: "剧 1080p",
+            channel: "c",
+            links: [
+              // PanSou-typed 123 link (canonical 123pan.com share shape).
+              { type: "123", url: "https://www.123pan.com/s/AbCd-12", password: "" },
+              // Loosely-typed links: the mirror-domain share shape must still win
+              // (domain set mirrors parsePan123ShareUrl: 123pan/123684/123865/123912 · com/cn)…
+              { type: "others", url: "https://www.123684.com/s/abc-1?pwd=x" },
+              // …but a non-123 URL must NOT be classified 123.
+              { type: "others", url: "https://cloud.189.cn/web/main/" },
+              { type: "115", url: "https://115.com/s/a" },
+            ],
+          },
+        ],
+      },
+    });
+
+    // 123 drive → only 123 links (mirrors allowedResourceTypesForKinds(["pansou-123"])).
+    const pan123Only = new PanSouResourceProvider({
+      baseURL: "https://pansou.example",
+      maxSearchAttempts: 1,
+      allowedTypes: ["123"],
+      fetchJson,
+    });
+    const snapshot = await pan123Only.search({ keyword: "k" });
+    expect(snapshot.candidates.map((c) => c.type)).toEqual(["123", "123"]);
+    expect(snapshot.candidates.map((c) => c.providerPayload.url)).toEqual([
+      "https://www.123pan.com/s/AbCd-12",
+      "https://www.123684.com/s/abc-1?pwd=x",
+    ]);
+  });
+
   it("returns an empty snapshot when PanSou reports a non-zero code", async () => {
     const provider = new PanSouResourceProvider({
       baseURL: "https://pansou.example",
