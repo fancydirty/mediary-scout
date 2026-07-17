@@ -9,8 +9,16 @@
 
 /** Cookie name/value must not carry HTTP header separators/injectors. */
 const HEADER_UNSAFE = /[\r\n]/;
-const MAX_COOKIES = 64;
-const MAX_FIELD_LEN = 8192;
+// Caps chosen so a real 天翼 jar (a handful of cookies, each well under 1KB, a few
+// hundred bytes serialized) always passes, while an amplified jar cannot: the
+// SERIALIZED total is the real guard (client joins the jar into one Cookie header),
+// with per-cookie + count caps as cheap early rejects.
+const MAX_COOKIES = 32;
+const MAX_COOKIE_NAME_LEN = 256;
+const MAX_COOKIE_VALUE_LEN = 4096;
+/** Cap on the whole `k=v; k=v` header the client builds (blocks DoS amplification). */
+const MAX_SERIALIZED_COOKIE_LEN = 16384;
+const MAX_STRING_FIELD_LEN = 4096;
 const MAX_REDIRECT_URL_LEN = 2048;
 /** Non-empty string fields the poll/exchange actually send. */
 const REQUIRED_STRING_FIELDS = ["uuid", "paramId", "reqId", "lt"] as const;
@@ -24,7 +32,7 @@ export function validateTianyiQrSession(session: unknown): ValidationResult {
   const s = session as Record<string, unknown>;
   for (const field of REQUIRED_STRING_FIELDS) {
     const value = s[field];
-    if (typeof value !== "string" || value.length === 0 || value.length > MAX_FIELD_LEN) {
+    if (typeof value !== "string" || value.length === 0 || value.length > MAX_STRING_FIELD_LEN) {
       return { ok: false, error: `session.${field} must be a non-empty string` };
     }
   }
@@ -35,17 +43,22 @@ export function validateTianyiQrSession(session: unknown): ValidationResult {
   if (cookies.length > MAX_COOKIES) {
     return { ok: false, error: "session.cookies has too many entries" };
   }
+  let serializedLength = 0;
   for (const pair of cookies) {
     if (!Array.isArray(pair) || pair.length !== 2 || typeof pair[0] !== "string" || typeof pair[1] !== "string") {
       return { ok: false, error: "session.cookies must be [name, value] string pairs" };
     }
     const [name, value] = pair;
-    if (name.length > MAX_FIELD_LEN || value.length > MAX_FIELD_LEN) {
+    if (name.length > MAX_COOKIE_NAME_LEN || value.length > MAX_COOKIE_VALUE_LEN) {
       return { ok: false, error: "cookie name/value too long" };
     }
     if (HEADER_UNSAFE.test(name) || HEADER_UNSAFE.test(value) || name.includes(";") || value.includes(";")) {
       return { ok: false, error: "cookie name/value contains illegal characters (CR/LF/;)" };
     }
+    serializedLength += name.length + value.length + 3; // "name=value; "
+  }
+  if (serializedLength > MAX_SERIALIZED_COOKIE_LEN) {
+    return { ok: false, error: "session.cookies serialized header too large" };
   }
   return { ok: true };
 }

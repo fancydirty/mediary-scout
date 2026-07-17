@@ -38,9 +38,16 @@ describe("validateTianyiQrSession", () => {
     expect(validateTianyiQrSession({ ...base, cookies: [["a", "b; c=d"]] }).ok).toBe(false);
   });
 
-  it("rejects an oversized cookie jar", () => {
-    const many = Array.from({ length: 65 }, (_, i) => [`k${i}`, "v"] as [string, string]);
+  it("rejects a jar with too many entries", () => {
+    const many = Array.from({ length: 33 }, (_, i) => [`k${i}`, "v"] as [string, string]);
     expect(validateTianyiQrSession({ ...base, cookies: many }).ok).toBe(false);
+  });
+
+  it("rejects a jar that passes count + per-cookie caps but serializes to an oversized Cookie header (DoS amplification)", () => {
+    // 8 cookies × ~4KB value = ~32KB serialized > the 16KB header cap, though each
+    // cookie is individually legal and there are only 8 of them.
+    const big = Array.from({ length: 8 }, (_, i) => [`k${i}`, "v".repeat(4000)] as [string, string]);
+    expect(validateTianyiQrSession({ ...base, cookies: big }).ok).toBe(false);
   });
 });
 
