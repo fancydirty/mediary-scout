@@ -2237,6 +2237,88 @@ export class StorageOwnedByOtherAccountError extends Error {
 }
 
 /**
+ * Shared bind skeleton for the two TOKEN brands (光鸭/天翼): enforce instance-wide
+ * ownership, then refresh-or-insert the connected_storage row. The parts that
+ * genuinely differ per brand — uid derivation (光鸭 validates its token over the
+ * network for the authoritative sub; 天翼 parses session.loginName) and the
+ * credential-blob / meta shape — are the thin caller's job; it computes
+ * providerUid, builds credentialBlob + meta, and hands them here.
+ * - reject: this (provider, uid) already belongs to ANOTHER account → throw.
+ * - refresh: same account re-login → overwrite payload with {…credentialBlob, meta},
+ *   keeping the row's id / CIDs / label / createdAt (the client's freshly-rotated
+ *   credential replaces the old one; anything durable that must survive renewal
+ *   already lives under `meta`, e.g. 天翼's loginName).
+ * - insert: new connection → best-effort provision the media tree under the brand's
+ *   provisionRootId, store id `cs_<provider>_<uidSuffix>` with label null.
+ * ⚠️ 光鸭's deviceId-pinning-on-rebind is threaded IN by the caller (it peeks the
+ *   existing row and bakes the pinned deviceId into credentialBlob) so this helper
+ *   stays brand-agnostic. Cookie brands (夸克/115) are NOT collapsed here — they
+ *   carry real per-brand differences (115 ownership + app_settings mirror; 夸克
+ *   cookie shape) and keep their own binds.
+ */
+async function bindTokenConnectedStorage(input: {
+  provider: string;
+  providerUid: string;
+  credentialBlob: Record<string, unknown>;
+  meta: Record<string, unknown>;
+}): Promise<{ providerUid: string }> {
+  const { provider, providerUid, credentialBlob, meta } = input;
+  const accountId = await getCurrentAccountId();
+  const repository = getWorkflowRepository();
+  const existing = await repository.findConnectedStorageByUid(provider, providerUid);
+  const decision = resolveStorageBinding({ provider, providerUid, accountId, existing });
+  if (decision.action === "reject") {
+    throw new StorageOwnedByOtherAccountError();
+  }
+  const payload = { ...credentialBlob, meta };
+  if (decision.action === "refresh" && existing) {
+    // Same account re-login → refresh the credential blob, keep the resolved CIDs.
+    await repository.upsertConnectedStorage({
+      id: existing.id,
+      accountId,
+      provider,
+      providerUid,
+      label: existing.label,
+      payload,
+      rootCid: existing.rootCid,
+      moviesCid: existing.moviesCid,
+      tvCid: existing.tvCid,
+      animeCid: existing.animeCid,
+      createdAt: existing.createdAt,
+    });
+    return { providerUid };
+  }
+  // insert: provision the media tree under the brand's provisionRootId. Best-effort
+  // — a failure still stores the connection (worker self-heals / falls back later).
+  let cids: { rootCid: string | null; moviesCid: string | null; tvCid: string | null; animeCid: string | null } = {
+    rootCid: null,
+    moviesCid: null,
+    tvCid: null,
+    animeCid: null,
+  };
+  try {
+    cids = await provisionDriveCategoryDirs(provider, "", credentialBlob);
+  } catch (error) {
+    console.error(`[media-track] ${provider} directory provision failed (will store without CIDs): ${String(error)}`);
+  }
+  const idSuffix = providerUid.replace(/[^A-Za-z0-9]/g, "").slice(0, 48);
+  await repository.upsertConnectedStorage({
+    id: `cs_${provider}_${idSuffix}`,
+    accountId,
+    provider,
+    providerUid,
+    label: null,
+    payload,
+    rootCid: cids.rootCid,
+    moviesCid: cids.moviesCid,
+    tvCid: cids.tvCid,
+    animeCid: cids.animeCid,
+    createdAt: new Date().toISOString(),
+  });
+  return { providerUid };
+}
+
+/**
  * §7 P2: bind a freshly-exchanged 115 cookie to the CURRENT account's
  * connected_storage, enforcing instance-wide ownership and provisioning the
  * category directories on a genuinely new connection.
@@ -2492,74 +2574,18 @@ export async function connectGuangYa(rawAccessToken: string, rawRefreshToken: st
       `无法用该 token 登录光鸭云盘（请确认 access_token / refresh_token 完整且未过期）：${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  const accountId = await getCurrentAccountId();
-  const repository = getWorkflowRepository();
-  const existing = await repository.findConnectedStorageByUid("guangya", providerUid);
-  const decision = resolveStorageBinding({ provider: "guangya", providerUid, accountId, existing });
-  if (decision.action === "reject") {
-    throw new StorageOwnedByOtherAccountError();
-  }
-  const payload = { accessToken, refreshToken, deviceId, meta: { connectedAt: new Date().toISOString() } };
-  if (decision.action === "refresh" && existing) {
-    // Same account re-bind → refresh the token blob, keep the resolved CIDs.
-    // Reuse the already-pinned deviceId (风控: a re-bind must NOT look like a new
-    // device); only fall back to the freshly-generated one if the drive has none.
-    const pinnedDeviceId = (existing.payload as { deviceId?: string } | null)?.deviceId ?? deviceId;
-    await repository.upsertConnectedStorage({
-      id: existing.id,
-      accountId,
-      provider: "guangya",
-      providerUid,
-      label: existing.label,
-      payload: { accessToken, refreshToken, deviceId: pinnedDeviceId, meta: { connectedAt: new Date().toISOString() } },
-      rootCid: existing.rootCid,
-      moviesCid: existing.moviesCid,
-      tvCid: existing.tvCid,
-      animeCid: existing.animeCid,
-      createdAt: existing.createdAt,
-    });
-    return { providerUid };
-  }
-  // insert: provision the category tree under the 光鸭 root (""). Best-effort — a
-  // failure still stores the connection (worker self-heals/falls back later).
-  let cids: { rootCid: string | null; moviesCid: string | null; tvCid: string | null; animeCid: string | null } = {
-    rootCid: null,
-    moviesCid: null,
-    tvCid: null,
-    animeCid: null,
-  };
-  try {
-    const executor = createExecutorForBrand({
-      provider: "guangya",
-      credential: { accessToken, refreshToken, deviceId },
-      scopeCids: [],
-    });
-    cids = await provisionCategoryDirs({
-      baseParentId: getStorageBrand("guangya").provisionRootId, // 光鸭 account root ("")
-      ...customDirNamesFromEnv(process.env),
-      storage: {
-        listChildDirs: (parentId: string) => executor.listChildDirectories(parentId),
-        createDirectory: (dir) => executor.createDirectory(dir),
-      },
-    });
-  } catch (error) {
-    console.error(`[media-track] 光鸭 directory provision failed (will store without CIDs): ${String(error)}`);
-  }
-  const idSuffix = providerUid.replace(/[^A-Za-z0-9]/g, "").slice(0, 48);
-  await repository.upsertConnectedStorage({
-    id: `cs_guangya_${idSuffix}`,
-    accountId,
+  // 风控: a re-bind must NOT look like a new device — reuse the already-pinned
+  // deviceId when this uid is already connected, else keep the freshly-generated
+  // one. Baking the resolved deviceId into credentialBlob here lets
+  // bindTokenConnectedStorage stay brand-agnostic (it never touches deviceId).
+  const existing = await getWorkflowRepository().findConnectedStorageByUid("guangya", providerUid);
+  const pinnedDeviceId = (existing?.payload as { deviceId?: string } | null)?.deviceId ?? deviceId;
+  return bindTokenConnectedStorage({
     provider: "guangya",
     providerUid,
-    label: null,
-    payload,
-    rootCid: cids.rootCid,
-    moviesCid: cids.moviesCid,
-    tvCid: cids.tvCid,
-    animeCid: cids.animeCid,
-    createdAt: new Date().toISOString(),
+    credentialBlob: { accessToken, refreshToken, deviceId: pinnedDeviceId },
+    meta: { connectedAt: new Date().toISOString() },
   });
-  return { providerUid };
 }
 
 /**
@@ -2578,13 +2604,6 @@ async function bindTianyiConnectedStorage(session: TianyiSession): Promise<{ pro
   if (!providerUid) {
     throw new Error("无法确定天翼云盘账号(登录返回的 loginName 为空);请重新扫码或粘贴 SSON 后重试。");
   }
-  const accountId = await getCurrentAccountId();
-  const repository = getWorkflowRepository();
-  const existing = await repository.findConnectedStorageByUid("tianyi", providerUid);
-  const decision = resolveStorageBinding({ provider: "tianyi", providerUid, accountId, existing });
-  if (decision.action === "reject") {
-    throw new StorageOwnedByOtherAccountError();
-  }
   // The rotating credential blob (what the client/provision consume + what session
   // renewal replaces). loginName is durable identity → it lives ONLY under
   // payload.meta, never top-level (T6 contract: makeTokenPersister overwrites the
@@ -2595,55 +2614,12 @@ async function bindTianyiConnectedStorage(session: TianyiSession): Promise<{ pro
     refreshToken: session.refreshToken,
     ...(session.familySessionKey ? { familySessionKey: session.familySessionKey } : {}),
   };
-  const payload = {
-    ...credentialBlob,
-    meta: { connectedAt: new Date().toISOString(), loginName: session.loginName },
-  };
-  if (decision.action === "refresh" && existing) {
-    // Same account re-login → refresh the credential blob, keep the resolved CIDs.
-    await repository.upsertConnectedStorage({
-      id: existing.id,
-      accountId,
-      provider: "tianyi",
-      providerUid,
-      label: existing.label,
-      payload,
-      rootCid: existing.rootCid,
-      moviesCid: existing.moviesCid,
-      tvCid: existing.tvCid,
-      animeCid: existing.animeCid,
-      createdAt: existing.createdAt,
-    });
-    return { providerUid };
-  }
-  // insert: provision the media tree under the 天翼 personal-cloud root ("-11").
-  // Best-effort — a failure still stores the connection (worker self-heals later).
-  let cids: { rootCid: string | null; moviesCid: string | null; tvCid: string | null; animeCid: string | null } = {
-    rootCid: null,
-    moviesCid: null,
-    tvCid: null,
-    animeCid: null,
-  };
-  try {
-    cids = await provisionDriveCategoryDirs("tianyi", "", credentialBlob);
-  } catch (error) {
-    console.error(`[media-track] 天翼 directory provision failed (will store without CIDs): ${String(error)}`);
-  }
-  const idSuffix = providerUid.replace(/[^A-Za-z0-9]/g, "").slice(0, 48);
-  await repository.upsertConnectedStorage({
-    id: `cs_tianyi_${idSuffix}`,
-    accountId,
+  return bindTokenConnectedStorage({
     provider: "tianyi",
     providerUid,
-    label: null,
-    payload,
-    rootCid: cids.rootCid,
-    moviesCid: cids.moviesCid,
-    tvCid: cids.tvCid,
-    animeCid: cids.animeCid,
-    createdAt: new Date().toISOString(),
+    credentialBlob,
+    meta: { connectedAt: new Date().toISOString(), loginName: session.loginName },
   });
-  return { providerUid };
 }
 
 /**
