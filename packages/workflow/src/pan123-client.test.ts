@@ -288,6 +288,27 @@ describe("Pan123Client directory write ops", () => {
     ]);
   });
 
+  it("trash omits FileName for a name-less entry (removeDirectory only has an id); Type stays correct", async () => {
+    // removeDirectory hands trash a bare {id, isFolder:true} — no name. The
+    // authoritative file/trash only needs FileId (FileName optional), so a
+    // name-less entry must NOT ship an empty/undefined FileName key.
+    let raw = "";
+    const fetchImpl = fetchStub((url, init) => {
+      expect(url).toContain("/file/trash");
+      raw = init.body ?? "";
+      return { status: 200, body: { code: 0 } };
+    });
+    const c = new Pan123Client({ token: "TK", fetchImpl });
+    await c.trash([
+      { id: "9007199254740993777", isFolder: true },
+      { id: "42", name: "ep.mkv", isFolder: false },
+    ]);
+    const list = (JSON.parse(raw).fileTrashInfoList ?? []) as Array<Record<string, unknown>>;
+    expect(Object.keys(list[0] ?? {}).sort()).toEqual(["FileId", "Type"]); // no FileName key at all
+    expect(list[0]).toEqual({ FileId: "9007199254740993777", Type: 1 });
+    expect(list[1]).toEqual({ FileId: "42", FileName: "ep.mkv", Type: 0 });
+  });
+
   it("trash is a no-op for an empty entry list (no network call)", async () => {
     const fetchImpl = fetchStub(() => {
       throw new Error("must not call the network");

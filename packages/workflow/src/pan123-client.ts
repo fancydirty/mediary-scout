@@ -312,7 +312,7 @@ export class Pan123Client {
     return id;
   }
 
-  async trash(entries: { id: string; name: string; isFolder: boolean }[]): Promise<void> {
+  async trash(entries: { id: string; name?: string; isFolder: boolean }[]): Promise<void> {
     if (entries.length === 0) {
       return;
     }
@@ -322,7 +322,13 @@ export class Pan123Client {
         driveId: 0,
         event: "intoRecycle",
         operation: true,
-        fileTrashInfoList: entries.map((e) => ({ FileId: e.id, FileName: e.name, Type: e.isFolder ? 1 : 0 })),
+        // file/trash 权威接口只需 FileId(FileName 可选)。removeDirectory 只有 id,
+        // 故 name 缺省时省略 FileName 键(别发空串/undefined)。
+        fileTrashInfoList: entries.map((e) => ({
+          FileId: e.id,
+          ...(e.name ? { FileName: e.name } : {}),
+          Type: e.isFolder ? 1 : 0,
+        })),
       },
     });
   }
