@@ -44,7 +44,12 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
  *  16+-digit float (or an id that legitimately needs to stay a number) with the
  *  same regex, producing invalid JSON → parseTianyiJson returns null → the call
  *  fails loud. Only add fields that are pure opaque int64 identifiers. */
-const BIGINT_ID_FIELDS = /"(id|fileId|shareId|taskId|targetFolderId|parentId|pId|shareDirFileId)":(\d{16,})/g;
+// `\s*` around the colon makes the guard FORMATTING-INDEPENDENT: JSON permits
+// whitespace/newlines after (and before) `:`, so `"fileId": 924…` must be caught
+// too — otherwise JSON.parse would silently round the int64, the exact root cause
+// this client exists to prevent.
+const BIGINT_ID_FIELDS =
+  /"(id|fileId|shareId|taskId|targetFolderId|parentId|pId|shareDirFileId)"\s*:\s*(\d{16,})/g;
 
 /** 唯一 JSON 解析入口:先把大整数 id 字段加引号转字符串,再 parse。见文件头「root cause」。 */
 export function parseTianyiJson(text: string): unknown {

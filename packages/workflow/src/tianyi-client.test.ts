@@ -36,6 +36,15 @@ describe("parseTianyiJson (bigint-safe)", () => {
     const parsed = parseTianyiJson(raw) as { fileList: Array<Record<string, unknown>> };
     expect(parsed.fileList[0]?.id).toBe("924511245739356595");
   });
+  it("preserves int64 ids even with whitespace/newlines around the colon (formatting-independent)", () => {
+    // JSON permits whitespace after (and before) `:`; the guard must still fire or
+    // JSON.parse would silently round the int64 — the exact root cause it prevents.
+    const raw = '{\n  "fileId": 924511245739356595,\n  "shareId" : 123456789012345678,\n  "size": 42\n}';
+    const parsed = parseTianyiJson(raw) as Record<string, unknown>;
+    expect(parsed.fileId).toBe("924511245739356595");
+    expect(parsed.shareId).toBe("123456789012345678");
+    expect(parsed.size).toBe(42);
+  });
   it("returns null for non-JSON", () => {
     expect(parseTianyiJson("<html>error</html>")).toBeNull();
   });
