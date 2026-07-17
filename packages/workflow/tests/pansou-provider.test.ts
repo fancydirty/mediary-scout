@@ -142,6 +142,43 @@ describe("PanSouResourceProvider", () => {
     expect(ps.candidates.map((c) => c.type).sort()).toEqual(["115", "magnet"]);
   });
 
+  it("recognizes tianyi links by rawType and by cloud.189.cn share-url shape", async () => {
+    const fetchJson = async () => ({
+      code: 0,
+      data: {
+        results: [
+          {
+            title: "剧 1080p",
+            channel: "c",
+            links: [
+              // PanSou-typed tianyi link (the probe-confirmed /t/<code> shape).
+              { type: "tianyi", url: "https://cloud.189.cn/t/AbCd12", password: "" },
+              // Loosely-typed links: the share-url shape must still win…
+              { type: "others", url: "https://cloud.189.cn/web/share?code=QzYnEr&accessCode=x1y2" },
+              // …but a non-share 189 URL (web portal) must NOT be classified tianyi.
+              { type: "others", url: "https://cloud.189.cn/web/main/" },
+              { type: "115", url: "https://115.com/s/a" },
+            ],
+          },
+        ],
+      },
+    });
+
+    // tianyi drive → only tianyi links (mirrors allowedResourceTypesForKinds(["pansou-tianyi"])).
+    const tianyiOnly = new PanSouResourceProvider({
+      baseURL: "https://pansou.example",
+      maxSearchAttempts: 1,
+      allowedTypes: ["tianyi"],
+      fetchJson,
+    });
+    const snapshot = await tianyiOnly.search({ keyword: "k" });
+    expect(snapshot.candidates.map((c) => c.type)).toEqual(["tianyi", "tianyi"]);
+    expect(snapshot.candidates.map((c) => c.providerPayload.url)).toEqual([
+      "https://cloud.189.cn/t/AbCd12",
+      "https://cloud.189.cn/web/share?code=QzYnEr&accessCode=x1y2",
+    ]);
+  });
+
   it("returns an empty snapshot when PanSou reports a non-zero code", async () => {
     const provider = new PanSouResourceProvider({
       baseURL: "https://pansou.example",
