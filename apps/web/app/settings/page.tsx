@@ -1,4 +1,5 @@
 import { driveConnectionBadge } from "../../lib/settings-badge";
+import { maskProviderUid } from "../../lib/mask-provider-uid";
 import { connection } from "next/server";
 import { Suspense } from "react";
 import { Bell, Bot, Cable, CalendarClock, Clapperboard, Gauge, KeyRound, Languages, Radio, ShieldCheck, Subtitles, TriangleAlert, Users } from "lucide-react";
@@ -343,6 +344,19 @@ async function SubtitleSourceSection() {
   );
 }
 
+/** 品牌显示名(与注册表 label 一致);盘卡与解绑确认共用。 */
+const PROVIDER_LABELS: Record<string, string> = {
+  pan115: "115网盘",
+  quark: "夸克网盘",
+  guangya: "光鸭云盘",
+  tianyi: "天翼云盘",
+  pan123: "123网盘",
+};
+
+function providerLabel(provider: string): string {
+  return PROVIDER_LABELS[provider] ?? provider;
+}
+
 async function Pan115Section() {
   await connection();
   const status = await getPan115ConnectionStatus();
@@ -356,7 +370,7 @@ async function Pan115Section() {
             <Cable size={16} aria-hidden style={{ verticalAlign: "-2px", marginRight: 8 }} />
             网盘连接
           </h2>
-          <p className="panel-note">连接 115（扫码）、夸克（粘贴 cookie）、光鸭（粘贴 token）、天翼（扫码）或 123网盘（扫码／粘 token）；凭证持久化到数据库，自动用于后续转存。每块盘是独立工作区</p>
+          <p className="panel-note">每块盘是独立工作区，左上角可切换；凭证入库后自动用于转存</p>
         </div>
         {(() => {
           // #93: derive the header badge from ALL drives — 115-only status made
@@ -376,56 +390,66 @@ async function Pan115Section() {
       </div>
 
       {drives.length === 0 ? (
-        <p className="qr-hint">还没有连接任何网盘，扫码 115 或粘贴夸克 cookie 后即可开始获取资源。</p>
+        <p className="qr-hint">还没有连接任何网盘，选择下方品牌完成连接后即可开始获取资源。</p>
       ) : null}
 
       {drives.length > 0 ? (
-        <div style={{ margin: "14px 0" }}>
-          <p className="panel-note" style={{ marginBottom: 8 }}>
-            本账号已连接的网盘{drives.length >= 2 ? "（左上角可切换工作区，每块盘各自独立）" : ""}
-          </p>
-          <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 8 }}>
-            {drives.map((drive) => (
-              <li key={drive.id} className="setting-row" style={{ justifyContent: "space-between" }}>
-                <span>
-                  {drive.provider === "pan115" ? "115网盘" : drive.provider === "quark" ? "夸克网盘" : drive.provider === "guangya" ? "光鸭云盘" : drive.provider === "tianyi" ? "天翼云盘" : drive.provider === "pan123" ? "123网盘" : drive.provider}
-                  <span className="push-help"> · 账号 {drive.providerUid}</span>
-                  {drive.connectedAt ? (
-                    <span className="push-help"> · 连接于 {drive.connectedAt.slice(0, 16).replace("T", " ")}</span>
-                  ) : null}
-                </span>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                  {drive.status === "frozen" ? (
-                    <span className="hub-badge tone-amber" title="cookie 已失效，重新扫码绑定同一个 115 即可恢复">
-                      <TriangleAlert size={12} aria-hidden />
-                      掉线
-                    </span>
+        <div className="drive-grid">
+          {drives.map((drive) => {
+            const frozen = drive.status === "frozen";
+            const ready = !frozen && drive.provisioned;
+            return (
+              <div key={drive.id} className={`drive-card${frozen ? " is-frozen" : ""}`}>
+                <div className="drive-card-head">
+                  {PROVIDER_LABELS[drive.provider] ? (
+                    // 已注册品牌必有 svg(workspace-switcher 同款资产)
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img className="drive-card-icon" src={`/brands/${drive.provider}.svg`} alt="" width={26} height={26} />
                   ) : (
-                    <span className={`hub-badge ${drive.provisioned ? "tone-green" : "tone-amber"}`}>
-                      {drive.provisioned ? "目录已就绪" : "目录待建"}
-                    </span>
+                    <span className="drive-dot amber" aria-hidden />
                   )}
-                  <TestConnectionButton storageId={drive.id} />
-                  <UnbindStorageButton
-                    storageId={drive.id}
-                    label={drive.provider === "pan115" ? "115网盘" : drive.provider === "quark" ? "夸克网盘" : drive.provider === "guangya" ? "光鸭云盘" : drive.provider === "tianyi" ? "天翼云盘" : drive.provider === "pan123" ? "123网盘" : drive.provider}
+                  <span className="drive-card-name">{providerLabel(drive.provider)}</span>
+                  <span
+                    className={`drive-dot ${ready ? "green" : "amber"}`}
+                    title={frozen ? "凭证已失效，重新绑定同一账号即可恢复" : ready ? "目录已就绪" : "目录待建"}
+                    aria-label={frozen ? "掉线" : ready ? "就绪" : "目录待建"}
                   />
-                </span>
-              </li>
-            ))}
-          </ul>
+                </div>
+                <div className="drive-card-uid" title={drive.providerUid}>
+                  {maskProviderUid(drive.providerUid)}
+                </div>
+                <div className="drive-card-meta">
+                  {frozen ? (
+                    <span className="tone-amber-text">掉线 · 重新绑定即恢复</span>
+                  ) : !drive.provisioned ? (
+                    <span className="tone-amber-text">目录待建</span>
+                  ) : drive.connectedAt ? (
+                    <span>{drive.connectedAt.slice(0, 10)} 连接</span>
+                  ) : (
+                    <span>就绪</span>
+                  )}
+                </div>
+                <div className="drive-card-actions">
+                  <TestConnectionButton storageId={drive.id} />
+                  <UnbindStorageButton storageId={drive.id} label={providerLabel(drive.provider)} />
+                </div>
+              </div>
+            );
+          })}
         </div>
       ) : null}
 
-      <p className="panel-note" style={{ marginBottom: 8 }}>
-        {drives.length > 0
-          ? "添加另一块网盘（115／夸克／光鸭／天翼／123）——不同账号即新增一块独立工作区；绑到已连的同一账号会自动刷新登录"
-          : "添加你的第一块网盘"}
+      <p className="panel-note drive-add-heading">
+        {drives.length > 0 ? "添加网盘 · 选择品牌开始连接" : "添加你的第一块网盘"}
+        {drives.length > 0 ? (
+          <span className="drive-add-hint">不同账号即新增一块独立工作区；绑已连的同一账号会自动刷新登录</span>
+        ) : null}
       </p>
-      <AddDriveBrandTabs />
+      <AddDriveBrandTabs defaultBrand={drives.length > 0 ? null : "pan115"} />
 
-      <p className="panel-note" style={{ marginTop: 12 }}>
-        ⚠️ 请勿在多个账号或多个实例上绑定同一个网盘账号，易触发风控。每个网盘账号在本实例内只能归属一个用户。
+      <p className="panel-note drive-risk-note">
+        <TriangleAlert size={12} aria-hidden style={{ verticalAlign: "-2px", marginRight: 4 }} />
+        同一网盘账号勿在多个账号或多个实例绑定，易触发风控；每个网盘账号在本实例内只能归属一个用户。
       </p>
     </section>
   );
