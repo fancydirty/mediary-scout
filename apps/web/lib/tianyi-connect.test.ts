@@ -48,15 +48,27 @@ const prevPg = process.env.MEDIA_TRACK_POSTGRES_URL;
 const prevMultiUser = process.env.MEDIA_TRACK_MULTI_USER;
 
 /** Boot workflow-runtime against a fresh :memory: SQLite repo with the network
- *  login client stubbed. */
-const boot = async () => {
+ *  login client stubbed. `failProvision` additionally makes the insert branch's
+ *  directory provisioning throw (createExecutorForBrand → throw) WITHOUT any
+ *  network, to test the "provision fails → still store the connection" contract. */
+const boot = async (opts: { failProvision?: boolean } = {}) => {
   process.env.MEDIA_TRACK_SQLITE_PATH = ":memory:";
   delete process.env.MEDIA_TRACK_POSTGRES_URL;
   delete process.env.MEDIA_TRACK_MULTI_USER; // single-user → getCurrentAccountId() = acct_default
   vi.resetModules();
   vi.doMock("@media-track/workflow", async () => {
     const actual = await vi.importActual<typeof import("@media-track/workflow")>("@media-track/workflow");
-    return { ...actual, TianyiQrLoginClient: FakeTianyiQrLoginClient };
+    return {
+      ...actual,
+      TianyiQrLoginClient: FakeTianyiQrLoginClient,
+      ...(opts.failProvision
+        ? {
+            createExecutorForBrand: () => {
+              throw new Error("PROVISION_BOOM: no network in test");
+            },
+          }
+        : {}),
+    };
   });
   return import("./workflow-runtime");
 };
@@ -168,6 +180,30 @@ describe("connectTianyiSson (bind)", () => {
       (s) => s.provider === "tianyi",
     );
     expect(rows).toHaveLength(0);
+  });
+
+  it("insert branch: provision throws → row still stored with null CIDs and bind does NOT throw", async () => {
+    // Fresh uid (no seeded row) → resolveStorageBinding → insert → provision runs
+    // → createExecutorForBrand stubbed to throw. The bind must swallow it and still
+    // persist the connection (best-effort provision contract).
+    const rt = await boot({ failProvision: true });
+    const repository = rt.getWorkflowRepository();
+
+    const { providerUid } = await rt.connectTianyiSson("SSON-fresh");
+    expect(providerUid).toBe(LOGIN_NAME);
+
+    const stored = await repository.findConnectedStorageByUid("tianyi", LOGIN_NAME);
+    expect(stored).not.toBeNull();
+    expect(stored!.id).toBe(`cs_tianyi_${LOGIN_NAME}`); // digits-only uid → suffix intact
+    // Provision failed → all CIDs null; the connection is still usable (worker self-heals).
+    expect(stored!.rootCid).toBeNull();
+    expect(stored!.moviesCid).toBeNull();
+    expect(stored!.tvCid).toBeNull();
+    expect(stored!.animeCid).toBeNull();
+    // Credential blob + durable identity still land correctly.
+    const payload = stored!.payload as Record<string, unknown>;
+    expect((payload.meta as Record<string, unknown>).loginName).toBe(LOGIN_NAME);
+    expect(payload.sessionKey).toBe("SK-web");
   });
 });
 

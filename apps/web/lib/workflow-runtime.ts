@@ -2688,7 +2688,15 @@ export async function completeTianyiQrLogin(
   redirectUrl: string,
 ): Promise<{ providerUid: string }> {
   const { TianyiQrLoginClient } = await import("@media-track/workflow");
-  const tianyiSession = await new TianyiQrLoginClient().exchangeSession(session, redirectUrl);
+  // Wrap ONLY the exchange: a raw transport error (TIANYI_QR_HTTP_FAILED / timeout)
+  // becomes an actionable branded message. bind() stays OUTSIDE the try so its
+  // StorageOwnedByOtherAccountError propagates uncaught (the T8 route 409s on it).
+  let tianyiSession: TianyiSession;
+  try {
+    tianyiSession = await new TianyiQrLoginClient().exchangeSession(session, redirectUrl);
+  } catch (error) {
+    throw new Error(`无法完成天翼扫码登录（请重新扫码）：${error instanceof Error ? error.message : String(error)}`);
+  }
   return bindTianyiConnectedStorage(tianyiSession);
 }
 
@@ -2702,6 +2710,16 @@ export async function connectTianyiSson(sson: string): Promise<{ providerUid: st
     throw new Error("请粘贴天翼 SSON cookie。");
   }
   const { TianyiQrLoginClient } = await import("@media-track/workflow");
-  const session = await new TianyiQrLoginClient().loginBySson(trimmed);
+  // Wrap ONLY the SSON login so a raw transport/timeout error surfaces as an
+  // actionable branded message. bind() stays OUTSIDE the try so its
+  // StorageOwnedByOtherAccountError propagates uncaught (T8 route 409s on it).
+  let session: TianyiSession;
+  try {
+    session = await new TianyiQrLoginClient().loginBySson(trimmed);
+  } catch (error) {
+    throw new Error(
+      `无法用该 SSON 登录天翼云盘（请确认 cookie 完整且未过期）：${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
   return bindTianyiConnectedStorage(session);
 }
