@@ -32,6 +32,11 @@ import type { StorageExecutor, UnparsedVideoFile } from "./ports.js";
 
 const MAX_RECURSIVE_COLLECT_DEPTH = 6;
 const DEFAULT_MIN_VIDEO_SIZE_BYTES = 10 * 1024 * 1024;
+/** /file/copy/async is server-side async — the copy is still queuing when saveShare
+ *  returns. Poll the target dir this many times (aligned with the real-run probe:
+ *  8 × 2500ms) before concluding nothing landed. */
+const DEFAULT_TRANSFER_SETTLE_POLL_ATTEMPTS = 8;
+const DEFAULT_TRANSFER_SETTLE_POLL_INTERVAL_MS = 2500;
 /** 个人云根目录 id — a plain non-empty id (unlike 光鸭's "" root). */
 const PAN123_ROOT_FOLDER_ID = "0";
 
@@ -60,6 +65,12 @@ export interface Pan123StorageExecutorOptions {
   protectedDirectoryIds?: string[];
   minVideoSizeBytes?: number;
   videoExtensions?: string[];
+  /** Bounded settle-poll for the async copy (default 8, aligned with the probe). */
+  transferSettlePollAttempts?: number;
+  /** Interval between settle-poll reads in ms (default 2500, aligned with the probe). */
+  transferSettlePollIntervalMs?: number;
+  /** Sleep primitive — injected so tests can advance the poll without real waiting. */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 interface VideoFact {
@@ -79,6 +90,9 @@ export class Pan123StorageExecutor implements StorageExecutor {
   private readonly protectedDirectoryIds: Set<string>;
   private readonly minVideoSizeBytes: number;
   private readonly videoExtensions: Set<string>;
+  private readonly transferSettlePollAttempts: number;
+  private readonly transferSettlePollIntervalMs: number;
+  private readonly sleep: (ms: number) => Promise<void>;
   private nextTransferNumber = 1;
 
   constructor(options: Pan123StorageExecutorOptions) {
@@ -92,6 +106,11 @@ export class Pan123StorageExecutor implements StorageExecutor {
     this.videoExtensions = new Set(
       (options.videoExtensions ?? DEFAULT_VIDEO_EXTENSIONS).map((ext) => ext.toLowerCase()),
     );
+    this.transferSettlePollAttempts =
+      options.transferSettlePollAttempts ?? DEFAULT_TRANSFER_SETTLE_POLL_ATTEMPTS;
+    this.transferSettlePollIntervalMs =
+      options.transferSettlePollIntervalMs ?? DEFAULT_TRANSFER_SETTLE_POLL_INTERVAL_MS;
+    this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
 
   async createDirectory(input: { name: string; parentId: string }): Promise<string> {
@@ -173,8 +192,30 @@ export class Pan123StorageExecutor implements StorageExecutor {
       providerMessage = error instanceof Error ? error.message : String(error);
     }
 
-    const after = await this.listVideoFiles(safe);
-    const materializedFileIds = after.filter((f) => !before.has(f.id)).map((f) => f.id);
+    let materializedFileIds: string[] = [];
+    if (providerMessage) {
+      // Already failed — no point polling. Still diff once so a PARTIAL landing
+      // (some files copied before the block) is reported alongside the failure.
+      materializedFileIds = (await this.listVideoFiles(safe))
+        .filter((f) => !before.has(f.id))
+        .map((f) => f.id);
+    } else {
+      // copy/async is server-side async (saveShare is fire-copy, unlike tianyi's
+      // poll-to-done): a single immediate re-list would miss a big transfer still
+      // in the queue → false no_target_change ("lands nothing" 老伤). Poll the
+      // target dir until new videos appear. Exhausting the budget while still empty
+      // = genuinely nothing landed → no_target_change is correct.
+      for (let attempt = 0; attempt < this.transferSettlePollAttempts; attempt++) {
+        const after = await this.listVideoFiles(safe);
+        materializedFileIds = after.filter((f) => !before.has(f.id)).map((f) => f.id);
+        if (materializedFileIds.length > 0) {
+          break;
+        }
+        if (attempt < this.transferSettlePollAttempts - 1) {
+          await this.sleep(this.transferSettlePollIntervalMs);
+        }
+      }
+    }
     const status: TransferStatus = providerMessage
       ? "failed"
       : materializedFileIds.length > 0

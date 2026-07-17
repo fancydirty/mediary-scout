@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ResourceCandidate, ResourceType } from "./domain.js";
 import { Pan123AuthError } from "./pan123-client.js";
 import type { Pan123Client, Pan123Item } from "./pan123-client.js";
+import type { Pan123StorageExecutorOptions } from "./pan123-storage-executor.js";
 import { parsePan123ShareUrl, Pan123StorageExecutor } from "./pan123-storage-executor.js";
 
 /** The slice of Pan123Client the executor drives. Fakes must match the REAL
@@ -25,10 +26,17 @@ function fakeClient(overrides: Partial<Pan123ClientShape> = {}): Pan123ClientSha
   };
 }
 
-function makeExecutor(client: Pan123ClientShape, writeScopeDirectoryIds: string[] = [SCOPE]): Pan123StorageExecutor {
+function makeExecutor(
+  client: Pan123ClientShape,
+  writeScopeDirectoryIds: string[] = [SCOPE],
+  extra: Partial<Pan123StorageExecutorOptions> = {},
+): Pan123StorageExecutor {
   return new Pan123StorageExecutor({
     client: client as unknown as Pan123Client,
     writeScopeDirectoryIds,
+    // 默认注入 no-op sleep,让走 settle-poll 的用例(no_target_change 等)不真睡 8×2.5s。
+    sleep: async () => {},
+    ...extra,
   });
 }
 
@@ -206,6 +214,84 @@ describe("Pan123StorageExecutor.transfer", () => {
     await expect(
       executor.transfer({ workflowRunId: "run-1", directoryId: SCOPE, candidate: candidate() }),
     ).rejects.toThrow(Pan123AuthError);
+  });
+
+  it("bounded settle-poll: waits for the async copy to land, then reports succeeded (copy/async is server-side async)", async () => {
+    // /file/copy/async returns before the copy finishes queuing (saveShare is
+    // fire-copy, unlike tianyi's poll-to-done). A single immediate re-list would
+    // miss a big transfer still in the queue → false no_target_change ("lands
+    // nothing" 老伤). Poll the target dir (probe: 8×2.5s) until videos appear.
+    let lists = 0;
+    const listFiles = vi.fn<Pan123Client["listFiles"]>(async () => {
+      lists += 1;
+      // #1 before-list empty; #2/#3 after-list empty (still queuing); #4 landed.
+      return lists >= 4 ? [file("924511245739356595", "Show.S01E01.mkv")] : [];
+    });
+    const saveShare = vi.fn<Pan123Client["saveShare"]>(async () => ({ ok: true, message: "" }));
+    const sleeps: number[] = [];
+    const executor = makeExecutor(fakeClient({ listFiles, saveShare }), [SCOPE], {
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+    });
+
+    const attempt = await executor.transfer({
+      workflowRunId: "run-1",
+      directoryId: SCOPE,
+      candidate: candidate(),
+    });
+
+    expect(attempt.status).toBe("succeeded");
+    expect(attempt.materializedFileIds).toEqual(["924511245739356595"]);
+    expect(sleeps.length).toBeGreaterThanOrEqual(2); // waited across the empty reads
+    expect(sleeps.every((ms) => ms === 2500)).toBe(true); // default interval aligns with the probe
+  });
+
+  it("settle-poll exhausts and reports no_target_change when nothing ever lands (sleeps attempts-1 times)", async () => {
+    const listFiles = vi.fn<Pan123Client["listFiles"]>(async () => []); // never lands
+    const saveShare = vi.fn<Pan123Client["saveShare"]>(async () => ({ ok: true, message: "" }));
+    const sleeps: number[] = [];
+    const executor = makeExecutor(fakeClient({ listFiles, saveShare }), [SCOPE], {
+      transferSettlePollAttempts: 4,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+    });
+
+    const attempt = await executor.transfer({
+      workflowRunId: "run-1",
+      directoryId: SCOPE,
+      candidate: candidate(),
+    });
+
+    expect(attempt.status).toBe("no_target_change");
+    expect(attempt.materializedFileIds).toEqual([]);
+    expect(sleeps.length).toBe(3); // attempts-1: sleep BETWEEN reads only, not after the last
+  });
+
+  it("diffs against a NON-empty before set: materializedFileIds carries only the newly landed id", async () => {
+    // before was always empty in the other cases; verify the !before.has filter
+    // excludes a pre-existing video and reports only the new one.
+    let landed = false;
+    const listFiles = vi.fn<Pan123Client["listFiles"]>(async () =>
+      landed
+        ? [file("old-1", "Show.S01E01.mkv"), file("new-1", "Show.S01E02.mkv")]
+        : [file("old-1", "Show.S01E01.mkv")],
+    );
+    const saveShare = vi.fn<Pan123Client["saveShare"]>(async () => {
+      landed = true;
+      return { ok: true, message: "" };
+    });
+    const executor = makeExecutor(fakeClient({ listFiles, saveShare }));
+
+    const attempt = await executor.transfer({
+      workflowRunId: "run-1",
+      directoryId: SCOPE,
+      candidate: candidate(),
+    });
+
+    expect(attempt.status).toBe("succeeded");
+    expect(attempt.materializedFileIds).toEqual(["new-1"]); // NOT old-1
   });
 
   it("providerPayload.password overrides the URL-parsed sharePwd; empty diff = no_target_change", async () => {
