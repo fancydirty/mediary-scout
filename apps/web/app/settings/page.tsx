@@ -47,7 +47,7 @@ import {
   resolveGlobalWorkspace,
   resolveIsDesktop,
 } from "../../lib/workflow-runtime";
-import { brandSupportsProwlarr } from "@media-track/workflow";
+import { brandSupportsProwlarr, getStorageBrand, isRegisteredStorageProvider } from "@media-track/workflow";
 import { isDemoMode } from "../../lib/demo-mode";
 
 export default function SettingsPage({
@@ -344,17 +344,10 @@ async function SubtitleSourceSection() {
   );
 }
 
-/** 品牌显示名(与注册表 label 一致);盘卡与解绑确认共用。 */
-const PROVIDER_LABELS: Record<string, string | undefined> = {
-  pan115: "115网盘",
-  quark: "夸克网盘",
-  guangya: "光鸭云盘",
-  tianyi: "天翼云盘",
-  pan123: "123网盘",
-};
-
+/** 品牌显示名直读 workflow 注册表(单一事实源,与 workspace-switcher 一致),
+ *  未注册品牌兜底显示原始 provider 串。盘卡与解绑确认共用。 */
 function providerLabel(provider: string): string {
-  return PROVIDER_LABELS[provider] ?? provider;
+  return isRegisteredStorageProvider(provider) ? getStorageBrand(provider).label : provider;
 }
 
 async function Pan115Section() {
@@ -401,7 +394,7 @@ async function Pan115Section() {
             return (
               <div key={drive.id} className={`drive-card${frozen ? " is-frozen" : ""}`}>
                 <div className="drive-card-head">
-                  {PROVIDER_LABELS[drive.provider] ? (
+                  {isRegisteredStorageProvider(drive.provider) ? (
                     // 已注册品牌必有 svg(workspace-switcher 同款资产)
                     // eslint-disable-next-line @next/next/no-img-element
                     <img className="drive-card-icon" src={`/brands/${drive.provider}.svg`} alt="" width={26} height={26} />

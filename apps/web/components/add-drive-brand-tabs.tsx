@@ -13,7 +13,7 @@ import { Pan123TokenConnect } from "./pan123-token-connect";
 type Brand = "pan115" | "quark" | "guangya" | "tianyi" | "pan123";
 
 /** 品牌图库瓦片的静态元数据:图标走 /brands/<key>.svg(workspace-switcher 同款资产),
- *  authNote 把认证方式前置到选择时刻(选之前就知道要扫码还是粘贴)。加新品牌 = 加一行。 */
+ *  authNote 把认证方式前置到选择时刻(选之前就知道要扫码还是粘贴)。加新品牌:此表加一行 + Brand 联合 + 下方连接区分支 + /brands svg(完整触点见加品牌清单)。 */
 const BRAND_TILES: Array<{ key: Brand; label: string; authNote: string }> = [
   { key: "pan115", label: "115网盘", authNote: "扫码登录" },
   { key: "quark", label: "夸克网盘", authNote: "扫码 / 粘 cookie" },
