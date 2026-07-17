@@ -511,6 +511,16 @@ export class TaskSandbox {
         systemicBlock = { reason: attempt.providerMessage!.trim() };
         break;
       }
+      // no_target_change with nothing landed: on an async-copy brand (123's
+      // fire-copy + settle window) this can be a FALSE miss — the server-side copy
+      // may land AFTER the window. Burning the next candidate now could double-land
+      // the film once the slow copy arrives, so STOP and hand judgment back to the
+      // agent (its runbook: re-read via inspectStaging BEFORE re-transferring or
+      // writing the candidate off). Loud dead links (non-ntc) keep iterating —
+      // their death is proven, not pending.
+      if (attempt.noTargetChange === true && attempt.materializedFileIds.length === 0) {
+        break;
+      }
     }
     const landed = await this.storage.listTree({ directoryId: this.stagingDirectoryId });
     return { landed, transferredCandidateId, attempts, ...(systemicBlock ? { systemicBlock } : {}) };

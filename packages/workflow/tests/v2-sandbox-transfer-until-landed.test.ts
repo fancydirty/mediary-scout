@@ -196,22 +196,26 @@ describe("TaskSandbox — transferUntilLanded (movie-only, share-links-only, age
   });
 });
 
-/** Minimal succeeding StorageExecutor — enough surface for the RealStorageV2 gate
- *  tests below (transfer lands one video; everything else is inert). */
+/** Minimal StorageExecutor for the RealStorageV2 tests below — per-candidate
+ *  scripted outcomes (default: succeed and land one video); everything else inert. */
 class LandingExecutor implements StorageExecutor {
   transfers: string[] = [];
+  constructor(
+    private readonly outcomes: Record<string, { status: TransferAttempt["status"]; message?: string }> = {},
+  ) {}
   async createDirectory(input: { name: string; parentId: string }): Promise<string> {
     return `dir_${input.name}`;
   }
   async transfer(input: { workflowRunId: string; directoryId: string; candidate: ResourceCandidate }): Promise<TransferAttempt> {
     this.transfers.push(input.candidate.id);
+    const outcome = this.outcomes[input.candidate.id] ?? { status: "succeeded" as const };
     return {
       id: `att_${this.transfers.length}`,
       workflowRunId: input.workflowRunId,
       candidateId: input.candidate.id,
-      status: "succeeded",
-      providerMessage: "",
-      materializedFileIds: ["f1"],
+      status: outcome.status,
+      providerMessage: outcome.message ?? "",
+      materializedFileIds: outcome.status === "succeeded" ? ["f1"] : [],
     };
   }
   async listTree(): Promise<PackageTreeFile[]> {
@@ -254,23 +258,36 @@ class LandingExecutor implements StorageExecutor {
   }
 }
 
-/** Movie sandbox wired to the REAL storage adapter (real url classifier) with the
+/** Movie sandbox wired to the REAL storage adapter (real url classifier) with each
  *  candidate's actual share url in the registry — the end-to-end gate truth. */
-async function realAdapterMovieSetup(url: string, type: ResourceCandidate["type"]) {
+async function realAdapterMultiSetup(
+  candidates: Array<{
+    id: string;
+    url: string;
+    type: ResourceCandidate["type"];
+    outcome?: { status: TransferAttempt["status"]; message?: string };
+  }>,
+) {
   const provider = new FakeResourceProviderV2({
-    results: { film: [{ id: "cand", title: "某片 2023 4K" }] },
+    results: { film: candidates.map((c) => ({ id: c.id, title: `某片 2023 ${c.id}` })) },
   });
   const registry = new CandidateRegistry();
-  registry.record({
-    id: "cand",
-    snapshotId: "snap",
-    index: 0,
-    title: "某片 2023 4K",
-    type,
-    source: "pansou",
-    providerPayload: { url },
-  });
-  const executor = new LandingExecutor();
+  const outcomes: Record<string, { status: TransferAttempt["status"]; message?: string }> = {};
+  for (const c of candidates) {
+    registry.record({
+      id: c.id,
+      snapshotId: "snap",
+      index: 0,
+      title: `某片 2023 ${c.id}`,
+      type: c.type,
+      source: "pansou",
+      providerPayload: { url: c.url },
+    });
+    if (c.outcome) {
+      outcomes[c.id] = c.outcome;
+    }
+  }
+  const executor = new LandingExecutor(outcomes);
   const storage = new RealStorageV2({ executor, registry, workflowRunId: "run-gate" });
   const sandbox = new TaskSandbox({
     provider,
@@ -281,6 +298,10 @@ async function realAdapterMovieSetup(url: string, type: ResourceCandidate["type"
   });
   await sandbox.searchResources("film");
   return { sandbox, executor };
+}
+
+async function realAdapterMovieSetup(url: string, type: ResourceCandidate["type"]) {
+  return realAdapterMultiSetup([{ id: "cand", url, type }]);
 }
 
 describe("transferUntilLanded gate over the REAL url classifier — every fail-loud 转存分享 brand passes", () => {
@@ -318,5 +339,39 @@ describe("transferUntilLanded gate over the REAL url classifier — every fail-l
       /SANDBOX_TRANSFER_UNTIL_LANDED_REQUIRES_SHARE_LINK/,
     );
     expect(executor.transfers).toEqual([]);
+  });
+});
+
+describe("transferUntilLanded — no_target_change STOPS the loop (123 异步 copy 的假 miss 防双落)", () => {
+  it("stops at a no_target_change attempt with nothing landed — does NOT burn the next candidate", async () => {
+    // A's 转存 went through but nothing appeared within the settle window: on 123's
+    // fire-copy async transfer this may be a FALSE miss (the server-side copy is
+    // still in flight). Burning B now could double-land the film once A's copy
+    // arrives — the loop must stop and hand judgment back (runbook: re-read first).
+    const ntcMessage = "转存完成但目标目录未出现新视频(20s settle 窗口)";
+    const { sandbox, executor } = await realAdapterMultiSetup([
+      { id: "A", url: "https://www.123pan.com/s/aaa-1?pwd=x1", type: "123", outcome: { status: "no_target_change", message: ntcMessage } },
+      { id: "B", url: "https://www.123pan.com/s/bbb-2?pwd=y2", type: "123" },
+    ]);
+
+    const result = await sandbox.transferUntilLanded({ candidateIds: ["A", "B"] });
+
+    expect(executor.transfers).toEqual(["A"]); // B was never transferred
+    expect(result.transferredCandidateId).toBeNull();
+    expect(result.attempts).toEqual([{ candidateId: "A", status: "failed", providerMessage: ntcMessage }]);
+    expect(result.systemicBlock).toBeUndefined(); // an ntc stop is NOT an account block
+  });
+
+  it("an ordinary loud dead link (failed, non-ntc) still iterates to the next candidate", async () => {
+    const { sandbox, executor } = await realAdapterMultiSetup([
+      { id: "A", url: "https://www.123pan.com/s/aaa-1?pwd=x1", type: "123", outcome: { status: "failed", message: "分享已取消" } },
+      { id: "B", url: "https://www.123pan.com/s/bbb-2?pwd=y2", type: "123" },
+    ]);
+
+    const result = await sandbox.transferUntilLanded({ candidateIds: ["A", "B"] });
+
+    expect(executor.transfers).toEqual(["A", "B"]); // dead link burned through as before
+    expect(result.transferredCandidateId).toBe("B");
+    expect(result.attempts.map((a) => a.status)).toEqual(["failed", "succeeded"]);
   });
 });

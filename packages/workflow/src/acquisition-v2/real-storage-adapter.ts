@@ -120,9 +120,12 @@ export class RealStorageV2 implements StorageV2 {
     // Only a real materialization counts as success; no_target_change (115 has no
     // cached copy) is a miss the agent must recover from, surfaced as failed +
     // an empty reread. Layer-1: surface providerMessage so the agent sees WHY.
+    // The noTargetChange flag rides along so brand-agnostic callers can tell a
+    // silent-late async copy (123 — possible FALSE miss) from a loud dead link.
     return {
       status: attempt.status === "succeeded" ? "succeeded" : "failed",
       materializedFileIds: attempt.materializedFileIds,
+      ...(attempt.status === "no_target_change" ? { noTargetChange: true as const } : {}),
       ...(attempt.providerMessage ? { providerMessage: attempt.providerMessage } : {}),
     };
   }

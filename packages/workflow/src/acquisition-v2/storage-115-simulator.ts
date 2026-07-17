@@ -27,6 +27,14 @@ export interface TransferAttemptResult {
    *  surfaces this so the agent sees WHY a transfer failed and can distinguish a
    *  systemic account block from an ordinary dead link. */
   providerMessage?: string;
+  /** True when the executor reported no_target_change: the 转存 itself went through
+   *  but nothing new appeared in the target within the settle window. On an
+   *  async-copy brand (123's fire-copy) this can be a FALSE miss — the server-side
+   *  copy may land AFTER the window — so callers that iterate on failure
+   *  (transferUntilLanded) must STOP rather than burn the next candidate (a late
+   *  copy plus a second transfer = the film landed twice). Status stays collapsed
+   *  to "failed" for existing consumers. */
+  noTargetChange?: true;
 }
 
 /** What a candidate transfer would land — files keyed by their path relative to

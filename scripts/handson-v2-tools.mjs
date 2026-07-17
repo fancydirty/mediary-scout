@@ -216,7 +216,8 @@ async function cmdTransfer(args) {
 }
 
 /** Drive the REAL movie-only sandbox.transferUntilLanded over an AGENT-VETTED,
- *  ranked set of 115-share candidates (I play the agent: vet by title, 115-only). */
+ *  ranked set of share candidates (I play the agent: vet by title; the tool takes
+ *  fail-loud 转存分享 links — 115/夸克/天翼/123 — and rejects magnets). */
 async function cmdTransferUntil(args) {
   const parentId = parentForKind("movie");
   if (!args.name) throw new Error("--name is required");
@@ -243,14 +244,14 @@ async function cmdTransferUntil(args) {
 
   const vet = new RegExp(args.vet, "i");
   // Agent vetting: keep ONLY candidates that are genuinely the target film AND are
-  // 115 shares (the tool is 115-only). Rank most-descriptive-first (crude proxy:
-  // longer titles tend to be transparent rips).
+  // fail-loud share links (115/夸克/天翼/123 转存分享 — the tool rejects magnets).
+  // Rank most-descriptive-first (crude proxy: longer titles tend to be transparent rips).
   const vetted = search.snapshot.candidates
-    .filter((c) => vet.test(c.title) && storage.candidateLinkKind(c.id) === "pan115")
+    .filter((c) => vet.test(c.title) && storage.candidateLinkKind(c.id) === "share")
     .sort((a, b) => b.title.length - a.title.length);
-  console.log(`\nvetted+ranked 115-share candidates (title ~ /${args.vet}/i):`);
+  console.log(`\nvetted+ranked share candidates (title ~ /${args.vet}/i):`);
   vetted.forEach((c, i) => console.log(`  ${i}. [${c.id}] ${c.title.slice(0, 80)}`));
-  if (vetted.length === 0) throw new Error("no vetted 115-share candidates — broaden the search/vet");
+  if (vetted.length === 0) throw new Error("no vetted share candidates — broaden the search/vet");
 
   console.log(`\n=== transferUntilLanded(${vetted.length} candidates) — stop at first 秒传 ===`);
   const result = await sandbox.transferUntilLanded({ candidateIds: vetted.map((c) => c.id) });

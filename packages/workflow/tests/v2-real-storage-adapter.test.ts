@@ -109,13 +109,16 @@ describe("RealStorageV2 — StorageExecutor → StorageV2 adapter", () => {
     expect(executor.transfers).toEqual([{ workflowRunId: "run-7", directoryId: "staging", candidateId: "cand" }]);
   });
 
-  it("maps no_target_change to a failed attempt (nothing usable landed)", async () => {
+  it("maps no_target_change to a failed attempt AND surfaces the noTargetChange flag", async () => {
     const executor = new RecordingExecutor({ status: "no_target_change" });
     const { storage, registry } = adapter(executor);
     registry.record(candidate("cand"));
 
     const result = await storage.transferCandidate({ candidateId: "cand", intoDirectoryId: "staging" });
     expect(result.status).toBe("failed");
+    // the flag lets brand-agnostic callers (transferUntilLanded) tell a silent-late
+    // async copy (123's settle window — possible FALSE miss) from a loud dead link
+    expect(result.noTargetChange).toBe(true);
   });
 
   it("surfaces the executor's providerMessage on a failed transfer (so the agent sees WHY)", async () => {
@@ -126,6 +129,7 @@ describe("RealStorageV2 — StorageExecutor → StorageV2 adapter", () => {
     const result = await storage.transferCandidate({ candidateId: "cand", intoDirectoryId: "staging" });
     expect(result.status).toBe("failed");
     expect(result.providerMessage).toBe("云下载配额不足，请升级VIP获得赠送配额或购买云下载配额！");
+    expect(result.noTargetChange).toBeUndefined(); // a loud failure is NOT an ntc
   });
 
   it("fails loud when the candidate id was never observed (not in the registry)", async () => {
