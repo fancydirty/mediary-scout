@@ -29,12 +29,16 @@ export interface StorageBrand {
   provider: StorageProvider;
   /** Display name shown in the UI (switcher chip, settings tab). */
   label: string;
-  /** Extract the instance-wide-unique account id from a credential cookie. */
-  parseUid: (cookie: string) => string | null;
-  /** Whether an error is this brand's dead-cookie signal (drives freeze on it). */
+  /** Extract the instance-wide-unique account id from the brand's credential —
+   *  a cookie string for cookie brands (115/夸克), a JWT access token for 光鸭,
+   *  the loginName for 天翼. Callers pass the brand-appropriate string, never a
+   *  JSON blob (a blob would rotate with tokens and destabilize
+   *  UNIQUE(provider, provider_uid)). */
+  parseUid: (credential: string) => string | null;
+  /** Whether an error is this brand's dead-credential signal (drives freeze on it). */
   isAuthError: (err: unknown) => boolean;
-  /** Resource providers applicable to this brand. Quark has no magnet web API, so
-   *  it omits "prowlarr" — magnet stays 115-only. */
+  /** Resource providers applicable to this brand. Share-link brands (夸克/天翼)
+   *  have no magnet web API, so they omit "prowlarr" — magnet is 115/光鸭 only. */
   resourceProviderKinds: ResourceProviderKind[];
   /** Whether to strengthen the Chinese-subs soft default for this brand. When true,
    *  the agent prompt emphasizes that Chinese-titled resources from this drive are
