@@ -35,7 +35,7 @@ export function Pan123TokenConnect() {
         天有效），复制粘贴到下面。
       </p>
       <p className="push-help" style={{ marginBottom: 12 }}>
-        123云盘{" "}
+        123网盘{" "}
         <a href="https://www.123pan.com/" target="_blank" rel="noopener noreferrer">
           官网 <ExternalLink size={12} style={{ verticalAlign: "-1px" }} />
         </a>
