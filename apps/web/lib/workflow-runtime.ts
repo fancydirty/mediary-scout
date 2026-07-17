@@ -1478,8 +1478,11 @@ async function getWorkerResourceProvider(
 
 /** Opaque credential blob for token-auth brands (authKind "token"):
  *  光鸭 {accessToken,refreshToken,deviceId?}; 天翼 {sessionKey,accessToken,
- *  refreshToken,familySessionKey?,loginName?}. Deliberately untyped here — each
- *  brand's client validates its own shape downstream. */
+ *  refreshToken,familySessionKey?}. Deliberately untyped here — each brand's
+ *  client validates its own shape downstream. ⚠️ 天翼's durable identity lives at
+ *  payload.meta.loginName, NOT in this blob: makeTokenPersister replaces the
+ *  payload with blob+meta on every renewal, so a top-level loginName the client
+ *  happens to include is transient and must not be relied on. */
 type TokenCredential = Record<string, unknown>;
 
 /** §7: the account's 115 credentials (cookie + category CIDs) from its
@@ -1593,14 +1596,20 @@ async function provisionDriveCategoryDirs(
  * payload so the next run starts from the fresh credential. Brand-agnostic — the
  * blob is persisted as-is (光鸭 passes {accessToken,refreshToken,deviceId}; 天翼
  * passes {sessionKey,accessToken,refreshToken,familySessionKey,loginName}), with
- * the row's existing `meta` preserved. Re-reads the row at call time to keep its
- * CIDs/label (mirrors the cookie-refresh upsert in connectGuangYa). Best-effort:
- * a persist failure is logged, not thrown — the in-memory client keeps the new
- * credential for the rest of the run regardless.
+ * the row's existing `meta` preserved. ⚠️ Invariant: the persister REPLACES the
+ * payload with blob+meta, so anything durable that isn't the rotating credential
+ * MUST live under `payload.meta` (天翼's durable loginName sits at meta.loginName;
+ * a top-level loginName in the renewal blob is transient). An incomplete blob
+ * (missing the brand's required keys per extractStorageCredential) is never
+ * persisted — it would silently turn the drive into "not connected". Re-reads
+ * the row at call time to keep its CIDs/label (mirrors the cookie-refresh upsert
+ * in connectGuangYa). Best-effort: a persist failure is logged, not thrown — the
+ * in-memory client keeps the new credential for the rest of the run regardless.
  */
 function makeTokenPersister(
   accountId: string,
   storageId: string,
+  provider: string,
 ): (creds: unknown) => Promise<void> {
   return async (creds) => {
     try {
@@ -1608,7 +1617,16 @@ function makeTokenPersister(
       const repository = getWorkflowRepository();
       const drive = (await repository.listConnectedStorages(accountId)).find((s) => s.id === storageId);
       if (!drive) {
-        console.warn(`[media-track] token refresh: drive ${storageId} vanished, skip persist`);
+        console.warn(
+          `[media-track] ${provider} token refresh: drive ${storageId} (account ${accountId}) vanished, skip persist`,
+        );
+        return;
+      }
+      // Guard: never replace the payload with a blob missing the brand's required
+      // keys — a buggy/partial refresh would otherwise silently disconnect the
+      // drive (extractStorageCredential → null: no freeze, no error, just gone).
+      if (!extractStorageCredential(drive.provider, blob).credential) {
+        console.warn(`[media-track] ${provider} token refresh: incomplete blob for ${storageId}, skip persist`);
         return;
       }
       const prevMeta = (drive.payload as { meta?: unknown } | null)?.meta;
@@ -1654,8 +1672,8 @@ async function getAccountStorageCredentials(
       return null;
     }
     const { cookie, credential } = extractStorageCredential(drive.provider, drive.payload);
-    // No usable credential (no cookie for 115/夸克, no token blob for 光鸭) → treat
-    // as not-connected, exactly like the old empty-cookie guard.
+    // No usable credential (no cookie for 115/夸克, no token blob for 光鸭/天翼)
+    // → treat as not-connected, exactly like the old empty-cookie guard.
     if (!cookie && !credential) {
       return null;
     }
@@ -1776,7 +1794,7 @@ export async function testConnection(
       creds.cookie,
       creds.rootCid,
       creds.credential,
-      makeTokenPersister(accountId, creds.id),
+      makeTokenPersister(accountId, creds.id, creds.provider),
     );
     await getWorkflowRepository().setConnectedStorageStatus(creds.id, "active", null, null);
     return { ok: true, status: "active", message: "连接正常。" };
@@ -1798,9 +1816,9 @@ async function probeStorageConnection(
   cookie: string,
   rootCid: string | null,
   credential: TokenCredential | null,
-  // Persist rotated tokens if the probe refreshes them mid-flight. Wired by
+  // Persist a rotated credential if the probe refreshes it mid-flight. Wired by
   // testConnection (an existing drive). Omitted at first-connect (no row yet).
-  onTokensRefreshed?: ((creds: unknown) => Promise<void>) | undefined,
+  onCredentialRefresh?: ((creds: unknown) => Promise<void>) | undefined,
 ): Promise<void> {
   const { Pan115CookieClient, QuarkCookieClient, TianyiClient } = await import("@media-track/workflow");
   if (provider === "guangya") {
@@ -1815,8 +1833,9 @@ async function probeStorageConnection(
       // consistent with the rest of the brand's device-pinning).
       ...(blob.deviceId === undefined ? {} : { deviceId: blob.deviceId }),
       // A 401 during the probe refreshes the token pair; persist it so the DB
-      // doesn't keep a stale token that later wrongly freezes the drive.
-      ...(onTokensRefreshed ? { onTokensRefreshed } : {}),
+      // doesn't keep a stale token that later wrongly freezes the drive. (The
+      // client option keeps 光鸭's own onTokensRefreshed vocabulary.)
+      ...(onCredentialRefresh ? { onTokensRefreshed: onCredentialRefresh } : {}),
     }).validateToken();
     return;
   }
@@ -1837,7 +1856,7 @@ async function probeStorageConnection(
       accessToken: blob.accessToken ?? "",
       refreshToken: blob.refreshToken ?? "",
       ...(blob.familySessionKey === undefined ? {} : { familySessionKey: blob.familySessionKey }),
-      ...(onTokensRefreshed ? { onCredentialRefresh: onTokensRefreshed } : {}),
+      ...(onCredentialRefresh ? { onCredentialRefresh } : {}),
     }).listFiles("-11");
     return;
   }
@@ -1897,7 +1916,7 @@ async function getWorkerStorageExecutor(
           credential: creds.credential ?? {},
           scopeCids,
           env: process.env,
-          onCredentialRefresh: makeTokenPersister(accountId, creds.id),
+          onCredentialRefresh: makeTokenPersister(accountId, creds.id, creds.provider),
         });
       }
       return createExecutorForBrand({
