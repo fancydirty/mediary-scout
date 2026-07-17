@@ -191,17 +191,25 @@ describe("RealStorageV2 — StorageExecutor → StorageV2 adapter", () => {
     expect(attempts.some((a) => a.candidateId.startsWith("subtitle:"))).toBe(false);
   });
 
-  it("classifies candidate link kind from the recorded url (115 share / magnet / unknown)", async () => {
+  it("classifies candidate link kind from the recorded url (fail-loud share brand / magnet / unknown)", async () => {
     const { storage, registry } = adapter(new RecordingExecutor());
-    registry.record({ ...candidate("share"), providerPayload: { url: "https://115cdn.com/s/abc?password=x" } });
-    registry.record({ ...candidate("share2"), providerPayload: { url: "https://115.com/s/def" } });
-    registry.record({ ...candidate("mag"), providerPayload: { url: "magnet:?xt=urn:btih:deadbeef" } });
-    registry.record({ ...candidate("weird"), providerPayload: { url: "https://pan.quark.cn/s/zzz" } });
+    // every 转存分享 brand (fail-loud) → "share"
+    registry.record({ ...candidate("s115"), providerPayload: { url: "https://115cdn.com/s/abc?password=x" } });
+    registry.record({ ...candidate("s115b"), providerPayload: { url: "https://115.com/s/def" } });
+    registry.record({ ...candidate("squark"), type: "quark", providerPayload: { url: "https://pan.quark.cn/s/zzz?passcode=ab12" } });
+    registry.record({ ...candidate("stianyi"), type: "tianyi", providerPayload: { url: "https://cloud.189.cn/t/QzUnmqBvYr2q?accessCode=x8fd" } });
+    registry.record({ ...candidate("stianyi_web"), type: "tianyi", providerPayload: { url: "https://cloud.189.cn/web/share?code=AbCd12&pwd=1234" } });
+    registry.record({ ...candidate("s123"), type: "123", providerPayload: { url: "https://www.123pan.com/s/abc-1?pwd=x8fd" } });
+    registry.record({ ...candidate("s123_mirror"), type: "123", providerPayload: { url: "https://123684.com/s/Kd9-TvBq?password=1234" } });
+    // silent-fail magnet and unrecognized hosts stay out
+    registry.record({ ...candidate("mag"), type: "magnet", providerPayload: { url: "magnet:?xt=urn:btih:deadbeef" } });
+    registry.record({ ...candidate("weird"), providerPayload: { url: "https://pan.baidu.com/s/1abcDEF" } });
 
-    expect(storage.candidateLinkKind("share")).toBe("pan115");
-    expect(storage.candidateLinkKind("share2")).toBe("pan115");
+    for (const id of ["s115", "s115b", "squark", "stianyi", "stianyi_web", "s123", "s123_mirror"]) {
+      expect(storage.candidateLinkKind(id)).toBe("share");
+    }
     expect(storage.candidateLinkKind("mag")).toBe("magnet");
-    expect(storage.candidateLinkKind("weird")).toBe("unknown"); // non-115 share host
+    expect(storage.candidateLinkKind("weird")).toBe("unknown"); // unrecognized share host
     expect(storage.candidateLinkKind("ghost")).toBe("unknown"); // never recorded
   });
 

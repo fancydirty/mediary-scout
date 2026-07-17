@@ -194,7 +194,7 @@ export function buildSandboxToolSet(
   if (options.movie) {
     tools["transferUntilLanded"] = {
       description:
-        'Movie only. Transfer a PRIORITY-ORDERED list of candidates you judged to be the SAME target film (best resource first), stopping at the FIRST that 秒传-lands; the rest are abandoned. 115 SHARE LINKS ONLY — magnets do NOT fail loud, so for a magnet use transferCandidate and verify via inspectStaging. YOU pick the set (a keyword search returns same-named DIFFERENT works — never hand it everything); the system just burns through the dead links for you (链接已过期/分享已取消/错误的链接 are common). Returns {landed, transferredCandidateId, attempts}. Use this when several 115 shares for the one film may be dead/black-box; for a single obvious share, transferCandidate is fine.',
+        'Movie only. Transfer a PRIORITY-ORDERED list of candidates you judged to be the SAME target film (best resource first), stopping at the FIRST that 秒传-lands; the rest are abandoned. FAIL-LOUD SHARE LINKS ONLY (115/夸克/天翼/123 转存分享 all qualify) — magnets do NOT fail loud, so for a magnet use transferCandidate and verify via inspectStaging. YOU pick the set (a keyword search returns same-named DIFFERENT works — never hand it everything); the system just burns through the dead links for you (链接已过期/分享已取消/错误的链接 are common). Returns {landed, transferredCandidateId, attempts}. Use this when several shares for the one film may be dead/black-box; for a single obvious share, transferCandidate is fine.',
       inputSchema: z.object({ candidateIds: z.array(z.string()) }),
       execute: (args: { candidateIds: string[] }) => asEvidence(() => sandbox.transferUntilLanded(args)),
     };

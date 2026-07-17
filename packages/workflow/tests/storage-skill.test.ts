@@ -71,11 +71,12 @@ describe("brand-aware storage skill", () => {
     // the ONE dead-share message the code itself guarantees (saveShare's empty/dead
     // reply) must be in the examples — the rest await T10 live calibration
     expect(pan123).toContain("分享为空 / 已失效");
-    // transferUntilLanded is 115-share-only (sandbox gate throws
-    // SANDBOX_TRANSFER_UNTIL_LANDED_REQUIRES_PAN115) — the arm must NOT recommend
-    // it, and must tell the truth: ranked one-at-a-time transferCandidate instead
-    expect(pan123).not.toMatch(/transferUntilLanded[^.]*(burns through|automatically)/);
-    expect(pan123).toMatch(/transferUntilLanded[^.]*115/);
+    // transferUntilLanded accepts every fail-loud 转存分享 brand (the sandbox gate
+    // rejects only magnets/unknown) — the arm recommends it for a movie, exactly
+    // like the quark/tianyi arms, and must NOT carry the old Do-NOT-use warning
+    expect(pan123).toMatch(/transferUntilLanded[^.]*(burns through|automatically)/);
+    expect(pan123).not.toMatch(/Do NOT use transferUntilLanded/i);
+    expect(pan123).not.toMatch(/115-share-only|it is 115/);
     expect(pan123).toContain("transferCandidate");
     // the third outcome (settle window exhausted on a big async copy) is taught:
     // re-read before re-transferring or burning the candidate

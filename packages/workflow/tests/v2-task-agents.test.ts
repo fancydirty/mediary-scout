@@ -207,7 +207,7 @@ describe("Movie system prompt carries movie-specific invariants", () => {
     [/\.iso|原盘|BDMV|disc image/i, "reject 原盘/ISO/BDMV disc images — need a playable video"],
     [/LAST (action|step)|never mark before|in place|only after/i, "mark is the LAST step, only after the film is in place"],
     [/flattenMovie/, "flattenMovie is the movie extraction"],
-    [/transferUntilLanded/, "transferUntilLanded for ranked 115 shares / dead links"],
+    [/transferUntilLanded/, "transferUntilLanded for ranked shares / dead links"],
   ])("mentions %s (%s)", (re) => {
     expect(prompt).toMatch(re);
   });

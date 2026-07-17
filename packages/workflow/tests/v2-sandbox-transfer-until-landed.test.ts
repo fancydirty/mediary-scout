@@ -2,22 +2,27 @@ import { describe, expect, it } from "vitest";
 import { TaskSandbox } from "../src/acquisition-v2/sandbox.js";
 import { FakeResourceProviderV2 } from "../src/acquisition-v2/fake-provider.js";
 import { Storage115Simulator } from "../src/acquisition-v2/storage-115-simulator.js";
+import { RealStorageV2 } from "../src/acquisition-v2/real-storage-adapter.js";
+import { CandidateRegistry } from "../src/acquisition-v2/candidate-registry.js";
+import type { StorageExecutor, UnparsedVideoFile } from "../src/ports.js";
+import type { PackageTreeFile, ResourceCandidate, TransferAttempt, VerifiedFile } from "../src/domain.js";
 
 /**
  * The movie-only `transferUntilLanded` tool (2026-06-15, user-designed):
  * iterate an AGENT-ORDERED list of candidates the agent judged to be the SAME
  * target film (best → next-best), stopping at the FIRST that 秒传-lands; the rest
- * are abandoned. 115 share links ONLY — only a 115 share fails LOUD, so the
- * iterate-on-failure logic is sound; a magnet's success is only knowable by the
- * landing point, so magnets are rejected (the agent uses transferCandidate +
- * observe for those). Candidate SELECTION stays the agent's (the wildcard search
+ * are abandoned. Fail-loud SHARE links ONLY (115/夸克/天翼/123 转存分享) — every
+ * share-transfer brand fails LOUD on a dead link, so the iterate-on-failure logic
+ * is sound; a magnet's success is only knowable by the landing point, so magnets
+ * (and unknown links) are rejected (the agent uses transferCandidate + observe
+ * for those). Candidate SELECTION stays the agent's (the wildcard search
  * returns unrelated works — 葫芦小金刚 under "抓娃娃" — so the system must never
  * iterate the raw result set). TV/anime never gets this tool.
  */
 async function movieSetup(options: {
   results: Array<{ id: string; title: string }>;
   packs?: Record<string, { files: Array<{ path: string; sizeBytes: number }> }>;
-  linkKinds?: Record<string, "pan115" | "magnet">;
+  linkKinds?: Record<string, "share" | "magnet">;
   failureMessages?: Record<string, string>;
 }) {
   const provider = new FakeResourceProviderV2({
@@ -39,8 +44,8 @@ async function movieSetup(options: {
   return { sandbox, storage, movieDir };
 }
 
-describe("TaskSandbox — transferUntilLanded (movie-only, 115-only, agent-ordered, stop-at-first-landed)", () => {
-  it("burns through dead 115 shares in the given order and stops at the first that lands", async () => {
+describe("TaskSandbox — transferUntilLanded (movie-only, share-links-only, agent-ordered, stop-at-first-landed)", () => {
+  it("burns through dead shares in the given order and stops at the first that lands", async () => {
     const { sandbox } = await movieSetup({
       results: [
         { id: "dead_1", title: "奥本海默 黑盒A" },
@@ -52,7 +57,7 @@ describe("TaskSandbox — transferUntilLanded (movie-only, 115-only, agent-order
         live: { files: [{ path: "奥本海默 (2023)/Oppenheimer.2023.2160p.mkv", sizeBytes: 9000 }] },
         after: { files: [{ path: "wrong/After.mkv", sizeBytes: 1 }] },
       },
-      linkKinds: { dead_1: "pan115", dead_2: "pan115", live: "pan115", after: "pan115" },
+      linkKinds: { dead_1: "share", dead_2: "share", live: "share", after: "share" },
     });
     await sandbox.searchResources("oppenheimer");
 
@@ -63,21 +68,35 @@ describe("TaskSandbox — transferUntilLanded (movie-only, 115-only, agent-order
     expect(result.landed.some((f) => f.isVideo)).toBe(true);
   });
 
-  it("rejects a magnet candidate — only 115 shares fail loud, so only they may be iterated", async () => {
+  it("rejects a magnet candidate with the share-link error code — a magnet does not fail loud", async () => {
     const { sandbox } = await movieSetup({
       results: [{ id: "mag", title: "奥本海默 magnet" }],
       packs: { mag: { files: [{ path: "x.mkv", sizeBytes: 1 }] } },
       linkKinds: { mag: "magnet" },
     });
     await sandbox.searchResources("oppenheimer");
-    await expect(sandbox.transferUntilLanded({ candidateIds: ["mag"] })).rejects.toThrow(/115|pan115/i);
+    await expect(sandbox.transferUntilLanded({ candidateIds: ["mag"] })).rejects.toThrow(
+      /SANDBOX_TRANSFER_UNTIL_LANDED_REQUIRES_SHARE_LINK/,
+    );
+  });
+
+  it("rejects an unknown-kind candidate with the share-link error code — only fail-loud shares iterate", async () => {
+    const { sandbox } = await movieSetup({
+      results: [{ id: "mystery", title: "奥本海默 未知链接" }],
+      packs: { mystery: { files: [{ path: "x.mkv", sizeBytes: 1 }] } },
+      // no linkKinds entry → the simulator classifies it "unknown"
+    });
+    await sandbox.searchResources("oppenheimer");
+    await expect(sandbox.transferUntilLanded({ candidateIds: ["mystery"] })).rejects.toThrow(
+      /SANDBOX_TRANSFER_UNTIL_LANDED_REQUIRES_SHARE_LINK/,
+    );
   });
 
   it("refuses once coverage is already met", async () => {
     const { sandbox } = await movieSetup({
       results: [{ id: "live", title: "奥本海默" }],
       packs: { live: { files: [{ path: "m.mkv", sizeBytes: 1 }] } },
-      linkKinds: { live: "pan115" },
+      linkKinds: { live: "share" },
     });
     await sandbox.searchResources("oppenheimer");
     await sandbox.markObtained({ codes: ["MOVIE"] });
@@ -88,7 +107,7 @@ describe("TaskSandbox — transferUntilLanded (movie-only, 115-only, agent-order
     const { sandbox } = await movieSetup({
       results: [{ id: "live", title: "奥本海默" }],
       packs: { live: { files: [{ path: "m.mkv", sizeBytes: 1 }] } },
-      linkKinds: { live: "pan115" },
+      linkKinds: { live: "share" },
     });
     await sandbox.searchResources("oppenheimer");
     await expect(sandbox.transferUntilLanded({ candidateIds: ["live", "ghost"] })).rejects.toThrow(/observ|snapshot/i);
@@ -100,7 +119,7 @@ describe("TaskSandbox — transferUntilLanded (movie-only, 115-only, agent-order
     });
     const storage = new Storage115Simulator({
       packs: { live: { files: [{ path: "m.mkv", sizeBytes: 1 }] } },
-      linkKinds: { live: "pan115" },
+      linkKinds: { live: "share" },
     });
     const staging = await storage.createDirectory({ name: "staging", parentId: "root" });
     const seasonDir = await storage.createDirectory({ name: "Season 1", parentId: "root" });
@@ -122,7 +141,7 @@ describe("TaskSandbox — transferUntilLanded (movie-only, 115-only, agent-order
         { id: "live", title: "奥本海默 B" },
       ],
       packs: { live: { files: [{ path: "奥本海默 (2023)/Oppenheimer.mkv", sizeBytes: 9000 }] } },
-      linkKinds: { dead_1: "pan115", live: "pan115" },
+      linkKinds: { dead_1: "share", live: "share" },
       failureMessages: { dead_1: "链接已过期" },
     });
     await sandbox.searchResources("oppenheimer");
@@ -144,7 +163,7 @@ describe("TaskSandbox — transferUntilLanded (movie-only, 115-only, agent-order
       // exhausted — every transfer fails with the same systemic message. Grinding
       // all three is the wasted-transfer the 心灵奇旅 incident is about.
       packs: { c3: { files: [{ path: "奥本海默 (2023)/o.mkv", sizeBytes: 1 }] } },
-      linkKinds: { c1: "pan115", c2: "pan115", c3: "pan115" },
+      linkKinds: { c1: "share", c2: "share", c3: "share" },
       failureMessages: {
         c1: "云下载配额不足，请升级VIP获得赠送配额或购买云下载配额！",
         c2: "云下载配额不足，请升级VIP获得赠送配额或购买云下载配额！",
@@ -167,12 +186,137 @@ describe("TaskSandbox — transferUntilLanded (movie-only, 115-only, agent-order
         { id: "dead_1", title: "奥本海默 A" },
         { id: "dead_2", title: "奥本海默 B" },
       ],
-      linkKinds: { dead_1: "pan115", dead_2: "pan115" },
+      linkKinds: { dead_1: "share", dead_2: "share" },
     });
     await sandbox.searchResources("oppenheimer");
     const result = await sandbox.transferUntilLanded({ candidateIds: ["dead_1", "dead_2"] });
     expect(result.transferredCandidateId).toBeNull();
     expect(result.attempts.map((a) => a.status)).toEqual(["failed", "failed"]);
     expect(result.landed.some((f) => f.isVideo)).toBe(false);
+  });
+});
+
+/** Minimal succeeding StorageExecutor — enough surface for the RealStorageV2 gate
+ *  tests below (transfer lands one video; everything else is inert). */
+class LandingExecutor implements StorageExecutor {
+  transfers: string[] = [];
+  async createDirectory(input: { name: string; parentId: string }): Promise<string> {
+    return `dir_${input.name}`;
+  }
+  async transfer(input: { workflowRunId: string; directoryId: string; candidate: ResourceCandidate }): Promise<TransferAttempt> {
+    this.transfers.push(input.candidate.id);
+    return {
+      id: `att_${this.transfers.length}`,
+      workflowRunId: input.workflowRunId,
+      candidateId: input.candidate.id,
+      status: "succeeded",
+      providerMessage: "",
+      materializedFileIds: ["f1"],
+    };
+  }
+  async listTree(): Promise<PackageTreeFile[]> {
+    return [{ path: "某片 (2023)/Movie.2023.mkv", providerFileId: "f1", sizeBytes: 9000 }];
+  }
+  async listSubdirectories(): Promise<Array<{ id: string; path: string }>> {
+    return [];
+  }
+  async listChildDirectories(): Promise<Array<{ id: string; name: string }>> {
+    return [];
+  }
+  async moveFiles(input: { fileIds: string[]; targetDirectoryId: string }): Promise<{ moved: string[] }> {
+    return { moved: input.fileIds };
+  }
+  async deleteFiles(input: { directoryId: string; fileIds: string[] }): Promise<{ deleted: string[] }> {
+    return { deleted: input.fileIds };
+  }
+  async removeDirectory(): Promise<{ removed: boolean }> {
+    return { removed: true };
+  }
+  async listVideoFiles(): Promise<VerifiedFile[]> {
+    return [];
+  }
+  async listUnparsedVideoFiles(): Promise<UnparsedVideoFile[]> {
+    return [];
+  }
+  async renameFile(): Promise<void> {}
+  async transferSubtitleUrl(input: { url: string; filename: string; directoryId: string; workflowRunId: string }): Promise<TransferAttempt> {
+    return {
+      id: `${input.workflowRunId}_subtitle_1`,
+      workflowRunId: input.workflowRunId,
+      candidateId: `subtitle:${input.filename}`,
+      status: "succeeded",
+      providerMessage: "",
+      materializedFileIds: ["sub_f1"],
+    };
+  }
+  async flattenDirectory(): Promise<{ moved: string[]; removed: string[] }> {
+    return { moved: [], removed: [] };
+  }
+}
+
+/** Movie sandbox wired to the REAL storage adapter (real url classifier) with the
+ *  candidate's actual share url in the registry — the end-to-end gate truth. */
+async function realAdapterMovieSetup(url: string, type: ResourceCandidate["type"]) {
+  const provider = new FakeResourceProviderV2({
+    results: { film: [{ id: "cand", title: "某片 2023 4K" }] },
+  });
+  const registry = new CandidateRegistry();
+  registry.record({
+    id: "cand",
+    snapshotId: "snap",
+    index: 0,
+    title: "某片 2023 4K",
+    type,
+    source: "pansou",
+    providerPayload: { url },
+  });
+  const executor = new LandingExecutor();
+  const storage = new RealStorageV2({ executor, registry, workflowRunId: "run-gate" });
+  const sandbox = new TaskSandbox({
+    provider,
+    storage,
+    stagingDirectoryId: "movie_dir",
+    targetMovieDirectoryId: "movie_dir",
+    need: ["MOVIE"],
+  });
+  await sandbox.searchResources("film");
+  return { sandbox, executor };
+}
+
+describe("transferUntilLanded gate over the REAL url classifier — every fail-loud 转存分享 brand passes", () => {
+  it.each([
+    ["115", "https://115.com/s/sww96353nl6?password=g876", "115"],
+    ["夸克", "https://pan.quark.cn/s/1a2b3c4d?passcode=ab12", "quark"],
+    ["天翼", "https://cloud.189.cn/t/QzUnmqBvYr2q?accessCode=x8fd", "tianyi"],
+    ["天翼 web/share", "https://cloud.189.cn/web/share?code=AbCd12&pwd=1234", "tianyi"],
+    ["123", "https://www.123pan.com/s/abc-1?pwd=x8fd", "123"],
+    ["123 镜像域", "https://123684.com/s/Kd9-TvBq?password=1234", "123"],
+  ] as const)("a %s share candidate passes the gate and enters the iterate loop", async (_brand, url, type) => {
+    const { sandbox, executor } = await realAdapterMovieSetup(url, type);
+
+    const result = await sandbox.transferUntilLanded({ candidateIds: ["cand"] });
+
+    expect(executor.transfers).toEqual(["cand"]); // the loop really ran the transfer
+    expect(result.transferredCandidateId).toBe("cand");
+    expect(result.landed.some((f) => f.isVideo)).toBe(true);
+  });
+
+  it("still rejects a magnet through the real classifier (silent-fail — landing point only)", async () => {
+    const { sandbox, executor } = await realAdapterMovieSetup(
+      "magnet:?xt=urn:btih:edef9b0fc91c9ccdf5b3e43f6cc5278160e81dd5",
+      "magnet",
+    );
+    await expect(sandbox.transferUntilLanded({ candidateIds: ["cand"] })).rejects.toThrow(
+      /SANDBOX_TRANSFER_UNTIL_LANDED_REQUIRES_SHARE_LINK/,
+    );
+    expect(executor.transfers).toEqual([]); // nothing ran
+  });
+
+  it("still rejects an unrecognized link through the real classifier", async () => {
+    const { sandbox, executor } = await realAdapterMovieSetup("https://pan.baidu.com/s/1abcDEF", "manual");
+    await expect(sandbox.transferUntilLanded({ candidateIds: ["cand"] })).rejects.toThrow(
+      /SANDBOX_TRANSFER_UNTIL_LANDED_REQUIRES_SHARE_LINK/,
+    );
+    expect(executor.transfers).toEqual([]);
   });
 });

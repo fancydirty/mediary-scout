@@ -26,7 +26,7 @@ export const INTERROGATION_QUESTIONS: readonly InterrogationQuestion[] = [
     prompt:
       "你现在的任务:获取电影《奥本海默》(2023)。请只用【中文文字】描述你的完整打算——从零开始按 1. 2. 3. 列出你会【依次调用哪个工具、为什么】,直到这部电影入库,不要省略任何步骤。⚠️ 这是问询不是执行:绝对不要真的调用工具、不要输出任何 tool_call 或函数调用语法,就用文字把你的计划讲清楚。",
     expectation:
-      "主动先 readSkill(movie + protocol);再 search(裸标题优先、别一上来带年份)→证据先行选对片(对年份、防翻拍、剔除同名不同作品)→对多个同片 115 分享按最优排序用 transferUntilLanded(只 115、第一个秒传即停),或单个/磁力用 transferCandidate→inspectStaging 验是正片→flattenMovie(自动挖视频+字幕、删壳)→deleteFiles 清花絮→markObtained([\"MOVIE\"])(最后一步)→finish。重点看:是否真去读 skill、是否用 flattenMovie、面对多个黑盒死链是否会用 transferUntilLanded 让系统替它穿透死链(而不是一个个手动试)。",
+      "主动先 readSkill(movie + protocol);再 search(裸标题优先、别一上来带年份)→证据先行选对片(对年份、防翻拍、剔除同名不同作品)→对多个同片转存分享按最优排序用 transferUntilLanded(只收 fail-loud 转存分享链 115/夸克/天翼/123,磁力不行、第一个秒传即停),或单个/磁力用 transferCandidate→inspectStaging 验是正片→flattenMovie(自动挖视频+字幕、删壳)→deleteFiles 清花絮→markObtained([\"MOVIE\"])(最后一步)→finish。重点看:是否真去读 skill、是否用 flattenMovie、面对多个黑盒死链是否会用 transferUntilLanded 让系统替它穿透死链(而不是一个个手动试)。",
   },
   {
     id: "open_tv_walkthrough",
