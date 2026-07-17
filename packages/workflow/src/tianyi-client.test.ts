@@ -179,6 +179,58 @@ describe("TianyiClient WEB face", () => {
     await expect(c.listFiles("-11")).rejects.toThrow(/FileNotFound/);
     await c.listFiles("-11").catch((e) => expect(isTianyiAuthError(e)).toBe(false));
   });
+
+  it("detects the errorCode/errorMsg auth envelope (HTTP 400 InvalidSessionKey / IP mismatch) and self-heals — never returns []", async () => {
+    // Ground truth from real cloud.189.cn with an expired/IP-mismatched session:
+    // HTTP 400 + {"errorCode":"InvalidSessionKey","errorMsg":"check ip error - curIp=…, cookiesIp=…"}
+    // The auth envelope uses errorCode/errorMsg (NOT res_code/res_message). If unwrap
+    // only read res_code, code=undefined → treated as success → listFiles returns [] →
+    // a dead session masquerades as an EMPTY account (the fail-quiet class).
+    const refreshed: unknown[] = [];
+    let sessionMinted = false;
+    const fetchImpl = fetchStub((url) => {
+      if (url.includes("getSessionForPC")) {
+        sessionMinted = true;
+        return { status: 200, body: '{"res_code":0,"sessionKey":"SK2","accessToken":"AT2","refreshToken":"RT2"}' };
+      }
+      if (!sessionMinted) {
+        return {
+          status: 400,
+          body: '{"errorCode":"InvalidSessionKey","errorMsg":"check ip error - curIp=1.2.3.4, cookiesIp=5.6.7.8","success":null}',
+        };
+      }
+      return { status: 200, body: '{"res_code":0,"fileListAO":{"folderList":[{"id":111222333444555666,"name":"Movies"}],"fileList":[]}}' };
+    });
+    const c = new TianyiClient({
+      sessionKey: "SK",
+      accessToken: "AT",
+      refreshToken: "RT",
+      fetchImpl,
+      onCredentialRefresh: (creds) => {
+        refreshed.push(creds);
+      },
+    });
+    const items = await c.listFiles("-11");
+    expect(refreshed).toHaveLength(1); // renewSession actually fired
+    expect(items).toEqual([{ id: "111222333444555666", name: "Movies", size: 0, md5: "", isFolder: true }]); // retried result, NOT []
+  });
+
+  it("throws TianyiAuthError (never []) when the HTTP-400 errorCode auth envelope persists and renew fails", async () => {
+    const fetchImpl = fetchStub((url) => {
+      if (url.includes("getSessionForPC")) return { status: 200, body: '{"res_code":-1,"res_message":"renew failed"}' };
+      if (url.includes("refreshToken.do")) return { status: 200, body: '{"res_code":-1,"res_message":"refresh failed"}' };
+      return { status: 400, body: '{"errorCode":"InvalidSessionKey","errorMsg":"check ip error - curIp=1.2.3.4","success":null}' };
+    });
+    const c = new TianyiClient({ sessionKey: "SK", accessToken: "AT", refreshToken: "RT", fetchImpl });
+    await expect(c.listFiles("-11")).rejects.toBeInstanceOf(TianyiAuthError);
+  });
+
+  it("throws a loud non-auth error on an HTTP 400 with a non-auth errorCode (does not return [])", async () => {
+    const fetchImpl = fetchStub(() => ({ status: 400, body: '{"errorCode":"FileNotFound","errorMsg":"no such dir","success":null}' }));
+    const c = new TianyiClient({ sessionKey: "SK", accessToken: "AT", refreshToken: "RT", fetchImpl });
+    await expect(c.listFiles("-11")).rejects.toThrow(/FileNotFound|status=400/);
+    await c.listFiles("-11").catch((e) => expect(isTianyiAuthError(e)).toBe(false));
+  });
 });
 
 describe("TianyiClient SHARE_SAVE chain", () => {

@@ -220,14 +220,24 @@ export class TianyiClient {
       throw new Error(`TIANYI_HTTP_FAILED: status=${res.status} non-JSON body`);
     }
     const data = parsed as Record<string, unknown>;
-    const code = data["res_code"];
-    const message = String(data["res_message"] ?? "");
+    // 天翼 SUCCESS 走 res_code(0/缺省);AUTH/错误走 errorCode/errorMsg(+HTTP 4xx),
+    // 例如真号实测:HTTP 400 `{"errorCode":"InvalidSessionKey","errorMsg":"check ip error…"}`。
+    // 只读 res_code 会让 code=undefined → 错误对象被当空目录返回(fail-quiet)。两套 envelope 都读。
+    const code = data["res_code"] ?? data["errorCode"];
+    const message = String(data["res_message"] ?? data["errorMsg"] ?? "");
     if (isSessionDead(code, message)) {
       if (retried) {
         throw new TianyiAuthError(`TIANYI_AUTH_FAILED: ${message || "session invalid"}`);
       }
-      await this.renewSession(); // 失败会抛 TianyiAuthError
+      await this.renewSession(); // 失败会抛 TianyiAuthError;getSessionForPC 重签当前 IP
       return retry();
+    }
+    // 非 2xx 且无可识别成功 envelope(code 仍 undefined/null)→ 失败 loud,
+    // 绝不把 4xx 错误体当成空目录 [] 返回。放在 isSessionDead 之后,故 400 InvalidSessionKey 仍走自愈。
+    if (res.status >= 400 && (code === undefined || code === null)) {
+      throw new Error(
+        `TIANYI_${path.replace(/[^a-z]/gi, "_")}_FAILED: status=${res.status} ${message || res.text.slice(0, 120)}`,
+      );
     }
     if (code !== 0 && code !== undefined && code !== "0") {
       throw new Error(`TIANYI_${path.replace(/[^a-z]/gi, "_")}_FAILED: res_code=${String(code)} ${message}`);
@@ -583,12 +593,13 @@ export class TianyiClient {
 
 // ── module helpers ──────────────────────────────────────────────────────────
 
-/** 会话失效信号:res_code 为 InvalidSessionKey,或 message 含 userSessionBO is null / 会话失效。 */
+/** 会话失效信号:code(res_code 或 errorCode)为 InvalidSessionKey,或 message 含
+ *  userSessionBO is null / 会话失效 / check ip error(IP 变更导致 session 绑定失效)。 */
 function isSessionDead(code: unknown, message: string): boolean {
   if (code === "InvalidSessionKey") {
     return true;
   }
-  return /userSessionBO is null|InvalidSessionKey|会话失效|sessionKey.*invalid/i.test(message);
+  return /userSessionBO is null|InvalidSessionKey|会话失效|sessionKey.*invalid|check ip error/i.test(message);
 }
 
 function mergeTianyiListing(fileListAO: unknown): TianyiItem[] {
