@@ -107,6 +107,22 @@ export async function connectGuangYaAction(
   }
 }
 
+/** Settings "添加网盘 → 天翼": bind a pasted SSON cookie as a new drive. Mirrors
+ *  connectGuangYaAction; the SSON is exchanged for a full session (personal +
+ *  family credentials) + bound in connectTianyiSson (workflow-runtime). QR-scan
+ *  binds via the /api/tianyi/qrcode/confirm route (completeTianyiQrLogin). */
+export async function connectTianyiSsonAction(sson: string): Promise<ConnectQuarkActionResult> {
+  assertNotDemo();
+  try {
+    const { connectTianyiSson } = await import("../lib/workflow-runtime");
+    const { providerUid } = await connectTianyiSson(sson);
+    revalidatePath("/settings");
+    return { ok: true, message: `天翼云盘已连接（账号 ${providerUid.slice(0, 10)}…）。` };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 export interface RequestTrackingActionResult {
   status:
     | "requested"

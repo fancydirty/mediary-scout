@@ -77,6 +77,19 @@ describe("describeAgentRunError — does NOT misclassify netdisk (brand) auth er
     expect(describeAgentRunError(new Error(msg))).toBe(msg);
   });
 
+  it("leaves a Tianyi auth error UNCHANGED (dead session ≠ AI 模型 401)", () => {
+    const msg = "TIANYI_AUTH_FAILED: InvalidSessionKey (check ip error) 401";
+    expect(describeAgentRunError(new Error(msg))).toBe(msg);
+  });
+
+  it("leaves a TianyiAuthError with a 401 statusCode UNCHANGED (brand prefix wins)", () => {
+    const brand = Object.assign(new Error("TIANYI_AUTH_FAILED: session invalid"), {
+      statusCode: 401,
+      name: "TianyiAuthError",
+    });
+    expect(describeAgentRunError(brand)).toBe("TIANYI_AUTH_FAILED: session invalid");
+  });
+
   it("leaves a brand auth error with a 401 statusCode UNCHANGED (brand prefix wins)", () => {
     const brand = Object.assign(new Error("GUANGYA_AUTH_FAILED: 401 after refresh"), {
       statusCode: 401,

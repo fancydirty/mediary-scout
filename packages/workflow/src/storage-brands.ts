@@ -15,26 +15,41 @@ import type { ResourceType } from "./domain.js";
 import { isGuangYaAuthError, parseGuangYaUid } from "./guangya-client.js";
 import { isPan115AuthError } from "./pan115-cookie-client.js";
 import { isQuarkAuthError, parseQuarkUid } from "./quark-cookie-client.js";
+import { isTianyiAuthError, parseTianyiUid } from "./tianyi-client.js";
 
-export type StorageProvider = "pan115" | "quark" | "guangya";
-export type ResourceProviderKind = "pansou-115" | "pansou-quark" | "pansou-magnet" | "prowlarr";
+export type StorageProvider = "pan115" | "quark" | "guangya" | "tianyi";
+export type ResourceProviderKind =
+  | "pansou-115"
+  | "pansou-quark"
+  | "pansou-magnet"
+  | "pansou-tianyi"
+  | "prowlarr";
 
 export interface StorageBrand {
   provider: StorageProvider;
   /** Display name shown in the UI (switcher chip, settings tab). */
   label: string;
-  /** Extract the instance-wide-unique account id from a credential cookie. */
-  parseUid: (cookie: string) => string | null;
-  /** Whether an error is this brand's dead-cookie signal (drives freeze on it). */
+  /** Extract the instance-wide-unique account id from the brand's credential —
+   *  a cookie string for cookie brands (115/夸克), a JWT access token for 光鸭,
+   *  the loginName for 天翼. Callers pass the brand-appropriate string, never a
+   *  JSON blob (a blob would rotate with tokens and destabilize
+   *  UNIQUE(provider, provider_uid)). */
+  parseUid: (credential: string) => string | null;
+  /** Whether an error is this brand's dead-credential signal (drives freeze on it). */
   isAuthError: (err: unknown) => boolean;
-  /** Resource providers applicable to this brand. Quark has no magnet web API, so
-   *  it omits "prowlarr" — magnet stays 115-only. */
+  /** Resource providers applicable to this brand. Share-link brands (夸克/天翼)
+   *  have no magnet web API, so they omit "prowlarr" — magnet is 115/光鸭 only. */
   resourceProviderKinds: ResourceProviderKind[];
   /** Whether to strengthen the Chinese-subs soft default for this brand. When true,
    *  the agent prompt emphasizes that Chinese-titled resources from this drive are
    *  more likely to carry Chinese subs (these are Chinese-world drives where resources
    *  mostly come from the Chinese community). Set to false for magnet-only drives. */
   assumeChineseSubsFromChineseTitle: boolean;
+  /** Credential shape: "cookie" brands (115/夸克) store a raw cookie string;
+   *  "token" brands (光鸭/天翼) store a JSON token blob. workflow-runtime routes
+   *  credential extraction, executor dispatch, and refresh persistence on this
+   *  field — replacing the old hardcoded `provider === "guangya"` checks. */
+  authKind: "cookie" | "token";
 }
 
 export const STORAGE_BRANDS: StorageBrand[] = [
@@ -45,6 +60,7 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     isAuthError: isPan115AuthError,
     resourceProviderKinds: ["pansou-115", "prowlarr"],
     assumeChineseSubsFromChineseTitle: true,
+    authKind: "cookie",
   },
   {
     provider: "quark",
@@ -53,6 +69,7 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     isAuthError: isQuarkAuthError,
     resourceProviderKinds: ["pansou-quark"],
     assumeChineseSubsFromChineseTitle: true,
+    authKind: "cookie",
   },
   {
     provider: "guangya",
@@ -61,6 +78,16 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     isAuthError: isGuangYaAuthError,
     resourceProviderKinds: ["pansou-magnet", "prowlarr"],
     assumeChineseSubsFromChineseTitle: false,
+    authKind: "token",
+  },
+  {
+    provider: "tianyi",
+    label: "天翼云盘",
+    parseUid: parseTianyiUid,
+    isAuthError: isTianyiAuthError,
+    resourceProviderKinds: ["pansou-tianyi"],
+    assumeChineseSubsFromChineseTitle: true,
+    authKind: "token",
   },
 ];
 
@@ -73,6 +100,9 @@ export const STORAGE_BRANDS: StorageBrand[] = [
 export function allowedResourceTypesForKinds(kinds: readonly string[]): ResourceType[] {
   if (kinds.includes("pansou-quark")) {
     return ["quark"];
+  }
+  if (kinds.includes("pansou-tianyi")) {
+    return ["tianyi"];
   }
   if (kinds.includes("pansou-magnet")) {
     return ["magnet"];

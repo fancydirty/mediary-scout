@@ -57,8 +57,9 @@ export interface TaskAgentPromptOptions {
   /** Rendered quality-preference guidance (召回后选片优先级, from getQualityGuidance);
    *  "" / undefined = 不限 → no quality block injected. */
   qualityGuidance?: string;
-  /** The run's drive brand ("pan115" | "quark") — selects the brand transfer model
-   *  in the prompt and the brand-specific dead-links skill section. Default 115. */
+  /** The run's drive brand ("pan115" | "quark" | "guangya" | "tianyi") — selects the
+   *  brand transfer model in the prompt and the brand-specific dead-links skill
+   *  section (transferModelLine / getStorageSkill). Default 115. */
   storageProvider?: string;
   /** When true, the agent loop registers the subtitle tools (viewSubtitleSnapshot +
    *  transferSubtitle). Set by orchestrator when the subtitle gates pass. */
@@ -80,15 +81,19 @@ export interface TaskAgentPromptOptions {
   prefetchedCandidateCount?: number;
 }
 
-/** A brand-specific transfer-model note. 夸克 differs from 115 (转存分享链 / 无磁力)
- *  and 光鸭 differs again (磁力/离线, 无秒传/分享转存), so make each explicit; 115 keeps
- *  the existing in-prompt guidance (no extra line). Exported for unit coverage. */
+/** A brand-specific transfer-model note. 夸克 differs from 115 (转存分享链 / 无磁力),
+ *  光鸭 differs again (磁力/离线, 无秒传/分享转存), and 天翼 mirrors 夸克 (转存分享链 /
+ *  无磁力, SHARE_SAVE), so make each explicit; 115 keeps the existing in-prompt
+ *  guidance (no extra line). Exported for unit coverage. */
 export function transferModelLine(options: TaskAgentPromptOptions): string {
   if (options.storageProvider === "quark") {
     return `\nTRANSFER MODEL — 夸克网盘 (this drive): every candidate is a 夸克分享链 (转存分享链, the 秒传 equivalent). 夸克 has NO magnet / offline-download API, so there are NO magnet candidates and a magnet would fail loud (QUARK_NO_MAGNET); ignore any 115/magnet wording — it does not apply here. A dead/expired share fails LOUD (分享不存在 / 已取消 / 已过期 / 提取码错误) — switch to the next covering 夸克分享. Read the "dead-links-black-box" skill section: on this drive it is the 夸克 version.`;
   }
   if (options.storageProvider === "guangya") {
     return `\nTRANSFER MODEL — 光鸭云盘 (this drive): every candidate is a 磁力/离线链接 (磁力 / ed2k / BT). transferCandidate runs resolve_res → create_task → 轮询 the offline task until it lands. 光鸭 is MAGNET/OFFLINE-ONLY — there is NO instant-save and NO 分享转存, so a 夸克/115/光鸭 分享链 is NOT supported and fails loud (GUANGYA_ONLY_MAGNET); ignore any 115 instant-save / share-link wording — it does not apply here. A dead magnet (resolve_res 空 / 离线任务无种子不落盘) does not error loudly — trust the staging reread, and on nothing-landed switch to the next covering 磁力 candidate. Read the "dead-links-black-box" skill section: on this drive it is the 光鸭 version.`;
+  }
+  if (options.storageProvider === "tianyi") {
+    return `\nTRANSFER MODEL — 天翼云盘 (this drive): every candidate is a 天翼分享链 (cloud.189.cn/t/<code>, a 转存分享链 — the 115-秒传 equivalent): the system SHARE_SAVE's the share's files into staging. 天翼 has NO magnet / offline-download API, so there are NO magnet candidates and a magnet would fail loud (TIANYI_NO_MAGNET); ignore any 115/magnet wording — it does not apply here. A dead/expired share fails LOUD (分享不存在 / 已失效 / 已过期 / 需要提取码 / ShareNotFound) — switch to the next covering 天翼分享. Read the "dead-links-black-box" skill section: on this drive it is the 天翼 version.`;
   }
   return "";
 }

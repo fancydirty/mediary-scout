@@ -214,6 +214,18 @@ function normalizeResourceType(rawType: string, url: string): ResourceType | nul
   if (rawType === "quark" || url.includes("pan.quark.cn/s/")) {
     return "quark";
   }
+  // 天翼 share shapes mirror parseTianyiShareUrl (tianyi-storage-executor):
+  // cloud.189.cn/t/<code> (the probe-confirmed PanSou link shape) and
+  // cloud.189.cn/web/share?…code=<code> (the ?code= is required — the executor
+  // can't parse a code-less share URL). Deliberately NOT bare "cloud.189.cn/",
+  // which would misclassify non-share 189 URLs (e.g. the web portal).
+  if (
+    rawType === "tianyi" ||
+    url.includes("cloud.189.cn/t/") ||
+    /cloud\.189\.cn\/web\/share\?[^#]*\bcode=/.test(url)
+  ) {
+    return "tianyi";
+  }
   if (url.startsWith("magnet:")) {
     return "magnet";
   }

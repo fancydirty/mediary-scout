@@ -17,8 +17,13 @@ function makeGuangYaJwt(payload: Record<string, unknown>): string {
 }
 
 describe("storage brand registry", () => {
-  it("registers exactly pan115 + quark + guangya", () => {
-    expect(STORAGE_BRANDS.map((b) => b.provider).sort()).toEqual(["guangya", "pan115", "quark"]);
+  it("registers exactly pan115 + quark + guangya + tianyi", () => {
+    expect(STORAGE_BRANDS.map((b) => b.provider).sort()).toEqual([
+      "guangya",
+      "pan115",
+      "quark",
+      "tianyi",
+    ]);
   });
 
   it("getStorageBrand resolves guangya with its label, magnet/prowlarr kinds + uid parsing", () => {

@@ -41,9 +41,11 @@ const BRAND_AUTH_MARKERS = [
   "guangya",
   "quark",
   "pan115",
+  "tianyi",
   "pan115autherror",
   "quarkautherror",
   "guangyaautherror",
+  "tianyiautherror",
 ];
 
 function messageOf(error: unknown): string {
