@@ -14,19 +14,24 @@ import { createProtectedPan115CookieStorageExecutorFromEnv } from "./pan115-stor
 import type { StorageExecutor } from "./ports.js";
 import { QuarkCookieClient } from "./quark-cookie-client.js";
 import { QuarkStorageExecutor } from "./quark-storage-executor.js";
+import { TianyiClient } from "./tianyi-client.js";
+import type { TianyiClientOptions, TianyiCredential } from "./tianyi-client.js";
+import { TianyiStorageExecutor } from "./tianyi-storage-executor.js";
 
 export function createExecutorForBrand(input: {
   provider: string;
   /** Cookie credential for cookie-auth brands (115/夸克). Optional now that 光鸭
    *  authenticates with a token blob instead — pass `credential` for those. */
   cookie?: string;
-  /** Opaque credential blob for token-auth brands (光鸭: {accessToken,refreshToken,deviceId}). */
+  /** Opaque credential blob for token-auth brands (光鸭: {accessToken,refreshToken,deviceId};
+   *  天翼: {sessionKey,accessToken,refreshToken,familySessionKey?}). */
   credential?: unknown;
   /** The drive's write-scope directory ids (rootCid + Movies/TV/Anime). */
   scopeCids: string[];
   /** Base env for the 115 executor (guard pacing etc); defaults to process.env. */
   env?: Record<string, string | undefined>;
-  /** Persist hook for refreshed token-auth credentials (光鸭 refresh rotates tokens). */
+  /** Persist hook for refreshed token-auth credentials (光鸭 refresh rotates tokens;
+   *  天翼 session 自愈轮换 sessionKey/accessToken). */
   onCredentialRefresh?: (creds: unknown) => void | Promise<void>;
 }): StorageExecutor {
   if (input.provider === "pan115") {
@@ -65,6 +70,27 @@ export function createExecutorForBrand(input: {
     }
     return new GuangYaStorageExecutor({
       client: new GuangYaClient(clientOptions),
+      writeScopeDirectoryIds: input.scopeCids,
+    });
+  }
+  if (input.provider === "tianyi") {
+    const c = (input.credential ?? {}) as Partial<TianyiCredential>;
+    // Same exactOptionalPropertyTypes discipline as guangya: never set optional
+    // keys to `undefined`.
+    const clientOptions: TianyiClientOptions = {
+      sessionKey: c.sessionKey ?? "",
+      accessToken: c.accessToken ?? "",
+      refreshToken: c.refreshToken ?? "",
+    };
+    if (c.familySessionKey !== undefined) {
+      clientOptions.familySessionKey = c.familySessionKey;
+    }
+    const onRefresh = input.onCredentialRefresh;
+    if (onRefresh) {
+      clientOptions.onCredentialRefresh = (creds) => onRefresh(creds);
+    }
+    return new TianyiStorageExecutor({
+      client: new TianyiClient(clientOptions),
       writeScopeDirectoryIds: input.scopeCids,
     });
   }
