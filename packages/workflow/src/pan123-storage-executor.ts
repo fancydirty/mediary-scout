@@ -325,7 +325,7 @@ export class Pan123StorageExecutor implements StorageExecutor {
       }
       // A subdir DISCOVERED under an in-scope parent is itself within scope (the same
       // top-down derivation createDirectory relies on) — register it so a later
-      // removeDirectory can clear it. 123's SHARE_SAVE materializes wrapper subdirs
+      // removeDirectory can clear it. 123's saveShare (file/copy/async) materializes wrapper subdirs
       // SERVER-SIDE (not via createDirectory), so without this the movie flatten's
       // removeDirectory(wrapper) hits WRITE_SCOPE_VIOLATION and leaves empty wrapper
       // dirs + non-video junk behind (the PR#58 光鸭 lesson). Listing an OUT-of-scope

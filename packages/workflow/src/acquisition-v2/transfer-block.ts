@@ -19,6 +19,11 @@ const SYSTEMIC_PATTERNS: RegExp[] = [
   /云下载|离线/,
   /登录|重新登陆|未登录|登陆超时|登录超时/,
   /PAN115_AUTH|AUTH_FAILED|未授权|鉴权/i,
+  // Storage full ("网盘容量不足"): the drive itself is out of space — every further
+  // save fails identically. Real scenario: multi-account free-tier drives (123's
+  // 15GB 级小号) fill up. Dead-link messages never say 容量, so the false-positive
+  // surface is small.
+  /容量/,
 ];
 
 /**

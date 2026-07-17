@@ -117,12 +117,15 @@ const DEAD_LINKS_BLACK_BOX_PAN123 = `# Dead links, 转存, and black-box resourc
 The drive is 123网盘. Every candidate is a 123 分享链 (123pan.com/s/<key> — 123684/123865/123912 等镜像域也是真的,一样能转;提取码在 pwd) — a 转存分享 (the 115-秒传 equivalent): the system opens the share, lists its files, and 秒传复制s them into staging via a server-side async copy, then re-lists the target until the copy settles (the bounded polling is built in — you do NOT wait or poll yourself). transferCandidate returns the TRUE materialized files (the system rereads for you). Trust THAT, not your prediction.
 
 ## 无磁力 (this is the key difference from 115)
-123 has NO magnet / offline-download API (v1). So there are NO magnet candidates here (the resource provider only surfaces 123 分享链), and a magnet would fail LOUD ("PAN123_NO_MAGNET") if ever forced. There is therefore NO "magnet silently fails / wait for download" nuance at all — every candidate is a 转存分享 that either lands or fails loud.
+123 has NO magnet / offline-download API (v1). So there are NO magnet candidates here (the resource provider only surfaces 123 分享链), and a magnet would fail LOUD ("PAN123_NO_MAGNET") if ever forced. There is therefore NO "magnet silently fails / wait for download" nuance at all — every candidate is a 转存分享 that lands, fails loud, or — rarely — reports no_target_change (see below).
 
 ## Fail-loud (a dead / cancelled / wrong-code share)
 A 123 分享 fails LOUD with a clear reason — switch to another covering candidate:
-- "分享不存在", "分享已取消 / 链接失效 / 已过期", "提取码错误 / 需要提取码". All = dead.
-A dead link is the NORM, never a reason to give up — try the next 123 分享 that covers the need. For a movie, transferUntilLanded over your ranked 123 分享 burns through the dead ones automatically (it relies on this loud failure, exactly like the 115 path).
+- "分享为空 / 已失效" (the system's own empty/dead-share report), "分享不存在", "分享已取消 / 链接失效 / 已过期", "提取码错误 / 需要提取码". All = dead.
+A dead link is the NORM, never a reason to give up — try the next 123 分享 that covers the need. For a movie, rank your 123 分享 candidates best-first and transferCandidate them ONE at a time in that order — a dead one fails loud, so move straight on to the next until one lands. Do NOT use transferUntilLanded on this drive: it is 115-share-only and rejects 123 candidates.
+
+## no_target_change (the third outcome — NOT a loud failure)
+Sometimes the attempt reports no_target_change: the 转存 went through without an error, yet no new video appeared in the target dir within the built-in settle window. A LARGE share's server-side copy can outlast that window, so this can be a FALSE miss. Do NOT immediately re-transfer the same candidate (you may double-land its files) and do NOT instantly write it off: re-read the target directory (inspectStaging) first — if the files have appeared by then, it landed; only when the re-read still shows nothing did it truly not land, and THEN you switch to the next covering candidate.
 
 ## SYSTEMIC BLOCK (别甩锅)
 When a 123 转存 fails with a SYSTEMIC message — "配额不足" / "额度已用完" / "容量不足" / "VIP会员" / "登录" / "鉴权" — the resource EXISTS but the ACCOUNT is blocked (quota / auth / VIP). The tool result carries \`systemicBlock: { reason: "..." }\`. **立即停 — DO NOT keep transferring.** Every candidate will fail the same way. Report honestly: the resource was found, the account cannot transfer it (not "no resource"). This is actionable (top up / re-login), never blame the resource.

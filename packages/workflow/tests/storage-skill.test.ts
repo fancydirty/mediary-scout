@@ -68,6 +68,18 @@ describe("brand-aware storage skill", () => {
     expect(pan123).toContain("PAN123_NO_MAGNET");
     // a dead / cancelled / wrong-code share fails LOUD (switch candidate)
     expect(pan123).toMatch(/分享不存在|已取消|已失效|已过期|提取码错误|链接失效/);
+    // the ONE dead-share message the code itself guarantees (saveShare's empty/dead
+    // reply) must be in the examples — the rest await T10 live calibration
+    expect(pan123).toContain("分享为空 / 已失效");
+    // transferUntilLanded is 115-share-only (sandbox gate throws
+    // SANDBOX_TRANSFER_UNTIL_LANDED_REQUIRES_PAN115) — the arm must NOT recommend
+    // it, and must tell the truth: ranked one-at-a-time transferCandidate instead
+    expect(pan123).not.toMatch(/transferUntilLanded[^.]*(burns through|automatically)/);
+    expect(pan123).toMatch(/transferUntilLanded[^.]*115/);
+    expect(pan123).toContain("transferCandidate");
+    // the third outcome (settle window exhausted on a big async copy) is taught:
+    // re-read before re-transferring or burning the candidate
+    expect(pan123).toContain("no_target_change");
     // black-box gate keeps the publish-time heuristic (早于最新集=基本不含)
     expect(pan123).toMatch(/publish time|发布时间/i);
     // must NOT carry other brands' fail-loud codes / sentinels
