@@ -52,4 +52,18 @@ describe("STORAGE_BRANDS registry", () => {
     expect(getStorageBrand("guangya").provisionRootId).toBe("");
     expect(getStorageBrand("tianyi").provisionRootId).toBe("-11");
   });
+
+  it("carries each token brand's requiredCredentialKeys (drives the connection guard)", () => {
+    // extractStorageCredential treats a token blob as connected iff every one of
+    // these keys is a non-empty string; a change here changes what counts as a
+    // usable credential. Cookie brands have none (they authenticate by cookie).
+    expect(getStorageBrand("guangya").requiredCredentialKeys).toEqual(["accessToken", "refreshToken"]);
+    expect(getStorageBrand("tianyi").requiredCredentialKeys).toEqual([
+      "sessionKey",
+      "accessToken",
+      "refreshToken",
+    ]);
+    expect(getStorageBrand("pan115").requiredCredentialKeys).toBeUndefined();
+    expect(getStorageBrand("quark").requiredCredentialKeys).toBeUndefined();
+  });
 });
