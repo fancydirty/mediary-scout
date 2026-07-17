@@ -14,15 +14,17 @@ import { parsePan115Uid } from "./account-credentials.js";
 import type { ResourceType } from "./domain.js";
 import { isGuangYaAuthError, parseGuangYaUid } from "./guangya-client.js";
 import { isPan115AuthError } from "./pan115-cookie-client.js";
+import { isPan123AuthError, parsePan123Uid } from "./pan123-client.js";
 import { isQuarkAuthError, parseQuarkUid } from "./quark-cookie-client.js";
 import { isTianyiAuthError, parseTianyiUid } from "./tianyi-client.js";
 
-export type StorageProvider = "pan115" | "quark" | "guangya" | "tianyi";
+export type StorageProvider = "pan115" | "quark" | "guangya" | "tianyi" | "pan123";
 export type ResourceProviderKind =
   | "pansou-115"
   | "pansou-quark"
   | "pansou-magnet"
   | "pansou-tianyi"
+  | "pansou-123"
   | "prowlarr";
 
 export interface StorageBrand {
@@ -109,6 +111,17 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     provisionRootId: "-11", // 天翼个人云 root folder id
     requiredCredentialKeys: ["sessionKey", "accessToken", "refreshToken"],
   },
+  {
+    provider: "pan123",
+    label: "123网盘",
+    parseUid: parsePan123Uid,
+    isAuthError: isPan123AuthError,
+    resourceProviderKinds: ["pansou-123"],
+    assumeChineseSubsFromChineseTitle: true,
+    authKind: "token",
+    provisionRootId: "0", // 123 个人云根
+    requiredCredentialKeys: ["token"],
+  },
 ];
 
 /**
@@ -123,6 +136,9 @@ export function allowedResourceTypesForKinds(kinds: readonly string[]): Resource
   }
   if (kinds.includes("pansou-tianyi")) {
     return ["tianyi"];
+  }
+  if (kinds.includes("pansou-123")) {
+    return ["123"];
   }
   if (kinds.includes("pansou-magnet")) {
     return ["magnet"];

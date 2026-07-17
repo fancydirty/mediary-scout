@@ -23,7 +23,7 @@ export type WorkflowStatus =
    *  releases, but NOT queued/running — the worker never claims it and it is not an
    *  "active" run (see isActiveWorkflowStatus). The air-time gate runs the agent. */
   | "reserved";
-export type ResourceType = "115" | "magnet" | "manual" | "quark" | "tianyi";
+export type ResourceType = "115" | "magnet" | "manual" | "quark" | "tianyi" | "123";
 export type TransferStatus = "succeeded" | "failed" | "no_target_change";
 export type Confidence = "low" | "medium" | "high";
 
