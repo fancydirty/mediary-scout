@@ -17,7 +17,7 @@ function isValidPan123Token(token: string): boolean {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  if (isDemoMode()) return NextResponse.json({ error: "演示站只读" }, { status: 403 });
+  if (isDemoMode()) return NextResponse.json({ ok: false, error: "演示站只读" }, { status: 403 });
   // Parse the body OUTSIDE the business try/catch: invalid/missing JSON is a
   // client error (400), not an infra failure (502) — mirrors tianyi's confirm.
   const body = (await request.json().catch(() => null)) as { token?: unknown } | null;

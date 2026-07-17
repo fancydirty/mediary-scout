@@ -6,7 +6,7 @@ import { Pan123QrLoginClient } from "@media-track/workflow";
 // the session is just { uniID, qrcodeContent } — /status only needs the uniID
 // and /confirm only needs the token the poll returns.
 export async function POST(): Promise<NextResponse> {
-  if (isDemoMode()) return NextResponse.json({ error: "演示站只读" }, { status: 403 });
+  if (isDemoMode()) return NextResponse.json({ ok: false, error: "演示站只读" }, { status: 403 });
   try {
     const session = await new Pan123QrLoginClient().getQrSession();
     return NextResponse.json({ ok: true, session });
