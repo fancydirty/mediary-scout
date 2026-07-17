@@ -147,6 +147,20 @@ describe("Pan123Client transport / listFiles", () => {
     const c = new Pan123Client({ token: "TK", fetchImpl });
     await expect(c.listFiles("0")).rejects.toThrow(/PAN123_HTTP_FAILED/);
   });
+
+  it("fails LOUD on HTTP 200 + a non-JSON body (WAF/challenge page must NOT become [])", async () => {
+    // outage-as-empty 病:被墙/挑战页常回 HTTP 200 + HTML。null→{}→code=0→空成功 = 上游中断
+    // 伪装成空目录。必须无条件 fail-loud,不看 status。
+    const fetchImpl = fetchStub(() => ({ status: 200, body: "<html>blocked</html>" }));
+    const c = new Pan123Client({ token: "TK", fetchImpl });
+    await expect(c.listFiles("0")).rejects.toThrow(/PAN123_HTTP_FAILED/);
+  });
+
+  it("fails LOUD on HTTP 200 + JSON that is missing `code` (abnormal response, not code:0 empty success)", async () => {
+    const fetchImpl = fetchStub(() => ({ status: 200, body: { ok: true } }));
+    const c = new Pan123Client({ token: "TK", fetchImpl });
+    await expect(c.listFiles("0")).rejects.toThrow(/PAN123_HTTP_FAILED/);
+  });
 });
 
 describe("Pan123Client 转存链 (share/get → file/copy/async)", () => {
@@ -194,6 +208,39 @@ describe("Pan123Client 转存链 (share/get → file/copy/async)", () => {
       drive_id: 0,
       type: 0,
     });
+  });
+
+  it("follows the share Next cursor: saveShare copies ALL pages (no >100 silent truncation)", async () => {
+    // no-silent-caps:分享顶层 >100 个文件时,只转第 1 页 = 静默丢失。listShareDir 必须翻页。
+    const nexts: string[] = [];
+    let copyBody: Record<string, unknown> = {};
+    const fetchImpl = fetchStub((url, init) => {
+      if (url.includes("/share/get")) {
+        const next = new URL(url).searchParams.get("next") ?? "";
+        nexts.push(next);
+        if (next === "0") {
+          return {
+            status: 200,
+            body: '{"code":0,"data":{"InfoList":[{"FileId":9007199254740993001,"FileName":"A.mkv","Size":1,"Etag":"EA","Type":0}],"Next":"1"}}',
+          };
+        }
+        return {
+          status: 200,
+          body: '{"code":0,"data":{"InfoList":[{"FileId":9007199254740993002,"FileName":"B.mkv","Size":2,"Etag":"EB","Type":0}],"Next":"-1"}}',
+        };
+      }
+      if (url.includes("/file/copy/async")) {
+        copyBody = JSON.parse(init.body ?? "{}");
+        return { status: 200, body: { code: 0 } };
+      }
+      throw new Error("unexpected " + url);
+    });
+    const c = new Pan123Client({ token: "TK", fetchImpl });
+    const r = await c.saveShare({ shareKey: "KEY", sharePwd: "", targetParentId: "0" });
+    expect(r.ok).toBe(true);
+    expect(nexts).toEqual(["0", "1"]); // both pages fetched
+    const list = copyBody.file_list as Array<Record<string, unknown>>;
+    expect(list.map((f) => f.file_name)).toEqual(["A.mkv", "B.mkv"]); // BOTH pages copied, not just page 1
   });
 
   it("returns ok:false (does NOT throw) for an empty / dead share", async () => {

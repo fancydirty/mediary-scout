@@ -104,11 +104,10 @@ export function isPan123AuthError(error: unknown): error is Pan123AuthError {
   return error instanceof Pan123AuthError;
 }
 
-/** The credential blob persisted in connected_storages.payload. */
+/** The credential blob persisted in connected_storages.payload. v1 是纯 token 模型
+ *  (web 面无刷新端点),故不含 tokenExp/meta——没有代码写读,YAGNI。 */
 export interface Pan123Credential {
   token: string;
-  tokenExp?: number;
-  meta?: Record<string, unknown>;
 }
 
 export type Pan123Fetch = (
@@ -168,10 +167,18 @@ export class Pan123Client {
       },
       ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
     });
-    const data = (parsePan123Json(res.text) ?? {}) as Record<string, unknown>;
-    // 非 JSON 且 HTTP 失败:fail-loud(别 fail-quiet 把 502/WAF 页当空成功——天翼血泪)。
-    if (res.status >= 400 && data["code"] === undefined) {
-      throw new Error(`PAN123_HTTP_FAILED: status=${res.status}`);
+    const parsed = parsePan123Json(res.text);
+    // Fail LOUD on a non-JSON body (WAF/gateway/challenge HTML, transient 5xx) —
+    // never null→{}→code=0=空成功, or an upstream outage / GFW block masquerades as
+    // an empty directory / 「分享已失效」 (the TMDB-outage-as-empty 病, 天翼血泪).
+    // ⚠️ Not gated on HTTP status: challenge pages ship HTTP 200 + HTML.
+    if (parsed === null || typeof parsed !== "object") {
+      throw new Error(`PAN123_HTTP_FAILED: status=${res.status} non-JSON body`);
+    }
+    const data = parsed as Record<string, unknown>;
+    // 123 每个 web 响应都带 code;缺 code = 非正常响应(不是 code:0 空成功)→ fail loud。
+    if (data["code"] === undefined) {
+      throw new Error(`PAN123_HTTP_FAILED: status=${res.status} missing code`);
     }
     const code = numOf(data["code"]);
     if (code === 401) {
@@ -219,25 +226,39 @@ export class Pan123Client {
     return out;
   }
 
-  /** 列分享目录(share/get,登录态空码穿透)。读 data.InfoList → 统一 item。 */
+  /** 列分享目录(share/get,登录态空码穿透)。分页游标 `next`(起始 "0"),读 data.InfoList
+   *  + data.Next,停止哨兵同 listFiles。合并所有页——分享顶层 >100 文件时不静默截断
+   *  (no-silent-caps,转存完整性)。 */
   async listShareDir(input: { shareKey: string; sharePwd: string; parentFileId?: string }): Promise<Pan123Item[]> {
-    const resp = await this.signed("/share/get", {
-      method: "GET",
-      query: {
-        ShareKey: input.shareKey,
-        SharePwd: input.sharePwd,
-        parentFileId: input.parentFileId ?? "0",
-        Page: "1",
-        limit: "100",
-        next: "0",
-        orderBy: "file_name",
-        orderDirection: "asc",
-        event: "homeListFile",
-      },
-    });
-    const d = (resp["data"] ?? {}) as Record<string, unknown>;
-    const infoList = Array.isArray(d["InfoList"]) ? (d["InfoList"] as unknown[]) : [];
-    return infoList.map(mapPan123Item);
+    const out: Pan123Item[] = [];
+    let next = "0";
+    for (let guard = 0; guard < 100; guard++) {
+      const resp = await this.signed("/share/get", {
+        method: "GET",
+        query: {
+          ShareKey: input.shareKey,
+          SharePwd: input.sharePwd,
+          parentFileId: input.parentFileId ?? "0",
+          Page: "1",
+          limit: "100",
+          next,
+          orderBy: "file_name",
+          orderDirection: "asc",
+          event: "homeListFile",
+        },
+      });
+      const d = (resp["data"] ?? {}) as Record<string, unknown>;
+      const infoList = Array.isArray(d["InfoList"]) ? (d["InfoList"] as unknown[]) : [];
+      for (const it of infoList) {
+        out.push(mapPan123Item(it));
+      }
+      const nextCursor = d["Next"];
+      if (isStopCursor(nextCursor)) {
+        break;
+      }
+      next = String(nextCursor);
+    }
+    return out;
   }
 
   // ── 转存链(share/get → file/copy/async) ─────────────────────────────────
