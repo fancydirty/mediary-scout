@@ -5,6 +5,7 @@ import {
   Storage115Executor,
 } from "../src/index.js";
 import { GuangYaStorageExecutor } from "../src/guangya-storage-executor.js";
+import { Pan123StorageExecutor } from "../src/pan123-storage-executor.js";
 import { TianyiStorageExecutor } from "../src/tianyi-storage-executor.js";
 import * as barrel from "../src/index.js";
 
@@ -59,6 +60,29 @@ describe("createExecutorForBrand", () => {
       onCredentialRefresh: () => {},
     });
     expect(full).toBeInstanceOf(TianyiStorageExecutor);
+  });
+
+  it("pan123 → Pan123StorageExecutor (from a token credential blob, no cookie)", () => {
+    const exec = createExecutorForBrand({
+      provider: "pan123",
+      credential: { token: "TK" },
+      scopeCids: ["s1"],
+    });
+    expect(exec).toBeInstanceOf(Pan123StorageExecutor);
+  });
+
+  it("pan123 constructs when the credential is missing or empty (token falls back to '')", () => {
+    const empty = createExecutorForBrand({ provider: "pan123", credential: {}, scopeCids: ["s1"] });
+    expect(empty).toBeInstanceOf(Pan123StorageExecutor);
+
+    const absent = createExecutorForBrand({ provider: "pan123", scopeCids: ["s1"] });
+    expect(absent).toBeInstanceOf(Pan123StorageExecutor);
+  });
+
+  it("barrel exports the three pan123 modules (client / qrcode login / executor)", () => {
+    expect(barrel.Pan123StorageExecutor).toBe(Pan123StorageExecutor);
+    expect(typeof barrel.Pan123Client).toBe("function");
+    expect(typeof barrel.Pan123QrLoginClient).toBe("function");
   });
 
   it("barrel exports the three tianyi modules (client / qrcode login / executor)", () => {
