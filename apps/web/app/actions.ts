@@ -123,6 +123,22 @@ export async function connectTianyiSsonAction(sson: string): Promise<ConnectQuar
   }
 }
 
+/** Settings "添加网盘 → 123网盘": bind a pasted 90-day login token as a new drive.
+ *  Mirrors connectTianyiSsonAction; the token is probed (listFiles on the root) +
+ *  bound in connectPan123Token (workflow-runtime). QR-scan binds via the
+ *  /api/pan123/qrcode/confirm route (completePan123QrLogin, Task 8). */
+export async function connectPan123TokenAction(token: string): Promise<ConnectQuarkActionResult> {
+  assertNotDemo();
+  try {
+    const { connectPan123Token } = await import("../lib/workflow-runtime");
+    const { providerUid } = await connectPan123Token(token);
+    revalidatePath("/settings");
+    return { ok: true, message: `123网盘已连接（账号 ${providerUid.slice(0, 10)}…）。` };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 export interface RequestTrackingActionResult {
   status:
     | "requested"
