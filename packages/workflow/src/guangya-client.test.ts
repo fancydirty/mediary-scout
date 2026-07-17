@@ -93,6 +93,25 @@ describe("GuangYaClient.validateToken", () => {
 
     await expect(client.validateToken()).rejects.toBeInstanceOf(GuangYaAuthError);
   });
+
+  it("trims whitespace-padded tokens before they reach the Bearer header", async () => {
+    // The credential extraction now hands over the raw stored blob, so the client
+    // is the single place that sanitizes tokens (mirrors TianyiClient).
+    const fetchImpl = mockFetch(async () => jsonResponse(200, { sub: "aj6Qo5l86EF4O2AM" }));
+    const client = new GuangYaClient({
+      accessToken: `  ${ACCESS}  `,
+      refreshToken: `\t${REFRESH}\n`,
+      deviceId: "dev123",
+      fetchImpl,
+    });
+
+    await client.validateToken();
+
+    const [, init] = fetchImpl.mock.calls[0]!;
+    expect((init as RequestInit).headers).toMatchObject({
+      Authorization: `Bearer ${ACCESS}`, // trimmed, not "Bearer   ACCESS  "
+    });
+  });
 });
 
 describe("GuangYaClient.listFiles", () => {

@@ -123,8 +123,12 @@ export class GuangYaClient {
   private readonly fetchImpl: GuangYaFetch;
 
   constructor(options: GuangYaClientOptions) {
-    this.accessToken = options.accessToken;
-    this.refreshToken = options.refreshToken;
+    // Trim tokens defensively (mirrors TianyiClient): the credential extraction now
+    // hands over the raw stored blob, so the client is the single place that
+    // sanitizes — a stray-whitespace token (e.g. from a refresh response) never
+    // reaches the `Bearer` header.
+    this.accessToken = options.accessToken.trim();
+    this.refreshToken = options.refreshToken.trim();
     this.deviceId = options.deviceId?.trim() || generateGuangYaDeviceId();
     this.onTokensRefreshed = options.onTokensRefreshed;
     this.fetchImpl = options.fetchImpl ?? ((url, init) => fetch(url, init));
@@ -290,10 +294,10 @@ export class GuangYaClient {
         `GUANGYA_REFRESH_FAILED: ${error || response.status} ${description}`.trim(),
       );
     }
-    this.accessToken = accessToken;
+    this.accessToken = accessToken.trim();
     const refreshToken = stringValue(recordValue(json, "refresh_token"));
     if (refreshToken) {
-      this.refreshToken = refreshToken;
+      this.refreshToken = refreshToken.trim();
     }
     if (this.onTokensRefreshed) {
       await this.onTokensRefreshed({
