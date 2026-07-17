@@ -1549,9 +1549,12 @@ async function provisionDriveCategoryDirs(
 ): Promise<{ rootCid: string; moviesCid: string; tvCid: string; animeCid: string }> {
   // Per-brand provisioning root is DATA in the registry ("0"/"0"/""/"-11"), not
   // logic — one lookup drives every arm below (was hardcoded per branch).
-  const baseParentId = getStorageBrand(provider).provisionRootId;
+  const brand = getStorageBrand(provider);
+  const baseParentId = brand.provisionRootId;
+  // Dispatch on authKind (registry) so ANY token brand takes the credential path —
+  // a future token brand won't silently fall through to the 115/夸克 cookie path.
   const executor =
-    provider === "guangya" || provider === "tianyi"
+    brand.authKind === "token"
       ? createExecutorForBrand({ provider, credential: credential ?? {}, scopeCids: [] })
       : provider === "quark"
         ? createExecutorForBrand({ provider: "quark", cookie, scopeCids: [] })
