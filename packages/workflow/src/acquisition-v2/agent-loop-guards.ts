@@ -174,11 +174,17 @@ export function buildNoCoverageStop<TOOLS extends ToolSet = ToolSet>(): StopCond
   return ({ steps }) => hasSuccessfulNoCoverageReport(steps as ReadonlyArray<StepLike>);
 }
 
-/** Whether any step carries a SUCCESSFUL finish result (the coverage summary,
- *  error-free). Mirrors hasSuccessfulNoCoverageReport: finish is the symmetric
- *  terminal declaration — 复联4 live (2026-07-17) showed the model calling finish
- *  ×3 in a row (~2 wasted steps) because only reportNoCoverage had a mechanical
- *  stop. An {error} finish result does NOT stop (premature call stays recoverable). */
+/** Whether any step carries a SUCCESSFUL finish result — the coverage summary,
+ *  error-free AND coverageMet:true. Mirrors hasSuccessfulNoCoverageReport: finish
+ *  is the symmetric terminal declaration — 复联4 live (2026-07-17) showed the model
+ *  calling finish ×3 in a row (~2 wasted steps) because only reportNoCoverage had
+ *  a mechanical stop. Two cases deliberately do NOT stop:
+ *  - {error} result (premature call stays recoverable);
+ *  - coverageMet:false — unlike reportNoCoverage (whose §9 guard REJECTS a
+ *    premature report), sandbox.finish() has no guard and always returns the
+ *    summary, so a first-move premature finish would otherwise hard-kill the run
+ *    with nothing done. Unmet coverage hands judgment back to the model; a model
+ *    that loops finish anyway is caught by the repetition stop / step cap. */
 export function hasSuccessfulFinish(steps: ReadonlyArray<StepLike>): boolean {
   for (const step of steps) {
     if (!(step.toolCalls ?? []).some((c) => c.toolName === "finish")) {
@@ -186,7 +192,7 @@ export function hasSuccessfulFinish(steps: ReadonlyArray<StepLike>): boolean {
     }
     for (const result of step.toolResults ?? []) {
       const output = result.output as { error?: unknown; coverageMet?: unknown } | undefined;
-      if (output && output.error === undefined && output.coverageMet !== undefined) {
+      if (output && output.error === undefined && output.coverageMet === true) {
         return true;
       }
     }

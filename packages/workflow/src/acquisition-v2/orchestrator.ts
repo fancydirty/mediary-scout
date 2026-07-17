@@ -215,9 +215,12 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     transferAttempts,
     resourceSnapshots,
     coverageMet: result.coverage.coverageMet,
-    // The finish terminal stop ends the loop AT the finish step, so a successful
+    // The finish terminal stop ends the loop AT the finish step, so a SUCCESSFUL
     // run has no closing free-text turn — fall back to the honest coverage summary
-    // so persisted decisions never carry an empty reason.
+    // for that case. Other mechanical stops (systemic block / no-coverage) also
+    // leave text empty; their reasons already persist elsewhere (each attempt's
+    // providerMessage / the reportNoCoverage reason), so they keep the pre-existing
+    // empty-reason behavior here.
     reason:
       result.text ||
       (result.coverage.coverageMet
