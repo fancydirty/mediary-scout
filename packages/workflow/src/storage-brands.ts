@@ -50,6 +50,12 @@ export interface StorageBrand {
    *  credential extraction, executor dispatch, and refresh persistence on this
    *  field — replacing the old hardcoded `provider === "guangya"` checks. */
   authKind: "cookie" | "token";
+  /** Parent directory id under which connect-time provisioning creates the
+   *  Mediary Scout/{Movies,TV,Anime} tree — per-brand DATA, not logic. 115 & 夸克
+   *  both root at "0"; 光鸭 roots at "" (account root); 天翼 personal-cloud roots
+   *  at "-11". Consumed as `provisionCategoryDirs`' baseParentId so the root is
+   *  registry-driven instead of hardcoded at each provision call site. */
+  provisionRootId: string;
 }
 
 export const STORAGE_BRANDS: StorageBrand[] = [
@@ -61,6 +67,7 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     resourceProviderKinds: ["pansou-115", "prowlarr"],
     assumeChineseSubsFromChineseTitle: true,
     authKind: "cookie",
+    provisionRootId: "0", // 115 account root
   },
   {
     provider: "quark",
@@ -70,6 +77,7 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     resourceProviderKinds: ["pansou-quark"],
     assumeChineseSubsFromChineseTitle: true,
     authKind: "cookie",
+    provisionRootId: "0", // 夸克 account root
   },
   {
     provider: "guangya",
@@ -79,6 +87,7 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     resourceProviderKinds: ["pansou-magnet", "prowlarr"],
     assumeChineseSubsFromChineseTitle: false,
     authKind: "token",
+    provisionRootId: "", // 光鸭 account root
   },
   {
     provider: "tianyi",
@@ -88,6 +97,7 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     resourceProviderKinds: ["pansou-tianyi"],
     assumeChineseSubsFromChineseTitle: true,
     authKind: "token",
+    provisionRootId: "-11", // 天翼个人云 root folder id
   },
 ];
 

@@ -1552,34 +1552,17 @@ async function provisionDriveCategoryDirs(
   cookie: string,
   credential: TokenCredential | null,
 ): Promise<{ rootCid: string; moviesCid: string; tvCid: string; animeCid: string }> {
-  if (provider === "guangya") {
-    const executor = createExecutorForBrand({ provider: "guangya", credential: credential ?? {}, scopeCids: [] });
-    return provisionCategoryDirs({
-      baseParentId: "", // 光鸭 account root
-      ...customDirNamesFromEnv(process.env),
-      storage: {
-        listChildDirs: (parentId: string) => executor.listChildDirectories(parentId),
-        createDirectory: (dir) => executor.createDirectory(dir),
-      },
-    });
-  }
-  if (provider === "tianyi") {
-    const executor = createExecutorForBrand({ provider: "tianyi", credential: credential ?? {}, scopeCids: [] });
-    return provisionCategoryDirs({
-      baseParentId: "-11", // 天翼个人云 root folder id
-      ...customDirNamesFromEnv(process.env),
-      storage: {
-        listChildDirs: (parentId: string) => executor.listChildDirectories(parentId),
-        createDirectory: (dir) => executor.createDirectory(dir),
-      },
-    });
-  }
+  // Per-brand provisioning root is DATA in the registry ("0"/"0"/""/"-11"), not
+  // logic — one lookup drives every arm below (was hardcoded per branch).
+  const baseParentId = getStorageBrand(provider).provisionRootId;
   const executor =
-    provider === "quark"
-      ? createExecutorForBrand({ provider: "quark", cookie, scopeCids: [] })
-      : createBootstrapPan115CookieStorageExecutor({ cookie });
+    provider === "guangya" || provider === "tianyi"
+      ? createExecutorForBrand({ provider, credential: credential ?? {}, scopeCids: [] })
+      : provider === "quark"
+        ? createExecutorForBrand({ provider: "quark", cookie, scopeCids: [] })
+        : createBootstrapPan115CookieStorageExecutor({ cookie });
   return provisionCategoryDirs({
-    baseParentId: "0",
+    baseParentId,
     ...customDirNamesFromEnv(process.env),
     storage: {
       listChildDirs: (parentId: string) => executor.listChildDirectories(parentId),
@@ -2454,7 +2437,7 @@ export async function connectQuarkCookie(rawCookie: string): Promise<{ providerU
   try {
     const executor = createExecutorForBrand({ provider: "quark", cookie, scopeCids: [] });
     cids = await provisionCategoryDirs({
-      baseParentId: "0", // 夸克 account root
+      baseParentId: getStorageBrand("quark").provisionRootId, // 夸克 account root ("0")
       ...customDirNamesFromEnv(process.env),
       storage: {
         listChildDirs: (parentId: string) => executor.listChildDirectories(parentId),
@@ -2561,7 +2544,7 @@ export async function connectGuangYa(rawAccessToken: string, rawRefreshToken: st
       scopeCids: [],
     });
     cids = await provisionCategoryDirs({
-      baseParentId: "", // 光鸭 account root
+      baseParentId: getStorageBrand("guangya").provisionRootId, // 光鸭 account root ("")
       ...customDirNamesFromEnv(process.env),
       storage: {
         listChildDirs: (parentId: string) => executor.listChildDirectories(parentId),
