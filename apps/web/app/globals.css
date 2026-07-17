@@ -3448,6 +3448,16 @@ select.setting-control {
   flex: none;
 }
 
+/* 未注册品牌的图标占位:方形,绝不与状态圆点撞形 */
+.drive-card-icon-fallback {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  flex: none;
+  display: inline-block;
+}
+
 .drive-card-name {
   font-weight: 600;
   font-size: 13px;

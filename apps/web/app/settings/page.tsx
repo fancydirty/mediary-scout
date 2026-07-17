@@ -399,7 +399,8 @@ async function Pan115Section() {
                     // eslint-disable-next-line @next/next/no-img-element
                     <img className="drive-card-icon" src={`/brands/${drive.provider}.svg`} alt="" width={26} height={26} />
                   ) : (
-                    <span className="drive-dot amber" aria-hidden />
+                    // 未注册品牌:中性方形占位(与右侧状态圆点区分形状,避免双点误读)
+                    <span className="drive-card-icon-fallback" aria-hidden />
                   )}
                   <span className="drive-card-name">{providerLabel(drive.provider)}</span>
                   <span
