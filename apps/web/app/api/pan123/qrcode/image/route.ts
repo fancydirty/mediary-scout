@@ -9,10 +9,17 @@ import QRCode from "qrcode";
 // broken QR image because its whitelist assumed the wrong content shape — do
 // NOT change these prefixes without re-probing the real generate response.
 // yun.123pan.com is kept as a defensive twin (the server may flip cn↔com), and
-// the bare-token shape is the last-resort fallback for a format change to a
-// plain id (mirroring the tianyi image route's three-layer structure).
+// login.123pan.com as well: the generate API lives there and fully controls the
+// url the client forwards verbatim, so a server-side flip to its own host must
+// not 400 the image. All three are 123-first-party prefixes — no arbitrary-URL
+// QR minting. The bare-token shape is the last-resort fallback for a format
+// change to a plain id (mirroring the tianyi image route's three-layer structure).
 const BARE_TOKEN_SHAPE = /^[0-9A-Za-z_-]{8,128}$/;
-const PAN123_LOGIN_URL_PREFIXES = ["https://yun.123pan.cn/", "https://yun.123pan.com/"];
+const PAN123_LOGIN_URL_PREFIXES = [
+  "https://yun.123pan.cn/",
+  "https://yun.123pan.com/",
+  "https://login.123pan.com/",
+];
 const MAX_URL_CONTENT_LENGTH = 2048;
 
 function isValidQrContent(content: string): boolean {
