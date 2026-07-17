@@ -74,7 +74,7 @@ export default function SettingsPage({
           <div className="settings-card">
             <p>
               🔭 这是只读演示站,不提供网盘连接、登录与任何写入设置。
-              想真正使用(连 115/夸克、配 LLM key、自定义画质/通知)请{" "}
+              想真正使用(连 夸克/115/光鸭/123/天翼、配 LLM key、自定义画质/通知)请{" "}
               <a href="https://github.com/fancydirty/mediary-scout" target="_blank" rel="noreferrer">
                 自部署
               </a>
