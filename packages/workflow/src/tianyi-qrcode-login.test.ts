@@ -141,9 +141,9 @@ describe("TianyiQrLoginClient.pollStatus (v1-critical 4-state mapping)", () => {
   });
 });
 
-// ── getQrSession: unifyLoginForPC (regex + cookies) → getUUID → BARE uuid ──────
+// ─ getQrSession: unifyLoginForPC (regex + cookies) → getUUID → verbatim uuid ──
 describe("TianyiQrLoginClient.getQrSession (unifyLoginForPC → getUUID)", () => {
-  it("parses lt/reqId/paramId, returns the BARE uuid as qrcodeContent, captures the cookie jar", async () => {
+  it("parses lt/reqId/paramId, returns the verbatim uuid as qrcodeContent, captures the cookie jar", async () => {
     const calls: Array<{ url: string; init: TianyiQrRequestInit }> = [];
     const rawFetch = vi.fn<TianyiQrRawFetch>(async (url: string, init: TianyiQrRequestInit) => {
       calls.push({ url, init });
@@ -178,7 +178,7 @@ describe("TianyiQrLoginClient.getQrSession (unifyLoginForPC → getUUID)", () =>
     expect(s.paramId).toBe("PARAM_9");
     expect(s.appId).toBe("8025431004");
     expect(s.clientType).toBe("10020");
-    expect(s.qrcodeContent).toBe("UUID_ABC"); // BARE uuid — genQRCode encodes u.uuid (probe)
+    expect(s.qrcodeContent).toBe("UUID_ABC"); // verbatim uuid — the QR encodes getUUID.do's uuid field as-is (live-verified: that field is the full qrClinentLogin login URL)
     expect(s.cookies).toContainEqual(["LOGIN_COOKIE", "abc"]);
     expect(s.cookies).toContainEqual(["UUID_CK", "def"]);
   });
@@ -210,6 +210,14 @@ describe("TianyiQrLoginClient.getQrSession (unifyLoginForPC → getUUID)", () =>
 
   it("throws TIANYI_QR_INIT_FAILED if the login page carries no lt/paramId", async () => {
     const rawFetch = vi.fn<TianyiQrRawFetch>(async () => makeRaw({ text: "<html>nope</html>" }));
+    const c = new TianyiQrLoginClient({ rawFetch });
+    await expect(c.getQrSession()).rejects.toThrow(/TIANYI_QR_INIT_FAILED/);
+  });
+
+  it("throws TIANYI_QR_INIT_FAILED when lt/paramId are present but reqId is missing", async () => {
+    // reqId rides as the Reqid header on every subsequent poll; a missing one must
+    // fail fast at init, not defer to a less-actionable later poll failure.
+    const rawFetch = vi.fn<TianyiQrRawFetch>(async () => makeRaw({ text: `lt = "L"; paramId = "P";` }));
     const c = new TianyiQrLoginClient({ rawFetch });
     await expect(c.getQrSession()).rejects.toThrow(/TIANYI_QR_INIT_FAILED/);
   });

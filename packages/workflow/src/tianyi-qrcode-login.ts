@@ -314,8 +314,12 @@ export class TianyiQrLoginClient {
     const lt = grab(page.text, LT_RE);
     const paramId = grab(page.text, PARAMID_RE);
     const reqId = grab(page.text, REQID_RE);
-    if (!lt || !paramId) {
-      throw new Error("TIANYI_QR_INIT_FAILED: could not parse lt/paramId from unifyLoginForPC page");
+    // reqId is validated alongside lt/paramId: pollStatus/loginBySson always send it
+    // as the Reqid header, so an empty one would defer the failure to a later request
+    // with a much less actionable error. The real unifyLoginForPC page always carries
+    // all three (probe-confirmed) — fail fast here if any is missing.
+    if (!lt || !paramId || !reqId) {
+      throw new Error("TIANYI_QR_INIT_FAILED: could not parse lt/reqId/paramId from unifyLoginForPC page");
     }
     return { lt, reqId, paramId };
   }
