@@ -169,7 +169,10 @@ export class TianyiQrLoginClient {
 
   /**
    * unifyLoginForPC (follow redirects, harvest cookies; regex lt/reqId/paramId) →
-   * getUUID.do → assemble the session. QR content = the bare uuid. PROBE-VERIFIED.
+   * getUUID.do → assemble the session. QR content = the getUUID.do `uuid` field
+   * forwarded verbatim — LIVE-VERIFIED that field carries the full
+   * `open.e.189.cn/api/account/qrClinentLogin.do?paras=new_uuid=<x>|<appId>` login
+   * URL (NOT a bare id), which the 天翼 App scans.
    */
   async getQrSession(): Promise<TianyiQrSession> {
     const jar = new Map<string, string>();
