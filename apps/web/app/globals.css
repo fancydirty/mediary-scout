@@ -17,6 +17,7 @@
   --info: #539df5;
   --border: #4d4d4d;
   --border-soft: #7c7c7c;
+  --text-faint: #8f8f8f;
   --radius-pill: 9999px;
   --radius-card: 8px;
   --shadow-heavy: rgba(0, 0, 0, 0.5) 0px 8px 24px;
@@ -3413,4 +3414,188 @@ select.setting-control {
   font-size: 12px;
   cursor: pointer;
   padding: 0;
+}
+
+/* ── 设置页·网盘 tab 重设计(盘位卡片网格 + 品牌图库添加流)──────────────── */
+
+.drive-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 8px;
+  margin: 14px 0 18px;
+}
+
+.drive-card {
+  background: var(--bg-surface);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: var(--radius-card);
+  padding: 10px 12px;
+  min-width: 0;
+}
+
+.drive-card.is-frozen {
+  border-color: rgba(255, 164, 43, 0.35);
+}
+
+.drive-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.drive-card-icon {
+  border-radius: 6px;
+  flex: none;
+}
+
+/* 未注册品牌的图标占位:方形,绝不与状态圆点撞形 */
+.drive-card-icon-fallback {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  flex: none;
+  display: inline-block;
+}
+
+.drive-card-name {
+  font-weight: 600;
+  font-size: 13px;
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.drive-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+  display: inline-block;
+}
+
+.drive-dot.green {
+  background: var(--accent);
+}
+
+.drive-dot.amber {
+  background: var(--warning);
+}
+
+.drive-card-uid {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 7px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.drive-card-meta {
+  color: var(--text-faint);
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+.tone-amber-text {
+  color: var(--warning);
+}
+
+/* 动作降权:默认弱化,悬停/键盘聚焦时提到全亮(opacity 不挡触控,手机可直接点) */
+.drive-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 9px;
+  opacity: 0.55;
+  transition: opacity 0.15s;
+}
+
+.drive-card:hover .drive-card-actions,
+.drive-card:focus-within .drive-card-actions {
+  opacity: 1;
+}
+
+.drive-card-actions .ghost-button,
+.drive-card-actions .secondary-button {
+  font-size: 12px;
+  padding: 3px 10px;
+}
+
+.drive-add-heading {
+  margin-bottom: 8px;
+}
+
+.drive-add-hint {
+  color: var(--text-faint);
+  font-size: 11px;
+  margin-left: 8px;
+}
+
+.drive-risk-note {
+  margin-top: 12px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* 品牌图库瓦片(集成图库范式:图标 + 名称 + 认证方式) */
+.brand-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+  gap: 8px;
+}
+
+.brand-tile {
+  background: var(--bg-surface);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: var(--radius-card);
+  padding: 12px 8px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  cursor: pointer;
+  color: var(--text);
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.brand-tile:hover {
+  border-color: rgba(255, 255, 255, 0.22);
+  background: var(--bg-raised);
+}
+
+.brand-tile.is-selected {
+  border-color: var(--accent);
+  background: var(--bg-raised);
+}
+
+.brand-tile-icon {
+  border-radius: 7px;
+  margin-bottom: 5px;
+}
+
+.brand-tile-label {
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.brand-tile-note {
+  color: var(--text-muted);
+  font-size: 10.5px;
+}
+
+.brand-tile.is-selected .brand-tile-note {
+  color: var(--accent);
+}
+
+.brand-connect-area {
+  margin-top: 10px;
+  background: var(--bg-surface);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: var(--radius-card);
+  padding: 14px;
 }
