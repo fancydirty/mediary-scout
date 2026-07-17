@@ -48,6 +48,7 @@ import {
   allowedResourceTypesForKinds,
   parseQuarkUid,
   parseGuangYaUid,
+  parseTianyiUid,
   generateGuangYaDeviceId,
   GuangYaClient,
   type ResolveAccountWorkerContext,
@@ -70,6 +71,8 @@ import {
   type ResourceType,
   type SeasonMetadataSync,
   type StorageExecutor,
+  type TianyiSession,
+  type TianyiQrSession,
   type TrackedSeason,
   type TrackedSeasonStatusView,
   type VerifiedFile,
@@ -2587,4 +2590,118 @@ export async function connectGuangYa(rawAccessToken: string, rawRefreshToken: st
     createdAt: new Date().toISOString(),
   });
   return { providerUid };
+}
+
+/**
+ * 天翼云盘:把一次登录换到的 TianyiSession(个人+家庭凭证一次拿到)绑定为当前账号
+ * 的一块新盘(brand "tianyi")。QR 扫码与 SSON 粘贴两入口都收敛到这里,镜像
+ * connectGuangYa 的结构(跨账号 reject / 同账号 refresh 保留 CIDs / 首绑 provision)。
+ * - providerUid = session.loginName(键 UNIQUE(provider, provider_uid))。空 loginName
+ *   = 换 session 没拿到账号标识,直接报错(否则空串当 uid 绑定,后续无法区分账号)。
+ * ⚠️ 持久身份 loginName 落在 payload.meta.loginName(不放顶层):会话续期时
+ *   makeTokenPersister 用 client 回传的凭证 blob + 保留的 meta 覆盖 payload,顶层
+ *   loginName 会被冲掉,只有 meta 里的才持久(见 T6 契约注释 makeTokenPersister)。
+ *   顶层只放会轮换的凭证(sessionKey/accessToken/refreshToken/familySessionKey)。
+ */
+async function bindTianyiConnectedStorage(session: TianyiSession): Promise<{ providerUid: string }> {
+  const providerUid = parseTianyiUid(session.loginName);
+  if (!providerUid) {
+    throw new Error("无法确定天翼云盘账号(登录返回的 loginName 为空);请重新扫码或粘贴 SSON 后重试。");
+  }
+  const accountId = await getCurrentAccountId();
+  const repository = getWorkflowRepository();
+  const existing = await repository.findConnectedStorageByUid("tianyi", providerUid);
+  const decision = resolveStorageBinding({ provider: "tianyi", providerUid, accountId, existing });
+  if (decision.action === "reject") {
+    throw new StorageOwnedByOtherAccountError();
+  }
+  // The rotating credential blob (what the client/provision consume + what session
+  // renewal replaces). loginName is durable identity → it lives ONLY under
+  // payload.meta, never top-level (T6 contract: makeTokenPersister overwrites the
+  // top-level blob on every renewal). familySessionKey rides along only when present.
+  const credentialBlob: Record<string, unknown> = {
+    sessionKey: session.sessionKey,
+    accessToken: session.accessToken,
+    refreshToken: session.refreshToken,
+    ...(session.familySessionKey ? { familySessionKey: session.familySessionKey } : {}),
+  };
+  const payload = {
+    ...credentialBlob,
+    meta: { connectedAt: new Date().toISOString(), loginName: session.loginName },
+  };
+  if (decision.action === "refresh" && existing) {
+    // Same account re-login → refresh the credential blob, keep the resolved CIDs.
+    await repository.upsertConnectedStorage({
+      id: existing.id,
+      accountId,
+      provider: "tianyi",
+      providerUid,
+      label: existing.label,
+      payload,
+      rootCid: existing.rootCid,
+      moviesCid: existing.moviesCid,
+      tvCid: existing.tvCid,
+      animeCid: existing.animeCid,
+      createdAt: existing.createdAt,
+    });
+    return { providerUid };
+  }
+  // insert: provision the media tree under the 天翼 personal-cloud root ("-11").
+  // Best-effort — a failure still stores the connection (worker self-heals later).
+  let cids: { rootCid: string | null; moviesCid: string | null; tvCid: string | null; animeCid: string | null } = {
+    rootCid: null,
+    moviesCid: null,
+    tvCid: null,
+    animeCid: null,
+  };
+  try {
+    cids = await provisionDriveCategoryDirs("tianyi", "", credentialBlob);
+  } catch (error) {
+    console.error(`[media-track] 天翼 directory provision failed (will store without CIDs): ${String(error)}`);
+  }
+  const idSuffix = providerUid.replace(/[^A-Za-z0-9]/g, "").slice(0, 48);
+  await repository.upsertConnectedStorage({
+    id: `cs_tianyi_${idSuffix}`,
+    accountId,
+    provider: "tianyi",
+    providerUid,
+    label: null,
+    payload,
+    rootCid: cids.rootCid,
+    moviesCid: cids.moviesCid,
+    tvCid: cids.tvCid,
+    animeCid: cids.animeCid,
+    createdAt: new Date().toISOString(),
+  });
+  return { providerUid };
+}
+
+/**
+ * 天翼扫码登录:用轮询确认后拿到的 redirectUrl,在 getSessionForPC.action 兑换全套
+ * session(个人+家庭凭证一次拿到),再走与 SSON 粘贴完全相同的绑定/provision。导出
+ * 供 QR 确认 API 路由(Task 8)调用。
+ * ℹ️ QR 会话的 cookie jar 只在 exchangeSession 内部用完即弃 —— exchange 先于 bind,
+ *    bind 只吃换好的 TianyiSession,jar 不参与绑定。
+ */
+export async function completeTianyiQrLogin(
+  session: TianyiQrSession,
+  redirectUrl: string,
+): Promise<{ providerUid: string }> {
+  const { TianyiQrLoginClient } = await import("@media-track/workflow");
+  const tianyiSession = await new TianyiQrLoginClient().exchangeSession(session, redirectUrl);
+  return bindTianyiConnectedStorage(tianyiSession);
+}
+
+/**
+ * 天翼 SSON 兜底:粘贴 SSON cookie(扫码不便时的回退),loginBySson 走
+ * unifyLoginForPC 重定向换全套 session,再绑定。SSON 为空直接报错(不触网)。
+ */
+export async function connectTianyiSson(sson: string): Promise<{ providerUid: string }> {
+  const trimmed = sson.trim();
+  if (!trimmed) {
+    throw new Error("请粘贴天翼 SSON cookie。");
+  }
+  const { TianyiQrLoginClient } = await import("@media-track/workflow");
+  const session = await new TianyiQrLoginClient().loginBySson(trimmed);
+  return bindTianyiConnectedStorage(session);
 }
