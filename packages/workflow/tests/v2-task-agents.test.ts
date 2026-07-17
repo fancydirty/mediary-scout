@@ -113,6 +113,23 @@ describe("transferModelLine — brand transfer model in the prompt", () => {
     expect(line).toMatch(/QUARK_NO_MAGNET/);
   });
 
+  it("tianyi: 转存分享链 / 无磁力 model (SHARE_SAVE, 秒传 equivalent), distinct from quark/guangya/default", () => {
+    const line = transferModelLine({ storageProvider: "tianyi" });
+    expect(line).toBeTruthy();
+    expect(line.length).toBeGreaterThan(0);
+    expect(line).toMatch(/天翼/);
+    // a 转存分享链 drive (share-transfer, like 夸克 — NOT a magnet/offline drive)
+    expect(line).toMatch(/分享链|转存分享/);
+    expect(line).toContain("cloud.189.cn");
+    // no magnet/offline API — a magnet fails loud with the tianyi sentinel
+    expect(line).toContain("TIANYI_NO_MAGNET");
+    expect(line).not.toMatch(/QUARK_NO_MAGNET|GUANGYA_ONLY_MAGNET/);
+    // distinct from the quark line, the guangya line, and the default (115) empty line
+    expect(line).not.toBe(transferModelLine({ storageProvider: "quark" }));
+    expect(line).not.toBe(transferModelLine({ storageProvider: "guangya" }));
+    expect(line).not.toBe(transferModelLine({}));
+  });
+
   it("115 (default) injects no extra transfer-model line", () => {
     expect(transferModelLine({})).toBe("");
     expect(transferModelLine({ storageProvider: "pan115" })).toBe("");

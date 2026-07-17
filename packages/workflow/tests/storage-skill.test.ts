@@ -33,11 +33,29 @@ describe("brand-aware storage skill", () => {
     expect(guangya).not.toContain("41006");
   });
 
+  it("getStorageSkill('tianyi') teaches 转存分享, 无磁力, TIANYI_NO_MAGNET, and fail-loud share signals; does NOT throw", () => {
+    const tianyi = getStorageSkill("tianyi");
+    expect(tianyi).toBeTruthy();
+    expect(tianyi.length).toBeGreaterThan(0);
+    // share-transfer (SHARE_SAVE) drive, like 夸克 — the 115-秒传 equivalent
+    expect(tianyi).toContain("转存分享");
+    expect(tianyi).toMatch(/秒传/);
+    expect(tianyi).toContain("天翼");
+    expect(tianyi).toContain("cloud.189.cn");
+    // no magnet/offline API on 天翼 — a magnet fails loud with this sentinel
+    expect(tianyi).toMatch(/无磁力|NO magnet/i);
+    expect(tianyi).toContain("TIANYI_NO_MAGNET");
+    // a dead / expired / access-code-required share fails LOUD (switch candidate)
+    expect(tianyi).toMatch(/分享不存在|已失效|已过期|需要提取码|ShareNotFound/);
+    // must NOT carry 夸克's fail-loud code (different brand)
+    expect(tianyi).not.toContain("41006");
+  });
+
   it("getStorageSkill throws for an unknown brand", () => {
     expect(() => getStorageSkill("baidu")).toThrowError(/unknown storage brand/i);
   });
 
-  it.each(["pan115", "quark", "guangya"])(
+  it.each(["pan115", "quark", "guangya", "tianyi"])(
     "%s teaches the systemic-block STOP rule (quota/auth = account problem, not a dead link)",
     (brand) => {
       const skill = getStorageSkill(brand);
@@ -56,6 +74,7 @@ describe("brand-aware storage skill", () => {
     expect(readSkillSection("dead-links-black-box", "quark")).toBe(getStorageSkill("quark"));
     expect(readSkillSection("dead-links-black-box", "pan115")).toBe(getStorageSkill("pan115"));
     expect(readSkillSection("dead-links-black-box", "guangya")).toBe(getStorageSkill("guangya"));
+    expect(readSkillSection("dead-links-black-box", "tianyi")).toBe(getStorageSkill("tianyi"));
     // defaults to 115 when no brand is given (single-user / legacy)
     expect(readSkillSection("dead-links-black-box")).toBe(getStorageSkill("pan115"));
   });

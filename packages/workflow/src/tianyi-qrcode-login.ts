@@ -6,7 +6,10 @@
  *
  *   getQrSession()   unifyLoginForPC (follow ≤6 redirects, harvest cookies each hop;
  *                    regex out lt/reqId/paramId) → getUUID.do → the QR encodes the
- *                    BARE uuid string.
+ *                    getUUID.do `uuid` FIELD verbatim. That field is NOT a bare id:
+ *                    live capture proved it carries the FULL qrClinentLogin login URL
+ *                    (open.e.189.cn/api/account/qrClinentLogin.do?paras=new_uuid=<x>|<appId>),
+ *                    which is exactly what the 天翼 App scanner expects.
  *   pollStatus()     qrcodeLoginState.do, mapping 4 status codes
  *                    (-106 waiting / -11002 scanned / 0 confirmed / -11001 expired).
  *   exchangeSession()  after "confirmed", redeem the poll's redirectUrl at
@@ -29,7 +32,12 @@
  * • getQrSession — PROBE-VERIFIED (tianyi-qr-init.mjs): unifyLoginForPC URL/params,
  *   the ≤6-hop cookie-harvesting redirect follow, the `lt = "…"`/`paramId = "…"`/
  *   `reqId = "…"` regexes, getUUID.do form, and — critically — the QR content is
- *   the BARE `u.uuid` (probe: `QRCode.toFile(png, u.uuid)`), NOT a constructed URL.
+ *   `u.uuid` forwarded VERBATIM (probe: `QRCode.toFile(png, u.uuid)`). That is NOT
+ *   a bare id: getUUID.do returns the FULL qrClinentLogin login URL in that field
+ *   (open.e.189.cn/api/account/qrClinentLogin.do?paras=new_uuid=<x>|<appId>), so
+ *   forwarding it verbatim — no construction, no bare-id substitution — is correct
+ *   (live-verified; the App scanner needs the whole URL). A bare id is only the
+ *   image route's defensive fallback, never what we encode here.
  * • pollStatus — PROBE-VERIFIED (tianyi-qr-poll.mjs): form (appId/clientType/
  *   returnUrl/paramId/uuid/encryuuid/date `YYYY-MM-DDHH:mm:ss.SSS`/timeStamp),
  *   Referer `https://open.e.189.cn` (no trailing slash)/Reqid/lt headers + jar, and
@@ -119,7 +127,9 @@ export interface TianyiQrSession {
   /** Login cookies harvested in getQrSession; MUST be threaded through pollStatus
    *  + exchangeSession (see file header). */
   cookies: TianyiQrCookieJar;
-  /** QR content: the BARE uuid string (probe: genQRCode encodes u.uuid). */
+  /** QR content: the getUUID.do `uuid` field forwarded verbatim (probe: genQRCode
+   *  encodes u.uuid). NOT a bare id — that field carries the full qrClinentLogin
+   *  login URL the 天翼 App scanner expects. */
   qrcodeContent?: string;
 }
 
@@ -184,7 +194,9 @@ export class TianyiQrLoginClient {
       clientType: QR_CLIENT_TYPE,
       returnUrl: RETURN_URL,
       cookies: [...jar],
-      qrcodeContent: uuid, // BARE uuid — genQRCode encodes u.uuid (probe)
+      // getUUID.do's `uuid` field, forwarded verbatim — it IS the full qrClinentLogin
+      // login URL (live-verified), NOT a bare id; the App scanner needs the whole URL.
+      qrcodeContent: uuid,
     };
   }
 
