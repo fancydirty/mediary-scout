@@ -5,7 +5,16 @@ import { completePan123QrLogin, StorageOwnedByOtherAccountError } from "../../..
 // The ~90-day 123 login token is a JWT (eyJ… header.payload.signature) — the
 // poll hands it to the browser verbatim, and it IS the final credential (no
 // 天翼-style exchange). Validate the JWT shape before touching the runtime.
+// Length cap BEFORE the regex (mirrors status route's uniID cap): this is an
+// unauthenticated endpoint — without it a malicious MB-sized eyJ… body gets
+// full-regex-scanned and shipped verbatim in a Bearer header upstream. A real
+// 90-day token is ~500 bytes; 4096 is ample headroom.
+const MAX_TOKEN_LENGTH = 4096;
 const PAN123_TOKEN_SHAPE = /^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
+
+function isValidPan123Token(token: string): boolean {
+  return token.length > 0 && token.length <= MAX_TOKEN_LENGTH && PAN123_TOKEN_SHAPE.test(token);
+}
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   if (isDemoMode()) return NextResponse.json({ error: "演示站只读" }, { status: 403 });
@@ -13,7 +22,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   // client error (400), not an infra failure (502) — mirrors tianyi's confirm.
   const body = (await request.json().catch(() => null)) as { token?: unknown } | null;
   const token = typeof body?.token === "string" ? body.token.trim() : "";
-  if (!token || !PAN123_TOKEN_SHAPE.test(token)) {
+  if (!isValidPan123Token(token)) {
     return NextResponse.json({ ok: false, error: "缺少或非法的登录 token" }, { status: 400 });
   }
   try {
