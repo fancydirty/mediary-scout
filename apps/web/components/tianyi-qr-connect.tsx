@@ -24,7 +24,8 @@ type Session = {
 type Phase = "idle" | "loading" | "waiting" | "scanned" | "confirming" | "done" | "expired" | "error";
 
 /**
- * 天翼扫码登录:与 Quark/Pan115 QrConnect 同构的相位机。生成二维码(内容=裸 uuid)→
+ * 天翼扫码登录:与 Quark/Pan115 QrConnect 同构的相位机。生成二维码(内容=getUUID.do
+ * 的 uuid 字段,live 实证其值是完整 qrClinentLogin.do 登录 URL)→
  * 用户天翼云盘 App 扫 → 每 2s 轮询(天翼非长轮询;有真实 scanned 相位)→ confirmed 拿
  * redirectUrl → /confirm 兑换全套 session + 绑定。
  * 🔴 cookie jar 滚动回传:每次 /status 都会带回更新过的 cookies,必须替换进 session
