@@ -345,7 +345,7 @@ async function SubtitleSourceSection() {
 }
 
 /** 品牌显示名(与注册表 label 一致);盘卡与解绑确认共用。 */
-const PROVIDER_LABELS: Record<string, string> = {
+const PROVIDER_LABELS: Record<string, string | undefined> = {
   pan115: "115网盘",
   quark: "夸克网盘",
   guangya: "光鸭云盘",
@@ -411,6 +411,7 @@ async function Pan115Section() {
                   <span className="drive-card-name">{providerLabel(drive.provider)}</span>
                   <span
                     className={`drive-dot ${ready ? "green" : "amber"}`}
+                    role="img"
                     title={frozen ? "凭证已失效，重新绑定同一账号即可恢复" : ready ? "目录已就绪" : "目录待建"}
                     aria-label={frozen ? "掉线" : ready ? "就绪" : "目录待建"}
                   />

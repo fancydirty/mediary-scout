@@ -17,6 +17,7 @@
   --info: #539df5;
   --border: #4d4d4d;
   --border-soft: #7c7c7c;
+  --text-faint: #8f8f8f;
   --radius-pill: 9999px;
   --radius-card: 8px;
   --shadow-heavy: rgba(0, 0, 0, 0.5) 0px 8px 24px;
@@ -3484,7 +3485,7 @@ select.setting-control {
 }
 
 .drive-card-meta {
-  color: #6f6f6f;
+  color: var(--text-faint);
   font-size: 11px;
   margin-top: 2px;
 }
@@ -3520,7 +3521,7 @@ select.setting-control {
 }
 
 .drive-add-hint {
-  color: #6f6f6f;
+  color: var(--text-faint);
   font-size: 11px;
   margin-left: 8px;
 }
@@ -3528,7 +3529,7 @@ select.setting-control {
 .drive-risk-note {
   margin-top: 12px;
   font-size: 11px;
-  color: #8f8f8f;
+  color: var(--text-faint);
 }
 
 /* 品牌图库瓦片(集成图库范式:图标 + 名称 + 认证方式) */
