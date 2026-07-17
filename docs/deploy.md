@@ -15,7 +15,7 @@ Mediary Scout 有两种部署方式:
 
 ---
 
-> **English summary.** Self-host with one command — `docker compose up -d` brings up web (Next.js + in-process worker) + Postgres + a bundled PanSou. Open `http://<host>:3000`, go to Settings, scan-login your 115 / Quark drive (or paste a 光鸭 / GuangYaPan `access_token` + `refresh_token`), add an OpenAI-compatible LLM endpoint, and you're running. To reach it from your phone / TV / on the go, use **Tailscale** (private mesh — safest) or a **Cloudflare Tunnel** (public HTTPS, no public IP). **Never expose `:3000` raw to the internet.** Full walkthrough below (Chinese).
+> **English summary.** Self-host with one command — `docker compose up -d` brings up web (Next.js + in-process worker) + Postgres + a bundled PanSou. Open `http://<host>:3000`, go to Settings, scan-login your drive (115 / Quark / 123 / Tianyi by QR; GuangYaPan by pasted token), add an OpenAI-compatible LLM endpoint, and you're running. To reach it from your phone / TV / on the go, use **Tailscale** (private mesh — safest) or a **Cloudflare Tunnel** (public HTTPS, no public IP). **Never expose `:3000` raw to the internet.** Full walkthrough below (Chinese).
 
 一行命令起整套:**web(Next + 进程内 worker)+ Postgres + 自带 PanSou**。本指南覆盖:选宿主 → compose 起服务 → 从自己的设备访问 → 安全/升级。
 
@@ -23,6 +23,8 @@ Mediary Scout 有两种部署方式:
 - [选择你的宿主](#选择你的宿主)
 - [Compose 快速开始](#compose-快速开始)
 - [光鸭云盘(GuangYaPan)连接](#光鸭云盘guangyapan连接)
+- [天翼云盘连接](#天翼云盘连接)
+- [123网盘连接](#123网盘连接)
 - [想跑真实获取还需要](#想跑真实获取还需要)
 - [可选增强](#可选增强)
 - [从你的设备访问](#从你的设备访问)
@@ -49,7 +51,7 @@ docker compose up -d        # 首次会构建 web 镜像,几分钟
 ```
 
 打开 `http://<你的主机>:3000`:
-1. **设置 → 网盘**:115 扫码登录(cookie 持久化到数据库,后续自动转存);夸克在设置选夸克品牌粘贴 cookie;光鸭云盘在设置选光鸭品牌粘贴 `access_token` + `refresh_token` 两个值(见 [光鸭云盘连接](#光鸭云盘guangyapan连接))。
+1. **设置 → 网盘**:在品牌瓦片里选一个开始连接——115 / 夸克 / 天翼 / 123 扫码登录,光鸭粘贴 token(见各品牌连接小节);凭证入库后自动用于转存。五个品牌可各绑一块盘,互为独立工作区。
 2. 就这样。**TMDB 元数据经作者 CF Worker 开箱即用**(想用自己额度可在设置填 TMDB key);**PanSou 网盘搜索源已自带**。
 
 ### 组成 / 端口
@@ -107,6 +109,22 @@ docker compose up -d        # 首次会构建 web 镜像,几分钟
 ### 3. 来源致谢(API 逆向)
 
 光鸭云盘的网盘 API 集成,基于开源项目 **[AList](https://github.com/AlistGo/alist)** 的 `guangyapan` driver(目录 [`drivers/guangyapan`](https://github.com/AlistGo/alist/tree/main/drivers/guangyapan))。该 driver 是本项目逆向光鸭 API 的来源,在此致谢。
+
+## 天翼云盘连接
+
+天翼云盘(中国电信)是第四个支持的品牌,走**转存分享**路径(`cloud.189.cn/t/…` 分享链,与夸克同模型;无磁力/离线 API,Prowlarr 不适用)。
+
+- **连接**:设置 → 网盘 → 选「天翼云盘」→ 用天翼云盘 App 扫码。扫码不便时点开「手动粘 SSON cookie」:浏览器登录 [cloud.189.cn](https://cloud.189.cn) 后,从开发者工具 → Application → Cookies 里复制 `SSON` 的值粘入。
+- 会话由系统自动续期;显示「掉线」时重新扫码绑定同一账号即可恢复,追踪数据不丢。
+- 资源量提示:PanSou 上天翼分享目前偏少(电影尤其弱,剧/动漫可用),见 README 的分享量对比表。
+
+## 123网盘连接
+
+123网盘是第五个支持的品牌,走**转存分享**路径(`123pan.com/s/…` 分享链;免费账号即可转存——转存是服务端秒传复制,不消耗提取流量)。
+
+- **连接**:设置 → 网盘 → 选「123网盘」→ 用 123网盘 App 扫码(登录约 **90 天**有效)。扫码不便时点开「手动粘 token」:浏览器登录 [123pan.com](https://www.123pan.com) 网页版后,开发者工具 → Application → Local Storage 里找 `eyJ…` 开头的登录 token 整段粘入。
+- token 到期后显示「掉线」,重新扫码即恢复。
+- v1 未启用 123 的磁力离线接口(免费配额极少);候选全部来自 PanSou 的 123 分享。
 
 ## 想跑真实获取还需要
 

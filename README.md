@@ -90,18 +90,30 @@ Multiple drives appear as a workspace switcher with per-brand icons:
 
 Most "media automation" either searches well but doesn't know what you're actually missing, or moves files but never verifies what landed. Mediary Scout treats acquisition as a **state problem**, driven by an agent that acts from evidence, not vibes:
 
-- **Multi-drive, brand-extensible** — 115, Quark, and 光鸭 (GuangYaPan) today, each a first-class workspace (a tree model: one account, many drives). Adding a new drive brand is a contained plugin.
+- **Multi-drive, brand-extensible** — five drives today (Quark, 115, 光鸭 GuangYaPan, 123, 天翼 Tianyi), each a first-class workspace (a tree model: one account, many drives). Adding a new drive brand is a contained plugin.
 - **Agent-driven selection** — the agent reads real search results and picks by quality preference, **Chinese-subtitle** needs, and de-duplication, then verifies the transfer after it happens.
 - **Tracking & scheduled gap-fill** — season-level state machine; a scheduled sweep comes back only for shows that still have missing episodes.
 - **Cloud-native** — it **transfers** shares/magnets straight into your drive (秒传 / save), it does not download to a local disk.
 
 ## Supported drives
 
-Three Chinese cloud drives, each a first-class workspace:
+Five Chinese cloud drives, each a first-class workspace — ordered by how many PanSou resources each can consume:
 
-- **115** (`pan115`) — full support, including magnet via Prowlarr.
-- **Quark** (`quark`) — share-link transfer (no magnet web API).
-- **GuangYaPan / 光鸭云盘** (`guangya`) — Xunlei-family drive; **magnet / offline-download first** (transfers magnet/ed2k/BT via its offline-task API, like 115's offline path — it does **not** transfer 115/Quark/光鸭 share-links in v1). Token auth (`access_token` + `refresh_token`). Pairs well with Prowlarr. **[Setup guide](docs/deploy.md#光鸭云盘guangyapan连接)**
+- **Quark / 夸克** (`quark`) — share-link transfer (no magnet web API). The largest share pool on PanSou by far.
+- **115** (`pan115`) — full support: 115 share links **and** magnets (built-in offline path, plus Prowlarr).
+- **GuangYaPan / 光鸭云盘** (`guangya`) — Xunlei-family drive; **magnet / offline-download only** (transfers magnet/ed2k/BT via its offline-task API — it does **not** transfer share links in v1). Token auth. Pairs well with Prowlarr. **[Setup guide](docs/deploy.md#光鸭云盘guangyapan连接)**
+- **123网盘** (`pan123`) — share-link transfer (`123pan.com/s/…`); QR login (~90-day token) or paste a token. Free accounts can transfer (server-side copy costs no download quota). **[Setup guide](docs/deploy.md#123网盘连接)**
+- **Tianyi / 天翼云盘** (`tianyi`) — share-link transfer (`cloud.189.cn/t/…`); QR login or paste an SSON cookie. Smallest share pool on PanSou today (weak for movies, workable for shows/anime). **[Setup guide](docs/deploy.md#天翼云盘连接)**
+
+Measured share volume per drive (2026-07 point-in-time sample: six popular titles across movie / drama / anime, one PanSou instance with curated channels — your channels will vary):
+
+| Drive | Own share links | Magnets it can also eat | Usable pool |
+| --- | ---: | ---: | ---: |
+| Quark | 523 | — | **523** |
+| 115 | 100 | 361 | **461** |
+| 光鸭 | — | 361 | **361** |
+| 123 | 120 | — | **120** |
+| 天翼 | 63 | — | **63** |
 
 New brands plug into a storage-brand registry; the bulk of adding one is a drive client + a storage executor for that drive's transfer API.
 
@@ -140,7 +152,7 @@ flowchart LR
     Q --> W["In-process worker"]
     W --> AG["V2 sandbox agent"]
     AG -->|search| SRC["PanSou / Prowlarr"]
-    AG -->|transfer| DR["115 / Quark / 光鸭 drive"]
+    AG -->|transfer| DR["Quark / 115 / 光鸭 / 123 / 天翼 drive"]
     AG -->|read back| DR
     AG -->|verify + mark| Q
     Q -->|realtime| UI
@@ -176,7 +188,7 @@ You are deploying Mediary Scout, a self-hosted media-acquisition agent. Follow t
    - Local network only (default — open `http://<host>:3000` from devices on the same LAN)
    - Tailscale (private mesh — recommended for home; no public IP, auto-encrypted)
    - Cloudflare Tunnel (public HTTPS like `https://media.yourdomain.com` — needs a domain on Cloudflare + Access in front)
-4. **Configure real acquisition now, or just get it running first?** Real acquisition needs a 115/Quark/光鸭 drive + an LLM endpoint (OpenAI-compatible) + (if using 115) 115 directory CIDs. Skipping means it boots and you can look around, configure later in Settings.
+4. **Configure real acquisition now, or just get it running first?** Real acquisition needs a supported drive (Quark/115/光鸭/123/天翼) + an LLM endpoint (OpenAI-compatible) + (if using 115) 115 directory CIDs. Skipping means it boots and you can look around, configure later in Settings.
 
 ## OPTIONAL — one question, skip all if the user doesn't care
 5. Any of these you want to set up now? Reply "none" to skip and use defaults:
@@ -199,7 +211,7 @@ You are deploying Mediary Scout, a self-hosted media-acquisition agent. Follow t
 
 ## Status & limitations
 
-- Self-hosted, for advanced users; you need usable 115/Quark/光鸭 access (a membership is most practical).
+- Self-hosted, for advanced users; you need usable access to a supported drive (Quark/115/光鸭/123/天翼 — a membership is most practical on 115/夸克; 123/天翼 work on free accounts).
 - Scheduled monitoring is most valuable on an always-on host (Docker path).
 - This is not a hosted product and ships no hosted backend.
 
@@ -211,9 +223,11 @@ Built on top of, and grateful to:
 - [Prowlarr](https://github.com/Prowlarr/Prowlarr) — indexer manager (optional)
 - [p115client](https://github.com/ChenyangGao/p115client) — 115 API reference
 - [AList](https://github.com/AlistGo/alist) — GuangYaPan (光鸭云盘) API integration reference (the `drivers/guangyapan` driver)
+- [p123client](https://github.com/ChenyangGao/p123client) — 123网盘 API reference
+- [cloud189-auto-save](https://github.com/1307super/cloud189-auto-save) / [cloudpan189-api](https://github.com/tickstep/cloudpan189-api) — 天翼云盘 API references
 - [TMDB](https://www.themoviedb.org/) — metadata (this product is not endorsed or certified by TMDB)
 
-Not affiliated with 115, Quark, 光鸭云盘 (GuangYaPan), TMDB, or any indexer. Mediary Scout is an independent, disciplined workflow built around these pieces.
+Not affiliated with 115, Quark, 光鸭云盘 (GuangYaPan), 123网盘, 天翼云盘, TMDB, or any indexer. Mediary Scout is an independent, disciplined workflow built around these pieces.
 
 ## Star History
 ![Star History Chart](https://api.star-history.com/svg?repos=fancydirty/mediary-scout)
