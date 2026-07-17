@@ -3,9 +3,13 @@ import { validateTianyiQrSession, validateTianyiRedirectUrl } from "./tianyi-qr-
 
 const base = {
   uuid: "uuid-1",
+  encryuuid: "enc-1",
   paramId: "p-1",
   reqId: "r-1",
   lt: "lt-1",
+  appId: "8025431004",
+  clientType: "10020",
+  returnUrl: "https://m.cloud.189.cn/x",
   cookies: [["JSESSIONID", "abc"]] as Array<[string, string]>,
 };
 
@@ -20,10 +24,20 @@ describe("validateTianyiQrSession", () => {
     expect(validateTianyiQrSession([]).ok).toBe(false);
   });
 
-  it("rejects a missing/empty required field", () => {
+  it("rejects a missing/empty required field (incl. the poll-only ones)", () => {
     expect(validateTianyiQrSession({ ...base, uuid: "" }).ok).toBe(false);
     const { lt: _lt, ...noLt } = base;
     expect(validateTianyiQrSession(noLt).ok).toBe(false);
+    const { encryuuid: _e, ...noEncry } = base;
+    expect(validateTianyiQrSession(noEncry).ok).toBe(false); // poll form needs encryuuid
+    const { returnUrl: _r, ...noReturn } = base;
+    expect(validateTianyiQrSession(noReturn).ok).toBe(false);
+  });
+
+  it("rejects a cookie name that is empty or not an RFC6265 token (space/=)", () => {
+    expect(validateTianyiQrSession({ ...base, cookies: [["", "v"]] }).ok).toBe(false);
+    expect(validateTianyiQrSession({ ...base, cookies: [["a b", "v"]] }).ok).toBe(false);
+    expect(validateTianyiQrSession({ ...base, cookies: [["a=b", "v"]] }).ok).toBe(false);
   });
 
   it("rejects cookies that are not [name,value] string pairs", () => {

@@ -7,8 +7,8 @@
  * of the self-hosted auth in front. Pure + unit-tested; the routes 400 on failure.
  */
 
-/** Cookie name/value must not carry HTTP header separators/injectors. */
-const HEADER_UNSAFE = /[\r\n]/;
+/** RFC 6265 cookie-name = token (no controls, separators, whitespace, `=`, or `;`). */
+const COOKIE_NAME_TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 // Caps chosen so a real 天翼 jar (a handful of cookies, each well under 1KB, a few
 // hundred bytes serialized) always passes, while an amplified jar cannot: the
 // SERIALIZED total is the real guard (client joins the jar into one Cookie header),
@@ -20,8 +20,30 @@ const MAX_COOKIE_VALUE_LEN = 4096;
 const MAX_SERIALIZED_COOKIE_LEN = 16384;
 const MAX_STRING_FIELD_LEN = 4096;
 const MAX_REDIRECT_URL_LEN = 2048;
-/** Non-empty string fields the poll/exchange actually send. */
-const REQUIRED_STRING_FIELDS = ["uuid", "paramId", "reqId", "lt"] as const;
+/** Non-empty string fields pollStatus/exchangeSession actually send (form/headers).
+ *  Validating all of them turns a malformed body into a 400, not a misleading 502. */
+const REQUIRED_STRING_FIELDS = [
+  "uuid",
+  "encryuuid",
+  "paramId",
+  "reqId",
+  "lt",
+  "appId",
+  "clientType",
+  "returnUrl",
+] as const;
+
+/** A cookie value must carry no control chars (CR/LF etc.) or `;` — either would
+ *  corrupt the joined Cookie header. Char-code scan avoids a control-char regex. */
+function cookieValueHasIllegalChar(value: string): boolean {
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code < 0x20 || code === 0x7f || code === 0x3b /* ; */) {
+      return true;
+    }
+  }
+  return false;
+}
 
 export type ValidationResult = { ok: true } | { ok: false; error: string };
 
@@ -49,11 +71,11 @@ export function validateTianyiQrSession(session: unknown): ValidationResult {
       return { ok: false, error: "session.cookies must be [name, value] string pairs" };
     }
     const [name, value] = pair;
-    if (name.length > MAX_COOKIE_NAME_LEN || value.length > MAX_COOKIE_VALUE_LEN) {
-      return { ok: false, error: "cookie name/value too long" };
+    if (name.length === 0 || name.length > MAX_COOKIE_NAME_LEN || !COOKIE_NAME_TOKEN.test(name)) {
+      return { ok: false, error: "cookie name must be a non-empty RFC6265 token (no space/=/;/controls)" };
     }
-    if (HEADER_UNSAFE.test(name) || HEADER_UNSAFE.test(value) || name.includes(";") || value.includes(";")) {
-      return { ok: false, error: "cookie name/value contains illegal characters (CR/LF/;)" };
+    if (value.length > MAX_COOKIE_VALUE_LEN || cookieValueHasIllegalChar(value)) {
+      return { ok: false, error: "cookie value too long or contains illegal characters (CR/LF/;)" };
     }
     serializedLength += name.length + value.length + 3; // "name=value; "
   }
