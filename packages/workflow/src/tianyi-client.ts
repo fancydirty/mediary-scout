@@ -528,9 +528,10 @@ export class TianyiClient {
   /** DELETE/MOVE taskInfos entry. ⚠️ isFolder is LOAD-BEARING (probe
    *  tianyi-save-bigint.mjs cleanup, line ~81): a FOLDER was really deleted with
    *  {fileId, fileName, isFolder: 1} — hardcoding isFolder: 0 silently deletes
-   *  nothing for a dir. fileName rides along when the caller knows it; the probe
-   *  always sent it, and whether 天翼 accepts a name-less folder DELETE is
-   *  UNVERIFIED (T10 live e2e must delete a real wrapper dir to confirm). */
+   *  nothing for a dir. fileName rides along when the caller knows it; a name-less
+   *  folder DELETE is LIVE-VERIFIED (2026-07-17 T10 write smoke: {fileId, isFolder:1}
+   *  without fileName → status=4/failedCount=0, folder really gone). MOVE taskInfos
+   *  share this shape but a real MOVE hasn't run live yet (agent flatten will). */
   private static batchTaskInfos(entries: TianyiBatchEntry[]): string {
     return JSON.stringify(
       entries.map((e) => ({

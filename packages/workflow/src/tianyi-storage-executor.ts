@@ -241,9 +241,9 @@ export class TianyiStorageExecutor implements StorageExecutor {
       throw new Error(`SAFETY_VIOLATION: refusing to remove protected/root directory fileId=${safe}`);
     }
     // isFolder:true is probe-verified (isFolder:0 on a dir deletes nothing). This
-    // call site only has the id, so the entry goes WITHOUT fileName — the probe
-    // always sent one and whether 天翼 accepts a name-less folder DELETE is
-    // UNVERIFIED: T10 live e2e must delete a real wrapper dir to confirm.
+    // call site only has the id, so the entry goes WITHOUT fileName — LIVE-VERIFIED
+    // 2026-07-17 (T10 write smoke): a name-less {fileId, isFolder:1} DELETE against
+    // real cloud.189.cn reached status=4/failedCount=0 and the folder was gone.
     await this.client.batchDelete([{ id: safe, isFolder: true }]);
     return { removed: true };
   }
