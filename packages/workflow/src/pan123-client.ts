@@ -134,7 +134,11 @@ export class Pan123Client {
   private readonly fetchImpl: Pan123Fetch;
 
   constructor(opts: Pan123ClientOptions) {
-    this.token = opts.token?.trim() ?? "";
+    // Defensive coercion at the single choke point: callers cast `credential`
+    // from unknown, so a malformed DB blob can deliver a non-string token. Treat
+    // it as "" so the failure surfaces as a clean 401 → Pan123AuthError (freeze),
+    // never a TypeError inside .trim().
+    this.token = typeof opts.token === "string" ? opts.token.trim() : "";
     this.fetchImpl = opts.fetchImpl ?? defaultPan123Fetch;
   }
 

@@ -153,6 +153,13 @@ describe("Pan123Client transport / listFiles", () => {
     await expect(c.listFiles("0")).rejects.toBeInstanceOf(Pan123AuthError);
   });
 
+  it("coerces a non-string token to \"\" — a malformed blob fails as a clean auth error, not a TypeError", async () => {
+    // callers cast `credential` from unknown; a bad DB row can deliver token: number.
+    const fetchImpl = fetchStub(() => ({ status: 401, body: { code: 401, message: "unauthorized" } }));
+    const c = new Pan123Client({ token: 123 as unknown as string, fetchImpl });
+    await expect(c.listFiles("0")).rejects.toBeInstanceOf(Pan123AuthError);
+  });
+
   it("throws a generic (non-auth) Error on a non-zero business code (e.g. 5050)", async () => {
     const fetchImpl = fetchStub(() => ({ status: 200, body: { code: 5050, message: "size required" } }));
     const c = new Pan123Client({ token: "TK", fetchImpl });

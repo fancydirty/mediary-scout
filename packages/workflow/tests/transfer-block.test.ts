@@ -88,6 +88,10 @@ describe("isSystemicTransferBlockMessage (per-message predicate, reused by the s
     // 容量 (storage full) is an account-level block too — the 123 skill text
     // promises systemicBlock for it, so the detector must actually match it.
     expect(isSystemicTransferBlockMessage("网盘容量不足，无法保存")).toBe(true);
+    expect(isSystemicTransferBlockMessage("容量已满")).toBe(true);
+    // …but a PER-FILE size-limit error mentioning 容量 is NOT account-level: other
+    // (smaller) candidates can still succeed, so it must keep iterating.
+    expect(isSystemicTransferBlockMessage("单文件容量超过上限，无法保存")).toBe(false);
   });
 
   it("is false for dead-link messages (they iterate to the next candidate, not stop)", () => {
