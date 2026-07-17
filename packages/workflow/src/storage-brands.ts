@@ -56,6 +56,14 @@ export interface StorageBrand {
    *  at "-11". Consumed as `provisionCategoryDirs`' baseParentId so the root is
    *  registry-driven instead of hardcoded at each provision call site. */
   provisionRootId: string;
+  /** For "token" brands only: the credential-blob keys that MUST each be a
+   *  non-empty string for the drive to count as connected — 光鸭 needs
+   *  accessToken+refreshToken (deviceId optional, rides in the blob); 天翼 needs
+   *  the sessionKey+accessToken+refreshToken trio. `extractStorageCredential`
+   *  reads this instead of a per-brand `if`, returning the raw blob when every
+   *  key is present (the client trims/validates the rest downstream). Undefined
+   *  for cookie brands (115/夸克), which authenticate with a cookie string. */
+  requiredCredentialKeys?: string[];
 }
 
 export const STORAGE_BRANDS: StorageBrand[] = [
@@ -88,6 +96,7 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     assumeChineseSubsFromChineseTitle: false,
     authKind: "token",
     provisionRootId: "", // 光鸭 account root
+    requiredCredentialKeys: ["accessToken", "refreshToken"],
   },
   {
     provider: "tianyi",
@@ -98,6 +107,7 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     assumeChineseSubsFromChineseTitle: true,
     authKind: "token",
     provisionRootId: "-11", // 天翼个人云 root folder id
+    requiredCredentialKeys: ["sessionKey", "accessToken", "refreshToken"],
   },
 ];
 

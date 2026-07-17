@@ -1512,28 +1512,19 @@ function extractStorageCredential(
   provider: string,
   payload: unknown,
 ): { cookie: string; credential: TokenCredential | null } {
-  const authKind = isRegisteredStorageProvider(provider) ? getStorageBrand(provider).authKind : "cookie";
-  if (authKind === "token") {
+  const brand = isRegisteredStorageProvider(provider) ? getStorageBrand(provider) : null;
+  if (brand?.authKind === "token") {
+    // Token brands store an opaque credential blob. It counts as "connected" iff
+    // every brand-required key (registry: requiredCredentialKeys) is a non-empty
+    // string — 光鸭 needs accessToken+refreshToken (deviceId optional, rides along
+    // in the blob); 天翼 needs the sessionKey/accessToken/refreshToken trio. Return
+    // the raw blob as-is (the brand client trims/validates the rest downstream);
+    // any required key missing → not-connected, exactly like an empty cookie.
     const blob = (payload ?? {}) as Record<string, unknown>;
-    if (provider === "tianyi") {
-      // 天翼 needs the full trio: sessionKey (web-face auth) + accessToken/
-      // refreshToken (session renewal). Any missing → treat as not-connected.
-      const ok = ["sessionKey", "accessToken", "refreshToken"].every(
-        (key) => typeof blob[key] === "string" && (blob[key] as string).trim().length > 0,
-      );
-      return ok ? { cookie: "", credential: blob } : { cookie: "", credential: null };
-    }
-    // 光鸭: accessToken + refreshToken required, deviceId optional.
-    const accessToken = typeof blob.accessToken === "string" ? blob.accessToken.trim() : "";
-    const refreshToken = typeof blob.refreshToken === "string" ? blob.refreshToken.trim() : "";
-    if (!accessToken || !refreshToken) {
-      return { cookie: "", credential: null };
-    }
-    const credential: TokenCredential = { accessToken, refreshToken };
-    if (blob.deviceId !== undefined) {
-      credential.deviceId = blob.deviceId;
-    }
-    return { cookie: "", credential };
+    const ok = (brand.requiredCredentialKeys ?? []).every(
+      (key) => typeof blob[key] === "string" && (blob[key] as string).trim().length > 0,
+    );
+    return ok ? { cookie: "", credential: blob } : { cookie: "", credential: null };
   }
   const cookie = (payload as { cookie?: string } | null)?.cookie?.trim() ?? "";
   return { cookie, credential: null };
