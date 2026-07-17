@@ -193,8 +193,10 @@ export class Pan123Client {
   // ── 目录读 ───────────────────────────────────────────────────────────────
 
   /** file/list/new:分页游标 `next`(起始 "0"),读 data.InfoList + data.Next。
-   *  Next 为 -1/""/0 之一即停止(照探针分页停止条件)。 */
-  async listFiles(parentFileId: string): Promise<Pan123Item[]> {
+   *  Next 为 -1/""/0 之一即停止(照探针分页停止条件)。
+   *  `opts.maxPages` 封顶翻页数(默认不限=全量翻页,现行为):probe 这类 cheap read
+   *  只需第一页验活,存量大账号不必付至多 100 个串行签名往返。 */
+  async listFiles(parentFileId: string, opts?: { maxPages?: number }): Promise<Pan123Item[]> {
     const out: Pan123Item[] = [];
     let next = "0";
     // Safety cap: a misbehaving cursor must not spin forever (100 pages × 100 = 10k items).
@@ -220,6 +222,9 @@ export class Pan123Client {
       const nextCursor = d["Next"];
       if (isStopCursor(nextCursor)) {
         break;
+      }
+      if (guard + 1 >= (opts?.maxPages ?? Infinity)) {
+        break; // cheap-read cap reached — caller only needed the first page(s)
       }
       next = String(nextCursor);
     }

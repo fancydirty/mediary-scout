@@ -26,15 +26,21 @@ const VALID_TOKEN = `${b64url({ alg: "HS256", typ: "JWT" })}.${b64url({ id: 1008
  *  proves the probe gate runs before bind. */
 const DEAD_TOKEN = `${b64url({ alg: "HS256", typ: "JWT" })}.${b64url({ id: 424242 })}.DEAD`;
 
+/** Counts FakePan123Client constructions — the connect entry points must NOT
+ *  touch the network (probe) for input rejected locally (empty / unparseable
+ *  token). Reset in boot(). */
+let pan123ClientConstructions = 0;
+
 /** Stub for @media-track/workflow's Pan123Client — no network. The probe arm
  *  calls listFiles("0"); a token whose signature segment is "DEAD" simulates a
  *  revoked/expired token (the real client throws Pan123AuthError on code 401). */
 class FakePan123Client {
   private readonly token: string;
   constructor(opts: { token: string }) {
+    pan123ClientConstructions++;
     this.token = opts.token;
   }
-  async listFiles(_parentFileId: string) {
+  async listFiles(_parentFileId: string, _opts?: { maxPages?: number }) {
     if (this.token.endsWith(".DEAD")) {
       throw new Error("PAN123_API_401: token dead");
     }
@@ -47,17 +53,28 @@ const prevMultiUser = process.env.MEDIA_TRACK_MULTI_USER;
 
 /** Boot workflow-runtime against a fresh :memory: SQLite repo with the network
  *  client stubbed (parsePan123Uid stays REAL via importActual — uid derivation is
- *  part of what's under test). */
-const boot = async () => {
+ *  part of what's under test). `failProvision` additionally makes the insert
+ *  branch's directory provisioning throw (createExecutorForBrand → throw) WITHOUT
+ *  any network, to test the "provision fails → still store the connection"
+ *  contract (mirrors tianyi-connect.test.ts). */
+const boot = async (opts: { failProvision?: boolean } = {}) => {
   process.env.MEDIA_TRACK_SQLITE_PATH = ":memory:";
   delete process.env.MEDIA_TRACK_POSTGRES_URL;
   delete process.env.MEDIA_TRACK_MULTI_USER; // single-user → getCurrentAccountId() = acct_default
+  pan123ClientConstructions = 0;
   vi.resetModules();
   vi.doMock("@media-track/workflow", async () => {
     const actual = await vi.importActual<typeof import("@media-track/workflow")>("@media-track/workflow");
     return {
       ...actual,
       Pan123Client: FakePan123Client,
+      ...(opts.failProvision
+        ? {
+            createExecutorForBrand: () => {
+              throw new Error("PROVISION_BOOM: no network in test");
+            },
+          }
+        : {}),
     };
   });
   return import("./workflow-runtime");
@@ -137,16 +154,45 @@ describe("connectPan123Token (bind)", () => {
     expect(defaultRows).toHaveLength(0);
   });
 
-  it("empty token → friendly error before any network/probe call", async () => {
-    const rt = await boot();
-    await expect(rt.connectPan123Token("   ")).rejects.toThrow(/token/);
+  it("insert branch: provision throws → row still stored with null CIDs and bind does NOT throw", async () => {
+    // Fresh uid (no seeded row) → resolveStorageBinding → insert → provision runs
+    // → createExecutorForBrand stubbed to throw. The bind must swallow it and still
+    // persist the connection (best-effort provision contract). This is the primary
+    // real-world path: a brand-new user's first bind.
+    const rt = await boot({ failProvision: true });
+    const repository = rt.getWorkflowRepository();
+
+    const { providerUid } = await rt.connectPan123Token(VALID_TOKEN);
+    expect(providerUid).toBe("10086");
+
+    const stored = await repository.findConnectedStorageByUid("pan123", "10086");
+    expect(stored).not.toBeNull();
+    expect(stored!.id).toBe("cs_pan123_10086"); // digits-only uid → suffix intact
+    // Provision failed → all CIDs null; the connection is still usable (worker self-heals).
+    expect(stored!.rootCid).toBeNull();
+    expect(stored!.moviesCid).toBeNull();
+    expect(stored!.tvCid).toBeNull();
+    expect(stored!.animeCid).toBeNull();
+    // Credential blob still lands correctly (pure-token model).
+    const payload = stored!.payload as Record<string, unknown>;
+    expect(payload.token).toBe(VALID_TOKEN);
+    expect((payload.meta as Record<string, unknown>).connectedAt).toEqual(expect.any(String));
   });
 
-  it("unparseable token (not a 123 JWT) → refuses to bind, nothing stored", async () => {
+  it("empty token → friendly error, zero network (no probe client constructed)", async () => {
     const rt = await boot();
-    // The fake probe accepts any non-DEAD token, so this exercises the uid guard
-    // specifically (probe passed, JWT payload unreadable → no providerUid).
+    await expect(rt.connectPan123Token("   ")).rejects.toThrow(/token/);
+    expect(pan123ClientConstructions).toBe(0);
+  });
+
+  it("unparseable token (not a 123 JWT) → precise local error, zero network, nothing stored", async () => {
+    const rt = await boot();
+    // uid is parsed LOCALLY before the probe: garbage input must hit the precise
+    // "不是有效的 123 登录 token" message WITHOUT ever sending the garbage token to
+    // 123 (no Pan123Client construction), and must not be masked by the probe's
+    // "确认 token 完整且未过期" wording.
     await expect(rt.connectPan123Token("not-a-jwt")).rejects.toThrow(/识别/);
+    expect(pan123ClientConstructions).toBe(0);
     const rows = (await rt.getWorkflowRepository().listConnectedStorages("acct_default")).filter(
       (s) => s.provider === "pan123",
     );
@@ -195,6 +241,13 @@ describe("completePan123QrLogin (QR bind)", () => {
   it("QR flow returned an empty token → friendly re-scan error, no probe", async () => {
     const rt = await boot();
     await expect(rt.completePan123QrLogin("  ")).rejects.toThrow(/扫码/);
+    expect(pan123ClientConstructions).toBe(0);
+  });
+
+  it("QR flow returned an unparseable token → precise local error, zero network", async () => {
+    const rt = await boot();
+    await expect(rt.completePan123QrLogin("garbage-not-a-jwt")).rejects.toThrow(/识别/);
+    expect(pan123ClientConstructions).toBe(0);
   });
 
   it("QR flow returned a dead token → probe fails with a re-scan error, nothing stored", async () => {

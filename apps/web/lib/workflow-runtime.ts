@@ -1844,9 +1844,10 @@ async function probeStorageConnection(
   if (provider === "pan123") {
     const blob = (credential ?? {}) as { token?: string };
     // 纯 token(v1 无刷新——web 面无 refresh 端点):listFiles("0") 验根可读。
+    // maxPages:1 守住 cheap-read 契约——验活只需第一页,不为存量大账号全量翻页。
     // 死 token → Pan123Client 抛 Pan123AuthError → registry isAuthError 冻结。
     // onCredentialRefresh 不接(client 无该 option),签名里的参数对 pan123 闲置。
-    await new Pan123Client({ token: blob.token ?? "" }).listFiles("0");
+    await new Pan123Client({ token: blob.token ?? "" }).listFiles("0", { maxPages: 1 });
     return;
   }
   if (provider === "quark") {
@@ -2704,10 +2705,7 @@ export async function connectTianyiSson(sson: string): Promise<{ providerUid: st
  */
 async function bindPan123ConnectedStorage(rawToken: string): Promise<{ providerUid: string }> {
   const token = rawToken.trim();
-  const providerUid = parsePan123Uid(token);
-  if (!providerUid) {
-    throw new Error("无法从该 token 识别 123网盘账号（不是有效的 123 登录 token）；请重新扫码或粘贴完整 token。");
-  }
+  const providerUid = parsePan123UidOrThrow(token);
   return bindTokenConnectedStorage({
     provider: "pan123",
     providerUid,
@@ -2716,17 +2714,31 @@ async function bindPan123ConnectedStorage(rawToken: string): Promise<{ providerU
   });
 }
 
+/** 本地(纯函数零网络)从 123 登录 token 解稳定数字用户 id;解不出 = 不是合法 123
+ *  JWT,抛精准错误。connect 两入口在触网 probe 前先走这里——垃圾输入不发给 123
+ *  (否则 401 → 误导性的「确认 token 完整且未过期」措辞盖掉真原因)。 */
+function parsePan123UidOrThrow(token: string): string {
+  const providerUid = parsePan123Uid(token);
+  if (!providerUid) {
+    throw new Error("无法从该 token 识别 123网盘账号（不是有效的 123 登录 token）；请重新扫码或粘贴完整 token。");
+  }
+  return providerUid;
+}
+
 /**
  * 123 扫码登录完成:前端轮询 result 拿到 90 天 token 后,confirm 路由把 token 传来,
- * 这里直接绑定(123 无天翼那种 exchange 步骤——token 即最终凭证)。probe 一次验活,
- * 防扫码流程异常拿到坏 token 入库。导出供 QR confirm API 路由(T8)调用。
+ * 这里直接绑定(123 无天翼那种 exchange 步骤——token 即最终凭证)。先本地解 uid 拦
+ * 垃圾 token,再 probe 一次验活,防扫码流程异常拿到坏 token 入库。导出供 QR confirm
+ * API 路由(T8)调用。
  */
 export async function completePan123QrLogin(token: string): Promise<{ providerUid: string }> {
   const trimmed = token.trim();
   if (!trimmed) {
     throw new Error("扫码登录未返回 token，请重新扫码。");
   }
-  // 先验活再绑(bind 留在 try 外,StorageOwnedByOtherAccountError 原样上抛给路由 409)。
+  // 先本地解 uid(零网络,垃圾 token 得到精准错误),再验活、再绑(bind 留在 try 外,
+  // StorageOwnedByOtherAccountError 原样上抛给路由 409)。
+  parsePan123UidOrThrow(trimmed);
   try {
     await probeStorageConnection("pan123", "", null, { token: trimmed });
   } catch (error) {
@@ -2739,13 +2751,14 @@ export async function completePan123QrLogin(token: string): Promise<{ providerUi
 
 /**
  * 123 粘 token 兜底:用户从浏览器 localStorage/抓包粘贴 90 天 token(扫码不便时的回退)。
- * 空直接报错(不触网);probe 验活后绑定。
+ * 空/解不出 uid 直接报错(不触网);probe 验活后绑定。
  */
 export async function connectPan123Token(rawToken: string): Promise<{ providerUid: string }> {
   const trimmed = rawToken.trim();
   if (!trimmed) {
     throw new Error("请粘贴 123网盘登录 token。");
   }
+  parsePan123UidOrThrow(trimmed);
   try {
     await probeStorageConnection("pan123", "", null, { token: trimmed });
   } catch (error) {

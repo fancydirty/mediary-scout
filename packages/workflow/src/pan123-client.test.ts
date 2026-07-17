@@ -129,6 +129,24 @@ describe("Pan123Client transport / listFiles", () => {
     expect(items.map((i) => i.name)).toEqual(["p1", "p2"]);
   });
 
+  it("listFiles maxPages:1 sends exactly ONE request even when a next-page cursor exists (cheap probe)", async () => {
+    // probeStorageConnection 契约是 cheap read:验活只需第一页,大账号不能付全量翻页
+    // (至多 100 个串行签名往返)的代价。默认(不传 opts)行为不变=全量翻页。
+    const nexts: string[] = [];
+    const fetchImpl = fetchStub((url) => {
+      const next = new URL(url).searchParams.get("next") ?? "";
+      nexts.push(next);
+      return {
+        status: 200,
+        body: '{"code":0,"data":{"InfoList":[{"FileId":1,"FileName":"p1","Size":1,"Etag":"E1","Type":0}],"Next":"55"}}',
+      };
+    });
+    const c = new Pan123Client({ token: "TK", fetchImpl });
+    const items = await c.listFiles("0", { maxPages: 1 });
+    expect(nexts).toEqual(["0"]); // exactly one request despite Next="55"
+    expect(items.map((i) => i.name)).toEqual(["p1"]); // first page still returned
+  });
+
   it("throws Pan123AuthError on code===401 (dead token — no retry/refresh)", async () => {
     const fetchImpl = fetchStub(() => ({ status: 401, body: { code: 401, message: "tokens number has exceeded the limit" } }));
     const c = new Pan123Client({ token: "DEAD", fetchImpl });
