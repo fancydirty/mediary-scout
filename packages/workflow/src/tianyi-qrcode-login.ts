@@ -324,10 +324,14 @@ export class TianyiQrLoginClient {
     return { lt, reqId, paramId };
   }
 
-  /** GET, following ≤6 redirects manually and harvesting cookies at every hop. */
+  /** GET, following ≤MAX_REDIRECT_HOPS (6) redirects manually and harvesting
+   *  cookies at every hop. The loop runs MAX_REDIRECT_HOPS+1 times: each redirect
+   *  consumes a hop, and the +1 is the fetch of the final (non-redirect) page — so
+   *  a full 6-redirect chain still reaches its destination instead of falsely
+   *  throwing "too many redirects" on the last one. */
   private async getFollow(url: string, jar: Map<string, string>): Promise<TianyiQrRawResponse> {
     let current = url;
-    for (let hop = 0; hop < MAX_REDIRECT_HOPS; hop++) {
+    for (let hop = 0; hop <= MAX_REDIRECT_HOPS; hop++) {
       const res = await this.request(current, { method: "GET" }, jar);
       if (res.status >= 300 && res.status < 400) {
         const location = res.headers.get("location") ?? res.headers.get("Location");
