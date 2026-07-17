@@ -1521,9 +1521,13 @@ function extractStorageCredential(
     // the raw blob as-is (the brand client trims/validates the rest downstream);
     // any required key missing → not-connected, exactly like an empty cookie.
     const blob = (payload ?? {}) as Record<string, unknown>;
-    const ok = (brand.requiredCredentialKeys ?? []).every(
-      (key) => typeof blob[key] === "string" && (blob[key] as string).trim().length > 0,
-    );
+    // A token brand with no requiredCredentialKeys is a REGISTRY MISCONFIG, not a
+    // connected drive: `[].every(...)` is vacuously true, so without this guard any
+    // payload (even {}) would silently pass. Require a non-empty key list.
+    const requiredKeys = brand.requiredCredentialKeys ?? [];
+    const ok =
+      requiredKeys.length > 0 &&
+      requiredKeys.every((key) => typeof blob[key] === "string" && (blob[key] as string).trim().length > 0);
     return ok ? { cookie: "", credential: blob } : { cookie: "", credential: null };
   }
   const cookie = (payload as { cookie?: string } | null)?.cookie?.trim() ?? "";
@@ -2261,11 +2265,18 @@ async function bindTokenConnectedStorage(input: {
   providerUid: string;
   credentialBlob: Record<string, unknown>;
   meta: Record<string, unknown>;
+  /** Pre-fetched row (光鸭 already looks it up to pin deviceId) — pass it to avoid
+   *  a duplicate findConnectedStorageByUid on every bind. Omit to let the helper
+   *  fetch; `null` means "looked up, none found" (don't re-fetch). */
+  existing?: Awaited<ReturnType<ReturnType<typeof getWorkflowRepository>["findConnectedStorageByUid"]>>;
 }): Promise<{ providerUid: string }> {
   const { provider, providerUid, credentialBlob, meta } = input;
   const accountId = await getCurrentAccountId();
   const repository = getWorkflowRepository();
-  const existing = await repository.findConnectedStorageByUid(provider, providerUid);
+  const existing =
+    input.existing !== undefined
+      ? input.existing
+      : await repository.findConnectedStorageByUid(provider, providerUid);
   const decision = resolveStorageBinding({ provider, providerUid, accountId, existing });
   if (decision.action === "reject") {
     throw new StorageOwnedByOtherAccountError();
@@ -2585,6 +2596,7 @@ export async function connectGuangYa(rawAccessToken: string, rawRefreshToken: st
     providerUid,
     credentialBlob: { accessToken, refreshToken, deviceId: pinnedDeviceId },
     meta: { connectedAt: new Date().toISOString() },
+    existing, // reuse the row we just fetched for deviceId-pinning (no double lookup)
   });
 }
 
