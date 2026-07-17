@@ -82,6 +82,21 @@ describe("describeAgentRunError — does NOT misclassify netdisk (brand) auth er
     expect(describeAgentRunError(new Error(msg))).toBe(msg);
   });
 
+  it("leaves a Pan123 auth error UNCHANGED even when the upstream text says 'unauthorized'", () => {
+    // Pan123Client throws `PAN123_AUTH_FAILED: ${upstream message}` — the upstream
+    // text can carry LLM-looking words; the brand prefix must win.
+    const msg = "PAN123_AUTH_FAILED: unauthorized (token 已失效)";
+    expect(describeAgentRunError(new Error(msg))).toBe(msg);
+  });
+
+  it("leaves a Pan123AuthError with a 401 statusCode UNCHANGED (dead 90-day token ≠ AI 模型 401)", () => {
+    const brand = Object.assign(new Error("PAN123_AUTH_FAILED: token expired"), {
+      statusCode: 401,
+      name: "Pan123AuthError",
+    });
+    expect(describeAgentRunError(brand)).toBe("PAN123_AUTH_FAILED: token expired");
+  });
+
   it("leaves a TianyiAuthError with a 401 statusCode UNCHANGED (brand prefix wins)", () => {
     const brand = Object.assign(new Error("TIANYI_AUTH_FAILED: session invalid"), {
       statusCode: 401,

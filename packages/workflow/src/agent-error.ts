@@ -34,18 +34,21 @@ const LLM_AUTH_PATTERNS = [
 
 // Netdisk (storage brand) auth errors are a TOKEN problem with the user's drive,
 // not the AI model. They are thrown as Pan115AuthError / QuarkAuthError /
-// GuangYaAuthError with these message prefixes (and class names). If any of these
-// markers is present anywhere in the error (or its cause chain), it is NEVER an
-// LLM-auth error — even if it carries a 401/403 statusCode or the word in its text.
+// GuangYaAuthError / TianyiAuthError / Pan123AuthError with these message prefixes
+// (and class names). If any of these markers is present anywhere in the error (or
+// its cause chain), it is NEVER an LLM-auth error — even if it carries a 401/403
+// statusCode or the word in its text.
 const BRAND_AUTH_MARKERS = [
   "guangya",
   "quark",
   "pan115",
   "tianyi",
+  "pan123",
   "pan115autherror",
   "quarkautherror",
   "guangyaautherror",
   "tianyiautherror",
+  "pan123autherror",
 ];
 
 function messageOf(error: unknown): string {
