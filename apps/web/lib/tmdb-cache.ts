@@ -9,6 +9,12 @@ import {
 
 const DEFAULT_TTL_MS = 6 * 60 * 60 * 1000; // 6h: TMDB search results barely change
 const SWEEP_INTERVAL_MS = 10 * 60 * 1000; // reclaim dead rows at most every 10 min
+const PERMANENT_SCHEMA_INIT_SQLSTATES = new Set(["28P01", "28000", "3D000"]);
+
+function isPermanentSchemaInitError(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null | undefined)?.code;
+  return typeof code === "string" && PERMANENT_SCHEMA_INIT_SQLSTATES.has(code);
+}
 
 /**
  * Durable TMDB search cache (tier 2 of the read path: tracked state -> this
@@ -101,7 +107,15 @@ export class PostgresMediaSearchCache implements MediaSearchCache {
   }
 
   private ensureSchema(): Promise<void> {
-    return (this.schemaReady ??= this.createSchema());
+    if (this.schemaReady === undefined) {
+      this.schemaReady = this.createSchema().catch((error) => {
+        if (!isPermanentSchemaInitError(error)) {
+          this.schemaReady = undefined;
+        }
+        throw error;
+      });
+    }
+    return this.schemaReady;
   }
 
   // Same first-boot hazard as the workflow schema: concurrent `CREATE TABLE/INDEX
