@@ -1,11 +1,11 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { connection, NextResponse, type NextRequest } from "next/server";
+import { workerApiGuard } from "../../../../lib/worker-api-guard";
 import { runNextQueuedWorkflow } from "../../../../lib/workflow-runtime";
 
 export async function POST(request: NextRequest) {
-  const secret = process.env.MEDIA_TRACK_WORKER_SECRET;
-  if (secret && request.headers.get("x-media-track-worker-secret") !== secret) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  await connection();
+  const denied = workerApiGuard(request);
+  if (denied) return denied;
 
   const result = await runNextQueuedWorkflow();
   return NextResponse.json(result);
