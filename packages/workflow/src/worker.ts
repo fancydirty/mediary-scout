@@ -21,6 +21,10 @@ import { isTransientAcquisitionError } from "./acquisition-v2/transient-error.js
 import { describeAgentRunError } from "./agent-error.js";
 import { formatReportPushText } from "./notification-report.js";
 import { isMovieUnreleased } from "./domain.js";
+import { isGuangYaAuthError } from "./guangya-client.js";
+import { isPan115AuthError } from "./pan115-cookie-client.js";
+import { isPan123AuthError } from "./pan123-client.js";
+import { isQuarkAuthError } from "./quark-cookie-client.js";
 import {
   runMovieAcquisitionV2AndPersist,
   runSeriesInitializationV2AndPersist,
@@ -28,6 +32,37 @@ import {
   runType3MonitoringV2AndPersist,
 } from "./runner-v2.js";
 import { syncSeasonAgainstMetadata } from "./season-sync.js";
+import { isTianyiAuthError } from "./tianyi-client.js";
+
+/** Brand netdisk auth failures only — never LLM Unauthorized / plain Errors. */
+function isBrandStorageAuthError(error: unknown): boolean {
+  return (
+    isPan115AuthError(error) ||
+    isQuarkAuthError(error) ||
+    isGuangYaAuthError(error) ||
+    isTianyiAuthError(error) ||
+    isPan123AuthError(error)
+  );
+}
+
+async function maybeFreezeOnBrandAuthError(input: {
+  connectedStorageId: string | null | undefined;
+  error: unknown;
+  onAuthErrorFreeze?: (storageId: string, reason: string) => Promise<void>;
+}): Promise<void> {
+  const { connectedStorageId, error, onAuthErrorFreeze } = input;
+  if (!onAuthErrorFreeze || !connectedStorageId || !isBrandStorageAuthError(error)) {
+    return;
+  }
+  const reason = error instanceof Error ? error.message : String(error);
+  try {
+    await onAuthErrorFreeze(connectedStorageId, reason);
+  } catch (freezeError) {
+    console.error(
+      `[media-track] onAuthErrorFreeze failed for ${connectedStorageId}: ${String(freezeError)}`,
+    );
+  }
+}
 
 /**
  * Pick the 115 landing parent for a title. Anime lands under its own parent
@@ -176,6 +211,8 @@ export async function handleWorkflowRunFailure(input: {
   error: unknown;
   repository: Pick<WorkflowRepository, "saveWorkflowRunSnapshot">;
   now: () => string;
+  /** Freeze the run's connected drive on brand *AuthError (cookie/token dead). */
+  onAuthErrorFreeze?: (storageId: string, reason: string) => Promise<void>;
 }): Promise<{ status: "auto_requeued" | "failed"; workflowRunId: string; errorMessage: string }> {
   const { claimed, error, repository } = input;
   const nowIso = input.now();
@@ -234,6 +271,14 @@ export async function handleWorkflowRunFailure(input: {
     transferAttempts: willRetry ? claimed.transferAttempts : [],
     notifications: [notification],
   });
+  // Brand auth (dead cookie/token) — freeze the drive so the queue refuses more
+  // work until re-bound. LLM Unauthorized is NOT a brand AuthError; only the
+  // five *AuthError classes trigger this. Failures in the freeze hook are log-only.
+  await maybeFreezeOnBrandAuthError({
+    connectedStorageId: claimed.connectedStorageId,
+    error,
+    ...(input.onAuthErrorFreeze === undefined ? {} : { onAuthErrorFreeze: input.onAuthErrorFreeze }),
+  });
   return {
     status: willRetry ? "auto_requeued" : "failed",
     workflowRunId: claimed.workflowRun.id,
@@ -254,6 +299,7 @@ export async function runQueuedType2Workflow(input: {
   animeStorageParentDirectoryId?: string;
   /** §7: resolve the claimed run's per-account 115 creds + landing CIDs. */
   resolveAccountContext?: ResolveAccountWorkerContext;
+  onAuthErrorFreeze?: (storageId: string, reason: string) => Promise<void>;
 }): Promise<QueuedType2WorkerResult> {
   const now = input.now ?? (() => new Date().toISOString());
   const claimed = await input.repository.claimNextQueuedWorkflowRun({
@@ -320,6 +366,9 @@ export async function runQueuedType2Workflow(input: {
       error,
       repository: input.repository,
       now,
+      ...(input.onAuthErrorFreeze === undefined
+        ? {}
+        : { onAuthErrorFreeze: input.onAuthErrorFreeze }),
     });
     return handled.status === "auto_requeued"
       ? { status: "ran", workflowRunId: handled.workflowRunId, workflowStatus: "queued" }
@@ -373,6 +422,7 @@ export async function runScheduledType3Monitoring(input: {
   /** §7: resolve each patrolled season's per-account 115 creds + landing CIDs.
    *  The sweep is cross-account; each show runs under its owner's credentials. */
   resolveAccountContext?: ResolveAccountWorkerContext;
+  onAuthErrorFreeze?: (storageId: string, reason: string) => Promise<void>;
 }): Promise<ScheduledType3Outcome[]> {
   const now = input.now ?? (() => new Date().toISOString());
   const outcomes: ScheduledType3Outcome[] = [];
@@ -534,6 +584,13 @@ export async function runScheduledType3Monitoring(input: {
         transferAttempts: [],
         notifications: [],
       });
+      await maybeFreezeOnBrandAuthError({
+        connectedStorageId: state.connectedStorageId,
+        error,
+        ...(input.onAuthErrorFreeze === undefined
+          ? {}
+          : { onAuthErrorFreeze: input.onAuthErrorFreeze }),
+      });
       outcomes.push({
         trackedSeasonId: state.season.id,
         status: "failed",
@@ -556,6 +613,7 @@ async function patrolMovie(args: {
     repository: WorkflowRepository;
     createWorkflowRunId?: () => string;
     staleActiveRunTimeoutMs?: number;
+    onAuthErrorFreeze?: (storageId: string, reason: string) => Promise<void>;
   };
   deps: {
     resourceProvider: ResourceProvider;
@@ -690,6 +748,13 @@ async function patrolMovie(args: {
       transferAttempts: [],
       notifications: [],
     });
+    await maybeFreezeOnBrandAuthError({
+      connectedStorageId: state.connectedStorageId,
+      error,
+      ...(input.onAuthErrorFreeze === undefined
+        ? {}
+        : { onAuthErrorFreeze: input.onAuthErrorFreeze }),
+    });
     return {
       trackedSeasonId: state.season.id,
       status: "failed",
@@ -741,6 +806,7 @@ export async function runQueuedMovieAcquisition(input: {
   now?: () => string;
   /** §7: resolve the claimed run's per-account 115 creds + landing CIDs. */
   resolveAccountContext?: ResolveAccountWorkerContext;
+  onAuthErrorFreeze?: (storageId: string, reason: string) => Promise<void>;
 }): Promise<QueuedType2WorkerResult> {
   const now = input.now ?? (() => new Date().toISOString());
   const claimed = await input.repository.claimNextQueuedWorkflowRun({
@@ -798,6 +864,9 @@ export async function runQueuedMovieAcquisition(input: {
       error,
       repository: input.repository,
       now,
+      ...(input.onAuthErrorFreeze === undefined
+        ? {}
+        : { onAuthErrorFreeze: input.onAuthErrorFreeze }),
     });
     return handled.status === "auto_requeued"
       ? { status: "ran", workflowRunId: handled.workflowRunId, workflowStatus: "queued" }
@@ -819,6 +888,7 @@ export async function runQueuedSeriesInitialization(input: {
   now?: () => string;
   /** §7: resolve the claimed run's per-account 115 creds + landing CIDs. */
   resolveAccountContext?: ResolveAccountWorkerContext;
+  onAuthErrorFreeze?: (storageId: string, reason: string) => Promise<void>;
 }): Promise<QueuedType2WorkerResult> {
   const now = input.now ?? (() => new Date().toISOString());
   const claimed = await input.repository.claimNextQueuedWorkflowRun({
@@ -917,6 +987,9 @@ export async function runQueuedSeriesInitialization(input: {
       error,
       repository: input.repository,
       now,
+      ...(input.onAuthErrorFreeze === undefined
+        ? {}
+        : { onAuthErrorFreeze: input.onAuthErrorFreeze }),
     });
     return handled.status === "auto_requeued"
       ? { status: "ran", workflowRunId: handled.workflowRunId, workflowStatus: "queued" }

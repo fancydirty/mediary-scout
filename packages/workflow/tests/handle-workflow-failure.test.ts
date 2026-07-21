@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { MediaTitle, TrackedSeason, WorkflowRun } from "../src/domain.js";
 import type { PersistedWorkflowRunSnapshot, PersistWorkflowRunSnapshotInput } from "../src/repository.js";
+import { QuarkAuthError } from "../src/quark-cookie-client.js";
 import { handleWorkflowRunFailure } from "../src/worker.js";
 
 const title: MediaTitle = {
@@ -151,5 +152,48 @@ describe("handleWorkflowRunFailure", () => {
     const saved = save.mock.calls[0]![0];
     expect(saved.workflowRun.status).toBe("failed");
     expect(saved.notifications[0]?.report?.status).toBe("failed");
+  });
+
+  it("freezes the connected drive once on brand QuarkAuthError", async () => {
+    const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
+    const onAuthErrorFreeze = vi.fn(async (_storageId: string, _reason: string) => {});
+    await handleWorkflowRunFailure({
+      claimed: snapshot(),
+      error: new QuarkAuthError("QUARK_AUTH_FAILED: require login"),
+      repository: { saveWorkflowRunSnapshot: save },
+      now,
+      onAuthErrorFreeze,
+    });
+    expect(onAuthErrorFreeze).toHaveBeenCalledTimes(1);
+    expect(onAuthErrorFreeze).toHaveBeenCalledWith("cs_1", "QUARK_AUTH_FAILED: require login");
+  });
+
+  it("does not freeze on a plain Error (even if message looks auth-like)", async () => {
+    const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
+    const onAuthErrorFreeze = vi.fn(async () => {});
+    await handleWorkflowRunFailure({
+      claimed: snapshot(),
+      error: new Error("Unauthorized"),
+      repository: { saveWorkflowRunSnapshot: save },
+      now,
+      onAuthErrorFreeze,
+    });
+    expect(onAuthErrorFreeze).not.toHaveBeenCalled();
+  });
+
+  it("does not freeze / does not throw when connectedStorageId is null", async () => {
+    const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
+    const onAuthErrorFreeze = vi.fn(async () => {});
+    const claimed = { ...snapshot(), connectedStorageId: null };
+    await expect(
+      handleWorkflowRunFailure({
+        claimed,
+        error: new QuarkAuthError("QUARK_AUTH_FAILED: require login"),
+        repository: { saveWorkflowRunSnapshot: save },
+        now,
+        onAuthErrorFreeze,
+      }),
+    ).resolves.toMatchObject({ status: "failed" });
+    expect(onAuthErrorFreeze).not.toHaveBeenCalled();
   });
 });
