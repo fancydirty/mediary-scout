@@ -2600,6 +2600,16 @@ export async function connectQuarkCookie(rawCookie: string): Promise<{ providerU
   if (decision.action === "reject") {
     throw new StorageOwnedByOtherAccountError();
   }
+  // Live-check BEFORE bind (parity with 123/天翼/光鸭): dead/revoked cookie must
+  // not land in connected_storages. Best-effort provision below is separate —
+  // auth failures here abort the whole connect.
+  try {
+    await probeStorageConnection("quark", cookie, existing?.rootCid ?? "0", null);
+  } catch (error) {
+    throw new Error(
+      `无法用该 cookie 连接夸克：${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
   const payload = { cookie, meta: { connectedAt: new Date().toISOString() } };
   if (decision.action === "refresh" && existing) {
     // Same account re-bind → refresh the cookie, keep the resolved CIDs.
@@ -2620,6 +2630,7 @@ export async function connectQuarkCookie(rawCookie: string): Promise<{ providerU
   }
   // insert: provision the category tree under the 夸克 root ("0"). Best-effort —
   // a failure still stores the connection (worker falls back to env CIDs / none).
+  // Auth already proved live above; provision errors are non-fatal layout issues.
   let cids: { rootCid: string | null; moviesCid: string | null; tvCid: string | null; animeCid: string | null } = {
     rootCid: null,
     moviesCid: null,
