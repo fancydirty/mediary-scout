@@ -115,6 +115,37 @@ describe("account scoping (InMemory)", () => {
     expect(byNotif.get("notif_a2")).toBe("acct_a2");
   });
 
+  it("listRecentNotificationsWithAccount applies since before limit so pre-cutoff noise cannot crowd out the window", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    const base = snapshotFor("acct_push", "base");
+    // 90 after the cutoff + 90 before. Newest-first without a since filter returns
+    // 100 rows that still mix in 10 pre-cutoff events. The fixed API must drop those
+    // first, then apply the limit, leaving only the 90 post-cutoff events.
+    const after = Array.from({ length: 90 }, (_, index) => ({
+      id: `after_${String(index).padStart(3, "0")}`,
+      workflowRunId: base.workflowRun.id,
+      kind: "already_current" as const,
+      title: `after ${index}`,
+      body: "ok",
+      createdAt: new Date(Date.parse("2026-07-21T12:00:00.000Z") + (index + 1) * 1000).toISOString(),
+    }));
+    const before = Array.from({ length: 90 }, (_, index) => ({
+      id: `before_${String(index).padStart(3, "0")}`,
+      workflowRunId: base.workflowRun.id,
+      kind: "already_current" as const,
+      title: `before ${index}`,
+      body: "ok",
+      createdAt: new Date(Date.parse("2026-07-21T11:00:00.000Z") + index * 1000).toISOString(),
+    }));
+    await repo.saveWorkflowRunSnapshot({ ...base, notifications: [...after, ...before] });
+
+    const since = "2026-07-21T12:00:00.000Z";
+    const tagged = await repo.listRecentNotificationsWithAccount({ since, limit: 100 });
+    expect(tagged).toHaveLength(90);
+    expect(tagged.every((entry) => entry.notification.createdAt >= since)).toBe(true);
+    expect(tagged.some((entry) => entry.notification.id.startsWith("before_"))).toBe(false);
+  });
+
   it("omitting accountId falls back to the default account (single-user, fail-closed)", async () => {
     const repo = new InMemoryWorkflowRepository();
     await repo.saveWorkflowRunSnapshot(snapshotFor(DEFAULT_ACCOUNT_ID, "d"));

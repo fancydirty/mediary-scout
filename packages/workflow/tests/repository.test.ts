@@ -585,6 +585,58 @@ describe("InMemoryWorkflowRepository", () => {
 
 
 describe("listNotifications", () => {
+  it("does not expire a long-running active run that still has fresh progress liveness", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const live = workflowPersistenceFixture({
+      workflowRun: {
+        ...workflowPersistenceFixture().workflowRun,
+        id: "run_live_slow",
+        status: "running",
+        startedAt: "2026-06-11T00:00:00.000Z",
+        finishedAt: null,
+        progress: {
+          activity: "大批量转存中",
+          phase: "transfer",
+          percent: 40,
+          updatedAt: "2026-06-11T00:55:00.000Z",
+        },
+      },
+      resourceSnapshots: [],
+      decisions: [],
+      transferAttempts: [],
+      notifications: [],
+    });
+    const competing = workflowPersistenceFixture({
+      workflowRun: {
+        ...workflowPersistenceFixture().workflowRun,
+        id: "run_competing_live",
+        status: "running",
+        startedAt: "2026-06-11T01:00:00.000Z",
+        finishedAt: null,
+      },
+      resourceSnapshots: [],
+      decisions: [],
+      transferAttempts: [],
+      notifications: [],
+    });
+
+    await repository.saveWorkflowRunSnapshot(live);
+
+    await expect(
+      repository.reserveWorkflowRun({
+        ...competing,
+        blockIfEpisodeStatesExist: true,
+        staleActiveRunStartedBefore: "2026-06-11T00:30:00.000Z",
+        staleFinishedAt: "2026-06-11T01:00:00.000Z",
+      }),
+    ).resolves.toMatchObject({ status: "already_active" });
+
+    await expect(repository.getWorkflowRunSnapshot("run_live_slow")).resolves.toMatchObject({
+      workflowRun: { id: "run_live_slow", status: "running", finishedAt: null },
+    });
+  });
+
+
   it("returns notifications across runs, newest first", async () => {
     const { InMemoryWorkflowRepository } = await import("../src/index.js");
     const repository = new InMemoryWorkflowRepository();

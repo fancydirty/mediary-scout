@@ -1044,9 +1044,13 @@ async function pushNotificationsSince(
     // Cross-account: the drain/sweep may have completed runs for several accounts.
     // Each notification is tagged with its owning account so it goes to THAT
     // user's channels (push config resolved per-account: account → global → env).
-    const recent = (await targetRepository.listRecentNotificationsWithAccount({ limit: 100 })).filter(
-      (entry) => entry.notification.createdAt >= sinceIso,
-    );
+    // since is applied in the repository BEFORE the limit so a large sweep's
+    // earliest notifications are not crowded out by newer already_current noise.
+    // Cap is high enough for a full patrol of a large library; still bounded.
+    const recent = await targetRepository.listRecentNotificationsWithAccount({
+      since: sinceIso,
+      limit: 10_000,
+    });
     if (recent.length === 0) {
       return;
     }

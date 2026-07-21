@@ -31,6 +31,7 @@ import {
   DuplicateUsernameError,
   expireWorkflowRun,
   isActiveWorkflowStatus,
+  isStaleActiveWorkflowRun,
   retriedWorkflowRun,
   seasonScopeKey,
   UNSCOPED_STORAGE,
@@ -498,7 +499,7 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
       (workflowRun) =>
         workflowRun.kind === snapshot.workflowRun.kind &&
         isActiveWorkflowStatus(workflowRun.status) &&
-        workflowRun.startedAt < input.staleActiveRunStartedBefore!,
+        isStaleActiveWorkflowRun(workflowRun, input.staleActiveRunStartedBefore!),
     );
     for (const staleRun of staleRuns) {
       const expiredRun = expireWorkflowRun(
@@ -1048,14 +1049,18 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
 
   async listRecentNotificationsWithAccount(input?: {
     limit?: number;
+    since?: string;
   }): Promise<Array<{ accountId: string; connectedStorageId: string | null; notification: NotificationEvent }>> {
     // Cross-account: each notification tagged with its run's owning (account, storage).
+    // Apply since in SQL before the JS limit so pre-cutoff noise cannot crowd the window.
+    const since = input?.since ?? null;
     const rows = this.db
       .prepare(
         "SELECT n.payload AS payload, wr.account_id AS account_id, wr.connected_storage_id AS connected_storage_id " +
-          "FROM notifications n JOIN workflow_runs wr ON n.workflow_run_id = wr.id",
+          "FROM notifications n JOIN workflow_runs wr ON n.workflow_run_id = wr.id " +
+          "WHERE (? IS NULL OR json_extract(n.payload, '$.createdAt') >= ?)",
       )
-      .all() as Array<{ payload: string; account_id: string; connected_storage_id: string | null }>;
+      .all(since, since) as Array<{ payload: string; account_id: string; connected_storage_id: string | null }>;
     const tagged = rows.map((row) => {
       const rawStorage = row.connected_storage_id ?? null;
       return {
