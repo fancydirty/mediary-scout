@@ -1924,11 +1924,13 @@ async function probeStorageConnection(
 }
 
 /**
- * Whether the background worker has a drive it could use. Returns false ONLY in
- * the genuine fresh-deploy case (adapter "115", no connected 网盘 on ANY account,
- * no env cookie), so the worker can skip QUIETLY instead of spamming logs every
- * poll. Multi-user: a non-default account's drive still counts — runs claim with
- * that accountId. Cheap + non-throwing.
+ * Whether the background worker has a drive it could use. Returns false when:
+ * - adapter is "115", no env cookie, and no connected 网盘 on any account
+ *   (genuine fresh deploy), OR
+ * - the repository probe throws (transient DB blip) — fail quiet so the tick
+ *   does not crash; callers must not treat false as a definitive "no drives".
+ * Multi-user: any account's drive counts (EXISTS, not per-account scan).
+ * Cheap + non-throwing.
  */
 export async function workerHasConfiguredDrive(): Promise<boolean> {
   if ((process.env.MEDIA_TRACK_STORAGE_ADAPTER ?? "fake") !== "115") {
