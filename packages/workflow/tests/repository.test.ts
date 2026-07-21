@@ -581,10 +581,7 @@ describe("InMemoryWorkflowRepository", () => {
       episodes: [],
     });
   });
-});
 
-
-describe("listNotifications", () => {
   it("does not expire a long-running active run that still has fresh progress liveness", async () => {
     const repository = new InMemoryWorkflowRepository();
     const live = workflowPersistenceFixture({
@@ -636,6 +633,10 @@ describe("listNotifications", () => {
     });
   });
 
+});
+
+
+describe("listNotifications", () => {
 
   it("returns notifications across runs, newest first", async () => {
     const { InMemoryWorkflowRepository } = await import("../src/index.js");

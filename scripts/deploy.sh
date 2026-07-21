@@ -57,7 +57,7 @@ if [ "${RUNNING}" = "${GIT_SHA}" ]; then
   i=0
   READY=0
   while [ "$i" -lt 60 ]; do
-    if docker compose exec -T web node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then
+    if docker compose exec -T web node -e "fetch('http://127.0.0.1:3000/api/health',{signal:AbortSignal.timeout(5000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then
       READY=1
       break
     fi
