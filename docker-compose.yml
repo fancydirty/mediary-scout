@@ -68,6 +68,19 @@ services:
     # Host port configurable (WEB_PORT) in case 3000 is taken on the host.
     ports:
       - "${WEB_PORT:-3000}:3000"
+    # Probes /api/health, which reads the DB through the app's real query path —
+    # so `docker ps` shows "unhealthy" if the app can't reach postgres (e.g. the
+    # 2026-07-21 wedge), not just when the process dies. Runs inside the container
+    # against localhost (bypasses any Cloudflare Access). node:22-slim has global
+    # fetch and no curl/wget, so probe with node. r.ok is true only for 2xx.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
     restart: unless-stopped
 
   # Optional public HTTPS via Cloudflare Tunnel (no public IP, no open ports).
