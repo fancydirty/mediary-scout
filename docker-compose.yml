@@ -1,6 +1,12 @@
 # media-track 自部署:一把拉起 web(Next + 进程内 worker) / Postgres / PanSou。
 #   docker compose up -d   →   打开 http://<host>:3000   →   设置页扫码连 115 即用
 # TMDB 经 §1 CF Worker 开箱即用;LLM key / 自己的 TMDB key / Prowlarr 在设置页填。
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -15,6 +21,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 12
+    logging: *default-logging
     restart: unless-stopped
 
   pansou:
@@ -26,6 +33,7 @@ services:
     # the agent then never sees the good 网盘 4K/REMUX resources. See the file header.
     env_file:
       - deploy/pansou.channels.env
+    logging: *default-logging
     restart: unless-stopped
 
   web:
@@ -81,6 +89,7 @@ services:
       timeout: 5s
       retries: 3
       start_period: 40s
+    logging: *default-logging
     restart: unless-stopped
 
   # Optional public HTTPS via Cloudflare Tunnel (no public IP, no open ports).
@@ -112,6 +121,7 @@ services:
       - "host.docker.internal:host-gateway"
     depends_on:
       - web
+    logging: *default-logging
     restart: unless-stopped
     profiles:
       - tunnel

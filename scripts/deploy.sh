@@ -53,7 +53,24 @@ done
 echo "    expected (HEAD):        ${GIT_SHA}"
 echo "    running container:      ${RUNNING}"
 if [ "${RUNNING}" = "${GIT_SHA}" ]; then
-  echo "==> OK: container is serving the freshly built commit."
+  echo "==> Verifying application readiness"
+  i=0
+  READY=0
+  while [ "$i" -lt 60 ]; do
+    if docker compose exec -T web node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then
+      READY=1
+      break
+    fi
+    i=$((i + 1))
+    sleep 1
+  done
+  if [ "$READY" = "1" ]; then
+    echo "==> OK: container serves the freshly built commit and passes the DB-backed health probe."
+  else
+    echo "==> WARNING: container commit matches HEAD but /api/health never became ready."
+    docker compose logs --tail=100 web || true
+    exit 1
+  fi
 else
   echo "==> WARNING: running container commit != HEAD. The build may have been cached"
   echo "    stale, or the container did not recreate. Investigate before trusting it."

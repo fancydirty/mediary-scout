@@ -37,6 +37,8 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npx tsc -p apps/web/tsconfig.json --noEmit
+      - run: npx tsc -p apps/desktop/tsconfig.json --noEmit
+      - run: npx tsc -p workers/tmdb-proxy/tsconfig.json --noEmit
       # Production build with NO database — mirrors `docker compose build` (no .env
       # at image-build time). cacheComponents prerenders pages at build; any server
       # component that reads the DB outside a connection()/cookies()/searchParams
@@ -46,4 +48,8 @@ jobs:
       - run: npm run build:web
         env:
           MEDIA_TRACK_POSTGRES_URL: ""
-      - run: npx vitest run
+      - run: npx vitest run --exclude '**/*.pg.test.ts'
+      # The PG integration files share MEDIA_TRACK_POSTGRES_URL and each performs
+      # schema/init + cleanup. Run those files serially to prevent test-only DDL/DML
+      # deadlocks while still proving every PG suite actually executes in CI.
+      - run: npx vitest run --no-file-parallelism packages/workflow/tests/*.pg.test.ts
