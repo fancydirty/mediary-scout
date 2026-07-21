@@ -13,9 +13,10 @@ media-track(产品名 Mediary Scout):媒体资源自动获取/追踪产品。Nex
 - **PR #149**(`560bfea`):ensureSchema 永久错(28P01/28000/3D000)fail-fast、其余重试;新增 `/api/health`(走真实 DB 读路径)+ web 容器 healthcheck。
 - **PR #150**(`89c7bc6`):Wave1 — A1–A6 + B3 + proxy/C8 + C3/C7。
 - **PR #151**(`798a465`):Wave2 — B1/B2/B4 + C1/C2/C4–C6。
-- 全部已合并 main；实例 `media-router-tunnel` 已 `deploy.sh` 到 `798a465`，真机 e2e 通过（health 200、页面 200、日志轮转、backup 脚本在位）。
+- **PR #152**(`e105f89`):C10 夸克粘贴绑盘前 live-check（账号根 `"0"` + error cause）。
+- 全部已合并 main；实例 `media-router-tunnel` 已 `deploy.sh` 到 `e105f89`，真机 e2e 通过（health 200、页面 200、日志轮转、backup 脚本在位）。
 
-**审计剩余（低优先，勿当紧急）**: C9 热路径全表读老化；C10 夸克粘贴验活 / 孤儿 run 重试上限 / testPush SSRF（内网有限）。Tier D 仍勿修。
+**审计剩余（低优先，勿当紧急）**: C9 热路径全表读老化；孤儿 run 重试上限；testPush SSRF（内网有限）。Tier D 仍勿修。**健壮性审计主线 A/B + 高价值 C 已收口。**
 
 ## 1. 审计方法(可信度依据)
 
