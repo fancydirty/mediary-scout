@@ -67,6 +67,34 @@ export function pickWorkspaceStorageId(
   return storageIdParam;
 }
 
+/**
+ * Resolve which connected storage a queue/reserve action should pin to.
+ * Unlike pickWorkspaceStorageId (route 404 on unknown), unknown explicit ids
+ * fail closed with unknown:true — never soft-fallback to primary, never
+ * passthrough a ghost storageId into the run.
+ */
+export function resolveQueueStorageChoice(
+  storages: ReadonlyArray<{ id: string; createdAt: string; status?: string }>,
+  explicitId?: string | null,
+): { id: string | null; frozen: boolean; unknown: boolean } {
+  if (explicitId) {
+    const found = storages.find((storage) => storage.id === explicitId);
+    if (!found) {
+      return { id: null, frozen: false, unknown: true };
+    }
+    return { id: found.id, frozen: found.status === "frozen", unknown: false };
+  }
+  if (storages.length === 0) {
+    return { id: null, frozen: false, unknown: false };
+  }
+  const earliest = [...storages].sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0]!;
+  return {
+    id: earliest.id,
+    frozen: earliest.status === "frozen",
+    unknown: false,
+  };
+}
+
 export interface WorkspaceSwitcherItem {
   id: string;
   href: string;
