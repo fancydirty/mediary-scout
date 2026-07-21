@@ -2601,10 +2601,11 @@ export async function connectQuarkCookie(rawCookie: string): Promise<{ providerU
     throw new StorageOwnedByOtherAccountError();
   }
   // Live-check BEFORE bind (parity with 123/天翼/光鸭): dead/revoked cookie must
-  // not land in connected_storages. Best-effort provision below is separate —
-  // auth failures here abort the whole connect.
+  // not land in connected_storages. Always probe the account root ("0"), not
+  // existing.rootCid (that is the mediary category tree — user may have deleted
+  // it; a missing layout dir must not block cookie refresh).
   try {
-    await probeStorageConnection("quark", cookie, existing?.rootCid ?? "0", null);
+    await probeStorageConnection("quark", cookie, "0", null);
   } catch (error) {
     throw new Error(
       `无法用该 cookie 连接夸克：${error instanceof Error ? error.message : String(error)}`,
