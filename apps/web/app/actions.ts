@@ -48,24 +48,32 @@ export interface UnbindStorageActionResult {
  *  restores it. Refused while the drive has an in-flight acquisition. */
 export async function unbindStorageAction(storageId: string): Promise<UnbindStorageActionResult> {
   assertNotDemo();
-  const { getCurrentAccountId, getWorkflowRepository } = await import("../lib/workflow-runtime");
-  const accountId = await getCurrentAccountId();
+  const {
+    requireAuthenticatedAccountId,
+    getWorkflowRepository,
+    clearPan115GlobalMirrorForUnboundDrive,
+  } = await import("../lib/workflow-runtime");
+  let accountId: string;
+  try {
+    accountId = await requireAuthenticatedAccountId();
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : String(error) };
+  }
   const repository = getWorkflowRepository();
 
-  // Ownership: only a drive this account owns can be unbound.
-  const drives = await repository.listConnectedStorages(accountId);
-  if (!drives.some((drive) => drive.id === storageId)) {
+  // Atomic ownership + active-run guard (closes TOCTOU between check and delete).
+  const result = await repository.tryUnbindConnectedStorage(accountId, storageId);
+  if (!result.ok) {
+    if (result.reason === "active_runs") {
+      return { ok: false, message: "该盘还有获取任务在进行，完成或取消后再取消绑定。" };
+    }
     return { ok: false, message: "未找到该网盘。" };
   }
 
-  // Guard: refuse while an acquisition is queued/running on this drive (else the
-  // worker loses its credentials mid-flight).
-  const active = await repository.listActiveWorkflowRuns({ accountId, connectedStorageId: storageId });
-  if (active.length > 0) {
-    return { ok: false, message: "该盘还有获取任务在进行，完成或取消后再取消绑定。" };
+  if (result.storage.provider === "pan115") {
+    await clearPan115GlobalMirrorForUnboundDrive(result.storage.providerUid, repository);
   }
 
-  await repository.deleteConnectedStorage(accountId, storageId);
   revalidatePath("/settings");
   revalidatePath("/");
   return { ok: true, message: "已取消绑定（追踪记录已保留，重新绑定同一块盘即可恢复）。" };

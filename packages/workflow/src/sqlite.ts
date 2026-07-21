@@ -1088,6 +1088,10 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
       .run(key, value);
   }
 
+  async deleteSetting(key: string): Promise<void> {
+    this.db.prepare("DELETE FROM app_settings WHERE key = ?").run(key);
+  }
+
   async getAccountSetting(accountId: string, key: string): Promise<string | null> {
     const row = this.db
       .prepare("SELECT value FROM account_settings WHERE account_id = ? AND key = ?")
@@ -1189,6 +1193,10 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
   }
 
   async upsertConnectedStorage(row: UpsertConnectedStorageInput): Promise<void> {
+    // Refuse the multi-user unauthenticated sentinel — binds must never land on a ghost account.
+    if (row.accountId === "acct_unauthenticated") {
+      throw new Error("cannot bind storage to unauthenticated account");
+    }
     // Instance-wide UNIQUE(provider, provider_uid) ownership: on conflict NEVER
     // reassign account_id, and only refresh the row when the SAME account owns it
     // (the WHERE makes a cross-account conflict a no-op — it can't steal or
@@ -1224,6 +1232,42 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     this.db
       .prepare("DELETE FROM connected_storages WHERE id = ? AND account_id = ?")
       .run(storageId, accountId);
+  }
+
+  async tryUnbindConnectedStorage(
+    accountId: string,
+    storageId: string,
+  ): Promise<
+    | { ok: true; storage: ConnectedStorage }
+    | { ok: false; reason: "active_runs" | "not_found" }
+  > {
+    const unbind = this.db.transaction(() => {
+      const row = this.db
+        .prepare(
+          "SELECT id, account_id, provider, provider_uid, label, payload, root_cid, movies_cid, tv_cid, anime_cid, status, frozen_reason, frozen_at, created_at " +
+            "FROM connected_storages WHERE id = ? AND account_id = ?",
+        )
+        .get(storageId, accountId) as Record<string, unknown> | undefined;
+      if (!row) {
+        return { ok: false as const, reason: "not_found" as const };
+      }
+      const active = this.db
+        .prepare(
+          "SELECT 1 FROM workflow_runs " +
+            "WHERE account_id = ? AND connected_storage_id = ? " +
+            "AND json_extract(payload, '$.status') IN ('queued', 'running') " +
+            "LIMIT 1",
+        )
+        .get(accountId, storageId);
+      if (active) {
+        return { ok: false as const, reason: "active_runs" as const };
+      }
+      this.db
+        .prepare("DELETE FROM connected_storages WHERE id = ? AND account_id = ?")
+        .run(storageId, accountId);
+      return { ok: true as const, storage: this.connectedStorageFromRow(row) };
+    });
+    return unbind();
   }
 
   async findConnectedStorageByUid(

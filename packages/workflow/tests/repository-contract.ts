@@ -36,6 +36,15 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
         expect(await repo.getSetting("daily_sweep_time")).toBe("07:30");
       });
 
+      it("deleteSetting removes a key and is a no-op for unknown keys", async () => {
+        const repo = await fresh();
+        await repo.setSetting("pan115.cookie", "UID=1;CID=2");
+        await repo.deleteSetting("pan115.cookie");
+        expect(await repo.getSetting("pan115.cookie")).toBeNull();
+        await repo.deleteSetting("pan115.cookie"); // no-op
+        expect(await repo.getSetting("pan115.cookie")).toBeNull();
+      });
+
       it("scopes account settings per account", async () => {
         const repo = await fresh();
         await repo.setAccountSetting("acct_a", "llm_key", "A");

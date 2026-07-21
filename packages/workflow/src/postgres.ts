@@ -914,6 +914,11 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     );
   }
 
+  async deleteSetting(key: string): Promise<void> {
+    await this.ensureSchema();
+    await this.pool.query("DELETE FROM app_settings WHERE key = $1", [key]);
+  }
+
   async getAccountSetting(accountId: string, key: string): Promise<string | null> {
     await this.ensureSchema();
     const result = await this.pool.query(
@@ -967,6 +972,10 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
 
   async upsertConnectedStorage(row: UpsertConnectedStorageInput): Promise<void> {
     await this.ensureSchema();
+    // Refuse the multi-user unauthenticated sentinel — binds must never land on a ghost account.
+    if (row.accountId === "acct_unauthenticated") {
+      throw new Error("cannot bind storage to unauthenticated account");
+    }
     // Instance-wide UNIQUE(provider, provider_uid) ownership: on conflict NEVER
     // reassign account_id, and only refresh the row when the SAME account owns it
     // (the WHERE makes a cross-account conflict a no-op — it can't steal or
@@ -1006,6 +1015,43 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
       storageId,
       accountId,
     ]);
+  }
+
+  async tryUnbindConnectedStorage(
+    accountId: string,
+    storageId: string,
+  ): Promise<
+    | { ok: true; storage: ConnectedStorage }
+    | { ok: false; reason: "active_runs" | "not_found" }
+  > {
+    return this.withTransaction(async (client) => {
+      const locked = await client.query(
+        "SELECT id, account_id, provider, provider_uid, label, payload, root_cid, movies_cid, tv_cid, anime_cid, status, frozen_reason, frozen_at, created_at " +
+          "FROM connected_storages WHERE id = $1 AND account_id = $2 FOR UPDATE",
+        [storageId, accountId],
+      );
+      if (locked.rows.length === 0) {
+        return { ok: false as const, reason: "not_found" as const };
+      }
+      const active = await client.query(
+        "SELECT 1 FROM workflow_runs " +
+          "WHERE account_id = $1 AND connected_storage_id = $2 " +
+          "AND payload->>'status' IN ('queued', 'running') " +
+          "LIMIT 1",
+        [accountId, storageId],
+      );
+      if (active.rows.length > 0) {
+        return { ok: false as const, reason: "active_runs" as const };
+      }
+      await client.query("DELETE FROM connected_storages WHERE id = $1 AND account_id = $2", [
+        storageId,
+        accountId,
+      ]);
+      return {
+        ok: true as const,
+        storage: connectedStorageFromRow(locked.rows[0] as Record<string, unknown>),
+      };
+    });
   }
 
   async findConnectedStorageByUid(
