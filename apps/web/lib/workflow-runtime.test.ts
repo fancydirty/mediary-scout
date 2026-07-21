@@ -629,4 +629,29 @@ describe("requireAuthenticatedAccountId (C2: refuse acct_unauthenticated writes)
     await expect(requireAuthenticatedAccountId()).rejects.toBeInstanceOf(UnauthenticatedAccountError);
     await expect(requireAuthenticatedAccountId()).rejects.toThrow(/未登录/);
   });
+
+  it("queue/reserve write paths refuse multi-user unauthenticated as unsupported", async () => {
+    process.env.MEDIA_TRACK_MULTI_USER = "1";
+    vi.resetModules();
+    vi.doMock("next/headers", () => ({
+      cookies: async () => ({ get: () => undefined }),
+    }));
+    const {
+      queueCandidateTracking,
+      queueCandidateSeries,
+      reserveCandidate,
+    } = await import("./workflow-runtime");
+    await expect(queueCandidateTracking("tmdb_movie_1")).resolves.toMatchObject({
+      status: "unsupported",
+      message: expect.stringMatching(/未登录/),
+    });
+    await expect(queueCandidateSeries("tmdb_tv_1_s1")).resolves.toMatchObject({
+      status: "unsupported",
+      message: expect.stringMatching(/未登录/),
+    });
+    await expect(reserveCandidate("tmdb_movie_1")).resolves.toMatchObject({
+      status: "unsupported",
+      message: expect.stringMatching(/未登录/),
+    });
+  });
 });

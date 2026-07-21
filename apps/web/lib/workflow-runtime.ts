@@ -602,7 +602,15 @@ export async function queueCandidateTracking(
   candidateId: string,
   connectedStorageId?: string | null,
 ): Promise<CandidateTrackingRequestResult> {
-  const accountId = await getCurrentAccountId();
+  let accountId: string;
+  try {
+    accountId = await requireAuthenticatedAccountId();
+  } catch (error) {
+    return {
+      status: "unsupported",
+      message: error instanceof Error ? error.message : "未登录，无法获取。",
+    };
+  }
   const workspace = await resolveQueueStorage(accountId, connectedStorageId);
   if (workspace.unknown) {
     return { status: "unsupported", message: "找不到该网盘工作区。" };
@@ -1038,6 +1046,15 @@ export async function reserveCandidate(
   candidateId: string,
   connectedStorageId?: string | null,
 ): Promise<CandidateReserveRequestResult> {
+  let accountId: string;
+  try {
+    accountId = await requireAuthenticatedAccountId();
+  } catch (error) {
+    return {
+      status: "unsupported",
+      message: error instanceof Error ? error.message : "未登录，无法预定。",
+    };
+  }
   const movieTmdbId = parseMovieCandidateId(candidateId);
   if (movieTmdbId === null) {
     return { status: "unsupported", message: "只有电影可以预定。" };
@@ -1046,7 +1063,6 @@ export async function reserveCandidate(
   if (!movie) {
     return { status: "unsupported", message: "无法获取该电影的信息。" };
   }
-  const accountId = await getCurrentAccountId();
   const workspace = await resolveQueueStorage(accountId, connectedStorageId);
   if (workspace.unknown) {
     return { status: "unsupported", message: "找不到该网盘工作区。" };
@@ -1152,7 +1168,15 @@ export async function queueCandidateSeries(
   if (!parsed) {
     return { status: "unsupported", message: "暂时只支持剧集的全剧获取。" };
   }
-  const accountId = await getCurrentAccountId();
+  let accountId: string;
+  try {
+    accountId = await requireAuthenticatedAccountId();
+  } catch (error) {
+    return {
+      status: "unsupported",
+      message: error instanceof Error ? error.message : "未登录，无法获取。",
+    };
+  }
   const workspace = await resolveQueueStorage(accountId, connectedStorageId);
   if (workspace.unknown) {
     return { status: "unsupported", message: "找不到该网盘工作区。" };
