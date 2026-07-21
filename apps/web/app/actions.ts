@@ -71,7 +71,12 @@ export async function unbindStorageAction(storageId: string): Promise<UnbindStor
   }
 
   if (result.storage.provider === "pan115") {
-    await clearPan115GlobalMirrorForUnboundDrive(result.storage.providerUid, repository);
+    // Best-effort: unbind already committed; mirror cleanup must not fail the action.
+    try {
+      await clearPan115GlobalMirrorForUnboundDrive(result.storage.providerUid, repository);
+    } catch {
+      // leave stale mirror; next bind/unbind or cookie probe can reconcile
+    }
   }
 
   revalidatePath("/settings");

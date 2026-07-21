@@ -164,4 +164,27 @@ describe("unbindStorageAction (B4)", () => {
     expect(await repo.getSetting("pan115.cookie")).toBe("UID=100000001_A; CID=c");
     expect(process.env.PAN115_COOKIE).toBe("UID=100000001_A; CID=c");
   });
+
+  it("unbind still ok when pan115 mirror cleanup throws", async () => {
+    await repo.upsertConnectedStorage(pan115Drive());
+    vi.resetModules();
+    vi.doMock("../lib/workflow-runtime", async () => {
+      const actual = await vi.importActual<typeof import("../lib/workflow-runtime")>(
+        "../lib/workflow-runtime",
+      );
+      return {
+        ...actual,
+        getWorkflowRepository: () => repo,
+        requireAuthenticatedAccountId: async () => "acct_default",
+        clearPan115GlobalMirrorForUnboundDrive: async () => {
+          throw new Error("mirror boom");
+        },
+      };
+    });
+    actions = await import("./actions");
+
+    const result = await actions.unbindStorageAction("cs_100000001");
+    expect(result.ok).toBe(true);
+    expect(await repo.listConnectedStorages("acct_default")).toEqual([]);
+  });
 });

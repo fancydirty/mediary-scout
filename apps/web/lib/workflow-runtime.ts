@@ -1768,7 +1768,9 @@ async function resolveQueueStorage(
     );
     return resolveQueueStorageChoice(storages, explicitConnectedStorageId);
   } catch {
-    return { id: null, frozen: false, unknown: false };
+    // Fail closed: transient DB errors must not queue unscoped or drop an
+    // explicit workspace pin (would land on the wrong drive).
+    return { id: null, frozen: false, unknown: true };
   }
 }
 
@@ -1911,17 +1913,24 @@ export async function workerHasConfiguredDrive(): Promise<boolean> {
   if ((process.env.PAN115_COOKIE ?? "").trim().length > 0) {
     return true; // legacy env-cookie bootstrap path
   }
-  const repository = getWorkflowRepository();
-  const accounts = await repository.listAccounts();
-  const accountIds = new Set(accounts.map((account) => account.id));
-  accountIds.add(DEFAULT_ACCOUNT_ID);
-  for (const accountId of accountIds) {
-    const storages = await repository.listConnectedStorages(accountId);
-    if (storages.length > 0) {
+  try {
+    const repository = getWorkflowRepository();
+    // Common path first: single-user / default account owns the primary drive.
+    if ((await repository.listConnectedStorages(DEFAULT_ACCOUNT_ID)).length > 0) {
       return true;
     }
+    const accounts = await repository.listAccounts();
+    for (const account of accounts) {
+      if (account.id === DEFAULT_ACCOUNT_ID) continue;
+      if ((await repository.listConnectedStorages(account.id)).length > 0) {
+        return true;
+      }
+    }
+    return false;
+  } catch {
+    // Cheap + non-throwing: DB blip must not crash the background worker tick.
+    return false;
   }
-  return false;
 }
 
 async function getWorkerStorageExecutor(

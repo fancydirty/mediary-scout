@@ -591,6 +591,13 @@ describe("workerHasConfiguredDrive (C1: any account's drive counts)", () => {
     });
     expect(await rt.workerHasConfiguredDrive()).toBe(true);
   });
+
+  it("repository throw → false (non-throwing for worker tick)", async () => {
+    const rt = await boot();
+    const repo = rt.getWorkflowRepository();
+    vi.spyOn(repo, "listConnectedStorages").mockRejectedValueOnce(new Error("db down"));
+    await expect(rt.workerHasConfiguredDrive()).resolves.toBe(false);
+  });
 });
 
 describe("requireAuthenticatedAccountId (C2: refuse acct_unauthenticated writes)", () => {
