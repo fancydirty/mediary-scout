@@ -278,3 +278,24 @@ docker compose build --build-arg NPM_REGISTRY=https://registry.npmmirror.com
 > # 核对容器真在跑新代码(应等于上面的 HEAD):
 > docker compose exec web cat BUILD_COMMIT
 > ```
+
+
+## 备份与恢复（pgdata）
+
+自托管时 Postgres 数据在 compose 卷 `pgdata` 里，是媒体库/追踪状态的唯一真相。建议定期备份：
+
+```bash
+# 在仓库根目录
+./scripts/pg-backup.sh ./backups
+# → backups/mediatrack-YYYYMMDD-HHMMSS.sql.gz
+```
+
+恢复（会覆盖当前库内容，先停写入/worker）：
+
+```bash
+gunzip -c backups/mediatrack-YYYYMMDD-HHMMSS.sql.gz \
+  | docker compose exec -T postgres psql -U mediatrack -d mediatrack
+```
+
+也可直接备份 Docker 卷目录（停库后拷贝），但逻辑备份（pg_dump）更便携。
+
