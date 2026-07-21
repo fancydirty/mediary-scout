@@ -970,6 +970,12 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     return result.rows.map((row) => connectedStorageFromRow(row));
   }
 
+  async hasAnyConnectedStorage(): Promise<boolean> {
+    await this.ensureSchema();
+    const result = await this.pool.query("SELECT 1 FROM connected_storages LIMIT 1");
+    return result.rowCount !== null && result.rowCount > 0;
+  }
+
   async upsertConnectedStorage(row: UpsertConnectedStorageInput): Promise<void> {
     await this.ensureSchema();
     // Refuse the multi-user unauthenticated sentinel — binds must never land on a ghost account.

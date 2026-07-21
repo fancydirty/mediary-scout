@@ -1192,6 +1192,13 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     return rows.map((row) => this.connectedStorageFromRow(row));
   }
 
+  async hasAnyConnectedStorage(): Promise<boolean> {
+    const row = this.db.prepare("SELECT 1 AS ok FROM connected_storages LIMIT 1").get() as
+      | { ok: number }
+      | undefined;
+    return row !== undefined;
+  }
+
   async upsertConnectedStorage(row: UpsertConnectedStorageInput): Promise<void> {
     // Refuse the multi-user unauthenticated sentinel — binds must never land on a ghost account.
     if (row.accountId === "acct_unauthenticated") {

@@ -556,7 +556,7 @@ export async function getCurrentAccountId(): Promise<string> {
 export async function requireAuthenticatedAccountId(): Promise<string> {
   const accountId = await getCurrentAccountId();
   if (isMultiUserEnabled() && accountId === UNAUTHENTICATED_ACCOUNT_ID) {
-    throw new UnauthenticatedAccountError("未登录，无法绑定或修改网盘。请先登录。");
+    throw new UnauthenticatedAccountError();
   }
   return accountId;
 }
@@ -613,7 +613,7 @@ export async function queueCandidateTracking(
   }
   const workspace = await resolveQueueStorage(accountId, connectedStorageId);
   if (workspace.unknown) {
-    return { status: "unsupported", message: "找不到该网盘工作区。" };
+    return { status: "unsupported", message: "网盘工作区不可用（未找到或暂时无法访问），请刷新后重试。" };
   }
   if (workspace.frozen) {
     return { status: "unsupported", message: "该网盘已掉线，请重新扫码绑定同一个 115 后再获取。" };
@@ -1065,7 +1065,7 @@ export async function reserveCandidate(
   }
   const workspace = await resolveQueueStorage(accountId, connectedStorageId);
   if (workspace.unknown) {
-    return { status: "unsupported", message: "找不到该网盘工作区。" };
+    return { status: "unsupported", message: "网盘工作区不可用（未找到或暂时无法访问），请刷新后重试。" };
   }
   if (workspace.frozen) {
     return { status: "unsupported", message: "该网盘已掉线，请重新扫码绑定同一个 115 后再预定。" };
@@ -1179,7 +1179,7 @@ export async function queueCandidateSeries(
   }
   const workspace = await resolveQueueStorage(accountId, connectedStorageId);
   if (workspace.unknown) {
-    return { status: "unsupported", message: "找不到该网盘工作区。" };
+    return { status: "unsupported", message: "网盘工作区不可用（未找到或暂时无法访问），请刷新后重试。" };
   }
   if (workspace.frozen) {
     return { status: "unsupported", message: "该网盘已掉线，请重新扫码绑定同一个 115 后再获取。" };
@@ -1938,19 +1938,7 @@ export async function workerHasConfiguredDrive(): Promise<boolean> {
     return true; // legacy env-cookie bootstrap path
   }
   try {
-    const repository = getWorkflowRepository();
-    // Common path first: single-user / default account owns the primary drive.
-    if ((await repository.listConnectedStorages(DEFAULT_ACCOUNT_ID)).length > 0) {
-      return true;
-    }
-    const accounts = await repository.listAccounts();
-    for (const account of accounts) {
-      if (account.id === DEFAULT_ACCOUNT_ID) continue;
-      if ((await repository.listConnectedStorages(account.id)).length > 0) {
-        return true;
-      }
-    }
-    return false;
+    return await getWorkflowRepository().hasAnyConnectedStorage();
   } catch {
     // Cheap + non-throwing: DB blip must not crash the background worker tick.
     return false;
@@ -2254,8 +2242,9 @@ export async function hydratePan115CookieFromDb(): Promise<void> {
 
 /**
  * After unbinding a pan115 drive: drop the legacy global cookie mirror when it
- * belongs to that drive (UID match), so env/DB fallback cannot revive an unbound
- * credential. No-op for other brands or a global cookie of a different 115 uid.
+ * belongs to that drive (UID match) OR the cookie UID is unparseable (defensive
+ * clear — cannot prove it is a different drive). No-op when the mirror clearly
+ * belongs to another 115 uid.
  */
 export async function clearPan115GlobalMirrorForUnboundDrive(
   providerUid: string,
