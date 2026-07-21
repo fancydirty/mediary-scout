@@ -298,9 +298,23 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
   }
 
   /** Create the schema once, memoized — lets the repo be constructed without
-   *  awaiting yet still self-initialize on first query. */
+   *  awaiting yet still self-initialize on first query.
+   *
+   *  Only a SUCCESSFUL init is memoized. If init rejects (e.g. postgres isn't
+   *  accepting connections yet because the web container won the restart race on
+   *  a host reboot — 2026-07-21 incident), the memo is cleared so the next call
+   *  re-attempts instead of replaying the cached rejection forever. That
+   *  self-heals the whole repo once the database becomes reachable — the worker's
+   *  next poll drains the queue instead of the process staying wedged until a
+   *  manual restart. */
   private ensureSchema(): Promise<void> {
-    return (this.schemaReady ??= initializeWorkflowPostgresSchema(this.pool));
+    if (this.schemaReady === undefined) {
+      this.schemaReady = initializeWorkflowPostgresSchema(this.pool).catch((error) => {
+        this.schemaReady = undefined;
+        throw error;
+      });
+    }
+    return this.schemaReady;
   }
 
   async saveWorkflowRunSnapshot(input: PersistWorkflowRunSnapshotInput): Promise<void> {
