@@ -878,14 +878,17 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     since?: string;
   }): Promise<Array<{ accountId: string; connectedStorageId: string | null; notification: NotificationEvent }>> {
     await this.ensureSchema();
-    // Apply since in SQL before the JS limit so pre-cutoff noise cannot crowd the window.
+    // since + ORDER BY + LIMIT all in SQL so a large history cannot force a full-table
+    // pull into JS just to throw most rows away.
+    const limit = input?.limit ?? 100;
     const result = await this.pool.query(
       "SELECT n.payload AS payload, wr.account_id AS account_id, wr.connected_storage_id AS connected_storage_id FROM notifications n " +
         "JOIN workflow_runs wr ON n.workflow_run_id = wr.id " +
-        "WHERE ($1::text IS NULL OR (n.payload->>'createdAt') >= $1)",
-      [input?.since ?? null],
+        "WHERE ($1::text IS NULL OR (n.payload->>'createdAt') >= $1) " +
+        "ORDER BY (n.payload->>'createdAt') DESC LIMIT $2",
+      [input?.since ?? null, limit],
     );
-    const rows = result.rows.map((row) => {
+    return result.rows.map((row) => {
       const rawStorage = (row.connected_storage_id as string | null | undefined) ?? null;
       return {
         accountId: (row.account_id as string | undefined) ?? DEFAULT_ACCOUNT_ID,
@@ -895,8 +898,6 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
         notification: row.payload as NotificationEvent,
       };
     });
-    rows.sort((left, right) => right.notification.createdAt.localeCompare(left.notification.createdAt));
-    return rows.slice(0, input?.limit ?? 100);
   }
 
   async getSetting(key: string): Promise<string | null> {

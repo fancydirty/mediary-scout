@@ -1052,16 +1052,18 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     since?: string;
   }): Promise<Array<{ accountId: string; connectedStorageId: string | null; notification: NotificationEvent }>> {
     // Cross-account: each notification tagged with its run's owning (account, storage).
-    // Apply since in SQL before the JS limit so pre-cutoff noise cannot crowd the window.
+    // since + ORDER BY + LIMIT in SQL so a large history cannot force a full scan into JS.
     const since = input?.since ?? null;
+    const limit = input?.limit ?? 100;
     const rows = this.db
       .prepare(
         "SELECT n.payload AS payload, wr.account_id AS account_id, wr.connected_storage_id AS connected_storage_id " +
           "FROM notifications n JOIN workflow_runs wr ON n.workflow_run_id = wr.id " +
-          "WHERE (? IS NULL OR json_extract(n.payload, '$.createdAt') >= ?)",
+          "WHERE (? IS NULL OR json_extract(n.payload, '$.createdAt') >= ?) " +
+          "ORDER BY json_extract(n.payload, '$.createdAt') DESC LIMIT ?",
       )
-      .all(since, since) as Array<{ payload: string; account_id: string; connected_storage_id: string | null }>;
-    const tagged = rows.map((row) => {
+      .all(since, since, limit) as Array<{ payload: string; account_id: string; connected_storage_id: string | null }>;
+    return rows.map((row) => {
       const rawStorage = row.connected_storage_id ?? null;
       return {
         accountId: row.account_id ?? DEFAULT_ACCOUNT_ID,
@@ -1069,10 +1071,6 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
         notification: JSON.parse(row.payload) as NotificationEvent,
       };
     });
-    tagged.sort((left, right) =>
-      right.notification.createdAt.localeCompare(left.notification.createdAt),
-    );
-    return tagged.slice(0, input?.limit ?? 100);
   }
 
   async getSetting(key: string): Promise<string | null> {
