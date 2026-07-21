@@ -513,3 +513,113 @@ describe("getDailySweepTimes（多时间点 + 迁移回退）", () => {
     expect(await getDailySweepTimes(repo({ daily_sweep_time: "25:00" }))).toEqual(["06:00"]);
   });
 });
+
+describe("workerHasConfiguredDrive (C1: any account's drive counts)", () => {
+  const prev = {
+    adapter: process.env.MEDIA_TRACK_STORAGE_ADAPTER,
+    cookie: process.env.PAN115_COOKIE,
+    pg: process.env.MEDIA_TRACK_POSTGRES_URL,
+    sqlite: process.env.MEDIA_TRACK_SQLITE_PATH,
+  };
+
+  afterEach(() => {
+    for (const [k, v] of Object.entries({
+      MEDIA_TRACK_STORAGE_ADAPTER: prev.adapter,
+      PAN115_COOKIE: prev.cookie,
+      MEDIA_TRACK_POSTGRES_URL: prev.pg,
+      MEDIA_TRACK_SQLITE_PATH: prev.sqlite,
+    })) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    vi.resetModules();
+  });
+
+  async function boot() {
+    process.env.MEDIA_TRACK_SQLITE_PATH = ":memory:";
+    delete process.env.MEDIA_TRACK_POSTGRES_URL;
+    process.env.MEDIA_TRACK_STORAGE_ADAPTER = "115";
+    delete process.env.PAN115_COOKIE;
+    vi.resetModules();
+    return import("./workflow-runtime");
+  }
+
+  it("non-115 adapter → true (fake/dev never needs a cookie)", async () => {
+    process.env.MEDIA_TRACK_STORAGE_ADAPTER = "fake";
+    delete process.env.PAN115_COOKIE;
+    vi.resetModules();
+    const { workerHasConfiguredDrive } = await import("./workflow-runtime");
+    expect(await workerHasConfiguredDrive()).toBe(true);
+  });
+
+  it("env PAN115_COOKIE set → true (legacy bootstrap)", async () => {
+    process.env.MEDIA_TRACK_STORAGE_ADAPTER = "115";
+    process.env.PAN115_COOKIE = "UID=1;CID=2;SEID=3";
+    vi.resetModules();
+    const { workerHasConfiguredDrive } = await import("./workflow-runtime");
+    expect(await workerHasConfiguredDrive()).toBe(true);
+  });
+
+  it("fresh deploy (adapter 115, no cookie, no drives) → false", async () => {
+    const rt = await boot();
+    expect(await rt.workerHasConfiguredDrive()).toBe(false);
+  });
+
+  it("drive on a non-default account → true (multi-user must not starve the queue)", async () => {
+    const rt = await boot();
+    const repo = rt.getWorkflowRepository();
+    await repo.createAccount({
+      id: "acct_bob",
+      username: "bob",
+      passwordHash: "x",
+      groupId: null,
+      isOwner: false,
+      createdAt: "2026-07-01T00:00:00.000Z",
+    });
+    await repo.upsertConnectedStorage({
+      id: "cs_bob_115",
+      accountId: "acct_bob",
+      provider: "pan115",
+      providerUid: "bob115",
+      label: "bob",
+      payload: { cookie: "UID=bob" },
+      rootCid: "r",
+      moviesCid: "m",
+      tvCid: "t",
+      animeCid: "a",
+      createdAt: "2026-07-01T00:00:00.000Z",
+    });
+    expect(await rt.workerHasConfiguredDrive()).toBe(true);
+  });
+});
+
+describe("requireAuthenticatedAccountId (C2: refuse acct_unauthenticated writes)", () => {
+  const prevMulti = process.env.MEDIA_TRACK_MULTI_USER;
+
+  afterEach(() => {
+    if (prevMulti === undefined) delete process.env.MEDIA_TRACK_MULTI_USER;
+    else process.env.MEDIA_TRACK_MULTI_USER = prevMulti;
+    vi.resetModules();
+    vi.doUnmock("next/headers");
+  });
+
+  it("single-user → returns acct_default (unchanged)", async () => {
+    delete process.env.MEDIA_TRACK_MULTI_USER;
+    vi.resetModules();
+    const { requireAuthenticatedAccountId } = await import("./workflow-runtime");
+    expect(await requireAuthenticatedAccountId()).toBe("acct_default");
+  });
+
+  it("multi-user + no session cookie → throws UnauthenticatedAccountError", async () => {
+    process.env.MEDIA_TRACK_MULTI_USER = "1";
+    vi.resetModules();
+    vi.doMock("next/headers", () => ({
+      cookies: async () => ({ get: () => undefined }),
+    }));
+    const { requireAuthenticatedAccountId, UnauthenticatedAccountError, UNAUTHENTICATED_ACCOUNT_ID, getCurrentAccountId } =
+      await import("./workflow-runtime");
+    expect(await getCurrentAccountId()).toBe(UNAUTHENTICATED_ACCOUNT_ID);
+    await expect(requireAuthenticatedAccountId()).rejects.toBeInstanceOf(UnauthenticatedAccountError);
+    await expect(requireAuthenticatedAccountId()).rejects.toThrow(/未登录/);
+  });
+});

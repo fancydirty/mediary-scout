@@ -58,6 +58,7 @@ import {
   DuplicateUsernameError,
   DEFAULT_ACCOUNT_ID,
   pickWorkspaceStorageId,
+  resolveQueueStorageChoice,
   resolveWorkspaceFromParam,
   type Account,
   type WorkflowScope,
@@ -382,6 +383,14 @@ const SESSION_SECRET_SETTING_KEY = "session_secret";
  *  redirects first; this is defense-in-depth. */
 export const UNAUTHENTICATED_ACCOUNT_ID = "acct_unauthenticated";
 
+/** Multi-user write path refused an unauthenticated (no/invalid session) caller. */
+export class UnauthenticatedAccountError extends Error {
+  constructor(message = "未登录，请先登录后再操作。") {
+    super(message);
+    this.name = "UnauthenticatedAccountError";
+  }
+}
+
 let sessionSecretCache: string | null = null;
 
 /** The HMAC secret for session cookies: env override, else a generated value
@@ -539,6 +548,19 @@ export async function getCurrentAccountId(): Promise<string> {
   }
 }
 
+/**
+ * Account id for write/bind mutations. Multi-user + no valid session → throw
+ * (never bind to the read-only sentinel `acct_unauthenticated`). Single-user
+ * and the in-process worker path are unchanged.
+ */
+export async function requireAuthenticatedAccountId(): Promise<string> {
+  const accountId = await getCurrentAccountId();
+  if (isMultiUserEnabled() && accountId === UNAUTHENTICATED_ACCOUNT_ID) {
+    throw new UnauthenticatedAccountError("未登录，无法绑定或修改网盘。请先登录。");
+  }
+  return accountId;
+}
+
 export async function ensureDemoSeeded(targetRepository: WorkflowRepository): Promise<void> {
   // Only the public read-only demo deploy should ever be seeded. Without this
   // gate, a fresh SELF-HOSTED instance (empty DB) would get demo fake drives
@@ -582,6 +604,9 @@ export async function queueCandidateTracking(
 ): Promise<CandidateTrackingRequestResult> {
   const accountId = await getCurrentAccountId();
   const workspace = await resolveQueueStorage(accountId, connectedStorageId);
+  if (workspace.unknown) {
+    return { status: "unsupported", message: "找不到该网盘工作区。" };
+  }
   if (workspace.frozen) {
     return { status: "unsupported", message: "该网盘已掉线，请重新扫码绑定同一个 115 后再获取。" };
   }
@@ -726,6 +751,7 @@ export async function runNextQueuedWorkflow() {
   const parents = await getWorkerStorageParents(accountId);
   const resolveAccountContext = buildAccountContextResolver();
   const startedAt = new Date().toISOString();
+  const onAuthErrorFreeze = (id: string, reason: string) => freezeConnectedStorage(id, reason);
   const type2 = await runQueuedType2Workflow({
     repository,
     resourceProvider: await getWorkerResourceProvider(),
@@ -736,6 +762,7 @@ export async function runNextQueuedWorkflow() {
     storageParentDirectoryId: parents.tv,
     animeStorageParentDirectoryId: parents.anime,
     resolveAccountContext,
+    onAuthErrorFreeze,
   });
   if (type2.status !== "idle") {
     await pushNotificationsSince(repository, startedAt);
@@ -751,6 +778,7 @@ export async function runNextQueuedWorkflow() {
     storageParentDirectoryId: parents.tv,
     animeStorageParentDirectoryId: parents.anime,
     resolveAccountContext,
+    onAuthErrorFreeze,
   });
   if (series.status !== "idle") {
     await pushNotificationsSince(repository, startedAt);
@@ -765,6 +793,7 @@ export async function runNextQueuedWorkflow() {
     ...quality,
     moviesParentDirectoryId: parents.movies,
     resolveAccountContext,
+    onAuthErrorFreeze,
   });
   if (movie.status !== "idle") {
     await pushNotificationsSince(repository, startedAt);
@@ -1019,6 +1048,9 @@ export async function reserveCandidate(
   }
   const accountId = await getCurrentAccountId();
   const workspace = await resolveQueueStorage(accountId, connectedStorageId);
+  if (workspace.unknown) {
+    return { status: "unsupported", message: "找不到该网盘工作区。" };
+  }
   if (workspace.frozen) {
     return { status: "unsupported", message: "该网盘已掉线，请重新扫码绑定同一个 115 后再预定。" };
   }
@@ -1122,6 +1154,9 @@ export async function queueCandidateSeries(
   }
   const accountId = await getCurrentAccountId();
   const workspace = await resolveQueueStorage(accountId, connectedStorageId);
+  if (workspace.unknown) {
+    return { status: "unsupported", message: "找不到该网盘工作区。" };
+  }
   if (workspace.frozen) {
     return { status: "unsupported", message: "该网盘已掉线，请重新扫码绑定同一个 115 后再获取。" };
   }
@@ -1295,6 +1330,7 @@ export async function runScheduledType3(options?: {
       moviesParentDirectoryId: parents.movies,
       staleActiveRunTimeoutMs: 30 * 60 * 1000,
       resolveAccountContext: buildAccountContextResolver(),
+      onAuthErrorFreeze: (id, reason) => freezeConnectedStorage(id, reason),
       ...(sync ? { syncSeasonMetadata: sync } : {}),
     });
     await repository.setSetting(LAST_SWEEP_COMPLETED_AT_SETTING_KEY, new Date().toISOString());
@@ -1725,20 +1761,14 @@ async function getAccountStorageCredentials(
 async function resolveQueueStorage(
   accountId: string,
   explicitConnectedStorageId?: string | null,
-): Promise<{ id: string | null; frozen: boolean }> {
+): Promise<{ id: string | null; frozen: boolean; unknown: boolean }> {
   try {
-    const storages = (await getWorkflowRepository().listConnectedStorages(accountId))
-      .filter((storage) => isRegisteredStorageProvider(storage.provider))
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-    const chosen = explicitConnectedStorageId
-      ? storages.find((storage) => storage.id === explicitConnectedStorageId)
-      : storages[0];
-    if (!chosen) {
-      return { id: explicitConnectedStorageId ?? null, frozen: false };
-    }
-    return { id: chosen.id, frozen: chosen.status === "frozen" };
+    const storages = (await getWorkflowRepository().listConnectedStorages(accountId)).filter(
+      (storage) => isRegisteredStorageProvider(storage.provider),
+    );
+    return resolveQueueStorageChoice(storages, explicitConnectedStorageId);
   } catch {
-    return { id: explicitConnectedStorageId ?? null, frozen: false };
+    return { id: null, frozen: false, unknown: false };
   }
 }
 
@@ -1868,11 +1898,11 @@ async function probeStorageConnection(
 }
 
 /**
- * Whether the background worker has a drive it could use — i.e. whether
- * getWorkerStorageExecutor(acct_default) would succeed rather than throw
- * "PAN115_COOKIE is required". Returns false ONLY in the genuine fresh-deploy case
- * (adapter "115", no acct_default 网盘 bound, no env cookie), so the worker can skip
- * QUIETLY instead of spamming the logs every poll. Cheap + non-throwing.
+ * Whether the background worker has a drive it could use. Returns false ONLY in
+ * the genuine fresh-deploy case (adapter "115", no connected 网盘 on ANY account,
+ * no env cookie), so the worker can skip QUIETLY instead of spamming logs every
+ * poll. Multi-user: a non-default account's drive still counts — runs claim with
+ * that accountId. Cheap + non-throwing.
  */
 export async function workerHasConfiguredDrive(): Promise<boolean> {
   if ((process.env.MEDIA_TRACK_STORAGE_ADAPTER ?? "fake") !== "115") {
@@ -1881,7 +1911,17 @@ export async function workerHasConfiguredDrive(): Promise<boolean> {
   if ((process.env.PAN115_COOKIE ?? "").trim().length > 0) {
     return true; // legacy env-cookie bootstrap path
   }
-  return (await getAccountStorageCredentials(DEFAULT_ACCOUNT_ID)) !== null;
+  const repository = getWorkflowRepository();
+  const accounts = await repository.listAccounts();
+  const accountIds = new Set(accounts.map((account) => account.id));
+  accountIds.add(DEFAULT_ACCOUNT_ID);
+  for (const accountId of accountIds) {
+    const storages = await repository.listConnectedStorages(accountId);
+    if (storages.length > 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 async function getWorkerStorageExecutor(
@@ -2179,6 +2219,33 @@ export async function hydratePan115CookieFromDb(): Promise<void> {
   }
 }
 
+/**
+ * After unbinding a pan115 drive: drop the legacy global cookie mirror when it
+ * belongs to that drive (UID match), so env/DB fallback cannot revive an unbound
+ * credential. No-op for other brands or a global cookie of a different 115 uid.
+ */
+export async function clearPan115GlobalMirrorForUnboundDrive(
+  providerUid: string,
+  repository: Pick<WorkflowRepository, "getSetting" | "deleteSetting"> = getWorkflowRepository(),
+): Promise<void> {
+  const cookie = (await repository.getSetting(PAN115_COOKIE_KEY))?.trim() ?? "";
+  if (cookie) {
+    const cookieUid = parsePan115Uid(cookie);
+    if (cookieUid === null || cookieUid === providerUid) {
+      await repository.deleteSetting(PAN115_COOKIE_KEY);
+      await repository.deleteSetting(PAN115_META_KEY);
+    }
+  }
+  const envCookie = (process.env.PAN115_COOKIE ?? "").trim();
+  if (envCookie) {
+    const envUid = parsePan115Uid(envCookie);
+    if (envUid === null || envUid === providerUid) {
+      delete process.env.PAN115_COOKIE;
+    }
+  }
+  pan115CookieHydrated = false;
+}
+
 export interface Pan115ConnectionStatus {
   connected: boolean;
   source: "qr" | "env" | "none";
@@ -2288,7 +2355,7 @@ async function bindTokenConnectedStorage(input: {
   existing?: Awaited<ReturnType<ReturnType<typeof getWorkflowRepository>["findConnectedStorageByUid"]>>;
 }): Promise<{ providerUid: string }> {
   const { provider, providerUid, credentialBlob, meta } = input;
-  const accountId = await getCurrentAccountId();
+  const accountId = await requireAuthenticatedAccountId();
   const repository = getWorkflowRepository();
   const existing =
     input.existing !== undefined
@@ -2454,7 +2521,7 @@ export async function completePan115QrLogin(input: {
     : "alipaymini";
   const client = new Pan115QrLoginClient();
   const result = await client.exchangeCookie(input.session, app);
-  const accountId = await getCurrentAccountId();
+  const accountId = await requireAuthenticatedAccountId();
   // Bind to the current account's connected_storage first — this throws on an
   // ownership conflict BEFORE we touch any global state.
   await bindPan115ConnectedStorage({
@@ -2502,7 +2569,7 @@ export async function connectQuarkCookie(rawCookie: string): Promise<{ providerU
       "无法从该 cookie 解析夸克账号（需包含 __uid 或 __kps）；请从浏览器 Network 请求头复制完整 Cookie（Copy as cURL 最省事）。",
     );
   }
-  const accountId = await getCurrentAccountId();
+  const accountId = await requireAuthenticatedAccountId();
   const repository = getWorkflowRepository();
   const existing = await repository.findConnectedStorageByUid("quark", providerUid);
   const decision = resolveStorageBinding({ provider: "quark", providerUid, accountId, existing });
