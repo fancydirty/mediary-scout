@@ -4,6 +4,6 @@ export default defineConfig({
   test: {
     include: ["packages/**/*.test.ts", "apps/**/*.test.ts", "workers/**/*.test.ts", "site/**/*.test.mjs"],
     environment: "node",
-    passWithNoTests: true,
+    passWithNoTests: false,
   },
 });
