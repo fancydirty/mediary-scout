@@ -95,9 +95,19 @@ if (!harness) {
   const reason = !reachable
     ? "no DB reachable — set MEDIA_TRACK_TEST_POSTGRES_ADMIN_URL (or run a local dev Postgres)"
     : `could not provision a test database (the admin user needs CREATEDB): ${setupError}`;
-  describe.skip(`WorkflowRepository contract: Postgres (${reason})`, () => {
-    it("skipped", () => {});
-  });
+  // CI sets MEDIA_TRACK_CI_REQUIRE_POSTGRES=1 so a silent describe.skip cannot
+  // greenwash a missing/broken admin URL (vitest exits 0 on pure skips).
+  if (process.env.MEDIA_TRACK_CI_REQUIRE_POSTGRES === "1") {
+    describe("WorkflowRepository contract: Postgres (required)", () => {
+      it(`fails closed when Postgres is unavailable: ${reason}`, () => {
+        throw new Error(`Postgres contract required in CI but skipped: ${reason}`);
+      });
+    });
+  } else {
+    describe.skip(`WorkflowRepository contract: Postgres (${reason})`, () => {
+      it("skipped", () => {});
+    });
+  }
 } else {
   const { dbName, repository, resetPool } = harness;
 

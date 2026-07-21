@@ -27,6 +27,8 @@ jobs:
       MEDIA_TRACK_POSTGRES_URL: postgresql://mediatrack:mediatrack@localhost:5432/media_track
       # Admin URL for repository-contract-postgres (CREATE/DROP disposable DB).
       MEDIA_TRACK_TEST_POSTGRES_ADMIN_URL: postgresql://mediatrack:mediatrack@localhost:5432/postgres
+      # Fail (don't describe.skip) if the Postgres contract cannot provision a DB.
+      MEDIA_TRACK_CI_REQUIRE_POSTGRES: "1"
 
     steps:
       - uses: actions/checkout@v7
@@ -55,5 +57,6 @@ jobs:
       # schema/init + cleanup. Run those files serially to prevent test-only DDL/DML
       # deadlocks while still proving every PG suite actually executes in CI.
       - run: npx vitest run --no-file-parallelism packages/workflow/tests/*.pg.test.ts
-      # Fail CI if the Postgres contract suite was skipped (admin URL / CREATEDB broken).
+      # MEDIA_TRACK_CI_REQUIRE_POSTGRES=1 makes the contract hard-fail if it cannot
+      # reach/provision Postgres (vitest alone exits 0 on pure describe.skip).
       - run: npx vitest run packages/workflow/tests/repository-contract-postgres.test.ts packages/workflow/src/postgres-schema-init.test.ts
