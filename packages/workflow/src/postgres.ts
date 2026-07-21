@@ -245,6 +245,25 @@ export const WORKFLOW_SCHEMA_ADVISORY_LOCK_KEY = 4_011_989_141;
  * now-existing schema (cheap no-ops). The lock is transaction-scoped, so it is
  * always released — even if the DDL throws and we roll back.
  */
+/**
+ * SQLSTATEs that mean "the connection string / database is misconfigured" —
+ * retrying can never fix these, so a schema-init failure carrying one is cached
+ * (fail fast) rather than re-attempted on every poll. Everything else (connection
+ * refused, timeouts, unknown codes, admin-shutdown during a restart) is treated
+ * as transient and retried — the safe default, because misclassifying a transient
+ * error as permanent is exactly what wedges the process for hours.
+ */
+const PERMANENT_SCHEMA_INIT_SQLSTATES = new Set<string>([
+  "28P01", // invalid_password
+  "28000", // invalid_authorization_specification
+  "3D000", // invalid_catalog_name (database does not exist)
+]);
+
+function isPermanentSchemaInitError(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null | undefined)?.code;
+  return typeof code === "string" && PERMANENT_SCHEMA_INIT_SQLSTATES.has(code);
+}
+
 export async function initializeWorkflowPostgresSchema(pool: Pool): Promise<void> {
   const client = await pool.connect();
   try {
@@ -300,17 +319,25 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
   /** Create the schema once, memoized — lets the repo be constructed without
    *  awaiting yet still self-initialize on first query.
    *
-   *  Only a SUCCESSFUL init is memoized. If init rejects (e.g. postgres isn't
-   *  accepting connections yet because the web container won the restart race on
-   *  a host reboot — 2026-07-21 incident), the memo is cleared so the next call
-   *  re-attempts instead of replaying the cached rejection forever. That
-   *  self-heals the whole repo once the database becomes reachable — the worker's
-   *  next poll drains the queue instead of the process staying wedged until a
-   *  manual restart. */
+   *  Only a SUCCESSFUL init is memoized. If init rejects with a TRANSIENT error
+   *  (e.g. postgres isn't accepting connections yet because the web container won
+   *  the restart race on a host reboot — 2026-07-21 incident), the memo is cleared
+   *  so the next call re-attempts instead of replaying the cached rejection
+   *  forever. That self-heals the whole repo once the database becomes reachable —
+   *  the worker's next poll drains the queue instead of the process staying wedged
+   *  until a manual restart.
+   *
+   *  An UNAMBIGUOUSLY-PERMANENT error (bad password, missing database) keeps its
+   *  rejection cached so we fail fast instead of hammering the DB with a doomed
+   *  connection on every poll. Unknown/unclassified errors default to retry — the
+   *  safe direction, since misclassifying a transient error as permanent is what
+   *  reintroduces the multi-hour hang this guards against. */
   private ensureSchema(): Promise<void> {
     if (this.schemaReady === undefined) {
       this.schemaReady = initializeWorkflowPostgresSchema(this.pool).catch((error) => {
-        this.schemaReady = undefined;
+        if (!isPermanentSchemaInitError(error)) {
+          this.schemaReady = undefined;
+        }
         throw error;
       });
     }

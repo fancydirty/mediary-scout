@@ -47,4 +47,54 @@ describe("PostgresWorkflowRepository schema-init self-healing", () => {
     await expect(repository.getSetting("boot")).resolves.toBeNull();
     expect(connectAttempts).toBe(2);
   });
+
+  it("caches the rejection for an unambiguously-permanent error (bad password) instead of hammering", async () => {
+    let connectAttempts = 0;
+    const pool = {
+      connect: async () => {
+        connectAttempts += 1;
+        // Wrong credentials in MEDIA_TRACK_POSTGRES_URL — retrying will never
+        // succeed, so we must NOT re-attempt on every poll. Fail fast.
+        const err = new Error('password authentication failed for user "mediatrack"');
+        (err as NodeJS.ErrnoException).code = "28P01";
+        throw err;
+      },
+      query: async () => ({ rows: [] }),
+    } as unknown as Pool;
+
+    const repository = new PostgresWorkflowRepository(pool);
+
+    await expect(repository.getSetting("boot")).rejects.toThrow(/password/);
+    // A permanent config error must stay cached — the second call must NOT open
+    // another connection (no forever-hammering the DB with a doomed auth).
+    await expect(repository.getSetting("boot")).rejects.toThrow(/password/);
+    expect(connectAttempts).toBe(1);
+  });
+
+  it("retries on an unrecognized error code (default self-heal — never latch on unknown)", async () => {
+    let connectAttempts = 0;
+    const fakeClient = {
+      query: async () => ({ rows: [] }),
+      release: () => {},
+    } as unknown as PoolClient;
+    const pool = {
+      connect: async () => {
+        connectAttempts += 1;
+        if (connectAttempts === 1) {
+          const err = new Error("some unrecognized transient blip");
+          (err as NodeJS.ErrnoException).code = "99999"; // not a known-permanent code
+          throw err;
+        }
+        return fakeClient;
+      },
+      query: async () => ({ rows: [] }),
+    } as unknown as Pool;
+
+    const repository = new PostgresWorkflowRepository(pool);
+
+    await expect(repository.getSetting("boot")).rejects.toThrow(/unrecognized/);
+    // Unknown → treated as transient → retried, so it self-heals on the next call.
+    await expect(repository.getSetting("boot")).resolves.toBeNull();
+    expect(connectAttempts).toBe(2);
+  });
 });
