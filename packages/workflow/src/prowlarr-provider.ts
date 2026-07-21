@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { fetchWithTimeout } from "./fetch-with-timeout.js";
 import type { ResourceCandidate, ResourceSnapshot } from "./domain.js";
 import type { ResourceProvider } from "./ports.js";
 
@@ -14,6 +15,7 @@ export interface ProwlarrResourceProviderOptions {
   apiKey: string;
   fetchJson?: ProwlarrFetchJson;
   now?: () => string;
+  requestTimeoutMs?: number;
 }
 
 interface ProwlarrFact {
@@ -27,17 +29,20 @@ interface ProwlarrFact {
 }
 
 const BTIH_RE = /urn:btih:([0-9a-z]+)/i;
+const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
 
 export class ProwlarrResourceProvider implements ResourceProvider {
   private readonly baseURL: string;
   private readonly apiKey: string;
   private readonly fetchJson: ProwlarrFetchJson;
   private readonly now: () => string;
+  private readonly requestTimeoutMs: number;
 
   constructor(options: ProwlarrResourceProviderOptions) {
     this.baseURL = options.baseURL.replace(/\/+$/, "");
     this.apiKey = options.apiKey;
-    this.fetchJson = options.fetchJson ?? defaultFetchJson;
+    this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+    this.fetchJson = options.fetchJson ?? ((url, init) => defaultFetchJson(url, init, this.requestTimeoutMs));
     this.now = options.now ?? (() => new Date().toISOString());
   }
 
@@ -125,8 +130,8 @@ export function createProwlarrResourceProviderFromEnv(
   return new ProwlarrResourceProvider({ baseURL, apiKey });
 }
 
-async function defaultFetchJson(url: string, init: ProwlarrFetchInit): Promise<unknown> {
-  const response = await fetch(url, { method: init.method, headers: init.headers });
+async function defaultFetchJson(url: string, init: ProwlarrFetchInit, timeoutMs: number): Promise<unknown> {
+  const response = await fetchWithTimeout(url, { method: init.method, headers: init.headers }, timeoutMs);
   if (!response.ok) {
     throw new Error(`Prowlarr search failed with HTTP ${response.status}`);
   }

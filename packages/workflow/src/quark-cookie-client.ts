@@ -10,6 +10,8 @@
  * executor's fail-loud path, not here.
  */
 
+import { fetchWithTimeout } from "./fetch-with-timeout.js";
+
 const QUARK_BASE_URL = "https://drive-pc.quark.cn";
 // Fixed query every quark pc-web call carries. uc_param_str is intentionally empty.
 const QUARK_BASE_QUERY = "pr=ucpro&fr=pc&uc_param_str=";
@@ -19,6 +21,7 @@ const DEFAULT_USER_AGENT =
 const DEFAULT_LIST_PAGE_SIZE = 50;
 const DEFAULT_POLL_ATTEMPTS = 12;
 const DEFAULT_POLL_DELAY_MS = 800;
+const DEFAULT_HTTP_TIMEOUT_MS = 20_000;
 
 /** Quark's "require login" code — the dead-cookie signal (HTTP 401, code 31001). */
 const QUARK_AUTH_CODE = 31001;
@@ -308,7 +311,7 @@ async function defaultFetchJson(url: string, init: QuarkHttpInit): Promise<unkno
   if (init.body !== undefined) {
     requestInit.body = init.body;
   }
-  const response = await fetch(url, requestInit);
+  const response = await fetchWithTimeout(url, requestInit, DEFAULT_HTTP_TIMEOUT_MS);
   // Quark returns its {code:31001} auth body WITH HTTP 401, so parse the JSON
   // regardless of status — the code (not the HTTP status) is the real signal.
   const text = await response.text();

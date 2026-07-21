@@ -1,4 +1,5 @@
 import type { NotificationEvent, NotificationReport } from "./domain.js";
+import { fetchWithTimeout } from "./fetch-with-timeout.js";
 import { formatReportPushText, landedSize } from "./notification-report.js";
 import { getStorageBrand, isRegisteredStorageProvider } from "./storage-brands.js";
 
@@ -128,8 +129,10 @@ export type NotifyFetch = (
   init: { method: string; headers?: Record<string, string>; body?: string },
 ) => Promise<{ ok: boolean; status: number }>;
 
+const DEFAULT_HTTP_TIMEOUT_MS = 20_000;
+
 const defaultFetch: NotifyFetch = async (url, init) => {
-  const response = await fetch(url, init);
+  const response = await fetchWithTimeout(url, init, DEFAULT_HTTP_TIMEOUT_MS);
   return { ok: response.ok, status: response.status };
 };
 

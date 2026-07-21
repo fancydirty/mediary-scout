@@ -1,3 +1,5 @@
+import { fetchWithTimeout } from "./fetch-with-timeout.js";
+
 /**
  * 光鸭云盘 (GuangYaPan) HTTP client — the brand-3 analogue of Pan115CookieClient
  * and QuarkCookieClient. Unlike those two (cookie auth), 光鸭 uses OAuth Bearer
@@ -22,6 +24,7 @@ const AUTH_HOST = "https://account.guangyapan.com";
 const API_HOST = "https://api.guangyapan.com";
 
 const DEFAULT_LIST_PAGE_SIZE = 100;
+const DEFAULT_HTTP_TIMEOUT_MS = 20_000;
 
 /** A directory listing entry from get_file_list. */
 export interface GuangYaItem {
@@ -131,7 +134,7 @@ export class GuangYaClient {
     this.refreshToken = options.refreshToken.trim();
     this.deviceId = options.deviceId?.trim() || generateGuangYaDeviceId();
     this.onTokensRefreshed = options.onTokensRefreshed;
-    this.fetchImpl = options.fetchImpl ?? ((url, init) => fetch(url, init));
+    this.fetchImpl = options.fetchImpl ?? ((url, init) => fetchWithTimeout(url, init, DEFAULT_HTTP_TIMEOUT_MS));
   }
 
   /** GET account/v1/user/me (Bearer); refresh+retry once on 401. Returns `sub`. */

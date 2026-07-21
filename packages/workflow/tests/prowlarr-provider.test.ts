@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { ProwlarrResourceProvider } from "../src/index.js";
 
 function provider(results: unknown, calls?: { url?: string; apiKey?: string }) {
@@ -86,4 +88,36 @@ describe("ProwlarrResourceProvider", () => {
     expect(snap.candidates).toHaveLength(0);
     expect(snap.provider).toBe("prowlarr");
   });
+});
+
+describe("ProwlarrResourceProvider default transport timeout", () => {
+  let server: Server | undefined;
+
+  afterEach(async () => {
+    if (!server) return;
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) =>
+      server!.close((error) => (error ? reject(error) : resolve())),
+    );
+    server = undefined;
+  });
+
+  it("returns an empty snapshot instead of hanging when Prowlarr never responds", async () => {
+    server = createServer(() => {
+      // Accept the connection but intentionally never send headers or a body.
+    });
+    await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+    const provider = new ProwlarrResourceProvider({
+      baseURL: `http://127.0.0.1:${port}`,
+      apiKey: "K",
+      requestTimeoutMs: 200,
+    });
+
+    const startedAt = Date.now();
+    const snapshot = await provider.search({ keyword: "timeout" });
+
+    expect(snapshot.candidates).toEqual([]);
+    expect(Date.now() - startedAt).toBeLessThan(2_000);
+  }, 3_000);
 });

@@ -1,4 +1,5 @@
 import { lixianRsaEncrypt } from "./pan115-lixian-cipher.js";
+import { fetchWithTimeout } from "./fetch-with-timeout.js";
 import type {
   Pan115ActionResult,
   Pan115DirectoryInfo,
@@ -20,6 +21,7 @@ const DEFAULT_LIST_LIMIT = 200; // 115's per-page cap for /files
 const DEFAULT_MAX_LIST_TOTAL = 1000; // stitch up to this across pages; beyond it, fail loud
 const DEFAULT_LIST_PAGE_DELAY_MS = 1_200; // 逆鳞 spacing between page fetches (matches the guard)
 const DEFAULT_USER_AGENT = "media-track/0.1";
+const DEFAULT_HTTP_TIMEOUT_MS = 20_000;
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -341,7 +343,7 @@ async function defaultFetchJson(url: string, init: Pan115HttpInit): Promise<unkn
   if (init.body !== undefined) {
     requestInit.body = init.body;
   }
-  const response = await fetch(url, requestInit);
+  const response = await fetchWithTimeout(url, requestInit, DEFAULT_HTTP_TIMEOUT_MS);
   if (!response.ok) {
     throw new Error(`PAN115_HTTP_FAILED: ${response.status}`);
   }
