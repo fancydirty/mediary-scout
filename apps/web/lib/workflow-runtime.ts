@@ -2609,6 +2609,7 @@ export async function connectQuarkCookie(rawCookie: string): Promise<{ providerU
   } catch (error) {
     throw new Error(
       `无法用该 cookie 连接夸克：${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
     );
   }
   const payload = { cookie, meta: { connectedAt: new Date().toISOString() } };
