@@ -1,9 +1,10 @@
 import type { DeploymentUpdateState } from "./deployment-update";
 import { buildContainerUpgradePrompt } from "./deployment-update";
+import type { SettingsTabId } from "./settings-tabs-model";
 
 export type AttentionSeverity = "warning" | "blocker";
 export type AttentionKind = "frozen_drive" | "update_available" | "missing_llm";
-export type SettingsAttentionTab = "drives" | "services" | "preferences" | "patrol" | "account";
+export type SettingsAttentionTab = SettingsTabId;
 
 export interface SettingsAttentionItem {
   id: string;
