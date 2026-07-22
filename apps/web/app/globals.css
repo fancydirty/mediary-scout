@@ -1981,63 +1981,62 @@ p {
   position: relative;
 }
 
-/* Immersive hub: backdrop bleeds under main padding and covers the hero band
-   (back pill + poster row), matching the A1 album-hero mock. */
+/* Immersive hub: only the HERO band (back + poster) is full-bleed.
+   Synopsis / seasons stay on plain page background — backdrop must NOT cover them. */
 .product-main-hub {
-  /* Extra top room is owned by hub-hero so the backdrop can sit flush. */
   padding-top: 0;
 }
 
 .title-hub-immersive {
-  /* Pull sideways to cancel .main horizontal padding → edge-to-edge art. */
+  /* Side bleed cancels .main horizontal padding so art reaches the content edge. */
   margin-left: -32px;
   margin-right: -32px;
 }
 
 .hub-hero {
   position: relative;
-  padding: 20px 32px 36px;
-  min-height: 420px;
+  /* Natural height from back + poster — no forced min-height that balloons into body. */
+  padding: 16px 32px 28px;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
   isolation: isolate;
+  overflow: hidden;
 }
 
 .hub-hero .back-link {
   position: relative;
   z-index: 2;
   align-self: flex-start;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
 }
 
-.hub-backdrop {
+/* Scoped to .hub-hero so absolute inset only paints the hero band. */
+.hub-hero .hub-backdrop {
   position: absolute;
   inset: 0;
   height: auto;
   background-size: cover;
-  background-position: center 30%;
+  background-position: center 28%;
   border-radius: 0;
-  /* Stronger top presence + soft fade into page bg at the bottom of the hero. */
   -webkit-mask-image: linear-gradient(
     to bottom,
-    rgba(0, 0, 0, 0.85) 0%,
-    rgba(0, 0, 0, 0.7) 45%,
-    rgba(0, 0, 0, 0.35) 75%,
+    rgba(0, 0, 0, 0.75) 0%,
+    rgba(0, 0, 0, 0.55) 55%,
+    rgba(0, 0, 0, 0.2) 85%,
     transparent 100%
   );
   mask-image: linear-gradient(
     to bottom,
-    rgba(0, 0, 0, 0.85) 0%,
-    rgba(0, 0, 0, 0.7) 45%,
-    rgba(0, 0, 0, 0.35) 75%,
+    rgba(0, 0, 0, 0.75) 0%,
+    rgba(0, 0, 0, 0.55) 55%,
+    rgba(0, 0, 0, 0.2) 85%,
     transparent 100%
   );
   pointer-events: none;
   z-index: 0;
 }
 
-/* Scrim so white title type stays readable over bright backdrops. */
+/* Readability scrim over hero art only. */
 .hub-hero::before {
   content: "";
   position: absolute;
@@ -2046,9 +2045,9 @@ p {
   pointer-events: none;
   background: linear-gradient(
     180deg,
-    rgba(18, 18, 18, 0.15) 0%,
-    rgba(18, 18, 18, 0.45) 45%,
-    rgba(18, 18, 18, 0.88) 78%,
+    rgba(18, 18, 18, 0.2) 0%,
+    rgba(18, 18, 18, 0.35) 40%,
+    rgba(18, 18, 18, 0.82) 82%,
     var(--bg-base) 100%
   );
 }
@@ -2056,7 +2055,8 @@ p {
 .hub-body {
   position: relative;
   z-index: 1;
-  padding: 8px 32px 0;
+  padding: 20px 32px 0;
+  background: var(--bg-base);
 }
 
 .hub-header {
@@ -2075,11 +2075,10 @@ p {
     margin-right: -16px;
   }
   .hub-hero {
-    padding: 16px 16px 28px;
-    min-height: 360px;
+    padding: 12px 16px 22px;
   }
   .hub-body {
-    padding: 8px 16px 0;
+    padding: 16px 16px 0;
   }
 }
 

@@ -172,15 +172,15 @@ function TvHub({
     <AcquisitionLockProvider>
     {view.acquiring ? <AcquiringPoller /> : null}
     <section className="title-hub title-hub-immersive">
-      {view.backdropPath ? (
-        <div
-          className="hub-backdrop"
-          style={{ backgroundImage: `url(https://image.tmdb.org/t/p/w1280${view.backdropPath})` }}
-          aria-hidden
-        />
-      ) : null}
-
+      {/* Backdrop clipped to hub-hero only — seasons stay on plain page bg. */}
       <div className="hub-hero">
+        {view.backdropPath ? (
+          <div
+            className="hub-backdrop"
+            style={{ backgroundImage: `url(https://image.tmdb.org/t/p/w1280${view.backdropPath})` }}
+            aria-hidden
+          />
+        ) : null}
         <BackLink label={backLabel} fallbackHref={backHref} />
       <header className="hub-header">
         <div className="hub-poster">
@@ -316,14 +316,15 @@ function MovieHub({
     <AcquisitionLockProvider>
       {view.acquiring ? <AcquiringPoller /> : null}
       <section className="title-hub title-hub-immersive">
-        {view.backdropPath ? (
-          <div
-            className="hub-backdrop"
-            style={{ backgroundImage: `url(https://image.tmdb.org/t/p/w1280${view.backdropPath})` }}
-            aria-hidden
-          />
-        ) : null}
+        {/* Backdrop lives inside hub-hero only — must NOT cover synopsis body. */}
         <div className="hub-hero">
+          {view.backdropPath ? (
+            <div
+              className="hub-backdrop"
+              style={{ backgroundImage: `url(https://image.tmdb.org/t/p/w1280${view.backdropPath})` }}
+              aria-hidden
+            />
+          ) : null}
           <BackLink label={backLabel} fallbackHref={backHref} />
           <header className="hub-header">
             <div className="hub-poster">
