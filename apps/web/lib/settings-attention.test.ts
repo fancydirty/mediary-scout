@@ -122,4 +122,19 @@ describe("buildSettingsAttentionItems", () => {
     );
     expect(summary).toMatchObject({ count: 1, severity: "warning" });
   });
+
+  it("preserves non-primary workspace on deep-links", () => {
+    const items = buildSettingsAttentionItems({
+      demo: false,
+      drives: [{ id: "cs_q", provider: "quark", label: null, status: "frozen" }],
+      brandLabel,
+      llmConfigured: false,
+      update: null,
+      activeStorageId: "cs_other",
+    });
+    expect(items.map((i) => i.href)).toEqual([
+      "/settings?w=cs_other",
+      "/settings?tab=services&w=cs_other",
+    ]);
+  });
 });

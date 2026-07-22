@@ -86,7 +86,7 @@ export default function SettingsPage({
         ) : (
           <>
             <Suspense fallback={null}>
-              <SettingsAttentionSection />
+              <SettingsAttentionSection searchParams={searchParams} />
             </Suspense>
             <Suspense fallback={<div className="skeleton skeleton-heading" />}>
             <SettingsTabs
@@ -157,10 +157,18 @@ async function SettingsSidebar({ searchParams }: { searchParams: Promise<{ w?: s
   return <AppSidebar active="settings" basePath={workspace.basePath} activeStorageId={workspace.activeStorageId} />;
 }
 
-async function SettingsAttentionSection() {
+async function SettingsAttentionSection({
+  searchParams,
+}: {
+  searchParams: Promise<{ w?: string }>;
+}) {
   // Request-time only: account drives + LLM config + optional update probe.
   await connection();
-  const summary = await loadSettingsAttentionSummary();
+  const { w } = await searchParams;
+  const workspace = await resolveGlobalWorkspace(w);
+  const summary = await loadSettingsAttentionSummary(
+    workspace.activeStorageId ? { activeStorageId: workspace.activeStorageId } : undefined,
+  );
   return <SettingsActionInbox items={summary.items} />;
 }
 

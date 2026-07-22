@@ -7,10 +7,10 @@ import {
   type SettingsAttentionSummary,
 } from "./settings-attention";
 import {
-  getAccountConnectedStorages,
   getAccountScopedSettings,
   getCurrentAccountId,
   getLlmConfig,
+  getWorkflowRepository,
 } from "./workflow-runtime";
 
 function brandLabel(provider: string): string {
@@ -22,14 +22,19 @@ function brandLabel(provider: string): string {
 }
 
 /** Account-scoped attention items for Settings badge + Action Inbox. */
-export async function loadSettingsAttentionSummary(): Promise<SettingsAttentionSummary> {
+export async function loadSettingsAttentionSummary(options?: {
+  activeStorageId?: string;
+}): Promise<SettingsAttentionSummary> {
   if (isDemoMode()) {
     return { count: 0, severity: null, items: [] };
   }
 
+  // Resolve account once — listConnectedStorages(accountId) avoids a second
+  // getCurrentAccountId()/session verify on the poll path.
   const accountId = await getCurrentAccountId();
+  const repository = getWorkflowRepository();
   const [drives, llm, update] = await Promise.all([
-    getAccountConnectedStorages(),
+    repository.listConnectedStorages(accountId),
     getLlmConfig(getAccountScopedSettings(accountId)),
     loadDeploymentUpdateState(),
   ]);
@@ -45,6 +50,7 @@ export async function loadSettingsAttentionSummary(): Promise<SettingsAttentionS
     brandLabel,
     llmConfigured: Boolean(llm.baseURL && llm.modelId),
     update,
+    ...(options?.activeStorageId ? { activeStorageId: options.activeStorageId } : {}),
   });
   return summarizeSettingsAttention(items);
 }

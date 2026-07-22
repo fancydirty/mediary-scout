@@ -3,6 +3,7 @@ import { buildContainerUpgradePrompt } from "./deployment-update";
 
 export type AttentionSeverity = "warning" | "blocker";
 export type AttentionKind = "frozen_drive" | "update_available" | "missing_llm";
+export type SettingsAttentionTab = "drives" | "services" | "preferences" | "patrol" | "account";
 
 export interface SettingsAttentionItem {
   id: string;
@@ -23,6 +24,18 @@ export interface SettingsAttentionSummary {
   items: SettingsAttentionItem[];
 }
 
+/** Settings deep-link that keeps non-primary workspace (`?w`) like sidebar links. */
+export function settingsAttentionHref(
+  tab?: SettingsAttentionTab,
+  activeStorageId?: string,
+): string {
+  const params = new URLSearchParams();
+  if (tab && tab !== "drives") params.set("tab", tab);
+  if (activeStorageId) params.set("w", activeStorageId);
+  const query = params.toString();
+  return query ? `/settings?${query}` : "/settings";
+}
+
 export function buildSettingsAttentionItems(input: {
   demo: boolean;
   drives: Array<{
@@ -34,11 +47,15 @@ export function buildSettingsAttentionItems(input: {
   brandLabel: (provider: string) => string;
   llmConfigured: boolean;
   update: Pick<DeploymentUpdateState, "kind" | "behind" | "currentShort" | "latestShort"> | null;
-  settingsHref?: (tab?: "drives" | "services" | "preferences" | "patrol" | "account") => string;
+  /** Non-primary workspace id — preserved on deep-links so inbox actions don't reset context. */
+  activeStorageId?: string;
+  settingsHref?: (tab?: SettingsAttentionTab) => string;
 }): SettingsAttentionItem[] {
   if (input.demo) return [];
 
-  const href = input.settingsHref ?? defaultSettingsHref;
+  const href =
+    input.settingsHref ??
+    ((tab?: SettingsAttentionTab) => settingsAttentionHref(tab, input.activeStorageId));
   const items: SettingsAttentionItem[] = [];
 
   for (const drive of input.drives) {
@@ -99,9 +116,4 @@ export function summarizeSettingsAttention(items: SettingsAttentionItem[]): Sett
       ? "warning"
       : null;
   return { count: items.length, severity, items };
-}
-
-function defaultSettingsHref(tab?: "drives" | "services" | "preferences" | "patrol" | "account"): string {
-  if (!tab || tab === "drives") return "/settings";
-  return `/settings?tab=${tab}`;
 }
