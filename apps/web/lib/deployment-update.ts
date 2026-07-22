@@ -14,12 +14,11 @@ export interface RemoteCommitFetcher {
   (): Promise<string | null>;
 }
 
-const COMMIT_RE = /^[0-9a-f]{7,40}$/i;
+const COMMIT_RE = /^[0-9a-f]{40}$/i;
 
 export function normalizeCommit(value: string | null | undefined): string | null {
   const commit = value?.trim().toLowerCase() ?? "";
-  if (!COMMIT_RE.test(commit)) return null;
-  return commit.length === 40 ? commit : null;
+  return COMMIT_RE.test(commit) ? commit : null;
 }
 
 export function shortCommit(commit: string | null): string | null {
@@ -67,6 +66,8 @@ export async function getDeploymentUpdateState(input: {
     latestCommit,
     latestShort: shortCommit(latestCommit),
     kind: "container",
+    // "not latest main", not necessarily strictly behind: a custom/fork build can
+    // differ without main being ahead. The UI copy stays conservative.
     behind: latestCommit !== currentCommit,
     reason: "ok",
   };

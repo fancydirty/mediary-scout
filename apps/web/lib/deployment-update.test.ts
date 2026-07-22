@@ -18,6 +18,11 @@ describe("normalizeCommit", () => {
     expect(normalizeCommit("1111111")).toBeNull();
     expect(normalizeCommit(`${CURRENT}junk`)).toBeNull();
   });
+
+  it("rejects 39-char prefix and non-hex content", () => {
+    expect(normalizeCommit(CURRENT.slice(0, 39))).toBeNull();
+    expect(normalizeCommit("g".repeat(40))).toBeNull();
+  });
 });
 
 describe("getDeploymentUpdateState", () => {
