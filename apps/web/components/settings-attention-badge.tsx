@@ -28,8 +28,13 @@ export function SettingsAttentionBadge({
       }
     };
     sync();
-    mq.addEventListener("change", sync);
-    return () => mq.removeEventListener("change", sync);
+    // Older Safari only has addListener/removeListener on MediaQueryList.
+    if (typeof mq.addEventListener === "function") {
+      mq.addEventListener("change", sync);
+      return () => mq.removeEventListener("change", sync);
+    }
+    mq.addListener(sync);
+    return () => mq.removeListener(sync);
   }, [visibleWhen]);
 
   useEffect(() => {
