@@ -5,8 +5,8 @@ import { resolveGlobalWorkspace } from "../../../../lib/workflow-runtime";
 /** Lightweight badge/inbox payload. Poll-friendly; never throws to the client.
  *  Badge polls only need count/severity — pass `items=1` for full inbox items. */
 export async function GET(request: NextRequest) {
-  await connection();
   try {
+    await connection();
     const workspace = await resolveGlobalWorkspace(
       request.nextUrl.searchParams.get("w") ?? undefined,
     );
