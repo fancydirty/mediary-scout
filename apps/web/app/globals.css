@@ -183,6 +183,10 @@ p {
   padding: 12px;
 }
 
+.health-card .nav-badge {
+  margin-left: auto;
+}
+
 .health-card strong {
   display: block;
   font-size: 13px;
@@ -3206,6 +3210,65 @@ select.setting-control {
   margin-top: 12px;
   display: flex;
   justify-content: flex-end;
+}
+
+/* ---------- settings attention inbox ---------- */
+.attention-inbox {
+  max-width: 720px;
+  margin-bottom: 24px;
+  background: rgba(255, 164, 43, 0.08);
+  border: 1px solid rgba(255, 164, 43, 0.35);
+  border-radius: var(--radius-card);
+  padding: 16px;
+}
+.attention-inbox-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--warning);
+  margin-bottom: 12px;
+}
+.attention-inbox-list {
+  display: grid;
+  gap: 8px;
+}
+.attention-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 12px;
+}
+.attention-item.severity-blocker {
+  border-color: rgba(229, 72, 77, 0.45);
+}
+.attention-item.severity-warning {
+  border-color: rgba(255, 164, 43, 0.45);
+}
+.attention-item-title {
+  font-weight: 700;
+  color: var(--text);
+}
+.attention-item-body {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.attention-item-action {
+  flex: 0 0 auto;
+  text-decoration: none;
+  padding: 8px 12px;
+  font-size: 12px;
+}
+.attention-item-prompt {
+  margin-top: 8px;
+}
+.nav-badge-warning {
+  background: var(--warning);
+  color: #121212;
 }
 
 /* ---------- deployment update hint (self-host compose, Settings top) ---------- */

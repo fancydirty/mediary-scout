@@ -5,6 +5,7 @@ import { globalNavHref } from "@media-track/workflow";
 import { SearchNavLink } from "./search-memory";
 import { ActivityNavBadge } from "./activity-nav-badge";
 import { NotificationsNavBadge } from "./notifications-nav-badge";
+import { SettingsAttentionBadge } from "./settings-attention-badge";
 import { WorkspaceSwitcherLoader } from "./workspace-switcher-loader";
 import { AccountIdentityLoader } from "./account-identity-loader";
 
@@ -92,6 +93,7 @@ export function AppSidebar({
             >
               <Settings size={16} aria-hidden />
               设置
+              <SettingsAttentionBadge storageId={activeStorageId} visibleWhen="mobile" />
             </Link>
           </li>
         </ul>
@@ -119,6 +121,7 @@ export function AppSidebar({
             <strong>设置</strong>
             <span>网盘连接 · 推送 · 偏好</span>
           </span>
+          <SettingsAttentionBadge storageId={activeStorageId} visibleWhen="desktop" />
         </Link>
       </div>
     </aside>

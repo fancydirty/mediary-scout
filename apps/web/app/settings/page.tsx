@@ -21,8 +21,8 @@ import { SettingsTabs } from "../../components/settings-tabs";
 import { PasswordChangeForm } from "../../components/password-change-form";
 import { AccountAdminPanel } from "../../components/account-admin-panel";
 import { GitHubNameplate } from "../../components/github-nameplate";
-import { DeploymentUpdateCard } from "../../components/deployment-update-card";
-import { loadDeploymentUpdateState } from "../../lib/deployment-update-server";
+import { SettingsActionInbox } from "../../components/settings-action-inbox";
+import { loadSettingsAttentionSummary } from "../../lib/settings-attention-server";
 import {
   getAccountConnectedStorages,
   getAccountScopedSettings,
@@ -86,7 +86,7 @@ export default function SettingsPage({
         ) : (
           <>
             <Suspense fallback={null}>
-              <DeploymentUpdateSection />
+              <SettingsAttentionSection searchParams={searchParams} />
             </Suspense>
             <Suspense fallback={<div className="skeleton skeleton-heading" />}>
             <SettingsTabs
@@ -157,12 +157,17 @@ async function SettingsSidebar({ searchParams }: { searchParams: Promise<{ w?: s
   return <AppSidebar active="settings" basePath={workspace.basePath} activeStorageId={workspace.activeStorageId} />;
 }
 
-async function DeploymentUpdateSection() {
-  // Request-time only: reads BUILD_COMMIT and probes upstream main. Probe failure
-  // renders null inside the card — an offline instance never gets a false alarm.
+async function SettingsAttentionSection({
+  searchParams,
+}: {
+  searchParams: Promise<{ w?: string }>;
+}) {
+  // Request-time only: account drives + LLM config + optional update probe.
+  // Loader resolves account/drives once (including optional ?w deep-link context).
   await connection();
-  const state = await loadDeploymentUpdateState();
-  return <DeploymentUpdateCard state={state} />;
+  const { w } = await searchParams;
+  const summary = await loadSettingsAttentionSummary(w ? { w } : undefined);
+  return <SettingsActionInbox items={summary.items} />;
 }
 
 async function PasswordChangeSection() {
