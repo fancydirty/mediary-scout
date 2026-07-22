@@ -3208,6 +3208,61 @@ select.setting-control {
   justify-content: flex-end;
 }
 
+/* ---------- deployment update hint (self-host compose, Settings top) ---------- */
+.update-card {
+  max-width: 720px;
+  margin-bottom: 24px;
+  background: rgba(30, 215, 96, 0.08);
+  border: 1px solid rgba(30, 215, 96, 0.25);
+  border-radius: var(--radius-card);
+  padding: 16px;
+}
+.update-card-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--accent);
+  margin-bottom: 8px;
+}
+.update-card p {
+  color: var(--text-soft);
+}
+.update-card code {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.update-card-actions {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+.update-card .ghost-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.update-link {
+  text-decoration: none;
+}
+.update-copy-textarea {
+  width: 100%;
+  margin-top: 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text-soft);
+  padding: 10px;
+  font: inherit;
+  resize: vertical;
+}
+.update-copy-block {
+  min-width: 180px;
+}
+
 /* ---------- GitHub nameplate (Settings page bottom — quiet 暗记 + CTA) ---------- */
 .github-nameplate {
   margin-top: 32px;

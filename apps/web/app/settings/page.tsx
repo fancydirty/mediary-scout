@@ -21,6 +21,8 @@ import { SettingsTabs } from "../../components/settings-tabs";
 import { PasswordChangeForm } from "../../components/password-change-form";
 import { AccountAdminPanel } from "../../components/account-admin-panel";
 import { GitHubNameplate } from "../../components/github-nameplate";
+import { DeploymentUpdateCard } from "../../components/deployment-update-card";
+import { loadDeploymentUpdateState } from "../../lib/deployment-update-server";
 import {
   getAccountConnectedStorages,
   getAccountScopedSettings,
@@ -82,7 +84,11 @@ export default function SettingsPage({
             </p>
           </div>
         ) : (
-          <Suspense fallback={<div className="skeleton skeleton-heading" />}>
+          <>
+            <Suspense fallback={null}>
+              <DeploymentUpdateSection />
+            </Suspense>
+            <Suspense fallback={<div className="skeleton skeleton-heading" />}>
             <SettingsTabs
               drives={
                 <Suspense fallback={<div className="skeleton skeleton-heading" />}>
@@ -136,7 +142,8 @@ export default function SettingsPage({
                 </>
               }
             />
-          </Suspense>
+            </Suspense>
+          </>
         )}
         <GitHubNameplate />
       </main>
@@ -148,6 +155,14 @@ async function SettingsSidebar({ searchParams }: { searchParams: Promise<{ w?: s
   const { w } = await searchParams;
   const workspace = await resolveGlobalWorkspace(w);
   return <AppSidebar active="settings" basePath={workspace.basePath} activeStorageId={workspace.activeStorageId} />;
+}
+
+async function DeploymentUpdateSection() {
+  // Request-time only: reads BUILD_COMMIT and probes upstream main. Probe failure
+  // renders null inside the card — an offline instance never gets a false alarm.
+  await connection();
+  const state = await loadDeploymentUpdateState();
+  return <DeploymentUpdateCard state={state} />;
 }
 
 async function PasswordChangeSection() {
