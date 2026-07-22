@@ -3,8 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Copy } from "lucide-react";
 
-/** One-click copy for the owner-to-agent upgrade instruction. Clipboard API can
- *  be unavailable on non-HTTPS self-host origins; fall back to selection. */
+/** One-click copy for the owner-to-agent upgrade instruction. The full prompt is
+ *  also visible behind <details> so the flow still works when the browser blocks
+ *  Clipboard API (non-HTTPS self-host origins / automation contexts). */
 export function CopyUpgradePromptButton({ prompt }: { prompt: string }) {
   const [copied, setCopied] = useState(false);
   const [manual, setManual] = useState(false);
@@ -53,6 +54,10 @@ export function CopyUpgradePromptButton({ prompt }: { prompt: string }) {
           aria-label="升级指令"
         />
       ) : null}
+      <details className="update-prompt-details">
+        <summary>查看完整升级指令</summary>
+        <pre>{prompt}</pre>
+      </details>
     </div>
   );
 }
