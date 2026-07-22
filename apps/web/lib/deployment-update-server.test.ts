@@ -1,9 +1,14 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchLatestMainCommit } from "./deployment-update-server";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fetchLatestMainCommit, resetDeploymentUpdateProbeCacheForTests } from "./deployment-update-server";
 
 const SHA = "3333333333333333333333333333333333333333";
 
+beforeEach(() => {
+  resetDeploymentUpdateProbeCacheForTests();
+});
+
 afterEach(() => {
+  resetDeploymentUpdateProbeCacheForTests();
   vi.restoreAllMocks();
 });
 
@@ -25,5 +30,21 @@ describe("fetchLatestMainCommit", () => {
   it("returns null on malformed payload", async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ sha: "not-a-sha" }), { status: 200 }));
     await expect(fetchLatestMainCommit(fetchImpl as typeof fetch)).resolves.toBeNull();
+  });
+
+  it("caches the last probe briefly so Settings renders do not re-hit GitHub", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ sha: SHA }), { status: 200 }));
+    await expect(fetchLatestMainCommit(fetchImpl as typeof fetch)).resolves.toBe(SHA);
+    await expect(fetchLatestMainCommit(fetchImpl as typeof fetch)).resolves.toBe(SHA);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("caches thrown network failures as a quiet negative result", async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new Error("offline");
+    });
+    await expect(fetchLatestMainCommit(fetchImpl as typeof fetch)).resolves.toBeNull();
+    await expect(fetchLatestMainCommit(fetchImpl as typeof fetch)).resolves.toBeNull();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 });

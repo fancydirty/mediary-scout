@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, Copy } from "lucide-react";
 
 /** One-click copy for the owner-to-agent upgrade instruction. Clipboard API can
@@ -8,14 +8,31 @@ import { Check, Copy } from "lucide-react";
 export function CopyUpgradePromptButton({ prompt }: { prompt: string }) {
   const [copied, setCopied] = useState(false);
   const [manual, setManual] = useState(false);
+  const timeoutRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current !== null) {
+        window.clearTimeout(timeoutRef.current);
+      }
+    };
+  }, []);
 
   async function copyPrompt() {
+    if (timeoutRef.current !== null) {
+      window.clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
     try {
       await navigator.clipboard.writeText(prompt);
       setManual(false);
       setCopied(true);
-      window.setTimeout(() => setCopied(false), 1800);
+      timeoutRef.current = window.setTimeout(() => {
+        setCopied(false);
+        timeoutRef.current = null;
+      }, 1800);
     } catch {
+      setCopied(false);
       setManual(true);
     }
   }
