@@ -2,7 +2,8 @@ import { connection, NextResponse, type NextRequest } from "next/server";
 import { loadSettingsAttentionSummary } from "../../../../lib/settings-attention-server";
 import { resolveGlobalWorkspace } from "../../../../lib/workflow-runtime";
 
-/** Lightweight badge/inbox payload. Poll-friendly; never throws to the client. */
+/** Lightweight badge/inbox payload. Poll-friendly; never throws to the client.
+ *  Badge polls only need count/severity — pass `items=1` for full inbox items. */
 export async function GET(request: NextRequest) {
   await connection();
   try {
@@ -12,10 +13,11 @@ export async function GET(request: NextRequest) {
     const summary = await loadSettingsAttentionSummary(
       workspace.activeStorageId ? { activeStorageId: workspace.activeStorageId } : undefined,
     );
+    const includeItems = request.nextUrl.searchParams.get("items") === "1";
     return NextResponse.json({
       count: summary.count,
       severity: summary.severity,
-      items: summary.items,
+      items: includeItems ? summary.items : [],
     });
   } catch {
     // Fail quiet — badge polls every few seconds; never spam logs or break nav.

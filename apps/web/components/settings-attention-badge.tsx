@@ -2,13 +2,32 @@
 
 import { useEffect, useState } from "react";
 
-/** Live count of Settings attention items. Hidden at zero. Desktop footer + mobile
- *  tab both mount this; CSS decides placement (inline vs icon overlay). */
-export function SettingsAttentionBadge({ storageId }: { storageId?: string | undefined }) {
+/** Live count of Settings attention items. Hidden at zero.
+ *  Mobile nav + desktop footer each mount one instance; only the instance
+ *  matching the current breakpoint polls (same 860px switch as the sidebar). */
+export function SettingsAttentionBadge({
+  storageId,
+  visibleWhen,
+}: {
+  storageId?: string | undefined;
+  visibleWhen: "mobile" | "desktop";
+}) {
+  const [visible, setVisible] = useState(false);
   const [count, setCount] = useState(0);
   const [severity, setSeverity] = useState<"warning" | "blocker" | null>(null);
 
   useEffect(() => {
+    const mq = window.matchMedia("(max-width: 860px)");
+    const sync = () => {
+      setVisible(visibleWhen === "mobile" ? mq.matches : !mq.matches);
+    };
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, [visibleWhen]);
+
+  useEffect(() => {
+    if (!visible) return;
     let alive = true;
     const poll = async () => {
       try {
@@ -34,9 +53,9 @@ export function SettingsAttentionBadge({ storageId }: { storageId?: string | und
       alive = false;
       clearInterval(id);
     };
-  }, [storageId]);
+  }, [storageId, visible]);
 
-  if (count <= 0) return null;
+  if (!visible || count <= 0) return null;
   const tone = severity === "blocker" ? "nav-badge-alert" : "nav-badge-warning";
   return <span className={`nav-badge ${tone}`}>{count}</span>;
 }

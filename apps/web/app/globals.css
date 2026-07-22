@@ -3238,8 +3238,15 @@ select.setting-control {
   gap: 12px;
   align-items: center;
   background: rgba(0, 0, 0, 0.25);
+  border: 1px solid transparent;
   border-radius: 10px;
   padding: 12px;
+}
+.attention-item.severity-blocker {
+  border-color: rgba(229, 72, 77, 0.45);
+}
+.attention-item.severity-warning {
+  border-color: rgba(255, 164, 43, 0.45);
 }
 .attention-item-title {
   font-weight: 700;
