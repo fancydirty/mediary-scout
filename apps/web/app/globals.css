@@ -183,6 +183,10 @@ p {
   padding: 12px;
 }
 
+.health-card .nav-badge {
+  margin-left: auto;
+}
+
 .health-card strong {
   display: block;
   font-size: 13px;
@@ -3206,14 +3210,6 @@ select.setting-control {
   margin-top: 12px;
   display: flex;
   justify-content: flex-end;
-}
-
-/* Settings footer/desktop card can host the attention badge on the right. */
-.health-card {
-  position: relative;
-}
-.health-card .nav-badge {
-  margin-left: auto;
 }
 
 /* ---------- settings attention inbox ---------- */
