@@ -163,12 +163,10 @@ async function SettingsAttentionSection({
   searchParams: Promise<{ w?: string }>;
 }) {
   // Request-time only: account drives + LLM config + optional update probe.
+  // Loader resolves account/drives once (including optional ?w deep-link context).
   await connection();
   const { w } = await searchParams;
-  const workspace = await resolveGlobalWorkspace(w);
-  const summary = await loadSettingsAttentionSummary(
-    workspace.activeStorageId ? { activeStorageId: workspace.activeStorageId } : undefined,
-  );
+  const summary = await loadSettingsAttentionSummary(w ? { w } : undefined);
   return <SettingsActionInbox items={summary.items} />;
 }
 

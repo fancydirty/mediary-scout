@@ -1,4 +1,8 @@
-import { getStorageBrand } from "@media-track/workflow";
+import {
+  getStorageBrand,
+  isRegisteredStorageProvider,
+  resolveWorkspaceFromParam,
+} from "@media-track/workflow";
 import { isDemoMode } from "./demo-mode";
 import { loadDeploymentUpdateState } from "./deployment-update-server";
 import {
@@ -21,20 +25,24 @@ function brandLabel(provider: string): string {
   }
 }
 
-/** Account-scoped attention items for Settings badge + Action Inbox. */
+/** Account-scoped attention items for Settings badge + Action Inbox.
+ *  Resolves account + drives once; optional `w` preserves workspace on deep-links. */
 export async function loadSettingsAttentionSummary(options?: {
-  activeStorageId?: string;
+  w?: string | null;
 }): Promise<SettingsAttentionSummary> {
   if (isDemoMode()) {
     return { count: 0, severity: null, items: [] };
   }
 
-  // Resolve account once — listConnectedStorages(accountId) avoids a second
-  // getCurrentAccountId()/session verify on the poll path.
   const accountId = await getCurrentAccountId();
   const repository = getWorkflowRepository();
-  const [drives, llm, update] = await Promise.all([
-    repository.listConnectedStorages(accountId),
+  const drives = await repository.listConnectedStorages(accountId);
+  const workspace = resolveWorkspaceFromParam(
+    drives.filter((drive) => isRegisteredStorageProvider(drive.provider)),
+    options?.w ?? undefined,
+  );
+
+  const [llm, update] = await Promise.all([
     getLlmConfig(getAccountScopedSettings(accountId)),
     loadDeploymentUpdateState(),
   ]);
@@ -50,7 +58,7 @@ export async function loadSettingsAttentionSummary(options?: {
     brandLabel,
     llmConfigured: Boolean(llm.baseURL && llm.modelId),
     update,
-    ...(options?.activeStorageId ? { activeStorageId: options.activeStorageId } : {}),
+    ...(workspace.activeStorageId ? { activeStorageId: workspace.activeStorageId } : {}),
   });
   return summarizeSettingsAttention(items);
 }

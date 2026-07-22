@@ -1,6 +1,5 @@
 import { connection, NextResponse, type NextRequest } from "next/server";
 import { loadSettingsAttentionSummary } from "../../../../lib/settings-attention-server";
-import { resolveGlobalWorkspace } from "../../../../lib/workflow-runtime";
 
 const NO_STORE = { "Cache-Control": "no-store" } as const;
 
@@ -9,12 +8,9 @@ const NO_STORE = { "Cache-Control": "no-store" } as const;
 export async function GET(request: NextRequest) {
   try {
     await connection();
-    const workspace = await resolveGlobalWorkspace(
-      request.nextUrl.searchParams.get("w") ?? undefined,
-    );
-    const summary = await loadSettingsAttentionSummary(
-      workspace.activeStorageId ? { activeStorageId: workspace.activeStorageId } : undefined,
-    );
+    const summary = await loadSettingsAttentionSummary({
+      w: request.nextUrl.searchParams.get("w"),
+    });
     const includeItems = request.nextUrl.searchParams.get("items") === "1";
     return NextResponse.json(
       {
