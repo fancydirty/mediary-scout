@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 
 /** Live count of Settings attention items. Hidden at zero. Desktop footer + mobile
  *  tab both mount this; CSS decides placement (inline vs icon overlay). */
-export function SettingsAttentionBadge() {
+export function SettingsAttentionBadge({ storageId }: { storageId?: string | undefined }) {
   const [count, setCount] = useState(0);
   const [severity, setSeverity] = useState<"warning" | "blocker" | null>(null);
 
@@ -12,7 +12,10 @@ export function SettingsAttentionBadge() {
     let alive = true;
     const poll = async () => {
       try {
-        const res = await fetch("/api/settings/attention", { cache: "no-store" });
+        const url = storageId
+          ? `/api/settings/attention?w=${encodeURIComponent(storageId)}`
+          : "/api/settings/attention";
+        const res = await fetch(url, { cache: "no-store" });
         if (!res.ok) return;
         const data = (await res.json()) as {
           count?: number;
@@ -31,7 +34,7 @@ export function SettingsAttentionBadge() {
       alive = false;
       clearInterval(id);
     };
-  }, []);
+  }, [storageId]);
 
   if (count <= 0) return null;
   const tone = severity === "blocker" ? "nav-badge-alert" : "nav-badge-warning";

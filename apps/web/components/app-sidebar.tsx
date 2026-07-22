@@ -93,7 +93,7 @@ export function AppSidebar({
             >
               <Settings size={16} aria-hidden />
               设置
-              <SettingsAttentionBadge />
+              <SettingsAttentionBadge storageId={activeStorageId} />
             </Link>
           </li>
         </ul>
@@ -121,7 +121,7 @@ export function AppSidebar({
             <strong>设置</strong>
             <span>网盘连接 · 推送 · 偏好</span>
           </span>
-          <SettingsAttentionBadge />
+          <SettingsAttentionBadge storageId={activeStorageId} />
         </Link>
       </div>
     </aside>
