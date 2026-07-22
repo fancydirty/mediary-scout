@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 /** Live count of Settings attention items. Hidden at zero.
  *  Mobile nav + desktop footer each mount one instance; only the instance
@@ -15,6 +15,8 @@ export function SettingsAttentionBadge({
   const [visible, setVisible] = useState(false);
   const [count, setCount] = useState(0);
   const [severity, setSeverity] = useState<"warning" | "blocker" | null>(null);
+  // Bumped when hidden so late poll responses from a previous visible window are ignored.
+  const epochRef = useRef(0);
 
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 860px)");
@@ -22,6 +24,7 @@ export function SettingsAttentionBadge({
       const next = visibleWhen === "mobile" ? mq.matches : !mq.matches;
       setVisible(next);
       if (!next) {
+        epochRef.current += 1;
         // Drop stale count so a later resize doesn't flash an old badge.
         setCount(0);
         setSeverity(null);
@@ -41,6 +44,7 @@ export function SettingsAttentionBadge({
     if (!visible) return;
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const epochAtStart = epochRef.current;
     const poll = async () => {
       try {
         const url = storageId
@@ -52,14 +56,16 @@ export function SettingsAttentionBadge({
           count?: number;
           severity?: "warning" | "blocker" | null;
         };
-        if (!alive) return;
+        if (!alive || epochRef.current !== epochAtStart) return;
         setCount(typeof data.count === "number" ? data.count : 0);
         setSeverity(data.severity === "blocker" || data.severity === "warning" ? data.severity : null);
       } catch {
         // keep last
       } finally {
         // Self-schedule so slow requests never overlap.
-        if (alive) timer = setTimeout(() => void poll(), 8000);
+        if (alive && epochRef.current === epochAtStart) {
+          timer = setTimeout(() => void poll(), 8000);
+        }
       }
     };
     void poll();
