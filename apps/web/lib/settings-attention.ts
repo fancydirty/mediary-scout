@@ -1,6 +1,6 @@
 import type { DeploymentUpdateState } from "./deployment-update";
 import { buildContainerUpgradePrompt } from "./deployment-update";
-import type { SettingsTabId } from "./settings-tabs-model";
+import { DEFAULT_SETTINGS_TAB, type SettingsTabId } from "./settings-tabs-model";
 
 export type AttentionSeverity = "warning" | "blocker";
 export type AttentionKind = "frozen_drive" | "update_available" | "missing_llm";
@@ -31,8 +31,9 @@ export function settingsAttentionHref(
   activeStorageId?: string,
 ): string {
   const params = new URLSearchParams();
-  if (tab && tab !== "drives") params.set("tab", tab);
+  if (tab && tab !== DEFAULT_SETTINGS_TAB) params.set("tab", tab);
   if (activeStorageId) params.set("w", activeStorageId);
+  params.sort();
   const query = params.toString();
   return query ? `/settings?${query}` : "/settings";
 }
