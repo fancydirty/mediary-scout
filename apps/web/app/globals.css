@@ -3262,23 +3262,6 @@ select.setting-control {
 .update-copy-block {
   min-width: 180px;
 }
-.update-prompt-details {
-  margin-top: 10px;
-  font-size: 12px;
-}
-.update-prompt-details summary {
-  color: var(--text-muted);
-  cursor: pointer;
-}
-.update-prompt-details pre {
-  white-space: pre-wrap;
-  color: var(--text-soft);
-  background: rgba(0, 0, 0, 0.25);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
-  padding: 10px;
-  max-width: 520px;
-}
 
 /* ---------- GitHub nameplate (Settings page bottom — quiet 暗记 + CTA) ---------- */
 .github-nameplate {
