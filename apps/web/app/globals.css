@@ -2075,10 +2075,53 @@ p {
     margin-right: -16px;
   }
   .hub-hero {
-    padding: 12px 16px 22px;
+    padding: 12px 16px 18px;
+  }
+  .hub-hero .back-link {
+    flex-shrink: 0;
+    white-space: nowrap;
+    margin-bottom: 12px;
+  }
+  /* M1′: stack poster above full-width title (no squeezed right column). */
+  .hub-header {
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    text-align: center;
+  }
+  .hub-poster {
+    width: 128px;
+    min-width: 128px;
+  }
+  .hub-title-block {
+    align-items: center;
+    width: 100%;
+  }
+  .hub-title-block h1 {
+    font-size: 22px;
+    line-height: 1.25;
+  }
+  .hub-badges {
+    justify-content: center;
+  }
+  .hub-actions {
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  .hub-missing-note {
+    text-align: center;
+    max-width: none;
   }
   .hub-body {
-    padding: 16px 16px 0;
+    padding: 12px 16px 0;
+  }
+  .hub-seasons {
+    margin-top: 16px;
+    padding: 0 16px;
+  }
+  /* Hide desktop-only 3-line clamp leftover if any. */
+  .hub-overview {
+    display: none;
   }
 }
 
@@ -2462,6 +2505,19 @@ select.setting-control {
   text-transform: uppercase;
   color: var(--text-muted);
 }
+.movie-synopsis-hit {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
 .movie-synopsis-body {
   margin: 0;
   font-size: 14.5px;
@@ -2469,16 +2525,71 @@ select.setting-control {
   color: var(--text-soft);
   white-space: pre-wrap;
 }
-.movie-synopsis-toggle {
-  margin-top: 8px;
-  padding: 0;
-  border: none;
-  background: none;
-  color: var(--accent);
-  font: inherit;
-  font-size: 13px;
+.movie-synopsis-hint {
+  display: none;
+  margin-top: 6px;
+  font-size: 12px;
   font-weight: 600;
-  cursor: pointer;
+  color: var(--text-muted);
+}
+
+/* Mobile: 2-line clamp + gradient veil; whole block toggles expand. */
+@media (max-width: 860px) {
+  .movie-synopsis {
+    max-width: none;
+  }
+  .movie-synopsis-body {
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  .movie-synopsis.is-collapsed .movie-synopsis-body {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    white-space: normal;
+  }
+  .movie-synopsis.is-collapsed .movie-synopsis-hit {
+    position: relative;
+  }
+  .movie-synopsis.is-collapsed .movie-synopsis-hit::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 1.4em;
+    height: 1.6em;
+    pointer-events: none;
+    background: linear-gradient(
+      to bottom,
+      rgba(18, 18, 18, 0) 0%,
+      rgba(18, 18, 18, 0.55) 45%,
+      var(--bg-base) 100%
+    );
+  }
+  .movie-synopsis.is-collapsed .movie-synopsis-hint {
+    display: block;
+  }
+  .movie-synopsis.is-expanded .movie-synopsis-hint {
+    display: block;
+    color: var(--accent);
+  }
+}
+
+/* Desktop: always full text; no collapse chrome. */
+@media (min-width: 861px) {
+  .movie-synopsis.is-collapsed .movie-synopsis-body {
+    display: block;
+    -webkit-line-clamp: unset;
+    overflow: visible;
+  }
+  .movie-synopsis-hint {
+    display: none !important;
+  }
+  .movie-synopsis-hit {
+    cursor: default;
+    pointer-events: none;
+  }
 }
 .movie-meta-chips {
   display: flex;

@@ -215,7 +215,6 @@ function TvHub({
               ? ` · ${view.originalTitle}`
               : ""}
           </p>
-          {view.overview ? <p className="hub-overview">{view.overview}</p> : null}
           <div className="hub-actions">
             {/* Single-season titles get their button on the season row. */}
             {view.untrackedSeasonNumbers.length > 0 && view.seasons.length > 1 ? (
@@ -245,13 +244,11 @@ function TvHub({
       </header>
       </div>
 
+      <div className="hub-body">
+        {view.overview ? <MovieSynopsis overview={view.overview} /> : null}
+      </div>
+
       <section className="hub-seasons" aria-label="季列表">
-        <div className="section-heading">
-          <div>
-            <h2>季</h2>
-            <p>每季独立验证与监控；点击已追踪的季展开集数状态</p>
-          </div>
-        </div>
         <ul className="hub-season-list">
           {view.seasons.map((season) => (
             <SeasonRow
