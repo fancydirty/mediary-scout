@@ -2519,6 +2519,7 @@ select.setting-control {
   -webkit-tap-highlight-color: transparent;
 }
 .movie-synopsis-body {
+  display: block;
   margin: 0;
   font-size: 14.5px;
   line-height: 1.75;
@@ -2576,21 +2577,7 @@ select.setting-control {
   }
 }
 
-/* Desktop: always full text; no collapse chrome. */
-@media (min-width: 861px) {
-  .movie-synopsis.is-collapsed .movie-synopsis-body {
-    display: block;
-    -webkit-line-clamp: unset;
-    overflow: visible;
-  }
-  .movie-synopsis-hint {
-    display: none !important;
-  }
-  .movie-synopsis-hit {
-    cursor: default;
-    pointer-events: none;
-  }
-}
+
 .movie-meta-chips {
   display: flex;
   flex-wrap: wrap;
