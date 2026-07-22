@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { connection } from "next/server";
 import { Suspense, type ReactNode } from "react";
 import { TriangleAlert } from "lucide-react";
@@ -5,6 +6,8 @@ import { AcquiringPoller } from "../../../components/acquiring-poller";
 import { AcquisitionLockProvider } from "../../../components/acquisition-lock";
 import { AppSidebar } from "../../../components/app-sidebar";
 import { BackLink } from "../../../components/back-link";
+import { MovieSynopsis } from "../../../components/movie-synopsis";
+import { RequestTrackButton } from "../../../components/request-track-button";
 import {
   RequestRemainingButton,
   RequestSeasonButton,
@@ -17,8 +20,8 @@ import {
   type TitleHubSeason,
   type TitleHubView,
 } from "../../../lib/title-hub";
-import { resolveGlobalWorkspace } from "../../../lib/workflow-runtime";
 import { seasonBadgeState } from "../../../lib/title-aggregate";
+import { resolveGlobalWorkspace } from "../../../lib/workflow-runtime";
 
 const aggregateBadge = {
   untracked: null,
@@ -114,7 +117,7 @@ async function ShowContent({
   return (
     <ShowShell
       active={from ?? "none"}
-      backLabel={from === "search" ? "返回搜索" : from === "library" ? "返回媒体库" : "返回"}
+      backLabel={from === "search" ? "搜索" : from === "library" ? "媒体库" : "返回"}
       backHref={
         from === "library" ? `${workspace.basePath}?tab=library` : `${workspace.basePath}?tab=search`
       }
@@ -262,7 +265,7 @@ const movieStateMeta = {
   untracked: { label: "未追踪", tone: "muted" },
 } as const;
 
-/** A movie's detail page: a single status, no season grid. */
+/** A movie's detail page: hero + full synopsis body (no season grid). */
 function MovieHub({
   view,
   storageId,
@@ -273,8 +276,17 @@ function MovieHub({
   basePath: string;
 }) {
   const meta = movieStateMeta[view.state];
-  const releaseLine =
-    view.state === "reserved" && view.releaseDate ? `${formatMovieDate(view.releaseDate)} 上映` : null;
+  const activityHref = storageId ? `/activity?w=${encodeURIComponent(storageId)}` : "/activity";
+  const unreleased = Boolean(view.releaseDate && view.state === "untracked");
+  // RequestTrackButton: unreleased untracked → 预定; missing → 重新获取; else 获取.
+  const requestLabel = view.state === "missing" ? "重新获取" : unreleased ? "预定" : "获取";
+  const chips: Array<{ label: string; value: string }> = [];
+  if (view.releaseDate) chips.push({ label: "上映", value: formatMovieDate(view.releaseDate) });
+  if (view.originalTitle && view.originalTitle !== view.title) {
+    chips.push({ label: "原名", value: view.originalTitle });
+  }
+  chips.push({ label: "类型", value: "电影" });
+
   return (
     <AcquisitionLockProvider>
       {view.acquiring ? <AcquiringPoller /> : null}
@@ -303,16 +315,37 @@ function MovieHub({
             <p className="hub-attributes">
               电影
               {view.originalTitle && view.originalTitle !== view.title ? ` · ${view.originalTitle}` : ""}
-              {releaseLine ? ` · ${releaseLine}` : ""}
             </p>
-            {view.overview ? <p className="hub-overview">{view.overview}</p> : null}
-            {view.state !== "untracked" ? (
-              <div className="hub-actions">
+            <div className="hub-actions">
+              {view.state === "untracked" || view.state === "missing" ? (
+                <RequestTrackButton
+                  tmdbId={view.tmdbId}
+                  actionState="can_request"
+                  label={requestLabel}
+                  storageId={storageId}
+                />
+              ) : null}
+              {view.state === "acquiring" ? (
+                <Link className="primary-button" href={activityHref}>
+                  查看活动
+                </Link>
+              ) : null}
+              {view.state !== "untracked" ? (
                 <UntrackButton tmdbId={view.tmdbId} storageId={storageId} mediaKind="movie" basePath={basePath} />
-              </div>
-            ) : null}
+              ) : null}
+            </div>
           </div>
         </header>
+        {view.overview ? <MovieSynopsis overview={view.overview} /> : null}
+        {chips.length > 0 ? (
+          <div className="movie-meta-chips">
+            {chips.map((chip) => (
+              <span key={`${chip.label}-${chip.value}`} className="movie-meta-chip">
+                {chip.label} <strong>{chip.value}</strong>
+              </span>
+            ))}
+          </div>
+        ) : null}
       </section>
     </AcquisitionLockProvider>
   );

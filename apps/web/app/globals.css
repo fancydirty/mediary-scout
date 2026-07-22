@@ -2355,11 +2355,77 @@ select.setting-control {
 
 .back-link {
   display: inline-flex;
+  align-items: center;
+  gap: 6px;
   margin-bottom: 16px;
-  background: none;
-  border: none;
+  padding: 6px 12px;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--text-soft);
   cursor: pointer;
   font: inherit;
+  font-size: 13px;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.back-link:hover {
+  background: rgba(0, 0, 0, 0.5);
+  color: var(--text);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.movie-synopsis {
+  position: relative;
+  max-width: 720px;
+  margin: 4px 0 0;
+}
+.movie-synopsis-label {
+  margin: 0 0 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.movie-synopsis-body {
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.75;
+  color: var(--text-soft);
+  white-space: pre-wrap;
+}
+.movie-synopsis-toggle {
+  margin-top: 8px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.movie-meta-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: 720px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+.movie-meta-chip {
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg-surface);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 9999px;
+  padding: 5px 10px;
+}
+.movie-meta-chip strong {
+  color: var(--text-soft);
+  font-weight: 600;
 }
 
 /* Season picker dropdown on search cards */

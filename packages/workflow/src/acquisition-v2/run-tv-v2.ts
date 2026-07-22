@@ -70,6 +70,7 @@ export async function runTvAcquisitionV2(request: RunTvAcquisitionV2Request): Pr
       name: request.title.title,
       year: request.title.year ?? 0,
       aliases: request.title.aliases ?? [],
+      tmdbId: request.title.tmdbId,
     },
     categoryParentId: request.categoryParentId,
     seasons: request.seasons.map((season) => ({

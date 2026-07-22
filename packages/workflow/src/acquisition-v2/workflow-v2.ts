@@ -32,7 +32,7 @@ export interface RunAcquisitionV2WorkflowRequest {
   executor: StorageExecutor;
   model: LanguageModel;
   workflowRunId: string;
-  title: { name: string; year: number; aliases: string[] };
+  title: { name: string; year: number; aliases: string[]; tmdbId: number };
   /** Library category parent (Movies/TV/Anime), chosen by title.type upstream. */
   categoryParentId: string;
   seasons: V2WorkflowSeason[];
@@ -88,6 +88,7 @@ export async function runAcquisitionV2Workflow(
     categoryParentId: request.categoryParentId,
     showName: request.title.name,
     year: request.title.year,
+    tmdbId: request.title.tmdbId,
     seasons: request.seasons.map((season) => season.seasonNumber),
     workflowRunId: request.workflowRunId,
   });

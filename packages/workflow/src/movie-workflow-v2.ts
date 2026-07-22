@@ -21,6 +21,7 @@ import { readLandedSize, type LandedSize } from "./acquisition-v2/landed-size.js
 import type { AgentToolEvent } from "./acquisition-v2/activity.js";
 import { runAcquisitionV2 } from "./acquisition-v2/orchestrator.js";
 import { getQualityGuidance, getSearchRecipe } from "./acquisition-v2/search-profile.js";
+import { ensureMediaLibraryDirectory } from "./media-library-folder.js";
 
 function defaultNowIso(): string {
   return new Date().toISOString();
@@ -59,13 +60,17 @@ export async function runMovieAcquisitionV2(
 ): Promise<MovieWorkflowResult> {
   const now = request.now ?? defaultNowIso;
 
-  // verify-or-create Movies/Title (Year). For a movie this dir IS the staging,
-  // the flatten target, and the final location — there is NO separate staging
-  // (§5): transfer lands here, the wrapper is flattened in place, mark. So
-  // stagingDirectoryId === targetMovieDirectoryId === the movie dir.
-  const movieDirectoryId = await request.storage.createDirectory({
-    name: `${request.title.title} (${request.title.year ?? "—"})`,
+  // verify-or-create Movies/Title (Year) {tmdb-N} (legacy Title (Year) reused).
+  // For a movie this dir IS the staging, the flatten target, and the final
+  // location — there is NO separate staging (§5): transfer lands here, the
+  // wrapper is flattened in place, mark. So stagingDirectoryId ===
+  // targetMovieDirectoryId === the movie dir.
+  const movieDirectoryId = await ensureMediaLibraryDirectory({
+    executor: request.storage,
     parentId: request.moviesParentDirectoryId,
+    title: request.title.title,
+    year: request.title.year ?? "—",
+    tmdbId: request.title.tmdbId,
   });
 
   const v2 = await runAcquisitionV2({

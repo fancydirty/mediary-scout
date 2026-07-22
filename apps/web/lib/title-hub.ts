@@ -294,8 +294,8 @@ export async function getDetailView(
     if (!movieTarget) {
       return null;
     }
-    const reserved = isMovieUnreleased(movieTarget.title.releaseDate, now);
-    return movieHubViewFromTitle(movieTarget.title, reserved ? "reserved" : "untracked", false);
+    // Untracked stays untracked even if unreleased — `reserved` means tracked + waiting.
+    return movieHubViewFromTitle(movieTarget.title, "untracked", false);
   };
 
   if (typeHint === "movie") {

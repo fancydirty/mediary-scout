@@ -53,6 +53,7 @@ class RecordingExecutor extends FakeStorageExecutor {
 
 const title = {
   id: "tmdb_movie_27205",
+  tmdbId: 27205,
   title: "盗梦空间",
   year: 2010,
   aliases: ["Inception"],
@@ -224,6 +225,8 @@ describe("runMovieAcquisitionV2 — obtained comes from the AGENT'S coverage, ne
     });
 
     // Exactly one directory is created — the movie dir. No `staging-*` sibling.
-    expect(executor.createdDirs).toEqual([{ name: "盗梦空间 (2010)", parentId: "movies_root" }]);
+    expect(executor.createdDirs).toEqual([
+      { name: "盗梦空间 (2010) {tmdb-27205}", parentId: "movies_root" },
+    ]);
   });
 });

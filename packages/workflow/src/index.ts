@@ -2,6 +2,7 @@ export * from "./domain.js";
 export * from "./agent-model.js";
 export * from "./agent-error.js";
 export * from "./media-classification.js";
+export * from "./media-library-folder.js";
 export * from "./movie-workflow-v2.js";
 export * from "./notification-report.js";
 export * from "./season-sync.js";

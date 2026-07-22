@@ -49,7 +49,7 @@ describe("runAcquisitionV2Workflow — outer orchestration (dirs → sync → ag
       executor,
       model: searchThenReportModel(),
       workflowRunId: "run-1",
-      title: { name: "Show", year: 2024, aliases: [] },
+      title: { name: "Show", year: 2024, aliases: [], tmdbId: 42 },
       categoryParentId: "tv_root",
       seasons: [{ seasonNumber: 1, latestAiredEpisode: 3 }],
       qualityPreference: "1080p",
@@ -79,7 +79,7 @@ describe("runAcquisitionV2Workflow — outer orchestration (dirs → sync → ag
       executor,
       model,
       workflowRunId: "run-2",
-      title: { name: "Show", year: 2024, aliases: [] },
+      title: { name: "Show", year: 2024, aliases: [], tmdbId: 42 },
       categoryParentId: "tv_root",
       seasons: [{ seasonNumber: 1, latestAiredEpisode: 0 }], // nothing aired → nothing missing
       qualityPreference: "1080p",
@@ -97,7 +97,7 @@ describe("runAcquisitionV2Workflow — outer orchestration (dirs → sync → ag
       executor,
       model: searchThenReportModel(), // finds no new coverage this run
       workflowRunId: "run-3",
-      title: { name: "Show", year: 2024, aliases: [] },
+      title: { name: "Show", year: 2024, aliases: [], tmdbId: 42 },
       categoryParentId: "tv_root",
       seasons: [{ seasonNumber: 1, latestAiredEpisode: 3 }],
       qualityPreference: "1080p",

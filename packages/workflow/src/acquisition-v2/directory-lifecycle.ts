@@ -1,3 +1,4 @@
+import { ensureMediaLibraryDirectory } from "../media-library-folder.js";
 import type { StorageExecutor } from "../ports.js";
 
 /**
@@ -19,11 +20,13 @@ export interface AcquisitionDirectories {
 }
 
 export interface EnsureSeasonDirectoriesRequest {
-  executor: Pick<StorageExecutor, "createDirectory">;
+  executor: Pick<StorageExecutor, "createDirectory" | "listChildDirectories">;
   /** Library category parent (Movies/TV/Anime), chosen by title.type upstream. */
   categoryParentId: string;
   showName: string;
   year: number;
+  /** TMDB id — encoded into the show folder name as `{tmdb-N}`. */
+  tmdbId: number;
   /** The season number(s) this task covers (one, several, or all). */
   seasons: number[];
   /** Run-scoped suffix so each run gets its own staging dir under the show dir. */
@@ -33,11 +36,14 @@ export interface EnsureSeasonDirectoriesRequest {
 export async function ensureSeasonAcquisitionDirectories(
   request: EnsureSeasonDirectoriesRequest,
 ): Promise<AcquisitionDirectories> {
-  // Show dir under the category. find-or-create = verify-or-create: reused if it
-  // exists, recreated if the user deleted it.
-  const showDirectoryId = await request.executor.createDirectory({
-    name: `${request.showName} (${request.year})`,
+  // Show dir under the category. Prefer `Title (Year) {tmdb-N}`; reuse legacy
+  // `Title (Year)` when present so we never fork a second library folder.
+  const showDirectoryId = await ensureMediaLibraryDirectory({
+    executor: request.executor,
     parentId: request.categoryParentId,
+    title: request.showName,
+    year: request.year,
+    tmdbId: request.tmdbId,
   });
   // Each requested season's Season NN directory under the show dir.
   const seasonDirectoryIds: Record<number, string> = {};

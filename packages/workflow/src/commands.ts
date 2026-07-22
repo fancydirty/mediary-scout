@@ -8,6 +8,10 @@ import {
   type TrackedSeason,
   type WorkflowStatus,
 } from "./domain.js";
+import {
+  ensureMediaLibraryDirectory,
+  legacyMediaLibraryFolderName,
+} from "./media-library-folder.js";
 import type { StorageExecutor } from "./ports.js";
 import type { WorkflowRepository } from "./repository.js";
 
@@ -418,15 +422,25 @@ export async function importForeignWorkAsMovie(input: {
   movieTitle: string;
   year: number;
   moviesParentDirectoryId: string;
+  /** When known, folder becomes `Title (Year) {tmdb-N}`; otherwise legacy name. */
+  tmdbId?: number;
 }): Promise<ForeignWorkImportResult> {
   if (input.providerFileIds.length === 0) {
     throw new Error("FOREIGN_WORK_IMPORT_EMPTY: no files to import");
   }
-  const movieName = `${input.movieTitle} (${input.year})`;
-  const movieDirectoryId = await input.storage.createDirectory({
-    name: movieName,
-    parentId: input.moviesParentDirectoryId,
-  });
+  const movieDirectoryId =
+    input.tmdbId != null
+      ? await ensureMediaLibraryDirectory({
+          executor: input.storage,
+          parentId: input.moviesParentDirectoryId,
+          title: input.movieTitle,
+          year: input.year,
+          tmdbId: input.tmdbId,
+        })
+      : await input.storage.createDirectory({
+          name: legacyMediaLibraryFolderName({ title: input.movieTitle, year: input.year }),
+          parentId: input.moviesParentDirectoryId,
+        });
   const { moved } = await input.storage.moveFiles({
     fileIds: input.providerFileIds,
     targetDirectoryId: movieDirectoryId,
