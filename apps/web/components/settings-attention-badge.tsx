@@ -40,6 +40,7 @@ export function SettingsAttentionBadge({
   useEffect(() => {
     if (!visible) return;
     let alive = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const poll = async () => {
       try {
         const url = storageId
@@ -56,13 +57,15 @@ export function SettingsAttentionBadge({
         setSeverity(data.severity === "blocker" || data.severity === "warning" ? data.severity : null);
       } catch {
         // keep last
+      } finally {
+        // Self-schedule so slow requests never overlap.
+        if (alive) timer = setTimeout(() => void poll(), 8000);
       }
     };
     void poll();
-    const id = setInterval(() => void poll(), 8000);
     return () => {
       alive = false;
-      clearInterval(id);
+      if (timer) clearTimeout(timer);
     };
   }, [storageId, visible]);
 
