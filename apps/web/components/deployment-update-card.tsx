@@ -1,7 +1,7 @@
 import { ArrowUpCircle, ExternalLink } from "lucide-react";
 import {
   buildContainerUpgradePrompt,
-  GITHUB_MAIN_COMPARE_URL,
+  GITHUB_MAIN_COMMITS_URL,
   type DeploymentUpdateState,
 } from "../lib/deployment-update";
 import { CopyUpgradePromptButton } from "./copy-upgrade-prompt-button";
@@ -43,7 +43,7 @@ export function DeploymentUpdateCard({ state }: { state: DeploymentUpdateState }
       </p>
       <div className="update-card-actions">
         <CopyUpgradePromptButton prompt={prompt} />
-        <a className="ghost-button update-link" href={GITHUB_MAIN_COMPARE_URL} target="_blank" rel="noreferrer">
+        <a className="ghost-button update-link" href={GITHUB_MAIN_COMMITS_URL} target="_blank" rel="noreferrer">
           <ExternalLink size={14} aria-hidden />
           查看 main 变更
         </a>

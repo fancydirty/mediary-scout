@@ -89,5 +89,5 @@ export function buildContainerUpgradePrompt(input: {
   ].join("\n");
 }
 
-export const GITHUB_MAIN_COMPARE_URL =
+export const GITHUB_MAIN_COMMITS_URL =
   "https://github.com/fancydirty/mediary-scout/commits/main";

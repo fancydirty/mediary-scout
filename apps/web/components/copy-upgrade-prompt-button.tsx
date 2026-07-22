@@ -12,6 +12,7 @@ export function CopyUpgradePromptButton({ prompt }: { prompt: string }) {
   async function copyPrompt() {
     try {
       await navigator.clipboard.writeText(prompt);
+      setManual(false);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1800);
     } catch {
