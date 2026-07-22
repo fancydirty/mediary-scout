@@ -19,7 +19,13 @@ export function SettingsAttentionBadge({
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 860px)");
     const sync = () => {
-      setVisible(visibleWhen === "mobile" ? mq.matches : !mq.matches);
+      const next = visibleWhen === "mobile" ? mq.matches : !mq.matches;
+      setVisible(next);
+      if (!next) {
+        // Drop stale count so a later resize doesn't flash an old badge.
+        setCount(0);
+        setSeverity(null);
+      }
     };
     sync();
     mq.addEventListener("change", sync);
