@@ -3269,6 +3269,10 @@ select.setting-control {
 .update-prompt-details summary {
   color: var(--text-muted);
   cursor: pointer;
+  list-style: none;
+}
+.update-prompt-details summary::-webkit-details-marker {
+  display: none;
 }
 .update-prompt-details pre {
   white-space: pre-wrap;

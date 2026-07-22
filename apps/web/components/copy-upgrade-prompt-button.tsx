@@ -53,11 +53,12 @@ export function CopyUpgradePromptButton({ prompt }: { prompt: string }) {
           onFocus={(event) => event.currentTarget.select()}
           aria-label="升级指令"
         />
-      ) : null}
-      <details className="update-prompt-details">
-        <summary>查看完整升级指令</summary>
-        <pre>{prompt}</pre>
-      </details>
+      ) : (
+        <details className="update-prompt-details">
+          <summary>查看完整升级指令</summary>
+          <pre>{prompt}</pre>
+        </details>
+      )}
     </div>
   );
 }
