@@ -46,11 +46,13 @@ export function SettingsAttentionBadge({
     let timer: ReturnType<typeof setTimeout> | undefined;
     const epochAtStart = epochRef.current;
     const poll = async () => {
+      const controller = new AbortController();
+      const abortTimer = setTimeout(() => controller.abort(), 10000);
       try {
         const url = storageId
           ? `/api/settings/attention?w=${encodeURIComponent(storageId)}`
           : "/api/settings/attention";
-        const res = await fetch(url, { cache: "no-store" });
+        const res = await fetch(url, { cache: "no-store", signal: controller.signal });
         if (!res.ok) return;
         const data = (await res.json()) as {
           count?: number;
@@ -60,9 +62,10 @@ export function SettingsAttentionBadge({
         setCount(typeof data.count === "number" ? data.count : 0);
         setSeverity(data.severity === "blocker" || data.severity === "warning" ? data.severity : null);
       } catch {
-        // keep last
+        // keep last (including abort/timeout)
       } finally {
-        // Self-schedule so slow requests never overlap.
+        clearTimeout(abortTimer);
+        // Self-schedule so slow/hung requests never stall the loop forever.
         if (alive && epochRef.current === epochAtStart) {
           timer = setTimeout(() => void poll(), 8000);
         }
