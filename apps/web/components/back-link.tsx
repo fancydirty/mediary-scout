@@ -18,7 +18,7 @@ export function BackLink({
   const router = useRouter();
   return (
     <button
-      className="nav-item back-link"
+      className="back-link"
       type="button"
       onClick={() => {
         if (window.history.length > 1) {

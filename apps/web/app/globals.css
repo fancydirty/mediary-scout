@@ -2471,7 +2471,10 @@ select.setting-control {
 }
 
 .back-link {
+  /* Must NOT use .nav-item — mobile .nav-item is column (tab bar), which
+     stacks the arrow above the label and "squishes" 媒体库 into two lines. */
   display: inline-flex;
+  flex-direction: row;
   align-items: center;
   gap: 6px;
   margin-bottom: 16px;
@@ -2483,6 +2486,10 @@ select.setting-control {
   cursor: pointer;
   font: inherit;
   font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  flex-shrink: 0;
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
 }
