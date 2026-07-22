@@ -2,6 +2,7 @@ import Link from "next/link";
 import { connection } from "next/server";
 import { Suspense, type ReactNode } from "react";
 import { TriangleAlert } from "lucide-react";
+import { isMovieUnreleased } from "@media-track/workflow";
 import { AcquiringPoller } from "../../../components/acquiring-poller";
 import { AcquisitionLockProvider } from "../../../components/acquisition-lock";
 import { AppSidebar } from "../../../components/app-sidebar";
@@ -277,9 +278,10 @@ function MovieHub({
 }) {
   const meta = movieStateMeta[view.state];
   const activityHref = storageId ? `/activity?w=${encodeURIComponent(storageId)}` : "/activity";
-  const unreleased = Boolean(view.releaseDate && view.state === "untracked");
-  // RequestTrackButton: unreleased untracked → 预定; missing → 重新获取; else 获取.
-  const requestLabel = view.state === "missing" ? "重新获取" : unreleased ? "预定" : "获取";
+  const nowIso = new Date().toISOString();
+  const unreleased =
+    view.state === "untracked" && isMovieUnreleased(view.releaseDate, nowIso);
+  const movieCandidateId = `tmdb_movie_${view.tmdbId}`;
   const chips: Array<{ label: string; value: string }> = [];
   if (view.releaseDate) chips.push({ label: "上映", value: formatMovieDate(view.releaseDate) });
   if (view.originalTitle && view.originalTitle !== view.title) {
@@ -312,16 +314,14 @@ function MovieHub({
             <h1>
               {view.title} <span className="hub-year">({view.year})</span>
             </h1>
-            <p className="hub-attributes">
-              电影
-              {view.originalTitle && view.originalTitle !== view.title ? ` · ${view.originalTitle}` : ""}
-            </p>
+            <p className="hub-attributes">电影</p>
             <div className="hub-actions">
-              {view.state === "untracked" || view.state === "missing" ? (
+              {view.state === "untracked" ? (
                 <RequestTrackButton
+                  candidateId={movieCandidateId}
                   tmdbId={view.tmdbId}
-                  actionState="can_request"
-                  label={requestLabel}
+                  actionState={unreleased ? "can_reserve" : "can_request"}
+                  label={unreleased ? "预定" : "获取"}
                   storageId={storageId}
                 />
               ) : null}
@@ -334,6 +334,9 @@ function MovieHub({
                 <UntrackButton tmdbId={view.tmdbId} storageId={storageId} mediaKind="movie" basePath={basePath} />
               ) : null}
             </div>
+            {view.state === "missing" ? (
+              <p className="hub-missing-note">已上映但仍缺资源，日常巡检会继续尝试。</p>
+            ) : null}
           </div>
         </header>
         {view.overview ? <MovieSynopsis overview={view.overview} /> : null}
@@ -356,11 +359,8 @@ function formatMovieDate(releaseDate: string): string {
   return match ? `${match[1]}年${Number(match[2])}月${Number(match[3])}日` : releaseDate;
 }
 
-/** Contextual placeholder while the hub's first render streams in. Mirrors the
- *  real hub SHAPE (poster + title block header, then the season list) so the
- *  swap to real content doesn't reflow — reuses the same layout containers. A
- *  movie resolves with no seasons, but the header (the dominant region) matches
- *  both, and the season rows cover the common TV case. */
+/** Shared placeholder while the hub streams. Header-only — no fake TV season
+ *  rows (movies have none; TV content replaces this quickly). */
 function HubSkeleton() {
   return (
     <section className="title-hub">
@@ -374,14 +374,12 @@ function HubSkeleton() {
           <div className="skeleton skeleton-hub-line short" />
         </div>
       </header>
-      <section className="hub-seasons" aria-hidden>
+      <div className="movie-synopsis" aria-hidden>
         <div className="skeleton skeleton-hub-section" />
-        <ul className="hub-season-list">
-          <li className="skeleton skeleton-hub-row" />
-          <li className="skeleton skeleton-hub-row" />
-          <li className="skeleton skeleton-hub-row" />
-        </ul>
-      </section>
+        <div className="skeleton skeleton-hub-line" />
+        <div className="skeleton skeleton-hub-line" />
+        <div className="skeleton skeleton-hub-line short" />
+      </div>
     </section>
   );
 }

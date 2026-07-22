@@ -1,16 +1,19 @@
 import type { StorageExecutor } from "./ports.js";
 
+function folderYear(year: number | string | null | undefined): string {
+  if (year === null || year === undefined || year === "" || year === 0 || year === "0") {
+    return "—";
+  }
+  return String(year);
+}
+
 /** Canonical cloud folder name for a title root under Movies/TV/Anime. */
 export function mediaLibraryFolderName(input: {
   title: string;
   year: number | string | null | undefined;
   tmdbId: number;
 }): string {
-  const year =
-    input.year === null || input.year === undefined || input.year === ""
-      ? "—"
-      : String(input.year);
-  return `${input.title} (${year}) {tmdb-${input.tmdbId}}`;
+  return `${input.title} (${folderYear(input.year)}) {tmdb-${input.tmdbId}}`;
 }
 
 /** Pre-tmdb-suffix name. Kept so existing pan folders are reused, not duplicated. */
@@ -18,11 +21,7 @@ export function legacyMediaLibraryFolderName(input: {
   title: string;
   year: number | string | null | undefined;
 }): string {
-  const year =
-    input.year === null || input.year === undefined || input.year === ""
-      ? "—"
-      : String(input.year);
-  return `${input.title} (${year})`;
+  return `${input.title} (${folderYear(input.year)})`;
 }
 
 /**

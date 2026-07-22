@@ -2198,6 +2198,9 @@ export async function importForeignWorkFiles(input: {
   movieTitle: string;
   year: number;
 }): Promise<{ movieDirectoryId: string; movedFileIds: string[] }> {
+  // Foreign-work UI is free-text title/year only (no TMDB id). Folder stays the
+  // legacy `Title (Year)` form on purpose — `importForeignWorkAsMovie` supports
+  // `{tmdb-N}` only when a caller passes tmdbId.
   const accountId = await getCurrentAccountId();
   const parents = await getWorkerStorageParents(accountId);
   return importForeignWorkAsMovie({

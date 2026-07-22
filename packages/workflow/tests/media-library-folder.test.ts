@@ -13,8 +13,9 @@ describe("mediaLibraryFolderName", () => {
     );
   });
 
-  it("falls back year to em-dash when missing", () => {
+  it("falls back year to em-dash when missing or zero", () => {
     expect(mediaLibraryFolderName({ title: "X", year: null, tmdbId: 1 })).toBe("X (—) {tmdb-1}");
+    expect(mediaLibraryFolderName({ title: "X", year: 0, tmdbId: 1 })).toBe("X (—) {tmdb-1}");
     expect(legacyMediaLibraryFolderName({ title: "X", year: undefined })).toBe("X (—)");
   });
 });
