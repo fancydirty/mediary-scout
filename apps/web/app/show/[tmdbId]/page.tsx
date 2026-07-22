@@ -50,7 +50,13 @@ export default function ShowPage({
   // outside a boundary. The fallback mirrors the shell (sidebar + hub skeleton).
   return (
     <div className="app-shell">
-      <Suspense fallback={<ShowShell active="none" backLabel="返回" backHref="/?tab=search"><HubSkeleton /></ShowShell>}>
+      <Suspense
+        fallback={
+          <ShowShell active="none">
+            <HubSkeleton backLabel="返回" backHref="/?tab=search" />
+          </ShowShell>
+        }
+      >
         <ShowContent params={params} searchParams={searchParams} />
       </Suspense>
     </div>
@@ -59,15 +65,11 @@ export default function ShowPage({
 
 function ShowShell({
   active,
-  backLabel,
-  backHref,
   basePath = "/",
   activeStorageId,
   children,
 }: {
   active: "search" | "library" | "none";
-  backLabel: string;
-  backHref: string;
   basePath?: string;
   activeStorageId?: string | undefined;
   children: ReactNode;
@@ -75,10 +77,7 @@ function ShowShell({
   return (
     <>
       <AppSidebar active={active} basePath={basePath} activeStorageId={activeStorageId} />
-      <main className="main product-main">
-        <BackLink label={backLabel} fallbackHref={backHref} />
-        {children}
-      </main>
+      <main className="main product-main product-main-hub">{children}</main>
     </>
   );
 }
@@ -115,24 +114,37 @@ async function ShowContent({
     ? await getDetailView(tmdbId, workspace.connectedStorageId ?? undefined, typeHint)
     : null;
 
+  const backLabel = from === "search" ? "搜索" : from === "library" ? "媒体库" : "返回";
+  const backHref =
+    from === "library" ? `${workspace.basePath}?tab=library` : `${workspace.basePath}?tab=search`;
+
   return (
     <ShowShell
       active={from ?? "none"}
-      backLabel={from === "search" ? "搜索" : from === "library" ? "媒体库" : "返回"}
-      backHref={
-        from === "library" ? `${workspace.basePath}?tab=library` : `${workspace.basePath}?tab=search`
-      }
       basePath={workspace.basePath}
       activeStorageId={workspace.activeStorageId}
     >
       {view ? (
         view.kind === "movie" ? (
-          <MovieHub view={view} storageId={workspace.activeStorageId} basePath={workspace.basePath} />
+          <MovieHub
+            view={view}
+            storageId={workspace.activeStorageId}
+            basePath={workspace.basePath}
+            backLabel={backLabel}
+            backHref={backHref}
+          />
         ) : (
-          <TvHub view={view} storageId={workspace.activeStorageId} basePath={workspace.basePath} />
+          <TvHub
+            view={view}
+            storageId={workspace.activeStorageId}
+            basePath={workspace.basePath}
+            backLabel={backLabel}
+            backHref={backHref}
+          />
         )
       ) : (
         <div className="quiet-state">
+          <BackLink label={backLabel} fallbackHref={backHref} />
           <TriangleAlert size={24} aria-hidden />
           <strong>没有找到这部影片</strong>
           <span>回到搜索页重新查找。</span>
@@ -146,16 +158,20 @@ function TvHub({
   view,
   storageId,
   basePath,
+  backLabel,
+  backHref,
 }: {
   view: TitleHubView;
   storageId: string | undefined;
   basePath: string;
+  backLabel: string;
+  backHref: string;
 }) {
   const badge = aggregateBadge[view.aggregate];
   return (
     <AcquisitionLockProvider>
     {view.acquiring ? <AcquiringPoller /> : null}
-    <section className="title-hub">
+    <section className="title-hub title-hub-immersive">
       {view.backdropPath ? (
         <div
           className="hub-backdrop"
@@ -164,6 +180,8 @@ function TvHub({
         />
       ) : null}
 
+      <div className="hub-hero">
+        <BackLink label={backLabel} fallbackHref={backHref} />
       <header className="hub-header">
         <div className="hub-poster">
           {view.posterPath ? (
@@ -225,6 +243,7 @@ function TvHub({
           </div>
         </div>
       </header>
+      </div>
 
       <section className="hub-seasons" aria-label="季列表">
         <div className="section-heading">
@@ -266,15 +285,19 @@ const movieStateMeta = {
   untracked: { label: "未追踪", tone: "muted" },
 } as const;
 
-/** A movie's detail page: hero + full synopsis body (no season grid). */
+/** A movie's detail page: immersive hero + full synopsis body (no season grid). */
 function MovieHub({
   view,
   storageId,
   basePath,
+  backLabel,
+  backHref,
 }: {
   view: MovieHubView;
   storageId: string | undefined;
   basePath: string;
+  backLabel: string;
+  backHref: string;
 }) {
   const meta = movieStateMeta[view.state];
   const activityHref = storageId ? `/activity?w=${encodeURIComponent(storageId)}` : "/activity";
@@ -292,7 +315,7 @@ function MovieHub({
   return (
     <AcquisitionLockProvider>
       {view.acquiring ? <AcquiringPoller /> : null}
-      <section className="title-hub">
+      <section className="title-hub title-hub-immersive">
         {view.backdropPath ? (
           <div
             className="hub-backdrop"
@@ -300,55 +323,60 @@ function MovieHub({
             aria-hidden
           />
         ) : null}
-        <header className="hub-header">
-          <div className="hub-poster">
-            {view.posterPath ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={`https://image.tmdb.org/t/p/w342${view.posterPath}`} alt={`${view.title} 海报`} />
-            ) : (
-              <span className="poster-fallback">{view.title.slice(0, 4)}</span>
-            )}
-          </div>
-          <div className="hub-title-block">
-            <span className={`hub-badge tone-${meta.tone}`}>{meta.label}</span>
-            <h1>
-              {view.title} <span className="hub-year">({view.year})</span>
-            </h1>
-            <p className="hub-attributes">电影</p>
-            <div className="hub-actions">
-              {view.state === "untracked" ? (
-                <RequestTrackButton
-                  candidateId={movieCandidateId}
-                  tmdbId={view.tmdbId}
-                  actionState={unreleased ? "can_reserve" : "can_request"}
-                  label={unreleased ? "预定" : "获取"}
-                  storageId={storageId}
-                />
-              ) : null}
-              {view.state === "acquiring" ? (
-                <Link className="primary-button" href={activityHref}>
-                  查看活动
-                </Link>
-              ) : null}
-              {view.state !== "untracked" ? (
-                <UntrackButton tmdbId={view.tmdbId} storageId={storageId} mediaKind="movie" basePath={basePath} />
+        <div className="hub-hero">
+          <BackLink label={backLabel} fallbackHref={backHref} />
+          <header className="hub-header">
+            <div className="hub-poster">
+              {view.posterPath ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={`https://image.tmdb.org/t/p/w342${view.posterPath}`} alt={`${view.title} 海报`} />
+              ) : (
+                <span className="poster-fallback">{view.title.slice(0, 4)}</span>
+              )}
+            </div>
+            <div className="hub-title-block">
+              <span className={`hub-badge tone-${meta.tone}`}>{meta.label}</span>
+              <h1>
+                {view.title} <span className="hub-year">({view.year})</span>
+              </h1>
+              <p className="hub-attributes">电影</p>
+              <div className="hub-actions">
+                {view.state === "untracked" ? (
+                  <RequestTrackButton
+                    candidateId={movieCandidateId}
+                    tmdbId={view.tmdbId}
+                    actionState={unreleased ? "can_reserve" : "can_request"}
+                    label={unreleased ? "预定" : "获取"}
+                    storageId={storageId}
+                  />
+                ) : null}
+                {view.state === "acquiring" ? (
+                  <Link className="primary-button" href={activityHref}>
+                    查看活动
+                  </Link>
+                ) : null}
+                {view.state !== "untracked" ? (
+                  <UntrackButton tmdbId={view.tmdbId} storageId={storageId} mediaKind="movie" basePath={basePath} />
+                ) : null}
+              </div>
+              {view.state === "missing" ? (
+                <p className="hub-missing-note">已上映但仍缺资源，日常巡检会继续尝试。</p>
               ) : null}
             </div>
-            {view.state === "missing" ? (
-              <p className="hub-missing-note">已上映但仍缺资源，日常巡检会继续尝试。</p>
-            ) : null}
-          </div>
-        </header>
-        {view.overview ? <MovieSynopsis overview={view.overview} /> : null}
-        {chips.length > 0 ? (
-          <div className="movie-meta-chips">
-            {chips.map((chip) => (
-              <span key={`${chip.label}-${chip.value}`} className="movie-meta-chip">
-                {chip.label} <strong>{chip.value}</strong>
-              </span>
-            ))}
-          </div>
-        ) : null}
+          </header>
+        </div>
+        <div className="hub-body">
+          {view.overview ? <MovieSynopsis overview={view.overview} /> : null}
+          {chips.length > 0 ? (
+            <div className="movie-meta-chips">
+              {chips.map((chip) => (
+                <span key={`${chip.label}-${chip.value}`} className="movie-meta-chip">
+                  {chip.label} <strong>{chip.value}</strong>
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </div>
       </section>
     </AcquisitionLockProvider>
   );
@@ -361,20 +389,23 @@ function formatMovieDate(releaseDate: string): string {
 
 /** Shared placeholder while the hub streams. Header-only — no fake TV season
  *  rows (movies have none; TV content replaces this quickly). */
-function HubSkeleton() {
+function HubSkeleton({ backLabel, backHref }: { backLabel: string; backHref: string }) {
   return (
-    <section className="title-hub">
-      <header className="hub-header">
-        <div className="skeleton skeleton-hub-poster" />
-        <div className="skeleton-hub-titleblock">
-          <div className="skeleton skeleton-hub-badge" />
-          <div className="skeleton skeleton-hub-h1" />
-          <div className="skeleton skeleton-hub-line" />
-          <div className="skeleton skeleton-hub-line short" />
-          <div className="skeleton skeleton-hub-line short" />
-        </div>
-      </header>
-      <div className="movie-synopsis" aria-hidden>
+    <section className="title-hub title-hub-immersive">
+      <div className="hub-hero">
+        <BackLink label={backLabel} fallbackHref={backHref} />
+        <header className="hub-header">
+          <div className="skeleton skeleton-hub-poster" />
+          <div className="skeleton-hub-titleblock">
+            <div className="skeleton skeleton-hub-badge" />
+            <div className="skeleton skeleton-hub-h1" />
+            <div className="skeleton skeleton-hub-line" />
+            <div className="skeleton skeleton-hub-line short" />
+            <div className="skeleton skeleton-hub-line short" />
+          </div>
+        </header>
+      </div>
+      <div className="hub-body movie-synopsis" aria-hidden>
         <div className="skeleton skeleton-hub-section" />
         <div className="skeleton skeleton-hub-line" />
         <div className="skeleton skeleton-hub-line" />

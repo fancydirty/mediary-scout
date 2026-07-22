@@ -1981,39 +1981,106 @@ p {
   position: relative;
 }
 
-.hub-backdrop {
-  position: absolute;
-  top: -24px;
-  left: -32px;
-  right: -32px;
-  height: 320px;
-  background-size: cover;
-  background-position: center 20%;
-  border-radius: var(--radius-card);
-  -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.5), transparent);
-  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.5), transparent);
-  pointer-events: none;
+/* Immersive hub: backdrop bleeds under main padding and covers the hero band
+   (back pill + poster row), matching the A1 album-hero mock. */
+.product-main-hub {
+  /* Extra top room is owned by hub-hero so the backdrop can sit flush. */
+  padding-top: 0;
 }
 
-/* Mobile: the desktop full-bleed (left/right:-32px) overshoots the viewport
-   because .main padding shrinks to 16px on phones (~16px of horizontal scroll).
-   Match the mobile padding so the backdrop bleeds to the edge, not past it.
-   NOTE: this lives AFTER the base rule (and intentionally not in the earlier
-   @media block) so source order wins — both selectors are `.hub-backdrop`. */
-@media (max-width: 860px) {
-  .hub-backdrop {
-    left: -16px;
-    right: -16px;
-  }
+.title-hub-immersive {
+  /* Pull sideways to cancel .main horizontal padding → edge-to-edge art. */
+  margin-left: -32px;
+  margin-right: -32px;
+}
+
+.hub-hero {
+  position: relative;
+  padding: 20px 32px 36px;
+  min-height: 420px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  isolation: isolate;
+}
+
+.hub-hero .back-link {
+  position: relative;
+  z-index: 2;
+  align-self: flex-start;
+  margin-bottom: 20px;
+}
+
+.hub-backdrop {
+  position: absolute;
+  inset: 0;
+  height: auto;
+  background-size: cover;
+  background-position: center 30%;
+  border-radius: 0;
+  /* Stronger top presence + soft fade into page bg at the bottom of the hero. */
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.85) 0%,
+    rgba(0, 0, 0, 0.7) 45%,
+    rgba(0, 0, 0, 0.35) 75%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.85) 0%,
+    rgba(0, 0, 0, 0.7) 45%,
+    rgba(0, 0, 0, 0.35) 75%,
+    transparent 100%
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Scrim so white title type stays readable over bright backdrops. */
+.hub-hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    rgba(18, 18, 18, 0.15) 0%,
+    rgba(18, 18, 18, 0.45) 45%,
+    rgba(18, 18, 18, 0.88) 78%,
+    var(--bg-base) 100%
+  );
+}
+
+.hub-body {
+  position: relative;
+  z-index: 1;
+  padding: 8px 32px 0;
 }
 
 .hub-header {
   position: relative;
+  z-index: 2;
   display: flex;
   gap: 28px;
   align-items: flex-end;
-  padding-top: 48px;
-  margin-bottom: 32px;
+  padding-top: 0;
+  margin-bottom: 0;
+}
+
+@media (max-width: 860px) {
+  .title-hub-immersive {
+    margin-left: -16px;
+    margin-right: -16px;
+  }
+  .hub-hero {
+    padding: 16px 16px 28px;
+    min-height: 360px;
+  }
+  .hub-body {
+    padding: 8px 16px 0;
+  }
 }
 
 .hub-poster {
@@ -2079,9 +2146,17 @@ p {
 /* Season rows */
 .hub-seasons {
   position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   gap: 16px;
+  margin-top: 28px;
+  padding: 0 32px;
+}
+@media (max-width: 860px) {
+  .hub-seasons {
+    padding: 0 16px;
+  }
 }
 
 .hub-season-list {
