@@ -21,8 +21,8 @@ import { SettingsTabs } from "../../components/settings-tabs";
 import { PasswordChangeForm } from "../../components/password-change-form";
 import { AccountAdminPanel } from "../../components/account-admin-panel";
 import { GitHubNameplate } from "../../components/github-nameplate";
-import { DeploymentUpdateCard } from "../../components/deployment-update-card";
-import { loadDeploymentUpdateState } from "../../lib/deployment-update-server";
+import { SettingsActionInbox } from "../../components/settings-action-inbox";
+import { loadSettingsAttentionSummary } from "../../lib/settings-attention-server";
 import {
   getAccountConnectedStorages,
   getAccountScopedSettings,
@@ -86,7 +86,7 @@ export default function SettingsPage({
         ) : (
           <>
             <Suspense fallback={null}>
-              <DeploymentUpdateSection />
+              <SettingsAttentionSection />
             </Suspense>
             <Suspense fallback={<div className="skeleton skeleton-heading" />}>
             <SettingsTabs
@@ -157,12 +157,11 @@ async function SettingsSidebar({ searchParams }: { searchParams: Promise<{ w?: s
   return <AppSidebar active="settings" basePath={workspace.basePath} activeStorageId={workspace.activeStorageId} />;
 }
 
-async function DeploymentUpdateSection() {
-  // Request-time only: reads BUILD_COMMIT and probes upstream main. Probe failure
-  // renders null inside the card — an offline instance never gets a false alarm.
+async function SettingsAttentionSection() {
+  // Request-time only: account drives + LLM config + optional update probe.
   await connection();
-  const state = await loadDeploymentUpdateState();
-  return <DeploymentUpdateCard state={state} />;
+  const summary = await loadSettingsAttentionSummary();
+  return <SettingsActionInbox items={summary.items} />;
 }
 
 async function PasswordChangeSection() {
