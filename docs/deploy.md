@@ -304,7 +304,8 @@ gunzip -c backups/mediatrack-YYYYMMDD-HHMMSS.sql.gz \
 在部署机用户 crontab 里加一行即可（路径改成你的仓库目录）：
 
 ```cron
-# 每天北京时间 03:30 备份 pgdata；保留最近 14 天
+# 每天 03:30 备份 pgdata；保留最近 14 天
+# 若要固定北京时间，在 crontab 顶部加: TZ=Asia/Shanghai
 30 3 * * * cd /path/to/mediary-scout && ./scripts/pg-backup.sh ./backups >>./backups/cron.log 2>&1
 0 4 * * * find /path/to/mediary-scout/backups -name 'mediatrack-*.sql.gz' -mtime +14 -delete
 ```

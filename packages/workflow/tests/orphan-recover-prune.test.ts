@@ -3,6 +3,7 @@ import {
   isPrunableFinishedRun,
   ORPHAN_REQUEUE_MAX,
   recoverOrphanRunningRun,
+  retriedWorkflowRun,
 } from "../src/repository.js";
 import type { WorkflowRun } from "../src/domain.js";
 
@@ -35,6 +36,23 @@ describe("recoverOrphanRunningRun", () => {
     expect(run.status).toBe("failed");
     expect(run.finishedAt).toBe("2026-06-11T02:00:00.000Z");
     expect(run.auditEvents.some((e) => e.type === "orphan_requeue_capped")).toBe(true);
+  });
+});
+
+describe("retriedWorkflowRun", () => {
+  it("resets orphanRequeueCount so manual retry gets a fresh recovery budget", () => {
+    const failed = baseRun({
+      status: "failed",
+      finishedAt: "2026-06-11T02:00:00.000Z",
+      orphanRequeueCount: ORPHAN_REQUEUE_MAX,
+      autoRequeueCount: 2,
+      nextAttemptAt: "2026-06-11T03:00:00.000Z",
+    });
+    const retried = retriedWorkflowRun(failed, "2026-06-11T04:00:00.000Z");
+    expect(retried.status).toBe("queued");
+    expect(retried.orphanRequeueCount).toBe(0);
+    expect(retried.autoRequeueCount).toBe(0);
+    expect(retried.nextAttemptAt).toBeUndefined();
   });
 });
 
