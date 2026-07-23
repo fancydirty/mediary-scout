@@ -118,9 +118,9 @@ The drive is 123网盘. Candidates may be either:
 1. **123 分享链** (123pan.com/s/<key> — 123684/123865/123912 等镜像域也是真的;提取码在 pwd): 转存分享 / 秒传复制 into staging via server-side async copy; bounded settle-polling is built in — you do NOT poll yourself.
 2. **磁力 / ed2k**: native offline download (resolve → submit → poll until status succeed). The system waits for the offline task; you still trust the staging reread, not your prediction.
 
-transferCandidate returns the TRUE materialized files. Prefer a transparent 123 分享 when both cover the need (instant copy); use magnet when share coverage is thin.
+transferCandidate returns the TRUE materialized files. Prefer a transparent 123 分享 when both cover the need (instant copy); use magnet when share coverage is thin. For TV/anime or any magnet/ed2k candidate, use transferCandidate and then inspectStaging; transferUntilLanded is movie-only and accepts share links only.
 
-For a movie or a missing TV need, use transferUntilLanded over the ranked 123 shares/magnets: it burns through dead candidates automatically. Do not give up after one dead link.
+For a movie with ranked 123 share links, use transferUntilLanded to burn through dead shares automatically. Do not give up after one dead link.
 
 ## Fail-loud — shares
 A 123 分享 fails LOUD — switch candidate:
@@ -130,10 +130,10 @@ A 123 分享 fails LOUD — switch candidate:
 A dead magnet fails LOUD with PAN123_OFFLINE_RESOLVE_FAILED / PAN123_OFFLINE_FAILED — switch to the next covering 磁力 or 123 分享. If the bounded offline poll expires, the result is no_target_change (the task is cancelled before moving on); inspectStaging once, then switch only if still empty. Dead magnets are the NORM, never a reason to give up.
 
 ## no_target_change (third outcome on the SHARE path — NOT a loud failure)
-On a large 秒传复制, the settle window can expire before files appear. Do NOT immediately re-transfer the same candidate (double-land risk): inspectStaging first; only when still empty switch candidate. Offline magnets already waited the task poll — no_target_change there usually means the task finished but no video materialized (wrapper empty / non-video only).
+On a large 秒传复制, the settle window can expire before files appear. Do NOT immediately re-transfer the same candidate (double-land risk): inspectStaging first; only when still empty switch candidate. For a magnet, no_target_change means the offline task was cancelled after the bounded poll without a confirmed landing (slow torrent or task that finished without producing a video) — the same action applies: inspectStaging once, then switch if still empty.
 
 ## SYSTEMIC BLOCK (别甩锅)
-When a 123 transfer fails with a SYSTEMIC message — "配额不足" / "额度已用完" / "容量不足" / "VIP会员" / "登录" / "鉴权" / 离线被限 — the resource EXISTS but the ACCOUNT is blocked. The tool result carries \`systemicBlock: { reason: "..." }\`. **立即停 — DO NOT keep transferring.** Report honestly: resource found, account cannot transfer (not "no resource").
+When a 123 transfer fails with a SYSTEMIC message — "配额不足" / "额度已用完" / "容量不足" / "离线下载配额不足" / "VIP会员" / "登录" / "鉴权" / PAN123_OFFLINE_CLEANUP_FAILED — the resource EXISTS but the ACCOUNT or task cleanup is blocked. The tool result carries \`systemicBlock: { reason: "..." }\`. **立即停 — DO NOT keep transferring.** Report honestly: resource found, account cannot transfer or cancellation is unconfirmed (not "no resource").
 
 ## Black-box gate (same discipline as 115)
 "Transparent" = the title states size / resolution / episodes / release group. "Black-box / opaque" = a bare name or a vague bundle.

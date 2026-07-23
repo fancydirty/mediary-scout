@@ -68,6 +68,8 @@ describe("brand-aware storage skill", () => {
     expect(pan123).toContain("PAN123_OFFLINE_RESOLVE_FAILED");
     expect(pan123).toContain("PAN123_OFFLINE_FAILED");
     expect(pan123).toContain("no_target_change");
+    expect(pan123).toContain("transferCandidate");
+    expect(pan123).not.toContain("For a movie or a missing TV need, use transferUntilLanded");
     // a dead / cancelled / wrong-code share fails LOUD (switch candidate)
     expect(pan123).toMatch(/分享不存在|已取消|已失效|已过期|提取码错误|链接失效/);
     // the ONE dead-share message the code itself guarantees (saveShare's empty/dead

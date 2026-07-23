@@ -457,7 +457,9 @@ export class Pan123Client {
     }
     const first = (taskList[0] ?? {}) as Record<string, unknown>;
     if (numOf(first["result"]) !== 0) {
-      throw new Error("PAN123_OFFLINE_SUBMIT_FAILED: provider rejected submit");
+      const msg = strOf(first["err_msg"]) || "provider rejected submit";
+      const code = strOf(first["err_code"]);
+      throw new Error(`PAN123_OFFLINE_SUBMIT_FAILED: ${msg}${code ? ` (err_code=${code})` : ""}`);
     }
     const taskId = strId(first["task_id"]);
     if (!taskId) {

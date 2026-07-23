@@ -198,7 +198,7 @@ describe("Pan123StorageExecutor.transfer", () => {
     expect(client.saveShare).not.toHaveBeenCalled();
   });
 
-  it("reports a failed offline task loudly and does not delete it", async () => {
+  it("reports a failed offline task loudly and deletes its terminal task row", async () => {
     const getOfflineTask = vi.fn<Pan123Client["getOfflineTask"]>(async (taskId) => ({
       taskId,
       name: "dead magnet",
@@ -219,8 +219,11 @@ describe("Pan123StorageExecutor.transfer", () => {
     });
 
     expect(attempt.status).toBe("failed");
-    expect(attempt.providerMessage).toMatch(/PAN123_OFFLINE_FAILED.*dead magnet/);
-    expect(client.deleteOfflineTasks).not.toHaveBeenCalled();
+    expect(attempt.providerMessage).toMatch(/PAN123_OFFLINE_FAILED.*progress=17/);
+    // The provider-controlled task name must NOT leak into the message (VIP/会员
+    // in torrent names would trip the systemic-block classifier).
+    expect(attempt.providerMessage).not.toContain("dead magnet");
+    expect(client.deleteOfflineTasks).toHaveBeenCalledWith(["9007199254740993003"]);
   });
 
   it("reports a running task as no_target_change and deletes it before moving on", async () => {
@@ -247,6 +250,48 @@ describe("Pan123StorageExecutor.transfer", () => {
     expect(attempt.providerMessage).toMatch(/离线任务完成但目标目录未出现新视频/);
     expect(getOfflineTask).toHaveBeenCalledTimes(2);
     expect(client.deleteOfflineTasks).toHaveBeenCalledWith(["9007199254740993003"]);
+  });
+
+  it("deletes the offline task even when polling raises", async () => {
+    const getOfflineTask = vi.fn<Pan123Client["getOfflineTask"]>(async () => {
+      throw new Error("temporary task-list failure");
+    });
+    const client = fakeClient({ getOfflineTask });
+    const executor = makeExecutor(client);
+
+    const attempt = await executor.transfer({
+      workflowRunId: "run-1",
+      directoryId: SCOPE,
+      candidate: candidate({
+        type: "magnet" as ResourceType,
+        providerPayload: { url: "magnet:?xt=urn:btih:poll-error" },
+      }),
+    });
+
+    expect(attempt.status).toBe("failed");
+    expect(attempt.providerMessage).toContain("temporary task-list failure");
+    expect(client.deleteOfflineTasks).toHaveBeenCalledWith(["9007199254740993003"]);
+  });
+
+  it("surfaces cleanup failure after retrying task deletion", async () => {
+    const deleteOfflineTasks = vi.fn<Pan123Client["deleteOfflineTasks"]>(async () => {
+      throw new Error("delete unavailable");
+    });
+    const client = fakeClient({ deleteOfflineTasks });
+    const executor = makeExecutor(client);
+
+    const attempt = await executor.transfer({
+      workflowRunId: "run-1",
+      directoryId: SCOPE,
+      candidate: candidate({
+        type: "magnet" as ResourceType,
+        providerPayload: { url: "magnet:?xt=urn:btih:cleanup-error" },
+      }),
+    });
+
+    expect(attempt.status).toBe("failed");
+    expect(attempt.providerMessage).toMatch(/PAN123_OFFLINE_CLEANUP_FAILED/);
+    expect(deleteOfflineTasks).toHaveBeenCalledTimes(3);
   });
 
   it("reports failed (not throw) with the provider message for a dead/empty share", async () => {

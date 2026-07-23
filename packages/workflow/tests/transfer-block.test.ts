@@ -89,6 +89,7 @@ describe("isSystemicTransferBlockMessage (per-message predicate, reused by the s
     // promises systemicBlock for it, so the detector must actually match it.
     expect(isSystemicTransferBlockMessage("网盘容量不足，无法保存")).toBe(true);
     expect(isSystemicTransferBlockMessage("容量已满")).toBe(true);
+    expect(isSystemicTransferBlockMessage("PAN123_OFFLINE_CLEANUP_FAILED: task cancellation unconfirmed")).toBe(true);
     // …but a PER-FILE size-limit error mentioning 容量 is NOT account-level: other
     // (smaller) candidates can still succeed, so it must keep iterating.
     expect(isSystemicTransferBlockMessage("单文件容量超过上限，无法保存")).toBe(false);
@@ -101,6 +102,11 @@ describe("isSystemicTransferBlockMessage (per-message predicate, reused by the s
     expect(isSystemicTransferBlockMessage("分享不存在")).toBe(false);
     // 123 saveShare's guaranteed dead-share message — dead link, NOT systemic
     expect(isSystemicTransferBlockMessage("分享为空 / 已失效(share empty / dead)")).toBe(false);
+    expect(isSystemicTransferBlockMessage("PAN123_OFFLINE_RESOLVE_FAILED: magnet not found")).toBe(false);
+    // The executor's failure message is a fixed template (no provider-controlled
+    // task name) — a dead magnet stays candidate-local even when the torrent
+    // itself is named "...VIP...".
+    expect(isSystemicTransferBlockMessage("PAN123_OFFLINE_FAILED: offline task failed at progress=17")).toBe(false);
   });
 
   it("is false for empty / whitespace / undefined", () => {

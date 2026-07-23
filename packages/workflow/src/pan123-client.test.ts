@@ -343,6 +343,27 @@ describe("Pan123Client native offline (resolve → submit → list/delete)", () 
     });
   });
 
+  it("preserves provider submit error details for account-level failures", async () => {
+    const fetchImpl = fetchStub(() => ({
+      status: 200,
+      body: {
+        code: 0,
+        data: {
+          task_list: [{ result: 1, err_code: 41006, err_msg: "云下载配额不足，请升级VIP" }],
+        },
+      },
+    }));
+    const client = new Pan123Client({ token: "TK", fetchImpl });
+
+    await expect(
+      client.submitOffline({
+        resourceId: "123",
+        fileIds: ["456"],
+        uploadDirId: "789",
+      }),
+    ).rejects.toThrow(/PAN123_OFFLINE_SUBMIT_FAILED.*云下载配额不足.*41006/);
+  });
+
   it("finds a task on a later page and deletes task ids bigint-safely", async () => {
     const pages: number[] = [];
     let deleteBody: Record<string, unknown> = {};

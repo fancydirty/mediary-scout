@@ -28,6 +28,8 @@ const DEFAULT_MIN_VIDEO_SIZE_BYTES = 10 * 1024 * 1024;
  *  8 × 2500ms) before concluding nothing landed. */
 const DEFAULT_TRANSFER_SETTLE_POLL_ATTEMPTS = 8;
 const DEFAULT_TRANSFER_SETTLE_POLL_INTERVAL_MS = 2500;
+const OFFLINE_TASK_DELETE_MAX_ATTEMPTS = 3;
+const OFFLINE_TASK_DELETE_RETRY_DELAY_MS = 250;
 /** 个人云根目录 id — a plain non-empty id (unlike 光鸭's "" root). */
 const PAN123_ROOT_FOLDER_ID = "0";
 
@@ -240,7 +242,7 @@ export class Pan123StorageExecutor implements StorageExecutor {
 
   /** magnet/ed2k offline: resolve → submit → poll until status 2 or fail/timeout.
    * Returns false for a bounded timeout: this is a soft no_target_change, not a
-   * dead magnet. The task is removed before the agent can try another candidate,
+   * dead magnet. Every submitted task is cancelled before the result is returned,
    * preventing a late landing from creating a duplicate. */
   private async transferOfflineMagnet(input: { url: string; targetDirId: string }): Promise<boolean> {
     const resolved = await this.client.resolveOffline(input.url);
@@ -249,32 +251,61 @@ export class Pan123StorageExecutor implements StorageExecutor {
       fileIds: resolved.fileIds,
       uploadDirId: input.targetDirId,
     });
-    const completed = await this.pollOfflineTask(taskId);
-    // Delete both terminal and timed-out tasks. A timed-out task must not keep
-    // downloading after the agent moves on, otherwise it can land late and
-    // double the next candidate's files.
+    // Delete both terminal and timed-out tasks even when polling throws. A timed-
+    // out task must not keep downloading after the agent moves on, otherwise it
+    // can land late and double the next candidate's files.
+    // M-1: when BOTH polling and cleanup fail, the cleanup error must win (an
+    // uncancellable task of unknown state ⇒ stop) — but keep the poll error as
+    // `cause` so triage doesn't lose it.
+    let pollError: unknown;
     try {
-      await this.client.deleteOfflineTasks([taskId]);
-    } catch {
-      // Best-effort quota cleanup must never turn a landed transfer into failure.
+      return await this.pollOfflineTask(taskId);
+    } catch (error) {
+      pollError = error;
+      throw error;
+    } finally {
+      await this.deleteOfflineTaskWithRetry(taskId, pollError);
     }
-    return completed;
+  }
+
+  private async deleteOfflineTaskWithRetry(taskId: string, cause?: unknown): Promise<void> {
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= OFFLINE_TASK_DELETE_MAX_ATTEMPTS; attempt++) {
+      try {
+        await this.client.deleteOfflineTasks([taskId]);
+        return;
+      } catch (error) {
+        lastError = error;
+        if (attempt < OFFLINE_TASK_DELETE_MAX_ATTEMPTS) {
+          await this.sleep(OFFLINE_TASK_DELETE_RETRY_DELAY_MS);
+        }
+      }
+    }
+    const detail = lastError instanceof Error ? lastError.message : String(lastError);
+    throw new Error(
+      `PAN123_OFFLINE_CLEANUP_FAILED: task ${taskId} cancellation unconfirmed after ` +
+        `${OFFLINE_TASK_DELETE_MAX_ATTEMPTS} attempts: ${detail}`,
+      { cause: cause ?? lastError },
+    );
   }
 
   private async pollOfflineTask(taskId: string): Promise<boolean> {
     for (let i = 0; i < this.offlineTaskPollMaxPolls; i++) {
       const task = await this.client.getOfflineTask(taskId);
       if (!task) {
-        // Task row missing mid-poll — treat as still running once, then soft-miss.
+        // Task row missing mid-poll: treat as still running, but if it is STILL
+        // missing on the last poll, fail loud (PAN123_OFFLINE_TIMEOUT).
         if (i === this.offlineTaskPollMaxPolls - 1) {
           throw new Error("PAN123_OFFLINE_TIMEOUT: offline task disappeared before completion");
         }
       } else if (task.status === 2) {
         return true; // succeed
       } else if (task.status === 1) {
-        throw new Error(
-          `PAN123_OFFLINE_FAILED: task failed name=${task.name || "?"} progress=${task.progress}`,
-        );
+        // Never interpolate task.name: it is uploader-controlled and a torrent
+        // named "...VIP..." would trip the systemic-block classifier (别甩锅
+        // in reverse — one dead resource halting the whole run). Like 115's
+        // executor, failure messages are fixed templates only.
+        throw new Error(`PAN123_OFFLINE_FAILED: offline task failed at progress=${task.progress}`);
       }
       if (i < this.offlineTaskPollMaxPolls - 1) {
         await this.sleep(this.offlineTaskPollIntervalMs);

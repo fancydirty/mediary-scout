@@ -16,7 +16,11 @@ import type { TransferAttempt } from "../domain.js";
 const SYSTEMIC_PATTERNS: RegExp[] = [
   /配额|额度|quota/i,
   /VIP|会员|升级/i,
-  /云下载|离线/,
+  // Native offline resource failures are candidate-local. Only an explicit
+  // cleanup failure is systemic because continuing could allow a late task to
+  // land alongside another candidate.
+  /PAN123_OFFLINE_CLEANUP_FAILED/,
+  /(?:云下载|离线下载).*(?:配额|额度|VIP|会员)|(?:配额|额度|VIP|会员).*(?:云下载|离线下载)/i,
   /登录|重新登陆|未登录|登陆超时|登录超时/,
   /PAN115_AUTH|AUTH_FAILED|未授权|鉴权/i,
   // Storage full ("网盘容量不足"/"容量已满"): the drive itself is out of space —
