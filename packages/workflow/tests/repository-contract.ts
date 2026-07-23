@@ -371,11 +371,67 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
         await repo.claimNextQueuedWorkflowRun({ kind: "type2_init", now: "2026-06-11T01:00:00.000Z" });
         expect((await repo.getWorkflowRunSnapshot("q1"))?.workflowRun.status).toBe("running");
 
-        const count = await repo.requeueRunningWorkflowRuns();
+        const count = await repo.requeueRunningWorkflowRuns("2026-06-11T02:00:00.000Z");
         expect(count).toBe(1);
         const requeued = await repo.getWorkflowRunSnapshot("q1");
         expect(requeued?.workflowRun.status).toBe("queued");
         expect(requeued?.workflowRun.finishedAt).toBeNull();
+        expect(requeued?.workflowRun.orphanRequeueCount).toBe(1);
+      });
+
+      it("requeueRunningWorkflowRuns fails a poison run once orphan cap is hit", async () => {
+        const repo = await fresh();
+        const snap = queued("poison", { startedAt: "2026-06-11T00:00:00.000Z" });
+        // Seed already at the cap as a running orphan.
+        await repo.saveWorkflowRunSnapshot({
+          ...snap,
+          workflowRun: {
+            ...snap.workflowRun,
+            id: "poison",
+            status: "running",
+            finishedAt: null,
+            orphanRequeueCount: 5,
+          },
+        });
+        const count = await repo.requeueRunningWorkflowRuns("2026-06-11T03:00:00.000Z");
+        expect(count).toBe(0);
+        const failed = await repo.getWorkflowRunSnapshot("poison");
+        expect(failed?.workflowRun.status).toBe("failed");
+        expect(failed?.workflowRun.finishedAt).toBe("2026-06-11T03:00:00.000Z");
+        expect(
+          failed?.workflowRun.auditEvents.some((event) => event.type === "orphan_requeue_capped"),
+        ).toBe(true);
+      });
+
+      it("pruneFinishedWorkflowRuns drops old finished runs and keeps active ones", async () => {
+        const repo = await fresh();
+        const old = queued("old_done", { startedAt: "2026-05-01T00:00:00.000Z" });
+        await repo.saveWorkflowRunSnapshot({
+          ...old,
+          workflowRun: {
+            ...old.workflowRun,
+            id: "old_done",
+            status: "succeeded",
+            finishedAt: "2026-05-01T01:00:00.000Z",
+          },
+        });
+        const recent = queued("recent_done", { startedAt: "2026-06-10T00:00:00.000Z" });
+        await repo.saveWorkflowRunSnapshot({
+          ...recent,
+          workflowRun: {
+            ...recent.workflowRun,
+            id: "recent_done",
+            status: "succeeded",
+            finishedAt: "2026-06-10T01:00:00.000Z",
+          },
+        });
+        await repo.saveWorkflowRunSnapshot(queued("still_queued", { startedAt: "2026-06-11T00:00:00.000Z" }));
+
+        const pruned = await repo.pruneFinishedWorkflowRuns("2026-06-01T00:00:00.000Z");
+        expect(pruned).toBe(1);
+        expect(await repo.getWorkflowRunSnapshot("old_done")).toBeNull();
+        expect(await repo.getWorkflowRunSnapshot("recent_done")).not.toBeNull();
+        expect(await repo.getWorkflowRunSnapshot("still_queued")).not.toBeNull();
       });
 
       it("findActiveWorkflowRun matches (season, kind) and rejects a different scope", async () => {

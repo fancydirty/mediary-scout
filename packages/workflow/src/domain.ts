@@ -104,6 +104,10 @@ export interface WorkflowRun {
   /** Earliest ISO time the worker may re-claim this run. Set when auto-requeued
    *  (backoff); absent = immediately claimable. */
   nextAttemptAt?: string;
+  /** How many times crash recovery has requeued this run from `running`→`queued`
+   *  on worker start. Absent/0 = never orphan-recovered. Capped at
+   *  ORPHAN_REQUEUE_MAX so a poison run cannot crash-loop the worker forever. */
+  orphanRequeueCount?: number;
 }
 
 export interface AuditEvent {

@@ -299,3 +299,15 @@ gunzip -c backups/mediatrack-YYYYMMDD-HHMMSS.sql.gz \
 
 也可直接备份 Docker 卷目录（停库后拷贝），但逻辑备份（pg_dump）更便携。
 
+### 定时备份（host crontab 示例）
+
+在部署机用户 crontab 里加一行即可（路径改成你的仓库目录）：
+
+```cron
+# 每天北京时间 03:30 备份 pgdata；保留最近 14 天
+30 3 * * * cd /path/to/mediary-scout && ./scripts/pg-backup.sh ./backups >>./backups/cron.log 2>&1
+0 4 * * * find /path/to/mediary-scout/backups -name 'mediatrack-*.sql.gz' -mtime +14 -delete
+```
+
+把 `backups/` 目录同步到机外（对象存储 / NAS / 另一台机器）再算真正有备份。
+

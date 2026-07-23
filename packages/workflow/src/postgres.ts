@@ -20,6 +20,7 @@ import {
   cloneWorkflowValue,
   compareTrackedSeasonStates,
   expireWorkflowRun,
+  recoverOrphanRunningRun,
   retriedWorkflowRun,
   isActiveWorkflowStatus,
   isStaleActiveWorkflowRun,
@@ -443,15 +444,39 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     return claimedRunId ? this.loadWorkflowRunSnapshot(this.pool, claimedRunId) : null;
   }
 
-  async requeueRunningWorkflowRuns(): Promise<number> {
+  async requeueRunningWorkflowRuns(now: string = new Date().toISOString()): Promise<number> {
     return this.withTransaction(async (client) => {
       const running = (await this.allWorkflowRuns(client)).filter(
         (workflowRun) => workflowRun.status === "running",
       );
+      let requeued = 0;
       for (const workflowRun of running) {
-        await this.upsertWorkflowRun(client, { ...workflowRun, status: "queued", finishedAt: null });
+        const recovered = recoverOrphanRunningRun(workflowRun, now);
+        await this.upsertWorkflowRun(client, recovered.run);
+        if (recovered.action === "requeue") requeued += 1;
       }
-      return running.length;
+      return requeued;
+    });
+  }
+
+  async pruneFinishedWorkflowRuns(olderThan: string): Promise<number> {
+    return this.withTransaction(async (client) => {
+      await this.ensureSchema();
+      // Identify prunable finished runs first (status + finishedAt < cutoff).
+      const candidates = await client.query<{ id: string }>(
+        "SELECT id FROM workflow_runs WHERE payload->>'status' = ANY($1::text[]) " +
+          "AND payload->>'finishedAt' IS NOT NULL AND payload->>'finishedAt' < $2",
+        [["succeeded", "failed", "partial", "no_coverage"], olderThan],
+      );
+      const ids = candidates.rows.map((row) => row.id);
+      if (ids.length === 0) return 0;
+      await client.query("DELETE FROM notifications WHERE workflow_run_id = ANY($1::text[])", [ids]);
+      await client.query("DELETE FROM transfer_attempts WHERE workflow_run_id = ANY($1::text[])", [ids]);
+      await client.query("DELETE FROM agent_decisions WHERE workflow_run_id = ANY($1::text[])", [ids]);
+      await client.query("DELETE FROM agent_steps WHERE workflow_run_id = ANY($1::text[])", [ids]);
+      await client.query("DELETE FROM resource_snapshots WHERE workflow_run_id = ANY($1::text[])", [ids]);
+      await client.query("DELETE FROM workflow_runs WHERE id = ANY($1::text[])", [ids]);
+      return ids.length;
     });
   }
 

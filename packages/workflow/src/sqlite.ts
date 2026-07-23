@@ -31,7 +31,9 @@ import {
   DuplicateUsernameError,
   expireWorkflowRun,
   isActiveWorkflowStatus,
+  isPrunableFinishedRun,
   isStaleActiveWorkflowRun,
+  recoverOrphanRunningRun,
   retriedWorkflowRun,
   seasonScopeKey,
   UNSCOPED_STORAGE,
@@ -575,16 +577,36 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     return claimedRunId ? this.loadSnapshot(claimedRunId) : null;
   }
 
-  async requeueRunningWorkflowRuns(): Promise<number> {
-    // Crash recovery: every `running` run → `queued` (finishedAt cleared).
+  async requeueRunningWorkflowRuns(now: string = new Date().toISOString()): Promise<number> {
+    // Crash recovery: every `running` run → requeue (capped) or terminal fail.
     return this.db.transaction((): number => {
       const running = this.allWorkflowRuns().filter(
         (workflowRun) => workflowRun.status === "running",
       );
+      let requeued = 0;
       for (const workflowRun of running) {
-        this.upsertWorkflowRun({ ...workflowRun, status: "queued", finishedAt: null });
+        const recovered = recoverOrphanRunningRun(workflowRun, now);
+        this.upsertWorkflowRun(recovered.run);
+        if (recovered.action === "requeue") requeued += 1;
       }
-      return running.length;
+      return requeued;
+    })();
+  }
+
+  async pruneFinishedWorkflowRuns(olderThan: string): Promise<number> {
+    return this.db.transaction((): number => {
+      const prunable = this.allWorkflowRuns().filter((run) =>
+        isPrunableFinishedRun(run, olderThan),
+      );
+      for (const run of prunable) {
+        this.db.prepare("DELETE FROM notifications WHERE workflow_run_id = ?").run(run.id);
+        this.db.prepare("DELETE FROM transfer_attempts WHERE workflow_run_id = ?").run(run.id);
+        this.db.prepare("DELETE FROM agent_decisions WHERE workflow_run_id = ?").run(run.id);
+        this.db.prepare("DELETE FROM agent_steps WHERE workflow_run_id = ?").run(run.id);
+        this.db.prepare("DELETE FROM resource_snapshots WHERE workflow_run_id = ?").run(run.id);
+        this.db.prepare("DELETE FROM workflow_runs WHERE id = ?").run(run.id);
+      }
+      return prunable.length;
     })();
   }
 

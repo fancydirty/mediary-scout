@@ -12,6 +12,7 @@ import {
   episodeCode,
   FakeResourceProvider,
   FakeStorageExecutor,
+  FINISHED_RUN_RETENTION_MS,
   createAgentModel,
   createAgentModelFromEnv,
   createStubAcquisitionModel,
@@ -1335,6 +1336,19 @@ export async function runScheduledType3(options?: {
     );
   }
   const startedAt = new Date().toISOString();
+  // Opportunistic history GC: drop finished runs (and children) older than 30d so
+  // the claim/activity paths stay lean. Best-effort — never blocks the sweep.
+  try {
+    const cutoff = new Date(Date.parse(startedAt) - FINISHED_RUN_RETENTION_MS).toISOString();
+    const pruned = await repository.pruneFinishedWorkflowRuns(cutoff);
+    if (pruned > 0) {
+      console.log(`[patrol] pruned ${pruned} finished workflow run(s) older than 30d`);
+    }
+  } catch (error) {
+    console.error(
+      `[patrol] pruneFinishedWorkflowRuns failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
   let result: Awaited<ReturnType<typeof runScheduledType3Monitoring>>;
   try {
     await hydratePan115CookieFromDb();
