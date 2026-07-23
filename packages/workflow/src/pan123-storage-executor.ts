@@ -1,28 +1,19 @@
 /**
  * 123网盘 (123pan / yun.123pan.com) StorageExecutor — the brand-5 analogue of
  * TianyiStorageExecutor / QuarkStorageExecutor / GuangYaStorageExecutor, over
- * Pan123Client. Implements the 12 StorageExecutor port methods. Mirrors the
- * 天翼 executor's METHOD STRUCTURE; only the brand-specific bits differ.
+ * Pan123Client. Implements the 12 StorageExecutor port methods.
  *
- * Differences from 天翼:
- *  - 转存 is a copy: client.saveShare runs listShareDir → file/copy/async
- *    internally. Like 天翼/夸克 — and OPPOSITE of 光鸭 — there is NO offline/magnet
- *    API, so a magnet/ed2k candidate fails LOUD (PAN123_NO_MAGNET) instead of
- *    being attempted. saveShare's params are shareKey/sharePwd/targetParentId
- *    (NOT 天翼's shareCode/accessCode/targetFolderId) and it returns {ok,message}
- *    (no `failed` count).
- *  - Deletion goes through client.trash (NOT batchDelete); move goes through
- *    client.moveFiles({fileIds, targetParentId}) which takes a bare id list.
- *  - Like 天翼 there is NO confirmed parent-walk endpoint, so the write-scope
- *    guard uses the DERIVED-SCOPE model (光鸭/天翼): the workflow provisions the
- *    directory chain TOP-DOWN via createDirectory/listSubdirectories, each nested
- *    dir authorized by living under an already-in-scope parent (derivedScopeIds).
- *    assertWithinWriteScope is SYNCHRONOUS (no network) — callers do NOT await.
- *  - 123's personal-cloud root folder id is `"0"` — a normal, NON-empty id — so
- *    the guard needs no empty-string-root special case. `"0"` is protected by
- *    default: never recursively listed or removed.
- *  - A 123 item is a directory when `isFolder === true`; ids key on `id`, names
- *    on `name`, sizes on `size`. Directory listing uses `listFiles(dirId)`.
+ * Transfer paths (dual, like 115):
+ *  - 123 分享链 → client.saveShare (listShareDir → file/copy/async) + settle-poll
+ *  - magnet/ed2k/http 离线 → resolveOffline → submitOffline → poll getOfflineTask
+ *    (OpenList drivers/123 OfflineDownload; status 0=run 1=fail 2=ok)
+ *
+ * Other brand notes:
+ *  - Deletion via client.trash; move via client.moveFiles({fileIds, targetParentId}).
+ *  - Write-scope is DERIVED-SCOPE (no parent-walk API): createDirectory /
+ *    listSubdirectories register nested ids under already-in-scope parents.
+ *    assertWithinWriteScope is SYNCHRONOUS.
+ *  - Personal-cloud root id is `"0"` (always protected).
  */
 import type { PackageTreeFile, ResourceCandidate, TransferAttempt, TransferStatus, VerifiedFile } from "./domain.js";
 import { episodeCodeFromFileName } from "./episode-code.js";
@@ -69,6 +60,9 @@ export interface Pan123StorageExecutorOptions {
   transferSettlePollAttempts?: number;
   /** Interval between settle-poll reads in ms (default 2500, aligned with the probe). */
   transferSettlePollIntervalMs?: number;
+  /** Offline-task poll caps (magnet path). Default 60 × 3s ≈ 3min, mirrors 光鸭. */
+  offlineTaskPollMaxPolls?: number;
+  offlineTaskPollIntervalMs?: number;
   /** Sleep primitive — injected so tests can advance the poll without real waiting. */
   sleep?: (ms: number) => Promise<void>;
 }
@@ -92,6 +86,8 @@ export class Pan123StorageExecutor implements StorageExecutor {
   private readonly videoExtensions: Set<string>;
   private readonly transferSettlePollAttempts: number;
   private readonly transferSettlePollIntervalMs: number;
+  private readonly offlineTaskPollMaxPolls: number;
+  private readonly offlineTaskPollIntervalMs: number;
   private readonly sleep: (ms: number) => Promise<void>;
   private nextTransferNumber = 1;
 
@@ -110,6 +106,8 @@ export class Pan123StorageExecutor implements StorageExecutor {
       options.transferSettlePollAttempts ?? DEFAULT_TRANSFER_SETTLE_POLL_ATTEMPTS;
     this.transferSettlePollIntervalMs =
       options.transferSettlePollIntervalMs ?? DEFAULT_TRANSFER_SETTLE_POLL_INTERVAL_MS;
+    this.offlineTaskPollMaxPolls = options.offlineTaskPollMaxPolls ?? 60;
+    this.offlineTaskPollIntervalMs = options.offlineTaskPollIntervalMs ?? 3000;
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
 
@@ -156,39 +154,44 @@ export class Pan123StorageExecutor implements StorageExecutor {
     candidate: ResourceCandidate;
   }): Promise<TransferAttempt> {
     const url = stringValue(input.candidate.providerPayload["url"]);
-    // Magnet/ed2k has no offline API on 123 — fail LOUD so the caller never thinks
-    // a magnet "could have" worked; it must pick a 123 share-link candidate.
-    if (input.candidate.type === "magnet" || url.startsWith("magnet:") || url.startsWith("ed2k:")) {
-      throw new Error("PAN123_NO_MAGNET: 123网盘不支持磁力链接(v1 无离线下载);请改用 123 分享链候选");
-    }
+    // Share https stays on saveShare; only magnet-typed / magnet:/ed2k: go offline.
+    // (http offline exists on 123 but we don't route bare https here — that would
+    // steal 123 share URLs.)
+    const useOffline =
+      input.candidate.type === "magnet" || url.startsWith("magnet:") || url.startsWith("ed2k:");
 
     const safe = this.assertWithinWriteScope(input.directoryId, "transfer"); // 同步(derived-scope)
     const before = new Set((await this.listVideoFiles(safe)).map((f) => f.id));
 
     let providerMessage = "";
     try {
-      const parsed = parsePan123ShareUrl(url);
-      if (!parsed) {
-        throw new Error(`PAN123_TRANSFER_FAILED: unparseable 123 share url: ${url.slice(0, 60)}`);
-      }
-      const accessCode = stringValue(input.candidate.providerPayload["password"]) || parsed.sharePwd;
-      const result = await this.client.saveShare({
-        shareKey: parsed.shareKey,
-        sharePwd: accessCode,
-        targetParentId: safe,
-      });
-      if (!result.ok) {
-        // ok:false with an EMPTY message must never be reclassified as
-        // success/no_target_change — fall back to a loud generic reason.
-        providerMessage = result.message || "转存失败(provider 未给原因)"; // dead share / 提取码错 / 空分享
+      if (useOffline) {
+        await this.transferOfflineMagnet({ url, targetDirId: safe });
+      } else {
+        const parsed = parsePan123ShareUrl(url);
+        if (!parsed) {
+          throw new Error(`PAN123_TRANSFER_FAILED: unparseable 123 share url: ${url.slice(0, 60)}`);
+        }
+        const accessCode =
+          stringValue(input.candidate.providerPayload["password"]) || parsed.sharePwd;
+        const result = await this.client.saveShare({
+          shareKey: parsed.shareKey,
+          sharePwd: accessCode,
+          targetParentId: safe,
+        });
+        if (!result.ok) {
+          // ok:false with an EMPTY message must never be reclassified as
+          // success/no_target_change — fall back to a loud generic reason.
+          providerMessage = result.message || "转存失败(provider 未给原因)"; // dead share / 提取码错 / 空分享
+        }
       }
     } catch (error) {
       // Auth failures must surface so the worker freezes the drive — never absorbed.
       if (isPan123AuthError(error)) {
         throw error;
       }
-      // Any other failure (dead/expired share, bad params) is a FAILED attempt
-      // with a loud message; the agent moves to the next candidate.
+      // Any other failure (dead magnet / dead share / bad params) is a FAILED
+      // attempt with a loud message; the agent moves to the next candidate.
       providerMessage = error instanceof Error ? error.message : String(error);
     }
 
@@ -200,11 +203,9 @@ export class Pan123StorageExecutor implements StorageExecutor {
         .filter((f) => !before.has(f.id))
         .map((f) => f.id);
     } else {
-      // copy/async is server-side async (saveShare is fire-copy, unlike tianyi's
-      // poll-to-done): a single immediate re-list would miss a big transfer still
-      // in the queue → false no_target_change ("lands nothing" 老伤). Poll the
-      // target dir until new videos appear. Exhausting the budget while still empty
-      // = genuinely nothing landed → no_target_change is correct.
+      // Both copy/async and offline task completion can race the directory index:
+      // poll until new videos appear. Exhausting the budget while still empty =
+      // genuinely nothing landed → no_target_change is correct.
       for (let attempt = 0; attempt < this.transferSettlePollAttempts; attempt++) {
         const after = await this.listVideoFiles(safe);
         materializedFileIds = after.filter((f) => !before.has(f.id)).map((f) => f.id);
@@ -222,18 +223,64 @@ export class Pan123StorageExecutor implements StorageExecutor {
         ? "succeeded"
         : "no_target_change";
 
+    const emptyHint = useOffline
+      ? "离线任务完成但目标目录未出现新视频"
+      : "转存完成但目标目录未出现新视频";
     const attempt: TransferAttempt = {
       id: `${input.workflowRunId}_transfer_${this.nextTransferNumber}`,
       workflowRunId: input.workflowRunId,
       candidateId: input.candidate.id,
       status,
-      providerMessage:
-        providerMessage ||
-        (status === "no_target_change" ? "转存完成但目标目录未出现新视频" : ""),
+      providerMessage: providerMessage || (status === "no_target_change" ? emptyHint : ""),
       materializedFileIds,
     };
     this.nextTransferNumber += 1;
     return attempt;
+  }
+
+  /** magnet/ed2k offline: resolve → submit → poll until status 2 or fail/timeout.
+   * Returns false for a bounded timeout: this is a soft no_target_change, not a
+   * dead magnet. The task is removed before the agent can try another candidate,
+   * preventing a late landing from creating a duplicate. */
+  private async transferOfflineMagnet(input: { url: string; targetDirId: string }): Promise<boolean> {
+    const resolved = await this.client.resolveOffline(input.url);
+    const taskId = await this.client.submitOffline({
+      resourceId: resolved.resourceId,
+      fileIds: resolved.fileIds,
+      uploadDirId: input.targetDirId,
+    });
+    const completed = await this.pollOfflineTask(taskId);
+    // Delete both terminal and timed-out tasks. A timed-out task must not keep
+    // downloading after the agent moves on, otherwise it can land late and
+    // double the next candidate's files.
+    try {
+      await this.client.deleteOfflineTasks([taskId]);
+    } catch {
+      // Best-effort quota cleanup must never turn a landed transfer into failure.
+    }
+    return completed;
+  }
+
+  private async pollOfflineTask(taskId: string): Promise<boolean> {
+    for (let i = 0; i < this.offlineTaskPollMaxPolls; i++) {
+      const task = await this.client.getOfflineTask(taskId);
+      if (!task) {
+        // Task row missing mid-poll — treat as still running once, then soft-miss.
+        if (i === this.offlineTaskPollMaxPolls - 1) {
+          throw new Error("PAN123_OFFLINE_TIMEOUT: offline task disappeared before completion");
+        }
+      } else if (task.status === 2) {
+        return true; // succeed
+      } else if (task.status === 1) {
+        throw new Error(
+          `PAN123_OFFLINE_FAILED: task failed name=${task.name || "?"} progress=${task.progress}`,
+        );
+      }
+      if (i < this.offlineTaskPollMaxPolls - 1) {
+        await this.sleep(this.offlineTaskPollIntervalMs);
+      }
+    }
+    return false;
   }
 
   async flattenDirectory(directoryId: string): Promise<{ moved: string[]; removed: string[] }> {

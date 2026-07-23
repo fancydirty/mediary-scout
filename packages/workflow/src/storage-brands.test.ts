@@ -37,15 +37,17 @@ describe("STORAGE_BRANDS registry", () => {
     expect(allowedResourceTypesForKinds(["pansou-tianyi"])).toEqual(["tianyi"]);
   });
 
-  it("registers pan123 as a token-auth share brand with pansou-123 kind", () => {
+  it("registers pan123 as a token-auth dual share + magnet brand", () => {
     const b = getStorageBrand("pan123");
     expect(b.label).toBe("123网盘");
     expect(b.authKind).toBe("token");
-    expect(b.resourceProviderKinds).toEqual(["pansou-123"]);
+    expect(b.resourceProviderKinds).toEqual(["pansou-123", "prowlarr"]);
     expect(b.assumeChineseSubsFromChineseTitle).toBe(true);
     expect(b.provisionRootId).toBe("0");
     expect(b.requiredCredentialKeys).toEqual(["token"]);
-    expect(brandSupportsProwlarr("pan123")).toBe(false);
+    expect(brandSupportsProwlarr("pan123")).toBe(true);
+    expect(allowedResourceTypesForKinds(b.resourceProviderKinds)).toEqual(["123", "magnet"]);
+    // Legacy/custom kind sets without a magnet source stay share-only.
     expect(allowedResourceTypesForKinds(["pansou-123"])).toEqual(["123"]);
   });
 

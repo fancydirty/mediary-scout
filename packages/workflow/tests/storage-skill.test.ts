@@ -51,7 +51,7 @@ describe("brand-aware storage skill", () => {
     expect(tianyi).not.toContain("41006");
   });
 
-  it("getStorageSkill('pan123') teaches 转存 (秒传复制), 无磁力, PAN123_NO_MAGNET, and fail-loud share signals; does NOT throw", () => {
+  it("getStorageSkill('pan123') teaches dual 秒传 + native offline and both fail-loud paths", () => {
     const pan123 = getStorageSkill("pan123");
     expect(pan123).toBeTruthy();
     expect(pan123.length).toBeGreaterThan(0);
@@ -63,17 +63,18 @@ describe("brand-aware storage skill", () => {
     // mirror share domains are real (123684/123865/123912) — the agent must not
     // reject a candidate just because it is not on the main domain
     expect(pan123).toMatch(/123684|镜像/);
-    // no magnet/offline API on 123 (v1) — a magnet fails loud with this sentinel
-    expect(pan123).toMatch(/无磁力|NO magnet/i);
-    expect(pan123).toContain("PAN123_NO_MAGNET");
+    expect(pan123).toMatch(/DUAL|native offline/i);
+    expect(pan123).toMatch(/磁力|magnet/i);
+    expect(pan123).toContain("PAN123_OFFLINE_RESOLVE_FAILED");
+    expect(pan123).toContain("PAN123_OFFLINE_FAILED");
+    expect(pan123).toContain("no_target_change");
     // a dead / cancelled / wrong-code share fails LOUD (switch candidate)
     expect(pan123).toMatch(/分享不存在|已取消|已失效|已过期|提取码错误|链接失效/);
     // the ONE dead-share message the code itself guarantees (saveShare's empty/dead
     // reply) must be in the examples — the rest await T10 live calibration
     expect(pan123).toContain("分享为空 / 已失效");
-    // transferUntilLanded accepts every fail-loud 转存分享 brand (the sandbox gate
-    // rejects only magnets/unknown) — the arm recommends it for a movie, exactly
-    // like the quark/tianyi arms, and must NOT carry the old Do-NOT-use warning
+    // transferUntilLanded accepts every fail-loud 123 share/magnet candidate and
+    // the arm recommends it for dead-link rotation.
     expect(pan123).toMatch(/transferUntilLanded[^.]*(burns through|automatically)/);
     expect(pan123).not.toMatch(/Do NOT use transferUntilLanded/i);
     expect(pan123).not.toMatch(/115-share-only|it is 115/);
@@ -85,7 +86,9 @@ describe("brand-aware storage skill", () => {
     expect(pan123).toMatch(/publish time|发布时间/i);
     // must NOT carry other brands' fail-loud codes / sentinels
     expect(pan123).not.toContain("41006");
-    expect(pan123).not.toMatch(/TIANYI_NO_MAGNET|QUARK_NO_MAGNET|GUANGYA_ONLY_MAGNET/);
+    expect(pan123).not.toMatch(
+      /PAN123_NO_MAGNET|TIANYI_NO_MAGNET|QUARK_NO_MAGNET|GUANGYA_ONLY_MAGNET/,
+    );
   });
 
   it("getStorageSkill throws for an unknown brand", () => {

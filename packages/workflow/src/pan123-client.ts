@@ -1,25 +1,28 @@
 /**
  * 123网盘 (123pan / yun.123pan.com) HTTP client — the brand-5 analogue of
- * QuarkCookieClient / TianyiClient. Like 夸克/天翼, 123 is a pure "transfer-share"
- * (转存分享) brand; like 光鸭/天翼 it is token-auth (Bearer <token>).
+ * QuarkCookieClient / TianyiClient. Like 夸克/天翼 it is token-auth (Bearer
+ * <token>) and can 转存分享; unlike 夸克/天翼 it ALSO has a native offline-
+ * download path on the web face (magnet/ed2k/http → resolve → submit → poll),
+ * ported from OpenList `drivers/123` OfflineDownload.
  *
- * v1 uses ONLY the WEB face `yun.123pan.com/b/api/*`. Every request carries a
+ * Uses ONLY the WEB face `yun.123pan.com/b/api/*`. Every request carries a
  * crc32-based signPath signature (the {k,v} pair is injected into the query) plus
  * a fixed header set. There is NO token-refresh endpoint on the web face (all
  * refresh_token flows live on open-api.123pan.com, unrelated to 转存), so a dead
  * token cannot self-heal here: `code===401` throws Pan123AuthError and the upstream
- * registry freezes the connection for the user to re-scan. (This is why v1 has no
+ * registry freezes the connection for the user to re-scan. (This is why there is no
  * onCredentialRefresh / login_another / retry logic — nothing to refresh with.)
  *
- * 🔴 THE root cause this brand needs care for: 123's FileId/ShareId (int64, 18
- * digits) exceed Number.MAX_SAFE_INTEGER. Plain JSON.parse silently ROUNDS them →
- * a corrupted, non-existent id → a transfer that hangs / lands nothing. The fix:
- * stringify these id fields BEFORE JSON.parse. `parsePan123Json` is the SINGLE
- * json-parse entry point — no response is ever handed to raw JSON.parse.
+ * 🔴 THE root cause this brand needs care for: 123's FileId/ShareId/task_id
+ * (int64, 18 digits) exceed Number.MAX_SAFE_INTEGER. Plain JSON.parse silently
+ * ROUNDS them → a corrupted, non-existent id → a transfer that hangs / lands
+ * nothing. The fix: stringify these id fields BEFORE JSON.parse. `parsePan123Json`
+ * is the SINGLE json-parse entry point — no response is ever handed to raw JSON.parse.
  */
 
 const API_BASE = "https://yun.123pan.com/b/api";
 const DEFAULT_TIMEOUT_MS = 20_000;
+const OFFLINE_RESOLVE_TIMEOUT_MS = 60_000;
 
 /** Standard IEEE CRC32. Buffer in, unsigned 32-bit out. Used by signPath. */
 export function crc32(buf: Buffer): number {
@@ -58,8 +61,10 @@ export function signPath(path: string): { k: string; v: string } {
 
 /** id 字段名:123 的这些字段是 18 位 int64,JSON.parse 前必须先转字符串防精度丢失。
  *  ⚠️ 全 client 唯一的解析入口,任何响应都走它。字段清单以真跑通的探针 BIGINT 常量为准,
- *  额外加 `\s*` 容错(JSON 允许冒号前后空白)。不要加裸 `Id` 字段——太宽会误伤非 id 数字。 */
-const BIGINT_ID_FIELDS = /"(FileId|fileId|ShareId|shareId|file_id|parent_file_id)"\s*:\s*(\d{16,})/g;
+ *  额外加 `\s*` 容错(JSON 允许冒号前后空白)。`id`/`task_id` 覆盖离线 resolve/submit/list
+ *  响应(OpenList drivers/123);仅匹配 ≥16 位所以不会把 Size/progress 当 id。 */
+const BIGINT_ID_FIELDS =
+  /"(FileId|fileId|ShareId|shareId|file_id|parent_file_id|task_id|id)"\s*:\s*(\d{16,})/g;
 
 /** 唯一 JSON 解析入口:先把大整数 id 字段加引号转字符串,再 parse。见文件头「root cause」。 */
 export function parsePan123Json(text: string): unknown {
@@ -112,7 +117,12 @@ export interface Pan123Credential {
 
 export type Pan123Fetch = (
   url: string,
-  init: { method: "GET" | "POST"; headers: Record<string, string>; body?: string },
+  init: {
+    method: "GET" | "POST";
+    headers: Record<string, string>;
+    body?: string;
+    timeoutMs?: number;
+  },
 ) => Promise<{ status: number; text: string }>;
 
 /** 统一 item:file/list/new 与 share/get 的 InfoList 条目共用此形状。 */
@@ -148,7 +158,12 @@ export class Pan123Client {
    *  code===0 成功;code===401 → Pan123AuthError(死 token,不重试/不刷新);其它非 0 → 普通 Error。 */
   private async signed(
     path: string,
-    init: { method: "GET" | "POST"; query?: Record<string, string>; body?: unknown },
+    init: {
+      method: "GET" | "POST";
+      query?: Record<string, string>;
+      body?: unknown;
+      timeoutMs?: number;
+    },
   ): Promise<Record<string, unknown>> {
     const u = new URL(API_BASE + path);
     for (const [k, v] of Object.entries(init.query ?? {})) {
@@ -169,6 +184,7 @@ export class Pan123Client {
         referer: "https://yun.123pan.com/",
         "user-agent": "Mozilla/5.0",
       },
+      ...(init.timeoutMs !== undefined ? { timeoutMs: init.timeoutMs } : {}),
       ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
     });
     const parsed = parsePan123Json(res.text);
@@ -362,6 +378,151 @@ export class Pan123Client {
       body: { FileId: input.fileId, fileName: input.name, driveId: 0, duplicate: 0, event: "fileRename" },
     });
   }
+
+  // ── 离线下载(magnet/ed2k/http → resolve → submit → list) ─────────────────
+  // Ported from OpenList drivers/123 OfflineDownload. Status codes observed there:
+  // 0=downloading, 1=failed, 2=succeed (3 may appear as retrying on open-api face).
+
+  /** Resolve a magnet/ed2k/http URL into a resource_id + selectable file ids. */
+  async resolveOffline(url: string): Promise<{ resourceId: string; fileIds: string[] }> {
+    const resp = await this.signed("/v2/offline_download/task/resolve", {
+      method: "POST",
+      body: { urls: url },
+      timeoutMs: OFFLINE_RESOLVE_TIMEOUT_MS,
+    });
+    const data = (resp["data"] ?? {}) as Record<string, unknown>;
+    const list = Array.isArray(data["list"]) ? (data["list"] as unknown[]) : [];
+    if (list.length === 0) {
+      throw new Error("PAN123_OFFLINE_RESOLVE_FAILED: empty response");
+    }
+    const first = (list[0] ?? {}) as Record<string, unknown>;
+    if (numOf(first["result"]) !== 0) {
+      const msg = strOf(first["err_msg"]) || "offline resolve failed";
+      const code = strOf(first["err_code"]);
+      throw new Error(`PAN123_OFFLINE_RESOLVE_FAILED: ${msg}${code ? ` (err_code=${code})` : ""}`);
+    }
+    const resourceId = strId(first["id"]);
+    if (!resourceId) {
+      throw new Error("PAN123_OFFLINE_RESOLVE_FAILED: empty resource id");
+    }
+    const files = Array.isArray(first["files"]) ? (first["files"] as unknown[]) : [];
+    const fileIds: string[] = [];
+    for (const f of files) {
+      const fid = strId((f as Record<string, unknown>)["id"]);
+      if (fid && fid !== "0") {
+        fileIds.push(fid);
+      }
+    }
+    if (fileIds.length === 0) {
+      throw new Error("PAN123_OFFLINE_RESOLVE_FAILED: empty file list");
+    }
+    return { resourceId, fileIds };
+  }
+
+  /** Submit a previously-resolved offline resource into `uploadDirId`. Returns taskId. */
+  async submitOffline(input: {
+    resourceId: string;
+    fileIds: string[];
+    uploadDirId: string;
+  }): Promise<string> {
+    if (input.fileIds.length === 0) {
+      throw new Error("PAN123_OFFLINE_SUBMIT_FAILED: empty select_file_id");
+    }
+    // API wants numeric ids; keep as string in JS but JSON will emit quoted strings
+    // which 123 accepts (OpenList sends int64; our bigint-safe path keeps strings).
+    const resourceIdNum = Number(input.resourceId);
+    const selectFileIds = input.fileIds.map((id) => {
+      const n = Number(id);
+      return Number.isSafeInteger(n) ? n : id;
+    });
+    const uploadDir = Number.isSafeInteger(Number(input.uploadDirId))
+      ? Number(input.uploadDirId)
+      : input.uploadDirId;
+    const resp = await this.signed("/v2/offline_download/task/submit", {
+      method: "POST",
+      body: {
+        resource_list: [
+          {
+            resource_id: Number.isSafeInteger(resourceIdNum) ? resourceIdNum : input.resourceId,
+            select_file_id: selectFileIds,
+          },
+        ],
+        upload_dir: uploadDir,
+      },
+    });
+    const data = (resp["data"] ?? {}) as Record<string, unknown>;
+    const taskList = Array.isArray(data["task_list"]) ? (data["task_list"] as unknown[]) : [];
+    if (taskList.length === 0) {
+      throw new Error("PAN123_OFFLINE_SUBMIT_FAILED: empty task list");
+    }
+    const first = (taskList[0] ?? {}) as Record<string, unknown>;
+    if (numOf(first["result"]) !== 0) {
+      throw new Error("PAN123_OFFLINE_SUBMIT_FAILED: provider rejected submit");
+    }
+    const taskId = strId(first["task_id"]);
+    if (!taskId) {
+      throw new Error("PAN123_OFFLINE_SUBMIT_FAILED: empty task id");
+    }
+    return taskId;
+  }
+
+  /** Look up one offline task by id (pages status_arr 0/1/2/3). Null if not found. */
+  async getOfflineTask(taskId: string): Promise<Pan123OfflineTask | null> {
+    if (!taskId) {
+      return null;
+    }
+    let page = 1;
+    const pageSize = 100;
+    for (let guard = 0; guard < 50; guard++) {
+      const resp = await this.signed("/offline_download/task/list", {
+        method: "POST",
+        body: {
+          current_page: page,
+          page_size: pageSize,
+          status_arr: [0, 1, 2, 3],
+        },
+      });
+      const data = (resp["data"] ?? {}) as Record<string, unknown>;
+      const list = Array.isArray(data["list"]) ? (data["list"] as unknown[]) : [];
+      for (const raw of list) {
+        const t = mapOfflineTask(raw);
+        if (t.taskId === taskId) {
+          return t;
+        }
+      }
+      const total = numOf(data["total"]);
+      if (list.length === 0 || page * pageSize >= total) {
+        break;
+      }
+      page += 1;
+    }
+    return null;
+  }
+
+  /** Best-effort delete of finished/failed offline tasks (free quota). */
+  async deleteOfflineTasks(taskIds: string[]): Promise<void> {
+    if (taskIds.length === 0) {
+      return;
+    }
+    const ids = taskIds.map((id) => {
+      const n = Number(id);
+      return Number.isSafeInteger(n) ? n : id;
+    });
+    await this.signed("/offline_download/task/delete", {
+      method: "POST",
+      body: { task_ids: ids },
+    });
+  }
+}
+
+/** Offline-task row from /offline_download/task/list.
+ *  status: 0=downloading, 1=failed, 2=succeed (OpenList mapping). */
+export interface Pan123OfflineTask {
+  taskId: string;
+  name: string;
+  status: number;
+  progress: number;
+  size: number;
 }
 
 // ── module helpers ──────────────────────────────────────────────────────────
@@ -376,6 +537,17 @@ function mapPan123Item(raw: unknown): Pan123Item {
     size: numOf(r["Size"]),
     etag: String(r["Etag"] ?? ""),
     isFolder: numOf(r["Type"]) === 1,
+  };
+}
+
+function mapOfflineTask(raw: unknown): Pan123OfflineTask {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  return {
+    taskId: strId(r["task_id"]),
+    name: String(r["name"] ?? ""),
+    status: numOf(r["status"]),
+    progress: numOf(r["progress"]),
+    size: numOf(r["size"]),
   };
 }
 
@@ -416,14 +588,19 @@ function strOf(v: unknown): string {
 
 async function defaultPan123Fetch(
   url: string,
-  init: { method: "GET" | "POST"; headers: Record<string, string>; body?: string },
+  init: {
+    method: "GET" | "POST";
+    headers: Record<string, string>;
+    body?: string;
+    timeoutMs?: number;
+  },
 ): Promise<{ status: number; text: string }> {
   // HARD project rule "新外部HTTP一律带超时": a bare fetch with no AbortController
   // hung the whole app in the PanSou incident.
   const requestInit: RequestInit = {
     method: init.method,
     headers: init.headers,
-    signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+    signal: AbortSignal.timeout(init.timeoutMs ?? DEFAULT_TIMEOUT_MS),
   };
   if (init.body !== undefined) {
     requestInit.body = init.body;

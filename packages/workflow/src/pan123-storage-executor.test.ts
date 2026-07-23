@@ -11,7 +11,16 @@ import { parsePan123ShareUrl, Pan123StorageExecutor } from "./pan123-storage-exe
  *  {fileIds,targetParentId}; deletion is `trash` (not batchDelete). */
 type Pan123ClientShape = Pick<
   Pan123Client,
-  "listFiles" | "createFolder" | "saveShare" | "renameFile" | "trash" | "moveFiles"
+  | "listFiles"
+  | "createFolder"
+  | "saveShare"
+  | "resolveOffline"
+  | "submitOffline"
+  | "getOfflineTask"
+  | "deleteOfflineTasks"
+  | "renameFile"
+  | "trash"
+  | "moveFiles"
 >;
 
 function fakeClient(overrides: Partial<Pan123ClientShape> = {}): Pan123ClientShape {
@@ -19,6 +28,19 @@ function fakeClient(overrides: Partial<Pan123ClientShape> = {}): Pan123ClientSha
     listFiles: vi.fn<Pan123Client["listFiles"]>(async () => []),
     createFolder: vi.fn<Pan123Client["createFolder"]>(async () => "newdir123"),
     saveShare: vi.fn<Pan123Client["saveShare"]>(async () => ({ ok: true, message: "" })),
+    resolveOffline: vi.fn<Pan123Client["resolveOffline"]>(async () => ({
+      resourceId: "9007199254740993001",
+      fileIds: ["9007199254740993002"],
+    })),
+    submitOffline: vi.fn<Pan123Client["submitOffline"]>(async () => "9007199254740993003"),
+    getOfflineTask: vi.fn<Pan123Client["getOfflineTask"]>(async (taskId) => ({
+      taskId,
+      name: "Some.Show.mkv",
+      status: 2,
+      progress: 100,
+      size: 100,
+    })),
+    deleteOfflineTasks: vi.fn<Pan123Client["deleteOfflineTasks"]>(async () => {}),
     renameFile: vi.fn<Pan123Client["renameFile"]>(async () => {}),
     trash: vi.fn<Pan123Client["trash"]>(async () => {}),
     moveFiles: vi.fn<Pan123Client["moveFiles"]>(async () => {}),
@@ -130,29 +152,101 @@ describe("Pan123StorageExecutor.transfer", () => {
     expect(attempt.candidateId).toBe("cand-1");
   });
 
-  it("throws PAN123_NO_MAGNET on magnet/ed2k candidates without touching the client", async () => {
+  it("offline-downloads a magnet, polls to success, and diffs the landed video", async () => {
+    let landed = false;
+    const listFiles = vi.fn<Pan123Client["listFiles"]>(async () =>
+      landed ? [file("924511245739356595", "Show.S01E01.1080p.mkv")] : [],
+    );
+    const getOfflineTask = vi.fn<Pan123Client["getOfflineTask"]>(async (taskId) => {
+      landed = true;
+      return { taskId, name: "Show", status: 2, progress: 100, size: 123 };
+    });
+    const client = fakeClient({ listFiles, getOfflineTask });
+    const executor = makeExecutor(client);
+    const url = "magnet:?xt=urn:btih:deadbeef";
+
+    const attempt = await executor.transfer({
+      workflowRunId: "run-1",
+      directoryId: SCOPE,
+      candidate: candidate({ type: "magnet" as ResourceType, providerPayload: { url } }),
+    });
+
+    expect(client.resolveOffline).toHaveBeenCalledWith(url);
+    expect(client.submitOffline).toHaveBeenCalledWith({
+      resourceId: "9007199254740993001",
+      fileIds: ["9007199254740993002"],
+      uploadDirId: SCOPE,
+    });
+    expect(client.deleteOfflineTasks).toHaveBeenCalledWith(["9007199254740993003"]);
+    expect(client.saveShare).not.toHaveBeenCalled();
+    expect(attempt.status).toBe("succeeded");
+    expect(attempt.materializedFileIds).toEqual(["924511245739356595"]);
+  });
+
+  it("routes ed2k through native offline even when candidate.type is manual", async () => {
     const client = fakeClient();
     const executor = makeExecutor(client);
+    const url = "ed2k://|file|x.mkv|123|ABC|/";
 
-    await expect(
-      executor.transfer({
-        workflowRunId: "run-1",
-        directoryId: SCOPE,
-        candidate: candidate({
-          type: "magnet" as ResourceType,
-          providerPayload: { url: "magnet:?xt=urn:btih:deadbeef" },
-        }),
-      }),
-    ).rejects.toThrow(/PAN123_NO_MAGNET/);
-    // ed2k is equally unsupported (no offline API), regardless of candidate.type
-    await expect(
-      executor.transfer({
-        workflowRunId: "run-1",
-        directoryId: SCOPE,
-        candidate: candidate({ providerPayload: { url: "ed2k://|file|x.mkv|123|ABC|/" } }),
-      }),
-    ).rejects.toThrow(/PAN123_NO_MAGNET/);
+    await executor.transfer({
+      workflowRunId: "run-1",
+      directoryId: SCOPE,
+      candidate: candidate({ providerPayload: { url } }),
+    });
+
+    expect(client.resolveOffline).toHaveBeenCalledWith(url);
     expect(client.saveShare).not.toHaveBeenCalled();
+  });
+
+  it("reports a failed offline task loudly and does not delete it", async () => {
+    const getOfflineTask = vi.fn<Pan123Client["getOfflineTask"]>(async (taskId) => ({
+      taskId,
+      name: "dead magnet",
+      status: 1,
+      progress: 17,
+      size: 0,
+    }));
+    const client = fakeClient({ getOfflineTask });
+    const executor = makeExecutor(client);
+
+    const attempt = await executor.transfer({
+      workflowRunId: "run-1",
+      directoryId: SCOPE,
+      candidate: candidate({
+        type: "magnet" as ResourceType,
+        providerPayload: { url: "magnet:?xt=urn:btih:deadbeef" },
+      }),
+    });
+
+    expect(attempt.status).toBe("failed");
+    expect(attempt.providerMessage).toMatch(/PAN123_OFFLINE_FAILED.*dead magnet/);
+    expect(client.deleteOfflineTasks).not.toHaveBeenCalled();
+  });
+
+  it("reports a running task as no_target_change and deletes it before moving on", async () => {
+    const getOfflineTask = vi.fn<Pan123Client["getOfflineTask"]>(async (taskId) => ({
+      taskId,
+      name: "slow magnet",
+      status: 0,
+      progress: 5,
+      size: 100,
+    }));
+    const client = fakeClient({ getOfflineTask });
+    const executor = makeExecutor(client, [SCOPE], { offlineTaskPollMaxPolls: 2 });
+
+    const attempt = await executor.transfer({
+      workflowRunId: "run-1",
+      directoryId: SCOPE,
+      candidate: candidate({
+        type: "magnet" as ResourceType,
+        providerPayload: { url: "magnet:?xt=urn:btih:slow" },
+      }),
+    });
+
+    expect(attempt.status).toBe("no_target_change");
+    expect(attempt.providerMessage).toMatch(/离线任务完成但目标目录未出现新视频/);
+    expect(getOfflineTask).toHaveBeenCalledTimes(2);
+    expect(client.deleteOfflineTasks).toHaveBeenCalledWith(["9007199254740993003"]);
   });
 
   it("reports failed (not throw) with the provider message for a dead/empty share", async () => {

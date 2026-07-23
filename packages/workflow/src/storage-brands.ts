@@ -116,7 +116,8 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     label: "123网盘",
     parseUid: parsePan123Uid,
     isAuthError: isPan123AuthError,
-    resourceProviderKinds: ["pansou-123"],
+    // Share links + native offline (magnet/ed2k) — OpenList drivers/123 OfflineDownload.
+    resourceProviderKinds: ["pansou-123", "prowlarr"],
     assumeChineseSubsFromChineseTitle: true,
     authKind: "token",
     provisionRootId: "0", // 123 个人云根
@@ -137,8 +138,11 @@ export function allowedResourceTypesForKinds(kinds: readonly string[]): Resource
   if (kinds.includes("pansou-tianyi")) {
     return ["tianyi"];
   }
+  // 123 share + magnet when prowlarr/pansou-magnet is also listed (dual-path brand).
   if (kinds.includes("pansou-123")) {
-    return ["123"];
+    return kinds.includes("prowlarr") || kinds.includes("pansou-magnet")
+      ? ["123", "magnet"]
+      : ["123"];
   }
   if (kinds.includes("pansou-magnet")) {
     return ["magnet"];

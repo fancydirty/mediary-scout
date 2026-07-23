@@ -280,6 +280,102 @@ describe("Pan123Client 转存链 (share/get → file/copy/async)", () => {
   });
 });
 
+describe("Pan123Client native offline (resolve → submit → list/delete)", () => {
+  it("resolves a magnet and preserves int64 resource/file ids", async () => {
+    let body: Record<string, unknown> = {};
+    const fetchImpl = fetchStub((url, init) => {
+      expect(url).toContain("/v2/offline_download/task/resolve");
+      body = JSON.parse(init.body ?? "{}");
+      return {
+        status: 200,
+        body:
+          '{"code":0,"data":{"list":[{"result":0,"id":9007199254740993001,"files":[{"id":9007199254740993002},{"id":42}]}]}}',
+      };
+    });
+    const client = new Pan123Client({ token: "TK", fetchImpl });
+
+    await expect(client.resolveOffline("magnet:?xt=urn:btih:abc")).resolves.toEqual({
+      resourceId: "9007199254740993001",
+      fileIds: ["9007199254740993002", "42"],
+    });
+    expect(body).toEqual({ urls: "magnet:?xt=urn:btih:abc" });
+  });
+
+  it("surfaces the provider resolve error instead of submitting an empty resource", async () => {
+    const fetchImpl = fetchStub(() => ({
+      status: 200,
+      body: { code: 0, data: { list: [{ result: 1, err_code: 12345, err_msg: "资源解析失败" }] } },
+    }));
+    const client = new Pan123Client({ token: "TK", fetchImpl });
+
+    await expect(client.resolveOffline("magnet:?xt=urn:btih:dead")).rejects.toThrow(
+      /PAN123_OFFLINE_RESOLVE_FAILED.*资源解析失败.*12345/,
+    );
+  });
+
+  it("submits the selected files and preserves an int64 task id", async () => {
+    let body: Record<string, unknown> = {};
+    const fetchImpl = fetchStub((url, init) => {
+      expect(url).toContain("/v2/offline_download/task/submit");
+      body = JSON.parse(init.body ?? "{}");
+      return {
+        status: 200,
+        body: '{"code":0,"data":{"task_list":[{"task_id":9007199254740993003,"result":0}]}}',
+      };
+    });
+    const client = new Pan123Client({ token: "TK", fetchImpl });
+
+    await expect(
+      client.submitOffline({
+        resourceId: "9007199254740993001",
+        fileIds: ["9007199254740993002", "42"],
+        uploadDirId: "9007199254740993004",
+      }),
+    ).resolves.toBe("9007199254740993003");
+    expect(body).toEqual({
+      resource_list: [
+        {
+          resource_id: "9007199254740993001",
+          select_file_id: ["9007199254740993002", 42],
+        },
+      ],
+      upload_dir: "9007199254740993004",
+    });
+  });
+
+  it("finds a task on a later page and deletes task ids bigint-safely", async () => {
+    const pages: number[] = [];
+    let deleteBody: Record<string, unknown> = {};
+    const fetchImpl = fetchStub((url, init) => {
+      const body = JSON.parse(init.body ?? "{}") as Record<string, unknown>;
+      if (url.includes("/offline_download/task/list")) {
+        pages.push(Number(body.current_page));
+        if (body.current_page === 1) {
+          return { status: 200, body: { code: 0, data: { list: [{ task_id: 7 }], total: 101 } } };
+        }
+        return {
+          status: 200,
+          body:
+            '{"code":0,"data":{"list":[{"task_id":9007199254740993003,"name":"Show","status":2,"progress":100,"size":123}],"total":101}}',
+        };
+      }
+      expect(url).toContain("/offline_download/task/delete");
+      deleteBody = body;
+      return { status: 200, body: { code: 0 } };
+    });
+    const client = new Pan123Client({ token: "TK", fetchImpl });
+
+    await expect(client.getOfflineTask("9007199254740993003")).resolves.toMatchObject({
+      taskId: "9007199254740993003",
+      status: 2,
+      progress: 100,
+    });
+    expect(pages).toEqual([1, 2]);
+    await client.deleteOfflineTasks(["9007199254740993003", "7"]);
+    expect(deleteBody).toEqual({ task_ids: ["9007199254740993003", 7] });
+  });
+});
+
 describe("Pan123Client directory write ops", () => {
   it("createFolder posts the upload_request body and returns the new int64 id as string", async () => {
     let body: Record<string, unknown> = {};

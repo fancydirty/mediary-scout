@@ -130,18 +130,22 @@ describe("transferModelLine — brand transfer model in the prompt", () => {
     expect(line).not.toBe(transferModelLine({}));
   });
 
-  it("pan123: 转存分享链 / 无磁力 model (秒传复制, share-copy), distinct from quark/tianyi/guangya/default", () => {
+  it("pan123: dual 秒传分享 + native offline model, distinct from other brands", () => {
     const line = transferModelLine({ storageProvider: "pan123" });
     expect(line).toBeTruthy();
     expect(line.length).toBeGreaterThan(0);
     expect(line).toMatch(/123网盘/);
-    // a 转存分享链 drive (share-copy, like 夸克/天翼 — NOT a magnet/offline drive)
+    // Dual path: share-copy plus native magnet/offline.
     expect(line).toMatch(/分享链|转存分享/);
     expect(line).toContain("123pan.com");
     expect(line).toMatch(/秒传/);
-    // no magnet/offline API (v1) — a magnet fails loud with the pan123 sentinel
-    expect(line).toContain("PAN123_NO_MAGNET");
-    expect(line).not.toMatch(/QUARK_NO_MAGNET|GUANGYA_ONLY_MAGNET|TIANYI_NO_MAGNET/);
+    expect(line).toMatch(/DUAL|native offline/i);
+    expect(line).toMatch(/磁力|magnet/i);
+    expect(line).toContain("PAN123_OFFLINE_RESOLVE_FAILED");
+    expect(line).toContain("PAN123_OFFLINE_FAILED");
+    expect(line).not.toMatch(
+      /PAN123_NO_MAGNET|QUARK_NO_MAGNET|GUANGYA_ONLY_MAGNET|TIANYI_NO_MAGNET/,
+    );
     // dead-share fail-loud signals the 123 executor actually surfaces
     expect(line).toMatch(/分享不存在|已取消|提取码错误|链接失效/);
     // distinct from the quark/tianyi/guangya lines and the default (115) empty line
