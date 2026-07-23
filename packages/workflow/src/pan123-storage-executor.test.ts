@@ -527,6 +527,38 @@ describe("Pan123StorageExecutor write-scope guard (derived scope)", () => {
     expect(trash).toHaveBeenCalledWith([{ id: wrapperId, isFolder: true }]);
   });
 
+  it("authorizes createDirectory under a show folder REUSED via listChildDirectories (production 莉可丽丝 bug)", async () => {
+    // Real production failure 2026-07-23: a legacy show folder (`莉可丽丝 (2022)`)
+    // already existed on the 123 drive from an earlier run. ensureMediaLibraryDirectory
+    // found it via listChildDirectories(anime_cid) and returned its id — but
+    // listChildDirectories never registered it in derived scope, so the follow-up
+    // createDirectory(Season 01, parentId=showId) died with WRITE_SCOPE_VIOLATION.
+    const fs = new Map<string, Pan123Item[]>();
+    fs.set(SCOPE, [folder("existing-show", "莉可丽丝 (2022)")]);
+    fs.set("existing-show", []);
+    const listFiles = vi.fn<Pan123Client["listFiles"]>(async (dirId) => fs.get(dirId ?? "") ?? []);
+    const executor = makeExecutor(fakeClient({ listFiles }));
+
+    const children = await executor.listChildDirectories(SCOPE);
+    expect(children).toEqual([{ id: "existing-show", name: "莉可丽丝 (2022)" }]);
+
+    await expect(
+      executor.createDirectory({ name: "Season 01", parentId: "existing-show" }),
+    ).resolves.toBe("newdir123");
+  });
+
+  it("does NOT widen scope via listChildDirectories on an OUT-of-scope dir (read ≠ write)", async () => {
+    const fs = new Map<string, Pan123Item[]>();
+    fs.set("elsewhere", [folder("stranger", "x")]);
+    const listFiles = vi.fn<Pan123Client["listFiles"]>(async (dirId) => fs.get(dirId ?? "") ?? []);
+    const executor = makeExecutor(fakeClient({ listFiles }));
+
+    await executor.listChildDirectories("elsewhere");
+    await expect(
+      executor.createDirectory({ name: "Season 01", parentId: "stranger" }),
+    ).rejects.toThrow(/WRITE_SCOPE_VIOLATION/);
+  });
+
   it("does NOT widen scope by listing an OUT-of-scope dir (read ≠ write)", async () => {
     const fs = new Map<string, Pan123Item[]>();
     fs.set("elsewhere", [folder("stranger", "x")]);

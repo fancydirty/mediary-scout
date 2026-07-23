@@ -432,6 +432,14 @@ export class Pan123StorageExecutor implements StorageExecutor {
   }
 
   async listChildDirectories(directoryId: string): Promise<Array<{ id: string; name: string }>> {
+    // Derived-scope registration (same rule as the recursive lister above):
+    // a subdir DISCOVERED under an in-scope parent is itself in scope. Without
+    // this, ensureMediaLibraryDirectory reusing an EXISTING show folder returns
+    // an unregistered id and the follow-up createDirectory(Season NN) dies with
+    // WRITE_SCOPE_VIOLATION (production 莉可丽丝 2026-07-23). Listing an
+    // OUT-of-scope dir must NOT widen scope (read ≠ write) — gate on the
+    // parent, computed BEFORE listing.
+    const parentInScope = this.isWithinWriteScope(directoryId);
     const items = await this.client.listFiles(directoryId);
     const dirs: Array<{ id: string; name: string }> = [];
     for (const item of items) {
@@ -440,6 +448,9 @@ export class Pan123StorageExecutor implements StorageExecutor {
       }
       const id = idOf(item);
       if (id) {
+        if (parentInScope) {
+          this.derivedScopeIds.add(normalizeId(id));
+        }
         dirs.push({ id, name: nameOf(item) });
       }
     }
