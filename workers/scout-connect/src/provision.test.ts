@@ -245,4 +245,98 @@ describe("provisionEndpoint", () => {
     const unwrapped = await unwrapToken(endpoint.token_ciphertext, WRAP_KEY);
     expect(unwrapped).toBe(result.token);
   });
+
+  it("rejects a slug already used by an existing endpoint before any cf call", async () => {
+    const db = createMemoryConnectDb();
+    await db.insertInvite(makePendingInvite());
+    const calls: string[] = [];
+    const deps = makeDeps(db, makeFakeCf(calls));
+    await provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps });
+
+    await db.insertInvite(makePendingInvite({ id: "inv_2", code: "code-def" }));
+    await expect(
+      provisionEndpoint({ inviteId: "inv_2", slug: "alice", deps }),
+    ).rejects.toThrow(/already in use/);
+    // only the first provision's cf calls exist — no second tunnel was created
+    expect(countCalls(calls, "tunnel:")).toBe(1);
+  });
+
+  it("D1 write failure: best-effort deletes dns/access/tunnel and audits provision.orphan", async () => {
+    const db = createMemoryConnectDb();
+    await db.insertInvite(makePendingInvite());
+    const calls: string[] = [];
+    const deps = makeDeps(db, makeFakeCf(calls));
+
+    // first provision occupies the slug so the retry's insertEndpoint dies on
+    // the UNIQUE invite_id constraint after CF resources already exist
+    await provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps });
+
+    await db.insertInvite(makePendingInvite({ id: "inv_2", code: "code-def" }));
+    const otherDeps = {
+      ...makeDeps(db, makeFakeCf(calls)),
+      newEndpointId: () => "ep_test1", // collides with the existing row
+      newAuditId: () => "aud_test2",
+    };
+    await expect(
+      provisionEndpoint({ inviteId: "inv_2", slug: "bob", deps: otherDeps }),
+    ).rejects.toThrow(/UNIQUE/i);
+
+    // second tunnel's full resource set was cleaned up
+    const secondTunnelCalls = calls.filter((c) => c.startsWith("tunnel:")).length;
+    expect(secondTunnelCalls).toBe(2);
+    expect(countCalls(calls, "del-dns:")).toBe(1);
+    expect(countCalls(calls, "del-access:")).toBe(1);
+    expect(countCalls(calls, "del-tunnel:")).toBe(1);
+
+    // orphan audit row recorded, no plaintext token inside
+    const audits = await db.listAudits();
+    const orphan = audits.find((a) => a.action === "provision.orphan");
+    expect(orphan).toBeDefined();
+    expect(orphan?.actor).toBe("system");
+    expect(orphan?.invite_id).toBe("inv_2");
+    expect(JSON.stringify(orphan)).not.toContain(PLAIN_TOKEN);
+
+    // invite stays pending so the admin can retry
+    expect((await db.getInviteById("inv_2"))?.status).toBe("pending");
+  });
+
+  it("D1 failure compensation still throws the original error when cf deletes also fail", async () => {
+    const db = createMemoryConnectDb();
+    await db.insertInvite(makePendingInvite());
+    const calls: string[] = [];
+    const base = makeFakeCf(calls);
+    const failingDeletes: CfApi = {
+      ...base,
+      async deleteTunnel() {
+        calls.push("del-tunnel:boom");
+        throw new Error("delete tunnel boom");
+      },
+      async deleteDnsRecord() {
+        calls.push("del-dns:boom");
+        throw new Error("delete dns boom");
+      },
+      async deleteAccessApp() {
+        calls.push("del-access:boom");
+        throw new Error("delete access boom");
+      },
+    };
+    const deps = {
+      ...makeDeps(db, failingDeletes),
+      newEndpointId: () => "ep_test1",
+    };
+    // first, occupy the endpoint id so the insert fails
+    await provisionEndpoint({
+      inviteId: "inv_1",
+      slug: "alice",
+      deps: makeDeps(db, makeFakeCf([])),
+    });
+    await db.insertInvite(makePendingInvite({ id: "inv_2", code: "code-def" }));
+
+    await expect(
+      provisionEndpoint({ inviteId: "inv_2", slug: "bob", deps }),
+    ).rejects.toThrow(/UNIQUE/i);
+    expect(calls).toContain("del-dns:boom");
+    expect(calls).toContain("del-access:boom");
+    expect(calls).toContain("del-tunnel:boom");
+  });
 });

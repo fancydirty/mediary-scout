@@ -42,6 +42,14 @@ export async function provisionEndpoint(input: {
   const slug = assertSlug(input.slug);
   const hostname = `${slug}.${deps.rootDomain}`;
 
+  // Slug-availability precheck: shrinks the window where a retry would burn a
+  // full set of CF resources only to die on a UNIQUE constraint at insert time.
+  for (const existing of await db.listEndpoints()) {
+    if (existing.slug === slug || existing.hostname === hostname) {
+      throw new Error(`slug already in use: ${slug}`);
+    }
+  }
+
   const { tunnelId, token } = await cf.createTunnel(`scout-${slug}`);
 
   // Compensation invariant: deleteTunnel runs AT MOST once on any failure
@@ -87,38 +95,75 @@ export async function provisionEndpoint(input: {
   const sha = await sha256Hex(token);
   const endpointId = deps.newEndpointId();
 
-  await db.insertEndpoint({
-    id: endpointId,
-    invite_id: invite.id,
-    slug,
-    hostname,
-    cf_tunnel_id: tunnelId,
-    cf_access_app_id: appId,
-    cf_access_policy_id: policyId ?? null,
-    cf_dns_record_id: recordId,
-    status: "active",
-    token_sha256: sha,
-    token_ciphertext: ciphertext,
-    token_shown_at: null,
-    created_at: deps.now(),
-    revoked_at: null,
-  });
+  // Post-CF persistence phase: all CF resources (tunnel/ingress/access/dns)
+  // exist now. If a D1 write fails, the resources would dangle with no db row
+  // (and thus be unreachable by the revoke flow) — spec error-compensation
+  // row: best-effort delete of dns → access → tunnel, plus a best-effort
+  // `provision.orphan` audit row (which may itself fail if D1 is down).
+  try {
+    await db.insertEndpoint({
+      id: endpointId,
+      invite_id: invite.id,
+      slug,
+      hostname,
+      cf_tunnel_id: tunnelId,
+      cf_access_app_id: appId,
+      cf_access_policy_id: policyId ?? null,
+      cf_dns_record_id: recordId,
+      status: "active",
+      token_sha256: sha,
+      token_ciphertext: ciphertext,
+      token_shown_at: null,
+      created_at: deps.now(),
+      revoked_at: null,
+    });
 
-  await db.updateInviteStatus(invite.id, {
-    status: "provisioned",
-    slug,
-    provisioned_at: deps.now(),
-  });
+    await db.updateInviteStatus(invite.id, {
+      status: "provisioned",
+      slug,
+      provisioned_at: deps.now(),
+    });
 
-  await db.insertAudit({
-    id: deps.newAuditId(),
-    at: deps.now(),
-    actor: "admin",
-    action: "endpoint.provision",
-    invite_id: invite.id,
-    endpoint_id: endpointId,
-    detail_json: JSON.stringify({ hostname }),
-  });
+    await db.insertAudit({
+      id: deps.newAuditId(),
+      at: deps.now(),
+      actor: "admin",
+      action: "endpoint.provision",
+      invite_id: invite.id,
+      endpoint_id: endpointId,
+      detail_json: JSON.stringify({ hostname }),
+    });
+  } catch (e) {
+    try {
+      await cf.deleteDnsRecord(recordId);
+    } catch {
+      // best-effort compensation — original error is what matters
+    }
+    try {
+      await cf.deleteAccessApp(appId);
+    } catch {
+      // best-effort compensation
+    }
+    try {
+      await deleteTunnelOnce();
+    } catch {
+      // best-effort compensation
+    }
+    try {
+      await db.insertAudit({
+        id: deps.newAuditId(),
+        at: deps.now(),
+        actor: "system",
+        action: "provision.orphan",
+        invite_id: invite.id,
+        endpoint_id: endpointId,
+        detail_json: JSON.stringify({ hostname }),
+      });
+    } catch {
+      // D1 itself may be the failing component — nothing more we can do
+    }
+    throw e;
+  }
 
   return {
     endpointId,
