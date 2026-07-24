@@ -37,5 +37,6 @@ CREATE TABLE audit_events (
   detail_json TEXT
 );
 
-CREATE INDEX idx_invites_code ON invites(code);
+-- code is already covered by the UNIQUE constraint above (SQLite auto-indexes it).
+-- status index supports admin filtering by endpoint state (revoke_failed sweep).
 CREATE INDEX idx_endpoints_status ON endpoints(status);

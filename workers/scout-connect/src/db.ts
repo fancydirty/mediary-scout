@@ -140,7 +140,7 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
           row.revoked_at,
         )
         .run();
-      return row;
+      return { ...row };
     },
 
     async getInviteById(id) {
@@ -161,7 +161,7 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
 
     async listInvites() {
       const { results } = await d1
-        .prepare(`SELECT * FROM invites ORDER BY created_at DESC`)
+        .prepare(`SELECT * FROM invites ORDER BY created_at DESC, id DESC`)
         .all<RawRow>();
       return results.map(mapInvite);
     },
@@ -211,7 +211,7 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
           row.revoked_at,
         )
         .run();
-      return row;
+      return { ...row };
     },
 
     async getEndpointById(id) {
@@ -232,7 +232,7 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
 
     async listEndpoints() {
       const { results } = await d1
-        .prepare(`SELECT * FROM endpoints ORDER BY created_at DESC`)
+        .prepare(`SELECT * FROM endpoints ORDER BY created_at DESC, id DESC`)
         .all<RawRow>();
       return results.map(mapEndpoint);
     },
@@ -270,15 +270,18 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
 
     async listAudits() {
       const { results } = await d1
-        .prepare(`SELECT * FROM audit_events ORDER BY at DESC`)
+        .prepare(`SELECT * FROM audit_events ORDER BY at DESC, id DESC`)
         .all<RawRow>();
       return results.map(mapAudit);
     },
   };
 }
 
-function byCreatedAtDesc(a: { created_at: string }, b: { created_at: string }): number {
-  return b.created_at.localeCompare(a.created_at);
+// Deterministic list ordering: timestamp DESC, id DESC as tiebreaker. Mirrors
+// SQL `ORDER BY created_at DESC, id DESC`. localeCompare vs SQLite BINARY
+// collation is equivalent here because callers write fixed-width ISO-8601 UTC.
+function byCreatedAtDesc(a: { created_at: string; id: string }, b: { created_at: string; id: string }): number {
+  return b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id);
 }
 
 export function createMemoryConnectDb(): ConnectDb {
@@ -407,7 +410,7 @@ export function createMemoryConnectDb(): ConnectDb {
 
     async listAudits() {
       return [...audits.values()]
-        .sort((a, b) => b.at.localeCompare(a.at))
+        .sort((a, b) => b.at.localeCompare(a.at) || b.id.localeCompare(a.id))
         .map((row) => ({ ...row }));
     },
   };

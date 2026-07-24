@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
   createMemoryConnectDb,
+  createD1ConnectDb,
+  type D1Database,
+  type D1PreparedStatement,
   type InviteRow,
   type EndpointRow,
   type AuditRow,
@@ -174,5 +177,127 @@ describe("memory ConnectDb", () => {
     }
     first.code = "mutated";
     expect((await db.getInviteById("inv_1"))?.code).toBe("code-1");
+  });
+
+  it("mutations on nonexistent ids are silent no-ops (D1 UPDATE parity contract)", async () => {
+    const db = createMemoryConnectDb();
+    await expect(db.markTokenShown("nope", "2026-07-24T04:00:00.000Z")).resolves.toBeUndefined();
+    await expect(db.markEndpointRevoked("nope", "2026-07-24T04:00:00.000Z")).resolves.toBeUndefined();
+    await expect(db.markEndpointRevokeFailed("nope")).resolves.toBeUndefined();
+    await expect(db.updateInviteStatus("nope", { status: "revoked" })).resolves.toBeUndefined();
+    expect(await db.listEndpoints()).toHaveLength(0);
+    expect(await db.listInvites()).toHaveLength(0);
+  });
+
+  it("list ordering ties break deterministically by id DESC", async () => {
+    const db = createMemoryConnectDb();
+    const sameAt = "2026-07-24T00:00:00.000Z";
+    await db.insertInvite(makeInvite({ id: "inv_a", code: "ca", created_at: sameAt }));
+    await db.insertInvite(makeInvite({ id: "inv_b", code: "cb", created_at: sameAt }));
+    await db.insertEndpoint(makeEndpoint({ id: "ep_a", invite_id: "inv_a", slug: "sa", hostname: "sa.x", created_at: sameAt }));
+    await db.insertEndpoint(makeEndpoint({ id: "ep_b", invite_id: "inv_b", slug: "sb", hostname: "sb.x", created_at: sameAt }));
+    expect((await db.listInvites()).map((row) => row.id)).toEqual(["inv_b", "inv_a"]);
+    expect((await db.listEndpoints()).map((row) => row.id)).toEqual(["ep_b", "ep_a"]);
+  });
+
+  it("updateInviteStatus supports the revoke-shaped patch (slug cleared)", async () => {
+    const db = createMemoryConnectDb();
+    await db.insertInvite(makeInvite({ status: "provisioned", slug: "alice", provisioned_at: "2026-07-24T01:00:00.000Z" }));
+    await db.updateInviteStatus("inv_1", {
+      status: "revoked",
+      slug: null,
+      revoked_at: "2026-07-24T05:00:00.000Z",
+    });
+    const row = await db.getInviteById("inv_1");
+    expect(row?.status).toBe("revoked");
+    expect(row?.slug).toBeNull();
+    expect(row?.revoked_at).toBe("2026-07-24T05:00:00.000Z");
+    expect(row?.provisioned_at).toBe("2026-07-24T01:00:00.000Z");
+  });
+});
+
+interface SpyCall {
+  query: string;
+  binds: unknown[];
+  method: "first" | "all" | "run";
+}
+
+function createSpyD1(respond: { first?: unknown; all?: unknown[] } = {}): {
+  d1: D1Database;
+  calls: SpyCall[];
+} {
+  const calls: SpyCall[] = [];
+  const d1: D1Database = {
+    prepare(query: string): D1PreparedStatement {
+      const binds: unknown[] = [];
+      const stmt: D1PreparedStatement = {
+        bind(...values: unknown[]) {
+          binds.push(...values);
+          return stmt;
+        },
+        async first<T>(): Promise<T | null> {
+          calls.push({ query, binds: [...binds], method: "first" });
+          return (respond.first ?? null) as T | null;
+        },
+        async all<T>(): Promise<{ results: T[] }> {
+          calls.push({ query, binds: [...binds], method: "all" });
+          return { results: (respond.all ?? []) as T[] };
+        },
+        async run(): Promise<unknown> {
+          calls.push({ query, binds: [...binds], method: "run" });
+          return {};
+        },
+      };
+      return stmt;
+    },
+  };
+  return { d1, calls };
+}
+
+describe("D1 ConnectDb SQL", () => {
+  it("markTokenShown issues exactly one UPDATE nulling the ciphertext", async () => {
+    const { d1, calls } = createSpyD1();
+    const db = createD1ConnectDb(d1);
+    await db.markTokenShown("ep_1", "2026-07-24T02:00:00.000Z");
+    expect(calls).toHaveLength(1);
+    const call = calls[0];
+    expect(call?.method).toBe("run");
+    expect(call?.query).toContain("token_shown_at = ?");
+    expect(call?.query).toContain("token_ciphertext = NULL");
+    expect(call?.binds).toEqual(["2026-07-24T02:00:00.000Z", "ep_1"]);
+  });
+
+  it("updateInviteStatus full patch keeps placeholder↔bind alignment", async () => {
+    const { d1, calls } = createSpyD1();
+    const db = createD1ConnectDb(d1);
+    await db.updateInviteStatus("inv_1", {
+      status: "provisioned",
+      slug: "alice",
+      provisioned_at: "2026-07-24T01:00:00.000Z",
+      revoked_at: null,
+    });
+    expect(calls).toHaveLength(1);
+    const call = calls[0];
+    expect(call?.query).toBe(
+      "UPDATE invites SET status = ?, slug = ?, provisioned_at = ?, revoked_at = ? WHERE id = ?",
+    );
+    expect(call?.binds).toEqual(["provisioned", "alice", "2026-07-24T01:00:00.000Z", null, "inv_1"]);
+  });
+
+  it("updateInviteStatus status-only patch emits one placeholder", async () => {
+    const { d1, calls } = createSpyD1();
+    const db = createD1ConnectDb(d1);
+    await db.updateInviteStatus("inv_1", { status: "revoked" });
+    expect(calls[0]?.query).toBe("UPDATE invites SET status = ? WHERE id = ?");
+    expect(calls[0]?.binds).toEqual(["revoked", "inv_1"]);
+  });
+
+  it("insertEndpoint binds token fields without leaking them into SQL text", async () => {
+    const { d1, calls } = createSpyD1();
+    const db = createD1ConnectDb(d1);
+    await db.insertEndpoint(makeEndpoint({ token_ciphertext: "s3cret-ciphertext" }));
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.query).not.toContain("s3cret-ciphertext");
+    expect(calls[0]?.binds).toContain("s3cret-ciphertext");
   });
 });
