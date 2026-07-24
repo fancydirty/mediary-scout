@@ -21,13 +21,13 @@ export const RESERVED_SLUGS: ReadonlySet<string> = new Set([
 
 export const SLUG_RE = /^(?:[a-z0-9]|[a-z0-9][a-z0-9-]{0,30}[a-z0-9])$/;
 
-export const SLUG_MAX_LENGTH = 32;
+const SLUG_MAX_LENGTH = 32;
 
 export function normalizeSlug(input: string): string {
   return input.trim().toLowerCase();
 }
 
-export function assertSlug(input: string): void {
+export function assertSlug(input: string): string {
   const slug = normalizeSlug(input);
   if (slug.length < 1 || slug.length > SLUG_MAX_LENGTH) {
     throw new Error(
@@ -42,4 +42,5 @@ export function assertSlug(input: string): void {
   if (RESERVED_SLUGS.has(slug)) {
     throw new Error(`reserved slug: ${slug}`);
   }
+  return slug;
 }
