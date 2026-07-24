@@ -23,4 +23,17 @@ describe("slug", () => {
       expect(RESERVED_SLUGS.has(r)).toBe(true);
     }
   });
+
+  it("returns the normalized slug", () => {
+    expect(assertSlug("  Alice-01 ")).toBe("alice-01");
+  });
+
+  it("rejects empty and whitespace-only input", () => {
+    expect(() => assertSlug("")).toThrow();
+    expect(() => assertSlug("   ")).toThrow();
+  });
+
+  it("accepts exactly 32 characters", () => {
+    expect(() => assertSlug("a".repeat(32))).not.toThrow();
+  });
 });
