@@ -192,6 +192,18 @@ Mediary Scout 默认单用户、无登录,公网入口必须靠 Access 这类前
 
 > 想自启:`cloudflared` 容器已 `restart: unless-stopped`,宿主重启会自动拉起;隧道配置在 Cloudflare 侧托管,改公网主机名 / Access 策略都在控制台改,不用动宿主。
 
+### 方式三:Scout Connect（受邀）
+
+若你收到作者的 Scout Connect 邀请链接（`https://mediaryconnect.app/i/...`）:
+
+1. 打开链接，按页显示一次连接信息（含 `TUNNEL_TOKEN`）。
+2. 写入实例 `.env` 的 `TUNNEL_TOKEN=...`（可复制页上的 Agent 提示词交给 coding agent 代配）。
+3. `docker compose --profile tunnel up -d`
+4. 浏览器打开页上的 `https://<slug>.mediaryconnect.app`，完成 Cloudflare Access 邮箱验证。
+
+Public Hostname 与 Access 已由 Connect 控制面配好，服务目标固定为 compose 内 `http://web:3000`。
+网络不稳时可加 `TUNNEL_TRANSPORT_PROTOCOL=http2`。
+
 ## 安全
 
 - 本项目只走**自部署**,作者不托管(见 [distribution-and-legal-positioning.md](distribution-and-legal-positioning.md))。默认单用户、无登录。
