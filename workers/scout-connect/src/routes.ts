@@ -159,12 +159,23 @@ async function createInvite(request: Request, url: URL, deps: RouteDeps): Promis
   if (!email.includes("@")) {
     throw new HttpError(400, "invalid email");
   }
+  // Validate/normalize the slug at creation time so a bad slug fails fast
+  // (400 here) instead of later at provision.
+  const slugRaw = optString(body.slug);
+  let slug: string | null = null;
+  if (slugRaw !== null) {
+    try {
+      slug = assertSlug(slugRaw);
+    } catch (e) {
+      throw new HttpError(400, e instanceof Error ? e.message : "invalid slug");
+    }
+  }
   const invite = await deps.db.insertInvite({
     id: deps.newInviteId(),
     code: deps.newInviteCode(),
     invitee_label: optString(body.invitee_label),
     email,
-    slug: optString(body.slug),
+    slug,
     status: "pending",
     created_at: deps.now(),
     provisioned_at: null,
@@ -209,25 +220,40 @@ async function provisionInvite(
   if (invite.status !== "pending") {
     throw new HttpError(409, "invite not pending");
   }
-  const result = await provisionEndpoint({
-    inviteId: invite.id,
-    slug,
-    deps: {
-      cf: deps.cf,
-      db: deps.db,
-      rootDomain: deps.rootDomain,
-      tokenWrapKeyHex: deps.tokenWrapKeyHex,
-      now: deps.now,
-      newEndpointId: deps.newEndpointId,
-      newAuditId: deps.newAuditId,
+  let result;
+  try {
+    result = await provisionEndpoint({
+      inviteId: invite.id,
+      slug,
+      deps: {
+        cf: deps.cf,
+        db: deps.db,
+        rootDomain: deps.rootDomain,
+        tokenWrapKeyHex: deps.tokenWrapKeyHex,
+        now: deps.now,
+        newEndpointId: deps.newEndpointId,
+        newAuditId: deps.newAuditId,
+      },
+    });
+  } catch (e) {
+    // Domain conflicts (TOCTOU races past the pre-checks above) are client
+    // errors, not 500s. Everything else (CF/D1 failures) stays a 500.
+    const msg = e instanceof Error ? e.message : "";
+    if (msg.includes("invite not pending") || msg.includes("already in use")) {
+      throw new HttpError(409, msg);
+    }
+    throw e;
+  }
+  return json(
+    {
+      hostname: result.hostname,
+      token: result.token,
+      agentPrompt: result.agentPrompt,
+      inviteUrl: `${url.origin}/i/${result.inviteCode}`,
     },
-  });
-  return json({
-    hostname: result.hostname,
-    token: result.token,
-    agentPrompt: result.agentPrompt,
-    inviteUrl: `${url.origin}/i/${result.inviteCode}`,
-  });
+    200,
+    { noStore: true },
+  );
 }
 
 // Read-only mirror of revealByCode's state machine: a GET page render must
@@ -270,10 +296,14 @@ async function revealInvite(deps: RouteDeps, code: string): Promise<Response> {
     case "already_shown":
       return json({ hostname: outcome.hostname, alreadyShown: true });
     case "revealed":
-      return json({
-        hostname: outcome.hostname,
-        token: outcome.token,
-        agentPrompt: outcome.agentPrompt,
-      });
+      return json(
+        {
+          hostname: outcome.hostname,
+          token: outcome.token,
+          agentPrompt: outcome.agentPrompt,
+        },
+        200,
+        { noStore: true },
+      );
   }
 }

@@ -48,8 +48,13 @@ export async function revealByCode(input: {
   // SECURITY: the plaintext token is returned to the caller ONLY — never
   // persisted, never written to the audit log (hostname only there).
   const token = await unwrapToken(endpoint.token_ciphertext, deps.tokenWrapKeyHex);
-  // Sets token_shown_at AND nulls the ciphertext atomically.
-  await db.markTokenShown(endpoint.id, deps.now());
+  // Atomic burn is the commit point: conditional UPDATE wins exactly one
+  // concurrent reveal. A loser gets already_shown and discards its decrypted
+  // copy — the "只显示这一次" promise holds even under racing requests.
+  const burned = await db.markTokenShown(endpoint.id, deps.now());
+  if (!burned) {
+    return { kind: "already_shown", hostname: endpoint.hostname };
+  }
   // Audit is best-effort: the ciphertext is already burned, so a failed audit
   // insert must never block delivery of the one-time token.
   try {

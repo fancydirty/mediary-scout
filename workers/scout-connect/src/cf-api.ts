@@ -243,7 +243,9 @@ export function createCfApi(opts: CfApiOptions): CfApi {
         } catch (e) {
           lastError = e;
           if (!isActiveConnectionsError(e)) throw e;
-          await sleep(1500 * (attemptIdx + 1));
+          if (attemptIdx < 3) {
+            await sleep(1500 * (attemptIdx + 1));
+          }
         }
       }
       throw lastError;

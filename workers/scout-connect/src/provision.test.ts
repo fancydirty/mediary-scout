@@ -397,6 +397,43 @@ describe("provisionEndpoint", () => {
     expect(audits.some((a) => a.action === "provision.orphan")).toBe(true);
   });
 
+  it("insertAudit failure after invite flip: invite rolled back to pending, endpoint row gone, retry succeeds", async () => {
+    const db = createMemoryConnectDb();
+    await db.insertInvite(makePendingInvite());
+    const calls: string[] = [];
+    const deps = makeDeps(db, makeFakeCf(calls));
+
+    // poison ONLY insertAudit — updateInviteStatus succeeds first
+    const inner = db;
+    const failingAuditDb: ConnectDb = {
+      ...inner,
+      async insertAudit() {
+        throw new Error("d1 audit boom");
+      },
+    };
+    await expect(
+      provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps: { ...deps, db: failingAuditDb } }),
+    ).rejects.toThrow(/d1 audit boom/);
+
+    // invite rolled back to pending (not stuck provisioned-without-endpoint)
+    const invite = await db.getInviteById("inv_1");
+    expect(invite?.status).toBe("pending");
+    expect(invite?.slug).toBeNull();
+    expect(invite?.provisioned_at).toBeNull();
+    // phantom endpoint row removed
+    expect(await db.listEndpoints()).toHaveLength(0);
+    // cf resources cleaned
+    expect(countCalls(calls, "del-dns:")).toBe(1);
+    expect(countCalls(calls, "del-access:")).toBe(1);
+    expect(countCalls(calls, "del-tunnel:")).toBe(1);
+
+    // retry works end-to-end
+    const retryDeps = { ...deps, newEndpointId: () => "ep_retry", newAuditId: () => "aud_retry" };
+    const retry = await provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps: retryDeps });
+    expect(retry.hostname).toBe("alice.mediaryconnect.app");
+    expect(await db.listEndpoints()).toHaveLength(1);
+  });
+
   it("dns failure + deleteAccessApp also throws: tunnel still deleted via outer catch", async () => {
     const db = createMemoryConnectDb();
     await db.insertInvite(makePendingInvite());

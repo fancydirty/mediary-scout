@@ -224,4 +224,20 @@ describe("revealByCode", () => {
     expect(endpoint?.token_ciphertext).toBeNull();
     expect(await db.listAudits()).toHaveLength(0);
   });
+
+  it("concurrent reveals: exactly one wins, the other gets already_shown (atomic burn)", async () => {
+    const db = createMemoryConnectDb();
+    await db.insertInvite(makeInvite());
+    await seedEndpointWithToken(db);
+    const deps = makeDeps(db);
+
+    // Fire two reveals back-to-back without awaiting the first — the atomic
+    // conditional burn in markTokenShown decides the winner.
+    const [a, b] = await Promise.all([
+      revealByCode({ code: "code-abc", deps }),
+      revealByCode({ code: "code-abc", deps: { ...deps, newAuditId: () => "aud_y" } }),
+    ]);
+    const kinds = [a.kind, b.kind].sort();
+    expect(kinds).toEqual(["already_shown", "revealed"]);
+  });
 });

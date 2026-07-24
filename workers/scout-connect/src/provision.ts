@@ -58,8 +58,10 @@ export async function provisionEndpoint(input: {
   let tunnelDeleted = false;
   const deleteTunnelOnce = async (): Promise<void> => {
     if (!tunnelDeleted) {
-      tunnelDeleted = true;
+      // Latch AFTER the await: a transient delete failure leaves the flag
+      // unset so a later catch can still retry (404-idempotent = safe).
       await cf.deleteTunnel(tunnelId);
+      tunnelDeleted = true;
     }
   };
 
@@ -143,6 +145,19 @@ export async function provisionEndpoint(input: {
       await db.deleteEndpoint(endpointId);
     } catch {
       // best-effort compensation — original error is what matters
+    }
+    // If updateInviteStatus already flipped the invite to `provisioned` before
+    // a later write (insertAudit) failed, the invite would be stuck forever
+    // (not pending → no re-provision; no endpoint → nothing to revoke). Roll
+    // it back so the admin can retry.
+    try {
+      await db.updateInviteStatus(invite.id, {
+        status: "pending",
+        slug: null,
+        provisioned_at: null,
+      });
+    } catch {
+      // D1 may be the failing component — nothing more we can do
     }
     try {
       await cf.deleteDnsRecord(recordId);

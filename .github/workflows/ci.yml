@@ -43,6 +43,7 @@ jobs:
       - run: npx tsc -p apps/web/tsconfig.json --noEmit
       - run: npx tsc -p apps/desktop/tsconfig.json --noEmit
       - run: npx tsc -p workers/tmdb-proxy/tsconfig.json --noEmit
+      - run: npx tsc -p workers/scout-connect/tsconfig.json --noEmit
       # Production build with NO database — mirrors `docker compose build` (no .env
       # at image-build time). cacheComponents prerenders pages at build; any server
       # component that reads the DB outside a connection()/cookies()/searchParams

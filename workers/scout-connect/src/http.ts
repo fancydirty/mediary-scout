@@ -8,10 +8,13 @@ export class HttpError extends Error {
   }
 }
 
-export function json(data: unknown, status = 200): Response {
+export function json(data: unknown, status = 200, opts: { noStore?: boolean } = {}): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "content-type": "application/json; charset=utf-8" },
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      ...(opts.noStore === true ? { "cache-control": "no-store" } : {}),
+    },
   });
 }
 
