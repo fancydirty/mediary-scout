@@ -85,6 +85,6 @@ on a UDP-restricted network, tell the invitee to add
 ## Tests
 
 `npx vitest run workers/scout-connect` from the repo root (auto-discovered).
-101 unit tests cover slug/auth, crypto wrap/unwrap, CF API client (incl. token
+104 unit tests cover slug/auth, crypto wrap/unwrap, CF API client (incl. token
 non-leakage), D1 SQL shape, provision compensation (CF + D1 failure paths),
 revoke idempotency, one-time reveal state machine, and HTTP routes.
