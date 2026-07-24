@@ -1,0 +1,17 @@
+{
+  "name": "scout-connect",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-01",
+  "workers_dev": false,
+  "routes": [{ "pattern": "mediaryconnect.app", "custom_domain": true }],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "scout-connect",
+      "database_id": "REPLACE_ME"
+    }
+  ],
+  "vars": {
+    "CONNECT_ROOT_DOMAIN": "mediaryconnect.app"
+  }
+}
