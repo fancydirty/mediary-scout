@@ -55,7 +55,7 @@ function readyBody(codeJson: string): string {
 <p>访问地址:<a id="link" target="_blank" rel="noopener"></a></p>
 <p>TUNNEL_TOKEN:</p>
 <pre><code id="tok"></code></pre>
-<p><button id="copy-tok">复制 Token</button> <button id="copy-agent">复制给 Agent</button></p>
+<p><button id="copy-tok" data-label="复制 Token">复制 Token</button> <button id="copy-agent" data-label="复制给 Agent">复制给 Agent</button></p>
 <h2>手动配置步骤</h2>
 <ol>
 <li>进入 mediary-scout 部署目录(docker compose 项目根)。</li>
@@ -71,11 +71,20 @@ function readyBody(codeJson: string): string {
 const CODE=${codeJson};
 const $=(id)=>document.getElementById(id);
 let agentPrompt="";
+async function copyText(btn,text){
+  try{await navigator.clipboard.writeText(text);btn.textContent="已复制 ✓";}
+  catch(_){btn.textContent="复制失败,请手动选择复制";}
+  setTimeout(()=>{btn.textContent=btn.dataset.label||btn.textContent;},2000);
+}
 $("reveal").onclick=async()=>{
   $("reveal").disabled=true;
   let r=null;
   try{r=await fetch("/api/i/"+encodeURIComponent(CODE)+"/reveal",{method:"POST"});}
-  catch(_){$("reveal").disabled=false;return;}
+  catch(_){
+    $("reveal").disabled=false;
+    $("reveal").textContent="网络错误,请重试";
+    return;
+  }
   let d=null;
   try{d=await r.json();}catch(_){}
   // 409 未就绪 / 404 已失效 / 已显示过 → 回到服务端渲染的对应页面
@@ -92,8 +101,8 @@ $("reveal").onclick=async()=>{
   $("start").hidden=true;
   $("result").hidden=false;
 };
-$("copy-tok").onclick=()=>{navigator.clipboard.writeText($("tok").textContent);};
-$("copy-agent").onclick=()=>{navigator.clipboard.writeText(agentPrompt);};
+$("copy-tok").onclick=()=>{copyText($("copy-tok"),$("tok").textContent);};
+$("copy-agent").onclick=()=>{copyText($("copy-agent"),agentPrompt);};
 </script>`;
 }
 

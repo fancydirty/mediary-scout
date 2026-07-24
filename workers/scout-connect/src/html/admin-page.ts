@@ -93,9 +93,9 @@ async function refresh(){
   $("invites").innerHTML=invites.map((i)=>{
     const url=location.origin+"/i/"+i.code;
     const slugCell=i.status==="pending"
-      ?'<input size="12" id="slug-'+i.id+'" value="'+esc(i.slug||"")+'" placeholder="slug">'
+      ?'<input size="12" id="slug-'+esc(i.id)+'" value="'+esc(i.slug||"")+'" placeholder="slug">'
       :esc(i.slug||"");
-    const action=i.status==="pending"?'<button data-provision="'+i.id+'">开通</button>':"";
+    const action=i.status==="pending"?'<button data-provision="'+esc(i.id)+'">开通</button>':"";
     return '<tr><td>'+esc(i.email)+'</td><td>'+esc(i.invitee_label||"")+'</td><td>'+esc(i.status)+'</td><td>'+slugCell+'</td><td><a href="'+esc(url)+'" target="_blank" rel="noopener">链接</a></td><td>'+action+'</td></tr>';
   }).join("");
   for(const b of document.querySelectorAll("[data-provision]")){
@@ -108,7 +108,7 @@ async function refresh(){
     });
   }
   $("endpoints").innerHTML=endpoints.map((e)=>{
-    const action=e.status==="active"||e.status==="revoke_failed"?'<button data-revoke="'+e.id+'">吊销</button>':"";
+    const action=e.status==="active"||e.status==="revoke_failed"?'<button data-revoke="'+esc(e.id)+'">吊销</button>':"";
     return '<tr><td><a href="https://'+esc(e.hostname)+'" target="_blank" rel="noopener">'+esc(e.hostname)+'</a></td><td>'+esc(e.status)+'</td><td>'+esc(e.token_shown_at||"")+'</td><td>'+esc(e.created_at)+'</td><td>'+esc(e.revoked_at||"")+'</td><td>'+action+'</td></tr>';
   }).join("");
   for(const b of document.querySelectorAll("[data-revoke]")){

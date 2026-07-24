@@ -18,7 +18,16 @@ export function json(data: unknown, status = 200): Response {
 export function htmlPage(body: string, status = 200): Response {
   return new Response(body, {
     status,
-    headers: { "content-type": "text/html; charset=utf-8" },
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      // Pages are fully self-contained (inline style/script only), so a strict
+      // CSP is free defense-in-depth for a page that carries a one-time token.
+      "content-security-policy":
+        "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'self'",
+      "x-content-type-options": "nosniff",
+      "frame-ancestors": "'none'",
+      "referrer-policy": "no-referrer",
+    },
   });
 }
 

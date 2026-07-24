@@ -292,6 +292,24 @@ describe("handleRequest", () => {
     expect(html).not.toContain(FIXTURE_TOKEN_1);
   });
 
+  it("GET ready page does not pre-burn: reveal afterwards still returns the token", async () => {
+    const { db, deps } = setup();
+    const seeded = await seedProvisioned(deps);
+
+    await handleRequest(new Request(`${BASE}/i/${seeded.code}`), deps);
+    const invite = await db.getInviteByCode(seeded.code);
+    const ep = await db.getEndpointByInviteId(invite?.id ?? "");
+    expect(ep?.token_ciphertext).not.toBeNull();
+    expect(ep?.token_shown_at).toBeNull();
+
+    const reveal = await handleRequest(
+      new Request(`${BASE}/api/i/${seeded.code}/reveal`, { method: "POST" }),
+      deps,
+    );
+    expect(reveal.status).toBe(200);
+    expect(((await reveal.json()) as { token?: string }).token).toBe(FIXTURE_TOKEN_1);
+  });
+
   it("POST reveal → 200 with token; second reveal → 200 alreadyShown without token", async () => {
     const { deps } = setup();
     const seeded = await seedProvisioned(deps);
