@@ -89,18 +89,20 @@ export async function provisionEndpoint(input: {
     throw e;
   }
 
-  // SECURITY: only ciphertext + sha256 persist. The plaintext token is
-  // returned to the caller once and never touches the db or the audit log.
-  const ciphertext = await wrapToken(token, deps.tokenWrapKeyHex);
-  const sha = await sha256Hex(token);
+  // Post-CF phase (crypto + persistence): all CF resources
+  // (tunnel/ingress/access/dns) exist now. If anything here fails — including
+  // a misconfigured wrap key — the resources would dangle, potentially with no
+  // db row (and thus unreachable by the revoke flow). Spec error-compensation
+  // row: best-effort delete of dns → access → tunnel, remove a partially
+  // inserted endpoint row, plus a best-effort `provision.orphan` audit row
+  // (which may itself fail if D1 is down).
   const endpointId = deps.newEndpointId();
-
-  // Post-CF persistence phase: all CF resources (tunnel/ingress/access/dns)
-  // exist now. If a D1 write fails, the resources would dangle with no db row
-  // (and thus be unreachable by the revoke flow) — spec error-compensation
-  // row: best-effort delete of dns → access → tunnel, plus a best-effort
-  // `provision.orphan` audit row (which may itself fail if D1 is down).
   try {
+    // SECURITY: only ciphertext + sha256 persist. The plaintext token is
+    // returned to the caller once and never touches the db or the audit log.
+    const ciphertext = await wrapToken(token, deps.tokenWrapKeyHex);
+    const sha = await sha256Hex(token);
+
     await db.insertEndpoint({
       id: endpointId,
       invite_id: invite.id,
@@ -134,6 +136,14 @@ export async function provisionEndpoint(input: {
       detail_json: JSON.stringify({ hostname }),
     });
   } catch (e) {
+    // A partially inserted endpoint row would be a phantom pointing at the
+    // (about-to-be-deleted) CF resources and would block any retry via UNIQUE
+    // constraints — remove it best-effort. Forensics live in the orphan audit.
+    try {
+      await db.deleteEndpoint(endpointId);
+    } catch {
+      // best-effort compensation — original error is what matters
+    }
     try {
       await cf.deleteDnsRecord(recordId);
     } catch {
@@ -157,7 +167,12 @@ export async function provisionEndpoint(input: {
         action: "provision.orphan",
         invite_id: invite.id,
         endpoint_id: endpointId,
-        detail_json: JSON.stringify({ hostname }),
+        detail_json: JSON.stringify({
+          hostname,
+          cf_tunnel_id: tunnelId,
+          cf_access_app_id: appId,
+          cf_dns_record_id: recordId,
+        }),
       });
     } catch {
       // D1 itself may be the failing component — nothing more we can do

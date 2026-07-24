@@ -57,6 +57,8 @@ export interface ConnectDb {
   markTokenShown(endpointId: string, at: string): Promise<void>;
   markEndpointRevoked(endpointId: string, at: string): Promise<void>;
   markEndpointRevokeFailed(endpointId: string): Promise<void>;
+  /** Best-effort row removal for orphan compensation (no-op when absent). */
+  deleteEndpoint(endpointId: string): Promise<void>;
   insertAudit(row: AuditRow): Promise<void>;
   listAudits(): Promise<AuditRow[]>;
 }
@@ -258,6 +260,13 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
         .run();
     },
 
+    async deleteEndpoint(endpointId) {
+      await d1
+        .prepare(`DELETE FROM endpoints WHERE id = ?`)
+        .bind(endpointId)
+        .run();
+    },
+
     async insertAudit(row) {
       await d1
         .prepare(
@@ -399,6 +408,10 @@ export function createMemoryConnectDb(): ConnectDb {
         return;
       }
       row.status = "revoke_failed";
+    },
+
+    async deleteEndpoint(endpointId) {
+      endpoints.delete(endpointId);
     },
 
     async insertAudit(row) {

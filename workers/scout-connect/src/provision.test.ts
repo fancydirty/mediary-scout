@@ -267,8 +267,8 @@ describe("provisionEndpoint", () => {
     const calls: string[] = [];
     const deps = makeDeps(db, makeFakeCf(calls));
 
-    // first provision occupies the slug so the retry's insertEndpoint dies on
-    // the UNIQUE invite_id constraint after CF resources already exist
+    // first provision occupies the endpoint id so the retry's insertEndpoint
+    // dies on the endpoints.id PRIMARY KEY after CF resources already exist
     await provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps });
 
     await db.insertInvite(makePendingInvite({ id: "inv_2", code: "code-def" }));
@@ -288,12 +288,15 @@ describe("provisionEndpoint", () => {
     expect(countCalls(calls, "del-access:")).toBe(1);
     expect(countCalls(calls, "del-tunnel:")).toBe(1);
 
-    // orphan audit row recorded, no plaintext token inside
+    // orphan audit row recorded, carrying cf ids for forensics, no plaintext token
     const audits = await db.listAudits();
     const orphan = audits.find((a) => a.action === "provision.orphan");
     expect(orphan).toBeDefined();
     expect(orphan?.actor).toBe("system");
     expect(orphan?.invite_id).toBe("inv_2");
+    expect(orphan?.detail_json).toContain("tid-1");
+    expect(orphan?.detail_json).toContain("app-1");
+    expect(orphan?.detail_json).toContain("rec-1");
     expect(JSON.stringify(orphan)).not.toContain(PLAIN_TOKEN);
 
     // invite stays pending so the admin can retry
@@ -338,5 +341,81 @@ describe("provisionEndpoint", () => {
     expect(calls).toContain("del-dns:boom");
     expect(calls).toContain("del-access:boom");
     expect(calls).toContain("del-tunnel:boom");
+  });
+
+  it("updateInviteStatus failure after successful insert: phantom row removed, cf cleaned, retry possible", async () => {
+    const db = createMemoryConnectDb();
+    await db.insertInvite(makePendingInvite());
+    const calls: string[] = [];
+    const deps = makeDeps(db, makeFakeCf(calls));
+
+    // poison updateInviteStatus to fail once
+    const inner = db;
+    const failingDb: ConnectDb = {
+      ...inner,
+      async updateInviteStatus(id, patch) {
+        throw new Error("d1 update boom");
+      },
+    };
+    await expect(
+      provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps: { ...deps, db: failingDb } }),
+    ).rejects.toThrow(/d1 update boom/);
+
+    // phantom endpoint row removed
+    expect(await db.listEndpoints()).toHaveLength(0);
+    // full cf resource set cleaned
+    expect(countCalls(calls, "del-dns:")).toBe(1);
+    expect(countCalls(calls, "del-access:")).toBe(1);
+    expect(countCalls(calls, "del-tunnel:")).toBe(1);
+    // invite still pending, and a retry with the same slug now succeeds
+    expect((await db.getInviteById("inv_1"))?.status).toBe("pending");
+    const retryDeps = { ...deps, newEndpointId: () => "ep_retry", newAuditId: () => "aud_retry" };
+    const retry = await provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps: retryDeps });
+    expect(retry.hostname).toBe("alice.mediaryconnect.app");
+    expect(await db.listEndpoints()).toHaveLength(1);
+  });
+
+  it("misconfigured wrap key: crypto failure inside persistence phase still cleans up cf resources", async () => {
+    const db = createMemoryConnectDb();
+    await db.insertInvite(makePendingInvite());
+    const calls: string[] = [];
+    const deps = {
+      ...makeDeps(db, makeFakeCf(calls)),
+      tokenWrapKeyHex: "zz", // invalid hex — wrapToken throws
+    };
+
+    await expect(
+      provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps }),
+    ).rejects.toThrow();
+
+    expect(countCalls(calls, "tunnel:")).toBe(1);
+    expect(countCalls(calls, "del-dns:")).toBe(1);
+    expect(countCalls(calls, "del-access:")).toBe(1);
+    expect(countCalls(calls, "del-tunnel:")).toBe(1);
+    expect(await db.listEndpoints()).toHaveLength(0);
+    const audits = await db.listAudits();
+    expect(audits.some((a) => a.action === "provision.orphan")).toBe(true);
+  });
+
+  it("dns failure + deleteAccessApp also throws: tunnel still deleted via outer catch", async () => {
+    const db = createMemoryConnectDb();
+    await db.insertInvite(makePendingInvite());
+    const calls: string[] = [];
+    const base = makeFakeCf(calls, { failOn: "dns" });
+    const cf: CfApi = {
+      ...base,
+      async deleteAccessApp() {
+        calls.push("del-access:boom");
+        throw new Error("delete access boom");
+      },
+    };
+    const deps = makeDeps(db, cf);
+
+    // the thrown error is the delete's, not the original dns error — but the
+    // tunnel must still be cleaned up exactly once by the outer catch
+    await expect(
+      provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps }),
+    ).rejects.toThrow(/delete access boom/);
+    expect(countCalls(calls, "del-tunnel:")).toBe(1);
   });
 });
