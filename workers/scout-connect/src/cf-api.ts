@@ -74,6 +74,17 @@ function cfError(envelope: CfEnvelope | null, status: number): Error {
   return new Error(firstErrorMessage(envelope) ?? `HTTP ${status}`);
 }
 
+function isActiveConnectionsError(e: unknown): boolean {
+  return (
+    e instanceof Error &&
+    (e.message.includes("active connections") || e.message.includes("1022"))
+  );
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function requireString(value: unknown, field: string): string {
   if (typeof value !== "string" || value === "") {
     throw new Error(`cloudflare response missing ${field}`);
@@ -214,9 +225,28 @@ export function createCfApi(opts: CfApiOptions): CfApi {
     },
 
     async deleteTunnel(tunnelId) {
-      await cfDelete(resolved, `${accountPath}/cfd_tunnel/${encodeURIComponent(tunnelId)}`, {
-        notFoundIsSuccess: true,
-      });
+      // CF rejects tunnel deletion with error 1022 while cloudflared still
+      // holds connections open (e.g. revoke right after a live e2e). Close
+      // them first — DELETE .../connections disconnects all replicas — then
+      // retry the delete a few times while connections drain.
+      await cfDelete(
+        resolved,
+        `${accountPath}/cfd_tunnel/${encodeURIComponent(tunnelId)}/connections`,
+        { notFoundIsSuccess: true },
+      );
+      const deleteUrl = `${accountPath}/cfd_tunnel/${encodeURIComponent(tunnelId)}`;
+      let lastError: unknown;
+      for (let attemptIdx = 0; attemptIdx < 4; attemptIdx++) {
+        try {
+          await cfDelete(resolved, deleteUrl, { notFoundIsSuccess: true });
+          return;
+        } catch (e) {
+          lastError = e;
+          if (!isActiveConnectionsError(e)) throw e;
+          await sleep(1500 * (attemptIdx + 1));
+        }
+      }
+      throw lastError;
     },
 
     async deleteDnsRecord(recordId) {

@@ -197,23 +197,54 @@ describe("cf-api", () => {
     expect(err.message).not.toContain("response-token-secret");
   });
 
-  it("deleteTunnel resolves on HTTP 404 (idempotent)", async () => {
+  it("deleteTunnel closes connections first, then deletes the tunnel", async () => {
     const { api, calls } = makeApi([
+      { json: { success: true, errors: [], result: null } }, // connections
+      { json: { success: true, errors: [], result: null } }, // tunnel
+    ]);
+    await expect(api.deleteTunnel("tid")).resolves.toBeUndefined();
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.method).toBe("DELETE");
+    expect(calls[0]!.url).toBe(`${BASE}/accounts/${ACCOUNT_ID}/cfd_tunnel/tid/connections`);
+    expect(calls[1]!.method).toBe("DELETE");
+    expect(calls[1]!.url).toBe(`${BASE}/accounts/${ACCOUNT_ID}/cfd_tunnel/tid`);
+    expect(calls[1]!.headers.Authorization).toBe(`Bearer ${API_TOKEN}`);
+  });
+
+  it("deleteTunnel resolves on HTTP 404 for either call (idempotent)", async () => {
+    const { api } = makeApi([
+      {
+        status: 404,
+        json: { success: false, errors: [{ message: "tunnel not found" }], result: null },
+      },
       {
         status: 404,
         json: { success: false, errors: [{ message: "tunnel not found" }], result: null },
       },
     ]);
     await expect(api.deleteTunnel("tid")).resolves.toBeUndefined();
-    const call = calls[0]!;
-    expect(call.method).toBe("DELETE");
-    expect(call.url).toBe(`${BASE}/accounts/${ACCOUNT_ID}/cfd_tunnel/tid`);
-    expect(call.headers.Authorization).toBe(`Bearer ${API_TOKEN}`);
-    expect(call.body).toBeUndefined();
+  });
+
+  it("deleteTunnel retries on active-connections (1022) then succeeds", async () => {
+    const { api, calls } = makeApi([
+      { json: { success: true, errors: [], result: null } }, // connections closed
+      {
+        json: {
+          success: false,
+          errors: [{ code: 1022, message: "This tunnel has active connections." }],
+          result: null,
+        },
+      },
+      { json: { success: true, errors: [], result: null } }, // retry succeeds
+    ]);
+    await expect(api.deleteTunnel("tid")).resolves.toBeUndefined();
+    expect(calls).toHaveLength(3);
+    expect(calls[2]!.url).toBe(`${BASE}/accounts/${ACCOUNT_ID}/cfd_tunnel/tid`);
   });
 
   it("deleteTunnel resolves on a success:false not-found envelope", async () => {
     const { api } = makeApi([
+      { json: { success: true, errors: [], result: null } },
       {
         json: { success: false, errors: [{ code: 11000, message: "Tunnel not found" }], result: null },
       },
@@ -223,6 +254,7 @@ describe("cf-api", () => {
 
   it("deleteTunnel still throws on other errors", async () => {
     const { api } = makeApi([
+      { json: { success: true, errors: [], result: null } },
       { status: 500, json: { success: false, errors: [{ message: "internal" }], result: null } },
     ]);
     const err = await catchError(api.deleteTunnel("tid"));
