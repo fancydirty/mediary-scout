@@ -147,7 +147,9 @@ export function createCfApi(opts: CfApiOptions): CfApi {
     accountId: opts.accountId,
     zoneId: opts.zoneId,
     apiToken: opts.apiToken,
-    fetchImpl: opts.fetchImpl ?? globalThis.fetch,
+    // workerd throws "Illegal invocation" when fetch is called detached from
+    // globalThis — always wrap the default so it's invoked as a plain call.
+    fetchImpl: opts.fetchImpl ?? ((url, init) => globalThis.fetch(url, init)),
   };
   const accountPath = `${API_BASE}/accounts/${encodeURIComponent(resolved.accountId)}`;
   const zonePath = `${API_BASE}/zones/${encodeURIComponent(resolved.zoneId)}`;
