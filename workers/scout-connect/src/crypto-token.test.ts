@@ -19,7 +19,17 @@ describe("crypto-token", () => {
 
   it("unwrap fails on tamper", async () => {
     const wrapped = await wrapToken("secret", KEY_HEX);
-    await expect(unwrapToken(wrapped.slice(0, -2) + "ff", KEY_HEX)).rejects.toThrow();
+    // Flip a fully-significant middle base64url char deterministically — the
+    // final char carries discarded padding bits, so mutating it can be a no-op.
+    const mid = Math.floor(wrapped.length / 2);
+    const tampered =
+      wrapped.slice(0, mid) + (wrapped[mid] === "A" ? "B" : "A") + wrapped.slice(mid + 1);
+    await expect(unwrapToken(tampered, KEY_HEX)).rejects.toThrow();
+  });
+
+  it("unwrap fails with the wrong key", async () => {
+    const wrapped = await wrapToken("s", KEY_HEX);
+    await expect(unwrapToken(wrapped, "11".repeat(32))).rejects.toThrow();
   });
 
   it("wrapToken rejects non-32-byte keys", async () => {
