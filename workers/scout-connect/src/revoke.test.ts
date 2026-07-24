@@ -159,6 +159,25 @@ describe("revokeEndpoint", () => {
     expect((await db.getEndpointById("ep_1"))?.status).toBe("revoked");
   });
 
+  it("already revoked self-heals a stuck provisioned invite (crash window between the two D1 writes)", async () => {
+    const db = createMemoryConnectDb();
+    // Simulates isolate death between markEndpointRevoked and updateInviteStatus:
+    // endpoint revoked, invite still provisioned with slug set.
+    await db.insertInvite(makeInvite({ status: "provisioned", slug: "alice", provisioned_at: NOW }));
+    await db.insertEndpoint(makeEndpoint({ status: "revoked", revoked_at: NOW }));
+    const calls: string[] = [];
+    const deps = makeDeps(db, makeFakeCf(calls));
+
+    const result = await revokeEndpoint({ endpointId: "ep_1", deps });
+
+    expect(result.hostname).toBe("alice.mediaryconnect.app");
+    expect(calls).toHaveLength(0); // still no cf calls
+    const invite = await db.getInviteById("inv_1");
+    expect(invite?.status).toBe("revoked");
+    expect(invite?.slug).toBeNull();
+    expect(invite?.revoked_at).toBe(NOW);
+  });
+
   it("access-app delete throws: dns+tunnel still attempted, revoke_failed, audit written, error rethrown, invite NOT revoked", async () => {
     const db = createMemoryConnectDb();
     await db.insertInvite(makeInvite());

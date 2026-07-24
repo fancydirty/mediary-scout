@@ -29,8 +29,20 @@ export async function revokeEndpoint(input: {
   if (endpoint === null) {
     throw new Error("endpoint not found");
   }
-  // Idempotent: already revoked → nothing to do. No cf calls, no audit row.
+  // Idempotent: already revoked → no cf calls, no audit row. But self-heal a
+  // partial crash window: if the isolate died between markEndpointRevoked and
+  // updateInviteStatus, the invite is stuck `provisioned` (slug set) forever —
+  // and revealByCode would still hand out the (deleted) tunnel's token. Flip
+  // the invite here when it's not already revoked.
   if (endpoint.status === "revoked") {
+    const invite = await db.getInviteById(endpoint.invite_id);
+    if (invite !== null && invite.status !== "revoked") {
+      await db.updateInviteStatus(invite.id, {
+        status: "revoked",
+        slug: null,
+        revoked_at: deps.now(),
+      });
+    }
     return { endpointId, hostname: endpoint.hostname };
   }
 
@@ -84,7 +96,7 @@ export async function revokeEndpoint(input: {
     endpoint_id: endpointId,
     detail_json: JSON.stringify({
       hostname: endpoint.hostname,
-      error: errorMessage(firstError),
+      errors: failures.map(errorMessage),
     }),
   });
   throw firstError;

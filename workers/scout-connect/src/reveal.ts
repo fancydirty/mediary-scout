@@ -50,15 +50,21 @@ export async function revealByCode(input: {
   const token = await unwrapToken(endpoint.token_ciphertext, deps.tokenWrapKeyHex);
   // Sets token_shown_at AND nulls the ciphertext atomically.
   await db.markTokenShown(endpoint.id, deps.now());
-  await db.insertAudit({
-    id: deps.newAuditId(),
-    at: deps.now(),
-    actor: "invitee",
-    action: "token.reveal",
-    invite_id: invite.id,
-    endpoint_id: endpoint.id,
-    detail_json: JSON.stringify({ hostname: endpoint.hostname }),
-  });
+  // Audit is best-effort: the ciphertext is already burned, so a failed audit
+  // insert must never block delivery of the one-time token.
+  try {
+    await db.insertAudit({
+      id: deps.newAuditId(),
+      at: deps.now(),
+      actor: "invitee",
+      action: "token.reveal",
+      invite_id: invite.id,
+      endpoint_id: endpoint.id,
+      detail_json: JSON.stringify({ hostname: endpoint.hostname }),
+    });
+  } catch {
+    // audit lost — delivering the token takes precedence
+  }
   return {
     kind: "revealed",
     hostname: endpoint.hostname,

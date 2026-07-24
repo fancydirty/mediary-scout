@@ -198,4 +198,30 @@ describe("revealByCode", () => {
     }
     expect(outcome.token).toBe(tricky);
   });
+
+  it("audit insert failure after the burn still delivers the token (best-effort audit)", async () => {
+    const db = createMemoryConnectDb();
+    await db.insertInvite(makeInvite());
+    await seedEndpointWithToken(db);
+    const inner = db;
+    const failingAuditDb = {
+      ...inner,
+      async insertAudit(): Promise<void> {
+        throw new Error("d1 audit boom");
+      },
+    };
+    const deps = { ...makeDeps(db), db: failingAuditDb };
+
+    const outcome = await revealByCode({ code: "code-abc", deps });
+
+    if (outcome.kind !== "revealed") {
+      throw new Error(`expected revealed, got ${outcome.kind}`);
+    }
+    expect(outcome.token).toBe(PLAIN_TOKEN);
+    // burn still happened — ciphertext is gone despite the lost audit
+    const endpoint = await db.getEndpointById("ep_1");
+    expect(endpoint?.token_shown_at).toBe(NOW);
+    expect(endpoint?.token_ciphertext).toBeNull();
+    expect(await db.listAudits()).toHaveLength(0);
+  });
 });
