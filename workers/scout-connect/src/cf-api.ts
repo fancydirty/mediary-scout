@@ -122,13 +122,14 @@ async function cfJson(
   return envelope.result;
 }
 
-async function cfDelete(
-  resolved: ResolvedOptions,
-  url: string,
-  opts: { notFoundIsSuccess?: boolean } = {},
-): Promise<void> {
+// ALL deletes are idempotent by design (revoke can be retried safely):
+//  - HTTP 404 → already gone, success.
+//  - 2xx with success:false whose errors say "not found"/"does not exist" →
+//    also success (CF products phrase not-found differently per resource).
+// Anything else is a real error.
+async function cfDelete(resolved: ResolvedOptions, url: string): Promise<void> {
   const res = await resolved.fetchImpl(url, requestInit(resolved, "DELETE", undefined));
-  // 404 → already gone; revoke is idempotent. Checked BEFORE parsing the body.
+  // 404 → already gone. Checked BEFORE parsing the body.
   if (res.status === 404) return;
   let envelope: CfEnvelope | null = null;
   try {
@@ -137,7 +138,7 @@ async function cfDelete(
     envelope = null;
   }
   if (!res.ok || (envelope !== null && !envelope.success)) {
-    if (opts.notFoundIsSuccess === true && isNotFoundEnvelope(envelope)) return;
+    if (isNotFoundEnvelope(envelope)) return;
     throw cfError(envelope, res.status);
   }
 }
@@ -232,13 +233,12 @@ export function createCfApi(opts: CfApiOptions): CfApi {
       await cfDelete(
         resolved,
         `${accountPath}/cfd_tunnel/${encodeURIComponent(tunnelId)}/connections`,
-        { notFoundIsSuccess: true },
       );
       const deleteUrl = `${accountPath}/cfd_tunnel/${encodeURIComponent(tunnelId)}`;
       let lastError: unknown;
       for (let attemptIdx = 0; attemptIdx < 4; attemptIdx++) {
         try {
-          await cfDelete(resolved, deleteUrl, { notFoundIsSuccess: true });
+          await cfDelete(resolved, deleteUrl);
           return;
         } catch (e) {
           lastError = e;

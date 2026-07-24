@@ -127,8 +127,14 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
   const revokeMatch = path.match(/^\/api\/admin\/endpoints\/([^/]+)\/revoke$/);
   if (revokeMatch !== null && method === "POST") {
     requireAdmin(request, deps.adminToken);
+    const endpointId = decodeParam(revokeMatch[1] ?? "");
+    // 404 (not 500) for a missing endpoint — the admin client distinguishes
+    // "already gone" from "revoke failed".
+    if ((await deps.db.getEndpointById(endpointId)) === null) {
+      throw new HttpError(404, "endpoint not found");
+    }
     const result = await revokeEndpoint({
-      endpointId: decodeParam(revokeMatch[1] ?? ""),
+      endpointId,
       deps: { cf: deps.cf, db: deps.db, now: deps.now, newAuditId: deps.newAuditId },
     });
     return json({ hostname: result.hostname, revoked: true });

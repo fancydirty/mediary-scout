@@ -26,9 +26,11 @@ export function htmlPage(body: string, status = 200): Response {
       // Pages are fully self-contained (inline style/script only), so a strict
       // CSP is free defense-in-depth for a page that carries a one-time token.
       "content-security-policy":
-        "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'self'",
+        "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
       "x-content-type-options": "nosniff",
-      "frame-ancestors": "'none'",
+      // frame-ancestors only works as a CSP directive (above); x-frame-options
+      // is the legacy header that actually blocks framing in older browsers.
+      "x-frame-options": "DENY",
       "referrer-policy": "no-referrer",
     },
   });
