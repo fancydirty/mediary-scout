@@ -53,6 +53,8 @@ export interface ConnectDb {
   insertEndpoint(row: EndpointRow): Promise<EndpointRow>;
   getEndpointById(id: string): Promise<EndpointRow | null>;
   getEndpointByInviteId(inviteId: string): Promise<EndpointRow | null>;
+  /** Targeted existence check for the slug/hostname availability precheck. */
+  findEndpointBySlugOrHostname(slug: string, hostname: string): Promise<Pick<EndpointRow, "slug" | "hostname"> | null>;
   listEndpoints(): Promise<EndpointRow[]>;
   /**
    * Atomic burn: sets shown_at + nulls ciphertext only if not already burned.
@@ -237,6 +239,16 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
       return row === null ? null : mapEndpoint(row);
     },
 
+    async findEndpointBySlugOrHostname(slug, hostname) {
+      const row = await d1
+        .prepare(`SELECT slug, hostname FROM endpoints WHERE slug = ? OR hostname = ? LIMIT 1`)
+        .bind(slug, hostname)
+        .first<RawRow>();
+      return row === null
+        ? null
+        : { slug: row.slug as string, hostname: row.hostname as string };
+    },
+
     async listEndpoints() {
       const { results } = await d1
         .prepare(`SELECT * FROM endpoints ORDER BY created_at DESC, id DESC`)
@@ -384,6 +396,15 @@ export function createMemoryConnectDb(): ConnectDb {
       for (const row of endpoints.values()) {
         if (row.invite_id === inviteId) {
           return { ...row };
+        }
+      }
+      return null;
+    },
+
+    async findEndpointBySlugOrHostname(slug, hostname) {
+      for (const row of endpoints.values()) {
+        if (row.slug === slug || row.hostname === hostname) {
+          return { slug: row.slug, hostname: row.hostname };
         }
       }
       return null;

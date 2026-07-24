@@ -42,12 +42,16 @@ export async function provisionEndpoint(input: {
   const slug = assertSlug(input.slug);
   const hostname = `${slug}.${deps.rootDomain}`;
 
-  // Slug-availability precheck: shrinks the window where a retry would burn a
-  // full set of CF resources only to die on a UNIQUE constraint at insert time.
-  for (const existing of await db.listEndpoints()) {
-    if (existing.slug === slug || existing.hostname === hostname) {
+  // Slug/hostname availability precheck: shrinks the window where a retry
+  // would burn a full set of CF resources only to die on a UNIQUE constraint
+  // at insert time. Targeted existence query; the UNIQUE constraints on
+  // endpoints.slug/hostname remain the final authority.
+  const conflict = await db.findEndpointBySlugOrHostname(slug, hostname);
+  if (conflict !== null) {
+    if (conflict.slug === slug) {
       throw new Error(`slug already in use: ${slug}`);
     }
+    throw new Error(`hostname already in use: ${hostname}`);
   }
 
   const { tunnelId, token } = await cf.createTunnel(`scout-${slug}`);

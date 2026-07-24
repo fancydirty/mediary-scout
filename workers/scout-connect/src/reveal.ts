@@ -38,6 +38,12 @@ export async function revealByCode(input: {
     // Edge: provisioning half-done (invite flipped, endpoint row missing).
     return { kind: "not_ready" };
   }
+  // A revoked / revoke_failed endpoint must never hand out its (deleted)
+  // tunnel's token — and must not leak that the code was ever valid. Treat
+  // exactly like an unknown code, before any token logic.
+  if (endpoint.status !== "active") {
+    return { kind: "not_found" };
+  }
   // One-time reveal: either already shown, or ciphertext gone (corrupt
   // state — defensively refuse to attempt a decrypt). No audit row here:
   // page refreshes must not spam the audit log unboundedly.

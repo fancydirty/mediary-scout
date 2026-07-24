@@ -225,6 +225,21 @@ describe("revealByCode", () => {
     expect(await db.listAudits()).toHaveLength(0);
   });
 
+  it("revoked endpoint under a still-provisioned invite → not_found (no token, no validity leak)", async () => {
+    const db = createMemoryConnectDb();
+    await db.insertInvite(makeInvite()); // provisioned
+    await seedEndpointWithToken(db);
+    await db.markEndpointRevoked("ep_1", NOW);
+
+    const outcome = await revealByCode({ code: "code-abc", deps: makeDeps(db) });
+
+    expect(outcome).toEqual({ kind: "not_found" });
+    // ciphertext must NOT have been burned — admin forensics stay intact
+    const endpoint = await db.getEndpointById("ep_1");
+    expect(endpoint?.token_ciphertext).not.toBeNull();
+    expect(await db.listAudits()).toHaveLength(0);
+  });
+
   it("concurrent reveals: exactly one wins, the other gets already_shown (atomic burn)", async () => {
     const db = createMemoryConnectDb();
     await db.insertInvite(makeInvite());

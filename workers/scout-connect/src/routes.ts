@@ -278,6 +278,11 @@ async function inviteState(deps: RouteDeps, code: string): Promise<InvitePageSta
     // provisioning half-done (invite flipped, endpoint row missing)
     return { kind: "waiting" };
   }
+  // Match revealByCode: a non-active endpoint is an invalid link — never show
+  // a hostname or ready/revealed state for a revoked/revoke_failed endpoint.
+  if (endpoint.status !== "active") {
+    return { kind: "not_found" };
+  }
   if (endpoint.token_shown_at !== null || endpoint.token_ciphertext === null) {
     return { kind: "revealed", hostname: endpoint.hostname };
   }

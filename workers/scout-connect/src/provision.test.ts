@@ -246,6 +246,35 @@ describe("provisionEndpoint", () => {
     expect(unwrapped).toBe(result.token);
   });
 
+  it("hostname conflict error names the hostname, not the slug", async () => {
+    const db = createMemoryConnectDb();
+    await db.insertInvite(makePendingInvite());
+    const calls: string[] = [];
+    const deps = makeDeps(db, makeFakeCf(calls));
+    // pre-seed an endpoint whose hostname collides but slug differs
+    await db.insertEndpoint({
+      id: "ep_other",
+      invite_id: "inv_other",
+      slug: "other",
+      hostname: "alice.mediaryconnect.app",
+      cf_tunnel_id: "tid-x",
+      cf_access_app_id: "app-x",
+      cf_access_policy_id: null,
+      cf_dns_record_id: "rec-x",
+      status: "active",
+      token_sha256: "x",
+      token_ciphertext: null,
+      token_shown_at: null,
+      created_at: NOW,
+      revoked_at: null,
+    });
+
+    await expect(
+      provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps }),
+    ).rejects.toThrow(/hostname already in use/);
+    expect(calls).toHaveLength(0);
+  });
+
   it("rejects a slug already used by an existing endpoint before any cf call", async () => {
     const db = createMemoryConnectDb();
     await db.insertInvite(makePendingInvite());
