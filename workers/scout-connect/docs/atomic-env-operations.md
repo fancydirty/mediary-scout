@@ -41,9 +41,35 @@ echo "✓ 备份到 $BACKUP_FILE"
 # 结果 600 的 .env 静默变成 644——token 对同机其他用户可读。
 cp -p .env .env.new
 # 读取原 .env，保留所有非 TUNNEL_TOKEN 的行（'>' 截断写入，不改动已有权限）
+# grep 退出码：0=有匹配行，1=没有保留行（.env 只有 TUNNEL_TOKEN，合法），
+# >=2 才是真错误。必须区分——若 grep 报错，'>' 已把 .env.new 截断成空，
+# 继续 mv 会用「只剩 token」的文件覆盖 .env，静默清空 API_KEY/DB 等全部配置。
 grep -v '^TUNNEL_TOKEN=' .env > .env.new
+GREP_RC=$?
+if [ "$GREP_RC" -ge 2 ]; then
+  echo "❌ 读取 .env 失败（grep 退出码 ${GREP_RC}），已中止，.env 未被改动"
+  rm -f .env.new
+  exit 1
+fi
 # 追加新 token（用 printf 避免 shell 展开）
-printf 'TUNNEL_TOKEN=%s\n' '新token' >> .env.new
+if ! printf 'TUNNEL_TOKEN=%s\n' '新token' >> .env.new; then
+  echo "❌ 写入 token 失败，已中止，.env 未被改动"
+  rm -f .env.new
+  exit 1
+fi
+# 替换前自检：非 token 行数必须与原文件一致，且新文件含 TUNNEL_TOKEN
+OLD_KEPT=$(grep -cv '^TUNNEL_TOKEN=' .env || true)
+NEW_KEPT=$(grep -cv '^TUNNEL_TOKEN=' .env.new || true)
+if [ "$OLD_KEPT" != "$NEW_KEPT" ]; then
+  echo "❌ 新文件丢了配置行（原 $OLD_KEPT 行 → 新 $NEW_KEPT 行），已中止"
+  rm -f .env.new
+  exit 1
+fi
+if ! grep -q '^TUNNEL_TOKEN=' .env.new; then
+  echo "❌ 新文件里没有 TUNNEL_TOKEN，已中止"
+  rm -f .env.new
+  exit 1
+fi
 # 原子替换
 mv .env.new .env
 # 复核权限
@@ -55,8 +81,8 @@ echo "✓ .env 权限: $(ls -l .env | cut -c1-10)"
 # 必须先 stop + rm -f 再 up -d：
 # 1) up -d 可能复用已有容器，不会重读新的 TUNNEL_TOKEN
 # 2) 旧容器的日志里已有 Registered 行，会让坏 token 假装验证通过
-docker compose stop cloudflared 2>/dev/null || true
-docker compose rm -f cloudflared 2>/dev/null || true
+docker compose --profile tunnel stop cloudflared 2>/dev/null || true
+docker compose --profile tunnel rm -f cloudflared 2>/dev/null || true
 docker compose --profile tunnel up -d --force-recreate cloudflared
 # 等待最多 60 秒，每 5 秒检查一次（首次拉镜像可能较慢）
 # cloudflared 正常会建立 4 条连接（connIndex=0..3），健康标准是 4 条
@@ -67,9 +93,9 @@ while [ $ELAPSED -lt $MAX_WAIT ]; do
   sleep 5
   ELAPSED=$((ELAPSED + 5))
   # grep -c 无匹配时退出码为 1，用 || true 防止 set -e 提前中断
-  REGISTERED=$(docker compose logs cloudflared --tail 50 2>/dev/null | grep -c "Registered tunnel connection" || true)
+  REGISTERED=$(docker compose --profile tunnel logs cloudflared --tail 50 2>/dev/null | grep -c "Registered tunnel connection" || true)
   if [ "$REGISTERED" -ge 4 ]; then
-    echo "✅ Tunnel 连接成功（Registered ×$REGISTERED）"
+    echo "✅ Tunnel 连接成功（Registered ×${REGISTERED}）"
     break
   fi
 done
@@ -89,12 +115,20 @@ if [ "$REGISTERED" -eq 0 ]; then
     echo "❌ 找不到备份文件"
     exit 1
   fi
-  cp "$RESTORE_FROM" .env
+  # 回滚本身也要校验，否则「回滚完 .env 还是坏的」而且没人知道
+  if ! cp "$RESTORE_FROM" .env; then
+    echo "❌ 回滚失败（cp 非零）！请手动执行: cp $RESTORE_FROM .env"
+    exit 1
+  fi
+  if [ "$(wc -c < "$RESTORE_FROM")" != "$(wc -c < .env)" ]; then
+    echo "❌ 回滚不完整！请手动执行: cp $RESTORE_FROM .env"
+    exit 1
+  fi
   echo "✓ 已从 $RESTORE_FROM 恢复"
   # 必须用 stop + rm + up -d（重读 .env），down 不支持指定服务名
-  docker compose stop cloudflared 2>/dev/null || true
-  docker compose rm -f cloudflared 2>/dev/null || true
-  docker compose --profile tunnel up -d cloudflared
+  docker compose --profile tunnel stop cloudflared 2>/dev/null || true
+  docker compose --profile tunnel rm -f cloudflared 2>/dev/null || true
+  docker compose --profile tunnel up -d --force-recreate cloudflared
   echo "✅ 已回滚，服务恢复到配置前状态"
   exit 1
 fi
@@ -108,13 +142,16 @@ fi
 
 1. **原子操作** — mv 是原子的，不会"写了一半"
 2. **备份可信** — 检查 cp 退出码 + 字节数，杜绝回滚到截断文件
-3. **权限不外泄** — 用 `cp -p` 继承权限，绝不用 `stat` 解析（GNU 的 `-f` 语义不同，
+3. **写入不丢配置** — 区分 grep 退出码 1（合法）与 >=2（错误），替换前比对
+   非 token 行数。否则 grep 出错时 '>' 已清空临时文件，mv 会把 .env 变成「只剩 token」
+4. **回滚也校验** — 恢复后同样比对字节数，失败就打印手动命令
+5. **权限不外泄** — 用 `cp -p` 继承权限，绝不用 `stat` 解析（GNU 的 `-f` 语义不同，
    会让含 token 的 600 文件静默变 644）
-4. **强制验证** — 写完必须检查 Registered，健康标准 4 条
-5. **容器强制重建** — 先 stop + rm -f 再 `up -d --force-recreate`，
+6. **强制验证** — 写完必须检查 Registered，健康标准 4 条
+7. **容器强制重建** — 先 stop + rm -f 再 `up -d --force-recreate`，
    否则复用旧容器会读不到新 token，且旧日志的 Registered 行会让坏 token 假装通过
-6. **自动回滚** — 验证失败立刻恢复，优先用本次运行的备份而非 `ls -t`
-7. **用户永远有备份** — 所有 .env.bak-* 文件保留
+8. **自动回滚** — 验证失败立刻恢复，优先用本次运行的备份而非 `ls -t`
+9. **用户永远有备份** — 所有 .env.bak-* 文件保留
 
 ## 用户体验
 
