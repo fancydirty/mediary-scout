@@ -13,10 +13,20 @@
 **第 1 步：完整备份**
 ```bash
 BACKUP_FILE=".env.bak-$(date +%Y%m%d-%H%M%S)"
-cp .env "$BACKUP_FILE"
+# 必须检查 cp 退出码：磁盘满/IO 错误会写出截断文件，光看"文件存在"会漏
+if ! cp .env "$BACKUP_FILE"; then
+  echo "❌ 备份失败（cp 返回非零），停止"
+  exit 1
+fi
 # 验证本次备份是否成功（不依赖旧备份）
 if [ ! -f "$BACKUP_FILE" ]; then
   echo "❌ 备份失败，停止"
+  exit 1
+fi
+# 比对字节数，确认不是被截断的半个文件——回滚到截断的 .env 等于毁掉配置
+if [ "$(wc -c < .env)" != "$(wc -c < "$BACKUP_FILE")" ]; then
+  echo "❌ 备份不完整（大小与原文件不一致），停止"
+  rm -f "$BACKUP_FILE"
   exit 1
 fi
 echo "✓ 备份到 $BACKUP_FILE"
@@ -24,21 +34,30 @@ echo "✓ 备份到 $BACKUP_FILE"
 
 **第 2 步：原子化写入（不是 sed -i）**
 ```bash
-# 保留原 .env 权限（macOS/BSD 用 %Lp，Linux 用 %a，只取权限位）
-ORIG_PERMS=$(stat -f %Lp .env 2>/dev/null || stat -c %a .env 2>/dev/null || echo "644")
-# 读取原 .env，保留所有非 TUNNEL_TOKEN 的行
+# 用 cp -p 建立 .env.new，直接继承原文件权限/属主。
+# 不要用 stat 解析权限位：GNU coreutils 的 -f 是"文件系统信息"，
+# `stat -f %Lp` 会打印文件系统垃圾且退出码为 0，导致 `|| stat -c %a` 兜底
+# 永不触发，chmod 拿到垃圾值失败后被 `|| true` 吞掉，
+# 结果 600 的 .env 静默变成 644——token 对同机其他用户可读。
+cp -p .env .env.new
+# 读取原 .env，保留所有非 TUNNEL_TOKEN 的行（'>' 截断写入，不改动已有权限）
 grep -v '^TUNNEL_TOKEN=' .env > .env.new
 # 追加新 token（用 printf 避免 shell 展开）
 printf 'TUNNEL_TOKEN=%s\n' '新token' >> .env.new
-# 继承权限
-chmod "$ORIG_PERMS" .env.new 2>/dev/null || true
 # 原子替换
 mv .env.new .env
+# 复核权限
+echo "✓ .env 权限: $(ls -l .env | cut -c1-10)"
 ```
 
 **第 3 步：立刻验证**
 ```bash
-docker compose --profile tunnel up -d cloudflared
+# 必须先 stop + rm -f 再 up -d：
+# 1) up -d 可能复用已有容器，不会重读新的 TUNNEL_TOKEN
+# 2) 旧容器的日志里已有 Registered 行，会让坏 token 假装验证通过
+docker compose stop cloudflared 2>/dev/null || true
+docker compose rm -f cloudflared 2>/dev/null || true
+docker compose --profile tunnel up -d --force-recreate cloudflared
 # 等待最多 60 秒，每 5 秒检查一次（首次拉镜像可能较慢）
 # cloudflared 正常会建立 4 条连接（connIndex=0..3），健康标准是 4 条
 MAX_WAIT=60
@@ -60,12 +79,18 @@ done
 if [ "$REGISTERED" -eq 0 ]; then
   echo "❌ 验证失败，自动回滚"
   # 第 4 步：自动回滚
-  LATEST_BACKUP=$(ls -t .env.bak-* 2>/dev/null | head -1)
-  if [ -z "$LATEST_BACKUP" ]; then
+  # 优先用本次运行创建的备份，避免并发/其他备份把 ls -t 带偏
+  if [ -n "$BACKUP_FILE" ] && [ -f "$BACKUP_FILE" ]; then
+    RESTORE_FROM="$BACKUP_FILE"
+  else
+    RESTORE_FROM=$(ls -t .env.bak-* 2>/dev/null | head -1)
+  fi
+  if [ -z "$RESTORE_FROM" ]; then
     echo "❌ 找不到备份文件"
     exit 1
   fi
-  cp "$LATEST_BACKUP" .env
+  cp "$RESTORE_FROM" .env
+  echo "✓ 已从 $RESTORE_FROM 恢复"
   # 必须用 stop + rm + up -d（重读 .env），down 不支持指定服务名
   docker compose stop cloudflared 2>/dev/null || true
   docker compose rm -f cloudflared 2>/dev/null || true
@@ -82,9 +107,14 @@ fi
 ## 关键改进
 
 1. **原子操作** — mv 是原子的，不会"写了一半"
-2. **强制验证** — 写完必须检查 Registered
-3. **自动回滚** — 验证失败立刻恢复
-4. **用户永远有备份** — 所有 .env.bak-* 文件保留
+2. **备份可信** — 检查 cp 退出码 + 字节数，杜绝回滚到截断文件
+3. **权限不外泄** — 用 `cp -p` 继承权限，绝不用 `stat` 解析（GNU 的 `-f` 语义不同，
+   会让含 token 的 600 文件静默变 644）
+4. **强制验证** — 写完必须检查 Registered，健康标准 4 条
+5. **容器强制重建** — 先 stop + rm -f 再 `up -d --force-recreate`，
+   否则复用旧容器会读不到新 token，且旧日志的 Registered 行会让坏 token 假装通过
+6. **自动回滚** — 验证失败立刻恢复，优先用本次运行的备份而非 `ls -t`
+7. **用户永远有备份** — 所有 .env.bak-* 文件保留
 
 ## 用户体验
 

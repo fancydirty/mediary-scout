@@ -38,10 +38,20 @@ describe("buildAgentPrompt", () => {
     expect(out).toContain("docker compose --profile tunnel pull");
     // backup discipline: mandatory cp + verification that the backup exists
     expect(out).toContain('BACKUP_FILE=".env.bak-');
-    expect(out).toContain('cp .env "$BACKUP_FILE"');
+    expect(out).toContain('if ! cp .env "$BACKUP_FILE"');
     expect(out).toContain('if [ ! -f "$BACKUP_FILE" ]');
+    // backup must not be a truncated file (disk-full still creates the dest)
+    expect(out).toContain('"$(wc -c < .env)" != "$(wc -c < "$BACKUP_FILE")"');
     // atomic write: printf with a literal format string, never shell expansion
     expect(out).toContain("printf 'TUNNEL_TOKEN=%s\\n'");
+    // permissions inherited via cp -p. Never parse stat: on GNU coreutils
+    // `stat -f %Lp` prints filesystem info and exits 0, so the `|| stat -c %a`
+    // fallback never runs and a 0600 .env silently becomes 0644.
+    expect(out).toContain("cp -p .env .env.new");
+    // (the phrase appears in an explanatory comment; assert no assignment
+    //  from stat and no chmod of the temp file, i.e. no executable use)
+    expect(out).not.toContain("ORIG_PERMS=");
+    expect(out).not.toContain("chmod \"$ORIG_PERMS\"");
     // rollback must use stop + rm -f + up -d (down can't target a service,
     // restart doesn't re-read .env)
     expect(out).toContain("docker compose stop cloudflared");
@@ -53,6 +63,12 @@ describe("buildAgentPrompt", () => {
     expect(out).toContain('if [ "$REGISTERED" -ge 4 ]');
     // but only 0 connections triggers rollback — never roll back a working tunnel
     expect(out).toContain('if [ "$REGISTERED" -eq 0 ]');
+    // the container must be recreated before verifying, otherwise up -d can
+    // reuse the old container and its stale Registered lines pass a bad token
+    expect(out).toContain("up -d --force-recreate cloudflared");
+    // rollback restores this run's backup, not whatever ls -t happens to pick
+    expect(out).toContain('RESTORE_FROM="$BACKUP_FILE"');
+    expect(out).toContain('cp "$RESTORE_FROM" .env');
     // not "restart" (restart doesn't re-read .env)
     expect(out).toContain("restart 不会重读 .env");
     // Access verification is done by the human, not the agent
