@@ -40,18 +40,24 @@ mv .env.new .env
 ```bash
 docker compose --profile tunnel up -d cloudflared
 # 等待最多 60 秒，每 5 秒检查一次（首次拉镜像可能较慢）
+# cloudflared 正常会建立 4 条连接（connIndex=0..3），健康标准是 4 条
 MAX_WAIT=60
 ELAPSED=0
+REGISTERED=0
 while [ $ELAPSED -lt $MAX_WAIT ]; do
   sleep 5
   ELAPSED=$((ELAPSED + 5))
-  if docker compose logs cloudflared --tail 50 2>/dev/null | grep -q "Registered tunnel connection"; then
-    echo "✅ Tunnel 连接成功"
+  # grep -c 无匹配时退出码为 1，用 || true 防止 set -e 提前中断
+  REGISTERED=$(docker compose logs cloudflared --tail 50 2>/dev/null | grep -c "Registered tunnel connection" || true)
+  if [ "$REGISTERED" -ge 4 ]; then
+    echo "✅ Tunnel 连接成功（Registered ×$REGISTERED）"
     break
   fi
 done
 
-if [ $ELAPSED -ge $MAX_WAIT ]; then
+# 只有 0 条才算失败回滚：1~3 条说明 token 有效、隧道已在转发流量，
+# 回滚一个能用的隧道比连接数不满更糟
+if [ "$REGISTERED" -eq 0 ]; then
   echo "❌ 验证失败，自动回滚"
   # 第 4 步：自动回滚
   LATEST_BACKUP=$(ls -t .env.bak-* 2>/dev/null | head -1)
@@ -66,6 +72,10 @@ if [ $ELAPSED -ge $MAX_WAIT ]; then
   docker compose --profile tunnel up -d cloudflared
   echo "✅ 已回滚，服务恢复到配置前状态"
   exit 1
+fi
+
+if [ "$REGISTERED" -lt 4 ]; then
+  echo "⚠️ 只建立了 $REGISTERED/4 条连接（隧道可用但冗余不足），请报告这个数字"
 fi
 ```
 

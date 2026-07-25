@@ -48,6 +48,11 @@ describe("buildAgentPrompt", () => {
     expect(out).toContain("docker compose rm -f cloudflared");
     // verification polls instead of a fixed sleep (avoids false negatives)
     expect(out).toContain("MAX_WAIT=60");
+    // success requires the documented 4 connections, not just one
+    expect(out).toContain('grep -c "Registered tunnel connection"');
+    expect(out).toContain('if [ "$REGISTERED" -ge 4 ]');
+    // but only 0 connections triggers rollback — never roll back a working tunnel
+    expect(out).toContain('if [ "$REGISTERED" -eq 0 ]');
     // not "restart" (restart doesn't re-read .env)
     expect(out).toContain("restart 不会重读 .env");
     // Access verification is done by the human, not the agent
