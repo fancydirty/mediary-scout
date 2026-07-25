@@ -54,11 +54,15 @@ export function buildAgentPrompt(input: {
     rm -f .env.new
     exit 1
   fi
+  # docker compose 认这些写法都算 TUNNEL_TOKEN：前导空格、= 两侧空格、export 前缀。
+  # 只匹配 '^TUNNEL_TOKEN=' 会漏掉它们，留下一条含旧密钥的重复行，
+  # 而且下面的行数自检也会跟着算错。三处（过滤/计数/校验）必须用同一个正则。
+  TOKEN_RE='^[[:space:]]*(export[[:space:]]+)?TUNNEL_TOKEN[[:space:]]*='
   # 保留所有非 TUNNEL_TOKEN 的行（'>' 截断写入，不改动已有权限）
   # grep 退出码：0=有匹配行，1=没有保留行（.env 只有 TUNNEL_TOKEN，合法），
   # >=2 才是真错误。必须区分——若 grep 报错，'>' 已把 .env.new 截断成空，
   # 继续 mv 会用「只剩 token」的文件覆盖 .env，静默清空 API_KEY/DB 等全部配置。
-  grep -v '^TUNNEL_TOKEN=' .env > .env.new
+  grep -Ev "$TOKEN_RE" .env > .env.new
   GREP_RC=$?
   if [ "$GREP_RC" -ge 2 ]; then
     echo "❌ 读取 .env 失败（grep 退出码 \${GREP_RC}），已中止，.env 未被改动"
@@ -72,20 +76,25 @@ export function buildAgentPrompt(input: {
     exit 1
   fi
   # 替换前自检：新文件必须含 TUNNEL_TOKEN，且非 token 行数与原文件一致
-  OLD_KEPT=$(grep -cv '^TUNNEL_TOKEN=' .env || true)
-  NEW_KEPT=$(grep -cv '^TUNNEL_TOKEN=' .env.new || true)
+  OLD_KEPT=$(grep -Ecv "$TOKEN_RE" .env || true)
+  NEW_KEPT=$(grep -Ecv "$TOKEN_RE" .env.new || true)
   if [ "$OLD_KEPT" != "$NEW_KEPT" ]; then
     echo "❌ 新文件丢了配置行（原 $OLD_KEPT 行 → 新 $NEW_KEPT 行），已中止"
     rm -f .env.new
     exit 1
   fi
-  if ! grep -q '^TUNNEL_TOKEN=' .env.new; then
+  if ! grep -Eq "$TOKEN_RE" .env.new; then
     echo "❌ 新文件里没有 TUNNEL_TOKEN，已中止"
     rm -f .env.new
     exit 1
   fi
-  # 原子替换
-  mv .env.new .env
+  # 原子替换（mv 也要查退出码：只读文件系统/权限问题会让 token 根本没写进去，
+  # 却继续往下验证，最后得出「已写入」的错误结论）
+  if ! mv .env.new .env; then
+    echo "❌ 替换 .env 失败（mv 非零），已中止，.env 未被改动"
+    rm -f .env.new
+    exit 1
+  fi
   # 真的比对权限：备份是替换前的原样，两者权限必须一致。
   # 只 echo 不比对会让保证听起来比实际检查更强（上面那个 stat 坑就是这么藏住的）。
   ENV_MODE=$(ls -l .env | cut -c1-10)
@@ -149,7 +158,21 @@ export function buildAgentPrompt(input: {
     docker compose --profile tunnel stop cloudflared 2>/dev/null || true
     docker compose --profile tunnel rm -f cloudflared 2>/dev/null || true
     docker compose --profile tunnel up -d --force-recreate cloudflared
-    echo "✅ 已回滚,你的服务恢复到配置前状态"
+    # 回滚后必须再验一次：容器可能仍然起不来，这时候说「已恢复」是骗人的
+    RB_ELAPSED=0
+    RB_REGISTERED=0
+    while [ $RB_ELAPSED -lt 30 ]; do
+      sleep 5
+      RB_ELAPSED=$((RB_ELAPSED + 5))
+      RB_REGISTERED=$(docker compose --profile tunnel logs cloudflared --tail 50 2>/dev/null | grep -c "Registered tunnel connection" || true)
+      if [ "$RB_REGISTERED" -ge 1 ]; then break; fi
+    done
+    if [ "$RB_REGISTERED" -ge 1 ]; then
+      echo "✅ 已回滚,你的服务恢复到配置前状态（Registered ×\${RB_REGISTERED}）"
+    else
+      echo "❌ 已还原 .env,但 cloudflared 仍未连上。请把下面日志发给支持:"
+      docker compose --profile tunnel logs cloudflared --tail 30 2>/dev/null || true
+    fi
     exit 1
   fi
   

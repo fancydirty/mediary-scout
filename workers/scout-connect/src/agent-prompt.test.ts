@@ -57,6 +57,17 @@ describe("buildAgentPrompt", () => {
     // grep exit code must be classified: 1 is legal (no non-token lines),
     // >=2 is an error. Without this, a failed grep leaves .env.new truncated
     // by '>' and mv silently wipes every other key out of .env.
+    // one regex for filter/count/check; must cover the forms compose accepts
+    // (leading space, spaces around =, export prefix), otherwise a stale
+    // secret line survives and the line-count self-check miscounts
+    expect(out).toContain(
+      "TOKEN_RE='^[[:space:]]*(export[[:space:]]+)?TUNNEL_TOKEN[[:space:]]*='",
+    );
+    // (the strict form appears in an explanatory comment; assert it is not
+    //  used as an actual grep argument anywhere)
+    expect(out).not.toContain("grep -v '^TUNNEL_TOKEN='");
+    expect(out).not.toContain("grep -cv '^TUNNEL_TOKEN='");
+    expect(out).not.toContain("grep -q '^TUNNEL_TOKEN='");
     expect(out).toContain("GREP_RC=$?");
     expect(out).toContain('if [ "$GREP_RC" -ge 2 ]');
     // pre-replace self-check: kept-line count must match
@@ -67,6 +78,10 @@ describe("buildAgentPrompt", () => {
     expect(out).toContain("docker compose --profile tunnel rm -f cloudflared");
     // rollback's own cp is verified too
     expect(out).toContain('if ! cp "$RESTORE_FROM" .env');
+    // mv is checked; a read-only fs must not look like a successful write
+    expect(out).toContain("if ! mv .env.new .env");
+    // rollback re-verifies before claiming the service is back
+    expect(out).toContain('if [ "$RB_REGISTERED" -ge 1 ]');
     // verification polls instead of a fixed sleep (avoids false negatives)
     expect(out).toContain("MAX_WAIT=60");
     // success requires the documented 4 connections, not just one
