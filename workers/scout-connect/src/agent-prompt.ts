@@ -18,10 +18,21 @@ export function buildAgentPrompt(input: {
 2. 执行 \`docker compose ls\` — 找到 Config file 路径指向 mediary-scout 部署目录的那个 project。
 3. \`cd\` 到该目录,确认 docker-compose.yml 里有名为 web 的服务。若无,停止并向用户确认目录。
 
-第 1 步·写凭证:
+第 1 步·写凭证(铁律:先备份,再写入):
+⚠️ 强制备份步骤(不可跳过):
+  1. 执行 \`cp .env .env.bak-$(date +%Y%m%d-%H%M%S)\` — 完整备份当前 .env 文件
+  2. 确认备份成功: \`ls -lh .env.bak-*\` 应显示刚创建的备份文件
+  3. 若备份失败,立刻停止,不要继续写入
+
+写入步骤:
 - 确保 .env 中有且仅有一行有效: TUNNEL_TOKEN=${input.tunnelToken}
 - 若已有旧 TUNNEL_TOKEN,先用 # 注释备份那行,再写新行;不要动其它配置。
 - 若 .env 不在 git 忽略里(git check-ignore .env 返回非 0),先把 .env 加进 .git/info/exclude。
+
+❌ 绝对禁止:
+- 禁止使用 \`sed -i 's/TUNNEL_TOKEN=.*/.../' .env\` (会覆盖不备份)
+- 禁止使用 \`echo "TUNNEL_TOKEN=..." > .env\` (会覆盖整个文件)
+- 禁止在没有确认备份成功的情况下修改 .env
 
 第 2 步(可选)·UDP 受限: 先跳过,第 4 步失败时再回来加。
 
