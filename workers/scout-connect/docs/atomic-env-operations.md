@@ -24,8 +24,8 @@ echo "✓ 备份到 $BACKUP_FILE"
 
 **第 2 步：原子化写入（不是 sed -i）**
 ```bash
-# 保留原 .env 权限
-ORIG_PERMS=$(stat -f %p .env 2>/dev/null || stat -c %a .env 2>/dev/null)
+# 保留原 .env 权限（macOS/BSD 用 %Lp，Linux 用 %a，只取权限位）
+ORIG_PERMS=$(stat -f %Lp .env 2>/dev/null || stat -c %a .env 2>/dev/null || echo "644")
 # 读取原 .env，保留所有非 TUNNEL_TOKEN 的行
 grep -v '^TUNNEL_TOKEN=' .env > .env.new
 # 追加新 token（用 printf 避免 shell 展开）
@@ -39,10 +39,19 @@ mv .env.new .env
 **第 3 步：立刻验证**
 ```bash
 docker compose --profile tunnel up -d cloudflared
-sleep 15
-if docker compose logs cloudflared --tail 30 | grep -q "Registered tunnel connection"; then
-  echo "✅ Tunnel 连接成功"
-else
+# 等待最多 60 秒，每 5 秒检查一次（首次拉镜像可能较慢）
+MAX_WAIT=60
+ELAPSED=0
+while [ $ELAPSED -lt $MAX_WAIT ]; do
+  sleep 5
+  ELAPSED=$((ELAPSED + 5))
+  if docker compose logs cloudflared --tail 50 2>/dev/null | grep -q "Registered tunnel connection"; then
+    echo "✅ Tunnel 连接成功"
+    break
+  fi
+done
+
+if [ $ELAPSED -ge $MAX_WAIT ]; then
   echo "❌ 验证失败，自动回滚"
   # 第 4 步：自动回滚
   LATEST_BACKUP=$(ls -t .env.bak-* 2>/dev/null | head -1)
@@ -51,8 +60,9 @@ else
     exit 1
   fi
   cp "$LATEST_BACKUP" .env
-  # 必须用 down + up -d（重读 .env），restart 不会重读
-  docker compose --profile tunnel down cloudflared
+  # 必须用 stop + rm + up -d（重读 .env），down 不支持指定服务名
+  docker compose stop cloudflared 2>/dev/null || true
+  docker compose rm -f cloudflared 2>/dev/null || true
   docker compose --profile tunnel up -d cloudflared
   echo "✅ 已回滚，服务恢复到配置前状态"
   exit 1
@@ -84,4 +94,3 @@ fi
 → 自动回滚
 ✓ 服务已恢复
 ```
-# Updated after addressing all Copilot comments
