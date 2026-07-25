@@ -36,8 +36,18 @@ describe("buildAgentPrompt", () => {
     const out = buildAgentPrompt(INPUT);
     // image-pull retry (OrbStack e2e finding)
     expect(out).toContain("docker compose --profile tunnel pull");
-    // backup discipline
-    expect(out).toContain("备份");
+    // backup discipline: mandatory cp + verification that the backup exists
+    expect(out).toContain('BACKUP_FILE=".env.bak-');
+    expect(out).toContain('cp .env "$BACKUP_FILE"');
+    expect(out).toContain('if [ ! -f "$BACKUP_FILE" ]');
+    // atomic write: printf with a literal format string, never shell expansion
+    expect(out).toContain("printf 'TUNNEL_TOKEN=%s\\n'");
+    // rollback must use stop + rm -f + up -d (down can't target a service,
+    // restart doesn't re-read .env)
+    expect(out).toContain("docker compose stop cloudflared");
+    expect(out).toContain("docker compose rm -f cloudflared");
+    // verification polls instead of a fixed sleep (avoids false negatives)
+    expect(out).toContain("MAX_WAIT=60");
     // not "restart" (restart doesn't re-read .env)
     expect(out).toContain("restart 不会重读 .env");
     // Access verification is done by the human, not the agent
