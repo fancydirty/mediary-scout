@@ -38,15 +38,17 @@ export function buildAgentPrompt(input: {
 
 ⚠️ 1c. 立刻验证 + 失败自动回滚:
   \`\`\`bash
-  docker compose restart cloudflared
+  docker compose --profile tunnel up -d cloudflared
   sleep 15
-  if docker compose logs cloudflared --tail 20 | grep -q "Registered tunnel connection"; then
+  if docker compose logs cloudflared --tail 30 | grep -q "Registered tunnel connection"; then
     echo "✅ Tunnel 连接成功"
   else
     echo "❌ 验证失败,自动回滚到备份"
     LATEST_BACKUP=$(ls -t .env.bak-* | head -1)
     cp $LATEST_BACKUP .env
-    docker compose restart cloudflared
+    # 关键：必须用 down + up -d（重读 .env），restart 不会重读
+    docker compose --profile tunnel down cloudflared
+    docker compose --profile tunnel up -d cloudflared
     echo "✅ 已回滚,你的服务恢复到配置前状态"
     exit 1
   fi
