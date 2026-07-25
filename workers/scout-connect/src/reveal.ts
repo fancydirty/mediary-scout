@@ -1,5 +1,5 @@
 import { unwrapToken } from "./crypto-token.js";
-import { buildAgentPrompt } from "./agent-prompt.js";
+import { buildAgentPromptOrManual } from "./agent-prompt.js";
 import type { ConnectDb } from "./db.js";
 
 export interface RevealDeps {
@@ -80,6 +80,9 @@ export async function revealByCode(input: {
     kind: "revealed",
     hostname: endpoint.hostname,
     token,
-    agentPrompt: buildAgentPrompt({ hostname: endpoint.hostname, tunnelToken: token }),
+    agentPrompt: buildAgentPromptOrManual({
+      hostname: endpoint.hostname,
+      tunnelToken: token,
+    }),
   };
 }

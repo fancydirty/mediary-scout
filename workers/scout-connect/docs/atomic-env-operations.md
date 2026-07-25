@@ -12,7 +12,13 @@
 
 **第 1 步：完整备份**
 ```bash
-BACKUP_FILE=".env.bak-$(date +%Y%m%d-%H%M%S)"
+# 加 PID 后缀：同一秒内跑两次（或并发跑）会撞名，把上一份备份覆盖掉，
+# 那就违背了「所有 .env.bak-* 都保留」的承诺。
+BACKUP_FILE=".env.bak-$(date +%Y%m%d-%H%M%S)-$$"
+# 极端情况下仍撞名就别覆盖，直接换一个
+while [ -e "$BACKUP_FILE" ]; do
+  BACKUP_FILE="$BACKUP_FILE-1"
+done
 # 必须检查 cp 退出码：磁盘满/IO 错误会写出截断文件，光看"文件存在"会漏
 if ! cp .env "$BACKUP_FILE"; then
   echo "❌ 备份失败（cp 返回非零），停止"
@@ -60,8 +66,14 @@ if [ "$GREP_RC" -ge 2 ]; then
   rm -f .env.new
   exit 1
 fi
-# 追加新 token（用 printf 避免 shell 展开）
-if ! printf 'TUNNEL_TOKEN=%s\n' '新token' >> .env.new; then
+# 追加新 token。用「带引号的 heredoc」承载 token：内容完全按字面处理，
+# 不做任何展开。绝不要写成 printf ... '<token>'——token 里只要有一个单引号
+# 就会闭合引号，后面的内容会被 shell 当命令执行（这是真实存在过的注入）。
+TOKEN_VALUE=$(cat <<'MEDIARY_TUNNEL_TOKEN_EOF'
+新token
+MEDIARY_TUNNEL_TOKEN_EOF
+)
+if ! printf 'TUNNEL_TOKEN=%s\n' "$TOKEN_VALUE" >> .env.new; then
   echo "❌ 写入 token 失败，已中止，.env 未被改动"
   rm -f .env.new
   exit 1
@@ -176,20 +188,23 @@ fi
 ## 关键改进
 
 1. **原子操作** — mv 是原子的，不会"写了一半"
-2. **备份可信** — 检查 cp 退出码 + 字节数，杜绝回滚到截断文件
-3. **写入不丢配置** — 区分 grep 退出码 1（合法）与 >=2（错误），替换前比对
+2. **备份可信** — 检查 cp 退出码 + 字节数，杜绝回滚到截断文件；文件名带 PID
+   防同秒撞名覆盖
+3. **token 不可注入** — 用带引号的 heredoc 传 token，绝不写进单引号参数里
+   （token 含单引号会闭合引号并执行后面的内容）
+4. **写入不丢配置** — 区分 grep 退出码 1（合法）与 >=2（错误），替换前比对
    非 token 行数，并检查 cp -p / printf / mv 的退出码。否则 grep 出错时 '>'
    已清空临时文件，mv 会把 .env 变成「只剩 token」
-4. **旧 token 一定清干净** — compose 也认 ` TUNNEL_TOKEN = x` 和 `export TUNNEL_TOKEN=x`，
+5. **旧 token 一定清干净** — compose 也认 ` TUNNEL_TOKEN = x` 和 `export TUNNEL_TOKEN=x`，
    过滤/计数/校验统一用 `$TOKEN_RE`，否则会残留一行旧密钥
-5. **回滚也校验** — 恢复后比对字节数，并重新确认 Registered 才敢说「已恢复」
-6. **权限不外泄** — 用 `cp -p` 继承权限，绝不用 `stat` 解析（GNU 的 `-f` 语义不同，
+6. **回滚也校验** — 恢复后比对字节数，并重新确认 Registered 才敢说「已恢复」
+7. **权限不外泄** — 用 `cp -p` 继承权限，绝不用 `stat` 解析（GNU 的 `-f` 语义不同，
    会让含 token 的 600 文件静默变 644）
-7. **强制验证** — 写完必须检查 Registered，健康标准 4 条
-8. **容器强制重建** — 先 stop + rm -f 再 `up -d --force-recreate`，
+8. **强制验证** — 写完必须检查 Registered，健康标准 4 条
+9. **容器强制重建** — 先 stop + rm -f 再 `up -d --force-recreate`，
    否则复用旧容器会读不到新 token，且旧日志的 Registered 行会让坏 token 假装通过
-9. **自动回滚** — 验证失败立刻恢复，优先用本次运行的备份而非 `ls -t`
-10. **用户永远有备份** — 所有 .env.bak-* 文件保留
+10. **自动回滚** — 验证失败立刻恢复，优先用本次运行的备份而非 `ls -t`
+11. **用户永远有备份** — 所有 .env.bak-* 文件保留
 
 ## 用户体验
 

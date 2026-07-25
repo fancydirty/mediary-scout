@@ -1,7 +1,38 @@
+const TOKEN_HEREDOC_MARKER = "MEDIARY_TUNNEL_TOKEN_EOF";
+
+/**
+ * True when the token can be embedded in the generated shell script safely
+ * AND would produce a valid single-line .env entry.
+ *
+ * A quoted heredoc treats its body literally, so quotes/backslashes/newlines
+ * cannot inject commands. The two real problems are:
+ *  - a line equal to the marker, which would end the heredoc early
+ *  - newlines, which are safe but would write a second, malformed .env line
+ */
+export function canEmbedTunnelToken(token: string): boolean {
+  if (token.includes("\n") || token.includes("\r")) return false;
+  if (token.includes(TOKEN_HEREDOC_MARKER)) return false;
+  return true;
+}
+
 export function buildAgentPrompt(input: {
   hostname: string;
   tunnelToken: string;
 }): string {
+  // The token is interpolated into a shell script that the invitee's agent
+  // runs on their machine. Embedding it as '<token>' was a command injection:
+  // a single quote closed the quoting and the rest executed as shell.
+  // It now travels inside a QUOTED heredoc (fully literal, no expansion).
+  if (!canEmbedTunnelToken(input.tunnelToken)) {
+    // Never throw on the reveal path -- that would deny the user their token.
+    // Callers use canEmbedTunnelToken() to fall back to manual instructions.
+    throw new Error("tunnelToken cannot be embedded; check canEmbedTunnelToken");
+  }
+  // The hostname lands in URLs and shell text; it comes from a slug, so keep
+  // it to the DNS charset instead of trusting it.
+  if (!/^[a-zA-Z0-9.-]+$/.test(input.hostname)) {
+    throw new Error("hostname contains characters that cannot be embedded");
+  }
   return `你是在帮用户配置 Mediary Scout 的「Scout Connect」远程访问。
 
 目标:让用户的自托管实例经 Cloudflare Tunnel 发布到:
@@ -21,7 +52,13 @@ export function buildAgentPrompt(input: {
 第 1 步·写凭证(原子化操作 + 自动回滚):
 ⚠️ 1a. 强制备份(不可跳过):
   \`\`\`bash
-  BACKUP_FILE=".env.bak-$(date +%Y%m%d-%H%M%S)"
+  # 加 PID 后缀：同一秒内跑两次（或并发跑）会撞名，把上一份备份覆盖掉，
+  # 那就违背了「所有 .env.bak-* 都保留」的承诺。
+  BACKUP_FILE=".env.bak-$(date +%Y%m%d-%H%M%S)-$$"
+  # 极端情况下仍撞名就别覆盖，直接换一个
+  while [ -e "$BACKUP_FILE" ]; do
+    BACKUP_FILE="$BACKUP_FILE-1"
+  done
   # 必须检查 cp 退出码：磁盘满/IO 错误会写出截断文件，光看"文件存在"会漏
   if ! cp .env "$BACKUP_FILE"; then
     echo "❌ 备份失败（cp 返回非零），停止"
@@ -69,8 +106,14 @@ export function buildAgentPrompt(input: {
     rm -f .env.new
     exit 1
   fi
-  # 追加新 token（用 printf 避免 shell 展开）
-  if ! printf 'TUNNEL_TOKEN=%s\\n' '${input.tunnelToken}' >> .env.new; then
+  # 追加新 token。用「带引号的 heredoc」承载 token：内容完全按字面处理，
+  # 不做任何展开。绝不要写成 printf ... '<token>'——token 里只要有一个单引号
+  # 就会闭合引号，后面的内容会被 shell 当命令执行（这是真实存在过的注入）。
+  TOKEN_VALUE=$(cat <<'${TOKEN_HEREDOC_MARKER}'
+${input.tunnelToken}
+${TOKEN_HEREDOC_MARKER}
+)
+  if ! printf 'TUNNEL_TOKEN=%s\\n' "$TOKEN_VALUE" >> .env.new; then
     echo "❌ 写入 token 失败，已中止，.env 未被改动"
     rm -f .env.new
     exit 1
@@ -225,5 +268,35 @@ export function buildAgentPrompt(input: {
 
 完成后用简短中文汇报三项:隧道是否 Registered、Access 验证页是否(由用户确认)出现、能否进入面板。
 若卡在某步,说明卡在哪、日志关键行、你的下一步建议。
+`;
+}
+
+/**
+ * Delivery-safe wrapper: an unusual token must never block the reveal.
+ *
+ * If the token cannot be embedded in the script (multi-line, or containing
+ * the heredoc marker), return manual instructions instead of throwing, so
+ * the user still gets their token and a way to finish the setup.
+ */
+export function buildAgentPromptOrManual(input: {
+  hostname: string;
+  tunnelToken: string;
+}): string {
+  if (canEmbedTunnelToken(input.tunnelToken)) {
+    return buildAgentPrompt(input);
+  }
+  return `你是在帮用户配置 Mediary Scout 的「Scout Connect」远程访问。
+
+⚠️ 这个 tunnel token 的格式不常见(含换行或保留标记),自动脚本无法安全生成。
+请让用户联系支持重新签发 token,不要尝试手工拼 shell 命令写入。
+
+在此之前可以先确认环境:
+1. \`docker info\` 能跑通(装了 Docker / OrbStack)。
+2. \`docker compose ls\` 找到 mediary-scout 部署目录。
+3. 目标地址是 https://${input.hostname},门禁为 Cloudflare Access 邮箱 OTP。
+
+安全红线:
+- TUNNEL_TOKEN 是机密。不提交 git、不写进文档/截图/issue、不打印日志。
+- 不要用 \`sed -i\` / \`echo >\` 直接改 .env;改前必须备份。
 `;
 }

@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { buildAgentPrompt } from "./agent-prompt.js";
+import {
+  buildAgentPrompt,
+  buildAgentPromptOrManual,
+  canEmbedTunnelToken,
+} from "./agent-prompt.js";
 
 const INPUT = {
   hostname: "kiki-connect.example.com",
@@ -113,6 +117,66 @@ describe("buildAgentPrompt", () => {
     // eslint-disable-next-line no-control-regex
     const bare = out.match(/\$[A-Za-z_][A-Za-z0-9_]*(?=[^\x00-\x7F])/g);
     expect(bare).toBeNull();
+  });
+
+  it("cannot be shell-injected via the token", () => {
+    // Regression: the token used to be embedded as printf ... '<token>'.
+    // A single quote closed the quoting and the remainder ran as a command.
+    const evil = "AB@Cq3'; rm -rf /tmp/PWNED; echo '";
+    const out = buildAgentPrompt({ hostname: "h.example.com", tunnelToken: evil });
+    // never interpolated into a single-quoted argument
+    expect(out).not.toContain(`'${evil}'`);
+    // delivered through a quoted heredoc, so the body is fully literal
+    expect(out).toContain("TOKEN_VALUE=$(cat <<'MEDIARY_TUNNEL_TOKEN_EOF'");
+    expect(out).toContain('printf \'TUNNEL_TOKEN=%s\\n\' "$TOKEN_VALUE"');
+    // the token still appears verbatim exactly once (inside the heredoc)
+    expect(countOccurrences(out, evil)).toBe(1);
+  });
+
+  it("rejects input that could break out of the heredoc", () => {
+    expect(() =>
+      buildAgentPrompt({ hostname: "h.example.com", tunnelToken: "a\nb" }),
+    ).toThrow(/cannot be embedded/);
+    expect(() =>
+      buildAgentPrompt({
+        hostname: "h.example.com",
+        tunnelToken: "x\nMEDIARY_TUNNEL_TOKEN_EOF\nrm -rf /",
+      }),
+    ).toThrow(/cannot be embedded/);
+    expect(() =>
+      buildAgentPrompt({ hostname: "h.example.com; rm -rf /", tunnelToken: "t" }),
+    ).toThrow(/cannot be embedded/);
+  });
+
+  it("gives every backup a collision-proof name", () => {
+    const out = buildAgentPrompt(INPUT);
+    // same-second or concurrent runs must not overwrite an earlier backup
+    expect(out).toContain('BACKUP_FILE=".env.bak-$(date +%Y%m%d-%H%M%S)-$$"');
+    expect(out).toContain('while [ -e "$BACKUP_FILE" ]');
+  });
+
+  it("never blocks token delivery for an unusual token", () => {
+    // A multi-line token can't produce a valid single-line .env entry, but
+    // refusing to build anything would deny the user their token entirely.
+    const multiline = "tok-line1\nline2";
+    expect(canEmbedTunnelToken(multiline)).toBe(false);
+    expect(() => buildAgentPrompt({ hostname: "h.example.com", tunnelToken: multiline })).toThrow();
+    const manual = buildAgentPromptOrManual({
+      hostname: "h.example.com",
+      tunnelToken: multiline,
+    });
+    expect(manual).toContain("自动脚本无法安全生成");
+    expect(manual).toContain("h.example.com");
+    // the manual fallback must not leak the token into the instructions
+    expect(manual).not.toContain(multiline);
+    // and it must not hand the user a shell command to run by hand
+    expect(manual).not.toContain("printf 'TUNNEL_TOKEN=");
+  });
+
+  it("accepts realistic cloudflared tokens", () => {
+    // base64url payloads contain + / = and must not be rejected
+    expect(canEmbedTunnelToken("eyJhIjoiMTY1YSIsInQiOiI5ZjcyIn0=+/")).toBe(true);
+    expect(canEmbedTunnelToken("plain-token")).toBe(true);
   });
 
   it("is deterministic for the same input", () => {

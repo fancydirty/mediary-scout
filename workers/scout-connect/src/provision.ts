@@ -1,6 +1,6 @@
 import { assertSlug } from "./slug.js";
 import { sha256Hex, wrapToken } from "./crypto-token.js";
-import { buildAgentPrompt } from "./agent-prompt.js";
+import { buildAgentPromptOrManual } from "./agent-prompt.js";
 import type { CfApi } from "./cf-api.js";
 import type { ConnectDb } from "./db.js";
 
@@ -204,6 +204,6 @@ export async function provisionEndpoint(input: {
     inviteCode: invite.code,
     hostname,
     token,
-    agentPrompt: buildAgentPrompt({ hostname, tunnelToken: token }),
+    agentPrompt: buildAgentPromptOrManual({ hostname, tunnelToken: token }),
   };
 }
