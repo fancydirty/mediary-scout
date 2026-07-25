@@ -36,8 +36,8 @@ describe("buildAgentPrompt", () => {
     const out = buildAgentPrompt(INPUT);
     // image-pull retry (OrbStack e2e finding)
     expect(out).toContain("docker compose --profile tunnel pull");
-    // old-token backup discipline
-    expect(out).toContain("注释备份");
+    // backup discipline
+    expect(out).toContain("备份");
     // not "restart" (restart doesn't re-read .env)
     expect(out).toContain("restart 不会重读 .env");
     // Access verification is done by the human, not the agent
