@@ -18,21 +18,47 @@ export function buildAgentPrompt(input: {
 2. 执行 \`docker compose ls\` — 找到 Config file 路径指向 mediary-scout 部署目录的那个 project。
 3. \`cd\` 到该目录,确认 docker-compose.yml 里有名为 web 的服务。若无,停止并向用户确认目录。
 
-第 1 步·写凭证(铁律:先备份,再写入):
-⚠️ 强制备份步骤(不可跳过):
-  1. 执行 \`cp .env .env.bak-$(date +%Y%m%d-%H%M%S)\` — 完整备份当前 .env 文件
-  2. 确认备份成功: \`ls -lh .env.bak-*\` 应显示刚创建的备份文件
-  3. 若备份失败,立刻停止,不要继续写入
+第 1 步·写凭证(原子化操作 + 自动回滚):
+⚠️ 1a. 强制备份(不可跳过):
+  \`\`\`bash
+  cp .env .env.bak-$(date +%Y%m%d-%H%M%S)
+  ls -lh .env.bak-* | tail -1  # 确认备份成功
+  \`\`\`
+  若备份失败,立刻停止。
 
-写入步骤:
-- 确保 .env 中有且仅有一行有效: TUNNEL_TOKEN=${input.tunnelToken}
-- 若已有旧 TUNNEL_TOKEN,先用 # 注释备份那行,再写新行;不要动其它配置。
-- 若 .env 不在 git 忽略里(git check-ignore .env 返回非 0),先把 .env 加进 .git/info/exclude。
+⚠️ 1b. 原子化写入(不用 sed -i):
+  \`\`\`bash
+  # 保留所有非 TUNNEL_TOKEN 的行
+  grep -v '^TUNNEL_TOKEN=' .env > .env.new
+  # 追加新 token
+  echo "TUNNEL_TOKEN=${input.tunnelToken}" >> .env.new
+  # 原子替换
+  mv .env.new .env
+  \`\`\`
+
+⚠️ 1c. 立刻验证 + 失败自动回滚:
+  \`\`\`bash
+  docker compose restart cloudflared
+  sleep 15
+  if docker compose logs cloudflared --tail 20 | grep -q "Registered tunnel connection"; then
+    echo "✅ Tunnel 连接成功"
+  else
+    echo "❌ 验证失败,自动回滚到备份"
+    LATEST_BACKUP=$(ls -t .env.bak-* | head -1)
+    cp $LATEST_BACKUP .env
+    docker compose restart cloudflared
+    echo "✅ 已回滚,你的服务恢复到配置前状态"
+    exit 1
+  fi
+  \`\`\`
+
+⚠️ 1d. git 忽略检查:
+  若 .env 不在 git 忽略里,先 \`echo ".env" >> .git/info/exclude\`。
 
 ❌ 绝对禁止:
-- 禁止使用 \`sed -i 's/TUNNEL_TOKEN=.*/.../' .env\` (会覆盖不备份)
-- 禁止使用 \`echo "TUNNEL_TOKEN=..." > .env\` (会覆盖整个文件)
-- 禁止在没有确认备份成功的情况下修改 .env
+- 禁止 \`sed -i\` 或 \`echo >\` 直接覆盖 .env
+- 禁止跳过验证步骤
+- 禁止在没确认备份的情况下修改
 
 第 2 步(可选)·UDP 受限: 先跳过,第 4 步失败时再回来加。
 
