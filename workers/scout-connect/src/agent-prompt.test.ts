@@ -47,7 +47,9 @@ describe("buildAgentPrompt", () => {
     // permissions inherited via cp -p. Never parse stat: on GNU coreutils
     // `stat -f %Lp` prints filesystem info and exits 0, so the `|| stat -c %a`
     // fallback never runs and a 0600 .env silently becomes 0644.
-    expect(out).toContain("cp -p .env .env.new");
+    expect(out).toContain("if ! cp -p .env .env.new");
+    // permissions are actually compared against the backup, not just printed
+    expect(out).toContain('if [ "$ENV_MODE" != "$BAK_MODE" ]');
     // (the phrase appears in an explanatory comment; assert no assignment
     //  from stat and no chmod of the temp file, i.e. no executable use)
     expect(out).not.toContain("ORIG_PERMS=");

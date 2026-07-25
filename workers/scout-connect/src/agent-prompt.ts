@@ -48,7 +48,12 @@ export function buildAgentPrompt(input: {
   # \`stat -f %Lp\` 会打印文件系统垃圾且退出码为 0，导致 \`|| stat -c %a\` 兜底
   # 永不触发，chmod 拿到垃圾值失败后被 \`|| true\` 吞掉，
   # 结果 600 的 .env 静默变成 644——token 对同机其他用户可读。
-  cp -p .env .env.new
+  # 必须检查 cp -p 退出码：失败就意味着权限没继承，不能硬着头皮往下走。
+  if ! cp -p .env .env.new; then
+    echo "❌ 创建 .env.new 失败（cp -p 非零），已中止，.env 未被改动"
+    rm -f .env.new
+    exit 1
+  fi
   # 保留所有非 TUNNEL_TOKEN 的行（'>' 截断写入，不改动已有权限）
   # grep 退出码：0=有匹配行，1=没有保留行（.env 只有 TUNNEL_TOKEN，合法），
   # >=2 才是真错误。必须区分——若 grep 报错，'>' 已把 .env.new 截断成空，
@@ -81,8 +86,15 @@ export function buildAgentPrompt(input: {
   fi
   # 原子替换
   mv .env.new .env
-  # 复核权限确实和备份一致（备份是替换前的原样）
-  echo "✓ .env 权限: $(ls -l .env | cut -c1-10)"
+  # 真的比对权限：备份是替换前的原样，两者权限必须一致。
+  # 只 echo 不比对会让保证听起来比实际检查更强（上面那个 stat 坑就是这么藏住的）。
+  ENV_MODE=$(ls -l .env | cut -c1-10)
+  BAK_MODE=$(ls -l "$BACKUP_FILE" | cut -c1-10)
+  if [ "$ENV_MODE" != "$BAK_MODE" ]; then
+    echo "⚠️ .env 权限($ENV_MODE) 与备份($BAK_MODE) 不一致，请报告这一行"
+  else
+    echo "✓ .env 权限保持 $ENV_MODE"
+  fi
   \`\`\`
 
 ⚠️ 1c. 立刻验证 + 失败自动回滚:
