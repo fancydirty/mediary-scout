@@ -56,13 +56,16 @@ const redirectsToLogin = (req: NextRequest): boolean => {
 };
 
 describe("proxy gate — single-user mode (multi-user off)", () => {
-  it("未设密码：LAN 与远程一律直通（与现状一致）", () => {
+  it("局域网（无 CF 头）→ 直通，零摩擦（设不设密码都一样）", () => {
     expect(redirectsToLogin(makeRequest({}))).toBe(false);
-    expect(redirectsToLogin(makeRequest({ cf: true }))).toBe(false);
+    expect(redirectsToLogin(makeRequest({ passwordSet: true }))).toBe(false);
   });
 
-  it("已设密码 + 局域网（无 CF 头）→ 直通，零摩擦", () => {
-    expect(redirectsToLogin(makeRequest({ passwordSet: true }))).toBe(false);
+  it("未设密码 + 远程 → 仍要重定向到 /login（那里给的是设置密码表单）", () => {
+    // 旧规则是 passwordSet && isRemote，未设密码的实例对公网匿名访客直接放行。
+    // 服务端修复后会返回 acct_unauthenticated，若 proxy 还放行，远程站主只会
+    // 看到一个没有出口的空页面。两侧同规则：远程一律要 session。
+    expect(redirectsToLogin(makeRequest({ cf: true }))).toBe(true);
   });
 
   it("已设密码 + 远程（有 CF 头）+ 无 session → 重定向到登录", () => {
@@ -71,6 +74,10 @@ describe("proxy gate — single-user mode (multi-user off)", () => {
 
   it("已设密码 + 远程 + 有 session → 直通", () => {
     expect(redirectsToLogin(makeRequest({ passwordSet: true, cf: true, session: true }))).toBe(false);
+  });
+
+  it("远程 + 有 session → 直通（未设密码时同理，session 才是判据）", () => {
+    expect(redirectsToLogin(makeRequest({ cf: true, session: true }))).toBe(false);
   });
 
   it("三个 CF 头任一存在都算远程", () => {

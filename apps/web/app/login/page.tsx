@@ -10,6 +10,12 @@ import { HelpCircle, LoaderCircle } from "lucide-react";
  * adopts the seeded acct_default (keeping any existing library), and the copy makes
  * that explicit (接管 if a library already exists, otherwise 创建站主). Once claimed,
  * it's the normal login + open self-registration.
+ *
+ * 单用户 + 尚未设密码（`singleUser && passwordSet === false`）是**设置密码**屏。
+ * 远程访问现在无条件需要 session（Cloudflare Access 已移除，未设密码不再等于开放），
+ * 所以能走到这里的远程站主手上没有任何密码可输——必须就地设一个，否则被锁在外面。
+ * 表单打 `POST /api/auth/password`：该端点在「还没有密码」时不要求认证
+ * （见 app/api/auth/password/route.ts），设置成功后再登录换取 session。
  */
 export default function LoginPage() {
   const [mode, setMode] = useState<"login" | "register">("login");
@@ -36,9 +42,36 @@ export default function LoginPage() {
   // 单用户实例只有 acct_default 一个账号：用户名对最终用户不可见，
   // 只渲染密码框，且没有「创建账号」这回事。
   const singleUser = bootstrap?.singleUser === true;
+  // 单用户且还没有密码 → 设置密码屏（而不是登录屏）。
+  const settingPassword = singleUser && bootstrap?.passwordSet === false;
   // While unclaimed, only registration (→ adopt acct_default) is possible.
   // 单用户永远是登录（只输密码），没有注册这条路。
   const effectiveMode: "login" | "register" = singleUser ? "login" : claiming ? "register" : mode;
+
+  /** 首次设置访问密码，然后立刻用它登录换 session，最后回媒体库。 */
+  const submitNewPassword = () => {
+    setError(null);
+    startTransition(async () => {
+      const res = await fetch("/api/auth/password", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(body.error ?? "设置失败，请重试。");
+        return;
+      }
+      // 设完密码，远程这条路仍然需要 session：顺手登录，免得用户再输一次。
+      // 登录失败（例如限流）也不算致命——密码已经设好，跳回首页会被引导到登录屏。
+      await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ username: "", password }),
+      }).catch(() => undefined);
+      window.location.href = "/";
+    });
+  };
 
   const submit = () => {
     setError(null);
@@ -60,7 +93,7 @@ export default function LoginPage() {
   const title = singleUser
     ? bootstrap?.passwordSet
       ? "输入密码"
-      : "无需登录"
+      : "设置访问密码"
     : claiming
       ? bootstrap?.hasExistingLibrary
         ? "接管这台实例"
@@ -71,7 +104,7 @@ export default function LoginPage() {
   const note = singleUser
     ? bootstrap?.passwordSet
       ? "这台实例已设置访问密码。局域网内无需登录，从外网访问需要输入密码。"
-      : "这台实例还没有设置访问密码，无需登录即可使用。想开启外网访问再来设置。"
+      : "这台实例已开启外网访问，但还没有设置访问密码。任何人只要知道这个网址就能进来，看到你的媒体库、网盘凭据和全部设置。现在设一个密码把它锁上——局域网内依旧免登录。"
     : claiming
     ? bootstrap?.hasExistingLibrary
       ? "这台实例已有媒体库。设置站主用户名 + 密码来接管它——你的库和网盘都会原样归你。"
@@ -79,7 +112,15 @@ export default function LoginPage() {
     : mode === "login"
       ? "登录以访问你的媒体库"
       : "创建一个本地账号开始使用";
-  const buttonText = singleUser ? "进入" : claiming ? "接管并进入" : mode === "login" ? "登录" : "创建并登录";
+  const buttonText = settingPassword
+    ? "设置密码并进入"
+    : singleUser
+      ? "进入"
+      : claiming
+        ? "接管并进入"
+        : mode === "login"
+          ? "登录"
+          : "创建并登录";
 
   return (
     <main style={{ maxWidth: 360, margin: "14vh auto", padding: "0 20px" }}>
@@ -91,15 +132,14 @@ export default function LoginPage() {
           {note}
         </p>
 
-        {singleUser && bootstrap?.passwordSet === false ? (
-          <a className="primary-button" href="/" style={{ display: "block", textDecoration: "none" }}>
-            回到媒体库
-          </a>
-        ) : (
         <form
           onSubmit={(event) => {
             event.preventDefault();
-            submit();
+            if (settingPassword) {
+              submitNewPassword();
+            } else {
+              submit();
+            }
           }}
         >
           {singleUser ? null : (
@@ -120,9 +160,11 @@ export default function LoginPage() {
               className="setting-control"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
-              placeholder="密码"
-              aria-label="密码"
-              autoComplete={effectiveMode === "login" ? "current-password" : "new-password"}
+              placeholder={settingPassword ? "设置密码（至少 6 位）" : "密码"}
+              aria-label={settingPassword ? "设置访问密码" : "密码"}
+              autoComplete={
+                settingPassword || effectiveMode === "register" ? "new-password" : "current-password"
+              }
             />
           </div>
           {error ? (
@@ -139,7 +181,6 @@ export default function LoginPage() {
             {isPending ? <LoaderCircle size={14} className="spin" aria-hidden /> : buttonText}
           </button>
         </form>
-        )}
 
         {!claiming && !singleUser && mode === "register" ? (
           <div style={{ marginTop: 14 }}>

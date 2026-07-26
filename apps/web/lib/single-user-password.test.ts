@@ -29,11 +29,13 @@ describe("single-user password gate", () => {
     expect(await rt.hasLoginPassword()).toBe(false);
   });
 
-  it("resolveSingleUserAccount：未设密码 → 一律开放；设密码 → LAN 开放、远程需 session", async () => {
+  it("resolveSingleUserAccount：LAN 一律开放；远程一律需 session（与密码状态无关）", async () => {
     const rt = await boot();
     // 纯函数，覆盖全部内外/有无 session 组合（这是本 plan 的安全核心判定）
     expect(rt.resolveSingleUserAccount({ hasPassword: false, isRemote: false, sessionAccountId: null })).toBe("acct_default");
-    expect(rt.resolveSingleUserAccount({ hasPassword: false, isRemote: true, sessionAccountId: null })).toBe("acct_default");
+    // 未设密码 + 远程：曾经返回 acct_default —— 匿名公网访客直接拿到站主身份。
+    // Cloudflare Access 移除后这是活的公网洞，已收紧为哨兵。
+    expect(rt.resolveSingleUserAccount({ hasPassword: false, isRemote: true, sessionAccountId: null })).toBe("acct_unauthenticated");
     expect(rt.resolveSingleUserAccount({ hasPassword: true, isRemote: false, sessionAccountId: null })).toBe("acct_default"); // LAN 免登录
     expect(rt.resolveSingleUserAccount({ hasPassword: true, isRemote: true, sessionAccountId: null })).toBe("acct_unauthenticated"); // 远程无 session → 哨兵
     expect(rt.resolveSingleUserAccount({ hasPassword: true, isRemote: true, sessionAccountId: "acct_default" })).toBe("acct_default"); // 远程已登录 → 放行

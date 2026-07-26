@@ -146,3 +146,85 @@ describe("single-user gate wiring (failure paths)", () => {
     expect(await rt.getCurrentAccountId()).toBe("acct_default");
   });
 });
+
+/**
+ * 「未设密码 ⇒ 远程也全开放」是本仓库最严重的一个洞。
+ *
+ * 旧实现在判定远程之前就先 `if (hasPassword === false) return acct_default`，
+ * 于是一个**匿名公网访客**经隧道进来即拿到站主身份：整个媒体库、五个网盘的
+ * 凭据、LLM key 全部可读，且写路径也放行——`requireAuthenticatedAccountId()`
+ * 只拦哨兵 `acct_unauthenticated`，而这条路径压根产不出哨兵。
+ *
+ * 这在 Cloudflare Access 挡在前面时尚可存活；本分支移除了 Access，它就变成
+ * 一个活的公网洞。新规则：**远程一律需要 session，与密码状态无关**；
+ * 局域网维持开放（既定的可信网段设计）。
+ */
+describe("未设密码 + 远程 = 必须 fail-closed（移除 Access 后的公网洞）", () => {
+  it("纯函数：未设密码 + 远程 + 无 session → 哨兵，绝不是 acct_default", async () => {
+    const rt = await boot();
+    expect(
+      rt.resolveSingleUserAccount({ hasPassword: false, isRemote: true, sessionAccountId: null }),
+    ).toBe("acct_unauthenticated");
+  });
+
+  it("纯函数：未设密码 + 局域网 → 保持开放（可信网段设计不变）", async () => {
+    const rt = await boot();
+    expect(
+      rt.resolveSingleUserAccount({ hasPassword: false, isRemote: false, sessionAccountId: null }),
+    ).toBe("acct_default");
+  });
+
+  it("纯函数：状态未知/已设密码的既有组合不受影响", async () => {
+    const rt = await boot();
+    // LAN 一律开放
+    expect(
+      rt.resolveSingleUserAccount({ hasPassword: true, isRemote: false, sessionAccountId: null }),
+    ).toBe("acct_default");
+    expect(
+      rt.resolveSingleUserAccount({ hasPassword: "unknown", isRemote: false, sessionAccountId: null }),
+    ).toBe("acct_default");
+    // 远程：只认 acct_default 自己的 session
+    expect(
+      rt.resolveSingleUserAccount({ hasPassword: true, isRemote: true, sessionAccountId: null }),
+    ).toBe("acct_unauthenticated");
+    expect(
+      rt.resolveSingleUserAccount({ hasPassword: "unknown", isRemote: true, sessionAccountId: null }),
+    ).toBe("acct_unauthenticated");
+    expect(
+      rt.resolveSingleUserAccount({ hasPassword: false, isRemote: true, sessionAccountId: "acct_default" }),
+    ).toBe("acct_default");
+    expect(
+      rt.resolveSingleUserAccount({ hasPassword: true, isRemote: true, sessionAccountId: "acct_default" }),
+    ).toBe("acct_default");
+  });
+
+  /**
+   * 接线测试，不可省。`getCurrentAccountId()` 自己也有一份
+   * `if (hasPassword === false) return DEFAULT_ACCOUNT_ID` 的短路，位置在调用
+   * 纯函数**之前**。只修纯函数会让上面那些断言全绿、而真实请求路径依旧裸奔。
+   */
+  it("接线：未设密码 + 远程匿名请求 → getCurrentAccountId 必须返回哨兵", async () => {
+    mockRemoteRequest(); // 有 cf-ray，无 session cookie
+    const rt = await boot();
+    // 刻意不设密码：全新实例的真实状态
+    expect(await rt.hasLoginPassword()).toBe(false);
+    expect(await rt.getCurrentAccountId()).toBe("acct_unauthenticated");
+  });
+
+  it("接线：未设密码 + 远程匿名请求 → 写路径必须抛错", async () => {
+    mockRemoteRequest();
+    const rt = await boot();
+    expect(await rt.hasLoginPassword()).toBe(false);
+    await expect(rt.requireAuthenticatedAccountId()).rejects.toThrow();
+  });
+
+  it("接线：未设密码 + 局域网 → 仍然直通 acct_default（不得回归）", async () => {
+    vi.doMock("next/headers", () => ({
+      headers: async () => new Headers({ "user-agent": "curl" }), // 无 CF 头 = LAN
+      cookies: async () => ({ get: () => undefined }),
+    }));
+    const rt = await boot();
+    expect(await rt.hasLoginPassword()).toBe(false);
+    expect(await rt.getCurrentAccountId()).toBe("acct_default");
+  });
+});
