@@ -359,6 +359,13 @@ describe("waitlist", () => {
 });
 
 describe("endpoint cf_access_app_id 可空", () => {
+  // NOTE: this only pins the in-memory ConnectDb contract. createMemoryConnectDb
+  // is a plain Map with no constraint engine, so a green result here says
+  // NOTHING about whether the real table accepts the NULL — it passed happily
+  // the entire time schema.sql declared `cf_access_app_id TEXT NOT NULL` and
+  // production 500'd on every provision. The authoritative coverage is
+  // schema.test.ts, which runs this same insert against real SQLite built from
+  // schema.sql. Do not treat this test as constraint verification.
   it("cf_access_app_id 为 null（去 Access 后）时正常插入", async () => {
     const db = createMemoryConnectDb();
     await db.insertInvite(makeInvite());

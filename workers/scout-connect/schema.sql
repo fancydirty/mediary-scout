@@ -16,7 +16,9 @@ CREATE TABLE endpoints (
   slug TEXT NOT NULL UNIQUE,
   hostname TEXT NOT NULL UNIQUE,
   cf_tunnel_id TEXT NOT NULL,
-  cf_access_app_id TEXT NOT NULL,
+  -- Nullable since Access was removed: provision.ts writes NULL here. Existing
+  -- installs get this via migrations/0001-drop-access-notnull-add-last-seen.sql.
+  cf_access_app_id TEXT,
   cf_access_policy_id TEXT,
   cf_dns_record_id TEXT NOT NULL,
   status TEXT NOT NULL,
@@ -41,21 +43,22 @@ CREATE TABLE audit_events (
 -- code is already covered by the UNIQUE constraint above (SQLite auto-indexes it).
 -- status index supports admin filtering by endpoint state (revoke_failed sweep).
 CREATE INDEX idx_endpoints_status ON endpoints(status);
+-- Every /api/instance/status heartbeat (and every failed probe) looks up an
+-- endpoint by token hash; without this it is a full table scan.
+CREATE INDEX idx_endpoints_token_sha256 ON endpoints(token_sha256);
 
 -- Waitlist for Scout Connect beta (阶段 1).
 CREATE TABLE waitlist (
   id TEXT PRIMARY KEY,
   email TEXT NOT NULL,
   batch INTEGER NOT NULL DEFAULT 1,
-  status TEXT NOT NULL DEFAULT 'waiting',
+  -- Must stay in sync with the literal routes.ts inserts and filters on.
+  status TEXT NOT NULL DEFAULT 'pending',
   created_at TEXT NOT NULL
 );
 CREATE UNIQUE INDEX idx_waitlist_email_batch ON waitlist(email, batch);
+-- Backs the per-batch count on the POST /waitlist path (was a full scan).
+CREATE INDEX idx_waitlist_batch_created ON waitlist(batch, created_at);
 
--- Migration note: cf_access_app_id 改为可空（去 Access 后新数据写 NULL）。
--- SQLite 不支持 ALTER COLUMN，实际迁移需要：
---   1. ALTER TABLE endpoints RENAME TO endpoints_old;
---   2. CREATE TABLE endpoints (..., cf_access_app_id TEXT, ...);  -- 去掉 NOT NULL
---   3. INSERT INTO endpoints SELECT * FROM endpoints_old;
---   4. DROP TABLE endpoints_old;
--- 部署时由运维脚本执行；schema.sql 此处仅文档化意图。
+-- Schema changes need a matching file in ./migrations for already-deployed
+-- instances — schema.sql alone only covers fresh installs. See README → Deploy.
