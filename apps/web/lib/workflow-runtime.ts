@@ -200,7 +200,9 @@ export async function loginAccount(
   password: string,
   throttleKey?: string,
 ): Promise<AuthOutcome> {
-  const key = (throttleKey ?? username.trim().toLowerCase()) || "unknown";
+  // 无显式 throttleKey 时（库级调用，无请求上下文）退化为仅按 username。
+  // 不做 toLowerCase()：账号查询是精确匹配，折叠大小写会让不同账号共用一个桶。
+  const key = (throttleKey ?? username.trim()) || "unknown";
   const now = Date.now();
   const verdict = checkLoginAllowed(key, now);
   if (!verdict.allowed) {

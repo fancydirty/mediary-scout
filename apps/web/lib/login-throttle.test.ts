@@ -6,7 +6,7 @@ import {
   buildThrottleKey,
   _resetLoginThrottleForTest,
   _bucketCountForTest,
-  _MAX_BUCKETS_FOR_TEST,
+  _setMaxBucketsForTest,
 } from "./login-throttle";
 
 const K = "owner1|1.2.3.4";
@@ -92,33 +92,35 @@ describe("login throttle", () => {
   it("D2 fix: map size is hard-capped even when every bucket is fresh", () => {
     // 全部条目同一时刻创建 ⇒ 无一"过期"，清扫扫不掉任何东西。
     // 这正是硬上限必须靠驱逐（而非仅清扫）兜底的场景。
-    const overflow = _MAX_BUCKETS_FOR_TEST + 2_000;
-    for (let i = 0; i < overflow; i++) recordLoginFailure(`user${i}|ip`, T0);
-    expect(_bucketCountForTest()).toBeLessThanOrEqual(_MAX_BUCKETS_FOR_TEST);
+    const CAP = 50;
+    _setMaxBucketsForTest(CAP);
+    for (let i = 0; i < CAP + 200; i++) recordLoginFailure(`user${i}|ip`, T0);
+    expect(_bucketCountForTest()).toBeLessThanOrEqual(CAP);
   });
 
   it("D2 fix: eviction never drops a locked-out attacker to make room", () => {
+    const CAP = 50;
+    _setMaxBucketsForTest(CAP);
     const VICTIM = "attacker|1.1.1.1";
     for (let i = 0; i < 5; i++) recordLoginFailure(VICTIM, T0); // 锁定该 key
     expect(checkLoginAllowed(VICTIM, T0).allowed).toBe(false);
     // 攻击者试图用海量新 key 把自己的锁挤出内存
-    for (let i = 0; i < _MAX_BUCKETS_FOR_TEST + 1_000; i++) {
-      recordLoginFailure(`flood${i}|ip`, T0);
-    }
+    for (let i = 0; i < CAP + 200; i++) recordLoginFailure(`flood${i}|ip`, T0);
     expect(checkLoginAllowed(VICTIM, T0).allowed).toBe(false); // 锁必须还在
-    expect(_bucketCountForTest()).toBeLessThanOrEqual(_MAX_BUCKETS_FOR_TEST);
+    expect(_bucketCountForTest()).toBeLessThanOrEqual(CAP);
   });
 
   it("D2 fix: cap holds even when every existing bucket is locked (refuse new allocation)", () => {
+    const CAP = 20;
+    _setMaxBucketsForTest(CAP);
     // 把上限内的每个 key 都打到锁定状态 ⇒ 清扫无可清、驱逐无可驱
-    for (let i = 0; i < _MAX_BUCKETS_FOR_TEST; i++) {
+    for (let i = 0; i < CAP; i++) {
       for (let j = 0; j < 5; j++) recordLoginFailure(`locked${i}|ip`, T0);
     }
-    const saturated = _bucketCountForTest();
-    expect(saturated).toBeLessThanOrEqual(_MAX_BUCKETS_FOR_TEST);
+    expect(_bucketCountForTest()).toBeLessThanOrEqual(CAP);
     // 再灌新 key：必须拒绝分配而不是无条件 set() 突破上限
-    for (let i = 0; i < 500; i++) recordLoginFailure(`overflow${i}|ip`, T0);
-    expect(_bucketCountForTest()).toBeLessThanOrEqual(_MAX_BUCKETS_FOR_TEST);
+    for (let i = 0; i < 200; i++) recordLoginFailure(`overflow${i}|ip`, T0);
+    expect(_bucketCountForTest()).toBeLessThanOrEqual(CAP);
     // 且已有的锁不能被冲掉
     expect(checkLoginAllowed("locked0|ip", T0).allowed).toBe(false);
   });
@@ -165,10 +167,18 @@ describe("buildThrottleKey", () => {
     expect(buildThrottleKey(new Headers(), "owner")).toBe("owner|unknown");
   });
 
-  it("normalizes the username and caps both parts so huge inputs can't bloat a bucket", () => {
+  it("trims but preserves username case so throttle identity matches login identity", () => {
+    // 账号查询是 WHERE username = ? 精确匹配（大小写敏感），
+    // 若在此折叠大小写，Owner 与 owner 这两个不同账号会共用一个桶
     expect(buildThrottleKey(new Headers({ "cf-connecting-ip": "1.1.1.1" }), "  OwNeR  ")).toBe(
-      "owner|1.1.1.1",
+      "OwNeR|1.1.1.1",
     );
+    const upper = buildThrottleKey(new Headers({ "cf-connecting-ip": "1.1.1.1" }), "Owner");
+    const lower = buildThrottleKey(new Headers({ "cf-connecting-ip": "1.1.1.1" }), "owner");
+    expect(upper).not.toBe(lower); // 不同账号 → 不同桶
+  });
+
+  it("caps both parts so huge inputs can't bloat a bucket", () => {
     const huge = "A".repeat(100_000);
     const key = buildThrottleKey(new Headers({ "cf-connecting-ip": huge }), huge);
     expect(key.length).toBeLessThanOrEqual(64 + 1 + 64);

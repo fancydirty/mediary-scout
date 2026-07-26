@@ -24,9 +24,11 @@ const WINDOW_MS = 15 * 60 * 1000; // 15 分钟固定窗口
 const MAX_FAILURES = 5;           // 窗口内达到此次失败即锁
 const BASE_LOCK_MS = 60 * 1000;   // 首次锁 1 分钟
 const MAX_LOCK_MS = 30 * 60 * 1000; // 锁定上限 30 分钟
-const MAX_BUCKETS = 10_000;       // 内存硬上限（攻击者轮换 username|ip 时的护栏）
+const DEFAULT_MAX_BUCKETS = 10_000; // 内存硬上限（攻击者轮换 username|ip 时的护栏）
 
 const buckets = new Map<string, Bucket>();
+/** 生效的桶数上限。仅测试可临时下调以便快速覆盖饱和路径。 */
+let maxBuckets = DEFAULT_MAX_BUCKETS;
 
 /** 清扫已死条目（无活跃锁 + 窗口已过）。 */
 function sweepDeadBuckets(now: number): void {
@@ -49,9 +51,9 @@ function sweepDeadBuckets(now: number): void {
  * 饱和只可能发生在 10k 个 key 同时处于锁定中的真实攻击下，此时保锁优先。
  */
 function makeRoomForNewBucket(now: number): boolean {
-  if (buckets.size < MAX_BUCKETS) return true;
+  if (buckets.size < maxBuckets) return true;
   sweepDeadBuckets(now);
-  if (buckets.size < MAX_BUCKETS) return true;
+  if (buckets.size < maxBuckets) return true;
   for (const [k, v] of buckets) {
     if (now < v.lockedUntil) continue; // 锁定中，不驱逐
     buckets.delete(k);
@@ -95,9 +97,10 @@ export function recordLoginSuccess(key: string): void {
   buckets.delete(key);
 }
 
-/** 仅测试用：清空所有限流桶。 */
+/** 仅测试用：清空所有限流桶并恢复默认上限。 */
 export function _resetLoginThrottleForTest(): void {
   buckets.clear();
+  maxBuckets = DEFAULT_MAX_BUCKETS;
 }
 
 /** 仅测试用：当前桶数量（用于断言内存上限真的生效）。 */
@@ -105,8 +108,14 @@ export function _bucketCountForTest(): number {
   return buckets.size;
 }
 
-/** 仅测试用：内存硬上限常量（避免测试硬编码魔数与实现脱节）。 */
-export const _MAX_BUCKETS_FOR_TEST = MAX_BUCKETS;
+/**
+ * 仅测试用：临时下调桶数上限，以便用几十次循环（而非几万次）覆盖饱和/驱逐路径。
+ * 若不下调，覆盖这些路径需灌入上万条记录，在并行测试下会抢占 CPU 并让
+ * 同批的 scrypt 集成测试超时。`_resetLoginThrottleForTest()` 会恢复默认值。
+ */
+export function _setMaxBucketsForTest(n: number): void {
+  maxBuckets = n;
+}
 
 /** 限流键中 username 与 ip 各自的最大长度（防超长键放大内存占用）。 */
 const MAX_KEY_PART = 64;
@@ -119,11 +128,16 @@ const MAX_KEY_PART = 64;
  * `x-forwarded-for` 客户端可随意伪造，仅在无 CF 头（局域网直连）时作为次选，
  * 且局域网本就不是本限流的主要威胁面。两部分均截断到 64 字符，
  * 避免攻击者用超长 username 放大单条桶的内存占用。
+ *
+ * **不做 `toLowerCase()`**：账号查询是 `WHERE username = ?` 精确匹配
+ * （SQLite/Postgres 皆然，`username text UNIQUE`），大小写敏感。若在此折叠大小写，
+ * `Owner` 与 `owner` 这两个**不同账号**会共用一个桶——攻击者猛猜 `owner`
+ * 就能把 `Owner` 的合法用户锁在门外。限流身份必须与登录身份严格一致。
  */
 export function buildThrottleKey(headers: Headers, username: string): string {
   const cfIp = headers.get("cf-connecting-ip")?.trim();
   const xff = headers.get("x-forwarded-for")?.split(",")[0]?.trim();
   const ip = (cfIp || xff || "unknown").slice(0, MAX_KEY_PART);
-  const user = username.trim().toLowerCase().slice(0, MAX_KEY_PART);
+  const user = username.trim().slice(0, MAX_KEY_PART);
   return `${user}|${ip}`;
 }
