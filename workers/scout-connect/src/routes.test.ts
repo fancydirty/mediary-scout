@@ -217,6 +217,32 @@ describe("handleRequest", () => {
     expect(stored?.token_shown_at).toBeNull();
   });
 
+  // The heartbeat's only output was unobservable: POST /api/instance/status
+  // wrote endpoints.last_seen_at, but the admin list shape stripped it.
+  it("GET /api/admin/endpoints exposes last_seen_at (null before, ISO after a heartbeat)", async () => {
+    const { deps } = setup();
+    const seeded = await seedProvisioned(deps);
+
+    const beforeRes = await handleRequest(adminGet("/api/admin/endpoints"), deps);
+    const before = (await beforeRes.json()) as { endpoints: Array<Record<string, unknown>> };
+    expect(before.endpoints).toHaveLength(1);
+    expect(before.endpoints[0] && "last_seen_at" in before.endpoints[0]).toBe(true);
+    expect(before.endpoints[0]?.last_seen_at).toBeNull();
+
+    const beat = await handleRequest(
+      new Request(`${BASE}/api/instance/status`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${seeded.token}` },
+      }),
+      deps,
+    );
+    expect(beat.status).toBe(204);
+
+    const afterRes = await handleRequest(adminGet("/api/admin/endpoints"), deps);
+    const after = (await afterRes.json()) as { endpoints: Array<Record<string, unknown>> };
+    expect(after.endpoints[0]?.last_seen_at).toBe(NOW);
+  });
+
   it("provision without any slug → 400 slug required", async () => {
     const { deps } = setup();
     const createRes = await createInviteViaApi(deps, { email: "alice@example.com" });

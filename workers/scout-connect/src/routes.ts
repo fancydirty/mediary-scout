@@ -211,6 +211,7 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
       hostname: ep.hostname,
       status: ep.status,
       token_shown_at: ep.token_shown_at,
+      last_seen_at: ep.last_seen_at,
       created_at: ep.created_at,
       revoked_at: ep.revoked_at,
       cf_tunnel_id: ep.cf_tunnel_id,
