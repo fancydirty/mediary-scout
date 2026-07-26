@@ -16,12 +16,16 @@ Deployed at `https://mediaryconnect.app` (custom domain).
 admin ──► mediaryconnect.app (this worker)
             ├─ GET  /            intro
             ├─ GET  /admin       admin page (bearer token in sessionStorage)
+            ├─ GET  /api/admin/invites                     list invites
             ├─ POST /api/admin/invites                     create invite
             ├─ POST /api/admin/invites/:id/provision       tunnel+ingress+dns
+            ├─ GET  /api/admin/endpoints                   list endpoints (public
+            │                                              shape, incl. last_seen_at)
             ├─ POST /api/admin/endpoints/:id/revoke        delete dns+tunnel
             │                                              (+Access app, legacy rows)
             ├─ GET  /i/:code     invitee page (state machine, never pre-burns)
-            └─ POST /api/i/:code/reveal                    one-time token reveal
+            ├─ POST /api/i/:code/reveal                    one-time token reveal
+            └─ POST /api/instance/status                   heartbeat (see below)
                  │
                  ▼ Cloudflare API
             tunnel (scout-<slug>, config_src=cloudflare)
@@ -52,6 +56,16 @@ re-display the rank, so clients never have to branch on status code to find it.
 Ranking counts every row in the batch regardless of `waitlist.status`. Only
 `'pending'` exists today and nothing reads the column; if that changes, see the
 TRIPWIRE tests in `src/schema.test.ts` and `src/db.test.ts`.
+
+### Instance heartbeat (connector-token auth)
+
+`POST /api/instance/status` — the home instance's liveness beat.
+`Authorization: Bearer <connector token>` (the same `TUNNEL_TOKEN` handed out
+at provision/reveal — NOT the admin token). The token's sha256 must match an
+`active` endpoint; on success the worker stamps `endpoints.last_seen_at`
+(surfaced on `GET /api/admin/endpoints` and the admin page's 最近心跳 column)
+and returns `204 No Content`. Unknown or revoked token → `401`. The body is
+never read, so it needs no size cap.
 
 Token secrecy: the connector token is returned to the caller exactly once (at
 provision to the admin, or at `/api/i/:code/reveal` to the invitee). D1 stores
