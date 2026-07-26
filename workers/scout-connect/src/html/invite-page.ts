@@ -101,7 +101,7 @@ function readyBody(codeJson: string): string {
 <li>可选:网络不稳定或 UDP 受限时,追加一行 <code>TUNNEL_TRANSPORT_PROTOCOL=http2</code>。</li>
 <li>执行 <code>docker compose --profile tunnel up -d</code>。</li>
 <li>执行 <code>docker compose logs -f cloudflared</code>,直到出现 Registered tunnel connection 字样。</li>
-<li>浏览器打开 <code>https://<span class="hn"></span></code>,先完成 Cloudflare Access 邮箱验证,通过后进入 Mediary Scout。</li>
+<li>浏览器打开 <code>https://<span class="hn"></span></code>,首次打开先设置访问密码(这就是门禁),之后登录进入 Mediary Scout。</li>
 <li>若失败:检查 compose 服务名是否为 web、cloudflared 是否与 web 同网络、token 是否完整一行、防火墙是否拦截出站。</li>
 </ol>
 </div>
