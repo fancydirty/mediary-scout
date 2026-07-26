@@ -484,4 +484,22 @@ describe("provisionEndpoint", () => {
     ).rejects.toThrow(/delete access boom/);
     expect(countCalls(calls, "del-tunnel:")).toBe(1);
   });
+
+  it("no longer creates Access app; cf_access_app_id & cf_access_policy_id are null", async () => {
+    const db = createMemoryConnectDb();
+    await db.insertInvite(makePendingInvite());
+    const calls: string[] = [];
+    const cf = makeFakeCf(calls);
+    const deps = makeDeps(db, cf);
+
+    const result = await provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps });
+
+    expect(result.hostname).toBe("alice.mediaryconnect.app");
+    expect(calls.filter((c) => c.startsWith("access:"))).toHaveLength(0);
+
+    const endpoints = await db.listEndpoints();
+    expect(endpoints).toHaveLength(1);
+    expect(endpoints[0].cf_access_app_id).toBeNull();
+    expect(endpoints[0].cf_access_policy_id).toBeNull();
+  });
 });

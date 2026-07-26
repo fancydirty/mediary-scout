@@ -69,24 +69,13 @@ export async function provisionEndpoint(input: {
     }
   };
 
-  // Order matters: Access BEFORE DNS, so the hostname never resolves to an
-  // unprotected origin.
-  let appId: string;
-  let policyId: string | undefined;
+  // Create tunnel ingress and DNS; no Access app.
   let recordId: string;
   try {
     await cf.putTunnelIngress(tunnelId, hostname);
-    const app = await cf.createAccessApp({
-      name: `scout-${slug}`,
-      domain: hostname,
-      email: invite.email.trim().toLowerCase(),
-    });
-    appId = app.appId;
-    policyId = app.policyId;
     try {
       ({ recordId } = await cf.createDnsCname(slug, tunnelId));
     } catch (e) {
-      await cf.deleteAccessApp(appId);
       await deleteTunnelOnce();
       throw e;
     }
@@ -115,8 +104,8 @@ export async function provisionEndpoint(input: {
       slug,
       hostname,
       cf_tunnel_id: tunnelId,
-      cf_access_app_id: appId,
-      cf_access_policy_id: policyId ?? null,
+      cf_access_app_id: null,
+      cf_access_policy_id: null,
       cf_dns_record_id: recordId,
       status: "active",
       token_sha256: sha,
@@ -169,11 +158,6 @@ export async function provisionEndpoint(input: {
       // best-effort compensation — original error is what matters
     }
     try {
-      await cf.deleteAccessApp(appId);
-    } catch {
-      // best-effort compensation
-    }
-    try {
       await deleteTunnelOnce();
     } catch {
       // best-effort compensation
@@ -189,7 +173,6 @@ export async function provisionEndpoint(input: {
         detail_json: JSON.stringify({
           hostname,
           cf_tunnel_id: tunnelId,
-          cf_access_app_id: appId,
           cf_dns_record_id: recordId,
         }),
       });
