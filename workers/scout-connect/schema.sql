@@ -62,8 +62,9 @@ CREATE TABLE waitlist (
   created_at TEXT NOT NULL,
   -- Optional post-signup survey answers (a JSON object holding only the keys
   -- the user actually filled), written by POST /waitlist/survey. NULL until
-  -- then, and always NULL for rows queued before
-  -- migrations/0002-waitlist-survey.sql. Appended last to mirror the ALTER.
+  -- the user answers; rows queued before migrations/0002-waitlist-survey.sql
+  -- START as NULL after the ALTER but can be updated by a later survey submit.
+  -- Appended last to mirror the ALTER.
   survey_json TEXT
 );
 CREATE UNIQUE INDEX idx_waitlist_email_batch ON waitlist(email, batch);
