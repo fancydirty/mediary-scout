@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { handleRequest, MAX_JSON_BODY_BYTES, type RouteDeps } from "./routes.js";
 import { createMemoryConnectDb, type ConnectDb } from "./db.js";
 import type { CfApi } from "./cf-api.js";
-import { EMAIL_RE } from "./validation.js";
+import { EMAIL_MAX_LENGTH, EMAIL_RE } from "./validation.js";
 
 const BASE = "https://mediaryconnect.app";
 const ADMIN = "test-admin-token-fixture";
@@ -639,6 +639,40 @@ describe("POST /waitlist hardening", () => {
 
     expect(res.status).toBe(201);
     expect(await db.countWaitlist(1)).toBe(1);
+  });
+
+  // Copilot round 5, finding 1: the cap used to run on the RAW string, before
+  // trim(). The stored/validated value is the trimmed one, so a legitimate
+  // 254-char address pasted with surrounding whitespace (every mail client and
+  // password manager adds it) was rejected on a length its normalized form does
+  // not have. The cap must measure what we actually keep.
+  it("accepts a 254-char email submitted with surrounding whitespace", async () => {
+    const { db, deps } = setup();
+    const at254 = `${"a".repeat(254 - "@example.com".length)}@example.com`;
+    expect(at254).toHaveLength(254);
+    const padded = `  \t${at254}\n `;
+    expect(padded.length).toBeGreaterThan(EMAIL_MAX_LENGTH);
+
+    const res = await handleRequest(waitlistPost(padded), deps);
+
+    expect(res.status).toBe(201);
+    expect(await db.countWaitlist(1)).toBe(1);
+  });
+
+  // The other half of the same boundary: moving the cap after trim() must not
+  // turn it into a no-op. 255 trimmed chars is still over the RFC limit, and
+  // padding it with whitespace must not smuggle it past.
+  it("rejects an email whose TRIMMED length is 255, whitespace or not", async () => {
+    const { db, deps } = setup();
+    const at255 = `${"a".repeat(255 - "@example.com".length)}@example.com`;
+    expect(at255).toHaveLength(EMAIL_MAX_LENGTH + 1);
+
+    for (const candidate of [at255, `  ${at255}  `]) {
+      const res = await handleRequest(waitlistPost(candidate), deps);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "invalid email" });
+    }
+    expect(await db.countWaitlist(1)).toBe(0);
   });
 
   // HIGH-4: position was computed by pulling EVERY row and scanning in JS, so

@@ -466,12 +466,19 @@ async function addToWaitlist(request: Request, deps: RouteDeps): Promise<Respons
   if (typeof emailRaw !== "string") {
     throw new HttpError(400, "email required");
   }
-  // Bound the input BEFORE the regex. This route is unauthenticated, so length
-  // is the only thing standing between a stranger and an arbitrarily large
-  // stored row (a 200KB address was previously accepted).
-  if (emailRaw.length > EMAIL_MAX_LENGTH) {
-    throw new HttpError(400, "invalid email");
-  }
+  // Normalize FIRST, then bound, then run the regex.
+  //
+  // The cap measures the value we actually validate and store, not the raw
+  // submission: a 254-char address pasted with surrounding whitespace is a
+  // legitimate address, and capping `emailRaw` rejected it on a length its
+  // normalized form does not have.
+  //
+  // Trimming first is NOT a DoS hole, so do not "restore" a pre-trim check as
+  // hardening. The raw string is already bounded far earlier and far more
+  // cheaply by MAX_JSON_BODY_BYTES (8 KB, enforced as a streaming byte cap in
+  // readBodyTextCapped before this function is ever entered), so `trim()` here
+  // can only ever see ≤8 KB. The 200KB-address case is a 413 at the body cap.
+  // The cap below still bounds what reaches EMAIL_RE and the database.
   const email = emailRaw.trim().toLowerCase();
   if (email.length > EMAIL_MAX_LENGTH || !EMAIL_RE.test(email)) {
     throw new HttpError(400, "invalid email");

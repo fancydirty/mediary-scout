@@ -8,8 +8,11 @@ import type { NextRequest } from "next/server";
  * 这是「远程要登录、局域网免登录」的 Edge 侧实现，也是 Emby/Jellyfin 出事故的
  * 同一类判定。它只做 UX 层的重定向（权威判定在服务端 getCurrentAccountId()），
  * 但判错方向仍有代价：
- *  - 远程 + 已设密码 + 无 session 却放行 → 用户看到空数据页而不是登录页（体验坏）
+ *  - 远程 + 无 session 却放行 → 用户看到空数据页而不是登录页（体验坏）
  *  - 局域网被误判成需登录 → 本地用户凭空多一道门（回归）
+ *
+ * 现行规则只有两个输入：是否 (多用户 || 远程)，以及有没有 session。
+ * proxy 不再读 `mt_auth_required`，「有没有设过密码」不参与任何门禁判定。
  */
 
 // 本套件断言的是单用户行为。必须显式关掉多用户开关：若被 runner 设置或从
@@ -29,13 +32,19 @@ afterAll(() => {
 const makeRequest = (opts: {
   path?: string;
   cf?: boolean;
-  passwordSet?: boolean;
+  staleAuthCookie?: boolean;
   session?: boolean;
 }): NextRequest => {
   const headers = new Headers();
   if (opts.cf) headers.set("cf-ray", "8f3abc-LAX");
   const cookies = new Map<string, { name: string; value: string }>();
-  if (opts.passwordSet) cookies.set("mt_auth_required", { name: "mt_auth_required", value: "1" });
+  // `mt_auth_required` is no longer written by anything and no longer read by
+  // proxy — the gate is (multi-user || remote) + session, full stop. It is kept
+  // here ONLY as a representative stale cookie, to pin that a leftover cookie on
+  // a long-lived browser cannot change a gate decision in either direction.
+  // Setting it does NOT mean "a password is set"; proxy has no notion of that.
+  if (opts.staleAuthCookie)
+    cookies.set("mt_auth_required", { name: "mt_auth_required", value: "1" });
   if (opts.session) cookies.set("mt_session", { name: "mt_session", value: "sess.sig" });
   const url = new URL(`http://localhost:3000${opts.path ?? "/"}`);
   return {
@@ -56,9 +65,10 @@ const redirectsToLogin = (req: NextRequest): boolean => {
 };
 
 describe("proxy gate — single-user mode (multi-user off)", () => {
-  it("局域网（无 CF 头）→ 直通，零摩擦（设不设密码都一样）", () => {
+  it("局域网（无 CF 头）→ 直通，零摩擦（任何 cookie 状态下都一样）", () => {
     expect(redirectsToLogin(makeRequest({}))).toBe(false);
-    expect(redirectsToLogin(makeRequest({ passwordSet: true }))).toBe(false);
+    // 局域网直通与 cookie 无关：带一个残留 cookie 也不得凭空多出一道门。
+    expect(redirectsToLogin(makeRequest({ staleAuthCookie: true }))).toBe(false);
   });
 
   it("未设密码 + 远程 → 仍要重定向到 /login（那里给的是设置密码表单）", () => {
@@ -68,21 +78,23 @@ describe("proxy gate — single-user mode (multi-user off)", () => {
     expect(redirectsToLogin(makeRequest({ cf: true }))).toBe(true);
   });
 
-  it("已设密码 + 远程（有 CF 头）+ 无 session → 重定向到登录", () => {
-    expect(redirectsToLogin(makeRequest({ passwordSet: true, cf: true }))).toBe(true);
+  it("远程 + 无 session → 重定向到登录（残留 cookie 不得放行）", () => {
+    expect(redirectsToLogin(makeRequest({ staleAuthCookie: true, cf: true }))).toBe(true);
   });
 
-  it("已设密码 + 远程 + 有 session → 直通", () => {
-    expect(redirectsToLogin(makeRequest({ passwordSet: true, cf: true, session: true }))).toBe(false);
+  it("远程 + 有 session → 直通（残留 cookie 不影响）", () => {
+    expect(redirectsToLogin(makeRequest({ staleAuthCookie: true, cf: true, session: true }))).toBe(
+      false,
+    );
   });
 
-  it("远程 + 有 session → 直通（未设密码时同理，session 才是判据）", () => {
+  it("远程 + 有 session → 直通（session 才是唯一判据）", () => {
     expect(redirectsToLogin(makeRequest({ cf: true, session: true }))).toBe(false);
   });
 
   it("三个 CF 头任一存在都算远程", () => {
     for (const header of ["cf-ray", "cdn-loop", "cf-connecting-ip"]) {
-      const req = makeRequest({ passwordSet: true });
+      const req = makeRequest({});
       req.headers.set(header, "x");
       expect(redirectsToLogin(req)).toBe(true);
     }
@@ -90,17 +102,18 @@ describe("proxy gate — single-user mode (multi-user off)", () => {
 
   it("handler 自守的 API 前缀不被重定向（否则会把 JSON 端点变成 HTML 跳转）", () => {
     for (const path of ["/api/health", "/api/workflows/run", "/api/agent/step"]) {
-      expect(redirectsToLogin(makeRequest({ passwordSet: true, cf: true, path }))).toBe(false);
+      expect(redirectsToLogin(makeRequest({ cf: true, path }))).toBe(false);
     }
   });
 });
 
 describe("proxy gate — multi-user mode", () => {
-  it("多用户：无 session 一律重定向，与来源和密码 flag 无关", () => {
+  it("多用户：无 session 一律重定向，与来源和任何残留 cookie 无关", () => {
     process.env.MEDIA_TRACK_MULTI_USER = "1";
     try {
       expect(redirectsToLogin(makeRequest({}))).toBe(true); // LAN 也要登录
       expect(redirectsToLogin(makeRequest({ cf: true }))).toBe(true);
+      expect(redirectsToLogin(makeRequest({ staleAuthCookie: true }))).toBe(true);
       expect(redirectsToLogin(makeRequest({ session: true }))).toBe(false);
     } finally {
       delete process.env.MEDIA_TRACK_MULTI_USER;
