@@ -677,6 +677,24 @@ describe("GET /api/admin/waitlist", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ waitlist: [] });
   });
+
+  it("GET /admin console page renders the waitlist section wired to the route", async () => {
+    const { deps } = setup();
+    const res = await handleRequest(new Request(`${BASE}/admin`), deps);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    // Section with the four required columns.
+    expect(html).toContain("内测报名列表");
+    expect(html).toContain("名次");
+    expect(html).toContain("邮箱");
+    expect(html).toContain("报名时间");
+    // The copy-all-emails export (the project has no email-sending capability).
+    expect(html).toContain("复制全部邮箱");
+    // Actually wired to fetch the route, like the other sections.
+    expect(html).toContain("/api/admin/waitlist");
+    // Empty-state copy.
+    expect(html).toContain("暂无报名");
+  });
 });
 
 describe("POST /waitlist hardening", () => {

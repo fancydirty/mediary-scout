@@ -51,6 +51,13 @@ h1{font-size:1.3rem}h2{font-size:1.05rem;margin-top:2rem}
 <tbody id="endpoints"></tbody>
 </table>
 
+<h2>内测报名列表</h2>
+<p><button id="copy-waitlist">复制全部邮箱</button>（每行一个,便于在自己邮箱里批量粘贴发送邀请链接）</p>
+<table>
+<thead><tr><th>名次</th><th>邮箱</th><th>状态</th><th>报名时间</th></tr></thead>
+<tbody id="waitlist"></tbody>
+</table>
+
 <script type="module">
 const $=(id)=>document.getElementById(id);
 const esc=(s)=>String(s).replace(/[&<>"']/g,(c)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -87,9 +94,11 @@ function showProvision(r){
   $("p-copy-url").onclick=()=>copyText(lastProvision.inviteUrl);
 }
 
+let lastWaitlist=[];
 async function refresh(){
-  const data=await Promise.all([api("/api/admin/invites"),api("/api/admin/endpoints")]);
+  const data=await Promise.all([api("/api/admin/invites"),api("/api/admin/endpoints"),api("/api/admin/waitlist")]);
   const invites=data[0].invites,endpoints=data[1].endpoints;
+  lastWaitlist=data[2].waitlist;
   $("invites").innerHTML=invites.map((i)=>{
     const url=location.origin+"/i/"+i.code;
     const slugCell=i.status==="pending"
@@ -118,7 +127,16 @@ async function refresh(){
       await refresh();
     });
   }
+  $("waitlist").innerHTML=lastWaitlist.length===0
+    ?'<tr><td colspan="4">暂无报名</td></tr>'
+    :lastWaitlist.map((w,i)=>{
+      return '<tr><td>'+(i+1)+'</td><td>'+esc(w.email)+'</td><td>'+esc(w.status)+'</td><td>'+esc(w.created_at)+'</td></tr>';
+    }).join("");
 }
+$("copy-waitlist").onclick=guard(async()=>{
+  if(lastWaitlist.length===0){msg("暂无报名可复制","err");return;}
+  await copyText(lastWaitlist.map((w)=>w.email).join("\n"));
+});
 $("refresh").onclick=guard(refresh);
 $("create").onsubmit=guard(async(ev)=>{
   ev.preventDefault();
