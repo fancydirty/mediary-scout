@@ -635,9 +635,9 @@ describe("POST /waitlist hardening", () => {
         countCalls += 1;
         return db.countWaitlist(batch);
       },
-      async countWaitlistUpTo(batch, createdAt) {
+      async waitlistRankOf(batch, createdAt, id) {
         countCalls += 1;
-        return db.countWaitlistUpTo(batch, createdAt);
+        return db.waitlistRankOf(batch, createdAt, id);
       },
     };
 
@@ -652,7 +652,12 @@ describe("POST /waitlist hardening", () => {
   });
 
   it("reports positions that increase with each distinct signup", async () => {
-    const { deps } = setup();
+    // Distinct signups arriving in distinct seconds — the plain ordering case.
+    // `now` advances here on purpose: the frozen-clock variant is a different
+    // scenario and is covered by the same-second test below.
+    const { deps: base } = setup();
+    let tick = 0;
+    const deps = { ...base, now: () => `2026-07-24T10:00:0${tick++}.000Z` };
     const positions: number[] = [];
     for (const email of ["a@example.com", "b@example.com", "c@example.com"]) {
       const res = await handleRequest(waitlistPost(email), deps);
@@ -660,6 +665,51 @@ describe("POST /waitlist hardening", () => {
       positions.push(((await res.json()) as { position: number }).position);
     }
     expect(positions).toEqual([1, 2, 3]);
+  });
+
+  // The regression Copilot flagged, at the HTTP layer. created_at is a
+  // whole-second ISO string, so several people signing up in the same second is
+  // routine. Under the old `created_at <= ?` count, querying those rows gave
+  // every one of them the SAME position (measured against real SQLite with
+  // three same-second rows: 3, 3, 3).
+  //
+  // Distinctness is a property of a fixed snapshot, so this asserts against the
+  // settled table (via the repeat-submit 200 path) rather than against the
+  // insert-time values: a position handed out mid-signup is the rank among the
+  // rows that existed then, and because newId("wl") is random hex rather than
+  // monotonic, a later same-second row can legitimately sort ahead of an
+  // earlier one. Hence also no assertion of submission order here — that is
+  // not something this implementation guarantees within one second.
+  it("same-second signups get distinct, stable positions (no ties)", async () => {
+    const { db, deps } = setup();
+    const emails = ["a@example.com", "b@example.com", "c@example.com", "d@example.com"];
+    for (const email of emails) {
+      expect((await handleRequest(waitlistPost(email), deps)).status).toBe(201);
+    }
+
+    // All four share one frozen timestamp — this is the tie scenario.
+    const rows = await db.listWaitlist(1);
+    expect(rows).toHaveLength(emails.length);
+    expect(new Set(rows.map((r) => r.created_at)).size).toBe(1);
+
+    const settled = async (): Promise<number[]> => {
+      const out: number[] = [];
+      for (const email of emails) {
+        const res = await handleRequest(waitlistPost(email), deps);
+        expect(res.status).toBe(200);
+        out.push(((await res.json()) as { position: number }).position);
+      }
+      return out;
+    };
+
+    const positions = await settled();
+    // Every position distinct, and exactly the set 1..4 — no gaps, no ties.
+    // The old implementation returned [4, 4, 4, 4] here.
+    expect(new Set(positions).size).toBe(emails.length);
+    expect([...positions].sort((x, y) => x - y)).toEqual([1, 2, 3, 4]);
+
+    // Stable across repeated reads, not just internally consistent once.
+    expect(await settled()).toEqual(positions);
   });
 
   // HIGH-5: SELECT-then-INSERT is not atomic. Five concurrent identical POSTs

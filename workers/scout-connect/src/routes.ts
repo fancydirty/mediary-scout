@@ -384,6 +384,12 @@ async function addToWaitlist(request: Request, deps: RouteDeps): Promise<Respons
   // atomic and a double-clicked Submit used to 500.
   const existing = await deps.db.getWaitlistByEmail(email, batch);
   if (existing !== null) {
+    // `position` is returned on the already-exists path INTENTIONALLY, and the
+    // extra indexed read it costs is intentional too. The settings-page
+    // waitlist form shows the user their rank, and a repeat submit (double
+    // click, revisit, refresh) is exactly when they want to see it again.
+    // Returning it on both the 201 and 200 paths keeps one response contract
+    // instead of forcing the client to branch. Do not "optimise" it away.
     return json(
       { already_exists: true, id: existing.id, position: await waitlistPosition(deps, existing) },
       200,
@@ -410,6 +416,7 @@ async function addToWaitlist(request: Request, deps: RouteDeps): Promise<Respons
     if (winner === null) {
       throw e; // UNIQUE fired but the row is not readable — genuinely broken.
     }
+    // Same contract as the pre-check branch above, `position` included.
     return json(
       { already_exists: true, id: winner.id, position: await waitlistPosition(deps, winner) },
       200,
@@ -420,21 +427,28 @@ async function addToWaitlist(request: Request, deps: RouteDeps): Promise<Respons
 }
 
 /**
- * Position of `row` in its batch, via indexed counts rather than by pulling
+ * Position of `row` in its batch, via an indexed count rather than by pulling
  * every row and scanning in JS. The old implementation made TWO full table
  * scans per request — O(n) per call and O(n^2) cumulatively on an
  * unauthenticated endpoint that shares its D1 instance with `endpoints`, so
  * filling the waitlist degraded provisioning and revocation.
  *
- * Rows sharing a created_at all count each other, so ties resolve to the same
- * position; the previous findIndex-over-sorted-list was equally arbitrary among
- * ties.
+ * Ranks on the composite (created_at, id). created_at alone is not a total
+ * order — it is a whole-second ISO string, so every signup in the same second
+ * used to collapse to one shared position (measured: three same-second rows
+ * all reported position 3). `id` is the PRIMARY KEY, which makes the order
+ * total and every position distinct.
+ *
+ * Caveat worth knowing: ids are random (see newId), not monotonic, so within a
+ * single second the tiebreak is arbitrary-but-stable rather than true arrival
+ * order. Distinctness and stability are what the UI needs; exact sub-second
+ * arrival ordering would require a monotonic key we do not currently store.
  */
 async function waitlistPosition(
   deps: RouteDeps,
-  row: { batch: number; created_at: string },
+  row: { batch: number; created_at: string; id: string },
 ): Promise<number> {
-  return deps.db.countWaitlistUpTo(row.batch, row.created_at);
+  return deps.db.waitlistRankOf(row.batch, row.created_at, row.id);
 }
 
 async function reportInstanceStatus(request: Request, deps: RouteDeps): Promise<Response> {

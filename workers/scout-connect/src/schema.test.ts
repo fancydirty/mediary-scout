@@ -184,15 +184,25 @@ describe("schema.sql — fresh install against real SQLite", () => {
     expect(waitlistPlan).toContain("idx_waitlist_batch_created");
     expect(waitlistPlan).not.toContain("SCAN waitlist");
 
-    // The position query on the /waitlist hot path.
+    // The position query on the /waitlist hot path. The rank predicate is
+    // written as `created_at <= ? AND (created_at < ? OR id <= ?)` rather than
+    // the equivalent `created_at < ? OR (created_at = ? AND id <= ?)` on
+    // purpose: only the former keeps the created_at range bound on the index.
+    // Measured on this schema — the OR-first form degrades the plan to
+    // `SEARCH waitlist USING INDEX idx_waitlist_batch_created (batch=?)`,
+    // i.e. it walks the entire batch instead of stopping at created_at.
     const positionPlan = queryPlan(
       sqlite,
-      `SELECT COUNT(*) as cnt FROM waitlist WHERE batch = ? AND created_at <= ?`,
+      `SELECT COUNT(*) as cnt FROM waitlist WHERE batch = ? AND created_at <= ? AND (created_at < ? OR id <= ?)`,
       1,
       "2026-07-26T00:00:00.000Z",
+      "2026-07-26T00:00:00.000Z",
+      "wl_zzzz",
     );
     expect(positionPlan).toContain("idx_waitlist_batch_created");
     expect(positionPlan).not.toContain("SCAN waitlist");
+    // Pin the range bound itself, not merely "an index was used".
+    expect(positionPlan).toContain("created_at<?");
 
     const tokenPlan = queryPlan(sqlite, `SELECT * FROM endpoints WHERE token_sha256 = ?`, "x");
     expect(tokenPlan).toContain("idx_endpoints_token_sha256");
@@ -215,6 +225,93 @@ describe("schema.sql — fresh install against real SQLite", () => {
   it("does not carry a stale hand-migration comment now that a real migration exists", () => {
     expect(SCHEMA_SQL).not.toContain("部署时由运维脚本执行");
     expect(SCHEMA_SQL).not.toContain("endpoints_old");
+  });
+});
+
+describe("waitlist rank against real SQLite — whole-second timestamp ties", () => {
+  // Measured against this schema with three rows sharing one timestamp, the
+  // old `WHERE batch = ? AND created_at <= ?` predicate returned:
+  //   a@x.com -> 3, b@x.com -> 3, c@x.com -> 3
+  // i.e. `<=` only converted "everybody is #1" into "everybody is #N". The
+  // waitlist writes whole-second ISO timestamps, so same-second signups are
+  // the normal case, not an edge case. The rank must therefore be total, which
+  // requires a tiebreaker column — `id` is the PRIMARY KEY, so (created_at, id)
+  // is unique and the resulting rank is distinct and stable across calls.
+  const TS = "2026-07-26T00:00:00.000Z";
+
+  function seedSameSecond(db: ReturnType<typeof createD1ConnectDb>): Promise<unknown> {
+    // Inserted out of id order on purpose: rank must follow (created_at, id),
+    // not physical insertion/rowid order.
+    return Promise.all([
+      db.insertWaitlist({ id: "wl_b", email: "b@x.com", batch: 1, status: "pending", created_at: TS }),
+      db.insertWaitlist({ id: "wl_c", email: "c@x.com", batch: 1, status: "pending", created_at: TS }),
+      db.insertWaitlist({ id: "wl_a", email: "a@x.com", batch: 1, status: "pending", created_at: TS }),
+    ]);
+  }
+
+  it("gives 3 rows sharing one timestamp distinct positions 1,2,3 ordered by id", async () => {
+    const { db } = freshDb(SCHEMA_SQL);
+    await seedSameSecond(db);
+
+    const ranks = await Promise.all(
+      ["wl_a", "wl_b", "wl_c"].map((id) => db.waitlistRankOf(1, TS, id)),
+    );
+
+    expect(ranks).toEqual([1, 2, 3]);
+    expect(new Set(ranks).size).toBe(3);
+  });
+
+  it("is stable: repeated calls return the same rank for the same row", async () => {
+    const { db } = freshDb(SCHEMA_SQL);
+    await seedSameSecond(db);
+
+    const first = await db.waitlistRankOf(1, TS, "wl_b");
+    const second = await db.waitlistRankOf(1, TS, "wl_b");
+    expect(second).toBe(first);
+    expect(first).toBe(2);
+  });
+
+  it("still orders across differing timestamps, and ignores other batches", async () => {
+    const { db } = freshDb(SCHEMA_SQL);
+    await db.insertWaitlist({
+      id: "wl_early",
+      email: "early@x.com",
+      batch: 1,
+      status: "pending",
+      created_at: "2026-07-25T00:00:00.000Z",
+    });
+    await db.insertWaitlist({
+      id: "wl_late",
+      email: "late@x.com",
+      batch: 1,
+      status: "pending",
+      created_at: "2026-07-27T00:00:00.000Z",
+    });
+    // A high id in another batch must not inflate batch 1 ranks.
+    await db.insertWaitlist({
+      id: "wl_zzz_other",
+      email: "other@x.com",
+      batch: 2,
+      status: "pending",
+      created_at: "2026-07-25T00:00:00.000Z",
+    });
+
+    expect(await db.waitlistRankOf(1, "2026-07-25T00:00:00.000Z", "wl_early")).toBe(1);
+    expect(await db.waitlistRankOf(1, "2026-07-27T00:00:00.000Z", "wl_late")).toBe(2);
+    expect(await db.waitlistRankOf(2, "2026-07-25T00:00:00.000Z", "wl_zzz_other")).toBe(1);
+  });
+
+  it("a same-second row with a lower id does not share the later row's rank", async () => {
+    // The precise regression: under `created_at <= ?` both of these returned 2.
+    const { db } = freshDb(SCHEMA_SQL);
+    await db.insertWaitlist({ id: "wl_1", email: "one@x.com", batch: 1, status: "pending", created_at: TS });
+    await db.insertWaitlist({ id: "wl_2", email: "two@x.com", batch: 1, status: "pending", created_at: TS });
+
+    const a = await db.waitlistRankOf(1, TS, "wl_1");
+    const b = await db.waitlistRankOf(1, TS, "wl_2");
+    expect(a).toBe(1);
+    expect(b).toBe(2);
+    expect(a).not.toBe(b);
   });
 });
 

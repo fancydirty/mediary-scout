@@ -24,6 +24,10 @@ function makePendingInvite(overrides: Partial<InviteRow> = {}): InviteRow {
 }
 
 interface FakeCfOptions {
+  // "access" is retained deliberately: provisioning no longer creates an Access
+  // app, and the test that sets it asserts exactly that (a throwing
+  // createAccessApp changes nothing because it is never called). deleteAccessApp
+  // is still real API surface — revoke.ts calls it for pre-removal endpoints.
   failOn?: "ingress" | "access" | "dns";
 }
 
@@ -129,14 +133,17 @@ describe("provisionEndpoint", () => {
     expect(audits[0]?.detail_json ?? "").toContain("alice.mediaryconnect.app");
   });
 
-  it("access failure: deletes tunnel exactly once, never touches dns/access deletes, persists nothing", async () => {
+  // Regression guard for the Access removal: a CfApi whose createAccessApp
+  // would throw must make no difference, because provisioning never calls it.
+  // (This test used to be "access failure: deletes tunnel exactly once, never
+  // touches dns/access deletes, persists nothing" — a name describing the
+  // pre-removal behaviour, while every assertion below checks the happy path.)
+  it("succeeds even when createAccessApp would fail, because it is never called", async () => {
     const db = createMemoryConnectDb();
     await db.insertInvite(makePendingInvite());
     const calls: string[] = [];
     const deps = makeDeps(db, makeFakeCf(calls, { failOn: "access" }));
 
-    // Access app creation no longer happens, so this test is now redundant
-    // but we keep it to document that "access" failure mode is no longer relevant
     const result = await provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps });
 
     expect(result.hostname).toBe("alice.mediaryconnect.app");
@@ -162,7 +169,7 @@ describe("provisionEndpoint", () => {
     expect(await db.listAudits()).toHaveLength(0);
   });
 
-  it("ingress failure: deletes tunnel exactly once, never creates access app or dns", async () => {
+  it("ingress failure: deletes tunnel exactly once, creates no dns (and no access app, which is never created anyway)", async () => {
     const db = createMemoryConnectDb();
     await db.insertInvite(makePendingInvite());
     const calls: string[] = [];

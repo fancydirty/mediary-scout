@@ -328,7 +328,7 @@ describe("waitlist", () => {
       id: "w1",
       email: "a@x.com",
       batch: 1,
-      status: "waiting",
+      status: "pending",
       created_at: "2026-07-25T00:00:00Z",
     });
     await expect(
@@ -336,7 +336,7 @@ describe("waitlist", () => {
         id: "w2",
         email: "a@x.com",
         batch: 1,
-        status: "waiting",
+        status: "pending",
         created_at: "2026-07-25T00:00:01Z",
       }),
     ).rejects.toThrow(/UNIQUE/);
@@ -350,11 +350,61 @@ describe("waitlist", () => {
       id: "w1",
       email: "b@y.com",
       batch: 1,
-      status: "waiting",
+      status: "pending",
       created_at: "2026-07-25T00:00:00Z",
     });
     expect(await db.getWaitlistByEmail("b@y.com", 1)).toMatchObject({ email: "b@y.com" });
     expect(await db.getWaitlistByEmail("missing@z.com", 1)).toBeNull();
+  });
+
+  // The memory backend must rank identically to the D1 backend, or route tests
+  // (which run on memory) prove nothing about production. The authoritative
+  // same-second coverage lives in schema.test.ts against real SQLite; this is
+  // the lockstep check for the mock.
+  it("waitlistRankOf 同一秒内按 id 给出互不相同的 1,2,3", async () => {
+    const db = createMemoryConnectDb();
+    const ts = "2026-07-26T00:00:00.000Z";
+    for (const { id, email } of [
+      { id: "wl_b", email: "b@x.com" },
+      { id: "wl_c", email: "c@x.com" },
+      { id: "wl_a", email: "a@x.com" },
+    ]) {
+      await db.insertWaitlist({ id, email, batch: 1, status: "pending", created_at: ts });
+    }
+
+    const ranks = await Promise.all(
+      ["wl_a", "wl_b", "wl_c"].map((id) => db.waitlistRankOf(1, ts, id)),
+    );
+    expect(ranks).toEqual([1, 2, 3]);
+  });
+
+  it("waitlistRankOf 跨时间戳排序，且不计入其他 batch", async () => {
+    const db = createMemoryConnectDb();
+    await db.insertWaitlist({
+      id: "wl_early",
+      email: "early@x.com",
+      batch: 1,
+      status: "pending",
+      created_at: "2026-07-25T00:00:00.000Z",
+    });
+    await db.insertWaitlist({
+      id: "wl_late",
+      email: "late@x.com",
+      batch: 1,
+      status: "pending",
+      created_at: "2026-07-27T00:00:00.000Z",
+    });
+    await db.insertWaitlist({
+      id: "wl_zzz_other",
+      email: "other@x.com",
+      batch: 2,
+      status: "pending",
+      created_at: "2026-07-25T00:00:00.000Z",
+    });
+
+    expect(await db.waitlistRankOf(1, "2026-07-25T00:00:00.000Z", "wl_early")).toBe(1);
+    expect(await db.waitlistRankOf(1, "2026-07-27T00:00:00.000Z", "wl_late")).toBe(2);
+    expect(await db.waitlistRankOf(2, "2026-07-25T00:00:00.000Z", "wl_zzz_other")).toBe(1);
   });
 });
 

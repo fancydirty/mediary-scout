@@ -81,11 +81,24 @@ export interface ConnectDb {
   getWaitlistByEmail(email: string, batch: number): Promise<WaitlistRow | null>;
   countWaitlist(batch: number): Promise<number>;
   /**
-   * Number of rows in `batch` created at or before `createdAt` — i.e. the
-   * queue position of that row. Index-backed (idx_waitlist_batch_created) so
-   * the unauthenticated /waitlist path never scans the table.
+   * 1-based queue position of the row identified by (`batch`, `createdAt`,
+   * `id`), counting every row that sorts at or before it under the composite
+   * order (created_at, id).
+   *
+   * Why composite: created_at is a whole-second ISO string, so same-second
+   * signups are routine. A `created_at <= ?` count gives every tied row the
+   * SAME position (measured: three rows sharing one timestamp all reported 3).
+   * `id` is the PRIMARY KEY, so (created_at, id) is unique and the rank is
+   * distinct and stable.
+   *
+   * The predicate is deliberately spelled `created_at <= ? AND (created_at < ?
+   * OR id <= ?)` instead of the equivalent `created_at < ? OR (created_at = ?
+   * AND id <= ?)`: only the former keeps the created_at range bound on
+   * idx_waitlist_batch_created. The OR-first form still "uses the index" but
+   * degrades to `(batch=?)`, walking the whole batch on an unauthenticated
+   * path. See the query-plan assertion in schema.test.ts.
    */
-  countWaitlistUpTo(batch: number, createdAt: string): Promise<number>;
+  waitlistRankOf(batch: number, createdAt: string, id: string): Promise<number>;
   listWaitlist(batch: number): Promise<WaitlistRow[]>;
   getEndpointByTokenSha256(sha256: string): Promise<EndpointRow | null>;
   updateEndpointLastSeen(endpointId: string, lastSeenAt: string): Promise<void>;
@@ -364,10 +377,13 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
       return row?.cnt ?? 0;
     },
 
-    async countWaitlistUpTo(batch, createdAt) {
+    async waitlistRankOf(batch, createdAt, id) {
       const row = await d1
-        .prepare(`SELECT COUNT(*) as cnt FROM waitlist WHERE batch = ? AND created_at <= ?`)
-        .bind(batch, createdAt)
+        .prepare(
+          `SELECT COUNT(*) as cnt FROM waitlist
+             WHERE batch = ? AND created_at <= ? AND (created_at < ? OR id <= ?)`,
+        )
+        .bind(batch, createdAt, createdAt, id)
         .first<{ cnt: number }>();
       return row?.cnt ?? 0;
     },
@@ -581,10 +597,16 @@ export function createMemoryConnectDb(): ConnectDb {
       return count;
     },
 
-    async countWaitlistUpTo(batch, createdAt) {
+    async waitlistRankOf(batch, createdAt, id) {
+      // Must match the D1 predicate exactly, including the (created_at, id)
+      // tiebreaker — route tests run on this backend, so any drift here means
+      // they stop proving anything about production.
       let count = 0;
       for (const row of waitlist.values()) {
-        if (row.batch === batch && row.created_at <= createdAt) count++;
+        if (row.batch !== batch) continue;
+        if (row.created_at < createdAt || (row.created_at === createdAt && row.id <= id)) {
+          count++;
+        }
       }
       return count;
     },
