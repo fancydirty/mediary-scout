@@ -37,7 +37,7 @@ export function buildAgentPrompt(input: {
 
 目标:让用户的自托管实例经 Cloudflare Tunnel 发布到:
   https://${input.hostname}
-门禁是 Cloudflare Access 邮箱 OTP(浏览器打开时先要求邮箱验证码,通过后才进应用)。
+门禁是应用自身的访问密码(浏览器首次打开时会要求设置访问密码;设置后远程访问必须登录,局域网直连不受影响)。
 不要修改获取/网盘/LLM 业务逻辑。
 
 安全红线:
@@ -257,16 +257,16 @@ ${TOKEN_HEREDOC_MARKER}
 
 第 5 步·验证门禁(由人来完成,不是 agent):
 - 请用户在自己的设备浏览器打开 https://${input.hostname}
-- 应先到 Cloudflare Access 邮箱验证页(输入受邀邮箱收验证码;若没收到,查垃圾邮件)
-- 通过后进入 Mediary Scout 面板
+- 应看到 Mediary Scout 的登录页(全新实例首次打开是设置访问密码的页面)
+- 请用户设置访问密码 — 这就是门禁:设置后远程访问必须登录,之后进入 Mediary Scout 面板
 - 你(agent)不要自行声称验证结果;让用户告诉你看到了什么。
-- 若用户直接看到应用而无 Access 页,立刻停止并提示(门禁没生效,需作者检查)。
+- 若用户直接看到应用主界面而没有任何登录/设密码页,立刻停止并提示(门禁没生效,需作者检查)。
 
 第 6 步·收尾(告诉用户):
 - https://${input.hostname} 现在可从任何设备访问;token 页面只显示一次,但 token 本身长期有效,重启容器/宿主不影响。
 - 以后若无法访问,先 \`docker compose logs cloudflared --tail 30\` 看隧道是否还活着。
 
-完成后用简短中文汇报三项:隧道是否 Registered、Access 验证页是否(由用户确认)出现、能否进入面板。
+完成后用简短中文汇报三项:隧道是否 Registered、登录/设密码页是否(由用户确认)出现、能否进入面板。
 若卡在某步,说明卡在哪、日志关键行、你的下一步建议。
 `;
 }
@@ -293,7 +293,7 @@ export function buildAgentPromptOrManual(input: {
 在此之前可以先确认环境:
 1. \`docker info\` 能跑通(装了 Docker / OrbStack)。
 2. \`docker compose ls\` 找到 mediary-scout 部署目录。
-3. 目标地址是 https://${input.hostname},门禁为 Cloudflare Access 邮箱 OTP。
+3. 目标地址是 https://${input.hostname},门禁为应用自身的访问密码(首次打开时设置)。
 
 安全红线:
 - TUNNEL_TOKEN 是机密。不提交 git、不写进文档/截图/issue、不打印日志。

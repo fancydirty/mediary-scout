@@ -104,8 +104,44 @@ describe("buildAgentPrompt", () => {
     expect(out).toContain('cp "$RESTORE_FROM" .env');
     // not "restart" (restart doesn't re-read .env)
     expect(out).toContain("restart 不会重读 .env");
-    // Access verification is done by the human, not the agent
+    // Gate verification is done by the human, not the agent
     expect(out).toContain("不要自行声称验证结果");
+  });
+
+  it("describes the app-login gate, not a Cloudflare Access OTP gate", () => {
+    const out = buildAgentPrompt(INPUT);
+    // Post-#175 there is no Access app: referencing it sends the invitee's
+    // agent looking for a verification page that can never appear.
+    expect(out).not.toContain("Cloudflare Access");
+    expect(out).not.toContain("Access 验证页");
+    // The gate is the app's own access password, set in the browser on first
+    // open (remote requests then require login; LAN stays open).
+    expect(out).toContain("设置访问密码");
+  });
+
+  it("halts ONLY when the app is reachable with no login page at all", () => {
+    const out = buildAgentPrompt(INPUT);
+    // The old halt condition fired on the now-normal success path (app
+    // visible, no Access page) — every new provision ended in a bogus halt.
+    expect(out).not.toContain("无 Access 页");
+    // The genuinely broken state post-#175: app reachable with NO gate —
+    // that means the login gate didn't deploy.
+    expect(out).toContain("没有任何登录/设密码页,立刻停止");
+  });
+
+  it("report template asks about the login/set-password page, not an Access page", () => {
+    const out = buildAgentPrompt(INPUT);
+    expect(out).not.toContain("Access 验证页是否");
+    expect(out).toContain("登录/设密码页是否(由用户确认)出现");
+  });
+
+  it("manual fallback also cites the app-login gate", () => {
+    const manual = buildAgentPromptOrManual({
+      hostname: "h.example.com",
+      tunnelToken: "a\nb",
+    });
+    expect(manual).not.toContain("Cloudflare Access");
+    expect(manual).toContain("访问密码");
   });
 
   it("braces every shell var that precedes a non-ASCII char", () => {
