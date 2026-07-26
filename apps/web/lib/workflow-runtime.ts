@@ -240,6 +240,42 @@ export async function logoutSession(signedCookie: string | undefined): Promise<v
   }
 }
 
+/**
+ * 单用户模式是否已设置登录密码（`acct_default` 有非空 `passwordHash`）。
+ * 非空即表示实例进入「远程需登录」态；清空即回到全开放态（可逆开关）。
+ *
+ * 取不到仓库（未配置 DB / 无请求上下文）时返回 false —— 与「未设密码」
+ * 的现状行为一致，绝不因为读不到状态就把本地实例锁死。
+ */
+export async function hasLoginPassword(): Promise<boolean> {
+  try {
+    const acct = await getWorkflowRepository().getAccountById(DEFAULT_ACCOUNT_ID);
+    return Boolean(acct && acct.passwordHash.length > 0);
+  } catch {
+    return false;
+  }
+}
+
+/** 单用户模式设置/更新登录密码（`acct_default`）。设置后远程访问即需登录。 */
+export async function setSingleUserPassword(
+  newPassword: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (newPassword.length < 6) {
+    return { ok: false, error: "密码至少 6 位。" };
+  }
+  const repo = getWorkflowRepository();
+  await repo.setAccountPassword(DEFAULT_ACCOUNT_ID, await hashPassword(newPassword));
+  await repo.deleteSessionsForAccount(DEFAULT_ACCOUNT_ID); // 改密即踢掉全部旧 session
+  return { ok: true };
+}
+
+/** 单用户模式清除登录密码（回到全开放态）。 */
+export async function clearSingleUserPassword(): Promise<void> {
+  const repo = getWorkflowRepository();
+  await repo.setAccountPassword(DEFAULT_ACCOUNT_ID, "");
+  await repo.deleteSessionsForAccount(DEFAULT_ACCOUNT_ID);
+}
+
 /** Self-service password change. Verifies the current password, sets the new hash,
  *  and revokes ALL of the account's sessions (incl. the caller's → must re-login). */
 export async function changeOwnPassword(
@@ -557,9 +593,52 @@ export async function getRegisteredDriveCount(): Promise<number> {
   return storages.filter((storage) => isRegisteredStorageProvider(storage.provider)).length;
 }
 
+/**
+ * 远程判定：任一 Cloudflare 头存在即为经隧道的远程请求。
+ *
+ * 用 `cf-ray`/`cdn-loop` 而非仅 `cf-connecting-ip`——后者是唯一能被 zone
+ * Transform Rules 删除的 cf-* 头，删掉会把远程误判成内网（fail-open 裸奔）；
+ * `cf-ray` 访客删不掉。反方向（LAN 被误判成远程）只多要一次登录，fail-closed。
+ *
+ * 前提：实例只能经「局域网 + 隧道」两条路到达。部署文档须写明禁 UPnP、
+ * 勿把 web 端口直接映射出公网（Emby「thousands hacked」的主要暴露面即 UPnP 打洞）。
+ */
+export function isRemoteRequest(hdrs: Headers): boolean {
+  return hdrs.has("cf-ray") || hdrs.has("cdn-loop") || hdrs.has("cf-connecting-ip");
+}
+
+/**
+ * 单用户账号判定（纯函数，本 plan 的安全核心）。设密码后：LAN 开放、远程需 session。
+ *
+ * 抽成纯函数是为了能确定性覆盖全部「内外 × 有无 session」组合——
+ * Emby/Jellyfin 的事故正是内外判定出错，这段逻辑必须可被精确测试。
+ */
+export function resolveSingleUserAccount(opts: {
+  hasPassword: boolean;
+  isRemote: boolean;
+  sessionAccountId: string | null;
+}): string {
+  if (!opts.hasPassword) return DEFAULT_ACCOUNT_ID;
+  if (!opts.isRemote) return DEFAULT_ACCOUNT_ID; // LAN 免登录
+  return opts.sessionAccountId ?? UNAUTHENTICATED_ACCOUNT_ID; // 远程需登录
+}
+
 export async function getCurrentAccountId(): Promise<string> {
   if (!isMultiUserEnabled()) {
-    return DEFAULT_ACCOUNT_ID;
+    const hasPassword = await hasLoginPassword();
+    if (!hasPassword) return DEFAULT_ACCOUNT_ID;
+    try {
+      const { cookies, headers } = await import("next/headers");
+      const hdrs = await headers();
+      if (!isRemoteRequest(hdrs)) return DEFAULT_ACCOUNT_ID; // LAN → 开放
+      const store = await cookies();
+      const raw = store.get(SESSION_COOKIE_NAME)?.value;
+      const sessionAccountId = raw ? await resolveSessionAccountId(raw) : null;
+      return resolveSingleUserAccount({ hasPassword, isRemote: true, sessionAccountId });
+    } catch {
+      // 无请求上下文（in-process worker）：视为本地直通——采集任务不认 cookie。
+      return DEFAULT_ACCOUNT_ID;
+    }
   }
   try {
     const { cookies } = await import("next/headers");
@@ -579,11 +658,13 @@ export async function getCurrentAccountId(): Promise<string> {
 /**
  * Account id for write/bind mutations. Multi-user + no valid session → throw
  * (never bind to the read-only sentinel `acct_unauthenticated`). Single-user
- * and the in-process worker path are unchanged.
+ * with a password set behaves the same for remote requests; LAN and the
+ * in-process worker path stay unchanged.
  */
 export async function requireAuthenticatedAccountId(): Promise<string> {
   const accountId = await getCurrentAccountId();
-  if (isMultiUserEnabled() && accountId === UNAUTHENTICATED_ACCOUNT_ID) {
+  const gated = isMultiUserEnabled() || (await hasLoginPassword());
+  if (gated && accountId === UNAUTHENTICATED_ACCOUNT_ID) {
     throw new UnauthenticatedAccountError();
   }
   return accountId;
