@@ -401,9 +401,19 @@ describe("handleRequest", () => {
       deps,
     );
     expect(second.status).toBe(200);
-    const secondBody = (await second.json()) as { already_exists: boolean; id: string };
+    const secondBody = (await second.json()) as {
+      already_exists: boolean;
+      id: string;
+      position: number;
+    };
     expect(secondBody.already_exists).toBe(true);
     expect(secondBody.id).toBe(firstBody.id);
+    // The test name promises "position unchanged", so assert it. The 200 body is
+    // a strict superset of {already_exists, id} — `position` is returned on BOTH
+    // success paths on purpose (the settings form shows the user their rank, and
+    // a repeat submit is exactly when they look again). Without this the
+    // already-exists path could silently drop it and the name would still lie.
+    expect(secondBody.position).toBe(firstBody.position);
   });
 
   it("POST /waitlist invalid email → 400", async () => {
@@ -441,7 +451,7 @@ describe("handleRequest", () => {
       deps,
     );
     expect(first.status).toBe(201);
-    const firstBody = (await first.json()) as { id: string };
+    const firstBody = (await first.json()) as { id: string; position: number };
 
     const second = await handleRequest(
       new Request(`${BASE}/waitlist`, {
@@ -452,9 +462,15 @@ describe("handleRequest", () => {
       deps,
     );
     expect(second.status).toBe(200);
-    const secondBody = (await second.json()) as { already_exists: boolean; id: string };
+    const secondBody = (await second.json()) as {
+      already_exists: boolean;
+      id: string;
+      position: number;
+    };
     expect(secondBody.already_exists).toBe(true);
     expect(secondBody.id).toBe(firstBody.id);
+    // Same record ⇒ same rank. Pins `position` on the normalization path too.
+    expect(secondBody.position).toBe(firstBody.position);
   });
 
   it("POST /api/instance/status with valid token → 204, updates last_seen_at", async () => {
