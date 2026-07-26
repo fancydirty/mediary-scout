@@ -365,13 +365,34 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
     },
 
     async insertWaitlist(row) {
-      await d1
-        .prepare(
-          `INSERT INTO waitlist (id, email, batch, status, created_at, survey_json)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-        )
-        .bind(row.id, row.email, row.batch, row.status, row.created_at, row.survey_json)
-        .run();
+      try {
+        await d1
+          .prepare(
+            `INSERT INTO waitlist (id, email, batch, status, created_at, survey_json)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+          )
+          .bind(row.id, row.email, row.batch, row.status, row.created_at, row.survey_json)
+          .run();
+      } catch (e) {
+        // Migration-window fallback: if the worker got deployed BEFORE
+        // migrations/0002-waitlist-survey.sql ran, the column doesn't exist and
+        // every signup would 500 — a public-funnel outage caused by deploy order.
+        // Degrade to the legacy column list instead (survey silently off until
+        // the migration runs; updateWaitlistSurvey will fail loudly if someone
+        // actually submits a survey in that window, which is the right trade).
+        // Only this exact schema-mismatch error falls back — UNIQUE violations
+        // and real outages must propagate unchanged.
+        if (!(e instanceof Error) || !e.message.includes("no such column: survey_json")) {
+          throw e;
+        }
+        await d1
+          .prepare(
+            `INSERT INTO waitlist (id, email, batch, status, created_at)
+             VALUES (?, ?, ?, ?, ?)`,
+          )
+          .bind(row.id, row.email, row.batch, row.status, row.created_at)
+          .run();
+      }
       return row;
     },
 

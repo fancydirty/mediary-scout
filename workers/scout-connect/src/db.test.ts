@@ -565,6 +565,72 @@ describe("waitlist", () => {
   });
 });
 
+describe("insertWaitlist 迁移窗口降级", () => {
+  /** D1 stub：含 survey_json 的 INSERT 抛 "no such column"，legacy INSERT 放行。 */
+  function createPreMigrationD1() {
+    const calls: { query: string; binds: unknown[] }[] = [];
+    const d1: D1Database = {
+      prepare(query: string): D1PreparedStatement {
+        const binds: unknown[] = [];
+        const stmt: D1PreparedStatement = {
+          bind(...values: unknown[]) {
+            binds.push(...values);
+            return stmt;
+          },
+          async first<T>(): Promise<T | null> { return null as T | null; },
+          async all<T>(): Promise<{ results: T[] }> { return { results: [] as T[] }; },
+          async run(): Promise<unknown> {
+            calls.push({ query, binds: [...binds] });
+            if (query.includes("survey_json")) {
+              throw new Error("no such column: survey_json");
+            }
+            return {};
+          },
+        };
+        return stmt;
+      },
+    };
+    return { d1, calls };
+  }
+
+  it("列不存在时退化为 legacy INSERT，报名不挂", async () => {
+    const { d1, calls } = createPreMigrationD1();
+    const db = createD1ConnectDb(d1);
+    const row = await db.insertWaitlist({
+      id: "w1", email: "a@x.com", batch: 1, status: "pending",
+      created_at: "2026-07-25T00:00:00Z", survey_json: null,
+    });
+    expect(row.id).toBe("w1");
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.query).toContain("survey_json");
+    expect(calls[1]!.query).not.toContain("survey_json");
+    expect(calls[1]!.binds).toEqual(["w1", "a@x.com", 1, "pending", "2026-07-25T00:00:00Z"]);
+  });
+
+  it("其它错误（如 UNIQUE 冲突）原样上抛，绝不降级吞掉", async () => {
+    const d1: D1Database = {
+      prepare(): D1PreparedStatement {
+        const stmt: D1PreparedStatement = {
+          bind() { return stmt; },
+          async first<T>(): Promise<T | null> { return null as T | null; },
+          async all<T>(): Promise<{ results: T[] }> { return { results: [] as T[] }; },
+          async run(): Promise<unknown> {
+            throw new Error("UNIQUE constraint failed: waitlist.email");
+          },
+        };
+        return stmt;
+      },
+    };
+    const db = createD1ConnectDb(d1);
+    await expect(
+      db.insertWaitlist({
+        id: "w1", email: "a@x.com", batch: 1, status: "pending",
+        created_at: "t", survey_json: null,
+      }),
+    ).rejects.toThrow(/UNIQUE/);
+  });
+});
+
 describe("waitlist survey_json 兼容", () => {
   it("老 schema（无 survey_json 列）的行映射为 null 而非 undefined", async () => {
     // 迁移 0002 执行前的窗口期：老表 SELECT * 根本不会返回 survey_json 列。
