@@ -109,6 +109,9 @@ async function refresh(){
   }).join("");
   for(const b of document.querySelectorAll("[data-provision]")){
     b.onclick=guard(async()=>{
+      // Disable on click: a double-click fires two provisions for the same
+      // invite (the loser dies on UNIQUE endpoints.invite_id server-side).
+      b.disabled=true;
       const input=$("slug-"+b.getAttribute("data-provision"));
       const slug=input?input.value.trim():"";
       const r=await api("/api/admin/invites/"+b.getAttribute("data-provision")+"/provision",{method:"POST",body:slug?{slug}:{}});

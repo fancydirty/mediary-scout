@@ -158,13 +158,19 @@ export async function provisionEndpoint(input: {
     // If updateInviteStatus already flipped the invite to `provisioned` before
     // a later write (insertAudit) failed, the invite would be stuck forever
     // (not pending → no re-provision; no endpoint → nothing to revoke). Roll
-    // it back so the admin can retry.
+    // it back so the admin can retry — but ONLY when no endpoint row survives
+    // for this invite. In a same-invite double-provision race (admin
+    // double-clicks 开通) the winner's row IS still there; reverting the
+    // invite to pending would orphan a live endpoint: the invitee link shows
+    // "waiting" forever, reveal 409s, and re-provision dies on UNIQUE.
     try {
-      await db.updateInviteStatus(invite.id, {
-        status: "pending",
-        slug: null,
-        provisioned_at: null,
-      });
+      if ((await db.getEndpointByInviteId(invite.id)) === null) {
+        await db.updateInviteStatus(invite.id, {
+          status: "pending",
+          slug: null,
+          provisioned_at: null,
+        });
+      }
     } catch {
       // D1 may be the failing component — nothing more we can do
     }

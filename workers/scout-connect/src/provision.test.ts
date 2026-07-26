@@ -324,6 +324,57 @@ describe("provisionEndpoint", () => {
     expect((await db.getInviteById("inv_2"))?.status).toBe("pending");
   });
 
+  // Same-invite double-provision race (admin double-clicks 开通 — the button
+  // was never disabled): both requests pass the prechecks while the invite is
+  // still pending, both create CF resources, the winner commits, and the loser
+  // dies on `UNIQUE … endpoints.invite_id`. The loser's compensation must NOT
+  // flip the invite back to pending — that would orphan the winner's live
+  // endpoint (invite page shows "waiting" forever, reveal 409s, re-provision
+  // 500s on UNIQUE). The existing race tests above use a DIFFERENT invite;
+  // this one pins the same-invite case.
+  it("same-invite race: loser's compensation leaves the winner's invite provisioned", async () => {
+    const db = createMemoryConnectDb();
+    await db.insertInvite(makePendingInvite());
+    const calls: string[] = [];
+    const deps = makeDeps(db, makeFakeCf(calls));
+
+    // Winner runs to completion.
+    await provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps });
+    expect((await db.getInviteById("inv_1"))?.status).toBe("provisioned");
+
+    // Loser: its precheck reads happened BEFORE the winner committed — model
+    // the race window with stale reads (invite still pending, slug still free).
+    // Everything else goes to the real db, so the INSERT hits the winner's row.
+    const staleDb: ConnectDb = {
+      ...db,
+      async getInviteById(id) {
+        const row = await db.getInviteById(id);
+        return row === null ? null : { ...row, status: "pending" };
+      },
+      async findEndpointBySlugOrHostname() {
+        return null;
+      },
+    };
+    const loserDeps = {
+      ...makeDeps(db, makeFakeCf(calls)),
+      newEndpointId: () => "ep_loser",
+      newAuditId: () => "aud_loser",
+    };
+    await expect(
+      provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps: { ...loserDeps, db: staleDb } }),
+    ).rejects.toThrow(/UNIQUE/i);
+
+    // The winner's state must survive the loser's compensation untouched.
+    const invite = await db.getInviteById("inv_1");
+    expect(invite?.status).toBe("provisioned");
+    expect(invite?.slug).toBe("alice");
+    expect(invite?.provisioned_at).toBe(NOW);
+    expect(await db.getEndpointByInviteId("inv_1")).not.toBeNull();
+    // The loser's own CF resources were still cleaned up.
+    expect(countCalls(calls, "del-dns:")).toBe(1);
+    expect(countCalls(calls, "del-tunnel:")).toBe(1);
+  });
+
   it("D1 failure compensation still throws the original error when cf deletes also fail", async () => {
     const db = createMemoryConnectDb();
     await db.insertInvite(makePendingInvite());
