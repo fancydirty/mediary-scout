@@ -50,7 +50,7 @@ describe("login throttle", () => {
     expect(checkLoginAllowed(K, T0 + 1000).allowed).toBe(true);
   });
 
-  it("resets the failure count after the sliding window passes", () => {
+  it("resets the failure count after the fixed window passes", () => {
     for (let i = 0; i < 4; i++) recordLoginFailure(K, T0);
     // 16 minutes later (> 15min window) — old failures no longer count
     const later = T0 + 16 * 60_000;
@@ -107,6 +107,20 @@ describe("login throttle", () => {
     }
     expect(checkLoginAllowed(VICTIM, T0).allowed).toBe(false); // 锁必须还在
     expect(_bucketCountForTest()).toBeLessThanOrEqual(_MAX_BUCKETS_FOR_TEST);
+  });
+
+  it("D2 fix: cap holds even when every existing bucket is locked (refuse new allocation)", () => {
+    // 把上限内的每个 key 都打到锁定状态 ⇒ 清扫无可清、驱逐无可驱
+    for (let i = 0; i < _MAX_BUCKETS_FOR_TEST; i++) {
+      for (let j = 0; j < 5; j++) recordLoginFailure(`locked${i}|ip`, T0);
+    }
+    const saturated = _bucketCountForTest();
+    expect(saturated).toBeLessThanOrEqual(_MAX_BUCKETS_FOR_TEST);
+    // 再灌新 key：必须拒绝分配而不是无条件 set() 突破上限
+    for (let i = 0; i < 500; i++) recordLoginFailure(`overflow${i}|ip`, T0);
+    expect(_bucketCountForTest()).toBeLessThanOrEqual(_MAX_BUCKETS_FOR_TEST);
+    // 且已有的锁不能被冲掉
+    expect(checkLoginAllowed("locked0|ip", T0).allowed).toBe(false);
   });
 
   it("pins MAX_LOCK_MS constant (30 min cap is reachable and enforced)", () => {

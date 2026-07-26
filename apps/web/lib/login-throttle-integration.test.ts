@@ -23,7 +23,13 @@ const boot = async () => {
 afterEach(() => {
   delete process.env.MEDIA_TRACK_SQLITE_PATH;
   if (prevPg !== undefined) process.env.MEDIA_TRACK_POSTGRES_URL = prevPg;
-  if (prevMultiUser !== undefined) process.env.MEDIA_TRACK_MULTI_USER = prevMultiUser;
+  // 原值为 undefined 时必须删除而非跳过，否则 MEDIA_TRACK_MULTI_USER=1
+  // 会泄漏给后续测试文件，造成与执行顺序相关的失败
+  if (prevMultiUser !== undefined) {
+    process.env.MEDIA_TRACK_MULTI_USER = prevMultiUser;
+  } else {
+    delete process.env.MEDIA_TRACK_MULTI_USER;
+  }
   vi.resetModules();
 });
 

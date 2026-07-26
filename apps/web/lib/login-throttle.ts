@@ -38,20 +38,26 @@ function sweepDeadBuckets(now: number): void {
 }
 
 /**
- * 强制 Map 不超过 MAX_BUCKETS：先清死条目；若仍超限，按插入顺序驱逐最老的，
- * 但**跳过仍在锁定中的条目**（否则攻击者可用海量新 key 冲掉自己的锁）。
- * 全部条目都在锁定中的极端情况下停止驱逐——此时 Map 里全是真实攻击者，
- * 保锁比保内存重要（10k 条 ≈ 1.5MB，可接受）。
+ * 为「新 key」腾出一格容量，返回是否允许分配。
+ *
+ * 顺序：① 未达上限直接放行 → ② 清扫已死条目 → ③ 仍满则按插入顺序驱逐最老的
+ * **未锁定**条目（跳过锁定中的，否则攻击者可用海量新 key 把自己的锁冲掉）。
+ *
+ * ④ 若全部条目都在锁定中（无可驱逐），**拒绝分配新桶**而不是无条件 `set()`。
+ * 拒绝是安全的：新 key 尚无失败记录，丢掉它只是让那一次失败不计数，
+ * 已存在的锁不受影响；反之无条件 set() 会让 Map 突破上限。
+ * 饱和只可能发生在 10k 个 key 同时处于锁定中的真实攻击下，此时保锁优先。
  */
-function enforceBucketCap(now: number): void {
-  if (buckets.size < MAX_BUCKETS) return;
+function makeRoomForNewBucket(now: number): boolean {
+  if (buckets.size < MAX_BUCKETS) return true;
   sweepDeadBuckets(now);
-  if (buckets.size < MAX_BUCKETS) return;
+  if (buckets.size < MAX_BUCKETS) return true;
   for (const [k, v] of buckets) {
-    if (buckets.size < MAX_BUCKETS) break;
     if (now < v.lockedUntil) continue; // 锁定中，不驱逐
     buckets.delete(k);
+    return true;
   }
+  return false; // 全部锁定 → 拒绝新分配（保住已有的锁与内存上限）
 }
 
 export function checkLoginAllowed(key: string, now: number): LoginVerdict {
@@ -64,9 +70,11 @@ export function checkLoginAllowed(key: string, now: number): LoginVerdict {
 }
 
 export function recordLoginFailure(key: string, now: number): void {
-  // 内存硬护栏：攻击者轮换 username|ip 时防止 Map 无界增长
-  enforceBucketCap(now);
   let b = buckets.get(key);
+  // 新 key 才需要占用容量；已有 key 直接更新，永不因容量被拒
+  if (!b && !makeRoomForNewBucket(now)) {
+    return; // 容量饱和（全部条目锁定中）→ 放弃记录，绝不突破上限
+  }
   // 窗口已过 → 重置失败数与窗口，但保留 lockedUntil（否则锁定时长超过窗口时，
   // 一次废弃猜测即可解锁，退避阶梯上半截形同虚设）与 lockCount（持续升级锁定）
   if (!b || now - b.windowStart > WINDOW_MS) {
