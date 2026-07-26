@@ -45,7 +45,9 @@ const DEFAULT_WORKER_BASE = "https://mediaryconnect.app";
  * `SCOUT_CONNECT_URL` 指向预发/自建 worker 时，状态卡打到新 worker，
  * 而报名表单仍写进生产队列——测试数据污染真实名单。
  *
- * 在函数里读 env 而非模块顶层常量：`cacheComponents` 下顶层常量会被构建期烘死。
+ * 在函数里读 env 而非模块顶层常量：`cacheComponents` 下模块可能在构建期就被
+ * 求值，把 build 环境的 env 值烤死进产物——docker 镜像 build/run 环境不同，
+ * 那样预发/自建实例改 `SCOUT_CONNECT_URL` 会失效。
  * 这个值不敏感（就是个公开域名），可以安全下发给客户端组件。
  */
 export function scoutConnectBaseUrl(): string {
@@ -53,13 +55,6 @@ export function scoutConnectBaseUrl(): string {
   return raw.replace(/\/+$/, "");
 }
 
-/**
- * 心跳一次。`true` = worker 明确回了 204（契约里唯一的成功）。
- *
- * 注意读的是 `process.env`（而非模块顶层常量）：cacheComponents 下模块可能在
- * 构建期就被求值，把 build 环境的 env 值烤死进产物——docker 镜像 build/run
- * 环境不同，那样预发/自建实例改 `SCOUT_CONNECT_URL` 会失效。
- */
 /**
  * 心跳超时。这次 fetch 发生在 `/settings` 的 **SSR 渲染路径**上——没有超时的话，
  * worker 或网络「卡住但不报错」会把整个设置页的渲染一起挂死（不是慢，是永远不返回）。
@@ -69,6 +64,7 @@ export function scoutConnectBaseUrl(): string {
  */
 const HEARTBEAT_TIMEOUT_MS = 5_000;
 
+/** 心跳一次。`true` = worker 明确回了 204（契约里唯一的成功）。 */
 async function defaultSendHeartbeat(token: string): Promise<boolean> {
   const res = await fetch(`${scoutConnectBaseUrl()}/api/instance/status`, {
     method: "POST",

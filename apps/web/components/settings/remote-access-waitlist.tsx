@@ -17,15 +17,20 @@ import { LoaderCircle } from "lucide-react";
  * （双击/刷新）正是用户想再看一眼排名的时刻。
  */
 
-/** 与服务端同一个默认值（见 lib/remote-access.ts）。 */
-const DEFAULT_WORKER_BASE = "https://mediaryconnect.app";
-
-export function RemoteAccessWaitlistForm(props: { workerBaseUrl?: string }) {
+/**
+ * `workerBaseUrl` 是**必填**且刻意没有本地默认值：唯一来源是服务端的
+ * `scoutConnectBaseUrl()`（见 lib/remote-access.ts），由调用方透传下来。
+ *
+ * 这里若留一个 `?:` + 本地兜底常量，某个将来忘记传参的调用点就会**静默**
+ * 退回生产 worker——把预发/自建实例的报名写进真实队列，正是上一个 commit
+ * 修掉的 bug。设成必填后，漏传是编译错误，不是线上脏数据。
+ */
+export function RemoteAccessWaitlistForm(props: { workerBaseUrl: string }) {
   const [email, setEmail] = useState("");
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [pending, setPending] = useState(false);
 
-  const base = (props.workerBaseUrl?.trim() || DEFAULT_WORKER_BASE).replace(/\/+$/, "");
+  const base = props.workerBaseUrl.trim().replace(/\/+$/, "");
 
   const submit = async () => {
     setPending(true);
@@ -87,7 +92,10 @@ export function RemoteAccessWaitlistForm(props: { workerBaseUrl?: string }) {
         <p
           className="panel-note"
           // 提交结果要被读屏播报：它是用户这次操作的唯一反馈。
-          role="status"
+          // 失败走 alert（assertive，立刻打断）——politeness 下的失败提示很容易
+          // 被用户完全错过，而这时表单看起来「什么都没发生」。成功走 status。
+          // 与 remote-access-section.tsx 的无密码警告同款约定。
+          role={result.ok ? "status" : "alert"}
           style={{ margin: "10px 0 0", color: result.ok ? "var(--accent)" : "var(--danger, #e5484d)" }}
         >
           {result.text}

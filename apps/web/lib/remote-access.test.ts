@@ -6,10 +6,24 @@ import {
   type RemoteAccessState,
 } from "./remote-access";
 
-const ORIGINAL_ENV = { ...process.env };
+// 只按 key 保存/还原本套件真正会改的两个变量。**不能**整体替换
+// `process.env`：那会换掉对象本体，任何在此之前拿到过旧引用的模块（含先加载的
+// 测试文件）会继续读一个已经不再更新的快照。
+const prevScoutConnectUrl = process.env.SCOUT_CONNECT_URL;
+const prevTunnelToken = process.env.TUNNEL_TOKEN;
 
 afterEach(() => {
-  process.env = { ...ORIGINAL_ENV };
+  // 原值为 undefined 时必须删除而非跳过，否则本套件设的值会泄漏给后续测试文件
+  if (prevScoutConnectUrl !== undefined) {
+    process.env.SCOUT_CONNECT_URL = prevScoutConnectUrl;
+  } else {
+    delete process.env.SCOUT_CONNECT_URL;
+  }
+  if (prevTunnelToken !== undefined) {
+    process.env.TUNNEL_TOKEN = prevTunnelToken;
+  } else {
+    delete process.env.TUNNEL_TOKEN;
+  }
   vi.unstubAllGlobals();
 });
 
