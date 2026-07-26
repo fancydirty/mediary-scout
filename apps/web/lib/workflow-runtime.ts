@@ -241,18 +241,21 @@ export async function logoutSession(signedCookie: string | undefined): Promise<v
 }
 
 /**
- * 单用户模式是否已设置登录密码（`acct_default` 有非空 `passwordHash`）。
- * 非空即表示实例进入「远程需登录」态；清空即回到全开放态（可逆开关）。
+ * 单用户模式的登录密码状态。
  *
- * 取不到仓库（未配置 DB / 无请求上下文）时返回 false —— 与「未设密码」
- * 的现状行为一致，绝不因为读不到状态就把本地实例锁死。
+ * 三态而非布尔：`"unknown"` 表示**读不出来**（DB 抖动、连接池耗尽、故障切换），
+ * 它和「没设密码」是完全不同的两件事。若把二者合并，一次数据库抖动就会让
+ * 公网访客直接拿到站主身份——读不到状态时必须由调用方按「本地宽容、远程收紧」
+ * 分别决策，而不是在这里一律当作开放。
  */
-export async function hasLoginPassword(): Promise<boolean> {
+export type LoginPasswordState = boolean | "unknown";
+
+export async function hasLoginPassword(): Promise<LoginPasswordState> {
   try {
     const acct = await getWorkflowRepository().getAccountById(DEFAULT_ACCOUNT_ID);
     return Boolean(acct && acct.passwordHash.length > 0);
   } catch {
-    return false;
+    return "unknown";
   }
 }
 
@@ -610,35 +613,57 @@ export function isRemoteRequest(hdrs: Headers): boolean {
 /**
  * 单用户账号判定（纯函数，本 plan 的安全核心）。设密码后：LAN 开放、远程需 session。
  *
+ * `hasPassword` 为 `"unknown"`（状态读取失败）时按**已设密码**处理：
+ * 局域网仍然放行（可信网段，不因一次抖动制造运维事故），远程则收紧到需要
+ * session——读不到状态绝不等于没设密码。
+ *
+ * 远程放行只认 `acct_default`：同一个库可能残留多用户时期的账号
+ * （`MEDIA_TRACK_MULTI_USER` 是运行时开关，可来回切），那些账号的 session
+ * 不该在单用户模式下被当作站主，况且改密/清密只会吊销 `acct_default` 的 session，
+ * 吊销不掉它们。
+ *
  * 抽成纯函数是为了能确定性覆盖全部「内外 × 有无 session」组合——
  * Emby/Jellyfin 的事故正是内外判定出错，这段逻辑必须可被精确测试。
  */
 export function resolveSingleUserAccount(opts: {
-  hasPassword: boolean;
+  hasPassword: LoginPasswordState;
   isRemote: boolean;
   sessionAccountId: string | null;
 }): string {
-  if (!opts.hasPassword) return DEFAULT_ACCOUNT_ID;
-  if (!opts.isRemote) return DEFAULT_ACCOUNT_ID; // LAN 免登录
-  return opts.sessionAccountId ?? UNAUTHENTICATED_ACCOUNT_ID; // 远程需登录
+  if (opts.hasPassword === false) return DEFAULT_ACCOUNT_ID;
+  if (!opts.isRemote) return DEFAULT_ACCOUNT_ID; // LAN 免登录（含状态未知）
+  // 远程：必须持有 acct_default 自己的有效 session
+  return opts.sessionAccountId === DEFAULT_ACCOUNT_ID
+    ? DEFAULT_ACCOUNT_ID
+    : UNAUTHENTICATED_ACCOUNT_ID;
 }
 
 export async function getCurrentAccountId(): Promise<string> {
   if (!isMultiUserEnabled()) {
     const hasPassword = await hasLoginPassword();
-    if (!hasPassword) return DEFAULT_ACCOUNT_ID;
+    if (hasPassword === false) return DEFAULT_ACCOUNT_ID; // 明确没设密码 → 保持现状全开放
+    // 已设密码，或状态读不出来：都要看请求来自哪里
+    let hdrs: Headers;
+    let sessionCookie: string | undefined;
     try {
       const { cookies, headers } = await import("next/headers");
-      const hdrs = await headers();
-      if (!isRemoteRequest(hdrs)) return DEFAULT_ACCOUNT_ID; // LAN → 开放
-      const store = await cookies();
-      const raw = store.get(SESSION_COOKIE_NAME)?.value;
-      const sessionAccountId = raw ? await resolveSessionAccountId(raw) : null;
-      return resolveSingleUserAccount({ hasPassword, isRemote: true, sessionAccountId });
+      hdrs = await headers();
+      sessionCookie = (await cookies()).get(SESSION_COOKIE_NAME)?.value;
     } catch {
       // 无请求上下文（in-process worker）：视为本地直通——采集任务不认 cookie。
       return DEFAULT_ACCOUNT_ID;
     }
+    if (!isRemoteRequest(hdrs)) return DEFAULT_ACCOUNT_ID; // LAN → 开放
+    // 已确认是远程：此后任何读取失败都必须 fail-closed，不能退回开放默认值
+    let sessionAccountId: string | null = null;
+    if (sessionCookie) {
+      try {
+        sessionAccountId = await resolveSessionAccountId(sessionCookie);
+      } catch {
+        return UNAUTHENTICATED_ACCOUNT_ID;
+      }
+    }
+    return resolveSingleUserAccount({ hasPassword, isRemote: true, sessionAccountId });
   }
   try {
     const { cookies } = await import("next/headers");
@@ -656,15 +681,14 @@ export async function getCurrentAccountId(): Promise<string> {
 }
 
 /**
- * Account id for write/bind mutations. Multi-user + no valid session → throw
- * (never bind to the read-only sentinel `acct_unauthenticated`). Single-user
- * with a password set behaves the same for remote requests; LAN and the
- * in-process worker path stay unchanged.
+ * Account id for write/bind mutations. The sentinel `acct_unauthenticated` is
+ * only ever produced by an auth failure, so it must never reach a write path —
+ * reject it unconditionally rather than re-deriving whether the instance is
+ * gated (that second read could disagree with the first).
  */
 export async function requireAuthenticatedAccountId(): Promise<string> {
   const accountId = await getCurrentAccountId();
-  const gated = isMultiUserEnabled() || (await hasLoginPassword());
-  if (gated && accountId === UNAUTHENTICATED_ACCOUNT_ID) {
+  if (accountId === UNAUTHENTICATED_ACCOUNT_ID) {
     throw new UnauthenticatedAccountError();
   }
   return accountId;
