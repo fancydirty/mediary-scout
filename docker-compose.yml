@@ -64,6 +64,11 @@ services:
       # queue (获取 stuck "排队", category dirs never provisioned). Must be vercel-ai.
       MEDIA_TRACK_AGENT_ADAPTER: vercel-ai
       MEDIA_TRACK_DEMO_SEED: "0"
+      # 隧道 token 也给 web:设置页「远程访问」用它作实例身份，向 Scout Connect
+      # 报到查状态(仅发 Bearer 头做存活探针,不回传任何端点信息)。不传的话已开通
+      # 的实例会把自己显示成「未开通」。cloudflared 那边同样需要它,两处读同一个
+      # .env 变量。未设时为空 → tab 显示未开通,这正是自建/未开通实例的正确状态。
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
       # 可观测性:完整有序的 agent 逐步轨迹始终落 agent_steps 表(psql 即可复盘)。
       # 额外把每一步打到 stdout(docker compose logs web)是 OPT-IN —— 它会把工具参数
       # (搜索关键词 / 候选 id / 文件 id)写进容器日志与日志聚合器,默认不开。需要排障时
@@ -99,7 +104,9 @@ services:
   #      NOT localhost), and copy the connector token.
   #   2. Put TUNNEL_TOKEN=<token> in .env  (compose reads .env for interpolation).
   #   3. docker compose --profile tunnel up -d
-  #   4. ⚠️ Put Cloudflare Access in front of the hostname — this app has no login.
+  #   4. ⚠️ Gate the hostname: set an access password in 设置 → 账号 (remote requests
+  #      then require login while the LAN stays open), or put Cloudflare Access in front.
+  #      See docs/deploy.md → 「必须有门禁」. Do NOT expose it with neither.
   # See docs/deploy.md → 「方式二:Cloudflare Tunnel」 for the full walkthrough.
   cloudflared:
     image: cloudflare/cloudflared:latest
