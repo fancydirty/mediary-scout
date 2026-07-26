@@ -490,3 +490,101 @@ describe("migration 0001 — existing install against real SQLite", () => {
     expect(() => sqlite.exec(MIGRATION_SQL)).toThrow(/duplicate column name/i);
   });
 });
+
+// Copilot round 2, finding 2: step 8 opened with a bare
+// `ALTER TABLE waitlist RENAME TO waitlist_old`, which throws
+// "no such table: waitlist" on any instance provisioned from a schema.sql that
+// predates the waitlist table. Because the file is applied as one atomic unit,
+// that failure also rolls back the `endpoints` rebuild in steps 1-7 — the
+// critical part. So an older-than-expected D1 instance could not be migrated
+// at all, and the failure mode was a total one, not a partial one.
+describe("migration 0001 — legacy install that predates the waitlist table", () => {
+  /** LEGACY_SCHEMA_SQL minus the waitlist table and its index. */
+  const PRE_WAITLIST_SCHEMA_SQL = LEGACY_SCHEMA_SQL.slice(
+    0,
+    LEGACY_SCHEMA_SQL.indexOf("CREATE TABLE waitlist"),
+  );
+
+  it("the fixture really has no waitlist table (guards against a vacuous test)", () => {
+    const { sqlite } = freshDb(PRE_WAITLIST_SCHEMA_SQL);
+    const tables = (sqlite.prepare(`SELECT name FROM sqlite_master WHERE type='table'`).all() as {
+      name: string;
+    }[]).map((r) => r.name);
+    expect(tables).not.toContain("waitlist");
+    expect(tables).toContain("endpoints");
+  });
+
+  it("applies cleanly with no waitlist table present", () => {
+    const { sqlite } = freshDb(PRE_WAITLIST_SCHEMA_SQL);
+    // Before the fix: "no such table: waitlist".
+    expect(() => sqlite.exec(MIGRATION_SQL)).not.toThrow();
+  });
+
+  it("ends with the correct waitlist shape and indexes", () => {
+    const { sqlite } = freshDb(PRE_WAITLIST_SCHEMA_SQL);
+    sqlite.exec(MIGRATION_SQL);
+
+    const cols = sqlite.prepare(`PRAGMA table_info(waitlist)`).all() as {
+      name: string;
+      type: string;
+      notnull: number;
+      dflt_value: string | null;
+    }[];
+    expect(cols.map((c) => c.name)).toEqual(["id", "email", "batch", "status", "created_at"]);
+    // The whole point of step 8: the default must be the literal routes.ts uses.
+    expect(cols.find((c) => c.name === "status")?.dflt_value).toBe("'pending'");
+
+    const idx = indexNames(sqlite);
+    expect(idx).toContain("idx_waitlist_email_batch");
+    expect(idx).toContain("idx_waitlist_batch_created");
+    expect(
+      (sqlite.prepare(`SELECT name FROM sqlite_master WHERE type='table'`).all() as {
+        name: string;
+      }[]).map((r) => r.name),
+    ).not.toContain("waitlist_old");
+  });
+
+  it("the endpoints rebuild still lands (the atomic-rollback casualty)", async () => {
+    const { sqlite, db } = freshDb(PRE_WAITLIST_SCHEMA_SQL);
+    sqlite.exec(MIGRATION_SQL);
+
+    // This is what step 8's failure used to take down with it.
+    await expect(db.insertEndpoint(postAccessEndpoint())).resolves.toMatchObject({ id: "ep_1" });
+    expect(indexNames(sqlite)).toContain("idx_endpoints_token_sha256");
+  });
+
+  it("converges on exactly the fresh schema.sql shape", () => {
+    const migrated = freshDb(PRE_WAITLIST_SCHEMA_SQL);
+    migrated.sqlite.exec(MIGRATION_SQL);
+    const fresh = freshDb(SCHEMA_SQL);
+
+    const shapeOf = (sqlite: Sqlite, table: string): unknown =>
+      (sqlite.prepare(`PRAGMA table_info(${table})`).all() as {
+        name: string;
+        type: string;
+        notnull: number;
+        dflt_value: string | null;
+      }[]).map((c) => `${c.name} ${c.type} notnull=${c.notnull} default=${c.dflt_value}`);
+
+    expect(shapeOf(migrated.sqlite, "waitlist")).toEqual(shapeOf(fresh.sqlite, "waitlist"));
+    expect(shapeOf(migrated.sqlite, "endpoints")).toEqual(shapeOf(fresh.sqlite, "endpoints"));
+    expect(indexNames(migrated.sqlite).sort()).toEqual(indexNames(fresh.sqlite).sort());
+  });
+
+  it("the resurrection shim does not clobber a real pre-existing waitlist", () => {
+    // The guard must be CREATE TABLE IF NOT EXISTS, not an unconditional
+    // CREATE/DROP — scenario (a) data still has to survive.
+    const { sqlite } = freshDb(LEGACY_SCHEMA_SQL);
+    sqlite
+      .prepare(`INSERT INTO waitlist (id, email, created_at) VALUES (?, ?, ?)`)
+      .run("wl_legacy", "legacy@example.com", "2026-07-01T00:00:00.000Z");
+
+    sqlite.exec(MIGRATION_SQL);
+
+    const rows = sqlite.prepare(`SELECT id, email, batch, status FROM waitlist`).all();
+    expect(rows).toEqual([
+      // 'waiting' realigned to 'pending' by step 8's CASE.
+      { id: "wl_legacy", email: "legacy@example.com", batch: 1, status: "pending" },
+    ]);
+  });
+});

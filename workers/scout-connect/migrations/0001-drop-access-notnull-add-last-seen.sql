@@ -104,6 +104,26 @@ CREATE INDEX IF NOT EXISTS idx_endpoints_token_sha256 ON endpoints(token_sha256)
 --    filters on 'pending', so any row created via the default was invisible to
 --    the position math. Converge on 'pending'. Changing a DEFAULT also needs a
 --    rebuild, and the same explicit-column rule applies.
+--
+--    First, guarantee the rename below has something to rename. An instance
+--    provisioned from a schema.sql that predates the waitlist table has no
+--    such table, and a bare `ALTER TABLE waitlist RENAME` there fails with
+--    "no such table: waitlist". Because this file is applied as ONE atomic
+--    unit, that failure would also roll back the endpoints rebuild in steps
+--    1-7 — the critical part — leaving such an instance unmigratable.
+--    SQLite has no `ALTER TABLE ... IF EXISTS`, so the portable guard is to
+--    conditionally materialise the OLD shape (note: status default 'waiting')
+--    and let the normal rename/copy/drop path run over an empty table. On an
+--    instance that DOES have the table this is a no-op and the real data is
+--    preserved untouched.
+CREATE TABLE IF NOT EXISTS waitlist (
+  id TEXT PRIMARY KEY,
+  email TEXT NOT NULL,
+  batch INTEGER NOT NULL DEFAULT 1,
+  status TEXT NOT NULL DEFAULT 'waiting',
+  created_at TEXT NOT NULL
+);
+
 ALTER TABLE waitlist RENAME TO waitlist_old;
 
 CREATE TABLE waitlist (
