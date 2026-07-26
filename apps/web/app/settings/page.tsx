@@ -141,6 +141,9 @@ export default function SettingsPage({
                   </Suspense>
                 </>
               }
+              // Slot content lands in Task 3; until then the tab stays hidden by
+              // the same empty-slot observer that hides 账号 (nothing streams in).
+              remote={null}
             />
             </Suspense>
           </>
