@@ -283,7 +283,7 @@ describe("handleRequest", () => {
     const body = (await res.json()) as { error: string };
     // User-facing message, NOT the raw "UNIQUE constraint failed: …" string —
     // echoing internal schema text to the client violates this file's contract.
-    expect(body.error).toBe("slug already in use");
+    expect(body.error).toBe("slug already in use: alice");
     expect(body.error).not.toContain("UNIQUE");
   });
 

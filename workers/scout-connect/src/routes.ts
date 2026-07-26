@@ -383,11 +383,13 @@ async function provisionInvite(
     // "UNIQUE constraint failed: endpoints.<column>" string would leak internal
     // schema details to the client (this file's contract is to never leak
     // internal error text) and make the response brittle across runtimes.
+    // Messages match the pre-check path's format ("…: <value>") so callers see
+    // the same text whether the conflict was caught by the pre-check or the race.
     if (msg.includes("UNIQUE constraint failed: endpoints.slug")) {
-      throw new HttpError(409, "slug already in use");
+      throw new HttpError(409, `slug already in use: ${slug}`);
     }
     if (msg.includes("UNIQUE constraint failed: endpoints.hostname")) {
-      throw new HttpError(409, "hostname already in use");
+      throw new HttpError(409, `hostname already in use: ${slug}.${deps.rootDomain}`);
     }
     if (msg.includes("UNIQUE constraint failed: endpoints.invite_id")) {
       throw new HttpError(409, "invite already provisioned");
