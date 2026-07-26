@@ -69,6 +69,7 @@ TRIPWIRE tests in `src/schema.test.ts` and `src/db.test.ts`.
 | 400 | `{ error: "id required" }` (or `invalid json` / `invalid body` from the shared body reader) |
 | 404 | `{ error: "waitlist entry not found" }` |
 | 413 | `{ error: "body too large" }` |
+| 503 | `{ error: "survey temporarily unavailable" }` — migration window only (survey_json column missing); other db errors stay a generic 500 |
 
 Only answered keys are persisted, as a JSON object in `waitlist.survey_json`
 (added by `migrations/0002-waitlist-survey.sql`; NULL until answered): unknown
@@ -136,7 +137,7 @@ npx wrangler deploy
 | Migration | What / why |
 | --- | --- |
 | `0001-drop-access-notnull-add-last-seen.sql` | Drops the `cf_access_app_id NOT NULL` (post-Access `provision.ts` writes `NULL`; the old table rejected it, so **every provision 500'd** after creating and then rolling back the tunnel/DNS). Adds `last_seen_at` for `POST /api/instance/status`. Adds `idx_endpoints_token_sha256` + `idx_waitlist_batch_created` (both paths were full table scans). Realigns `waitlist.status` default `'waiting'` → `'pending'`. |
-| `0002-waitlist-survey.sql` | Adds nullable `waitlist.survey_json TEXT` for `POST /waitlist/survey`. Single additive `ALTER` (no rebuild; pre-existing rows read back NULL). Must run before deploy: `insertWaitlist` binds the column, so **every new signup 500s** on an unmigrated instance, not just survey submits. |
+| `0002-waitlist-survey.sql` | Adds nullable `waitlist.survey_json TEXT` for `POST /waitlist/survey`. Single additive `ALTER` (no rebuild; pre-existing rows read back NULL). Migrate before deploying. Wrong order no longer takes the funnel down — `insertWaitlist` falls back to the legacy column list and the survey route answers 503 — but degraded means exactly that: signups land without the column and their survey submits fail until this runs. |
 
 Notes on writing migrations here:
 

@@ -642,6 +642,9 @@ const SURVEY_FEEDBACK_MAX = 500;
  *        from the shared body reader)
  *   404 `{ error: "waitlist entry not found" }`
  *   413 `{ error: "body too large" }`
+ *   503 `{ error: "survey temporarily unavailable" }` — only in the migration
+ *        window (survey_json column missing); any other db error stays a
+ *        generic 500 and must never be masked as a 503
  *
  * Only keys actually answered are persisted, under their contract names —
  * unknown body keys are dropped, wrong-typed values are dropped, and
