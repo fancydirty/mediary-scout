@@ -565,6 +565,30 @@ describe("waitlist", () => {
   });
 });
 
+describe("waitlist survey_json 兼容", () => {
+  it("老 schema（无 survey_json 列）的行映射为 null 而非 undefined", async () => {
+    // 迁移 0002 执行前的窗口期：老表 SELECT * 根本不会返回 survey_json 列。
+    // 用 spy D1 直接喂一个「缺键」的原始行（memory backend 测不到这条路径——
+    // 它的行总是带键）。映射必须落成 null：undefined 会破坏 WaitlistRow 契约，
+    // 且 JSON.stringify 会把整个键丢掉（API 响应形状在迁移前后不一致）。
+    const legacyRow = {
+      id: "w1",
+      email: "a@x.com",
+      batch: 1,
+      status: "pending",
+      created_at: "2026-07-25T00:00:00Z",
+      // 故意没有 survey_json 键 —— 这就是迁移前的行形状
+    };
+    const { d1 } = createSpyD1({ first: legacyRow });
+    const db = createD1ConnectDb(d1);
+    const row = await db.getWaitlistByEmail("a@x.com", 1);
+    expect(row).not.toBeNull();
+    expect(row!.survey_json).toBeNull(); // 不是 undefined
+    expect("survey_json" in row!).toBe(true);
+    expect(JSON.parse(JSON.stringify(row))).toHaveProperty("survey_json", null);
+  });
+});
+
 describe("endpoint cf_access_app_id 可空", () => {
   // NOTE: this only pins the in-memory ConnectDb contract. createMemoryConnectDb
   // is a plain Map with no constraint engine, so a green result here says

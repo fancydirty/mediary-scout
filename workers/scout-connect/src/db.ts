@@ -180,7 +180,10 @@ function mapWaitlist(row: RawRow): WaitlistRow {
     batch: row.batch as number,
     status: row.status as string,
     created_at: row.created_at as string,
-    survey_json: row.survey_json as string | null,
+    // Coalesce, don't cast: against a pre-0002 schema (migration not yet run),
+    // SELECT * returns no survey_json column at all → `undefined`, which would
+    // break the `string | null` contract and silently vanish from JSON responses.
+    survey_json: (row.survey_json as string | null | undefined) ?? null,
   };
 }
 
