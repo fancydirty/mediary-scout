@@ -209,7 +209,7 @@ describe("schema.sql — fresh install against real SQLite", () => {
     expect(tokenPlan).not.toContain("SCAN endpoints");
   });
 
-  it("MEDIUM-7: waitlist.status default matches the literal the routes filter on", () => {
+  it("MEDIUM-7: waitlist.status default matches the literal the routes INSERT", () => {
     const { sqlite } = freshDb(SCHEMA_SQL);
     sqlite
       .prepare(`INSERT INTO waitlist (id, email, created_at) VALUES (?, ?, ?)`)
@@ -217,8 +217,14 @@ describe("schema.sql — fresh install against real SQLite", () => {
     const row = sqlite.prepare(`SELECT status FROM waitlist WHERE id = 'w_default'`).get() as {
       status: string;
     };
-    // A row created via the schema default must be visible to the position
-    // math, which counts `status = 'pending'`.
+    // The schema default and the literal routes.ts writes must agree, or the
+    // column holds two different words for one state and any future consumer
+    // (an admin filter, a batch-invite sweep) silently sees half the rows.
+    //
+    // NB: nothing FILTERS on status today — every waitlist query keys off
+    // `batch` and `created_at` only, and the position math counts rows within
+    // a batch regardless of status. So this is about keeping the column
+    // coherent, not about a query that would currently miss rows.
     expect(row.status).toBe("pending");
   });
 

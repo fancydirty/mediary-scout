@@ -52,7 +52,10 @@ CREATE TABLE waitlist (
   id TEXT PRIMARY KEY,
   email TEXT NOT NULL,
   batch INTEGER NOT NULL DEFAULT 1,
-  -- Must stay in sync with the literal routes.ts inserts and filters on.
+  -- Must stay in sync with the literal routes.ts INSERTs. Nothing filters on
+  -- this column today (the waitlist queries key off batch/created_at only);
+  -- the default and the written literal must still agree so the column does
+  -- not end up holding two words for one state.
   status TEXT NOT NULL DEFAULT 'pending',
   created_at TEXT NOT NULL
 );

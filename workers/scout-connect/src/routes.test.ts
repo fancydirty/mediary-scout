@@ -844,9 +844,10 @@ describe("POST /waitlist hardening", () => {
     expect(await res.json()).toEqual({ error: "internal" });
   });
 
-  // MEDIUM-7: schema default was 'waiting' while routes insert/filter
-  // 'pending', so default-created rows were invisible to the position math.
-  it("inserts the same status literal the position math filters on", async () => {
+  // MEDIUM-7: the schema default was 'waiting' while routes insert 'pending',
+  // so the column held two different words for one state. Nothing filters on
+  // status today — this pins that the app and the schema agree on the literal.
+  it("inserts the same status literal the schema defaults to", async () => {
     const { db, deps } = setup();
     await handleRequest(waitlistPost("lit@example.com"), deps);
     const row = await db.getWaitlistByEmail("lit@example.com", 1);

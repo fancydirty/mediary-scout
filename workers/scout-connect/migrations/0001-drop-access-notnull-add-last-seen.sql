@@ -100,10 +100,13 @@ CREATE INDEX IF NOT EXISTS idx_endpoints_status ON endpoints(status);
 --    every failed probe is a full scan of endpoints.
 CREATE INDEX IF NOT EXISTS idx_endpoints_token_sha256 ON endpoints(token_sha256);
 
--- 8. MEDIUM-7: the waitlist default was 'waiting' while routes.ts inserts and
---    filters on 'pending', so any row created via the default was invisible to
---    the position math. Converge on 'pending'. Changing a DEFAULT also needs a
---    rebuild, and the same explicit-column rule applies.
+-- 8. MEDIUM-7: the waitlist default was 'waiting' while routes.ts inserts
+--    'pending', so the column could hold two different words for one state
+--    depending on whether the row came from the app or from the default.
+--    Nothing filters on status today (the waitlist queries key off batch and
+--    created_at only), so this is a coherence fix, not a
+--    rows-are-being-missed fix. Converge on 'pending'. Changing a DEFAULT also
+--    needs a rebuild, and the same explicit-column rule applies.
 --
 --    First, guarantee the rename below has something to rename. An instance
 --    provisioned from a schema.sql that predates the waitlist table has no
