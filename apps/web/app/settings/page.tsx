@@ -20,6 +20,7 @@ import { PatrolNowButton } from "../../components/patrol-now-button";
 import { SettingsTabs } from "../../components/settings-tabs";
 import { PasswordChangeForm } from "../../components/password-change-form";
 import { AccountAdminPanel } from "../../components/account-admin-panel";
+import { RemoteAccessSection } from "../../components/settings/remote-access-section";
 import { GitHubNameplate } from "../../components/github-nameplate";
 import { SettingsActionInbox } from "../../components/settings-action-inbox";
 import { loadSettingsAttentionSummary } from "../../lib/settings-attention-server";
@@ -141,9 +142,14 @@ export default function SettingsPage({
                   </Suspense>
                 </>
               }
-              // Slot content lands in Task 3; until then the tab stays hidden by
-              // the same empty-slot observer that hides 账号 (nothing streams in).
-              remote={null}
+              // Fallback is null, not a skeleton: a skeleton element would stream
+              // into the slot and the empty-slot observer would read the tab as
+              // visible before we know whether the viewer is the 站主.
+              remote={
+                <Suspense fallback={null}>
+                  <RemoteAccessSection />
+                </Suspense>
+              }
             />
             </Suspense>
           </>
