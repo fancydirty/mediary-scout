@@ -41,6 +41,7 @@ function makeEndpoint(overrides: Partial<EndpointRow> = {}): EndpointRow {
     token_shown_at: "2026-07-24T02:00:00.000Z",
     created_at: "2026-07-24T01:00:00.000Z",
     revoked_at: null,
+    last_seen_at: null,
     ...overrides,
   };
 }

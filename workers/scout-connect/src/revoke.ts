@@ -59,7 +59,10 @@ export async function revokeEndpoint(input: {
     }
   };
 
-  await attempt(() => cf.deleteAccessApp(endpoint.cf_access_app_id));
+  // Old endpoints still have Access app that needs cleanup
+  if (endpoint.cf_access_app_id) {
+    await attempt(() => cf.deleteAccessApp(endpoint.cf_access_app_id!));
+  }
   await attempt(() => cf.deleteDnsRecord(endpoint.cf_dns_record_id));
   await attempt(() => cf.deleteTunnel(endpoint.cf_tunnel_id));
 

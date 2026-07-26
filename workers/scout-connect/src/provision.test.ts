@@ -252,6 +252,7 @@ describe("provisionEndpoint", () => {
       token_shown_at: null,
       created_at: NOW,
       revoked_at: null,
+      last_seen_at: null,
     });
 
     await expect(
@@ -480,7 +481,7 @@ describe("provisionEndpoint", () => {
 
     const endpoints = await db.listEndpoints();
     expect(endpoints).toHaveLength(1);
-    expect(endpoints[0].cf_access_app_id).toBeNull();
-    expect(endpoints[0].cf_access_policy_id).toBeNull();
+    expect(endpoints[0]?.cf_access_app_id).toBeNull();
+    expect(endpoints[0]?.cf_access_policy_id).toBeNull();
   });
 });

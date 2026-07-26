@@ -250,7 +250,8 @@ describe("handleRequest", () => {
     });
 
     const methods = calls.map((c) => c.method);
-    expect(methods).toContain("deleteAccessApp");
+    // New endpoints don't have Access app (cf_access_app_id is null)
+    expect(methods).not.toContain("deleteAccessApp");
     expect(methods).toContain("deleteDnsRecord");
     expect(methods).toContain("deleteTunnel");
 
