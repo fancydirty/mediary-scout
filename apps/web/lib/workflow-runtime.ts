@@ -1,6 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { cache } from "react";
 import {
+  checkLoginAllowed,
+  recordLoginFailure,
+  recordLoginSuccess,
+} from "./login-throttle";
+import {
   PanSouResourceProvider,
   createProtectedPan115CookieStorageExecutorFromEnv,
   createBootstrapPan115CookieStorageExecutor,
@@ -189,16 +194,30 @@ export async function registerAccount(username: string, password: string): Promi
   }
 }
 
-/** Authenticate username+password and start a session. */
-export async function loginAccount(username: string, password: string): Promise<AuthOutcome> {
+/** Authenticate username+password and start a session. Throttled against brute force. */
+export async function loginAccount(
+  username: string,
+  password: string,
+  throttleKey?: string,
+): Promise<AuthOutcome> {
+  const key = (throttleKey ?? username.trim().toLowerCase()) || "unknown";
+  const now = Date.now();
+  const verdict = checkLoginAllowed(key, now);
+  if (!verdict.allowed) {
+    return { ok: false, error: `尝试过于频繁，请 ${verdict.retryAfterSec} 秒后再试。` };
+  }
   const account = await getWorkflowRepository().getAccountByUsername(username.trim());
-  // Verify even when the account is missing-ish to avoid trivial username probing
-  // (the empty-hash default account has no password and can't be logged into).
-  const hash = account?.passwordHash ?? "";
-  const valid = hash.length > 0 && (await verifyPassword(password, hash));
-  if (!account || !valid) {
+  // Always verify to avoid timing oracle. Missing accounts get a dummy scrypt hash that will fail.
+  // (The empty-hash default account has no password and can't be logged into.)
+  const DUMMY_HASH = "scrypt:a2448ef076990b889ef0540720bccce2:4fdc41afebb4560f4a638b4225d8325904894d18d2df1c7a95c50a65c141b926dc252e99b63e681e15e2d6e008acc845b02c9a2fc99a4888749226ab262c6978";
+  const hash = account?.passwordHash || DUMMY_HASH;
+  const valid = await verifyPassword(password, hash);
+  const authenticated = Boolean(account) && valid && account.passwordHash.length > 0;
+  if (!authenticated) {
+    recordLoginFailure(key, now);
     return { ok: false, error: "用户名或密码不正确。" };
   }
+  recordLoginSuccess(key);
   return { ok: true, accountId: account.id, signedCookie: await createLoginSession(account.id) };
 }
 
