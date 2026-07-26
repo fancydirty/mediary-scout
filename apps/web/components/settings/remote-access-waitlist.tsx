@@ -85,7 +85,15 @@ export function RemoteAccessWaitlistForm(props: { workerBaseUrl: string }) {
           autoComplete="email"
         />
       </div>
-      <button type="submit" className="primary-button" disabled={pending || email.trim() === ""}>
+      <button
+        type="submit"
+        className="primary-button"
+        disabled={pending || email.trim() === ""}
+        // 提交中按钮内只剩 aria-hidden 的 spinner，读屏会念成无名「按钮」。
+        // 用 aria-label 补一个始终存在的可访问名称（仓库既有约定，见 login/page.tsx）。
+        aria-label={pending ? "正在提交内测申请" : "申请内测资格"}
+        aria-busy={pending}
+      >
         {pending ? <LoaderCircle size={14} className="spin" aria-hidden /> : "申请内测资格"}
       </button>
       {result ? (
