@@ -370,8 +370,15 @@ async function provisionInvite(
   } catch (e) {
     // Domain conflicts (TOCTOU races past the pre-checks above) are client
     // errors, not 500s. Everything else (CF/D1 failures) stays a 500.
+    // The actual race loser dies on the UNIQUE constraint — "UNIQUE
+    // constraint failed: endpoints.slug" (same wording in D1 and the memory
+    // mock) — which contains neither pre-check message, so map it explicitly.
     const msg = e instanceof Error ? e.message : "";
-    if (msg.includes("invite not pending") || msg.includes("already in use")) {
+    if (
+      msg.includes("invite not pending") ||
+      msg.includes("already in use") ||
+      /UNIQUE constraint failed: endpoints\.(slug|hostname|invite_id)/.test(msg)
+    ) {
       throw new HttpError(409, msg);
     }
     throw e;

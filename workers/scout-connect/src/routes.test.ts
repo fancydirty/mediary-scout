@@ -234,6 +234,53 @@ describe("handleRequest", () => {
     expect(await res.json()).toEqual({ error: "invite not found" });
   });
 
+  // The TOCTOU window past the slug precheck dies on the UNIQUE constraint,
+  // whose message ("UNIQUE constraint failed: endpoints.slug") matched NEITHER
+  // of the old 409 patterns ("already in use" / "invite not pending") and so
+  // surfaced as an opaque 500. A lost race is a client conflict, not an outage.
+  it("provision losing a slug race (UNIQUE endpoints.slug) → 409, not 500", async () => {
+    const { db, deps } = setup();
+    await seedProvisioned(deps); // alice.mediaryconnect.app endpoint exists
+    const createRes = await createInviteViaApi(deps, { email: "bob@example.com", slug: "alice" });
+    const created = (await createRes.json()) as InviteCreated;
+
+    // Blind ONLY the availability precheck: the winner's row was not visible
+    // when the loser checked, but is by the time the INSERT runs.
+    const racing: ConnectDb = {
+      ...db,
+      async findEndpointBySlugOrHostname() {
+        return null;
+      },
+    };
+    const res = await provisionViaApi({ ...deps, db: racing }, created.id);
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toContain("endpoints.slug");
+  });
+
+  it("provision losing a same-invite race (UNIQUE endpoints.invite_id) → 409, not 500", async () => {
+    const { db, deps } = setup();
+    const seeded = await seedProvisioned(deps);
+
+    // The loser's invite read happened before the winner committed: stale
+    // pending snapshot + a blinded availability precheck, then the INSERT
+    // dies on the winner's row.
+    const racing: ConnectDb = {
+      ...db,
+      async getInviteById(id) {
+        const row = await db.getInviteById(id);
+        return row === null ? null : { ...row, status: "pending" as const };
+      },
+      async findEndpointBySlugOrHostname() {
+        return null;
+      },
+    };
+    const res = await provisionViaApi({ ...deps, db: racing }, seeded.id);
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toContain("endpoints.invite_id");
+    // …and the winner's invite was not rolled back by the loser's compensation.
+    expect((await db.getInviteById(seeded.id))?.status).toBe("provisioned");
+  });
+
   it("revoke → 200 {hostname, revoked:true}, endpoint+invite flipped, cf deletes called", async () => {
     const { db, calls, deps } = setup();
     await seedProvisioned(deps);
