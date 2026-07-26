@@ -171,6 +171,17 @@ describe("心跳超时（SSR 渲染路径上的硬要求）", () => {
 });
 
 describe("scoutConnectBaseUrl（心跳与 waitlist 表单的唯一来源）", () => {
+  it("误配的 SCOUT_CONNECT_URL 回落默认，绝不退化成同源相对路径", () => {
+    // 仅 trim + 去尾斜杠的话，这些输入会变成空串或相对 URL，
+    // 心跳就静默打到实例自己身上，症状还只是「显示降级」，极难排查。
+    for (const bad of ["/", "////", "mediaryconnect.app", "://nope", "ftp://x.com"]) {
+      process.env.SCOUT_CONNECT_URL = bad;
+      const base = scoutConnectBaseUrl();
+      expect(base).toBe("https://mediaryconnect.app");
+      expect(`${base}/api/instance/status`.startsWith("https://")).toBe(true);
+    }
+  });
+
   it("默认生产域名；SCOUT_CONNECT_URL 可覆盖；去掉尾部斜杠", () => {
     delete process.env.SCOUT_CONNECT_URL;
     expect(scoutConnectBaseUrl()).toBe("https://mediaryconnect.app");

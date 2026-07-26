@@ -51,8 +51,16 @@ const DEFAULT_WORKER_BASE = "https://mediaryconnect.app";
  * 这个值不敏感（就是个公开域名），可以安全下发给客户端组件。
  */
 export function scoutConnectBaseUrl(): string {
-  const raw = process.env.SCOUT_CONNECT_URL?.trim() || DEFAULT_WORKER_BASE;
-  return raw.replace(/\/+$/, "");
+  const raw = process.env.SCOUT_CONNECT_URL?.trim();
+  if (!raw) return DEFAULT_WORKER_BASE;
+  const trimmed = raw.replace(/\/+$/, "");
+  // 必须校验协议：仅 trim + 去尾斜杠的话，误配成 "/" 或 "////" 会规范化成空串，
+  // 而 "mediaryconnect.app"（漏了协议）也不是绝对 URL——两种情况都会让
+  // `${base}/api/instance/status` 变成**同源相对路径**，心跳静默打到实例自己身上，
+  // 而且症状是「远程访问显示降级」，排查时根本想不到是 env 配错了。
+  // 校验失败宁可回落到生产默认值（可用），也不要静默走错地址。
+  if (!/^https?:\/\/[^/]+/.test(trimmed)) return DEFAULT_WORKER_BASE;
+  return trimmed;
 }
 
 /**
