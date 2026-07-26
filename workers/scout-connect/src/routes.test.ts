@@ -280,7 +280,11 @@ describe("handleRequest", () => {
     };
     const res = await provisionViaApi({ ...deps, db: racing }, created.id);
     expect(res.status).toBe(409);
-    expect(((await res.json()) as { error: string }).error).toContain("endpoints.slug");
+    const body = (await res.json()) as { error: string };
+    // User-facing message, NOT the raw "UNIQUE constraint failed: …" string —
+    // echoing internal schema text to the client violates this file's contract.
+    expect(body.error).toBe("slug already in use");
+    expect(body.error).not.toContain("UNIQUE");
   });
 
   it("provision losing a same-invite race (UNIQUE endpoints.invite_id) → 409, not 500", async () => {
@@ -302,7 +306,9 @@ describe("handleRequest", () => {
     };
     const res = await provisionViaApi({ ...deps, db: racing }, seeded.id);
     expect(res.status).toBe(409);
-    expect(((await res.json()) as { error: string }).error).toContain("endpoints.invite_id");
+    const body2 = (await res.json()) as { error: string };
+    expect(body2.error).toBe("invite already provisioned");
+    expect(body2.error).not.toContain("UNIQUE");
     // …and the winner's invite was not rolled back by the loser's compensation.
     expect((await db.getInviteById(seeded.id))?.status).toBe("provisioned");
   });

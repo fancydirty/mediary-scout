@@ -375,12 +375,22 @@ async function provisionInvite(
     // constraint failed: endpoints.slug" (same wording in D1 and the memory
     // mock) — which contains neither pre-check message, so map it explicitly.
     const msg = e instanceof Error ? e.message : "";
-    if (
-      msg.includes("invite not pending") ||
-      msg.includes("already in use") ||
-      /UNIQUE constraint failed: endpoints\.(slug|hostname|invite_id)/.test(msg)
-    ) {
+    if (msg.includes("invite not pending") || msg.includes("already in use")) {
       throw new HttpError(409, msg);
+    }
+    // The actual race loser dies on the UNIQUE constraint — same wording in D1
+    // and the memory mock. Translate to user-facing text: echoing the raw
+    // "UNIQUE constraint failed: endpoints.<column>" string would leak internal
+    // schema details to the client (this file's contract is to never leak
+    // internal error text) and make the response brittle across runtimes.
+    if (msg.includes("UNIQUE constraint failed: endpoints.slug")) {
+      throw new HttpError(409, "slug already in use");
+    }
+    if (msg.includes("UNIQUE constraint failed: endpoints.hostname")) {
+      throw new HttpError(409, "hostname already in use");
+    }
+    if (msg.includes("UNIQUE constraint failed: endpoints.invite_id")) {
+      throw new HttpError(409, "invite already provisioned");
     }
     throw e;
   }

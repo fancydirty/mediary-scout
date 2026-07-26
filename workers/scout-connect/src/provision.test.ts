@@ -466,6 +466,45 @@ describe("provisionEndpoint", () => {
     expect(audits.some((a) => a.action === "provision.orphan")).toBe(true);
   });
 
+  it("insertAudit fails AND deleteEndpoint also fails: invite STILL rolls back (phantom row is revocable)", async () => {
+    // The rollback guard exists to protect the RACE WINNER's row (a different
+    // endpointId). It must not protect OUR OWN attempt's row: when our own
+    // deleteEndpoint compensation fails, the surviving row points at CF
+    // resources the compensation is about to delete — leaving the invite
+    // provisioned would let reveal hand out a token for a dead tunnel.
+    // Rolling the invite back is strictly better: the phantom row stays
+    // visible in the admin endpoints list and revoke is 404-idempotent.
+    const db = createMemoryConnectDb();
+    await db.insertInvite(makePendingInvite());
+    const calls: string[] = [];
+    const deps = makeDeps(db, makeFakeCf(calls));
+
+    const inner = db;
+    const failingDb: ConnectDb = {
+      ...inner,
+      async insertAudit() {
+        throw new Error("d1 audit boom");
+      },
+      async deleteEndpoint() {
+        throw new Error("d1 delete boom");
+      },
+    };
+    await expect(
+      provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps: { ...deps, db: failingDb } }),
+    ).rejects.toThrow(/d1 audit boom/);
+
+    // invite rolled back (NOT stuck provisioned pointing at deleted resources)
+    const invite = await db.getInviteById("inv_1");
+    expect(invite?.status).toBe("pending");
+    expect(invite?.slug).toBeNull();
+    expect(invite?.provisioned_at).toBeNull();
+    // our own phantom row survives (delete failed) — visible, revocable later
+    expect(await db.listEndpoints()).toHaveLength(1);
+    // cf resources still cleaned up
+    expect(countCalls(calls, "del-dns:")).toBe(1);
+    expect(countCalls(calls, "del-tunnel:")).toBe(1);
+  });
+
   it("insertAudit failure after invite flip: invite rolled back to pending, endpoint row gone, retry succeeds", async () => {
     const db = createMemoryConnectDb();
     await db.insertInvite(makePendingInvite());
