@@ -8,10 +8,6 @@ import {
   requireAuthenticatedAccountId,
 } from "../../../../lib/workflow-runtime";
 
-/** flag cookie 名与有效期。仅用于 proxy 的重定向 UX，非安全判据。 */
-const AUTH_REQUIRED_COOKIE = "mt_auth_required";
-const FLAG_MAX_AGE = 365 * 24 * 60 * 60;
-
 /**
  * 单用户实例设置/更新/清除访问密码。
  *
@@ -20,7 +16,11 @@ const FLAG_MAX_AGE = 365 * 24 * 60 * 60;
  * 尚未设密码时实例本来就全开放，首次设置无从要求凭据——这与「局域网可信」
  * 的整体设计一致：能碰到局域网端口的人本来就能读写全部数据。
  *
- * 同时维护 `mt_auth_required` flag cookie 供 Edge 层 proxy 做重定向判断。
+ * 这里**不再**写 `mt_auth_required` flag cookie。它当初只服务一件事：proxy 的
+ * 旧规则 `passwordSet && isRemote`。那条规则已被删除（远程一律要 session，
+ * 见 proxy.ts 的注释），全仓库再无任何读取方，写下去只会留一个会过期、会与
+ * 真实状态漂移的假状态源。密码状态的唯一权威读法是 `GET /api/auth/bootstrap`
+ * → `hasLoginPassword()`（login/page.tsx 用的就是它）。
  */
 export async function POST(request: NextRequest) {
   if (isDemoMode()) {
@@ -44,9 +44,7 @@ export async function POST(request: NextRequest) {
 
   if (body.clear === true) {
     await clearSingleUserPassword();
-    const res = NextResponse.json({ ok: true, passwordSet: false });
-    res.cookies.set(AUTH_REQUIRED_COOKIE, "", { path: "/", maxAge: 0 });
-    return res;
+    return NextResponse.json({ ok: true, passwordSet: false });
   }
 
   const password = typeof body.password === "string" ? body.password : "";
@@ -54,15 +52,6 @@ export async function POST(request: NextRequest) {
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: 400 });
   }
-  const res = NextResponse.json({ ok: true, passwordSet: true });
-  res.cookies.set(AUTH_REQUIRED_COOKIE, "1", {
-    path: "/",
-    // 故意 NOT httpOnly：设置页要读它来显示当前状态。它不是安全判据——
-    // 权威判定在服务端 getCurrentAccountId()，伪造这个 cookie 不会绕过任何东西。
-    httpOnly: false,
-    sameSite: "lax",
-    maxAge: FLAG_MAX_AGE,
-  });
-  return res;
+  return NextResponse.json({ ok: true, passwordSet: true });
 }
 
