@@ -38,8 +38,91 @@ export async function handleRequest(request: Request, deps: RouteDeps): Promise<
   }
 }
 
+/**
+ * Hard cap on any request body this Worker will buffer or parse.
+ *
+ * 8 KB, because every body we accept is tiny and fixed-shape: `{email}` on
+ * POST /waitlist (an email is capped at 254 bytes by RFC 5321 — see
+ * EMAIL_MAX_LENGTH), `{email, slug, invitee_label}` on invite creation,
+ * `{slug}` on provision, and `{version, uptime_seconds}` on the status
+ * heartbeat. 8 KB is ~30x the largest of those, so it cannot reject a
+ * legitimate caller, while still being small enough that the worst case a
+ * stranger can force is trivial.
+ *
+ * This matters because POST /waitlist is public and unauthenticated, and this
+ * Worker shares its D1 instance with the provisioning control plane: an
+ * unbounded read+JSON.parse here is free CPU/memory amplification that
+ * degrades provisioning and revocation, not just the waitlist.
+ */
+export const MAX_JSON_BODY_BYTES = 8 * 1024;
+
+/**
+ * Cheap pre-read rejection on the DECLARED size. Costs nothing and refuses the
+ * request before a single byte is buffered — but it is only half the defence,
+ * because Content-Length is absent under chunked encoding and is attacker-
+ * controlled besides. readBodyTextCapped() enforces the real limit.
+ */
+function assertDeclaredSizeWithinCap(request: Request): void {
+  const declared = request.headers.get("content-length");
+  if (declared === null) {
+    return;
+  }
+  const bytes = Number(declared);
+  if (Number.isFinite(bytes) && bytes > MAX_JSON_BODY_BYTES) {
+    throw new HttpError(413, "body too large");
+  }
+}
+
+/**
+ * Reads the body with a genuine streaming cap: we stop pulling and cancel the
+ * stream the moment the running total crosses MAX_JSON_BODY_BYTES, so an
+ * attacker's 500 MB body costs us one chunk, not 500 MB. `await
+ * request.text()` cannot do this — it buffers everything first, which is
+ * exactly the amplification being fixed.
+ *
+ * Counts BYTES off the wire, not `String.length`: a JS string length is UTF-16
+ * code units, so a multibyte payload is up to 3x larger than a post-decode
+ * length check would suggest.
+ */
+async function readBodyTextCapped(request: Request): Promise<string> {
+  const body = request.body;
+  if (body === null) {
+    return "";
+  }
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      if (value === undefined) {
+        continue;
+      }
+      total += value.byteLength;
+      if (total > MAX_JSON_BODY_BYTES) {
+        await reader.cancel();
+        throw new HttpError(413, "body too large");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const joined = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    joined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(joined);
+}
+
 async function readJsonBody(request: Request): Promise<Record<string, unknown>> {
-  const text = await request.text();
+  assertDeclaredSizeWithinCap(request);
+  const text = await readBodyTextCapped(request);
   if (text.trim() === "") {
     return {};
   }

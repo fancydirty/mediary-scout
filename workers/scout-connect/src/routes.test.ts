@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { handleRequest, type RouteDeps } from "./routes.js";
+import { handleRequest, MAX_JSON_BODY_BYTES, type RouteDeps } from "./routes.js";
 import { createMemoryConnectDb, type ConnectDb } from "./db.js";
 import type { CfApi } from "./cf-api.js";
 import { EMAIL_RE } from "./validation.js";
@@ -586,13 +586,36 @@ describe("POST /waitlist hardening", () => {
     expect(await db.countWaitlist(1)).toBe(0);
   });
 
-  it("rejects a 200KB email without storing it", async () => {
+  // Copilot round 2, finding 1: this used to assert 400, because the ONLY
+  // thing standing between a stranger and a 200KB payload was the email length
+  // check — which runs after the whole body has already been read and parsed.
+  // The body cap now rejects it earlier and more cheaply, so the status is 413
+  // and the parse never happens. The property the test actually cares about —
+  // an enormous payload is refused and nothing is stored — is unchanged and
+  // still asserted; only the layer that refuses it moved outward.
+  it("rejects a 200KB email at the body cap, without storing it", async () => {
     const { db, deps } = setup();
     const enormous = `${"a".repeat(200 * 1024)}@example.com`;
 
     const res = await handleRequest(waitlistPost(enormous), deps);
 
+    expect(res.status).toBe(413);
+    expect(await res.json()).toEqual({ error: "body too large" });
+    expect(await db.countWaitlist(1)).toBe(0);
+  });
+
+  // The email cap is NOT made redundant by the body cap: an address can be
+  // grossly invalid while the body stays well under 8 KB. This keeps the 400
+  // path pinned so the inner check cannot be deleted as "already covered".
+  it("still rejects an over-long email with 400 when the body is under the cap", async () => {
+    const { db, deps } = setup();
+    // ~1 KB body: far below MAX_JSON_BODY_BYTES, far above EMAIL_MAX_LENGTH.
+    const longButSmall = `${"a".repeat(1000)}@example.com`;
+
+    const res = await handleRequest(waitlistPost(longButSmall), deps);
+
     expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "invalid email" });
     expect(await db.countWaitlist(1)).toBe(0);
   });
 
@@ -828,5 +851,176 @@ describe("POST /waitlist hardening", () => {
     await handleRequest(waitlistPost("lit@example.com"), deps);
     const row = await db.getWaitlistByEmail("lit@example.com", 1);
     expect(row?.status).toBe("pending");
+  });
+});
+
+// Copilot round 2, finding 1: readJsonBody() read and JSON.parse'd an
+// unbounded body. The email length cap runs AFTER that, so /waitlist — public
+// and unauthenticated — let a stranger make the Worker buffer and parse
+// megabytes for free. This Worker shares its D1 with the provisioning control
+// plane, so that is CPU/memory amplification against provisioning too.
+describe("request body size cap", () => {
+  function waitlistPost(email: unknown): Request {
+    return new Request(`${BASE}/waitlist`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+  }
+
+  /** A body far above MAX_JSON_BODY_BYTES (8 KB) but cheap to build. */
+  const oversizedJson = (): string => JSON.stringify({ email: "a".repeat(64 * 1024) });
+
+  /** Streams `text` so the Request carries NO content-length (chunked). */
+  function chunkedRequest(
+    url: string,
+    text: string,
+    headers: Record<string, string> = {},
+  ): Request {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(text));
+        controller.close();
+      },
+    });
+    return new Request(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body,
+      // Required by undici/workerd for a streaming request body.
+      duplex: "half",
+    } as RequestInit & { duplex: "half" });
+  }
+
+  it("declared Content-Length over the cap → 413, before the body is read", async () => {
+    const { deps } = setup();
+    // Body is never sent — only the header claims the size. A cap that is
+    // enforced purely post-read would have nothing to reject here.
+    const res = await handleRequest(
+      new Request(`${BASE}/waitlist`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "content-length": String(64 * 1024) },
+        body: JSON.stringify({ email: "ok@example.com" }),
+      }),
+      deps,
+    );
+
+    expect(res.status).toBe(413);
+    expect(await res.json()).toEqual({ error: "body too large" });
+  });
+
+  it("oversized actual body with NO Content-Length (chunked) → 413", async () => {
+    const { db, deps } = setup();
+
+    const res = await handleRequest(
+      chunkedRequest(`${BASE}/waitlist`, oversizedJson()),
+      deps,
+    );
+
+    expect(res.status).toBe(413);
+    expect(await res.json()).toEqual({ error: "body too large" });
+    expect(await db.countWaitlist(1)).toBe(0);
+  });
+
+  it("oversized actual body behind a LYING small Content-Length → 413", async () => {
+    const { db, deps } = setup();
+    // The header cannot be trusted: it says 12 bytes, the stream delivers 64 KB.
+    const res = await handleRequest(
+      chunkedRequest(`${BASE}/waitlist`, oversizedJson(), { "content-length": "12" }),
+      deps,
+    );
+
+    expect(res.status).toBe(413);
+    expect(await db.countWaitlist(1)).toBe(0);
+  });
+
+  it("counts BYTES, not UTF-16 code units (multibyte payload under the char count)", async () => {
+    const { deps } = setup();
+    // 4 KB of 3-byte characters = 12 KB on the wire but only ~4k `.length`.
+    // A `text.length` cap would wave this through; a byte cap must not.
+    const res = await handleRequest(
+      chunkedRequest(`${BASE}/waitlist`, JSON.stringify({ email: "中".repeat(4096) })),
+      deps,
+    );
+
+    expect(res.status).toBe(413);
+  });
+
+  it("a normal small body still succeeds on POST /waitlist", async () => {
+    const { db, deps } = setup();
+    const res = await handleRequest(waitlistPost("small@example.com"), deps);
+    expect(res.status).toBe(201);
+    expect(await db.countWaitlist(1)).toBe(1);
+  });
+
+  // The cap lives in the shared helper, so the two admin call sites get it too
+  // and must keep working. Both are bearer-authenticated; the cap is not their
+  // threat model, but a regression here would break the admin console.
+  it("a normal small body still succeeds on POST /api/admin/invites", async () => {
+    const { deps } = setup();
+    const res = await createInviteViaApi(deps, { email: "admin@example.com", slug: "alice" });
+    expect(res.status).toBe(201);
+  });
+
+  it("a normal small body still succeeds on POST /api/admin/invites/:id/provision", async () => {
+    const { deps } = setup();
+    const created = (await (
+      await createInviteViaApi(deps, { email: "admin@example.com" })
+    ).json()) as InviteCreated;
+
+    const res = await provisionViaApi(deps, created.id, { slug: "bob" });
+
+    expect(res.status).toBe(200);
+  });
+
+  it("oversized body on POST /api/admin/invites → 413 (helper is shared)", async () => {
+    const { deps } = setup();
+    const res = await handleRequest(
+      chunkedRequest(`${BASE}/api/admin/invites`, oversizedJson(), {
+        authorization: `Bearer ${ADMIN}`,
+      }),
+      deps,
+    );
+    expect(res.status).toBe(413);
+  });
+
+  // POST /api/instance/status is deliberately NOT in this list: it never reads
+  // its body at all (no readJsonBody call — it authenticates by header and
+  // returns 204), so there is nothing to buffer and nothing to amplify. The
+  // test below pins that, so if someone later adds a body read they get a
+  // failing test telling them to route it through the capped helper.
+  it("POST /api/instance/status ignores its body entirely, so a huge one is not read", async () => {
+    const { deps } = setup();
+    const seeded = await seedProvisioned(deps);
+    const req = chunkedRequest(
+      `${BASE}/api/instance/status`,
+      JSON.stringify({ version: "1".repeat(64 * 1024), uptime_seconds: 1 }),
+      { authorization: `Bearer ${seeded.token}` },
+    );
+
+    const res = await handleRequest(req, deps);
+
+    expect(res.status).toBe(204);
+    // Never consumed → never buffered. This is the property that makes the
+    // absence of a cap on this route safe.
+    expect(req.bodyUsed).toBe(false);
+  });
+
+  it("a body at exactly the cap is accepted; one byte over is not", async () => {
+    const { deps } = setup();
+    const overhead = JSON.stringify({ email: "", pad: "" }).length;
+    const atCap = JSON.stringify({
+      email: "edge@example.com",
+      pad: "a".repeat(MAX_JSON_BODY_BYTES - overhead - "edge@example.com".length),
+    });
+    expect(new TextEncoder().encode(atCap).byteLength).toBe(MAX_JSON_BODY_BYTES);
+
+    expect((await handleRequest(chunkedRequest(`${BASE}/waitlist`, atCap), deps)).status).toBe(201);
+
+    const overCap = `${atCap.slice(0, -2)}a"}`;
+    expect(new TextEncoder().encode(overCap).byteLength).toBe(MAX_JSON_BODY_BYTES + 1);
+    expect((await handleRequest(chunkedRequest(`${BASE}/waitlist`, overCap), deps)).status).toBe(
+      413,
+    );
   });
 });
