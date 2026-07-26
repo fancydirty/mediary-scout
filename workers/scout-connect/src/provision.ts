@@ -70,17 +70,32 @@ export async function provisionEndpoint(input: {
   };
 
   // Create tunnel ingress and DNS; no Access app.
+  //
+  // Compensation here is BEST EFFORT, matching the post-CF phase below: a
+  // failing deleteTunnel must never displace the failure that triggered the
+  // rollback, or the caller is told "delete tunnel boom" when the real problem
+  // was "cf dns boom". Note deleteTunnelOnce() latches only AFTER a successful
+  // await, so a transient failure in the inner catch leaves the flag unset and
+  // the outer catch retries it — deletion is 404-idempotent, so that is free.
   let recordId: string;
   try {
     await cf.putTunnelIngress(tunnelId, hostname);
     try {
       ({ recordId } = await cf.createDnsCname(slug, tunnelId));
     } catch (e) {
-      await deleteTunnelOnce();
+      try {
+        await deleteTunnelOnce();
+      } catch {
+        // best-effort compensation — original error is what matters
+      }
       throw e;
     }
   } catch (e) {
-    await deleteTunnelOnce();
+    try {
+      await deleteTunnelOnce();
+    } catch {
+      // best-effort compensation — original error is what matters
+    }
     throw e;
   }
 

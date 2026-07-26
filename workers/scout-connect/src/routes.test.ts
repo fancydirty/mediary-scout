@@ -416,6 +416,45 @@ describe("handleRequest", () => {
     expect(secondBody.position).toBe(firstBody.position);
   });
 
+  // Pins the error vocabulary documented in the addToWaitlist JSDoc and the
+  // README table. "bad encoding" was listed there for a while but is only ever
+  // thrown by decodeParam (URL components) — the body reader cannot produce it.
+  // If you add a new 4xx to this route, add it here and to both docs together.
+  it("POST /waitlist error vocabulary matches the documented contract", async () => {
+    const { deps } = setup();
+    const post = async (body: string, headers: Record<string, string> = {}) =>
+      handleRequest(
+        new Request(`${BASE}/waitlist`, {
+          method: "POST",
+          headers: { "content-type": "application/json", ...headers },
+          body,
+        }),
+        deps,
+      );
+
+    const seen = new Set<string>();
+    for (const body of [
+      JSON.stringify({}),                      // email required
+      JSON.stringify({ email: "nope" }),       // invalid email
+      "{not json",                             // invalid json
+      JSON.stringify([1, 2, 3]),               // invalid body
+      JSON.stringify({ email: `${"a".repeat(9000)}@x.com` }), // body too large
+    ]) {
+      const res = await post(body);
+      const { error } = (await res.json()) as { error: string };
+      seen.add(error);
+    }
+
+    expect([...seen].sort()).toEqual([
+      "body too large",
+      "email required",
+      "invalid body",
+      "invalid email",
+      "invalid json",
+    ]);
+    expect(seen.has("bad encoding")).toBe(false);
+  });
+
   it("POST /waitlist invalid email → 400", async () => {
     const { deps } = setup();
     const invalid = [

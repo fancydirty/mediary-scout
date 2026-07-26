@@ -451,7 +451,7 @@ describe("provisionEndpoint", () => {
     expect(await db.listEndpoints()).toHaveLength(1);
   });
 
-  it("dns failure + deleteTunnel also throws: deletion error is thrown", async () => {
+  it("dns failure + deleteTunnel also throws: ORIGINAL dns error propagates, delete still attempted", async () => {
     const db = createMemoryConnectDb();
     await db.insertInvite(makePendingInvite());
     const calls: string[] = [];
@@ -465,13 +465,65 @@ describe("provisionEndpoint", () => {
     };
     const deps = makeDeps(db, cf);
 
-    // When DNS creation fails and tunnel deletion also fails, the deletion
-    // error replaces the original DNS error. deleteTunnel is called twice
-    // (once in inner catch, once in outer catch) due to nested try-catch structure.
+    // Compensation is BEST EFFORT: a failing deleteTunnel must never displace
+    // the failure that triggered the rollback, or the caller is told "delete
+    // tunnel boom" when the real problem was "cf dns boom". (This test used to
+    // assert the opposite — it pinned that bug as the contract.)
     await expect(
       provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps }),
-    ).rejects.toThrow(/delete tunnel boom/);
+    ).rejects.toThrow(/cf dns boom/);
+    // ...but the delete must still have been ATTEMPTED. Twice, deliberately:
+    // deleteTunnelOnce() latches only AFTER a successful await, so the inner
+    // catch's failed attempt leaves the flag unset and the outer catch retries
+    // it (deletion is 404-idempotent, so a retry is free).
     expect(countCalls(calls, "del-tunnel:")).toBe(2);
+  });
+
+  it("dns failure + deleteTunnel transiently failing then succeeding: latch stops after the retry", async () => {
+    const db = createMemoryConnectDb();
+    await db.insertInvite(makePendingInvite());
+    const calls: string[] = [];
+    const base = makeFakeCf(calls, { failOn: "dns" });
+    let attempts = 0;
+    const cf: CfApi = {
+      ...base,
+      async deleteTunnel(tunnelId) {
+        attempts += 1;
+        if (attempts === 1) {
+          calls.push(`del-tunnel:${tunnelId}:transient`);
+          throw new Error("delete tunnel transient");
+        }
+        calls.push(`del-tunnel:${tunnelId}`);
+      },
+    };
+    const deps = makeDeps(db, cf);
+
+    await expect(
+      provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps }),
+    ).rejects.toThrow(/cf dns boom/);
+    // inner catch failed → outer catch retried → succeeded → latch set. No third call.
+    expect(countCalls(calls, "del-tunnel:")).toBe(2);
+  });
+
+  it("ingress failure + deleteTunnel also throws: ORIGINAL ingress error propagates", async () => {
+    const db = createMemoryConnectDb();
+    await db.insertInvite(makePendingInvite());
+    const calls: string[] = [];
+    const base = makeFakeCf(calls, { failOn: "ingress" });
+    const cf: CfApi = {
+      ...base,
+      async deleteTunnel(tunnelId) {
+        calls.push(`del-tunnel:${tunnelId}:boom`);
+        throw new Error("delete tunnel boom");
+      },
+    };
+    const deps = makeDeps(db, cf);
+
+    await expect(
+      provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps }),
+    ).rejects.toThrow(/cf ingress boom/);
+    // ingress never reaches the inner try, so only the outer catch compensates
+    expect(countCalls(calls, "del-tunnel:")).toBe(1);
   });
 
   it("no longer creates Access app; cf_access_app_id & cf_access_policy_id are null", async () => {

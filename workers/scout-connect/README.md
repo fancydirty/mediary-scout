@@ -38,7 +38,7 @@ admin ──► mediaryconnect.app (this worker)
 | --- | --- |
 | 201 | `{ id, position }` — new signup |
 | 200 | `{ already_exists: true, id, position }` — email already queued |
-| 400 | `{ error }` — `email required` / `invalid email` (or `invalid json`, `invalid body`, `bad encoding`) |
+| 400 | `{ error }` — `email required` / `invalid email` (or `invalid json` / `invalid body` from the shared body reader) |
 | 413 | `{ error: "body too large" }` |
 
 `position` is 1-based within the batch and is returned on **both** success

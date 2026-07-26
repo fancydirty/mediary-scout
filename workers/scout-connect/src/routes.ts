@@ -452,7 +452,7 @@ function isUniqueViolation(e: unknown): boolean {
  *   201 `{ id: string, position: number }`
  *   200 `{ already_exists: true, id: string, position: number }`
  *   400 `{ error: "email required" | "invalid email" }`
- *       (plus "invalid json" / "invalid body" / "bad encoding" from the
+ *       (plus "invalid json" / "invalid body" from the
  *        shared body reader)
  *   413 `{ error: "body too large" }`
  *
