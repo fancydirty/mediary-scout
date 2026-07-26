@@ -114,9 +114,17 @@ async function refresh(){
       b.disabled=true;
       const input=$("slug-"+b.getAttribute("data-provision"));
       const slug=input?input.value.trim():"";
-      const r=await api("/api/admin/invites/"+b.getAttribute("data-provision")+"/provision",{method:"POST",body:slug?{slug}:{}});
-      showProvision(r);
-      await refresh();
+      try {
+        const r=await api("/api/admin/invites/"+b.getAttribute("data-provision")+"/provision",{method:"POST",body:slug?{slug}:{}});
+        showProvision(r);
+        await refresh();
+      } catch(e) {
+        // Failure leaves the DOM untouched (no refresh), so re-enable for retry —
+        // the success path doesn't need this because refresh() re-renders the
+        // table and the provisioned invite no longer gets a 开通 button at all.
+        b.disabled=false;
+        throw e;
+      }
     });
   }
   $("endpoints").innerHTML=endpoints.map((e)=>{
