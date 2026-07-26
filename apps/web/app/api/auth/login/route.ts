@@ -18,7 +18,7 @@ export async function POST(request: NextRequest) {
   // hasLoginPassword() 读不出状态时返回 "unknown"，此时放行到 loginAccount——
   // 那里会因为拿不到有效 hash 而失败，不会误发 session。
   if (!isMultiUserEnabled() && (await hasLoginPassword()) === false) {
-    return NextResponse.json({ error: "login disabled" }, { status: 404 });
+    return NextResponse.json({ error: "这台实例未设置访问密码，无需登录。" }, { status: 404 });
   }
   const body = (await request.json().catch(() => ({}))) as { username?: unknown; password?: unknown };
   const username = typeof body.username === "string" ? body.username : "";

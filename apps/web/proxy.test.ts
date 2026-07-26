@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { proxy } from "./proxy";
 import type { NextRequest } from "next/server";
 
@@ -11,6 +11,20 @@ import type { NextRequest } from "next/server";
  *  - 远程 + 已设密码 + 无 session 却放行 → 用户看到空数据页而不是登录页（体验坏）
  *  - 局域网被误判成需登录 → 本地用户凭空多一道门（回归）
  */
+
+// 本套件断言的是单用户行为。必须显式关掉多用户开关：若被 runner 设置或从
+// 别的测试文件泄漏进来，proxy 会走「处处门禁」分支，断言就在悄悄测另一件事。
+const prevMultiUser = process.env.MEDIA_TRACK_MULTI_USER;
+beforeAll(() => {
+  delete process.env.MEDIA_TRACK_MULTI_USER;
+});
+afterAll(() => {
+  if (prevMultiUser !== undefined) {
+    process.env.MEDIA_TRACK_MULTI_USER = prevMultiUser;
+  } else {
+    delete process.env.MEDIA_TRACK_MULTI_USER;
+  }
+});
 
 const makeRequest = (opts: {
   path?: string;
@@ -70,6 +84,19 @@ describe("proxy gate — single-user mode (multi-user off)", () => {
   it("handler 自守的 API 前缀不被重定向（否则会把 JSON 端点变成 HTML 跳转）", () => {
     for (const path of ["/api/health", "/api/workflows/run", "/api/agent/step"]) {
       expect(redirectsToLogin(makeRequest({ passwordSet: true, cf: true, path }))).toBe(false);
+    }
+  });
+});
+
+describe("proxy gate — multi-user mode", () => {
+  it("多用户：无 session 一律重定向，与来源和密码 flag 无关", () => {
+    process.env.MEDIA_TRACK_MULTI_USER = "1";
+    try {
+      expect(redirectsToLogin(makeRequest({}))).toBe(true); // LAN 也要登录
+      expect(redirectsToLogin(makeRequest({ cf: true }))).toBe(true);
+      expect(redirectsToLogin(makeRequest({ session: true }))).toBe(false);
+    } finally {
+      delete process.env.MEDIA_TRACK_MULTI_USER;
     }
   });
 });

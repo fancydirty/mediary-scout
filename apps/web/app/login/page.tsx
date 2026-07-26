@@ -58,7 +58,9 @@ export default function LoginPage() {
   };
 
   const title = singleUser
-    ? "输入密码"
+    ? bootstrap?.passwordSet
+      ? "输入密码"
+      : "无需登录"
     : claiming
       ? bootstrap?.hasExistingLibrary
         ? "接管这台实例"
@@ -67,7 +69,9 @@ export default function LoginPage() {
         ? "登录"
         : "创建账号";
   const note = singleUser
-    ? "这台实例已设置访问密码。局域网内无需登录，从外网访问需要输入密码。"
+    ? bootstrap?.passwordSet
+      ? "这台实例已设置访问密码。局域网内无需登录，从外网访问需要输入密码。"
+      : "这台实例还没有设置访问密码，无需登录即可使用。想开启外网访问再来设置。"
     : claiming
     ? bootstrap?.hasExistingLibrary
       ? "这台实例已有媒体库。设置站主用户名 + 密码来接管它——你的库和网盘都会原样归你。"
@@ -87,6 +91,11 @@ export default function LoginPage() {
           {note}
         </p>
 
+        {singleUser && bootstrap?.passwordSet === false ? (
+          <a className="primary-button" href="/" style={{ display: "block", textDecoration: "none" }}>
+            回到媒体库
+          </a>
+        ) : (
         <form
           onSubmit={(event) => {
             event.preventDefault();
@@ -130,6 +139,7 @@ export default function LoginPage() {
             {isPending ? <LoaderCircle size={14} className="spin" aria-hidden /> : buttonText}
           </button>
         </form>
+        )}
 
         {!claiming && !singleUser && mode === "register" ? (
           <div style={{ marginTop: 14 }}>
