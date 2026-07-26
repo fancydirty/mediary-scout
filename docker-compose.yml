@@ -106,7 +106,8 @@ services:
   #   3. docker compose --profile tunnel up -d
   #   4. ⚠️ Gate the hostname: set an access password in 设置 → 账号 (remote requests
   #      then require login while the LAN stays open), or put Cloudflare Access in front.
-  #      See docs/deploy.md → 「必须有门禁」. Do NOT expose it with neither.
+  #      See docs/deploy.md → 「必须有门禁」. Never expose the hostname unless at
+  #      least one of those two gates is in place.
   # See docs/deploy.md → 「方式二:Cloudflare Tunnel」 for the full walkthrough.
   cloudflared:
     image: cloudflare/cloudflared:latest
