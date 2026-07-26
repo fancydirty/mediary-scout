@@ -4,6 +4,7 @@ import {
   resolveRemoteAccessState,
   scoutConnectBaseUrl,
   accountPasswordHref,
+  isWaitlistOpen,
   type RemoteAccessState,
 } from "./remote-access";
 
@@ -218,6 +219,21 @@ describe("accountPasswordHref（保留 ?w 工作区上下文）", () => {
     const href = accountPasswordHref("cs_a b&c");
     expect(href).toContain("w=cs_a+b%26c");
     expect(href.endsWith("#password")).toBe(true);
+  });
+});
+
+describe("isWaitlistOpen（默认关闭的发布开关）", () => {
+  it("未设 / 空 / 非 \"1\" → 关闭；只有 \"1\" 才开", () => {
+    delete process.env.MEDIA_TRACK_WAITLIST_OPEN;
+    expect(isWaitlistOpen()).toBe(false);
+    for (const v of ["", "  ", "0", "true", "yes", "on"]) {
+      process.env.MEDIA_TRACK_WAITLIST_OPEN = v;
+      expect(isWaitlistOpen()).toBe(false);
+    }
+    process.env.MEDIA_TRACK_WAITLIST_OPEN = "1";
+    expect(isWaitlistOpen()).toBe(true);
+    process.env.MEDIA_TRACK_WAITLIST_OPEN = "  1  ";
+    expect(isWaitlistOpen()).toBe(true);
   });
 });
 

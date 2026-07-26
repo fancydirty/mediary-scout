@@ -5,6 +5,7 @@ import {
   instanceTunnelToken,
   resolveRemoteAccessState,
   scoutConnectBaseUrl,
+  isWaitlistOpen,
   accountPasswordHref,
 } from "../../lib/remote-access";
 import { RemoteAccessWaitlistForm } from "./remote-access-waitlist";
@@ -36,6 +37,11 @@ export async function RemoteAccessSection({
   const state = await resolveRemoteAccessState({ token: instanceTunnelToken() });
 
   if (state.kind === "not_provisioned") {
+    // 后端未就绪时**整个 tab 不渲染**（返回 null → tab 自动隐藏，与非站主同款机制）。
+    // 容器用户 git pull 就能吃到 main，所以「代码已合并」不等于「功能可用」：
+    // 生产 worker 上 POST /waitlist 目前返回 404，此时给出报名框只会让人白填一次。
+    // 开启条件见 lib/remote-access.ts 的 isWaitlistOpen()。
+    if (!isWaitlistOpen()) return null;
     return (
       <section className="panel" style={{ maxWidth: 720, marginTop: 24 }}>
         <div className="panel-header">
