@@ -177,9 +177,18 @@ function boundedPart(raw: string): string {
  *
  * 显式传入的 `throttleKey`（`loginAccount` 的第三参）同样要过这一关——
  * 否则调用方传入超长键就能撑大内存，且与「键已被截断」的假设自相矛盾。
+ *
+ * **按 `|` 分段处理**：`buildThrottleKey()` 产出的是 `username|ip` 复合键，
+ * 若把它当作无结构字符串再截一次，IP 段能否幸存就取决于「尾部恰好是 IP」
+ * 这一巧合。分段后每侧各自有界，`username|ip` 的隔离性由设计保证——
+ * 这正是限流按「用户名 + 来源 IP」分桶的意义所在。
  */
 export function normalizeThrottleKey(key: string): string {
-  return boundedPart(key.trim()) || "unknown";
+  const trimmed = key.trim();
+  if (!trimmed) return "unknown";
+  const sep = trimmed.lastIndexOf("|");
+  if (sep === -1) return boundedPart(trimmed);
+  return `${boundedPart(trimmed.slice(0, sep))}|${boundedPart(trimmed.slice(sep + 1))}`;
 }
 
 /**

@@ -231,6 +231,32 @@ describe("buildThrottleKey", () => {
     expect(normalizeThrottleKey(`${huge}x`)).not.toBe(normalizeThrottleKey(`${huge}y`));
   });
 
+  it("normalizeThrottleKey bounds each side of a composite username|ip key", () => {
+    // 复合键必须分段处理，否则整体截断时 IP 段会被前一段挤掉。
+    // 复现用例：长用户名 + 两个「后 16 字符相同、中段不同」的 IPv6 地址。
+    // 单段截断只保留整串尾部 16 字符，这两个不同来源会塌成同一个桶——
+    // 于是某个 IPv6 上的攻击者就能把同网段另一地址的合法用户锁在门外。
+    const longUser = "U".repeat(100);
+    const ipA = "2001:0db8:aaaa:0000:0000:8a2e:0370:7334";
+    const ipB = "2001:0db8:bbbb:0000:0000:8a2e:0370:7334";
+    expect(ipA.slice(-16)).toBe(ipB.slice(-16)); // 前提：尾部确实相同
+    const a = normalizeThrottleKey(`${longUser}|${ipA}`);
+    const b = normalizeThrottleKey(`${longUser}|${ipB}`);
+    expect(a).not.toBe(b); // 不同来源 IP 必须落在不同桶
+
+    // IPv4 场景下 IP 段应原样保留
+    const v4 = normalizeThrottleKey(`${longUser}|1.1.1.1`);
+    const [userPart, ipPart] = v4.split("|");
+    expect(userPart!.length).toBeLessThanOrEqual(MAX_KEY_PART);
+    expect(ipPart).toBe("1.1.1.1");
+
+    // 畸形超长 IP 同样要各段有界
+    const longIp = normalizeThrottleKey(`${longUser}|${"9".repeat(400)}`);
+    for (const part of longIp.split("|")) {
+      expect(part.length).toBeLessThanOrEqual(MAX_KEY_PART);
+    }
+  });
+
   it("key parts stay within MAX_KEY_PART across magnitudes of input length", () => {
     // head 长度必须随「长度数字的位数」收缩，否则超长输入会顶破上限
     for (const n of [65, 100, 1_000, 100_000, 5_000_000]) {
