@@ -17,8 +17,18 @@ const WINDOW_MS = 15 * 60 * 1000; // 15 分钟滑动窗口
 const MAX_FAILURES = 5;           // 窗口内达到此次失败即锁
 const BASE_LOCK_MS = 60 * 1000;   // 首次锁 1 分钟
 const MAX_LOCK_MS = 30 * 60 * 1000; // 锁定上限 30 分钟
+const MAX_BUCKETS = 10_000;       // 内存上限：超出后清扫死条目
 
 const buckets = new Map<string, Bucket>();
+
+/** Remove expired buckets (no active lock, window passed). D2 mitigation. */
+function sweepDeadBuckets(now: number): void {
+  for (const [k, v] of buckets) {
+    if (now >= v.lockedUntil && now - v.windowStart > WINDOW_MS) {
+      buckets.delete(k);
+    }
+  }
+}
 
 export function checkLoginAllowed(key: string, now: number): LoginVerdict {
   const b = buckets.get(key);
@@ -30,10 +40,15 @@ export function checkLoginAllowed(key: string, now: number): LoginVerdict {
 }
 
 export function recordLoginFailure(key: string, now: number): void {
+  // D2 fix: cap unbounded map growth before processing
+  if (buckets.size >= MAX_BUCKETS) {
+    sweepDeadBuckets(now);
+  }
   let b = buckets.get(key);
   // 窗口已过 → 重置失败数与窗口，但保留 lockCount 以持续升级锁定
+  // D1 fix: preserve lockedUntil across window reset to prevent lock escape
   if (!b || now - b.windowStart > WINDOW_MS) {
-    b = { failures: 0, windowStart: now, lockedUntil: 0, lockCount: b?.lockCount ?? 0 };
+    b = { failures: 0, windowStart: now, lockedUntil: b?.lockedUntil ?? 0, lockCount: b?.lockCount ?? 0 };
   }
   b.failures += 1;
   if (b.failures >= MAX_FAILURES) {
