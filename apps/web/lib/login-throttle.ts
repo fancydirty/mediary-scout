@@ -137,8 +137,14 @@ export function _bucketCountForTest(): number {
  * 仅测试用：临时下调桶数上限，以便用几十次循环（而非几万次）覆盖饱和/驱逐路径。
  * 若不下调，覆盖这些路径需灌入上万条记录，在并行测试下会抢占 CPU 并让
  * 同批的 scrypt 集成测试超时。`_resetLoginThrottleForTest()` 会恢复默认值。
+ *
+ * 校验入参：0/负数/非整数会让「空 Map 也判定为饱和」，进而算出 `Infinity`
+ * 的退避时长——即便是测试辅助函数，也不能破坏限流器的不变量。
  */
 export function _setMaxBucketsForTest(n: number): void {
+  if (!Number.isInteger(n) || n < 1) {
+    throw new RangeError(`_setMaxBucketsForTest 需要 >= 1 的整数，收到 ${n}`);
+  }
   maxBuckets = n;
 }
 
@@ -146,17 +152,24 @@ export function _setMaxBucketsForTest(n: number): void {
 export const MAX_KEY_PART = 64;
 
 /**
- * 把任意长度的字符串压成有界表示。
+ * 把任意长度的字符串压成**严格不超过 `MAX_KEY_PART`** 的表示。
  *
- * 超长时取「头部 + 尾部 + 长度」而非仅头部：注册未限制用户名长度，
+ * 超长时取「头部 + 原始长度 + 尾部」而非仅头部：注册未限制用户名长度，
  * 若只截前 64 字符，两个前缀相同的长用户名会共用一个桶（跨用户 DoS）。
- * 带上尾部与原始长度可把碰撞面压到可忽略，同时键长仍然有界。
+ * 带上尾部与原始长度可把碰撞面压到可忽略。
+ *
+ * 头部长度按「长度数字的位数」动态计算，否则超长输入（`raw.length` 位数变多）
+ * 会把结果顶出上限，破坏内存上界这一不变量。
  */
 function boundedPart(raw: string): string {
   if (raw.length <= MAX_KEY_PART) return raw;
-  const head = raw.slice(0, MAX_KEY_PART - 24);
-  const tail = raw.slice(-16);
-  return `${head}~${raw.length}~${tail}`;
+  const lengthMarker = String(raw.length);
+  const TAIL = 16;
+  // 预算：head + "~" + lengthMarker + "~" + tail <= MAX_KEY_PART
+  const headLen = MAX_KEY_PART - TAIL - lengthMarker.length - 2;
+  // 极端情况（长度数字本身长到吃满预算）退化为纯尾部截断，仍然有界
+  if (headLen <= 0) return `${lengthMarker}~${raw.slice(-TAIL)}`.slice(0, MAX_KEY_PART);
+  return `${raw.slice(0, headLen)}~${lengthMarker}~${raw.slice(-TAIL)}`;
 }
 
 /**

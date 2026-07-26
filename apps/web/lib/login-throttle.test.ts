@@ -230,4 +230,20 @@ describe("buildThrottleKey", () => {
     // 同前缀的长键同样不能塌成一个
     expect(normalizeThrottleKey(`${huge}x`)).not.toBe(normalizeThrottleKey(`${huge}y`));
   });
+
+  it("key parts stay within MAX_KEY_PART across magnitudes of input length", () => {
+    // head 长度必须随「长度数字的位数」收缩，否则超长输入会顶破上限
+    for (const n of [65, 100, 1_000, 100_000, 5_000_000]) {
+      const out = normalizeThrottleKey("D".repeat(n));
+      expect(out.length).toBeLessThanOrEqual(MAX_KEY_PART);
+    }
+  });
+
+  it("_setMaxBucketsForTest rejects values that would break the invariants", () => {
+    // 0/负数会让空 Map 也判定为饱和 → 退避时长算成 Infinity
+    expect(() => _setMaxBucketsForTest(0)).toThrow(RangeError);
+    expect(() => _setMaxBucketsForTest(-1)).toThrow(RangeError);
+    expect(() => _setMaxBucketsForTest(1.5)).toThrow(RangeError);
+    expect(() => _setMaxBucketsForTest(1)).not.toThrow();
+  });
 });
