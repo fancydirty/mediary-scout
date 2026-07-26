@@ -1279,6 +1279,46 @@ describe("POST /waitlist/survey", () => {
     expect(await db.getWaitlistById("wl_nope")).toBeNull();
   });
 
+  it("503 (not a bare 500) when the survey column does not exist yet (migration window)", async () => {
+    const { deps } = setup();
+    const id = await signup(deps, "win@example.com");
+    // Simulate the pre-0002 schema: updateWaitlistSurvey throws the missing-column error.
+    const windowDeps: RouteDeps = {
+      ...deps,
+      db: {
+        ...deps.db,
+        async updateWaitlistSurvey() {
+          throw new Error("no such column: survey_json");
+        },
+      },
+    };
+    const res = await handleRequest(
+      surveyPost({ id, willing_to_pay: "willing" }),
+      windowDeps,
+    );
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: "survey temporarily unavailable" });
+  });
+
+  it("non-schema errors from updateWaitlistSurvey still propagate (not masked as 503)", async () => {
+    const { deps } = setup();
+    const id = await signup(deps, "realerr@example.com");
+    const errDeps: RouteDeps = {
+      ...deps,
+      db: {
+        ...deps.db,
+        async updateWaitlistSurvey() {
+          throw new Error("d1 connection reset");
+        },
+      },
+    };
+    // handleRequest 的兜底把未识别错误统一成 500 internal —— 关键是它绝不能
+    // 被误判成 503：只有「缺列」这种明确可恢复的情况才配 typed 状态码。
+    const res = await handleRequest(surveyPost({ id, willing_to_pay: "willing" }), errDeps);
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "internal" });
+  });
+
   it("400 when id is missing or not a string", async () => {
     const { deps } = setup();
     for (const body of [{}, { id: 42 }, { id: "  " }]) {

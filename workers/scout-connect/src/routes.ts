@@ -683,7 +683,20 @@ async function saveWaitlistSurvey(request: Request, deps: RouteDeps): Promise<Re
   }
 
   if (Object.keys(survey).length > 0) {
-    await deps.db.updateWaitlistSurvey(id, JSON.stringify(survey));
+    try {
+      await deps.db.updateWaitlistSurvey(id, JSON.stringify(survey));
+    } catch (e) {
+      // Migration window: 0002 not yet applied → the column doesn't exist and
+      // the raw D1 error would surface as an unobservable 500 outside this
+      // route's declared contract. Answer in-contract instead: 503 tells the
+      // client "not you, us, try later" (the signup itself already succeeded).
+      const msg = e instanceof Error ? e.message : "";
+      const isMissingColumn =
+        msg.includes("survey_json") &&
+        (msg.includes("no such column") || msg.includes("no column named"));
+      if (!isMissingColumn) throw e;
+      throw new HttpError(503, "survey temporarily unavailable");
+    }
   }
   return new Response(null, { status: 204 });
 }

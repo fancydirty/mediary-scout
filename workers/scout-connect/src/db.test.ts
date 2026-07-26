@@ -607,6 +607,36 @@ describe("insertWaitlist 迁移窗口降级", () => {
     expect(calls[1]!.binds).toEqual(["w1", "a@x.com", 1, "pending", "2026-07-25T00:00:00Z"]);
   });
 
+  it("另一种缺列措辞（no column named）同样触发降级", async () => {
+    // SQLite/D1 不同版本的报错文案可能是 "no such column" 或 "no column named"——
+    // 匹配过窄会让降级在它唯一存在的窗口期失灵（Copilot PR #181 round 4）。
+    const calls: string[] = [];
+    const d1: D1Database = {
+      prepare(query: string): D1PreparedStatement {
+        const stmt: D1PreparedStatement = {
+          bind() { return stmt; },
+          async first<T>(): Promise<T | null> { return null as T | null; },
+          async all<T>(): Promise<{ results: T[] }> { return { results: [] as T[] }; },
+          async run(): Promise<unknown> {
+            calls.push(query);
+            if (query.includes("survey_json")) {
+              throw new Error("no column named survey_json");
+            }
+            return {};
+          },
+        };
+        return stmt;
+      },
+    };
+    const db = createD1ConnectDb(d1);
+    const row = await db.insertWaitlist({
+      id: "w1", email: "a@x.com", batch: 1, status: "pending",
+      created_at: "t", survey_json: null,
+    });
+    expect(row.id).toBe("w1");
+    expect(calls).toHaveLength(2);
+  });
+
   it("其它错误（如 UNIQUE 冲突）原样上抛，绝不降级吞掉", async () => {
     const d1: D1Database = {
       prepare(): D1PreparedStatement {

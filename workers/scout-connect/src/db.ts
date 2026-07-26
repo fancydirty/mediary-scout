@@ -378,11 +378,17 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
         // migrations/0002-waitlist-survey.sql ran, the column doesn't exist and
         // every signup would 500 — a public-funnel outage caused by deploy order.
         // Degrade to the legacy column list instead (survey silently off until
-        // the migration runs; updateWaitlistSurvey will fail loudly if someone
-        // actually submits a survey in that window, which is the right trade).
-        // Only this exact schema-mismatch error falls back — UNIQUE violations
-        // and real outages must propagate unchanged.
-        if (!(e instanceof Error) || !e.message.includes("no such column: survey_json")) {
+        // the migration runs). Match BOTH phrasings of the missing-column error:
+        // "no such column: x" and "no column named x" — the exact wording varies
+        // across SQLite/D1 versions, and a too-narrow match would silently
+        // disable the fallback in exactly the window it exists for.
+        // Only schema-mismatch errors fall back — UNIQUE violations and real
+        // outages must propagate unchanged.
+        const msg = e instanceof Error ? e.message : "";
+        const isMissingColumn =
+          msg.includes("survey_json") &&
+          (msg.includes("no such column") || msg.includes("no column named"));
+        if (!isMissingColumn) {
           throw e;
         }
         await d1

@@ -2,11 +2,11 @@
 -- survey served by GET /beta and stored by POST /waitlist/survey.
 --
 -- ⚠️ RUN THIS BEFORE DEPLOYING the Worker version that reads/writes
--- survey_json. It is not optional:
---   * insertWaitlist binds survey_json, so EVERY new POST /waitlist signup
---     fails with `no column named survey_json` on an unmigrated instance —
---     not just survey submits.
---   * POST /waitlist/survey's UPDATE targets the same missing column.
+-- survey_json. As a safety net the code degrades in the wrong order —
+-- insertWaitlist falls back to the legacy column list, and the survey route
+-- answers 503 — but degraded means exactly that: signups land WITHOUT the
+-- survey column (their later survey submit fails) until this migration runs.
+-- Correct order is always: migrate first, deploy second.
 --
 -- How to run:
 --   cd workers/scout-connect
