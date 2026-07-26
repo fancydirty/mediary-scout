@@ -3,7 +3,10 @@ import {
   checkLoginAllowed,
   recordLoginFailure,
   recordLoginSuccess,
+  buildThrottleKey,
   _resetLoginThrottleForTest,
+  _bucketCountForTest,
+  _MAX_BUCKETS_FOR_TEST,
 } from "./login-throttle";
 
 const K = "owner1|1.2.3.4";
@@ -86,21 +89,24 @@ describe("login throttle", () => {
     expect(checkLoginAllowed(K, probeTime).allowed).toBe(false); // MUST stay locked
   });
 
-  it("D2 fix: map size stays bounded (caps at MAX_BUCKETS after sweep)", () => {
-    _resetLoginThrottleForTest();
-    // Fill 10k buckets
-    for (let i = 0; i < 10_000; i++) recordLoginFailure(`user${i}|ip`, T0);
-    const sizeBeforeOverflow = 10_000;
-    // One more (triggers sweep, then adds)
-    recordLoginFailure("overflow|ip", T0);
-    // Size should not exceed cap by much (sweep removes expired, then adds 1)
-    const sizeAfter = 10_001; // all fresh, none swept yet, so +1
-    expect(sizeAfter).toBeLessThanOrEqual(10_001); // sanity
-    // Advance time past window, fill again to trigger real sweep
-    const later = T0 + 16 * 60_000;
-    for (let i = 0; i < 2000; i++) recordLoginFailure(`new${i}|ip`, later);
-    // Old buckets should be swept — we won't test exact count, just that it didn't OOM
-    expect(true).toBe(true); // if we reach here without OOM, bounded growth works
+  it("D2 fix: map size is hard-capped even when every bucket is fresh", () => {
+    // 全部条目同一时刻创建 ⇒ 无一"过期"，清扫扫不掉任何东西。
+    // 这正是硬上限必须靠驱逐（而非仅清扫）兜底的场景。
+    const overflow = _MAX_BUCKETS_FOR_TEST + 2_000;
+    for (let i = 0; i < overflow; i++) recordLoginFailure(`user${i}|ip`, T0);
+    expect(_bucketCountForTest()).toBeLessThanOrEqual(_MAX_BUCKETS_FOR_TEST);
+  });
+
+  it("D2 fix: eviction never drops a locked-out attacker to make room", () => {
+    const VICTIM = "attacker|1.1.1.1";
+    for (let i = 0; i < 5; i++) recordLoginFailure(VICTIM, T0); // 锁定该 key
+    expect(checkLoginAllowed(VICTIM, T0).allowed).toBe(false);
+    // 攻击者试图用海量新 key 把自己的锁挤出内存
+    for (let i = 0; i < _MAX_BUCKETS_FOR_TEST + 1_000; i++) {
+      recordLoginFailure(`flood${i}|ip`, T0);
+    }
+    expect(checkLoginAllowed(VICTIM, T0).allowed).toBe(false); // 锁必须还在
+    expect(_bucketCountForTest()).toBeLessThanOrEqual(_MAX_BUCKETS_FOR_TEST);
   });
 
   it("pins MAX_LOCK_MS constant (30 min cap is reachable and enforced)", () => {
@@ -125,5 +131,32 @@ describe("login throttle", () => {
     // One more failure at 14 min (just inside window) → should lock
     recordLoginFailure(K, T0 + 14 * 60_000);
     expect(checkLoginAllowed(K, T0 + 14 * 60_000).allowed).toBe(false);
+  });
+});
+
+describe("buildThrottleKey", () => {
+  it("prefers cf-connecting-ip over the client-spoofable x-forwarded-for", () => {
+    // 攻击者伪造 XFF 想换一个限流桶；CF 注入的头才是可信来源
+    const h = new Headers({
+      "cf-connecting-ip": "203.0.113.7",
+      "x-forwarded-for": "1.2.3.4, 5.6.7.8",
+    });
+    expect(buildThrottleKey(h, "owner")).toBe("owner|203.0.113.7");
+  });
+
+  it("falls back to the first x-forwarded-for hop, then to 'unknown'", () => {
+    expect(buildThrottleKey(new Headers({ "x-forwarded-for": "9.9.9.9, 8.8.8.8" }), "owner")).toBe(
+      "owner|9.9.9.9",
+    );
+    expect(buildThrottleKey(new Headers(), "owner")).toBe("owner|unknown");
+  });
+
+  it("normalizes the username and caps both parts so huge inputs can't bloat a bucket", () => {
+    expect(buildThrottleKey(new Headers({ "cf-connecting-ip": "1.1.1.1" }), "  OwNeR  ")).toBe(
+      "owner|1.1.1.1",
+    );
+    const huge = "A".repeat(100_000);
+    const key = buildThrottleKey(new Headers({ "cf-connecting-ip": huge }), huge);
+    expect(key.length).toBeLessThanOrEqual(64 + 1 + 64);
   });
 });

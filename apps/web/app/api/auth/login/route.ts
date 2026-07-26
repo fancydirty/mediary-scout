@@ -1,5 +1,6 @@
 import { isDemoMode } from "../../../../lib/demo-mode";
 import { NextResponse, type NextRequest } from "next/server";
+import { buildThrottleKey } from "../../../../lib/login-throttle";
 import {
   SESSION_COOKIE_NAME,
   isMultiUserEnabled,
@@ -18,9 +19,7 @@ export async function POST(request: NextRequest) {
   const body = (await request.json().catch(() => ({}))) as { username?: unknown; password?: unknown };
   const username = typeof body.username === "string" ? body.username : "";
   const password = typeof body.password === "string" ? body.password : "";
-  const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
-  const throttleKey = `${username.trim().toLowerCase()}|${ip}`;
-  const result = await loginAccount(username, password, throttleKey);
+  const result = await loginAccount(username, password, buildThrottleKey(request.headers, username));
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: 401 });
   }
