@@ -16,7 +16,7 @@ export interface EndpointRow {
   slug: string;
   hostname: string;
   cf_tunnel_id: string;
-  cf_access_app_id: string;
+  cf_access_app_id: string | null;
   cf_access_policy_id: string | null;
   cf_dns_record_id: string;
   status: "active" | "revoked" | "revoke_failed";
@@ -35,6 +35,14 @@ export interface AuditRow {
   invite_id: string | null;
   endpoint_id: string | null;
   detail_json: string | null;
+}
+
+export interface WaitlistRow {
+  id: string;
+  email: string;
+  batch: number;
+  status: string;
+  created_at: string;
 }
 
 export interface InviteStatusPatch {
@@ -68,6 +76,11 @@ export interface ConnectDb {
   deleteEndpoint(endpointId: string): Promise<void>;
   insertAudit(row: AuditRow): Promise<void>;
   listAudits(): Promise<AuditRow[]>;
+  insertWaitlist(row: WaitlistRow): Promise<WaitlistRow>;
+  getWaitlistByEmail(email: string, batch: number): Promise<WaitlistRow | null>;
+  countWaitlist(batch: number): Promise<number>;
+  listWaitlist(batch: number): Promise<WaitlistRow[]>;
+  getEndpointByTokenSha256(sha256: string): Promise<EndpointRow | null>;
 }
 
 // Minimal ambient D1 types (intentionally not @cloudflare/workers-types).
@@ -105,7 +118,7 @@ function mapEndpoint(row: RawRow): EndpointRow {
     slug: row.slug as string,
     hostname: row.hostname as string,
     cf_tunnel_id: row.cf_tunnel_id as string,
-    cf_access_app_id: row.cf_access_app_id as string,
+    cf_access_app_id: row.cf_access_app_id as string | null,
     cf_access_policy_id: row.cf_access_policy_id as string | null,
     cf_dns_record_id: row.cf_dns_record_id as string,
     status: row.status as EndpointRow["status"],
@@ -126,6 +139,16 @@ function mapAudit(row: RawRow): AuditRow {
     invite_id: row.invite_id as string | null,
     endpoint_id: row.endpoint_id as string | null,
     detail_json: row.detail_json as string | null,
+  };
+}
+
+function mapWaitlist(row: RawRow): WaitlistRow {
+  return {
+    id: row.id as string,
+    email: row.email as string,
+    batch: row.batch as number,
+    status: row.status as string,
+    created_at: row.created_at as string,
   };
 }
 
@@ -304,6 +327,48 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
         .all<RawRow>();
       return results.map(mapAudit);
     },
+
+    async insertWaitlist(row) {
+      await d1
+        .prepare(
+          `INSERT INTO waitlist (id, email, batch, status, created_at) VALUES (?, ?, ?, ?, ?)`,
+        )
+        .bind(row.id, row.email, row.batch, row.status, row.created_at)
+        .run();
+      return row;
+    },
+
+    async getWaitlistByEmail(email, batch) {
+      const row = await d1
+        .prepare(`SELECT * FROM waitlist WHERE email = ? AND batch = ?`)
+        .bind(email, batch)
+        .first<RawRow>();
+      return row ? mapWaitlist(row) : null;
+    },
+
+    async countWaitlist(batch) {
+      const row = await d1
+        .prepare(`SELECT COUNT(*) as cnt FROM waitlist WHERE batch = ?`)
+        .bind(batch)
+        .first<{ cnt: number }>();
+      return row?.cnt ?? 0;
+    },
+
+    async listWaitlist(batch) {
+      const { results } = await d1
+        .prepare(`SELECT * FROM waitlist WHERE batch = ? ORDER BY created_at ASC`)
+        .bind(batch)
+        .all<RawRow>();
+      return results.map(mapWaitlist);
+    },
+
+    async getEndpointByTokenSha256(sha256) {
+      const row = await d1
+        .prepare(`SELECT * FROM endpoints WHERE token_sha256 = ?`)
+        .bind(sha256)
+        .first<RawRow>();
+      return row ? mapEndpoint(row) : null;
+    },
   };
 }
 
@@ -318,6 +383,7 @@ export function createMemoryConnectDb(): ConnectDb {
   const invites = new Map<string, InviteRow>();
   const endpoints = new Map<string, EndpointRow>();
   const audits = new Map<string, AuditRow>();
+  const waitlist = new Map<string, WaitlistRow>();
 
   return {
     async insertInvite(row) {
@@ -458,6 +524,52 @@ export function createMemoryConnectDb(): ConnectDb {
       return [...audits.values()]
         .sort((a, b) => b.at.localeCompare(a.at) || b.id.localeCompare(a.id))
         .map((row) => ({ ...row }));
+    },
+
+    async insertWaitlist(row) {
+      if (waitlist.has(row.id)) {
+        throw new Error(`UNIQUE constraint failed: waitlist.id (${row.id})`);
+      }
+      for (const existing of waitlist.values()) {
+        if (existing.email === row.email && existing.batch === row.batch) {
+          throw new Error(`UNIQUE constraint failed: waitlist(email, batch) (${row.email}, ${row.batch})`);
+        }
+      }
+      waitlist.set(row.id, { ...row });
+      return { ...row };
+    },
+
+    async getWaitlistByEmail(email, batch) {
+      for (const row of waitlist.values()) {
+        if (row.email === email && row.batch === batch) {
+          return { ...row };
+        }
+      }
+      return null;
+    },
+
+    async countWaitlist(batch) {
+      let count = 0;
+      for (const row of waitlist.values()) {
+        if (row.batch === batch) count++;
+      }
+      return count;
+    },
+
+    async listWaitlist(batch) {
+      return [...waitlist.values()]
+        .filter((row) => row.batch === batch)
+        .sort((a, b) => a.created_at.localeCompare(b.created_at))
+        .map((row) => ({ ...row }));
+    },
+
+    async getEndpointByTokenSha256(sha256) {
+      for (const row of endpoints.values()) {
+        if (row.token_sha256 === sha256) {
+          return { ...row };
+        }
+      }
+      return null;
     },
   };
 }

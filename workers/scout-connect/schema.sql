@@ -40,3 +40,21 @@ CREATE TABLE audit_events (
 -- code is already covered by the UNIQUE constraint above (SQLite auto-indexes it).
 -- status index supports admin filtering by endpoint state (revoke_failed sweep).
 CREATE INDEX idx_endpoints_status ON endpoints(status);
+
+-- Waitlist for Scout Connect beta (阶段 1).
+CREATE TABLE waitlist (
+  id TEXT PRIMARY KEY,
+  email TEXT NOT NULL,
+  batch INTEGER NOT NULL DEFAULT 1,
+  status TEXT NOT NULL DEFAULT 'waiting',
+  created_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX idx_waitlist_email_batch ON waitlist(email, batch);
+
+-- Migration note: cf_access_app_id 改为可空（去 Access 后新数据写 NULL）。
+-- SQLite 不支持 ALTER COLUMN，实际迁移需要：
+--   1. ALTER TABLE endpoints RENAME TO endpoints_old;
+--   2. CREATE TABLE endpoints (..., cf_access_app_id TEXT, ...);  -- 去掉 NOT NULL
+--   3. INSERT INTO endpoints SELECT * FROM endpoints_old;
+--   4. DROP TABLE endpoints_old;
+-- 部署时由运维脚本执行；schema.sql 此处仅文档化意图。

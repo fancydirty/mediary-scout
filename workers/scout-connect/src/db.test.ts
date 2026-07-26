@@ -319,3 +319,52 @@ describe("D1 ConnectDb SQL", () => {
     expect(calls[0]?.binds).toContain("s3cret-ciphertext");
   });
 });
+
+describe("waitlist", () => {
+  it("insert + count + list; email 唯一约束", async () => {
+    const db = createMemoryConnectDb();
+    await db.insertWaitlist({
+      id: "w1",
+      email: "a@x.com",
+      batch: 1,
+      status: "waiting",
+      created_at: "2026-07-25T00:00:00Z",
+    });
+    await expect(
+      db.insertWaitlist({
+        id: "w2",
+        email: "a@x.com",
+        batch: 1,
+        status: "waiting",
+        created_at: "2026-07-25T00:00:01Z",
+      }),
+    ).rejects.toThrow(/UNIQUE/);
+    expect(await db.countWaitlist(1)).toBe(1);
+    expect((await db.listWaitlist(1)).map((r) => r.email)).toEqual(["a@x.com"]);
+  });
+
+  it("getWaitlistByEmail 返回匹配行或 null", async () => {
+    const db = createMemoryConnectDb();
+    await db.insertWaitlist({
+      id: "w1",
+      email: "b@y.com",
+      batch: 1,
+      status: "waiting",
+      created_at: "2026-07-25T00:00:00Z",
+    });
+    expect(await db.getWaitlistByEmail("b@y.com", 1)).toMatchObject({ email: "b@y.com" });
+    expect(await db.getWaitlistByEmail("missing@z.com", 1)).toBeNull();
+  });
+});
+
+describe("endpoint cf_access_app_id 可空", () => {
+  it("cf_access_app_id 为 null（去 Access 后）时正常插入", async () => {
+    const db = createMemoryConnectDb();
+    await db.insertInvite(makeInvite());
+    const ep = await db.insertEndpoint(
+      makeEndpoint({ cf_access_app_id: null, cf_access_policy_id: null }),
+    );
+    expect(ep.cf_access_app_id).toBeNull();
+    expect(ep.cf_access_policy_id).toBeNull();
+  });
+});
