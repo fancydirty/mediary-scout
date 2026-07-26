@@ -9,6 +9,8 @@ import { assertSlug } from "./slug.js";
 import { homePage } from "./html/home-page.js";
 import { adminPage } from "./html/admin-page.js";
 import { invitePage, type InvitePageState } from "./html/invite-page.js";
+import { EMAIL_RE } from "./validation.js";
+import { newId } from "./ids.js";
 
 // Same aperture mark as apps/web/app/icon.svg — the product brand.
 const LOGO_SVG =
@@ -164,6 +166,11 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
   const revealMatch = path.match(/^\/api\/i\/([^/]+)\/reveal$/);
   if (revealMatch !== null && method === "POST") {
     return await revealInvite(deps, decodeParam(revealMatch[1] ?? ""));
+  }
+
+  // ---- public waitlist ----
+  if (path === "/waitlist" && method === "POST") {
+    return await addToWaitlist(request, deps);
   }
 
   throw new HttpError(404, "not found");
@@ -331,4 +338,41 @@ async function revealInvite(deps: RouteDeps, code: string): Promise<Response> {
         { noStore: true },
       );
   }
+}
+
+async function addToWaitlist(request: Request, deps: RouteDeps): Promise<Response> {
+  const body = await readJsonBody(request);
+  const emailRaw = body.email;
+  if (typeof emailRaw !== "string") {
+    throw new HttpError(400, "email required");
+  }
+  const email = emailRaw.trim().toLowerCase();
+  if (!EMAIL_RE.test(email)) {
+    throw new HttpError(400, "invalid email");
+  }
+
+  const batch = 1; // Fixed batch for阶段 1
+  const existing = await deps.db.getWaitlistByEmail(email, batch);
+  if (existing !== null) {
+    // Calculate position: count all pending entries with earlier created_at
+    const list = await deps.db.listWaitlist(batch);
+    const position = list.filter((row) => row.status === "pending").findIndex((row) => row.id === existing.id) + 1;
+    return json({ already_exists: true, id: existing.id, position }, 200);
+  }
+
+  const id = newId("wl");
+  const row = await deps.db.insertWaitlist({
+    id,
+    email,
+    batch,
+    status: "pending",
+    created_at: deps.now(),
+  });
+
+  // Position = count of earlier pending rows + 1
+  const list = await deps.db.listWaitlist(batch);
+  const pendingBefore = list.filter((r) => r.status === "pending" && r.created_at < row.created_at).length;
+  const position = pendingBefore + 1;
+
+  return json({ id: row.id, position }, 201);
 }

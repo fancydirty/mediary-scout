@@ -360,4 +360,98 @@ describe("handleRequest", () => {
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ error: "not found" });
   });
+
+  it("POST /waitlist with valid email → 201, id starts with wl_, position = 1", async () => {
+    const { deps } = setup();
+    const res = await handleRequest(
+      new Request(`${BASE}/waitlist`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "alice@example.com" }),
+      }),
+      deps,
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { id: string; position: number };
+    expect(body.id).toMatch(/^wl_/);
+    expect(body.position).toBe(1);
+  });
+
+  it("POST /waitlist same email twice → 200, same id, position unchanged", async () => {
+    const { deps } = setup();
+    const first = await handleRequest(
+      new Request(`${BASE}/waitlist`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "bob@example.com" }),
+      }),
+      deps,
+    );
+    expect(first.status).toBe(201);
+    const firstBody = (await first.json()) as { id: string; position: number };
+
+    const second = await handleRequest(
+      new Request(`${BASE}/waitlist`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "bob@example.com" }),
+      }),
+      deps,
+    );
+    expect(second.status).toBe(200);
+    const secondBody = (await second.json()) as { already_exists: boolean; id: string };
+    expect(secondBody.already_exists).toBe(true);
+    expect(secondBody.id).toBe(firstBody.id);
+  });
+
+  it("POST /waitlist invalid email → 400", async () => {
+    const { deps } = setup();
+    const invalid = [
+      "not-an-email",
+      "missing-at-sign.com",
+      "@no-local.com",
+      "no-domain@",
+      "bad@domain",
+      "bad@.com",
+    ];
+    for (const email of invalid) {
+      const res = await handleRequest(
+        new Request(`${BASE}/waitlist`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ email }),
+        }),
+        deps,
+      );
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "invalid email" });
+    }
+  });
+
+  it("POST /waitlist normalizes email (uppercase/whitespace) → same record", async () => {
+    const { deps } = setup();
+    const first = await handleRequest(
+      new Request(`${BASE}/waitlist`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "  Charlie@Example.COM  " }),
+      }),
+      deps,
+    );
+    expect(first.status).toBe(201);
+    const firstBody = (await first.json()) as { id: string };
+
+    const second = await handleRequest(
+      new Request(`${BASE}/waitlist`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "charlie@example.com" }),
+      }),
+      deps,
+    );
+    expect(second.status).toBe(200);
+    const secondBody = (await second.json()) as { already_exists: boolean; id: string };
+    expect(secondBody.already_exists).toBe(true);
+    expect(secondBody.id).toBe(firstBody.id);
+  });
 });
