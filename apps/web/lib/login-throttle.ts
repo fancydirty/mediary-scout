@@ -146,6 +146,30 @@ export function _setMaxBucketsForTest(n: number): void {
 export const MAX_KEY_PART = 64;
 
 /**
+ * 把任意长度的字符串压成有界表示。
+ *
+ * 超长时取「头部 + 尾部 + 长度」而非仅头部：注册未限制用户名长度，
+ * 若只截前 64 字符，两个前缀相同的长用户名会共用一个桶（跨用户 DoS）。
+ * 带上尾部与原始长度可把碰撞面压到可忽略，同时键长仍然有界。
+ */
+function boundedPart(raw: string): string {
+  if (raw.length <= MAX_KEY_PART) return raw;
+  const head = raw.slice(0, MAX_KEY_PART - 24);
+  const tail = raw.slice(-16);
+  return `${head}~${raw.length}~${tail}`;
+}
+
+/**
+ * 归一化任意限流键，保证长度有界。
+ *
+ * 显式传入的 `throttleKey`（`loginAccount` 的第三参）同样要过这一关——
+ * 否则调用方传入超长键就能撑大内存，且与「键已被截断」的假设自相矛盾。
+ */
+export function normalizeThrottleKey(key: string): string {
+  return boundedPart(key.trim()) || "unknown";
+}
+
+/**
  * 组装限流键 `username|ip`（纯函数，便于测试）。
  *
  * IP 取值优先级：`cf-connecting-ip` > `x-forwarded-for` 首段 > `"unknown"`。
@@ -162,7 +186,7 @@ export const MAX_KEY_PART = 64;
 export function buildThrottleKey(headers: Headers, username: string): string {
   const cfIp = headers.get("cf-connecting-ip")?.trim();
   const xff = headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  const ip = (cfIp || xff || "unknown").slice(0, MAX_KEY_PART);
-  const user = username.trim().slice(0, MAX_KEY_PART);
+  const ip = boundedPart((cfIp || xff || "unknown").trim());
+  const user = boundedPart(username.trim());
   return `${user}|${ip}`;
 }

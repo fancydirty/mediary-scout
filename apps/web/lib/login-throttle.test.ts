@@ -4,6 +4,8 @@ import {
   recordLoginFailure,
   recordLoginSuccess,
   buildThrottleKey,
+  normalizeThrottleKey,
+  MAX_KEY_PART,
   _resetLoginThrottleForTest,
   _bucketCountForTest,
   _setMaxBucketsForTest,
@@ -207,6 +209,25 @@ describe("buildThrottleKey", () => {
   it("caps both parts so huge inputs can't bloat a bucket", () => {
     const huge = "A".repeat(100_000);
     const key = buildThrottleKey(new Headers({ "cf-connecting-ip": huge }), huge);
-    expect(key.length).toBeLessThanOrEqual(64 + 1 + 64);
+    expect(key.length).toBeLessThanOrEqual(2 * MAX_KEY_PART + 1);
+  });
+
+  it("long usernames sharing a 64-char prefix must not collide (cross-user DoS)", () => {
+    // 注册未限制用户名长度；若截断只取前缀，两个长用户名会共用一个桶，
+    // 攻击者据此可锁死别人的账号。
+    const prefix = "B".repeat(200);
+    const h = new Headers({ "cf-connecting-ip": "1.1.1.1" });
+    const a = buildThrottleKey(h, `${prefix}-alice`);
+    const b = buildThrottleKey(h, `${prefix}-bob`);
+    expect(a).not.toBe(b);
+    expect(a.length).toBeLessThanOrEqual(2 * MAX_KEY_PART + 1);
+  });
+
+  it("normalizeThrottleKey bounds explicitly supplied keys too", () => {
+    const huge = "C".repeat(50_000);
+    expect(normalizeThrottleKey(huge).length).toBeLessThanOrEqual(MAX_KEY_PART);
+    expect(normalizeThrottleKey("   ")).toBe("unknown");
+    // 同前缀的长键同样不能塌成一个
+    expect(normalizeThrottleKey(`${huge}x`)).not.toBe(normalizeThrottleKey(`${huge}y`));
   });
 });

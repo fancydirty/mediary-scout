@@ -4,7 +4,7 @@ import {
   checkLoginAllowed,
   recordLoginFailure,
   recordLoginSuccess,
-  MAX_KEY_PART,
+  normalizeThrottleKey,
 } from "./login-throttle";
 import {
   PanSouResourceProvider,
@@ -203,8 +203,9 @@ export async function loginAccount(
 ): Promise<AuthOutcome> {
   // 无显式 throttleKey 时（库级调用，无请求上下文）退化为仅按 username。
   // 不做 toLowerCase()：账号查询是精确匹配，折叠大小写会让不同账号共用一个桶。
-  // 截断同 buildThrottleKey()：即便将来被别的入口复用，超长 username 也不会撑大桶键。
-  const key = (throttleKey ?? username.trim().slice(0, MAX_KEY_PART)) || "unknown";
+  // 一律过 normalizeThrottleKey()——显式传入的 key 也必须有界，否则调用方
+  // 传超长键就能撑大内存。
+  const key = normalizeThrottleKey(throttleKey ?? username);
   const now = Date.now();
   const verdict = checkLoginAllowed(key, now);
   if (!verdict.allowed) {
@@ -220,8 +221,12 @@ export async function loginAccount(
     recordLoginFailure(key, now);
     return { ok: false, error: "用户名或密码不正确。" };
   }
+  // 先建 session 再清限流桶：建 session 可能抛（DB 故障、取密钥失败），
+  // 那种情况下这次登录并未成功，桶必须保留，否则服务端间歇故障期间
+  // 反复尝试就能一直重置退避。
+  const signedCookie = await createLoginSession(account.id);
   recordLoginSuccess(key);
-  return { ok: true, accountId: account.id, signedCookie: await createLoginSession(account.id) };
+  return { ok: true, accountId: account.id, signedCookie };
 }
 
 /** Destroy the session behind a signed cookie (logout). Best-effort. */

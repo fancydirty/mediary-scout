@@ -129,4 +129,32 @@ describe("loginAccount throttling (integration)", () => {
     },
     CRYPTO_TIMEOUT_MS,
   );
+
+  it(
+    "keeps the throttle bucket when session creation fails (no backoff reset on server error)",
+    async () => {
+      const rt = await boot();
+      await rt.registerAccount("owner1", "password-123");
+      const { checkLoginAllowed, normalizeThrottleKey } = await import("./login-throttle");
+
+      // 先攒 4 次失败（还差 1 次就锁定）
+      for (let i = 0; i < 4; i++) await rt.loginAccount("owner1", "wrong-password");
+
+      // 让建 session 抛错：密码是对的，但服务端故障 ⇒ 这次登录并未成功
+      const repo = rt.getWorkflowRepository();
+      const original = repo.createSession.bind(repo);
+      repo.createSession = async () => {
+        throw new Error("DB down");
+      };
+      await expect(rt.loginAccount("owner1", "password-123")).rejects.toThrow("DB down");
+      repo.createSession = original;
+
+      // 桶必须保留：再失败 1 次即达到 5 次门槛而锁定。
+      // 若桶在 session 失败时被误清，这里只算第 1 次，不会锁。
+      await rt.loginAccount("owner1", "wrong-password");
+      const key = normalizeThrottleKey("owner1");
+      expect(checkLoginAllowed(key, Date.now()).allowed).toBe(false);
+    },
+    CRYPTO_TIMEOUT_MS,
+  );
 });
