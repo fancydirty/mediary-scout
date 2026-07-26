@@ -9,6 +9,7 @@ import { assertSlug } from "./slug.js";
 import { homePage } from "./html/home-page.js";
 import { adminPage } from "./html/admin-page.js";
 import { invitePage, type InvitePageState } from "./html/invite-page.js";
+import { betaPage } from "./html/beta-page.js";
 import { EMAIL_MAX_LENGTH, EMAIL_RE } from "./validation.js";
 import { newId } from "./ids.js";
 import { sha256Hex } from "./crypto-token.js";
@@ -186,6 +187,9 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
   }
   if (method === "GET" && path === "/admin") {
     return htmlPage(adminPage());
+  }
+  if (method === "GET" && path === "/beta") {
+    return htmlPage(betaPage());
   }
 
   // ---- admin api (bearer required) ----

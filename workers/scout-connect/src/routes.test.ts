@@ -350,6 +350,24 @@ describe("handleRequest", () => {
     expect(await res.text()).toContain("链接无效");
   });
 
+  it("GET /beta → 200 signup page, CSP permits its same-origin fetch", async () => {
+    const { deps } = setup();
+    const res = await handleRequest(new Request(`${BASE}/beta`), deps);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    const body = await res.text();
+    expect(body).toContain("Scout Connect 远程访问 · 内测");
+    expect(body).toContain('<form id="signup"');
+    // The page's inline script POSTs fetch("/waitlist") same-origin. Under the
+    // old CSP (default-src 'none', no connect-src) a real browser REFUSES that
+    // fetch (connect-src falls back to default-src) — verified empirically:
+    // "FETCH_BLOCKED Failed to fetch" without the directive, "FETCH_OK" with
+    // it. The invite page's reveal and the admin console needed it too.
+    const csp = res.headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("connect-src 'self'");
+    expect(csp).toContain("default-src 'none'");
+  });
+
   it("GET /i/:code with pending invite → 作者尚未开通, no reveal button", async () => {
     const { deps } = setup();
     const createRes = await createInviteViaApi(deps, { email: "alice@example.com" });
