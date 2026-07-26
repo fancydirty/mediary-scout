@@ -125,6 +125,32 @@ describe("login throttle", () => {
     expect(checkLoginAllowed("locked0|ip", T0).allowed).toBe(false);
   });
 
+  it("saturation must DENY unknown keys, not let them bypass the throttle", () => {
+    // 回归：曾经饱和时 recordLoginFailure 直接 return ⇒ 新 key 永远建不了桶
+    // ⇒ checkLoginAllowed 永远 allowed ⇒ 攻击者轮换 key 既绕过限流，
+    // 又让每次请求都跑一遍 memory-hard scrypt，把限流器变成 CPU 放大器。
+    const CAP = 10;
+    _setMaxBucketsForTest(CAP);
+    for (let i = 0; i < CAP; i++) {
+      for (let j = 0; j < 5; j++) recordLoginFailure(`locked${i}|ip`, T0);
+    }
+    // 全部条目锁定中 ⇒ 饱和。任意未知 key 必须被拒，且给出可重试时间。
+    const v = checkLoginAllowed("brand-new|9.9.9.9", T0);
+    expect(v.allowed).toBe(false);
+    if (!v.allowed) expect(v.retryAfterSec).toBeGreaterThan(0);
+  });
+
+  it("saturation lifts once locks expire (new keys allowed again)", () => {
+    const CAP = 10;
+    _setMaxBucketsForTest(CAP);
+    for (let i = 0; i < CAP; i++) {
+      for (let j = 0; j < 5; j++) recordLoginFailure(`locked${i}|ip`, T0);
+    }
+    expect(checkLoginAllowed("brand-new|9.9.9.9", T0).allowed).toBe(false);
+    // 首轮锁 60s，过后不再饱和 → 恢复正常放行
+    expect(checkLoginAllowed("brand-new|9.9.9.9", T0 + 61_000).allowed).toBe(true);
+  });
+
   it("pins MAX_LOCK_MS constant (30 min cap is reachable and enforced)", () => {
     const K = "repeat|offender";
     let t = T0;

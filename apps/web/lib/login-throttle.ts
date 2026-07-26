@@ -40,15 +40,11 @@ function sweepDeadBuckets(now: number): void {
 }
 
 /**
- * 为「新 key」腾出一格容量，返回是否允许分配。
+ * 为「新 key」腾出一格容量，返回是否腾到了。
  *
- * 顺序：① 未达上限直接放行 → ② 清扫已死条目 → ③ 仍满则按插入顺序驱逐最老的
- * **未锁定**条目（跳过锁定中的，否则攻击者可用海量新 key 把自己的锁冲掉）。
- *
- * ④ 若全部条目都在锁定中（无可驱逐），**拒绝分配新桶**而不是无条件 `set()`。
- * 拒绝是安全的：新 key 尚无失败记录，丢掉它只是让那一次失败不计数，
- * 已存在的锁不受影响；反之无条件 set() 会让 Map 突破上限。
- * 饱和只可能发生在 10k 个 key 同时处于锁定中的真实攻击下，此时保锁优先。
+ * 顺序：① 未达上限直接放行 → ② 清扫已死条目 → ③ 仍满则驱逐最老的**未锁定**条目
+ * （跳过锁定中的，否则攻击者可用海量新 key 把自己的锁冲掉）。
+ * ④ 全部条目都在锁定中 → 腾不出，返回 false，由调用方进入饱和降级。
  */
 function makeRoomForNewBucket(now: number): boolean {
   if (buckets.size < maxBuckets) return true;
@@ -59,23 +55,52 @@ function makeRoomForNewBucket(now: number): boolean {
     buckets.delete(k);
     return true;
   }
-  return false; // 全部锁定 → 拒绝新分配（保住已有的锁与内存上限）
+  return false;
+}
+
+/**
+ * 容量是否处于「饱和」——已达上限且没有任何可回收（未锁定）的条目。
+ * 该状态只可能出现在成千上万个 key 同时被锁定的真实攻击下。
+ */
+function isSaturated(now: number): boolean {
+  if (buckets.size < maxBuckets) return false;
+  for (const v of buckets.values()) {
+    if (now >= v.lockedUntil) return false; // 还有可回收的
+  }
+  return true;
 }
 
 export function checkLoginAllowed(key: string, now: number): LoginVerdict {
   const b = buckets.get(key);
-  if (!b) return { allowed: true };
-  if (now < b.lockedUntil) {
-    return { allowed: false, retryAfterSec: Math.ceil((b.lockedUntil - now) / 1000) };
+  if (b) {
+    if (now < b.lockedUntil) {
+      return { allowed: false, retryAfterSec: Math.ceil((b.lockedUntil - now) / 1000) };
+    }
+    return { allowed: true };
+  }
+  // 未知 key：容量饱和时统一快速拒绝。
+  //
+  // 否则会出现比内存溢出更糟的后果——新 key 永远建不了桶 ⇒ 永远 allowed ⇒
+  // 攻击者只要不断轮换 username|ip 就能既绕过限流、又让每次请求都跑一遍
+  // memory-hard 的 scrypt，把限流器变成 CPU 放大器。饱和是全局告警状态，
+  // 此时宁可让少数新用户等一会儿（退避时长 = 最短的那个锁），也不能放行。
+  if (isSaturated(now)) {
+    let soonest = Infinity;
+    for (const v of buckets.values()) {
+      if (v.lockedUntil < soonest) soonest = v.lockedUntil;
+    }
+    return { allowed: false, retryAfterSec: Math.max(1, Math.ceil((soonest - now) / 1000)) };
   }
   return { allowed: true };
 }
 
 export function recordLoginFailure(key: string, now: number): void {
   let b = buckets.get(key);
-  // 新 key 才需要占用容量；已有 key 直接更新，永不因容量被拒
+  // 新 key 才占容量；已有 key 直接更新，永不因容量被拒。
+  // 腾不出格子时放弃记录——此时 checkLoginAllowed() 已对未知 key 统一拒绝，
+  // 不计数不会造成放行（见该函数的饱和分支）。
   if (!b && !makeRoomForNewBucket(now)) {
-    return; // 容量饱和（全部条目锁定中）→ 放弃记录，绝不突破上限
+    return;
   }
   // 窗口已过 → 重置失败数与窗口，但保留 lockedUntil（否则锁定时长超过窗口时，
   // 一次废弃猜测即可解锁，退避阶梯上半截形同虚设）与 lockCount（持续升级锁定）
@@ -118,7 +143,7 @@ export function _setMaxBucketsForTest(n: number): void {
 }
 
 /** 限流键中 username 与 ip 各自的最大长度（防超长键放大内存占用）。 */
-const MAX_KEY_PART = 64;
+export const MAX_KEY_PART = 64;
 
 /**
  * 组装限流键 `username|ip`（纯函数，便于测试）。

@@ -95,21 +95,35 @@ describe("loginAccount throttling (integration)", () => {
       const rt = await boot();
       await rt.registerAccount("exists", "password-123");
 
-      const trials = 5;
-      // Warm both paths
+      // Warm both paths (JIT + scrypt buffers)
       await rt.loginAccount("exists", "wrong");
       await rt.loginAccount("missing", "wrong");
 
-      const t1 = process.hrtime.bigint();
-      for (let i = 0; i < trials; i++) await rt.loginAccount("exists", "wrong");
-      const existsMs = Number(process.hrtime.bigint() - t1) / 1e6 / trials;
+      // 交错测量 + 取中位数：两条路径在同一时间窗口内轮流跑，
+      // 这样 CI 抢占/降频会同等影响两者而不是只压到某一段；
+      // 中位数再滤掉个别离群点。否则「先测 A 再测 B」很容易假阳性。
+      const trials = 7;
+      const existsSamples: number[] = [];
+      const missingSamples: number[] = [];
+      for (let i = 0; i < trials; i++) {
+        const a = process.hrtime.bigint();
+        await rt.loginAccount("exists", "wrong");
+        existsSamples.push(Number(process.hrtime.bigint() - a) / 1e6);
 
-      const t2 = process.hrtime.bigint();
-      for (let i = 0; i < trials; i++) await rt.loginAccount("missing", "wrong");
-      const missingMs = Number(process.hrtime.bigint() - t2) / 1e6 / trials;
+        const b = process.hrtime.bigint();
+        await rt.loginAccount("missing", "wrong");
+        missingSamples.push(Number(process.hrtime.bigint() - b) / 1e6);
+      }
+      const median = (xs: number[]) => {
+        const s = [...xs].sort((p, q) => p - q);
+        return s[Math.floor(s.length / 2)]!;
+      };
+      const existsMs = median(existsSamples);
+      const missingMs = median(missingSamples);
 
       // 两条路径都要走完 scrypt（~50-80ms）。比值 < 10 即说明没有短路；
-      // 修复前缺失账号是 0.0026ms vs 存在 54ms（约 20000×）。
+      // 修复前缺失账号是 0.0026ms vs 存在 54ms（约 20000×），差了三个数量级，
+      // 所以哪怕环境噪声让比值飘到 2-3，也仍能稳稳判定。
       const ratio = Math.max(existsMs, missingMs) / Math.min(existsMs, missingMs);
       expect(ratio).toBeLessThan(10);
     },

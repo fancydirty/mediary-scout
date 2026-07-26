@@ -4,6 +4,7 @@ import {
   checkLoginAllowed,
   recordLoginFailure,
   recordLoginSuccess,
+  MAX_KEY_PART,
 } from "./login-throttle";
 import {
   PanSouResourceProvider,
@@ -202,7 +203,8 @@ export async function loginAccount(
 ): Promise<AuthOutcome> {
   // 无显式 throttleKey 时（库级调用，无请求上下文）退化为仅按 username。
   // 不做 toLowerCase()：账号查询是精确匹配，折叠大小写会让不同账号共用一个桶。
-  const key = (throttleKey ?? username.trim()) || "unknown";
+  // 截断同 buildThrottleKey()：即便将来被别的入口复用，超长 username 也不会撑大桶键。
+  const key = (throttleKey ?? username.trim().slice(0, MAX_KEY_PART)) || "unknown";
   const now = Date.now();
   const verdict = checkLoginAllowed(key, now);
   if (!verdict.allowed) {
