@@ -619,6 +619,66 @@ describe("handleRequest", () => {
   });
 });
 
+describe("GET /api/admin/waitlist", () => {
+  it("→ 401 without admin token", async () => {
+    const { deps } = setup();
+    const res = await handleRequest(new Request(`${BASE}/api/admin/waitlist`), deps);
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "unauthorized" });
+  });
+
+  it("→ 200 with rows in queue order ((created_at, id) ascending) for a seeded list", async () => {
+    const { db, deps } = setup();
+    // Insert OUT of order to prove the response is sorted by the queue
+    // composite (created_at, id), not insertion order.
+    await db.insertWaitlist({
+      id: "wl_c",
+      email: "c@example.com",
+      batch: 1,
+      status: "pending",
+      created_at: "2026-07-24T10:00:02.000Z",
+    });
+    await db.insertWaitlist({
+      id: "wl_a",
+      email: "a@example.com",
+      batch: 1,
+      status: "pending",
+      created_at: "2026-07-24T10:00:00.000Z",
+    });
+    await db.insertWaitlist({
+      id: "wl_b",
+      email: "b@example.com",
+      batch: 1,
+      status: "pending",
+      created_at: "2026-07-24T10:00:01.000Z",
+    });
+
+    const res = await handleRequest(adminGet("/api/admin/waitlist"), deps);
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      waitlist: Array<{ id: string; email: string; status: string; created_at: string }>;
+    };
+    expect(body.waitlist.map((r) => r.email)).toEqual([
+      "a@example.com",
+      "b@example.com",
+      "c@example.com",
+    ]);
+    expect(body.waitlist[0]).toMatchObject({
+      id: "wl_a",
+      status: "pending",
+      created_at: "2026-07-24T10:00:00.000Z",
+    });
+  });
+
+  it("→ 200 { waitlist: [] } when the batch is empty", async () => {
+    const { deps } = setup();
+    const res = await handleRequest(adminGet("/api/admin/waitlist"), deps);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ waitlist: [] });
+  });
+});
+
 describe("POST /waitlist hardening", () => {
   function waitlistPost(email: unknown): Request {
     return new Request(`${BASE}/waitlist`, {

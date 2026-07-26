@@ -218,6 +218,14 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
     return json({ endpoints });
   }
 
+  if (path === "/api/admin/waitlist" && method === "GET") {
+    requireAdmin(request, deps.adminToken);
+    // Queue order straight from the db — (created_at, id) ascending, the same
+    // composite waitlistRankOf counts under, so the 1-based array index here
+    // IS the position POST /waitlist reported to the user.
+    return json({ waitlist: await deps.db.listWaitlist(WAITLIST_BATCH) });
+  }
+
   const provisionMatch = path.match(/^\/api\/admin\/invites\/([^/]+)\/provision$/);
   if (provisionMatch !== null && method === "POST") {
     requireAdmin(request, deps.adminToken);
