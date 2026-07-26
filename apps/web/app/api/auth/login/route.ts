@@ -18,7 +18,9 @@ export async function POST(request: NextRequest) {
   const body = (await request.json().catch(() => ({}))) as { username?: unknown; password?: unknown };
   const username = typeof body.username === "string" ? body.username : "";
   const password = typeof body.password === "string" ? body.password : "";
-  const result = await loginAccount(username, password);
+  const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+  const throttleKey = `${username.trim().toLowerCase()}|${ip}`;
+  const result = await loginAccount(username, password, throttleKey);
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: 401 });
   }

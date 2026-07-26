@@ -212,8 +212,7 @@ export async function loginAccount(
   const DUMMY_HASH = "scrypt:a2448ef076990b889ef0540720bccce2:4fdc41afebb4560f4a638b4225d8325904894d18d2df1c7a95c50a65c141b926dc252e99b63e681e15e2d6e008acc845b02c9a2fc99a4888749226ab262c6978";
   const hash = account?.passwordHash || DUMMY_HASH;
   const valid = await verifyPassword(password, hash);
-  const authenticated = Boolean(account) && valid && account.passwordHash.length > 0;
-  if (!authenticated) {
+  if (!account || !valid || account.passwordHash.length === 0) {
     recordLoginFailure(key, now);
     return { ok: false, error: "用户名或密码不正确。" };
   }
