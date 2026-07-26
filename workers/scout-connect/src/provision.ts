@@ -111,6 +111,7 @@ export async function provisionEndpoint(input: {
       token_sha256: sha,
       token_ciphertext: ciphertext,
       token_shown_at: null,
+      last_seen_at: null,
       created_at: deps.now(),
       revoked_at: null,
     });

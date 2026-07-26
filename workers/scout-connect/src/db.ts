@@ -23,6 +23,7 @@ export interface EndpointRow {
   token_sha256: string;
   token_ciphertext: string | null;
   token_shown_at: string | null;
+  last_seen_at: string | null;
   created_at: string;
   revoked_at: string | null;
 }
@@ -81,6 +82,7 @@ export interface ConnectDb {
   countWaitlist(batch: number): Promise<number>;
   listWaitlist(batch: number): Promise<WaitlistRow[]>;
   getEndpointByTokenSha256(sha256: string): Promise<EndpointRow | null>;
+  updateEndpointLastSeen(endpointId: string, lastSeenAt: string): Promise<void>;
 }
 
 // Minimal ambient D1 types (intentionally not @cloudflare/workers-types).
@@ -125,6 +127,7 @@ function mapEndpoint(row: RawRow): EndpointRow {
     token_sha256: row.token_sha256 as string,
     token_ciphertext: row.token_ciphertext as string | null,
     token_shown_at: row.token_shown_at as string | null,
+    last_seen_at: row.last_seen_at as string | null,
     created_at: row.created_at as string,
     revoked_at: row.revoked_at as string | null,
   };
@@ -223,8 +226,8 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
     async insertEndpoint(row) {
       await d1
         .prepare(
-          `INSERT INTO endpoints (id, invite_id, slug, hostname, cf_tunnel_id, cf_access_app_id, cf_access_policy_id, cf_dns_record_id, status, token_sha256, token_ciphertext, token_shown_at, created_at, revoked_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO endpoints (id, invite_id, slug, hostname, cf_tunnel_id, cf_access_app_id, cf_access_policy_id, cf_dns_record_id, status, token_sha256, token_ciphertext, token_shown_at, last_seen_at, created_at, revoked_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
           row.id,
@@ -239,6 +242,7 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
           row.token_sha256,
           row.token_ciphertext,
           row.token_shown_at,
+          row.last_seen_at,
           row.created_at,
           row.revoked_at,
         )
@@ -368,6 +372,13 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
         .bind(sha256)
         .first<RawRow>();
       return row ? mapEndpoint(row) : null;
+    },
+
+    async updateEndpointLastSeen(endpointId, lastSeenAt) {
+      await d1
+        .prepare(`UPDATE endpoints SET last_seen_at = ? WHERE id = ?`)
+        .bind(lastSeenAt, endpointId)
+        .run();
     },
   };
 }
@@ -570,6 +581,13 @@ export function createMemoryConnectDb(): ConnectDb {
         }
       }
       return null;
+    },
+
+    async updateEndpointLastSeen(endpointId, lastSeenAt) {
+      const row = endpoints.get(endpointId);
+      if (row !== undefined) {
+        row.last_seen_at = lastSeenAt;
+      }
     },
   };
 }

@@ -38,6 +38,7 @@ function makeEndpoint(overrides: Partial<EndpointRow> = {}): EndpointRow {
     token_sha256: "sha256hex",
     token_ciphertext: "ciphertext",
     token_shown_at: null,
+    last_seen_at: null,
     created_at: "2026-07-24T00:00:00.000Z",
     revoked_at: null,
     ...overrides,

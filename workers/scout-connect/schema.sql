@@ -23,6 +23,7 @@ CREATE TABLE endpoints (
   token_sha256 TEXT NOT NULL,
   token_ciphertext TEXT,
   token_shown_at TEXT,
+  last_seen_at TEXT,
   created_at TEXT NOT NULL,
   revoked_at TEXT
 );

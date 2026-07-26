@@ -454,4 +454,110 @@ describe("handleRequest", () => {
     expect(secondBody.already_exists).toBe(true);
     expect(secondBody.id).toBe(firstBody.id);
   });
+
+  it("POST /api/instance/status with valid token → 204, updates last_seen_at", async () => {
+    const { db, deps } = setup();
+    const seeded = await seedProvisioned(deps);
+    
+    // Get the endpoint to extract its token
+    const endpoint = await db.getEndpointByInviteId(seeded.id);
+    expect(endpoint).not.toBeNull();
+    expect(endpoint?.last_seen_at).toBeNull();
+    
+    const res = await handleRequest(
+      new Request(`${BASE}/api/instance/status`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${seeded.token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ version: "1.0.0", uptime_seconds: 3600 }),
+      }),
+      deps,
+    );
+    expect(res.status).toBe(204);
+    
+    // Verify last_seen_at was updated
+    const updated = await db.getEndpointByInviteId(seeded.id);
+    expect(updated?.last_seen_at).toBe(NOW);
+  });
+
+  it("POST /api/instance/status missing Authorization header → 401", async () => {
+    const { deps } = setup();
+    const res = await handleRequest(
+      new Request(`${BASE}/api/instance/status`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      }),
+      deps,
+    );
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "unauthorized" });
+  });
+
+  it("POST /api/instance/status invalid token (wrong hash) → 401", async () => {
+    const { deps } = setup();
+    await seedProvisioned(deps);
+    
+    const res = await handleRequest(
+      new Request(`${BASE}/api/instance/status`, {
+        method: "POST",
+        headers: {
+          authorization: "Bearer wrong-token-that-wont-match",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({}),
+      }),
+      deps,
+    );
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "unauthorized" });
+  });
+
+  it("POST /api/instance/status revoked endpoint (status='revoked') → 401", async () => {
+    const { db, deps } = setup();
+    const seeded = await seedProvisioned(deps);
+    
+    // Revoke the endpoint
+    const endpoint = await db.getEndpointByInviteId(seeded.id);
+    expect(endpoint).not.toBeNull();
+    await handleRequest(
+      adminPost(`/api/admin/endpoints/${endpoint?.id ?? ""}/revoke`),
+      deps,
+    );
+    
+    // Try to report status with the (now revoked) token
+    const res = await handleRequest(
+      new Request(`${BASE}/api/instance/status`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${seeded.token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({}),
+      }),
+      deps,
+    );
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "unauthorized" });
+  });
+
+  it("POST /api/instance/status valid token + optional body fields (version/uptime) → 204", async () => {
+    const { deps } = setup();
+    const seeded = await seedProvisioned(deps);
+    
+    const res = await handleRequest(
+      new Request(`${BASE}/api/instance/status`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${seeded.token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ version: "2.5.1", uptime_seconds: 86400 }),
+      }),
+      deps,
+    );
+    expect(res.status).toBe(204);
+  });
 });

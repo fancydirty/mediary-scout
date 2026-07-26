@@ -11,6 +11,7 @@ import { adminPage } from "./html/admin-page.js";
 import { invitePage, type InvitePageState } from "./html/invite-page.js";
 import { EMAIL_RE } from "./validation.js";
 import { newId } from "./ids.js";
+import { sha256Hex } from "./crypto-token.js";
 
 // Same aperture mark as apps/web/app/icon.svg — the product brand.
 const LOGO_SVG =
@@ -171,6 +172,11 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
   // ---- public waitlist ----
   if (path === "/waitlist" && method === "POST") {
     return await addToWaitlist(request, deps);
+  }
+
+  // ---- instance status reporting (bearer token auth) ----
+  if (path === "/api/instance/status" && method === "POST") {
+    return await reportInstanceStatus(request, deps);
   }
 
   throw new HttpError(404, "not found");
@@ -375,4 +381,31 @@ async function addToWaitlist(request: Request, deps: RouteDeps): Promise<Respons
   const position = pendingBefore + 1;
 
   return json({ id: row.id, position }, 201);
+}
+
+async function reportInstanceStatus(request: Request, deps: RouteDeps): Promise<Response> {
+  // Extract Bearer token from Authorization header
+  const authHeader = request.headers.get("authorization");
+  if (!authHeader || !authHeader.toLowerCase().startsWith("bearer ")) {
+    throw new HttpError(401, "unauthorized");
+  }
+  const token = authHeader.slice("bearer ".length).trim();
+  if (token === "") {
+    throw new HttpError(401, "unauthorized");
+  }
+
+  // Hash the token and look up the endpoint
+  const tokenHash = await sha256Hex(token);
+  const endpoint = await deps.db.getEndpointByTokenSha256(tokenHash);
+
+  // Endpoint must exist and be active
+  if (endpoint === null || endpoint.status !== "active") {
+    throw new HttpError(401, "unauthorized");
+  }
+
+  // Update last_seen_at
+  await deps.db.updateEndpointLastSeen(endpoint.id, deps.now());
+
+  // Return 204 No Content
+  return new Response(null, { status: 204 });
 }
