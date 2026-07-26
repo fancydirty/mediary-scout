@@ -45,6 +45,15 @@ const DEFAULT_WORKER_BASE = "https://mediaryconnect.app";
  * 构建期就被求值，把 build 环境的 env 值烤死进产物——docker 镜像 build/run
  * 环境不同，那样预发/自建实例改 `SCOUT_CONNECT_URL` 会失效。
  */
+/**
+ * 心跳超时。这次 fetch 发生在 `/settings` 的 **SSR 渲染路径**上——没有超时的话，
+ * worker 或网络「卡住但不报错」会把整个设置页的渲染一起挂死（不是慢，是永远不返回）。
+ * 遵守项目硬规则「新外部 HTTP 一律带超时」（见 `pan123-client.ts` 的同款注释）。
+ * 5s 与 `deployment-update-server.ts` 的探测保持一致：这只是个存活探针，
+ * 超时即按降级处理，反正降级态本来就是「拿不到状态」。
+ */
+const HEARTBEAT_TIMEOUT_MS = 5_000;
+
 async function defaultSendHeartbeat(token: string): Promise<boolean> {
   const base = process.env.SCOUT_CONNECT_URL?.trim() || DEFAULT_WORKER_BASE;
   const res = await fetch(`${base.replace(/\/+$/, "")}/api/instance/status`, {
@@ -52,6 +61,7 @@ async function defaultSendHeartbeat(token: string): Promise<boolean> {
     // 契约是 Bearer 头；worker 压根不读 body（大 body 都不会被读取）。
     headers: { authorization: `Bearer ${token}` },
     cache: "no-store",
+    signal: AbortSignal.timeout(HEARTBEAT_TIMEOUT_MS),
   });
   // 严格判 204：契约就是 204 无 body。放宽成 res.ok 会把任何反代/门禁塞回来的
   // 200 登录页当成「隧道健康」，那是最需要被显示为降级的场景。

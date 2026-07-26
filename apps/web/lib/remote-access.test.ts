@@ -130,6 +130,31 @@ describe("resolveRemoteAccessState", () => {
   });
 });
 
+describe("心跳超时（SSR 渲染路径上的硬要求）", () => {
+  it("带 AbortSignal —— 项目硬规则「新外部 HTTP 一律带超时」", async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await resolveRemoteAccessState({ token: "tok" });
+    const init = fetchMock.mock.calls[0]?.[1];
+    // 没有 signal 的话，worker「卡住但不报错」会把整个 /settings 渲染挂死
+    expect(init?.signal).toBeDefined();
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("超时被中止 → 降级，不向渲染路径抛错", async () => {
+    // AbortSignal.timeout 到期时 fetch 抛 TimeoutError；必须被吞成 degraded
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+      }),
+    );
+    await expect(resolveRemoteAccessState({ token: "tok" })).resolves.toEqual({
+      kind: "active_degraded",
+    });
+  });
+});
+
 describe("instanceTunnelToken", () => {
   it("读 TUNNEL_TOKEN 并 trim", () => {
     process.env.TUNNEL_TOKEN = "  tok  ";
