@@ -15,6 +15,8 @@ Deployed at `https://mediaryconnect.app` (custom domain).
 ```
 admin ──► mediaryconnect.app (this worker)
             ├─ GET  /            intro
+            ├─ GET  /beta        beta signup page (two-step: email → optional
+            │                    survey; also served on beta.mediaryconnect.app)
             ├─ GET  /admin       admin page (bearer token in sessionStorage)
             ├─ GET  /api/admin/invites                     list invites
             ├─ POST /api/admin/invites                     create invite
@@ -56,6 +58,24 @@ re-display the rank, so clients never have to branch on status code to find it.
 Ranking counts every row in the batch regardless of `waitlist.status`. Only
 `'pending'` exists today and nothing reads the column; if that changes, see the
 TRIPWIRE tests in `src/schema.test.ts` and `src/db.test.ts`.
+
+`POST /waitlist/survey` — the optional post-signup survey offered by
+`GET /beta` after a successful signup. Body
+`{ id, willing_to_pay?, price_point?, use_cases?, donate?, feedback? }`.
+
+| Status | Body |
+| --- | --- |
+| 204 | stored (or nothing to store); no body |
+| 400 | `{ error: "id required" }` (or `invalid json` / `invalid body` from the shared body reader) |
+| 404 | `{ error: "waitlist entry not found" }` |
+| 413 | `{ error: "body too large" }` |
+
+Only answered keys are persisted, as a JSON object in `waitlist.survey_json`
+(added by `migrations/0002-waitlist-survey.sql`; NULL until answered): unknown
+keys and wrong-typed values are dropped, `feedback` is capped at 500 chars
+server-side (the page's textarea has `maxlength="500"`), and a submit with
+zero answered fields returns 204 **without** touching `survey_json`, so an
+empty re-submit never clobbers stored answers.
 
 ### Instance heartbeat (connector-token auth)
 
@@ -116,6 +136,7 @@ npx wrangler deploy
 | Migration | What / why |
 | --- | --- |
 | `0001-drop-access-notnull-add-last-seen.sql` | Drops the `cf_access_app_id NOT NULL` (post-Access `provision.ts` writes `NULL`; the old table rejected it, so **every provision 500'd** after creating and then rolling back the tunnel/DNS). Adds `last_seen_at` for `POST /api/instance/status`. Adds `idx_endpoints_token_sha256` + `idx_waitlist_batch_created` (both paths were full table scans). Realigns `waitlist.status` default `'waiting'` → `'pending'`. |
+| `0002-waitlist-survey.sql` | Adds nullable `waitlist.survey_json TEXT` for `POST /waitlist/survey`. Single additive `ALTER` (no rebuild; pre-existing rows read back NULL). Must run before deploy: `insertWaitlist` binds the column, so **every new signup 500s** on an unmigrated instance, not just survey submits. |
 
 Notes on writing migrations here:
 
