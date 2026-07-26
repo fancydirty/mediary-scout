@@ -80,6 +80,12 @@ export interface ConnectDb {
   insertWaitlist(row: WaitlistRow): Promise<WaitlistRow>;
   getWaitlistByEmail(email: string, batch: number): Promise<WaitlistRow | null>;
   countWaitlist(batch: number): Promise<number>;
+  /**
+   * Number of rows in `batch` created at or before `createdAt` — i.e. the
+   * queue position of that row. Index-backed (idx_waitlist_batch_created) so
+   * the unauthenticated /waitlist path never scans the table.
+   */
+  countWaitlistUpTo(batch: number, createdAt: string): Promise<number>;
   listWaitlist(batch: number): Promise<WaitlistRow[]>;
   getEndpointByTokenSha256(sha256: string): Promise<EndpointRow | null>;
   updateEndpointLastSeen(endpointId: string, lastSeenAt: string): Promise<void>;
@@ -358,6 +364,14 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
       return row?.cnt ?? 0;
     },
 
+    async countWaitlistUpTo(batch, createdAt) {
+      const row = await d1
+        .prepare(`SELECT COUNT(*) as cnt FROM waitlist WHERE batch = ? AND created_at <= ?`)
+        .bind(batch, createdAt)
+        .first<{ cnt: number }>();
+      return row?.cnt ?? 0;
+    },
+
     async listWaitlist(batch) {
       const { results } = await d1
         .prepare(`SELECT * FROM waitlist WHERE batch = ? ORDER BY created_at ASC`)
@@ -563,6 +577,14 @@ export function createMemoryConnectDb(): ConnectDb {
       let count = 0;
       for (const row of waitlist.values()) {
         if (row.batch === batch) count++;
+      }
+      return count;
+    },
+
+    async countWaitlistUpTo(batch, createdAt) {
+      let count = 0;
+      for (const row of waitlist.values()) {
+        if (row.batch === batch && row.created_at <= createdAt) count++;
       }
       return count;
     },

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { handleRequest, type RouteDeps } from "./routes.js";
 import { createMemoryConnectDb, type ConnectDb } from "./db.js";
 import type { CfApi } from "./cf-api.js";
+import { EMAIL_RE } from "./validation.js";
 
 const BASE = "https://mediaryconnect.app";
 const ADMIN = "test-admin-token-fixture";
@@ -560,5 +561,222 @@ describe("handleRequest", () => {
       deps,
     );
     expect(res.status).toBe(204);
+  });
+});
+
+describe("POST /waitlist hardening", () => {
+  function waitlistPost(email: unknown): Request {
+    return new Request(`${BASE}/waitlist`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+  }
+
+  // HIGH-4: the endpoint is unauthenticated, so an oversized body is stored
+  // verbatim and amplified. A 200KB "email" was previously accepted.
+  it("rejects an email longer than 254 chars (RFC 5321) with 400", async () => {
+    const { db, deps } = setup();
+    const huge = `${"a".repeat(300)}@example.com`;
+
+    const res = await handleRequest(waitlistPost(huge), deps);
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "invalid email" });
+    expect(await db.countWaitlist(1)).toBe(0);
+  });
+
+  it("rejects a 200KB email without storing it", async () => {
+    const { db, deps } = setup();
+    const enormous = `${"a".repeat(200 * 1024)}@example.com`;
+
+    const res = await handleRequest(waitlistPost(enormous), deps);
+
+    expect(res.status).toBe(400);
+    expect(await db.countWaitlist(1)).toBe(0);
+  });
+
+  it("caps length BEFORE the regex so a pathological local-part cannot be scanned", async () => {
+    const { deps } = setup();
+    // 254 chars is the RFC 5321 maximum; 255 must fail on length alone.
+    const at255 = `${"a".repeat(255 - "@example.com".length)}@example.com`;
+    expect(at255).toHaveLength(255);
+    expect(EMAIL_RE.test(at255)).toBe(true); // regex-valid, length-invalid
+
+    const res = await handleRequest(waitlistPost(at255), deps);
+    expect(res.status).toBe(400);
+  });
+
+  it("still accepts an email at exactly the 254-char boundary", async () => {
+    const { db, deps } = setup();
+    const at254 = `${"a".repeat(254 - "@example.com".length)}@example.com`;
+    expect(at254).toHaveLength(254);
+
+    const res = await handleRequest(waitlistPost(at254), deps);
+
+    expect(res.status).toBe(201);
+    expect(await db.countWaitlist(1)).toBe(1);
+  });
+
+  // HIGH-4: position was computed by pulling EVERY row and scanning in JS, so
+  // each request cost O(n) and the endpoint cost O(n^2) cumulatively. The
+  // indexed countWaitlist() was implemented but never called on this path.
+  it("does not call listWaitlist on the signup path (uses the indexed count)", async () => {
+    const { db, deps } = setup();
+    let listCalls = 0;
+    let countCalls = 0;
+    const tracked: ConnectDb = {
+      ...db,
+      async listWaitlist(batch) {
+        listCalls += 1;
+        return db.listWaitlist(batch);
+      },
+      async countWaitlist(batch) {
+        countCalls += 1;
+        return db.countWaitlist(batch);
+      },
+      async countWaitlistUpTo(batch, createdAt) {
+        countCalls += 1;
+        return db.countWaitlistUpTo(batch, createdAt);
+      },
+    };
+
+    const first = await handleRequest(waitlistPost("new@example.com"), { ...deps, db: tracked });
+    expect(first.status).toBe(201);
+    // And on the already-exists branch too.
+    const second = await handleRequest(waitlistPost("new@example.com"), { ...deps, db: tracked });
+    expect(second.status).toBe(200);
+
+    expect(listCalls).toBe(0);
+    expect(countCalls).toBeGreaterThan(0);
+  });
+
+  it("reports positions that increase with each distinct signup", async () => {
+    const { deps } = setup();
+    const positions: number[] = [];
+    for (const email of ["a@example.com", "b@example.com", "c@example.com"]) {
+      const res = await handleRequest(waitlistPost(email), deps);
+      expect(res.status).toBe(201);
+      positions.push(((await res.json()) as { position: number }).position);
+    }
+    expect(positions).toEqual([1, 2, 3]);
+  });
+
+  // HIGH-5: SELECT-then-INSERT is not atomic. Five concurrent identical POSTs
+  // previously returned one 201 and four 500 {"error":"internal"} — a user
+  // double-clicking Submit got an error page after being signed up.
+  it("concurrent identical submits never 500 (TOCTOU)", async () => {
+    const { db, deps } = setup();
+
+    const results = await Promise.all(
+      Array.from({ length: 5 }, () => handleRequest(waitlistPost("race@example.com"), deps)),
+    );
+
+    const statuses = results.map((r) => r.status).sort();
+    expect(statuses.filter((s) => s === 500)).toEqual([]);
+    expect(statuses.filter((s) => s === 201)).toHaveLength(1);
+    expect(statuses.filter((s) => s === 200)).toHaveLength(4);
+    // Data integrity: the UNIQUE index still admits exactly one row.
+    expect(await db.countWaitlist(1)).toBe(1);
+  });
+
+  it("a lost INSERT race returns the same shape as the already-exists branch", async () => {
+    const { db, deps } = setup();
+    const first = await handleRequest(waitlistPost("dup@example.com"), deps);
+    expect(first.status).toBe(201);
+    const firstId = ((await first.json()) as { id: string }).id;
+
+    // Force the race deterministically: blind ONLY the pre-check, so the
+    // handler proceeds to an INSERT that the UNIQUE index rejects. The
+    // post-violation lookup still works, exactly as in a real race where the
+    // winner's row is committed by the time we re-read.
+    let precheckBlinded = false;
+    const racing: ConnectDb = {
+      ...db,
+      async getWaitlistByEmail(email, batch) {
+        if (!precheckBlinded) {
+          precheckBlinded = true;
+          return null;
+        }
+        return db.getWaitlistByEmail(email, batch);
+      },
+    };
+
+    const second = await handleRequest(waitlistPost("dup@example.com"), {
+      ...deps,
+      db: racing,
+    });
+
+    expect(precheckBlinded).toBe(true);
+    expect(second.status).toBe(200);
+    const body = (await second.json()) as {
+      already_exists: boolean;
+      id: string;
+      position: number;
+    };
+    expect(body.already_exists).toBe(true);
+    expect(body.id).toBe(firstId);
+    expect(body.position).toBe(1);
+    expect(await db.countWaitlist(1)).toBe(1);
+  });
+
+  it("propagates a genuine insert failure as 500 (does not swallow every error)", async () => {
+    const { db, deps } = setup();
+    const broken: ConnectDb = {
+      ...db,
+      async insertWaitlist() {
+        throw new Error("D1_ERROR: network unreachable");
+      },
+    };
+
+    const res = await handleRequest(waitlistPost("boom@example.com"), { ...deps, db: broken });
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "internal" });
+  });
+
+  it("a non-UNIQUE failure still 500s even when a row is readable afterwards", async () => {
+    // Pins the narrowness of the UNIQUE check itself. Above, the recovery
+    // lookup returns null and the `winner === null` guard produces the 500 —
+    // so that test passes even with a broad catch-all. Here the lookup DOES
+    // return a row, so only classifying on the error message keeps this a 500.
+    // A blanket `catch { return 200 }` would report a D1 outage as success.
+    const { db, deps } = setup();
+    await db.insertWaitlist({
+      id: "wl_pre",
+      email: "outage@example.com",
+      batch: 1,
+      status: "pending",
+      created_at: "2026-07-24T09:00:00.000Z",
+    });
+    let precheckBlinded = false;
+    const broken: ConnectDb = {
+      ...db,
+      async getWaitlistByEmail(email, batch) {
+        if (!precheckBlinded) {
+          precheckBlinded = true;
+          return null;
+        }
+        return db.getWaitlistByEmail(email, batch);
+      },
+      async insertWaitlist() {
+        throw new Error("D1_ERROR: statement timed out");
+      },
+    };
+
+    const res = await handleRequest(waitlistPost("outage@example.com"), { ...deps, db: broken });
+
+    expect(precheckBlinded).toBe(true);
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "internal" });
+  });
+
+  // MEDIUM-7: schema default was 'waiting' while routes insert/filter
+  // 'pending', so default-created rows were invisible to the position math.
+  it("inserts the same status literal the position math filters on", async () => {
+    const { db, deps } = setup();
+    await handleRequest(waitlistPost("lit@example.com"), deps);
+    const row = await db.getWaitlistByEmail("lit@example.com", 1);
+    expect(row?.status).toBe("pending");
   });
 });

@@ -184,6 +184,16 @@ describe("schema.sql — fresh install against real SQLite", () => {
     expect(waitlistPlan).toContain("idx_waitlist_batch_created");
     expect(waitlistPlan).not.toContain("SCAN waitlist");
 
+    // The position query on the /waitlist hot path.
+    const positionPlan = queryPlan(
+      sqlite,
+      `SELECT COUNT(*) as cnt FROM waitlist WHERE batch = ? AND created_at <= ?`,
+      1,
+      "2026-07-26T00:00:00.000Z",
+    );
+    expect(positionPlan).toContain("idx_waitlist_batch_created");
+    expect(positionPlan).not.toContain("SCAN waitlist");
+
     const tokenPlan = queryPlan(sqlite, `SELECT * FROM endpoints WHERE token_sha256 = ?`, "x");
     expect(tokenPlan).toContain("idx_endpoints_token_sha256");
     expect(tokenPlan).not.toContain("SCAN endpoints");

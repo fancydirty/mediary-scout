@@ -9,7 +9,7 @@ import { assertSlug } from "./slug.js";
 import { homePage } from "./html/home-page.js";
 import { adminPage } from "./html/admin-page.js";
 import { invitePage, type InvitePageState } from "./html/invite-page.js";
-import { EMAIL_RE } from "./validation.js";
+import { EMAIL_MAX_LENGTH, EMAIL_RE } from "./validation.js";
 import { newId } from "./ids.js";
 import { sha256Hex } from "./crypto-token.js";
 
@@ -346,41 +346,95 @@ async function revealInvite(deps: RouteDeps, code: string): Promise<Response> {
   }
 }
 
+const WAITLIST_BATCH = 1; // Fixed batch for 阶段 1.
+
+/** The status literal for a queued signup. Must match schema.sql's DEFAULT. */
+const WAITLIST_PENDING = "pending";
+
+/**
+ * True when an insert failed because the (email, batch) UNIQUE index rejected
+ * it, as opposed to any other D1 failure. Deliberately narrow: a broad
+ * catch-all here would convert real outages into cheerful 200s.
+ */
+function isUniqueViolation(e: unknown): boolean {
+  return e instanceof Error && /UNIQUE constraint failed/i.test(e.message);
+}
+
 async function addToWaitlist(request: Request, deps: RouteDeps): Promise<Response> {
   const body = await readJsonBody(request);
   const emailRaw = body.email;
   if (typeof emailRaw !== "string") {
     throw new HttpError(400, "email required");
   }
+  // Bound the input BEFORE the regex. This route is unauthenticated, so length
+  // is the only thing standing between a stranger and an arbitrarily large
+  // stored row (a 200KB address was previously accepted).
+  if (emailRaw.length > EMAIL_MAX_LENGTH) {
+    throw new HttpError(400, "invalid email");
+  }
   const email = emailRaw.trim().toLowerCase();
-  if (!EMAIL_RE.test(email)) {
+  if (email.length > EMAIL_MAX_LENGTH || !EMAIL_RE.test(email)) {
     throw new HttpError(400, "invalid email");
   }
 
-  const batch = 1; // Fixed batch for阶段 1
+  const batch = WAITLIST_BATCH;
+
+  // Fast path for the common repeat submit. This is only an optimisation — the
+  // INSERT below is authoritative, because a SELECT-then-INSERT pair is not
+  // atomic and a double-clicked Submit used to 500.
   const existing = await deps.db.getWaitlistByEmail(email, batch);
   if (existing !== null) {
-    // Calculate position: count all pending entries with earlier created_at
-    const list = await deps.db.listWaitlist(batch);
-    const position = list.filter((row) => row.status === "pending").findIndex((row) => row.id === existing.id) + 1;
-    return json({ already_exists: true, id: existing.id, position }, 200);
+    return json(
+      { already_exists: true, id: existing.id, position: await waitlistPosition(deps, existing) },
+      200,
+    );
   }
 
-  const id = newId("wl");
-  const row = await deps.db.insertWaitlist({
-    id,
+  const row = {
+    id: newId("wl"),
     email,
     batch,
-    status: "pending",
+    status: WAITLIST_PENDING,
     created_at: deps.now(),
-  });
+  };
+  try {
+    await deps.db.insertWaitlist(row);
+  } catch (e) {
+    if (!isUniqueViolation(e)) {
+      throw e;
+    }
+    // Lost the race: someone inserted this exact (email, batch) between our
+    // pre-check and here. That is a successful signup, not an error — return
+    // the same shape as the already-exists branch above.
+    const winner = await deps.db.getWaitlistByEmail(email, batch);
+    if (winner === null) {
+      throw e; // UNIQUE fired but the row is not readable — genuinely broken.
+    }
+    return json(
+      { already_exists: true, id: winner.id, position: await waitlistPosition(deps, winner) },
+      200,
+    );
+  }
 
-  // Position = count of earlier pending rows + 1
-  const list = await deps.db.listWaitlist(batch);
-  const pendingBefore = list.filter((r) => r.status === "pending" && r.created_at < row.created_at).length;
-  const position = pendingBefore + 1;
+  return json({ id: row.id, position: await waitlistPosition(deps, row) }, 201);
+}
 
-  return json({ id: row.id, position }, 201);
+/**
+ * Position of `row` in its batch, via indexed counts rather than by pulling
+ * every row and scanning in JS. The old implementation made TWO full table
+ * scans per request — O(n) per call and O(n^2) cumulatively on an
+ * unauthenticated endpoint that shares its D1 instance with `endpoints`, so
+ * filling the waitlist degraded provisioning and revocation.
+ *
+ * Rows sharing a created_at all count each other, so ties resolve to the same
+ * position; the previous findIndex-over-sorted-list was equally arbitrary among
+ * ties.
+ */
+async function waitlistPosition(
+  deps: RouteDeps,
+  row: { batch: number; created_at: string },
+): Promise<number> {
+  return deps.db.countWaitlistUpTo(row.batch, row.created_at);
 }
 
 async function reportInstanceStatus(request: Request, deps: RouteDeps): Promise<Response> {
