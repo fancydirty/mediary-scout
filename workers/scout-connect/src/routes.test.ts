@@ -697,6 +697,54 @@ describe("GET /api/admin/waitlist", () => {
   });
 });
 
+describe("GET /api/admin/audits", () => {
+  it("→ 401 without admin token", async () => {
+    const { deps } = setup();
+    const res = await handleRequest(new Request(`${BASE}/api/admin/audits`), deps);
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "unauthorized" });
+  });
+
+  it("→ 200 with audit rows, newest first", async () => {
+    const { db, deps } = setup();
+    // Insert OUT of order to prove the response is sorted (at DESC, id DESC).
+    await db.insertAudit({
+      id: "aud_old",
+      at: "2026-07-24T09:00:00.000Z",
+      actor: "admin",
+      action: "invite.create",
+      invite_id: "inv_1",
+      endpoint_id: null,
+      detail_json: JSON.stringify({ email: "a@example.com" }),
+    });
+    await db.insertAudit({
+      id: "aud_new",
+      at: "2026-07-24T11:00:00.000Z",
+      actor: "admin",
+      action: "invite.create",
+      invite_id: "inv_2",
+      endpoint_id: null,
+      detail_json: JSON.stringify({ email: "b@example.com" }),
+    });
+
+    const res = await handleRequest(adminGet("/api/admin/audits"), deps);
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      audits: Array<{ id: string; action: string; at: string }>;
+    };
+    expect(body.audits.map((r) => r.id)).toEqual(["aud_new", "aud_old"]);
+    expect(body.audits[0]).toMatchObject({ action: "invite.create", at: "2026-07-24T11:00:00.000Z" });
+  });
+
+  it("→ 200 { audits: [] } when nothing has happened yet", async () => {
+    const { deps } = setup();
+    const res = await handleRequest(adminGet("/api/admin/audits"), deps);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ audits: [] });
+  });
+});
+
 describe("POST /waitlist hardening", () => {
   function waitlistPost(email: unknown): Request {
     return new Request(`${BASE}/waitlist`, {
@@ -1019,6 +1067,79 @@ describe("POST /waitlist hardening", () => {
     await handleRequest(waitlistPost("lit@example.com"), deps);
     const row = await db.getWaitlistByEmail("lit@example.com", 1);
     expect(row?.status).toBe("pending");
+  });
+});
+
+describe("POST /waitlist seat cap (founding batch = 100)", () => {
+  function waitlistPost(email: unknown): Request {
+    return new Request(`${BASE}/waitlist`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+  }
+
+  /**
+   * Seeds `n` pending rows directly into batch 1, bypassing the route.
+   * Distinct, ascending created_at values (all BEFORE the frozen NOW) so the
+   * (created_at, id) queue order is chronological and positions are
+   * deterministic: seed i holds position i regardless of the random id the
+   * route assigns to a new signup.
+   */
+  async function seedBatch(db: ConnectDb, n: number): Promise<void> {
+    for (let i = 1; i <= n; i++) {
+      const mm = String(Math.floor(i / 60)).padStart(2, "0");
+      const ss = String(i % 60).padStart(2, "0");
+      await db.insertWaitlist({
+        id: `wl_seed_${i}`,
+        email: `seed${i}@example.com`,
+        batch: 1,
+        status: "pending",
+        created_at: `2026-07-24T09:${mm}:${ss}.000Z`,
+      });
+    }
+  }
+
+  it("99 entries → the 100th new email still succeeds (201)", async () => {
+    const { db, deps } = setup();
+    await seedBatch(db, 99);
+
+    const res = await handleRequest(waitlistPost("last-seat@example.com"), deps);
+
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { id: string; position: number };
+    expect(body.id).toMatch(/^wl_/);
+    expect(body.position).toBe(100);
+    expect(await db.countWaitlist(1)).toBe(100);
+  });
+
+  it("100 entries → a NEW email → 409 本批内测席位已满, nothing inserted", async () => {
+    const { db, deps } = setup();
+    await seedBatch(db, 100);
+
+    const res = await handleRequest(waitlistPost("too-late@example.com"), deps);
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "本批内测席位已满" });
+    expect(await db.countWaitlist(1)).toBe(100);
+    expect(await db.getWaitlistByEmail("too-late@example.com", 1)).toBeNull();
+  });
+
+  it("at capacity, an EXISTING email still gets 200 with its position", async () => {
+    const { db, deps } = setup();
+    await seedBatch(db, 100);
+
+    const res = await handleRequest(waitlistPost("seed42@example.com"), deps);
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      already_exists: boolean;
+      id: string;
+      position: number;
+    };
+    expect(body.already_exists).toBe(true);
+    expect(body.id).toBe("wl_seed_42");
+    expect(body.position).toBe(42);
   });
 });
 

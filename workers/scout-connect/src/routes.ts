@@ -226,6 +226,14 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
     return json({ waitlist: await deps.db.listWaitlist(WAITLIST_BATCH) });
   }
 
+  if (path === "/api/admin/audits" && method === "GET") {
+    requireAdmin(request, deps.adminToken);
+    // Operator-facing read of the audit log (newest first, from the db).
+    // detail_json may carry invitee emails — same sensitivity as the invites
+    // list, and this route sits behind the same admin bearer as that one.
+    return json({ audits: await deps.db.listAudits() });
+  }
+
   const provisionMatch = path.match(/^\/api\/admin\/invites\/([^/]+)\/provision$/);
   if (provisionMatch !== null && method === "POST") {
     requireAdmin(request, deps.adminToken);
@@ -439,6 +447,14 @@ async function revealInvite(deps: RouteDeps, code: string): Promise<Response> {
 
 const WAITLIST_BATCH = 1; // Fixed batch for 阶段 1.
 
+/**
+ * Founding-batch seat cap. 阶段 1 admits at most 100 signups; new emails past
+ * the cap get 409. A module constant (like WAITLIST_BATCH), not an env var:
+ * the cap is a product decision tied to the fixed batch, and making it
+ * deploy-configurable would invite changing it without a code review.
+ */
+const WAITLIST_SEAT_CAP = 100;
+
 /** The status literal for a queued signup. Must match schema.sql's DEFAULT. */
 const WAITLIST_PENDING = "pending";
 
@@ -462,6 +478,8 @@ function isUniqueViolation(e: unknown): boolean {
  *   400 `{ error: "email required" | "invalid email" }`
  *       (plus "invalid json" / "invalid body" from the
  *        shared body reader)
+ *   409 `{ error: "本批内测席位已满" }` — founding batch at WAITLIST_SEAT_CAP;
+ *       NEW emails only, repeats still get their 200 below
  *   413 `{ error: "body too large" }`
  *
  * The 200 body is a strict superset of `{ already_exists, id }`. Any doc that
@@ -509,6 +527,19 @@ async function addToWaitlist(request: Request, deps: RouteDeps): Promise<Respons
       { already_exists: true, id: existing.id, position: await waitlistPosition(deps, existing) },
       200,
     );
+  }
+
+  // Founding-batch seat cap — checked AFTER the repeat-submit fast path, so
+  // an email already on the list keeps its 200 position lookup even when the
+  // batch is full; only NEW emails are turned away.
+  //
+  // Like the email pre-check above, this count-then-insert pair is not
+  // atomic: concurrent signups at cap-1 can all pass and overshoot the cap by
+  // a little. Tolerable for a soft product cap (the founding batch is
+  // hand-invited from the admin console anyway); the one hard invariant —
+  // one row per (email, batch) — stays with the UNIQUE index below.
+  if ((await deps.db.countWaitlist(batch)) >= WAITLIST_SEAT_CAP) {
+    throw new HttpError(409, "本批内测席位已满");
   }
 
   const row = {
