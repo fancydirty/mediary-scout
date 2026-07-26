@@ -46,7 +46,10 @@ function connectDbMethodNames(): string[] {
   // Members are declared one per line at exactly two-space indent:
   //   methodName(args): Promise<...>;
   // JSDoc/comment lines cannot match (they start with `/` or `*`).
-  return [...iface[1].matchAll(/^ {2}([a-zA-Z]+)\(/gm)]
+  // Character class must include digits: getEndpointByTokenSha256 contains
+  // "256" and a letters-only class would silently exclude it from the guard —
+  // the exact kind of gap this file exists to catch. (Copilot PR #179.)
+  return [...iface[1].matchAll(/^ {2}([a-zA-Z0-9]+)\(/gm)]
     .map((m) => m[1])
     .filter((n): n is string => n !== undefined);
 }
@@ -59,6 +62,8 @@ describe("ConnectDb surface guard", () => {
     expect(names.length).toBeGreaterThan(15);
     expect(names).toContain("insertInvite");
     expect(names).toContain("listWaitlist");
+    // 含数字的方法名也在守护范围内——letters-only 的正则会把它漏掉
+    expect(names).toContain("getEndpointByTokenSha256");
   });
 
   it("every ConnectDb method has at least one call site in non-test source", () => {
