@@ -47,4 +47,34 @@ describe("single-user password gate", () => {
     expect(rt.isRemoteRequest(new Headers({ "user-agent": "curl" }))).toBe(false); // LAN 无 CF 头
     expect(rt.isRemoteRequest(new Headers())).toBe(false);
   });
+
+  it("单用户设密码后可用密码登录 acct_default（用户名任意/空均视为 default）", async () => {
+    const rt = await boot();
+    await rt.setSingleUserPassword("secret-123");
+    const bad = await rt.loginAccount("", "nope-nope");
+    expect(bad.ok).toBe(false);
+    const ok = await rt.loginAccount("", "secret-123");
+    expect(ok.ok).toBe(true);
+    if (ok.ok) expect(ok.accountId).toBe("acct_default");
+  });
+
+  it("单用户未设密码时不能登录（没有密码可验证，不该发出 session）", async () => {
+    const rt = await boot();
+    const r = await rt.loginAccount("", "anything");
+    expect(r.ok).toBe(false);
+  });
+
+  it("单用户登录同样受限流保护（连续失败后锁定）", async () => {
+    const rt = await boot();
+    const { _resetLoginThrottleForTest } = await import("./login-throttle");
+    _resetLoginThrottleForTest();
+    await rt.setSingleUserPassword("secret-123");
+    for (let i = 0; i < 5; i++) {
+      const r = await rt.loginAccount("", "wrong-password");
+      expect(r.ok).toBe(false);
+    }
+    const locked = await rt.loginAccount("", "secret-123"); // 正确密码也应被挡
+    expect(locked.ok).toBe(false);
+    if (!locked.ok) expect(locked.error).toContain("尝试过于频繁");
+  });
 });

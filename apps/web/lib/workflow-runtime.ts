@@ -211,15 +211,25 @@ export async function loginAccount(
   if (!verdict.allowed) {
     return { ok: false, error: `尝试过于频繁，请 ${verdict.retryAfterSec} 秒后再试。` };
   }
-  const account = await getWorkflowRepository().getAccountByUsername(username.trim());
-  // Always verify to avoid timing oracle. Missing accounts get a dummy scrypt hash that will fail.
-  // (The empty-hash default account has no password and can't be logged into.)
-  const DUMMY_HASH = "scrypt:a2448ef076990b889ef0540720bccce2:4fdc41afebb4560f4a638b4225d8325904894d18d2df1c7a95c50a65c141b926dc252e99b63e681e15e2d6e008acc845b02c9a2fc99a4888749226ab262c6978";
+  // 账号缺失时也要走完整验密，否则耗时差异会泄露账号是否存在
+  // （空 hash 会在 verifyPassword 的格式校验处提前 return，所以必须给一个真格式的 hash）。
+  const DUMMY_HASH =
+    "scrypt:a2448ef076990b889ef0540720bccce2:4fdc41afebb4560f4a638b4225d8325904894d18d2df1c7a95c50a65c141b926dc252e99b63e681e15e2d6e008acc845b02c9a2fc99a4888749226ab262c6978";
+
+  // 单用户模式：只认 acct_default（「只输密码」，用户名忽略），且必须已设密码。
+  const repo = getWorkflowRepository();
+  const account = isMultiUserEnabled()
+    ? await repo.getAccountByUsername(username.trim())
+    : await repo.getAccountById(DEFAULT_ACCOUNT_ID);
+
   const hash = account?.passwordHash || DUMMY_HASH;
   const valid = await verifyPassword(password, hash);
   if (!account || !valid || account.passwordHash.length === 0) {
     recordLoginFailure(key, now);
-    return { ok: false, error: "用户名或密码不正确。" };
+    return {
+      ok: false,
+      error: isMultiUserEnabled() ? "用户名或密码不正确。" : "密码不正确。",
+    };
   }
   // 先建 session 再清限流桶：建 session 可能抛（DB 故障、取密钥失败），
   // 那种情况下这次登录并未成功，桶必须保留，否则服务端间歇故障期间
