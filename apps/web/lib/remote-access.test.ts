@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   instanceTunnelToken,
   resolveRemoteAccessState,
+  scoutConnectBaseUrl,
   type RemoteAccessState,
 } from "./remote-access";
 
@@ -152,6 +153,29 @@ describe("心跳超时（SSR 渲染路径上的硬要求）", () => {
     await expect(resolveRemoteAccessState({ token: "tok" })).resolves.toEqual({
       kind: "active_degraded",
     });
+  });
+});
+
+describe("scoutConnectBaseUrl（心跳与 waitlist 表单的唯一来源）", () => {
+  it("默认生产域名；SCOUT_CONNECT_URL 可覆盖；去掉尾部斜杠", () => {
+    delete process.env.SCOUT_CONNECT_URL;
+    expect(scoutConnectBaseUrl()).toBe("https://mediaryconnect.app");
+    process.env.SCOUT_CONNECT_URL = "https://staging.example.com/";
+    expect(scoutConnectBaseUrl()).toBe("https://staging.example.com");
+    process.env.SCOUT_CONNECT_URL = "  https://staging.example.com///  ";
+    expect(scoutConnectBaseUrl()).toBe("https://staging.example.com");
+  });
+
+  it("心跳打的就是 scoutConnectBaseUrl —— 否则预发的报名会写进生产队列", async () => {
+    process.env.SCOUT_CONNECT_URL = "https://staging.example.com";
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await resolveRemoteAccessState({ token: "tok" });
+    // 表单拿的是同一个函数的返回值（见 remote-access-section.tsx 的透传），
+    // 所以只要这里对得上，两条路径就不会分叉。
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      `${scoutConnectBaseUrl()}/api/instance/status`,
+    );
   });
 });
 

@@ -39,6 +39,21 @@ export type RemoteAccessState =
 const DEFAULT_WORKER_BASE = "https://mediaryconnect.app";
 
 /**
+ * 当前运行时的 worker base（唯一来源）。
+ *
+ * 服务端心跳与客户端 waitlist 表单**必须**用同一个值：否则把
+ * `SCOUT_CONNECT_URL` 指向预发/自建 worker 时，状态卡打到新 worker，
+ * 而报名表单仍写进生产队列——测试数据污染真实名单。
+ *
+ * 在函数里读 env 而非模块顶层常量：`cacheComponents` 下顶层常量会被构建期烘死。
+ * 这个值不敏感（就是个公开域名），可以安全下发给客户端组件。
+ */
+export function scoutConnectBaseUrl(): string {
+  const raw = process.env.SCOUT_CONNECT_URL?.trim() || DEFAULT_WORKER_BASE;
+  return raw.replace(/\/+$/, "");
+}
+
+/**
  * 心跳一次。`true` = worker 明确回了 204（契约里唯一的成功）。
  *
  * 注意读的是 `process.env`（而非模块顶层常量）：cacheComponents 下模块可能在
@@ -55,8 +70,7 @@ const DEFAULT_WORKER_BASE = "https://mediaryconnect.app";
 const HEARTBEAT_TIMEOUT_MS = 5_000;
 
 async function defaultSendHeartbeat(token: string): Promise<boolean> {
-  const base = process.env.SCOUT_CONNECT_URL?.trim() || DEFAULT_WORKER_BASE;
-  const res = await fetch(`${base.replace(/\/+$/, "")}/api/instance/status`, {
+  const res = await fetch(`${scoutConnectBaseUrl()}/api/instance/status`, {
     method: "POST",
     // 契约是 Bearer 头；worker 压根不读 body（大 body 都不会被读取）。
     headers: { authorization: `Bearer ${token}` },

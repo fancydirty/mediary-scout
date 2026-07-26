@@ -1,7 +1,11 @@
 import { connection } from "next/server";
 import { Globe, ShieldAlert, TriangleAlert } from "lucide-react";
 import { getCurrentAccountSummary, hasLoginPassword } from "../../lib/workflow-runtime";
-import { instanceTunnelToken, resolveRemoteAccessState } from "../../lib/remote-access";
+import {
+  instanceTunnelToken,
+  resolveRemoteAccessState,
+  scoutConnectBaseUrl,
+} from "../../lib/remote-access";
 import { RemoteAccessWaitlistForm } from "./remote-access-waitlist";
 
 /**
@@ -39,7 +43,7 @@ export async function RemoteAccessSection() {
             </p>
           </div>
         </div>
-        <RemoteAccessWaitlistForm />
+        <RemoteAccessWaitlistForm workerBaseUrl={scoutConnectBaseUrl()} />
       </section>
     );
   }
