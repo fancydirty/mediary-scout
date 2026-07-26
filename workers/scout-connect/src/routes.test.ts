@@ -1245,6 +1245,170 @@ describe("POST /waitlist seat cap (founding batch = 100)", () => {
   });
 });
 
+describe("POST /waitlist/survey", () => {
+  function surveyPost(body: unknown): Request {
+    return new Request(`${BASE}/waitlist/survey`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  /** Signs `email` up via the real route and returns the new waitlist id. */
+  async function signup(deps: RouteDeps, email: string): Promise<string> {
+    const res = await handleRequest(
+      new Request(`${BASE}/waitlist`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email }),
+      }),
+      deps,
+    );
+    expect(res.status).toBe(201);
+    return ((await res.json()) as { id: string }).id;
+  }
+
+  it("404 for an unknown id, nothing written", async () => {
+    const { db, deps } = setup();
+    const res = await handleRequest(
+      surveyPost({ id: "wl_nope", willing_to_pay: "willing" }),
+      deps,
+    );
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "waitlist entry not found" });
+    expect(await db.getWaitlistById("wl_nope")).toBeNull();
+  });
+
+  it("400 when id is missing or not a string", async () => {
+    const { deps } = setup();
+    for (const body of [{}, { id: 42 }, { id: "  " }]) {
+      const res = await handleRequest(surveyPost(body), deps);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "id required" });
+    }
+  });
+
+  it("204 and stores only the answered fields as JSON (round-trip)", async () => {
+    const { db, deps } = setup();
+    const id = await signup(deps, "survey@example.com");
+
+    const res = await handleRequest(
+      surveyPost({
+        id,
+        willing_to_pay: "willing",
+        price_point: "19",
+        use_cases: ["progress", "all"],
+        donate: true,
+        feedback: "加油",
+      }),
+      deps,
+    );
+
+    expect(res.status).toBe(204);
+    const row = await db.getWaitlistById(id);
+    expect(JSON.parse(row?.survey_json ?? "")).toEqual({
+      willing_to_pay: "willing",
+      price_point: "19",
+      use_cases: ["progress", "all"],
+      donate: true,
+      feedback: "加油",
+    });
+  });
+
+  it("ignores unknown fields — only known keys are persisted", async () => {
+    const { db, deps } = setup();
+    const id = await signup(deps, "unknown-fields@example.com");
+
+    const res = await handleRequest(
+      surveyPost({ id, willing_to_pay: "willing", hacker: "x", admin: true, email: "new@x.com" }),
+      deps,
+    );
+
+    expect(res.status).toBe(204);
+    expect(JSON.parse((await db.getWaitlistById(id))?.survey_json ?? "")).toEqual({
+      willing_to_pay: "willing",
+    });
+  });
+
+  it("truncates feedback at 500 chars server-side", async () => {
+    const { db, deps } = setup();
+    const id = await signup(deps, "long-feedback@example.com");
+
+    const res = await handleRequest(
+      surveyPost({ id, feedback: "a".repeat(600) }),
+      deps,
+    );
+
+    expect(res.status).toBe(204);
+    const stored = JSON.parse((await db.getWaitlistById(id))?.survey_json ?? "") as {
+      feedback: string;
+    };
+    expect(stored.feedback).toHaveLength(500);
+  });
+
+  it("id but no survey fields → 204, survey_json stays null (nothing clobbered)", async () => {
+    const { db, deps } = setup();
+    const id = await signup(deps, "empty-survey@example.com");
+
+    expect((await handleRequest(surveyPost({ id }), deps)).status).toBe(204);
+    expect((await db.getWaitlistById(id))?.survey_json).toBeNull();
+  });
+
+  it("an empty re-submit does not clobber answers already stored", async () => {
+    const { db, deps } = setup();
+    const id = await signup(deps, "resubmit@example.com");
+    await handleRequest(surveyPost({ id, donate: true }), deps);
+
+    // Second submit with no fields at all: answers from the first survive.
+    expect((await handleRequest(surveyPost({ id }), deps)).status).toBe(204);
+    expect(JSON.parse((await db.getWaitlistById(id))?.survey_json ?? "")).toEqual({
+      donate: true,
+    });
+  });
+
+  it("wrong-typed values are dropped, not stored and not a 500", async () => {
+    const { db, deps } = setup();
+    const id = await signup(deps, "types@example.com");
+
+    const res = await handleRequest(
+      surveyPost({ id, willing_to_pay: 5, use_cases: "all", donate: "yes", feedback: {} }),
+      deps,
+    );
+
+    expect(res.status).toBe(204);
+    expect((await db.getWaitlistById(id))?.survey_json).toBeNull();
+  });
+
+  it("non-string use_cases items are filtered out", async () => {
+    const { db, deps } = setup();
+    const id = await signup(deps, "uc@example.com");
+
+    const res = await handleRequest(
+      surveyPost({ id, use_cases: ["progress", 7, null, "all"] }),
+      deps,
+    );
+
+    expect(res.status).toBe(204);
+    expect(JSON.parse((await db.getWaitlistById(id))?.survey_json ?? "")).toEqual({
+      use_cases: ["progress", "all"],
+    });
+  });
+
+  it("oversized declared body → 413 (the shared capped reader)", async () => {
+    const { deps } = setup();
+    const res = await handleRequest(
+      new Request(`${BASE}/waitlist/survey`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "content-length": String(64 * 1024) },
+        body: JSON.stringify({ id: "wl_x" }),
+      }),
+      deps,
+    );
+    expect(res.status).toBe(413);
+    expect(await res.json()).toEqual({ error: "body too large" });
+  });
+});
+
 // Copilot round 2, finding 1: readJsonBody() read and JSON.parse'd an
 // unbounded body. The email length cap runs AFTER that, so /waitlist — public
 // and unauthenticated — let a stranger make the Worker buffer and parse

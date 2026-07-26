@@ -336,6 +336,17 @@ describe("D1 ConnectDb SQL", () => {
     expect(calls[0]?.query).not.toContain("willing_to_pay");
     expect(calls[0]?.binds).toContain(`{"willing_to_pay":"愿意"}`);
   });
+
+  it("updateWaitlistSurvey binds the JSON without leaking it into SQL text", async () => {
+    const { d1, calls } = createSpyD1();
+    const db = createD1ConnectDb(d1);
+    await db.updateWaitlistSurvey("w1", `{"feedback":"加长版"}`);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe("run");
+    expect(calls[0]?.query).toBe("UPDATE waitlist SET survey_json = ? WHERE id = ?");
+    expect(calls[0]?.query).not.toContain("加长版");
+    expect(calls[0]?.binds).toEqual([`{"feedback":"加长版"}`, "w1"]);
+  });
 });
 
 describe("waitlist", () => {
@@ -375,6 +386,45 @@ describe("waitlist", () => {
     });
     expect(await db.getWaitlistByEmail("b@y.com", 1)).toMatchObject({ email: "b@y.com" });
     expect(await db.getWaitlistByEmail("missing@z.com", 1)).toBeNull();
+  });
+
+  it("getWaitlistById 返回匹配行或 null", async () => {
+    const db = createMemoryConnectDb();
+    await db.insertWaitlist({
+      id: "w1",
+      email: "b@y.com",
+      batch: 1,
+      status: "pending",
+      created_at: "2026-07-25T00:00:00Z",
+      survey_json: null,
+    });
+    expect(await db.getWaitlistById("w1")).toMatchObject({ id: "w1", email: "b@y.com" });
+    expect(await db.getWaitlistById("missing")).toBeNull();
+  });
+
+  it("updateWaitlistSurvey persists survey_json and overwrites on re-submit", async () => {
+    const db = createMemoryConnectDb();
+    await db.insertWaitlist({
+      id: "w1",
+      email: "b@y.com",
+      batch: 1,
+      status: "pending",
+      created_at: "2026-07-25T00:00:00Z",
+      survey_json: null,
+    });
+    expect((await db.getWaitlistById("w1"))?.survey_json).toBeNull();
+
+    await db.updateWaitlistSurvey("w1", `{"donate":true}`);
+    expect((await db.getWaitlistById("w1"))?.survey_json).toBe(`{"donate":true}`);
+
+    await db.updateWaitlistSurvey("w1", `{"donate":false,"feedback":"x"}`);
+    expect((await db.getWaitlistById("w1"))?.survey_json).toBe(`{"donate":false,"feedback":"x"}`);
+  });
+
+  it("updateWaitlistSurvey on a nonexistent id is a silent no-op (D1 UPDATE parity)", async () => {
+    const db = createMemoryConnectDb();
+    await expect(db.updateWaitlistSurvey("nope", `{}`)).resolves.toBeUndefined();
+    expect(await db.getWaitlistById("nope")).toBeNull();
   });
 
   // The memory backend must rank identically to the D1 backend, or route tests

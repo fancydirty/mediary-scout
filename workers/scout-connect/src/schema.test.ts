@@ -858,4 +858,29 @@ describe("migration 0002 — waitlist.survey_json against real SQLite", () => {
     // ALTER fails, and `wrangler d1 execute --file` rolls the file back.
     expect(() => sqlite.exec(MIGRATION2_SQL)).toThrow(/duplicate column name/i);
   });
+
+  it("updateWaitlistSurvey + getWaitlistById round-trip against real SQLite", async () => {
+    // The HTTP-layer survey tests run on the memory mock; this pins the real
+    // D1 SQL end to end on the migrated shape.
+    const { db, sqlite } = freshDb(LEGACY_SCHEMA_SQL);
+    sqlite.exec(MIGRATION_SQL);
+    sqlite.exec(MIGRATION2_SQL);
+    await db.insertWaitlist({
+      id: "wl_rt",
+      email: "rt@x.com",
+      batch: 1,
+      status: "pending",
+      created_at: "2026-07-26T00:00:00.000Z",
+      survey_json: null,
+    });
+
+    await db.updateWaitlistSurvey("wl_rt", `{"use_cases":["progress"],"feedback":"好"}`);
+
+    const row = await db.getWaitlistById("wl_rt");
+    expect(JSON.parse(row?.survey_json ?? "")).toEqual({
+      use_cases: ["progress"],
+      feedback: "好",
+    });
+    expect(await db.getWaitlistById("wl_missing")).toBeNull();
+  });
 });

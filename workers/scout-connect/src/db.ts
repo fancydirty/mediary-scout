@@ -81,6 +81,13 @@ export interface ConnectDb {
   listAudits(): Promise<AuditRow[]>;
   insertWaitlist(row: WaitlistRow): Promise<WaitlistRow>;
   getWaitlistByEmail(email: string, batch: number): Promise<WaitlistRow | null>;
+  getWaitlistById(id: string): Promise<WaitlistRow | null>;
+  /**
+   * Stores the optional post-signup survey (a JSON string) on the row.
+   * UPDATE semantics: a nonexistent id is a silent no-op — the route is
+   * responsible for the 404 precheck.
+   */
+  updateWaitlistSurvey(id: string, surveyJson: string): Promise<void>;
   countWaitlist(batch: number): Promise<number>;
   /**
    * 1-based queue position of the row identified by (`batch`, `createdAt`,
@@ -373,6 +380,21 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
       return row ? mapWaitlist(row) : null;
     },
 
+    async getWaitlistById(id) {
+      const row = await d1
+        .prepare(`SELECT * FROM waitlist WHERE id = ?`)
+        .bind(id)
+        .first<RawRow>();
+      return row ? mapWaitlist(row) : null;
+    },
+
+    async updateWaitlistSurvey(id, surveyJson) {
+      await d1
+        .prepare(`UPDATE waitlist SET survey_json = ? WHERE id = ?`)
+        .bind(surveyJson, id)
+        .run();
+    },
+
     async countWaitlist(batch) {
       const row = await d1
         .prepare(`SELECT COUNT(*) as cnt FROM waitlist WHERE batch = ?`)
@@ -612,6 +634,18 @@ export function createMemoryConnectDb(): ConnectDb {
         }
       }
       return null;
+    },
+
+    async getWaitlistById(id) {
+      const row = waitlist.get(id);
+      return row === undefined ? null : { ...row };
+    },
+
+    async updateWaitlistSurvey(id, surveyJson) {
+      const row = waitlist.get(id);
+      if (row !== undefined) {
+        row.survey_json = surveyJson;
+      }
     },
 
     async countWaitlist(batch) {
