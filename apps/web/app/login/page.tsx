@@ -18,7 +18,12 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [whyOpen, setWhyOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
-  const [bootstrap, setBootstrap] = useState<{ needsClaim: boolean; hasExistingLibrary: boolean } | null>(null);
+  const [bootstrap, setBootstrap] = useState<{
+    needsClaim: boolean;
+    hasExistingLibrary: boolean;
+    singleUser?: boolean;
+    passwordSet?: boolean;
+  } | null>(null);
 
   useEffect(() => {
     fetch("/api/auth/bootstrap")
@@ -28,8 +33,12 @@ export default function LoginPage() {
   }, []);
 
   const claiming = bootstrap?.needsClaim === true;
+  // 单用户实例只有 acct_default 一个账号：用户名对最终用户不可见，
+  // 只渲染密码框，且没有「创建账号」这回事。
+  const singleUser = bootstrap?.singleUser === true;
   // While unclaimed, only registration (→ adopt acct_default) is possible.
-  const effectiveMode: "login" | "register" = claiming ? "register" : mode;
+  // 单用户永远是登录（只输密码），没有注册这条路。
+  const effectiveMode: "login" | "register" = singleUser ? "login" : claiming ? "register" : mode;
 
   const submit = () => {
     setError(null);
@@ -48,21 +57,25 @@ export default function LoginPage() {
     });
   };
 
-  const title = claiming
-    ? bootstrap?.hasExistingLibrary
-      ? "接管这台实例"
-      : "创建站主账号"
-    : mode === "login"
-      ? "登录"
-      : "创建账号";
-  const note = claiming
+  const title = singleUser
+    ? "输入密码"
+    : claiming
+      ? bootstrap?.hasExistingLibrary
+        ? "接管这台实例"
+        : "创建站主账号"
+      : mode === "login"
+        ? "登录"
+        : "创建账号";
+  const note = singleUser
+    ? "这台实例已设置访问密码。局域网内无需登录，从外网访问需要输入密码。"
+    : claiming
     ? bootstrap?.hasExistingLibrary
       ? "这台实例已有媒体库。设置站主用户名 + 密码来接管它——你的库和网盘都会原样归你。"
       : "你是第一个用户。这个账号将成为站主，拥有管理权限。"
     : mode === "login"
       ? "登录以访问你的媒体库"
       : "创建一个本地账号开始使用";
-  const buttonText = claiming ? "接管并进入" : mode === "login" ? "登录" : "创建并登录";
+  const buttonText = singleUser ? "进入" : claiming ? "接管并进入" : mode === "login" ? "登录" : "创建并登录";
 
   return (
     <main style={{ maxWidth: 360, margin: "14vh auto", padding: "0 20px" }}>
@@ -80,16 +93,18 @@ export default function LoginPage() {
             submit();
           }}
         >
-          <div className="setting-row" style={{ marginBottom: 10 }}>
-            <input
-              className="setting-control"
-              value={username}
-              onChange={(event) => setUsername(event.target.value)}
-              placeholder="用户名"
-              aria-label="用户名"
-              autoComplete="username"
-            />
-          </div>
+          {singleUser ? null : (
+            <div className="setting-row" style={{ marginBottom: 10 }}>
+              <input
+                className="setting-control"
+                value={username}
+                onChange={(event) => setUsername(event.target.value)}
+                placeholder="用户名"
+                aria-label="用户名"
+                autoComplete="username"
+              />
+            </div>
+          )}
           <div className="setting-row" style={{ marginBottom: 14 }}>
             <input
               type="password"
@@ -116,7 +131,7 @@ export default function LoginPage() {
           </button>
         </form>
 
-        {!claiming && mode === "register" ? (
+        {!claiming && !singleUser && mode === "register" ? (
           <div style={{ marginTop: 14 }}>
             <span
               role="note"
@@ -158,8 +173,9 @@ export default function LoginPage() {
           </div>
         ) : null}
 
-        {/* While unclaimed there is nobody to log in as, so hide the toggle. */}
-        {!claiming ? (
+        {/* While unclaimed there is nobody to log in as, so hide the toggle.
+            Single-user has exactly one account, so registration is meaningless. */}
+        {!claiming && !singleUser ? (
           <p className="panel-note" style={{ marginTop: 16 }}>
             {mode === "login" ? "还没有账号？" : "已有账号？"}{" "}
             <button
