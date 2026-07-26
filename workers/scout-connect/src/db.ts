@@ -44,6 +44,8 @@ export interface WaitlistRow {
   batch: number;
   status: string;
   created_at: string;
+  /** Optional post-signup survey answers as a JSON string; null until answered. */
+  survey_json: string | null;
 }
 
 export interface InviteStatusPatch {
@@ -171,6 +173,7 @@ function mapWaitlist(row: RawRow): WaitlistRow {
     batch: row.batch as number,
     status: row.status as string,
     created_at: row.created_at as string,
+    survey_json: row.survey_json as string | null,
   };
 }
 
@@ -354,9 +357,10 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
     async insertWaitlist(row) {
       await d1
         .prepare(
-          `INSERT INTO waitlist (id, email, batch, status, created_at) VALUES (?, ?, ?, ?, ?)`,
+          `INSERT INTO waitlist (id, email, batch, status, created_at, survey_json)
+           VALUES (?, ?, ?, ?, ?, ?)`,
         )
-        .bind(row.id, row.email, row.batch, row.status, row.created_at)
+        .bind(row.id, row.email, row.batch, row.status, row.created_at, row.survey_json)
         .run();
       return row;
     },

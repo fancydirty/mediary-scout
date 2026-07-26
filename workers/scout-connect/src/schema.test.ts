@@ -16,6 +16,10 @@ const MIGRATION_SQL = readFileSync(
   new URL("../migrations/0001-drop-access-notnull-add-last-seen.sql", import.meta.url),
   "utf8",
 );
+const MIGRATION2_SQL = readFileSync(
+  new URL("../migrations/0002-waitlist-survey.sql", import.meta.url),
+  "utf8",
+);
 
 // The production shape BEFORE this Worker version: schema.sql as of 884f4c4.
 // `cf_access_app_id` is NOT NULL and `last_seen_at` does not exist — exactly
@@ -252,6 +256,49 @@ describe("schema.sql — fresh install against real SQLite", () => {
     expect(SCHEMA_SQL).not.toContain("部署时由运维脚本执行");
     expect(SCHEMA_SQL).not.toContain("endpoints_old");
   });
+
+  it("waitlist.survey_json exists as a nullable TEXT column", () => {
+    const { sqlite } = freshDb(SCHEMA_SQL);
+    const col = (
+      sqlite.prepare(`PRAGMA table_info(waitlist)`).all() as {
+        name: string;
+        type: string;
+        notnull: number;
+      }[]
+    ).find((c) => c.name === "survey_json");
+    // Nullable on purpose: most signups never answer the survey, and the
+    // column must default to NULL for them (and for pre-0002 rows).
+    expect(col).toMatchObject({ type: "TEXT", notnull: 0 });
+  });
+
+  it("D1 insertWaitlist persists survey_json and mapWaitlist returns it (round-trip)", async () => {
+    const { db } = freshDb(SCHEMA_SQL);
+    const survey = `{"willing_to_pay":"愿意","use_cases":["查进度"]}`;
+    await db.insertWaitlist({
+      id: "wl_s",
+      email: "s@x.com",
+      batch: 1,
+      status: "pending",
+      created_at: "2026-07-26T00:00:00.000Z",
+      survey_json: survey,
+    });
+
+    expect((await db.getWaitlistByEmail("s@x.com", 1))?.survey_json).toBe(survey);
+  });
+
+  it("a waitlist row inserted without survey data reads back survey_json null", async () => {
+    const { db } = freshDb(SCHEMA_SQL);
+    await db.insertWaitlist({
+      id: "wl_n",
+      email: "n@x.com",
+      batch: 1,
+      status: "pending",
+      created_at: "2026-07-26T00:00:00.000Z",
+      survey_json: null,
+    });
+
+    expect((await db.getWaitlistByEmail("n@x.com", 1))?.survey_json).toBeNull();
+  });
 });
 
 describe("waitlist rank against real SQLite — whole-second timestamp ties", () => {
@@ -269,9 +316,9 @@ describe("waitlist rank against real SQLite — whole-second timestamp ties", ()
     // Inserted out of id order on purpose: rank must follow (created_at, id),
     // not physical insertion/rowid order.
     return Promise.all([
-      db.insertWaitlist({ id: "wl_b", email: "b@x.com", batch: 1, status: "pending", created_at: TS }),
-      db.insertWaitlist({ id: "wl_c", email: "c@x.com", batch: 1, status: "pending", created_at: TS }),
-      db.insertWaitlist({ id: "wl_a", email: "a@x.com", batch: 1, status: "pending", created_at: TS }),
+      db.insertWaitlist({ id: "wl_b", email: "b@x.com", batch: 1, status: "pending", created_at: TS, survey_json: null }),
+      db.insertWaitlist({ id: "wl_c", email: "c@x.com", batch: 1, status: "pending", created_at: TS, survey_json: null }),
+      db.insertWaitlist({ id: "wl_a", email: "a@x.com", batch: 1, status: "pending", created_at: TS, survey_json: null }),
     ]);
   }
 
@@ -305,6 +352,7 @@ describe("waitlist rank against real SQLite — whole-second timestamp ties", ()
       batch: 1,
       status: "pending",
       created_at: "2026-07-25T00:00:00.000Z",
+      survey_json: null,
     });
     await db.insertWaitlist({
       id: "wl_late",
@@ -312,6 +360,7 @@ describe("waitlist rank against real SQLite — whole-second timestamp ties", ()
       batch: 1,
       status: "pending",
       created_at: "2026-07-27T00:00:00.000Z",
+      survey_json: null,
     });
     // A high id in another batch must not inflate batch 1 ranks.
     await db.insertWaitlist({
@@ -320,6 +369,7 @@ describe("waitlist rank against real SQLite — whole-second timestamp ties", ()
       batch: 2,
       status: "pending",
       created_at: "2026-07-25T00:00:00.000Z",
+      survey_json: null,
     });
 
     expect(await db.waitlistRankOf(1, "2026-07-25T00:00:00.000Z", "wl_early")).toBe(1);
@@ -330,8 +380,8 @@ describe("waitlist rank against real SQLite — whole-second timestamp ties", ()
   it("a same-second row with a lower id does not share the later row's rank", async () => {
     // The precise regression: under `created_at <= ?` both of these returned 2.
     const { db } = freshDb(SCHEMA_SQL);
-    await db.insertWaitlist({ id: "wl_1", email: "one@x.com", batch: 1, status: "pending", created_at: TS });
-    await db.insertWaitlist({ id: "wl_2", email: "two@x.com", batch: 1, status: "pending", created_at: TS });
+    await db.insertWaitlist({ id: "wl_1", email: "one@x.com", batch: 1, status: "pending", created_at: TS, survey_json: null });
+    await db.insertWaitlist({ id: "wl_2", email: "two@x.com", batch: 1, status: "pending", created_at: TS, survey_json: null });
 
     const a = await db.waitlistRankOf(1, TS, "wl_1");
     const b = await db.waitlistRankOf(1, TS, "wl_2");
@@ -368,6 +418,7 @@ describe("waitlist rank against real SQLite — whole-second timestamp ties", ()
       batch: 1,
       status: "removed",
       created_at: "2026-07-25T00:00:00.000Z",
+      survey_json: null,
     });
     await db.insertWaitlist({
       id: "wl_here",
@@ -375,6 +426,7 @@ describe("waitlist rank against real SQLite — whole-second timestamp ties", ()
       batch: 1,
       status: "pending",
       created_at: TS,
+      survey_json: null,
     });
 
     // Documented current behaviour: the 'removed' row IS counted, so the
@@ -399,9 +451,9 @@ describe("waitlist rank against real SQLite — whole-second timestamp ties", ()
     // Insertion order deliberately != id order != nothing-in-particular, so a
     // rowid-ordered result is distinguishable from an (created_at, id) one.
     return Promise.all([
-      db.insertWaitlist({ id: "wl_c", email: "c@x.com", batch: 1, status: "pending", created_at: TS }),
-      db.insertWaitlist({ id: "wl_a", email: "a@x.com", batch: 1, status: "pending", created_at: TS }),
-      db.insertWaitlist({ id: "wl_b", email: "b@x.com", batch: 1, status: "pending", created_at: TS }),
+      db.insertWaitlist({ id: "wl_c", email: "c@x.com", batch: 1, status: "pending", created_at: TS, survey_json: null }),
+      db.insertWaitlist({ id: "wl_a", email: "a@x.com", batch: 1, status: "pending", created_at: TS, survey_json: null }),
+      db.insertWaitlist({ id: "wl_b", email: "b@x.com", batch: 1, status: "pending", created_at: TS, survey_json: null }),
     ]);
   }
 
@@ -429,11 +481,11 @@ describe("waitlist rank against real SQLite — whole-second timestamp ties", ()
     // Two distinct seconds, ties inside each, inserted in scrambled order —
     // and a decoy in another batch that must not shift batch 1.
     await Promise.all([
-      db.insertWaitlist({ id: "wl_m", email: "m@x.com", batch: 1, status: "pending", created_at: "2026-07-27T00:00:00.000Z" }),
-      db.insertWaitlist({ id: "wl_c", email: "c@x.com", batch: 1, status: "pending", created_at: TS }),
-      db.insertWaitlist({ id: "wl_z", email: "z@x.com", batch: 1, status: "pending", created_at: "2026-07-27T00:00:00.000Z" }),
-      db.insertWaitlist({ id: "wl_a", email: "a@x.com", batch: 1, status: "pending", created_at: TS }),
-      db.insertWaitlist({ id: "wl_aaa_other", email: "o@x.com", batch: 2, status: "pending", created_at: TS }),
+      db.insertWaitlist({ id: "wl_m", email: "m@x.com", batch: 1, status: "pending", created_at: "2026-07-27T00:00:00.000Z", survey_json: null }),
+      db.insertWaitlist({ id: "wl_c", email: "c@x.com", batch: 1, status: "pending", created_at: TS, survey_json: null }),
+      db.insertWaitlist({ id: "wl_z", email: "z@x.com", batch: 1, status: "pending", created_at: "2026-07-27T00:00:00.000Z", survey_json: null }),
+      db.insertWaitlist({ id: "wl_a", email: "a@x.com", batch: 1, status: "pending", created_at: TS, survey_json: null }),
+      db.insertWaitlist({ id: "wl_aaa_other", email: "o@x.com", batch: 2, status: "pending", created_at: TS, survey_json: null }),
     ]);
 
     const rows = await db.listWaitlist(1);
@@ -652,6 +704,9 @@ describe("migration 0001 — legacy install that predates the waitlist table", (
   it("ends with the correct waitlist shape and indexes", () => {
     const { sqlite } = freshDb(PRE_WAITLIST_SCHEMA_SQL);
     sqlite.exec(MIGRATION_SQL);
+    // The full pending chain — "the correct waitlist shape" is the shape this
+    // Worker version runs against, which includes 0002's survey_json.
+    sqlite.exec(MIGRATION2_SQL);
 
     const cols = sqlite.prepare(`PRAGMA table_info(waitlist)`).all() as {
       name: string;
@@ -659,9 +714,22 @@ describe("migration 0001 — legacy install that predates the waitlist table", (
       notnull: number;
       dflt_value: string | null;
     }[];
-    expect(cols.map((c) => c.name)).toEqual(["id", "email", "batch", "status", "created_at"]);
+    expect(cols.map((c) => c.name)).toEqual([
+      "id",
+      "email",
+      "batch",
+      "status",
+      "created_at",
+      "survey_json",
+    ]);
     // The whole point of step 8: the default must be the literal routes.ts uses.
     expect(cols.find((c) => c.name === "status")?.dflt_value).toBe("'pending'");
+    // 0002's column: nullable, no default — most rows never answer the survey.
+    expect(cols.find((c) => c.name === "survey_json")).toMatchObject({
+      type: "TEXT",
+      notnull: 0,
+      dflt_value: null,
+    });
 
     const idx = indexNames(sqlite);
     expect(idx).toContain("idx_waitlist_email_batch");
@@ -685,6 +753,7 @@ describe("migration 0001 — legacy install that predates the waitlist table", (
   it("converges on exactly the fresh schema.sql shape", () => {
     const migrated = freshDb(PRE_WAITLIST_SCHEMA_SQL);
     migrated.sqlite.exec(MIGRATION_SQL);
+    migrated.sqlite.exec(MIGRATION2_SQL);
     const fresh = freshDb(SCHEMA_SQL);
 
     const shapeOf = (sqlite: Sqlite, table: string): unknown =>
@@ -715,5 +784,78 @@ describe("migration 0001 — legacy install that predates the waitlist table", (
       // 'waiting' realigned to 'pending' by step 8's CASE.
       { id: "wl_legacy", email: "legacy@example.com", batch: 1, status: "pending" },
     ]);
+  });
+});
+
+// Migration 0002 adds the nullable waitlist.survey_json column that
+// POST /waitlist/survey writes. It is a single additive ALTER — no rebuild —
+// so already-queued signups keep their rows and simply read back NULL.
+describe("migration 0002 — waitlist.survey_json against real SQLite", () => {
+  it("is not wrapped in BEGIN/COMMIT (D1 rejects explicit transactions)", () => {
+    expect(MIGRATION2_SQL).not.toMatch(/^\s*BEGIN\b/im);
+    expect(MIGRATION2_SQL).not.toMatch(/^\s*COMMIT\b/im);
+  });
+
+  it("never contains the adjacent words wrangler's splitter string-matches on", () => {
+    // Same guard as migration 0001 above: the adjacent words anywhere in the
+    // file — INCLUDING inside a `--` comment — make `d1 execute --file` abort
+    // with "contains several transactions" before any SQL is parsed.
+    expect(MIGRATION2_SQL).not.toMatch(/BEGIN\s+TRANSACTION/i);
+    expect(MIGRATION2_SQL).not.toMatch(/^\s*SAVEPOINT\b/im);
+  });
+
+  it("documents how to run it and that it precedes the deploy", () => {
+    expect(MIGRATION2_SQL).toContain("wrangler d1 execute");
+    expect(MIGRATION2_SQL).toMatch(/BEFORE/i);
+  });
+
+  it("adds survey_json on top of 0001; the full chain converges with a fresh install", () => {
+    const migrated = freshDb(LEGACY_SCHEMA_SQL);
+    migrated.sqlite.exec(MIGRATION_SQL);
+    migrated.sqlite.exec(MIGRATION2_SQL);
+    const fresh = freshDb(SCHEMA_SQL);
+
+    const shapeOf = (sqlite: Sqlite, table: string): unknown =>
+      (sqlite.prepare(`PRAGMA table_info(${table})`).all() as {
+        name: string;
+        type: string;
+        notnull: number;
+        dflt_value: string | null;
+      }[]).map((c) => `${c.name} ${c.type} notnull=${c.notnull} default=${c.dflt_value}`);
+
+    // Fresh installs and fully-migrated installs must converge, or the next
+    // migration is written against a shape that only exists in one of them.
+    expect(shapeOf(migrated.sqlite, "waitlist")).toEqual(shapeOf(fresh.sqlite, "waitlist"));
+    expect(shapeOf(migrated.sqlite, "endpoints")).toEqual(shapeOf(fresh.sqlite, "endpoints"));
+    expect(indexNames(migrated.sqlite).sort()).toEqual(indexNames(fresh.sqlite).sort());
+  });
+
+  it("leaves already-queued rows untouched, survey_json NULL", () => {
+    const { sqlite } = freshDb(LEGACY_SCHEMA_SQL);
+    sqlite.exec(MIGRATION_SQL);
+    // A row queued under the post-0001 shape, before 0002 exists.
+    sqlite
+      .prepare(
+        `INSERT INTO waitlist (id, email, batch, status, created_at)
+         VALUES ('wl_pre', 'pre@x.com', 1, 'pending', '2026-07-01T00:00:00.000Z')`,
+      )
+      .run();
+
+    sqlite.exec(MIGRATION2_SQL);
+
+    const row = sqlite
+      .prepare(`SELECT id, email, batch, status, survey_json FROM waitlist WHERE id = 'wl_pre'`)
+      .get() as { survey_json: string | null };
+    expect(row).toMatchObject({ id: "wl_pre", email: "pre@x.com", batch: 1, status: "pending" });
+    expect(row.survey_json).toBeNull();
+  });
+
+  it("aborts rather than double-adding when applied twice", () => {
+    const { sqlite } = freshDb(LEGACY_SCHEMA_SQL);
+    sqlite.exec(MIGRATION_SQL);
+    sqlite.exec(MIGRATION2_SQL);
+    // SQLite has no `ADD COLUMN IF NOT EXISTS`; the guard is that the additive
+    // ALTER fails, and `wrangler d1 execute --file` rolls the file back.
+    expect(() => sqlite.exec(MIGRATION2_SQL)).toThrow(/duplicate column name/i);
   });
 });

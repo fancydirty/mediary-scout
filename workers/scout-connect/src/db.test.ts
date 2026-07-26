@@ -319,6 +319,23 @@ describe("D1 ConnectDb SQL", () => {
     expect(calls[0]?.query).not.toContain("s3cret-ciphertext");
     expect(calls[0]?.binds).toContain("s3cret-ciphertext");
   });
+
+  it("insertWaitlist binds survey_json without leaking it into SQL text", async () => {
+    const { d1, calls } = createSpyD1();
+    const db = createD1ConnectDb(d1);
+    await db.insertWaitlist({
+      id: "w1",
+      email: "a@x.com",
+      batch: 1,
+      status: "pending",
+      created_at: "2026-07-26T00:00:00.000Z",
+      survey_json: `{"willing_to_pay":"愿意"}`,
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.query).toContain("survey_json");
+    expect(calls[0]?.query).not.toContain("willing_to_pay");
+    expect(calls[0]?.binds).toContain(`{"willing_to_pay":"愿意"}`);
+  });
 });
 
 describe("waitlist", () => {
@@ -330,6 +347,7 @@ describe("waitlist", () => {
       batch: 1,
       status: "pending",
       created_at: "2026-07-25T00:00:00Z",
+      survey_json: null,
     });
     await expect(
       db.insertWaitlist({
@@ -338,6 +356,7 @@ describe("waitlist", () => {
         batch: 1,
         status: "pending",
         created_at: "2026-07-25T00:00:01Z",
+        survey_json: null,
       }),
     ).rejects.toThrow(/UNIQUE/);
     expect(await db.countWaitlist(1)).toBe(1);
@@ -352,6 +371,7 @@ describe("waitlist", () => {
       batch: 1,
       status: "pending",
       created_at: "2026-07-25T00:00:00Z",
+      survey_json: null,
     });
     expect(await db.getWaitlistByEmail("b@y.com", 1)).toMatchObject({ email: "b@y.com" });
     expect(await db.getWaitlistByEmail("missing@z.com", 1)).toBeNull();
@@ -369,7 +389,7 @@ describe("waitlist", () => {
       { id: "wl_c", email: "c@x.com" },
       { id: "wl_a", email: "a@x.com" },
     ]) {
-      await db.insertWaitlist({ id, email, batch: 1, status: "pending", created_at: ts });
+      await db.insertWaitlist({ id, email, batch: 1, status: "pending", created_at: ts, survey_json: null });
     }
 
     const ranks = await Promise.all(
@@ -386,6 +406,7 @@ describe("waitlist", () => {
       batch: 1,
       status: "pending",
       created_at: "2026-07-25T00:00:00.000Z",
+      survey_json: null,
     });
     await db.insertWaitlist({
       id: "wl_late",
@@ -393,6 +414,7 @@ describe("waitlist", () => {
       batch: 1,
       status: "pending",
       created_at: "2026-07-27T00:00:00.000Z",
+      survey_json: null,
     });
     await db.insertWaitlist({
       id: "wl_zzz_other",
@@ -400,6 +422,7 @@ describe("waitlist", () => {
       batch: 2,
       status: "pending",
       created_at: "2026-07-25T00:00:00.000Z",
+      survey_json: null,
     });
 
     expect(await db.waitlistRankOf(1, "2026-07-25T00:00:00.000Z", "wl_early")).toBe(1);
@@ -421,6 +444,7 @@ describe("waitlist", () => {
       batch: 1,
       status: "removed",
       created_at: "2026-07-25T00:00:00.000Z",
+      survey_json: null,
     });
     await db.insertWaitlist({
       id: "wl_here",
@@ -428,6 +452,7 @@ describe("waitlist", () => {
       batch: 1,
       status: "pending",
       created_at: TS,
+      survey_json: null,
     });
 
     expect(await db.waitlistRankOf(1, TS, "wl_here")).toBe(2);
@@ -447,7 +472,7 @@ describe("waitlist", () => {
       { id: "wl_a", email: "a@x.com" },
       { id: "wl_b", email: "b@x.com" },
     ]) {
-      await db.insertWaitlist({ id, email, batch: 1, status: "pending", created_at: TS });
+      await db.insertWaitlist({ id, email, batch: 1, status: "pending", created_at: TS, survey_json: null });
     }
   }
 
@@ -479,7 +504,7 @@ describe("waitlist", () => {
       { id: "wl_a", email: "a@x.com", created_at: TS, batch: 1 },
       { id: "wl_aaa_other", email: "o@x.com", created_at: TS, batch: 2 },
     ]) {
-      await db.insertWaitlist({ id, email, batch, status: "pending", created_at });
+      await db.insertWaitlist({ id, email, batch, status: "pending", created_at, survey_json: null });
     }
 
     const rows = await db.listWaitlist(1);

@@ -59,7 +59,12 @@ CREATE TABLE waitlist (
   -- counts every row in a batch regardless of status — if you add a second
   -- status value, see the TRIPWIRE tests in src/schema.test.ts.
   status TEXT NOT NULL DEFAULT 'pending',
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  -- Optional post-signup survey answers (a JSON object holding only the keys
+  -- the user actually filled), written by POST /waitlist/survey. NULL until
+  -- then, and always NULL for rows queued before
+  -- migrations/0002-waitlist-survey.sql. Appended last to mirror the ALTER.
+  survey_json TEXT
 );
 CREATE UNIQUE INDEX idx_waitlist_email_batch ON waitlist(email, batch);
 -- Backs the per-batch count on the POST /waitlist path (was a full scan).

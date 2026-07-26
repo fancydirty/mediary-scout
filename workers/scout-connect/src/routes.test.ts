@@ -716,6 +716,7 @@ describe("GET /api/admin/waitlist", () => {
       batch: 1,
       status: "pending",
       created_at: "2026-07-24T10:00:02.000Z",
+      survey_json: null,
     });
     await db.insertWaitlist({
       id: "wl_a",
@@ -723,6 +724,7 @@ describe("GET /api/admin/waitlist", () => {
       batch: 1,
       status: "pending",
       created_at: "2026-07-24T10:00:00.000Z",
+      survey_json: null,
     });
     await db.insertWaitlist({
       id: "wl_b",
@@ -730,6 +732,7 @@ describe("GET /api/admin/waitlist", () => {
       batch: 1,
       status: "pending",
       created_at: "2026-07-24T10:00:01.000Z",
+      survey_json: null,
     });
 
     const res = await handleRequest(adminGet("/api/admin/waitlist"), deps);
@@ -1115,6 +1118,7 @@ describe("POST /waitlist hardening", () => {
       batch: 1,
       status: "pending",
       created_at: "2026-07-24T09:00:00.000Z",
+      survey_json: null,
     });
     let precheckBlinded = false;
     const broken: ConnectDb = {
@@ -1175,6 +1179,7 @@ describe("POST /waitlist seat cap (founding batch = 100)", () => {
         batch: 1,
         status: "pending",
         created_at: `2026-07-24T09:${mm}:${ss}.000Z`,
+        survey_json: null,
       });
     }
   }

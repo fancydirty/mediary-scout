@@ -568,6 +568,7 @@ async function addToWaitlist(request: Request, deps: RouteDeps): Promise<Respons
     batch,
     status: WAITLIST_PENDING,
     created_at: deps.now(),
+    survey_json: null,
   };
   try {
     await deps.db.insertWaitlist(row);
