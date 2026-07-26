@@ -201,11 +201,15 @@ export async function loginAccount(
   password: string,
   throttleKey?: string,
 ): Promise<AuthOutcome> {
-  // 无显式 throttleKey 时（库级调用，无请求上下文）退化为仅按 username。
-  // 不做 toLowerCase()：账号查询是精确匹配，折叠大小写会让不同账号共用一个桶。
+  // 无显式 throttleKey 时（库级调用，无请求上下文）退化为仅按身份。
+  // 单用户模式忽略用户名（永远是 acct_default），故身份用常量——否则换个
+  // 用户名就换一个桶，限流可被直接绕过。
+  // 多用户不做 toLowerCase()：账号查询是精确匹配，折叠大小写会让不同账号共用一个桶。
   // 一律过 normalizeThrottleKey()——显式传入的 key 也必须有界，否则调用方
   // 传超长键就能撑大内存。
-  const key = normalizeThrottleKey(throttleKey ?? username);
+  const key = normalizeThrottleKey(
+    throttleKey ?? (isMultiUserEnabled() ? username : DEFAULT_ACCOUNT_ID),
+  );
   const now = Date.now();
   const verdict = checkLoginAllowed(key, now);
   if (!verdict.allowed) {

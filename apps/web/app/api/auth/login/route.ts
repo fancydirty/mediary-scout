@@ -23,7 +23,15 @@ export async function POST(request: NextRequest) {
   const body = (await request.json().catch(() => ({}))) as { username?: unknown; password?: unknown };
   const username = typeof body.username === "string" ? body.username : "";
   const password = typeof body.password === "string" ? body.password : "";
-  const result = await loginAccount(username, password, buildThrottleKey(request.headers, username));
+  // 限流身份必须与登录身份一致。单用户模式忽略用户名（永远登录 acct_default），
+  // 所以限流也不能按用户名分桶——否则攻击者每次换个用户名就换一个桶，
+  // 限流形同虚设而每次仍要付一次 scrypt 的代价。
+  const throttleIdentity = isMultiUserEnabled() ? username : "";
+  const result = await loginAccount(
+    username,
+    password,
+    buildThrottleKey(request.headers, throttleIdentity),
+  );
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: 401 });
   }

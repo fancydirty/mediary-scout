@@ -77,4 +77,36 @@ describe("single-user password gate", () => {
     expect(locked.ok).toBe(false);
     if (!locked.ok) expect(locked.error).toContain("尝试过于频繁");
   });
+
+  it("单用户下换用户名不能绕过限流（用户名本就被忽略）", async () => {
+    // 曾经的漏洞：限流键含用户名，而单用户登录忽略用户名 ⇒ 每次换个名字
+    // 就换一个桶，限流形同虚设，且每次仍要付一次 memory-hard scrypt。
+    const rt = await boot();
+    const { _resetLoginThrottleForTest, buildThrottleKey } = await import("./login-throttle");
+    _resetLoginThrottleForTest();
+    await rt.setSingleUserPassword("secret-123");
+    const headers = new Headers({ "cf-connecting-ip": "9.9.9.9" });
+
+    let refusedByThrottle = 0;
+    for (let i = 0; i < 8; i++) {
+      // 模拟 route 的行为：单用户模式下身份为空串
+      const r = await rt.loginAccount(`bogus${i}`, "wrong", buildThrottleKey(headers, ""));
+      if (!r.ok && r.error.includes("尝试过于频繁")) refusedByThrottle++;
+    }
+    // 5 次失败即锁 ⇒ 后续几次必须被拦
+    expect(refusedByThrottle).toBeGreaterThan(0);
+  });
+
+  it("库级调用（无显式 throttleKey）在单用户下也共用同一个桶", async () => {
+    const rt = await boot();
+    const { _resetLoginThrottleForTest } = await import("./login-throttle");
+    _resetLoginThrottleForTest();
+    await rt.setSingleUserPassword("secret-123");
+    let refused = 0;
+    for (let i = 0; i < 8; i++) {
+      const r = await rt.loginAccount(`name${i}`, "wrong"); // 不传 throttleKey
+      if (!r.ok && r.error.includes("尝试过于频繁")) refused++;
+    }
+    expect(refused).toBeGreaterThan(0);
+  });
 });

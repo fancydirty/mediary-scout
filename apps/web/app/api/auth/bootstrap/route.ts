@@ -24,7 +24,10 @@ export async function GET() {
       needsClaim: false,
       hasExistingLibrary: false,
       singleUser: true,
-      passwordSet: (await hasLoginPassword()) === true,
+      // "unknown"（DB 读不出来）按**已设密码**上报：服务端远程读路径此时是
+      // fail-closed 的，若这里报「无需登录」，用户会被引到一条走不通的路。
+      // 宁可显示登录框（顶多多输一次密码），也不要误导。
+      passwordSet: (await hasLoginPassword()) !== false,
     });
   }
   return NextResponse.json({ ...(await getBootstrapState()), singleUser: false });

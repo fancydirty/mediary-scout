@@ -204,11 +204,15 @@ export function normalizeThrottleKey(key: string): string {
  * （SQLite/Postgres 皆然，`username text UNIQUE`），大小写敏感。若在此折叠大小写，
  * `Owner` 与 `owner` 这两个**不同账号**会共用一个桶——攻击者猛猜 `owner`
  * 就能把 `Owner` 的合法用户锁在门外。限流身份必须与登录身份严格一致。
+ *
+ * `identity` 为空（单用户模式：登录只认 `acct_default`，用户名被忽略）时，
+ * 键退化为纯 IP。**必须如此**——否则攻击者每次请求换一个用户名就能换一个桶，
+ * 限流形同虚设，而每次尝试仍会消耗一次 memory-hard 的 scrypt。
  */
-export function buildThrottleKey(headers: Headers, username: string): string {
+export function buildThrottleKey(headers: Headers, identity: string): string {
   const cfIp = headers.get("cf-connecting-ip")?.trim();
   const xff = headers.get("x-forwarded-for")?.split(",")[0]?.trim();
   const ip = boundedPart((cfIp || xff || "unknown").trim());
-  const user = boundedPart(username.trim());
+  const user = boundedPart(identity.trim());
   return `${user}|${ip}`;
 }

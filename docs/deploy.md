@@ -181,14 +181,37 @@ docker compose logs -f cloudflared           # 看到 "Registered tunnel connect
 
 > 隧道连不上 / 老掉线? cloudflared 默认是 `auto`(优先 QUIC/UDP,理论上会回退 HTTP/2)。但有些网络(部分校园网、运营商、严格防火墙)封/限 UDP 时,auto 未必干净回退,隧道就注册不上或老掉线。这时在 `.env` 设 `TUNNEL_TRANSPORT_PROTOCOL=http2` 强制走 TCP 上的 HTTP/2,再 `docker compose --profile tunnel up -d` 重起即可。
 
-**3. ⚠️ 必须加 Cloudflare Access(否则等于把实例裸挂公网)**
+**3. ⚠️ 必须有门禁(否则等于把实例裸挂公网)**
 
-Mediary Scout 默认单用户、无登录,公网入口必须靠 Access 这类前置鉴权挡住:
+Mediary Scout 默认单用户、无登录。公网入口必须挡住,二选一:
+
+**方案 A(推荐):在应用里设访问密码**
+
+设置 → 账号 → 设置访问密码。设好之后:
+
+| 来源 | 行为 |
+|---|---|
+| 局域网(手机/电视/电脑直连 `:3000`) | **免登录,零摩擦** |
+| 经隧道从外网访问 | 需要输入密码,登录状态保持 30 天 |
+
+内外之别靠「请求是否带 Cloudflare 注入的头」判定(`CF-Ray` 等,访客摘不掉)。
+
+> ⚠️ **这条判定的前提:实例只能经「局域网 + 隧道」两条路到达,不能有第三条。**
+> 家庭 NAT 天然满足,但你必须确认:
+> - **别在路由器上给 web 端口做端口映射 / DMZ**;
+> - **关掉路由器的 UPnP 自动打洞**(Emby 曾因「局域网免密 + UPnP 自动打洞」导致数千台服务器被入侵,暴露面正是 UPnP);
+> - 若把实例放在有公网 IP 的 VPS 上,把 compose 的端口发布改成只监听本机(`127.0.0.1:3000:3000`),让隧道从容器网络内访问。
+>
+> 一旦存在第三条不经 Cloudflare 的入站路径,那条路上的请求会被判成「局域网」而免登录。
+
+**方案 B:Cloudflare Access(前置鉴权,与方案 A 可叠加)**
 
 - **Zero Trust → Access → Applications → Add an application → Self-hosted**。
 - Application domain 填 `media.yourdomain.com`。
 - 加一条 **Allow** 策略,例如 Include = **Emails** = 你自己的邮箱(进站会先要求邮箱一次性验证码登录)。想给家人用就把他们的邮箱也加进白名单。
 - 保存后,任何访问 `media.yourdomain.com` 的人都要先过 Access 这关,才能到达应用。
+
+Access 免费版有 50 个席位上限,超出后按人月计费;只给自己/家人用时方案 A 更省事。
 
 > 想自启:`cloudflared` 容器已 `restart: unless-stopped`,宿主重启会自动拉起;隧道配置在 Cloudflare 侧托管,改公网主机名 / Access 策略都在控制台改,不用动宿主。
 
