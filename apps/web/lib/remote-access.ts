@@ -120,3 +120,17 @@ export async function resolveRemoteAccessState(opts: {
 export function instanceTunnelToken(): string | undefined {
   return process.env.TUNNEL_TOKEN?.trim() || undefined;
 }
+
+/**
+ * 「去设置密码」链接。
+ *
+ * 必须保留 `?w` 工作区深链参数：从非默认工作区进设置页时，硬编码
+ * `/settings?tab=account` 会把用户静默踢回默认工作区上下文。
+ * （`settings/page.tsx` 已经在 `SettingsSidebar` / `SettingsAttentionSection`
+ * 里透传同一个 `w`，这里跟随同一约定。）
+ */
+export function accountPasswordHref(w?: string): string {
+  const params = new URLSearchParams({ tab: "account" });
+  if (w) params.set("w", w);
+  return `/settings?${params.toString()}#password`;
+}

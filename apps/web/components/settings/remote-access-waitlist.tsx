@@ -48,13 +48,20 @@ export function RemoteAccessWaitlistForm(props: { workerBaseUrl: string }) {
         | null;
 
       if (res.ok) {
-        // position 两条成功路径都有；万一缺了也别显示 "第 undefined 位"。
-        const position = typeof data?.position === "number" ? data.position : null;
-        const prefix = data?.already_exists ? "你已经在队列里" : "已登记";
-        setResult({
-          ok: true,
-          text: position === null ? `${prefix}。` : `${prefix}，当前排在第 ${position} 位。`,
-        });
+        // 光看 res.ok 不够：网关塞回来的 200 HTML、或空 body 让 json() 解析失败时，
+        // data 会是 null，用户却看到「已登记」——一次根本没发生的报名。
+        // 契约（README + addToWaitlist JSDoc）两条成功路径都必带 id:string 与
+        // position:number，所以拿它们当「这确实是 worker 的应答」的凭据。
+        const hasContract = typeof data?.id === "string" && typeof data?.position === "number";
+        if (!hasContract) {
+          setResult({
+            ok: false,
+            text: "提交后没收到有效回执，无法确认是否登记成功——请稍后重试一次。",
+          });
+          return;
+        }
+        const prefix = data.already_exists ? "你已经在队列里" : "已登记";
+        setResult({ ok: true, text: `${prefix}，当前排在第 ${data.position} 位。` });
         return;
       }
       setResult({ ok: false, text: waitlistErrorText(res.status, data?.error) });

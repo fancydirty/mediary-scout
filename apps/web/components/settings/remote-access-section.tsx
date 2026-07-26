@@ -5,6 +5,7 @@ import {
   instanceTunnelToken,
   resolveRemoteAccessState,
   scoutConnectBaseUrl,
+  accountPasswordHref,
 } from "../../lib/remote-access";
 import { RemoteAccessWaitlistForm } from "./remote-access-waitlist";
 
@@ -17,7 +18,11 @@ import { RemoteAccessWaitlistForm } from "./remote-access-waitlist";
  * **必须**返回 `null` 而不是空 fragment/空 div（那会流出一个直接子元素，
  * observer 就把 tab 判成可见了）。
  */
-export async function RemoteAccessSection() {
+export async function RemoteAccessSection({
+  searchParams,
+}: {
+  searchParams: Promise<{ w?: string }>;
+}) {
   // connection() 必须是第一行：cacheComponents 下否则会在构建期预渲染，
   // 把 build 环境的 TUNNEL_TOKEN/账号状态烤成静态壳（PasswordChangeSection 同款教训）。
   // 本仓库禁用 `export const dynamic`，await connection() 是唯一手段。
@@ -26,6 +31,8 @@ export async function RemoteAccessSection() {
   if (!me?.isOwner) return null;
 
   // hostname 当前无本地来源，故不传（详见 lib/remote-access.ts 文件头）。
+  const { w } = await searchParams;
+  const passwordHref = accountPasswordHref(w);
   const state = await resolveRemoteAccessState({ token: instanceTunnelToken() });
 
   if (state.kind === "not_provisioned") {
@@ -89,7 +96,7 @@ export async function RemoteAccessSection() {
             <p className="panel-note" style={{ margin: "4px 0 8px" }}>
               任何知道你域名的人都能直接进入，读取整个媒体库、网盘凭据与 LLM Key。请立即设置密码。
             </p>
-            <a className="primary-button" href="/settings?tab=account#password">
+            <a className="primary-button" href={passwordHref}>
               去设置密码
             </a>
           </div>
@@ -102,7 +109,7 @@ export async function RemoteAccessSection() {
           <TriangleAlert size={12} aria-hidden style={{ verticalAlign: "-2px", marginRight: 4 }} />
           暂时无法确认登录密码是否已设置（数据库读取失败）。
           若你尚未设置，请到{" "}
-          <a href="/settings?tab=account#password">账号</a> 补上——远程访问下这是唯一的门禁。
+          <a href={passwordHref}>账号</a> 补上——远程访问下这是唯一的门禁。
         </p>
       ) : null}
 

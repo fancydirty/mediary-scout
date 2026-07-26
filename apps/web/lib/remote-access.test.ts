@@ -3,6 +3,7 @@ import {
   instanceTunnelToken,
   resolveRemoteAccessState,
   scoutConnectBaseUrl,
+  accountPasswordHref,
   type RemoteAccessState,
 } from "./remote-access";
 
@@ -201,6 +202,22 @@ describe("scoutConnectBaseUrl（心跳与 waitlist 表单的唯一来源）", ()
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
       `${scoutConnectBaseUrl()}/api/instance/status`,
     );
+  });
+});
+
+describe("accountPasswordHref（保留 ?w 工作区上下文）", () => {
+  it("无 w → 基础链接；有 w → 带上且仍以 #password 收尾", () => {
+    expect(accountPasswordHref()).toBe("/settings?tab=account#password");
+    const withW = accountPasswordHref("cs_abc");
+    expect(withW).toContain("w=cs_abc");
+    expect(withW).toContain("tab=account");
+    expect(withW.endsWith("#password")).toBe(true);
+  });
+
+  it("需要转义的值被正确编码（否则会截断或注入参数）", () => {
+    const href = accountPasswordHref("cs_a b&c");
+    expect(href).toContain("w=cs_a+b%26c");
+    expect(href.endsWith("#password")).toBe(true);
   });
 });
 

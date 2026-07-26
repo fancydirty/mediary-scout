@@ -147,7 +147,7 @@ export default function SettingsPage({
               // visible before we know whether the viewer is the 站主.
               remote={
                 <Suspense fallback={null}>
-                  <RemoteAccessSection />
+                  <RemoteAccessSection searchParams={searchParams} />
                 </Suspense>
               }
             />
