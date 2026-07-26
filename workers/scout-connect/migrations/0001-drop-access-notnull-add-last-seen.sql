@@ -147,4 +147,17 @@ FROM waitlist_old;
 DROP TABLE waitlist_old;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_waitlist_email_batch ON waitlist(email, batch);
-CREATE INDEX IF NOT EXISTS idx_waitlist_batch_created ON waitlist(batch, created_at);
+-- Third column `id` (not just (batch, created_at)): listWaitlist orders by
+-- (created_at, id) so it agrees with the composite order waitlistRankOf counts
+-- under, and on the two-column index that ORDER BY measured as
+-- "USE TEMP B-TREE FOR LAST TERM OF ORDER BY" — SQLite re-sorting the whole
+-- batch to break same-second ties.
+--
+-- `IF NOT EXISTS` is safe here only because the rebuild above genuinely
+-- destroys the old index: it follows `waitlist` through the RENAME onto
+-- `waitlist_old` and is dropped with that table, so this statement always
+-- creates the index fresh with the definition below (verified). Note that
+-- `CREATE INDEX IF NOT EXISTS` will NOT widen an index that still exists — if
+-- you ever change an index definition WITHOUT an accompanying table rebuild,
+-- you must `DROP INDEX` it explicitly or the old definition silently survives.
+CREATE INDEX IF NOT EXISTS idx_waitlist_batch_created ON waitlist(batch, created_at, id);

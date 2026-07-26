@@ -209,6 +209,26 @@ describe("schema.sql — fresh install against real SQLite", () => {
     expect(tokenPlan).not.toContain("SCAN endpoints");
   });
 
+  it("listWaitlist's composite ORDER BY is served by the index, with no TEMP B-TREE", () => {
+    const { sqlite } = freshDb(SCHEMA_SQL);
+
+    // listWaitlist orders by (created_at, id) to agree with waitlistRankOf.
+    // Measured: against a (batch, created_at) index that ORDER BY produced
+    //   SEARCH waitlist USING INDEX idx_waitlist_batch_created (batch=?)
+    //     | USE TEMP B-TREE FOR LAST TERM OF ORDER BY
+    // — i.e. SQLite materialised and re-sorted the whole batch to break ties
+    // on `id`. Extending the index to (batch, created_at, id) makes the index
+    // order match the requested order exactly and the sort disappears.
+    const listPlan = queryPlan(
+      sqlite,
+      `SELECT * FROM waitlist WHERE batch = ? ORDER BY created_at ASC, id ASC`,
+      1,
+    );
+    expect(listPlan).toContain("idx_waitlist_batch_created");
+    expect(listPlan).not.toContain("SCAN waitlist");
+    expect(listPlan).not.toContain("TEMP B-TREE");
+  });
+
   it("MEDIUM-7: waitlist.status default matches the literal the routes INSERT", () => {
     const { sqlite } = freshDb(SCHEMA_SQL);
     sqlite
@@ -362,6 +382,65 @@ describe("waitlist rank against real SQLite — whole-second timestamp ties", ()
     expect(await db.waitlistRankOf(1, TS, "wl_here")).toBe(2);
     // And a non-pending row is itself rankable rather than invisible.
     expect(await db.waitlistRankOf(1, "2026-07-25T00:00:00.000Z", "wl_gone")).toBe(1);
+  });
+
+  // -------------------------------------------------------------------
+  // listWaitlist had to agree with waitlistRankOf and did not: it ordered
+  // by created_at ALONE, which is not a total order over whole-second ISO
+  // timestamps. Measured against this schema with three same-second rows
+  // inserted as wl_c, wl_a, wl_b:
+  //   listWaitlist (created_at only) -> wl_c wl_a wl_b
+  //   waitlistRankOf (created_at,id) -> wl_a=1 wl_b=2 wl_c=3
+  // so the row listed FIRST reported position 3. SQLite is free to return
+  // ties in any order (here: physical/rowid order), so this was also
+  // nondeterministic in principle, not merely "wrong but consistent".
+  // -------------------------------------------------------------------
+  function seedOutOfIdOrder(db: ReturnType<typeof createD1ConnectDb>): Promise<unknown> {
+    // Insertion order deliberately != id order != nothing-in-particular, so a
+    // rowid-ordered result is distinguishable from an (created_at, id) one.
+    return Promise.all([
+      db.insertWaitlist({ id: "wl_c", email: "c@x.com", batch: 1, status: "pending", created_at: TS }),
+      db.insertWaitlist({ id: "wl_a", email: "a@x.com", batch: 1, status: "pending", created_at: TS }),
+      db.insertWaitlist({ id: "wl_b", email: "b@x.com", batch: 1, status: "pending", created_at: TS }),
+    ]);
+  }
+
+  it("listWaitlist orders same-second rows by id, not by insertion order (D1)", async () => {
+    const { db } = freshDb(SCHEMA_SQL);
+    await seedOutOfIdOrder(db);
+
+    expect((await db.listWaitlist(1)).map((r) => r.id)).toEqual(["wl_a", "wl_b", "wl_c"]);
+  });
+
+  it("CROSS-CONSISTENCY: listWaitlist[i] ranks exactly i+1 (D1)", async () => {
+    // The real contract, asserted directly: the queue you display and the
+    // position you tell each person must be the same queue.
+    const { db } = freshDb(SCHEMA_SQL);
+    await seedOutOfIdOrder(db);
+
+    const rows = await db.listWaitlist(1);
+    const ranks = await Promise.all(rows.map((r) => db.waitlistRankOf(1, r.created_at, r.id)));
+
+    expect(ranks).toEqual(rows.map((_, i) => i + 1));
+  });
+
+  it("CROSS-CONSISTENCY holds with mixed timestamps and ties (D1)", async () => {
+    const { db } = freshDb(SCHEMA_SQL);
+    // Two distinct seconds, ties inside each, inserted in scrambled order —
+    // and a decoy in another batch that must not shift batch 1.
+    await Promise.all([
+      db.insertWaitlist({ id: "wl_m", email: "m@x.com", batch: 1, status: "pending", created_at: "2026-07-27T00:00:00.000Z" }),
+      db.insertWaitlist({ id: "wl_c", email: "c@x.com", batch: 1, status: "pending", created_at: TS }),
+      db.insertWaitlist({ id: "wl_z", email: "z@x.com", batch: 1, status: "pending", created_at: "2026-07-27T00:00:00.000Z" }),
+      db.insertWaitlist({ id: "wl_a", email: "a@x.com", batch: 1, status: "pending", created_at: TS }),
+      db.insertWaitlist({ id: "wl_aaa_other", email: "o@x.com", batch: 2, status: "pending", created_at: TS }),
+    ]);
+
+    const rows = await db.listWaitlist(1);
+    expect(rows.map((r) => r.id)).toEqual(["wl_a", "wl_c", "wl_m", "wl_z"]);
+
+    const ranks = await Promise.all(rows.map((r) => db.waitlistRankOf(1, r.created_at, r.id)));
+    expect(ranks).toEqual([1, 2, 3, 4]);
   });
 });
 

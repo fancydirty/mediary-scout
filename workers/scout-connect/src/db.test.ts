@@ -433,6 +433,61 @@ describe("waitlist", () => {
     expect(await db.waitlistRankOf(1, TS, "wl_here")).toBe(2);
     expect(await db.waitlistRankOf(1, "2026-07-25T00:00:00.000Z", "wl_gone")).toBe(1);
   });
+
+  // Mirror of the listWaitlist ordering tests in schema.test.ts. The mock
+  // ordered by created_at alone while waitlistRankOf used (created_at, id),
+  // so the row listed first could report position 3. Route tests run on this
+  // backend, so the two must stay semantically identical.
+  async function seedOutOfIdOrder(db: ReturnType<typeof createMemoryConnectDb>): Promise<void> {
+    const TS = "2026-07-26T00:00:00.000Z";
+    // Insertion order != id order; Map iteration is insertion-ordered, so an
+    // unsorted (or partially sorted) implementation returns wl_c first.
+    for (const { id, email } of [
+      { id: "wl_c", email: "c@x.com" },
+      { id: "wl_a", email: "a@x.com" },
+      { id: "wl_b", email: "b@x.com" },
+    ]) {
+      await db.insertWaitlist({ id, email, batch: 1, status: "pending", created_at: TS });
+    }
+  }
+
+  it("listWaitlist 同一秒内按 id 排序，而非插入顺序（memory mock）", async () => {
+    const db = createMemoryConnectDb();
+    await seedOutOfIdOrder(db);
+
+    expect((await db.listWaitlist(1)).map((r) => r.id)).toEqual(["wl_a", "wl_b", "wl_c"]);
+  });
+
+  it("CROSS-CONSISTENCY: listWaitlist[i] 的 rank 恰为 i+1（memory mock）", async () => {
+    const db = createMemoryConnectDb();
+    await seedOutOfIdOrder(db);
+
+    const rows = await db.listWaitlist(1);
+    const ranks = await Promise.all(rows.map((r) => db.waitlistRankOf(1, r.created_at, r.id)));
+
+    expect(ranks).toEqual(rows.map((_, i) => i + 1));
+  });
+
+  it("CROSS-CONSISTENCY 在混合时间戳 + 同秒并列下仍成立（memory mock）", async () => {
+    const db = createMemoryConnectDb();
+    const TS = "2026-07-26T00:00:00.000Z";
+    const LATER = "2026-07-27T00:00:00.000Z";
+    for (const { id, email, created_at, batch } of [
+      { id: "wl_m", email: "m@x.com", created_at: LATER, batch: 1 },
+      { id: "wl_c", email: "c@x.com", created_at: TS, batch: 1 },
+      { id: "wl_z", email: "z@x.com", created_at: LATER, batch: 1 },
+      { id: "wl_a", email: "a@x.com", created_at: TS, batch: 1 },
+      { id: "wl_aaa_other", email: "o@x.com", created_at: TS, batch: 2 },
+    ]) {
+      await db.insertWaitlist({ id, email, batch, status: "pending", created_at });
+    }
+
+    const rows = await db.listWaitlist(1);
+    expect(rows.map((r) => r.id)).toEqual(["wl_a", "wl_c", "wl_m", "wl_z"]);
+
+    const ranks = await Promise.all(rows.map((r) => db.waitlistRankOf(1, r.created_at, r.id)));
+    expect(ranks).toEqual([1, 2, 3, 4]);
+  });
 });
 
 describe("endpoint cf_access_app_id 可空", () => {

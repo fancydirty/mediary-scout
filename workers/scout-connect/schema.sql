@@ -63,7 +63,11 @@ CREATE TABLE waitlist (
 );
 CREATE UNIQUE INDEX idx_waitlist_email_batch ON waitlist(email, batch);
 -- Backs the per-batch count on the POST /waitlist path (was a full scan).
-CREATE INDEX idx_waitlist_batch_created ON waitlist(batch, created_at);
+-- `id` is the third column so that `ORDER BY created_at, id` — the composite
+-- queue order listWaitlist and waitlistRankOf share — is read straight off the
+-- index. On (batch, created_at) alone SQLite added a
+-- "USE TEMP B-TREE FOR LAST TERM OF ORDER BY" to break the same-second ties.
+CREATE INDEX idx_waitlist_batch_created ON waitlist(batch, created_at, id);
 
 -- Schema changes need a matching file in ./migrations for already-deployed
 -- instances — schema.sql alone only covers fresh installs. See README → Deploy.

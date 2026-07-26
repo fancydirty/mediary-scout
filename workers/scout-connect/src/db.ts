@@ -396,8 +396,14 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
     },
 
     async listWaitlist(batch) {
+      // (created_at, id) — the SAME composite order waitlistRankOf counts
+      // under. created_at alone is not a total order (whole-second ISO
+      // strings), so ties came back in arbitrary/physical order and the row
+      // listed first could report a different position: measured wl_c wl_a
+      // wl_b here against wl_a=1 wl_b=2 wl_c=3 from the rank query. `id` is
+      // the PRIMARY KEY, so the composite is unique and the queue is total.
       const { results } = await d1
-        .prepare(`SELECT * FROM waitlist WHERE batch = ? ORDER BY created_at ASC`)
+        .prepare(`SELECT * FROM waitlist WHERE batch = ? ORDER BY created_at ASC, id ASC`)
         .bind(batch)
         .all<RawRow>();
       return results.map(mapWaitlist);
@@ -425,6 +431,14 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
 // collation is equivalent here because callers write fixed-width ISO-8601 UTC.
 function byCreatedAtDesc(a: { created_at: string; id: string }, b: { created_at: string; id: string }): number {
   return b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id);
+}
+
+// Ascending counterpart for queue order (oldest first). Mirrors SQL
+// `ORDER BY created_at ASC, id ASC`, and must agree with the (created_at, id)
+// composite that waitlistRankOf counts under — same caveat about localeCompare
+// matching BINARY collation for fixed-width ISO-8601 UTC strings.
+function byCreatedAtAsc(a: { created_at: string; id: string }, b: { created_at: string; id: string }): number {
+  return a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id);
 }
 
 export function createMemoryConnectDb(): ConnectDb {
@@ -625,9 +639,13 @@ export function createMemoryConnectDb(): ConnectDb {
     },
 
     async listWaitlist(batch) {
+      // Must match the D1 ORDER BY exactly — `(created_at ASC, id ASC)`, the
+      // same composite waitlistRankOf counts under. Sorting on created_at
+      // alone left Map insertion order to break ties, so listWaitlist[0] could
+      // be the row that reports position 3. See the cross-consistency tests.
       return [...waitlist.values()]
         .filter((row) => row.batch === batch)
-        .sort((a, b) => a.created_at.localeCompare(b.created_at))
+        .sort(byCreatedAtAsc)
         .map((row) => ({ ...row }));
     },
 
