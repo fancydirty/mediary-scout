@@ -55,7 +55,9 @@ CREATE TABLE waitlist (
   -- Must stay in sync with the literal routes.ts INSERTs. Nothing filters on
   -- this column today (the waitlist queries key off batch/created_at only);
   -- the default and the written literal must still agree so the column does
-  -- not end up holding two words for one state.
+  -- not end up holding two words for one state. Note that the position math
+  -- counts every row in a batch regardless of status — if you add a second
+  -- status value, see the TRIPWIRE tests in src/schema.test.ts.
   status TEXT NOT NULL DEFAULT 'pending',
   created_at TEXT NOT NULL
 );

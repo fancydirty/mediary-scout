@@ -406,6 +406,33 @@ describe("waitlist", () => {
     expect(await db.waitlistRankOf(1, "2026-07-27T00:00:00.000Z", "wl_late")).toBe(2);
     expect(await db.waitlistRankOf(2, "2026-07-25T00:00:00.000Z", "wl_zzz_other")).toBe(1);
   });
+
+  // TRIPWIRE — mirror of the same-named test in schema.test.ts, which runs
+  // this scenario against real SQLite. Both exist on purpose: the two
+  // waitlistRankOf implementations must stay semantically identical, so a
+  // status filter added to only one of them has to fail somewhere. Read the
+  // long comment in schema.test.ts before changing either.
+  it("TRIPWIRE: ranking counts non-pending rows too — status is not filtered (memory mock)", async () => {
+    const db = createMemoryConnectDb();
+    const TS = "2026-07-26T00:00:00.000Z";
+    await db.insertWaitlist({
+      id: "wl_gone",
+      email: "gone@x.com",
+      batch: 1,
+      status: "removed",
+      created_at: "2026-07-25T00:00:00.000Z",
+    });
+    await db.insertWaitlist({
+      id: "wl_here",
+      email: "here@x.com",
+      batch: 1,
+      status: "pending",
+      created_at: TS,
+    });
+
+    expect(await db.waitlistRankOf(1, TS, "wl_here")).toBe(2);
+    expect(await db.waitlistRankOf(1, "2026-07-25T00:00:00.000Z", "wl_gone")).toBe(1);
+  });
 });
 
 describe("endpoint cf_access_app_id 可空", () => {

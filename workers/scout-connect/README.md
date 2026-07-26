@@ -30,6 +30,26 @@ admin ──► mediaryconnect.app (this worker)
             docker compose --profile tunnel up -d   (TUNNEL_TOKEN in .env)
 ```
 
+### Public endpoints (no auth)
+
+`POST /waitlist` — beta signup. Body `{ email }`.
+
+| Status | Body |
+| --- | --- |
+| 201 | `{ id, position }` — new signup |
+| 200 | `{ already_exists: true, id, position }` — email already queued |
+| 400 | `{ error }` — `email required` / `invalid email` (or `invalid json`, `invalid body`, `bad encoding`) |
+| 413 | `{ error: "body too large" }` |
+
+`position` is 1-based within the batch and is returned on **both** success
+paths — the 200 body is a strict superset of `{ already_exists, id }`. A repeat
+submit (double click, refresh) is exactly when the settings-page form needs to
+re-display the rank, so clients never have to branch on status code to find it.
+
+Ranking counts every row in the batch regardless of `waitlist.status`. Only
+`'pending'` exists today and nothing reads the column; if that changes, see the
+TRIPWIRE tests in `src/schema.test.ts` and `src/db.test.ts`.
+
 Token secrecy: the connector token is returned to the caller exactly once (at
 provision to the admin, or at `/api/i/:code/reveal` to the invitee). D1 stores
 AES-GCM ciphertext (`TOKEN_WRAP_KEY`) until the first reveal, then only a

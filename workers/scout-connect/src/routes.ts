@@ -443,6 +443,23 @@ function isUniqueViolation(e: unknown): boolean {
   return e instanceof Error && /UNIQUE constraint failed/i.test(e.message);
 }
 
+/**
+ * POST /waitlist — public, unauthenticated signup.
+ *
+ * Request: `{ email: string }` (≤ EMAIL_MAX_LENGTH bytes; trimmed+lowercased).
+ *
+ * Responses — `position` is present on EVERY success path, new or repeat:
+ *   201 `{ id: string, position: number }`
+ *   200 `{ already_exists: true, id: string, position: number }`
+ *   400 `{ error: "email required" | "invalid email" }`
+ *       (plus "invalid json" / "invalid body" / "bad encoding" from the
+ *        shared body reader)
+ *   413 `{ error: "body too large" }`
+ *
+ * The 200 body is a strict superset of `{ already_exists, id }`. Any doc that
+ * omits `position` there is stale — see the comment on the branch itself for
+ * why it is deliberate. `position` is 1-based within the batch.
+ */
 async function addToWaitlist(request: Request, deps: RouteDeps): Promise<Response> {
   const body = await readJsonBody(request);
   const emailRaw = body.email;

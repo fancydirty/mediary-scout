@@ -319,6 +319,50 @@ describe("waitlist rank against real SQLite — whole-second timestamp ties", ()
     expect(b).toBe(2);
     expect(a).not.toBe(b);
   });
+
+  // ---------------------------------------------------------------------
+  // TRIPWIRE — read this if you just added a new waitlist status.
+  //
+  // Ranking is status-agnostic: `waitlistRankOf` counts every row in the
+  // batch, whatever its `status`. That is safe TODAY only because 'pending'
+  // is the sole value that exists — routes.ts writes it and schema.sql
+  // defaults to it, and no query anywhere reads the column.
+  //
+  // If you are here because this test failed after you introduced
+  // 'accepted' / 'removed' / anything else: ranking currently COUNTS your
+  // new status, so those rows will inflate every later signup's position.
+  // Decide deliberately whether that is right, then update all three
+  // together — the D1 `waitlistRankOf` (db.ts), the in-memory
+  // `waitlistRankOf` (db.ts), and this test. Do not just re-point the
+  // assertion; the two implementations must stay semantically identical or
+  // route tests (which run on the mock) stop proving anything about
+  // production.
+  // ---------------------------------------------------------------------
+  it("TRIPWIRE: ranking counts non-pending rows too — status is not filtered (D1)", async () => {
+    const { db } = freshDb(SCHEMA_SQL);
+    // A non-'pending' row deliberately sorts FIRST, so if a status filter is
+    // ever added the rank below drops from 2 to 1 and this test goes red.
+    await db.insertWaitlist({
+      id: "wl_gone",
+      email: "gone@x.com",
+      batch: 1,
+      status: "removed",
+      created_at: "2026-07-25T00:00:00.000Z",
+    });
+    await db.insertWaitlist({
+      id: "wl_here",
+      email: "here@x.com",
+      batch: 1,
+      status: "pending",
+      created_at: TS,
+    });
+
+    // Documented current behaviour: the 'removed' row IS counted, so the
+    // pending row that arrived after it ranks 2, not 1.
+    expect(await db.waitlistRankOf(1, TS, "wl_here")).toBe(2);
+    // And a non-pending row is itself rankable rather than invisible.
+    expect(await db.waitlistRankOf(1, "2026-07-25T00:00:00.000Z", "wl_gone")).toBe(1);
+  });
 });
 
 describe("migration 0001 — existing install against real SQLite", () => {

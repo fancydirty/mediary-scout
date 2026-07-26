@@ -378,6 +378,13 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
     },
 
     async waitlistRankOf(batch, createdAt, id) {
+      // Intentionally status-agnostic: every row in the batch is counted,
+      // whatever its `status`. Safe only because 'pending' is the sole value
+      // that exists today (routes.ts writes it, schema.sql defaults to it,
+      // nothing reads the column). Adding a `status = 'pending'` predicate now
+      // would be a provable no-op. If a second status is ever introduced, this
+      // and the in-memory twin below must change TOGETHER; the TRIPWIRE tests
+      // in schema.test.ts and db.test.ts fail loudly if they do not.
       const row = await d1
         .prepare(
           `SELECT COUNT(*) as cnt FROM waitlist
@@ -601,6 +608,12 @@ export function createMemoryConnectDb(): ConnectDb {
       // Must match the D1 predicate exactly, including the (created_at, id)
       // tiebreaker — route tests run on this backend, so any drift here means
       // they stop proving anything about production.
+      //
+      // That includes being status-agnostic: like D1, this counts every row in
+      // the batch regardless of `status`, because 'pending' is currently the
+      // only value in existence. If you add a status filter, add it to BOTH
+      // implementations — the TRIPWIRE tests (schema.test.ts for D1,
+      // db.test.ts for this mock) go red on a one-sided change.
       let count = 0;
       for (const row of waitlist.values()) {
         if (row.batch !== batch) continue;
