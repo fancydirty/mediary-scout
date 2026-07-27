@@ -125,7 +125,7 @@ describe("cf-api", () => {
       },
     ]);
     const out = await api.createAccessApp({
-      name: "Scout Connect slug",
+      name: "Mediary Connect slug",
       domain: "slug.example.com",
       email: "user@example.com",
     });
@@ -145,7 +145,7 @@ describe("cf-api", () => {
         include: Array<{ email: { email: string } }>;
       }>;
     };
-    expect(body.name).toBe("Scout Connect slug");
+    expect(body.name).toBe("Mediary Connect slug");
     expect(body.domain).toBe("slug.example.com");
     expect(body.type).toBe("self_hosted");
     expect(body.session_duration).toBe("24h");
