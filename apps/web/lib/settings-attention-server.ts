@@ -36,9 +36,12 @@ function brandLabel(provider: string): string {
 
 /** update_available is an instance-level signal (BUILD_COMMIT vs remote main):
  *  multi-user shows it to the owner only; single-user is the implicit owner. */
-async function resolveIsOwner(accountId: string): Promise<boolean> {
+async function resolveIsOwner(
+  repository: WorkflowRepository,
+  accountId: string,
+): Promise<boolean> {
   if (!isMultiUserEnabled()) return true;
-  const account = await getWorkflowRepository().getAccountById(accountId);
+  const account = await repository.getAccountById(accountId);
   return account?.isOwner ?? false;
 }
 
@@ -84,7 +87,7 @@ export async function loadSettingsAttentionSummary(options?: {
 
   const [llm, isOwner] = await Promise.all([
     getLlmConfig(getAccountScopedSettings(accountId)),
-    resolveIsOwner(accountId),
+    resolveIsOwner(repository, accountId),
   ]);
   // update_available 只对站主存在（见 buildSettingsAttentionItems 的 isOwner
   // 门控），所以非站主不该付这份代价：两次文件读 + 可能的 GitHub 探测，冷
