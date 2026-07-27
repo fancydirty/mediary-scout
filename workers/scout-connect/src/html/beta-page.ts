@@ -17,6 +17,19 @@
 // (position, server error text) is inserted via textContent only; innerHTML
 // is deliberately never used, and a test pins both properties.
 
+/**
+ * env 进来的 sitekey 会被插进 HTML 属性：只接受 Turnstile key 的真实字符集
+ * （0x4AAAAAAD-… 这类 [0-9A-Za-z_-]）。恶意/畸形值归一为空串（=无 widget），
+ * 绝不靠转义硬插（esc 挡得住引号，挡不住"为什么把怪东西放进页面"）。
+ *
+ * routes.ts 的门**必须**用同一个归一化：否则 env 配了畸形 sitekey 时，
+ * 页面不渲染 widget 而门却开着，所有报名 400 且用户拿不到 token。
+ */
+export function normalizeTurnstileSitekey(raw?: string): string {
+  const key = (raw ?? "").trim();
+  return /^[0-9A-Za-z_-]+$/.test(key) ? key : "";
+}
+
 function esc(s: string): string {
   return s.replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c,
@@ -34,11 +47,7 @@ export function betaPage(turnstileSitekey?: string): string {
   // 缺任意一个，页面与 /waitlist 都不设防，供本地开发用）。三个片段——
   // api.js script、widget div、提交 JS 的 token 逻辑——必须同源注入或同源缺席，
   // 否则 absent 形态会泄漏 cf-turnstile / 人机验证 字样（有测试钉着）。
-  const rawKey = (turnstileSitekey ?? "").trim();
-  // env 进来的值会被插进 HTML 属性：只接受 Turnstile key 的真实字符集
-  // （0x4AAAAAAD-… 这类 [0-9A-Za-z_-]）。恶意/畸形值整体降级为无 widget，
-  // 绝不靠转义硬插（esc 挡得住引号，挡不住"为什么把怪东西放进页面"）。
-  const sitekey = /^[0-9A-Za-z_-]+$/.test(rawKey) ? rawKey : "";
+  const sitekey = normalizeTurnstileSitekey(turnstileSitekey);
   const tsScript = sitekey
     ? `\n<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" defer></script>`
     : "";

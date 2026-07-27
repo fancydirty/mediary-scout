@@ -9,7 +9,7 @@ import { assertSlug } from "./slug.js";
 import { homePage } from "./html/home-page.js";
 import { adminPage } from "./html/admin-page.js";
 import { invitePage, type InvitePageState } from "./html/invite-page.js";
-import { betaPage } from "./html/beta-page.js";
+import { betaPage, normalizeTurnstileSitekey } from "./html/beta-page.js";
 import { EMAIL_MAX_LENGTH, EMAIL_RE } from "./validation.js";
 import { newId } from "./ids.js";
 import { sha256Hex } from "./crypto-token.js";
@@ -534,12 +534,15 @@ function isUniqueViolation(e: unknown): boolean {
  * secret 无 sitekey → 没有 widget 可铸）。与 /waitlist 的门同一条规则。
  */
 function turnstileSitekeyIfConfigured(deps: RouteDeps): string | undefined {
-  return deps.turnstileSitekey && deps.turnstileSecret ? deps.turnstileSitekey : undefined;
+  // 与页面同一个归一化（trim + 字符集校验）：畸形 sitekey 会让页面不渲染
+  // widget，此时门也必须关——否则用户没有任何途径拿到 token，报名全 400。
+  const key = normalizeTurnstileSitekey(deps.turnstileSitekey);
+  return key && deps.turnstileSecret ? key : undefined;
 }
 
 /** Turnstile 门是否启用——与 turnstileSitekeyIfConfigured 同一条「成对」规则。 */
 function turnstileGateEnabled(deps: RouteDeps): boolean {
-  return Boolean(deps.turnstileSitekey && deps.turnstileSecret);
+  return turnstileSitekeyIfConfigured(deps) !== undefined;
 }
 
 /**

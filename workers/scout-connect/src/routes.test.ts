@@ -1849,6 +1849,21 @@ describe("POST /waitlist Turnstile gate", () => {
     expect(await db.countWaitlist(1)).toBe(2);
   });
 
+  it("malformed sitekey (even with secret) → gate OFF consistently: no widget AND signup passes", async () => {
+    // 页面侧 trim + 字符集校验会拒绝畸形 sitekey（不渲染 widget）；
+    // 门侧若只看 truthy 就会开着——用户没有任何途径拿 token，报名全 400。
+    // 两侧必须归一到同一个判定（Copilot PR #184 round 2）。
+    const { db, deps } = setup();
+    const fetchSpy = forbidFetch();
+    const messy = { ...deps, turnstileSitekey: ' x"><script>', turnstileSecret: TS_SECRET };
+    const page = await handleRequest(new Request(`${BASE}/beta`), messy);
+    expect(await page.text()).not.toContain("cf-turnstile");
+    const res = await handleRequest(waitlistPost({ email: "no-widget@example.com" }), messy);
+    expect(res.status).toBe(201);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(await db.countWaitlist(1)).toBe(1);
+  });
+
   it("GET /beta renders the widget only when BOTH halves are configured", async () => {
     const { deps } = setup();
     const both = await handleRequest(new Request(`${BASE}/beta`), tsDeps(deps));
