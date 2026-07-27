@@ -122,10 +122,12 @@ export async function resolveRemoteAccessState(opts: {
  * 内测报名站的对外地址（唯一来源）。
  *
  * 指向 worker 承载的 /beta 页——与 /waitlist API 同部署，只换了更好记的域名。
+ * 必须带 /beta 路径：该子域名的根路径 `GET /` 是 Scout Connect 说明页，
+ * 报名表单只在 `GET /beta`。
  * 设置页「远程访问」tab 的跳转链接从这里取，不要在组件里另写一份：
  * 链接失效时这个 tab 应该整体隐藏，分散硬编码会让那个判断失去单一事实源。
  */
-export const BETA_SITE_URL = "https://beta.mediaryconnect.app";
+export const BETA_SITE_URL = "https://beta.mediaryconnect.app/beta";
 
 export function instanceTunnelToken(): string | undefined {
   return process.env.TUNNEL_TOKEN?.trim() || undefined;
