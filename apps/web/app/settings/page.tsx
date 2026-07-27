@@ -24,7 +24,7 @@ import { AccountAdminPanel } from "../../components/account-admin-panel";
 import { RemoteAccessSection } from "../../components/settings/remote-access-section";
 import { GitHubNameplate } from "../../components/github-nameplate";
 import { SettingsActionInbox } from "../../components/settings-action-inbox";
-import { loadSettingsAttentionSummary } from "../../lib/settings-attention-server";
+import { loadSettingsAttentionSummary, markSettingsAttentionSeen } from "../../lib/settings-attention-server";
 import { resolveRequestOrigin } from "../../lib/request-origin";
 import {
   getAccountConnectedStorages,
@@ -179,6 +179,9 @@ async function SettingsAttentionSection({
   const { w } = await searchParams;
   const origin = resolveRequestOrigin(await headers());
   const summary = await loadSettingsAttentionSummary({ ...(w ? { w } : {}), origin });
+  // AFTER the summary load: anything first sighted during THIS render gets
+  // createdAt <= the seen_at written here → never badges the page it was shown on.
+  await markSettingsAttentionSeen();
   return <SettingsActionInbox items={summary.items} />;
 }
 

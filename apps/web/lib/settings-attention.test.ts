@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildSettingsAttentionItems, summarizeSettingsAttention } from "./settings-attention";
+import {
+  applySettingsAttentionState,
+  buildSettingsAttentionItems,
+  isAttentionItemId,
+  parseAttentionTimeMap,
+  summarizeSettingsAttention,
+} from "./settings-attention";
 
 const brandLabel = (provider: string) =>
   ({ pan115: "115网盘", quark: "夸克网盘", guangya: "光鸭云盘" }[provider] ?? provider);
@@ -166,5 +172,137 @@ describe("buildSettingsAttentionItems", () => {
       "/settings?w=cs_other",
       "/settings?tab=services&w=cs_other",
     ]);
+  });
+});
+
+describe("parseAttentionTimeMap", () => {
+  it("parses a JSON map of id → ISO time, dropping junk", () => {
+    const map = parseAttentionTimeMap(
+      JSON.stringify({
+        "frozen:cs1": "2026-07-01T00:00:00.000Z",
+        "update:aaaaaaa": "not-a-date",
+        "missing_llm": 42,
+        ["x".repeat(200)]: "2026-07-01T00:00:00.000Z",
+      }),
+    );
+    expect(map).toEqual({ "frozen:cs1": "2026-07-01T00:00:00.000Z" });
+  });
+
+  it("returns {} for null/garbage/non-object JSON", () => {
+    expect(parseAttentionTimeMap(null)).toEqual({});
+    expect(parseAttentionTimeMap("{oops")).toEqual({});
+    expect(parseAttentionTimeMap("[1,2]")).toEqual({});
+    expect(parseAttentionTimeMap('"str"')).toEqual({});
+  });
+});
+
+describe("isAttentionItemId", () => {
+  it("accepts the three known id shapes", () => {
+    expect(isAttentionItemId("missing_llm")).toBe(true);
+    expect(isAttentionItemId("frozen:cs_abc123")).toBe(true);
+    expect(isAttentionItemId("update:aaaaaaa")).toBe(true);
+    expect(isAttentionItemId("update:0123456789abcdef0123456789abcdef01234567")).toBe(true);
+  });
+
+  it("rejects everything else (bounded write surface)", () => {
+    expect(isAttentionItemId("")).toBe(false);
+    expect(isAttentionItemId("update_available")).toBe(false);
+    expect(isAttentionItemId("frozen:")).toBe(false);
+    expect(isAttentionItemId("update:zzz")).toBe(false);
+    expect(isAttentionItemId("../etc/passwd")).toBe(false);
+    expect(isAttentionItemId(`frozen:${"x".repeat(65)}`)).toBe(false);
+  });
+});
+
+describe("applySettingsAttentionState", () => {
+  const baseItems = buildSettingsAttentionItems({
+    demo: false,
+    isOwner: true,
+    drives: [{ id: "cs1", provider: "quark", label: null, status: "frozen" }],
+    brandLabel, origin: ORIGIN,
+    llmConfigured: false,
+    update: { kind: "container", behind: true, currentShort: "1111111", latestShort: "2222222" },
+  }); // frozen:cs1 (blocker) + missing_llm (warning) + update:2222222 (info)
+
+  const T0 = "2026-07-01T00:00:00.000Z";
+  const T1 = "2026-07-02T00:00:00.000Z";
+  const T2 = "2026-07-03T00:00:00.000Z";
+
+  it("first sight: stamps every item createdAt=now, persists state_since, counts all (seenAt null)", () => {
+    const r = applySettingsAttentionState({
+      items: baseItems, stateSince: {}, dismissed: {}, seenAt: null, now: T1,
+    });
+    expect(r.items.map((i) => [i.id, i.createdAt])).toEqual([
+      ["frozen:cs1", T1], ["missing_llm", T1], ["update:2222222", T1],
+    ]);
+    expect(r.nextStateSince).toEqual({ "frozen:cs1": T1, missing_llm: T1, "update:2222222": T1 });
+    expect(r.stateSinceChanged).toBe(true);
+    expect(r.count).toBe(3);
+    expect(r.severity).toBe("blocker");
+  });
+
+  it("keeps existing state_since timestamps (createdAt = first sight, not last render)", () => {
+    const r = applySettingsAttentionState({
+      items: baseItems,
+      stateSince: { "frozen:cs1": T0, missing_llm: T0, "update:2222222": T0 },
+      dismissed: {}, seenAt: null, now: T1,
+    });
+    expect(r.items.every((i) => i.createdAt === T0)).toBe(true);
+    expect(r.stateSinceChanged).toBe(false);
+  });
+
+  it("drops state_since entries whose state ended (drive unfroze / llm configured / update applied)", () => {
+    const r = applySettingsAttentionState({
+      items: baseItems.filter((i) => i.id === "missing_llm"),
+      stateSince: { "frozen:cs1": T0, missing_llm: T0 },
+      dismissed: {}, seenAt: null, now: T1,
+    });
+    expect(r.nextStateSince).toEqual({ missing_llm: T0 });
+    expect(r.stateSinceChanged).toBe(true);
+  });
+
+  it("badge count = visible items created AFTER seen_at; seen items stay in the inbox", () => {
+    const r = applySettingsAttentionState({
+      items: baseItems,
+      stateSince: { "frozen:cs1": T0, missing_llm: T2, "update:2222222": T0 },
+      dismissed: {}, seenAt: T1, now: T2,
+    });
+    expect(r.items).toHaveLength(3); // inbox unchanged by seen
+    expect(r.count).toBe(1); // only missing_llm (T2 > T1)
+    expect(r.severity).toBe("warning");
+  });
+
+  it("dismissal hides the item from inbox + count while its occurrence continues", () => {
+    const r = applySettingsAttentionState({
+      items: baseItems,
+      stateSince: { "frozen:cs1": T0, missing_llm: T0, "update:2222222": T0 },
+      dismissed: { "frozen:cs1": T1 }, // dismissed AFTER the occurrence began
+      seenAt: null, now: T2,
+    });
+    expect(r.items.map((i) => i.id)).toEqual(["missing_llm", "update:2222222"]);
+    expect(r.count).toBe(2);
+  });
+
+  it("dismissal does NOT hide a NEW occurrence (state ended → fresh state_since > dismissedAt)", () => {
+    const r = applySettingsAttentionState({
+      items: baseItems,
+      // re-freeze at T2, dismissal of the previous occurrence was at T1
+      stateSince: { "frozen:cs1": T2, missing_llm: T0, "update:2222222": T0 },
+      dismissed: { "frozen:cs1": T1 },
+      seenAt: null, now: T2,
+    });
+    expect(r.items.map((i) => i.id)).toContain("frozen:cs1");
+    expect(r.count).toBe(3);
+  });
+
+  it("severity is the worst among counted items only (dismissed/seen don't tint the badge)", () => {
+    const r = applySettingsAttentionState({
+      items: baseItems,
+      stateSince: { "frozen:cs1": T0, missing_llm: T0, "update:2222222": T2 },
+      dismissed: { "frozen:cs1": T1, missing_llm: T1 },
+      seenAt: null, now: T2,
+    });
+    expect(r.count).toBe(1);
+    expect(r.severity).toBe("info");
   });
 });

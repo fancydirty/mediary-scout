@@ -14,7 +14,7 @@ export function SettingsAttentionBadge({
 }) {
   const [visible, setVisible] = useState(false);
   const [count, setCount] = useState(0);
-  const [severity, setSeverity] = useState<"warning" | "blocker" | null>(null);
+  const [severity, setSeverity] = useState<"info" | "warning" | "blocker" | null>(null);
   // Bumped when hidden so late poll responses from a previous visible window are ignored.
   const epochRef = useRef(0);
 
@@ -56,11 +56,15 @@ export function SettingsAttentionBadge({
         if (!res.ok) return;
         const data = (await res.json()) as {
           count?: number;
-          severity?: "warning" | "blocker" | null;
+          severity?: "info" | "warning" | "blocker" | null;
         };
         if (!alive || epochRef.current !== epochAtStart) return;
         setCount(typeof data.count === "number" ? data.count : 0);
-        setSeverity(data.severity === "blocker" || data.severity === "warning" ? data.severity : null);
+        setSeverity(
+          data.severity === "blocker" || data.severity === "warning" || data.severity === "info"
+            ? data.severity
+            : null,
+        );
       } catch {
         // keep last (including abort/timeout)
       } finally {
