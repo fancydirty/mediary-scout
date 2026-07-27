@@ -226,7 +226,10 @@ export function applySettingsAttentionState(input: {
     }
   }
   for (const key of Object.keys(input.stateSince)) {
-    if (!(key in nextStateSince)) stateSinceChanged = true;
+    // 必须查自有属性：`in` 会顺着原型链找到 toString/valueOf 这类键
+    // （它们能被 parseAttentionTimeMap 正常保留），把已删除的条目误判成
+    // 「还在」，于是清理永远不会被落盘。
+    if (!Object.prototype.hasOwnProperty.call(nextStateSince, key)) stateSinceChanged = true;
   }
 
   const visible: SettingsAttentionItem[] = [];

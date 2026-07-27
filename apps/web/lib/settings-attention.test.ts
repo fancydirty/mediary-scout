@@ -279,6 +279,19 @@ describe("applySettingsAttentionState", () => {
     expect(r.stateSinceChanged).toBe(true);
   });
 
+  it("detects a dropped stateSince entry even when its key exists on Object.prototype", () => {
+    // toString/valueOf 这类键能被 parseAttentionTimeMap 正常保留（不同于
+    // __proto__），而 `key in obj` 会在原型链上找到它们、误判「还在」，
+    // 于是 stateSinceChanged 保持 false，这条陈旧记录永远不会被清理落盘。
+    const r = applySettingsAttentionState({
+      items: baseItems.filter((i) => i.id === "missing_llm"),
+      stateSince: { missing_llm: T0, toString: T0, valueOf: T0 },
+      dismissed: {}, seenAt: null, now: T1,
+    });
+    expect(r.stateSinceChanged).toBe(true);
+    expect(r.nextStateSince).toEqual({ missing_llm: T0 });
+  });
+
   it("badge count = visible items created AFTER seen_at; seen items stay in the inbox", () => {
     const r = applySettingsAttentionState({
       items: baseItems,
