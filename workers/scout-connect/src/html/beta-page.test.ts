@@ -108,3 +108,68 @@ describe("betaPage", () => {
     expect(page).toContain('textContent=String(d.position)');
   });
 });
+
+describe("betaPage Turnstile (sitekey configured)", () => {
+  // Public value by design (it ships in the page and in wrangler.jsonc vars) —
+  // this is the real production sitekey, used here as the fixture.
+  const SITEKEY = "0x4AAAAAAD-wkGraJigl3YK0";
+  const withKey = betaPage(SITEKEY);
+
+  it("loads the Turnstile api.js (deferred) and renders the widget inside the signup form", () => {
+    expect(withKey).toContain(
+      '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" defer></script>',
+    );
+    expect(withKey).toContain(
+      `<div class="cf-turnstile" data-sitekey="${SITEKEY}" data-theme="dark"></div>`,
+    );
+    // The widget must sit INSIDE <form id="signup"> so the token hidden input
+    // is scoped to the signup submit.
+    const formStart = withKey.indexOf('<form id="signup"');
+    const formEnd = withKey.indexOf("</form>", formStart);
+    const widgetAt = withKey.indexOf('class="cf-turnstile"');
+    expect(formStart).toBeGreaterThanOrEqual(0);
+    expect(widgetAt).toBeGreaterThan(formStart);
+    expect(widgetAt).toBeLessThan(formEnd);
+  });
+
+  it("submit JS reads the token and posts it as turnstile_token", () => {
+    expect(withKey).toContain('document.querySelector("[name=cf-turnstile-response]")');
+    expect(withKey).toContain("turnstile_token");
+  });
+
+  it("blocks the submit client-side with 人机验证未完成，请稍候 while the token is empty", () => {
+    expect(withKey).toContain("人机验证未完成，请稍候");
+  });
+
+  it("still renders no template holes with the sitekey interpolated", () => {
+    expect(withKey).not.toContain("${");
+    expect(withKey).not.toContain(">undefined<");
+    expect(withKey).not.toContain("innerHTML");
+  });
+});
+
+describe("betaPage Turnstile (sitekey absent)", () => {
+  it("renders NO turnstile markup at all without a sitekey", () => {
+    for (const p of [betaPage(), betaPage(undefined)]) {
+      expect(p).not.toContain("cf-turnstile");
+      expect(p).not.toContain("challenges.cloudflare.com");
+      expect(p).not.toContain("turnstile_token");
+      expect(p).not.toContain("人机验证");
+    }
+  });
+
+  it("empty/whitespace sitekey behaves as absent", () => {
+    for (const p of [betaPage(""), betaPage("   ")]) {
+      expect(p).not.toContain("cf-turnstile");
+      expect(p).not.toContain("challenges.cloudflare.com");
+    }
+  });
+
+  it("a sitekey outside the real charset is refused (no markup injection via env)", () => {
+    // The sitekey is interpolated into an HTML attribute; a malformed env
+    // value must degrade to "no widget", never break out of the attribute.
+    const p = betaPage('x"><script>alert(1)</script>');
+    expect(p).not.toContain("cf-turnstile");
+    expect(p).not.toContain("alert(1)");
+  });
+});

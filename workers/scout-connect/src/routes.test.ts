@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { handleRequest, MAX_JSON_BODY_BYTES, type RouteDeps } from "./routes.js";
 import { createMemoryConnectDb, type ConnectDb } from "./db.js";
 import type { CfApi } from "./cf-api.js";
@@ -404,6 +404,28 @@ describe("handleRequest", () => {
     const csp = res.headers.get("content-security-policy") ?? "";
     expect(csp).toContain("connect-src 'self'");
     expect(csp).toContain("default-src 'none'");
+  });
+
+  it("GET pages carry a CSP that allows the Cloudflare Turnstile assets", async () => {
+    // The beta signup page's bot gate (Turnstile) loads api.js, renders an
+    // iframe, and beacons to challenges.cloudflare.com. htmlPage()'s CSP is
+    // shared by home/invite/admin/beta, so the allowlist lives there for all.
+    const { deps } = setup();
+    const res = await handleRequest(new Request(`${BASE}/beta`), deps);
+    const csp = res.headers.get("content-security-policy") ?? "";
+    // New Turnstile sources (exact directive bodies — a dropped source here
+    // silently breaks the widget in production while tests stay green):
+    expect(csp).toContain(
+      "script-src 'unsafe-inline' 'self' https://challenges.cloudflare.com",
+    );
+    expect(csp).toContain("frame-src https://challenges.cloudflare.com");
+    expect(csp).toContain("connect-src 'self' https://challenges.cloudflare.com");
+    // Pre-existing directives unchanged:
+    expect(csp).toContain("default-src 'none'");
+    expect(csp).toContain("style-src 'unsafe-inline'");
+    expect(csp).toContain("base-uri 'none'");
+    expect(csp).toContain("form-action 'self'");
+    expect(csp).toContain("frame-ancestors 'none'");
   });
 
   it("GET /i/:code with pending invite → 作者尚未开通, no reveal button", async () => {
@@ -1655,5 +1677,196 @@ describe("request body size cap", () => {
     expect((await handleRequest(chunkedRequest(`${BASE}/waitlist`, overCap), deps)).status).toBe(
       413,
     );
+  });
+});
+
+// Cloudflare Turnstile gate on the public signup funnel (bot protection).
+// Active ONLY when BOTH turnstileSitekey (public var) and turnstileSecret
+// (wrangler secret) are configured in deps — either missing → the route
+// behaves exactly as before and siteverify is never called.
+describe("POST /waitlist Turnstile gate", () => {
+  const TS_SITEKEY = "0x4AAAAAAD-wkGraJigl3YK0-gate-fixture";
+  const TS_SECRET = "turnstile-secret-gate-fixture"; // fixture only — must never leak into responses/logs
+
+  function tsDeps(deps: RouteDeps): RouteDeps {
+    return { ...deps, turnstileSitekey: TS_SITEKEY, turnstileSecret: TS_SECRET };
+  }
+
+  function waitlistPost(body: unknown, headers: Record<string, string> = {}): Request {
+    return new Request(`${BASE}/waitlist`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify(body),
+    });
+  }
+
+  /** Stubs global fetch to explode — the gate must never reach siteverify. */
+  function forbidFetch() {
+    const spy = vi.fn(() => {
+      throw new Error("fetch must not be called in this scenario");
+    });
+    vi.stubGlobal("fetch", spy);
+    return spy;
+  }
+
+  function siteverifyJson(payload: unknown): Response {
+    return new Response(JSON.stringify(payload), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("configured + missing/empty/non-string token → 400 turnstile required, siteverify never called, nothing stored", async () => {
+    const { db, deps } = setup();
+    const fetchSpy = forbidFetch();
+    for (const body of [
+      { email: "a@example.com" },
+      { email: "a@example.com", turnstile_token: "" },
+      { email: "a@example.com", turnstile_token: "   " },
+      { email: "a@example.com", turnstile_token: 42 },
+    ]) {
+      const res = await handleRequest(waitlistPost(body), tsDeps(deps));
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "turnstile required" });
+    }
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(await db.countWaitlist(1)).toBe(0);
+  });
+
+  it("configured + siteverify success:false → 403 turnstile failed, nothing stored", async () => {
+    const { db, deps } = setup();
+    vi.stubGlobal("fetch", async () =>
+      siteverifyJson({ success: false, "error-codes": ["invalid-input-response"] }),
+    );
+    const res = await handleRequest(
+      waitlistPost({ email: "bot@example.com", turnstile_token: "tok-bad" }),
+      tsDeps(deps),
+    );
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "turnstile failed" });
+    expect(await db.countWaitlist(1)).toBe(0);
+  });
+
+  it("configured + siteverify success:true → 201; request is form-encoded with secret+token+remoteip and a timeout signal", async () => {
+    const { deps } = setup();
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
+      calls.push({
+        url:
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url,
+        init,
+      });
+      return siteverifyJson({ success: true });
+    });
+    const res = await handleRequest(
+      waitlistPost(
+        { email: "human@example.com", turnstile_token: "tok-ok" },
+        { "cf-connecting-ip": "203.0.113.9" },
+      ),
+      tsDeps(deps),
+    );
+    expect(res.status).toBe(201);
+    expect(calls).toHaveLength(1);
+    const call = calls[0]!;
+    expect(call.url).toBe("https://challenges.cloudflare.com/siteverify");
+    expect(call.init?.method).toBe("POST");
+    expect(call.init?.headers).toMatchObject({
+      "content-type": "application/x-www-form-urlencoded",
+    });
+    const form = new URLSearchParams(call.init?.body as string);
+    expect(form.get("secret")).toBe(TS_SECRET);
+    expect(form.get("response")).toBe("tok-ok");
+    expect(form.get("remoteip")).toBe("203.0.113.9");
+    // Project rule: every external HTTP call is bounded by a timeout signal.
+    expect(call.init?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("configured + siteverify network/timeout error → 403 fail closed, and the secret/token leak into neither response nor logs", async () => {
+    const { db, deps } = setup();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubGlobal("fetch", async () => {
+      throw new DOMException("The operation timed out", "TimeoutError");
+    });
+    const res = await handleRequest(
+      waitlistPost({ email: "human@example.com", turnstile_token: "tok-leakcheck" }),
+      tsDeps(deps),
+    );
+    expect(res.status).toBe(403);
+    const bodyText = JSON.stringify(await res.json());
+    expect(bodyText).not.toContain(TS_SECRET);
+    expect(bodyText).not.toContain("tok-leakcheck");
+    expect(await db.countWaitlist(1)).toBe(0);
+    // Fail-closed was logged — but the log carries neither the secret nor the token.
+    expect(errSpy).toHaveBeenCalled();
+    const logged = errSpy.mock.calls.map((args) => args.map(String).join(" ")).join("\n");
+    expect(logged).not.toContain(TS_SECRET);
+    expect(logged).not.toContain("tok-leakcheck");
+  });
+
+  it("an invalid email gets its plain 400 WITHOUT consuming the single-use token (shape validated before the gate)", async () => {
+    // siteverify tokens are single-use: burning one on a request that was
+    // doomed on email shape would 403 the user's corrected retry. The gate
+    // therefore runs after the cheap shape checks, before any db work.
+    const { deps } = setup();
+    const fetchSpy = forbidFetch();
+    const res = await handleRequest(waitlistPost({ email: "not-an-email" }), tsDeps(deps));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "invalid email" });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("unconfigured (no turnstile deps) → unchanged behavior, fetch NEVER called", async () => {
+    const { db, deps } = setup();
+    const fetchSpy = forbidFetch();
+    const res = await handleRequest(waitlistPost({ email: "free@example.com" }), deps);
+    expect(res.status).toBe(201);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(await db.countWaitlist(1)).toBe(1);
+  });
+
+  it("only one half configured → gate stays OFF (both sitekey and secret are required)", async () => {
+    const { db, deps } = setup();
+    const fetchSpy = forbidFetch();
+    // Sitekey without secret: the page mints tokens nobody can verify; secret
+    // without sitekey: no widget exists to mint tokens. Enforcing in either
+    // misconfiguration would 400 every signup — the gate must stay off.
+    const sitekeyOnly = await handleRequest(waitlistPost({ email: "k@example.com" }), {
+      ...deps,
+      turnstileSitekey: TS_SITEKEY,
+    });
+    expect(sitekeyOnly.status).toBe(201);
+    const secretOnly = await handleRequest(waitlistPost({ email: "s@example.com" }), {
+      ...deps,
+      turnstileSecret: TS_SECRET,
+    });
+    expect(secretOnly.status).toBe(201);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(await db.countWaitlist(1)).toBe(2);
+  });
+
+  it("GET /beta renders the widget only when BOTH halves are configured", async () => {
+    const { deps } = setup();
+    const both = await handleRequest(new Request(`${BASE}/beta`), tsDeps(deps));
+    expect(await both.text()).toContain(`data-sitekey="${TS_SITEKEY}"`);
+
+    const sitekeyOnly = await handleRequest(new Request(`${BASE}/beta`), {
+      ...deps,
+      turnstileSitekey: TS_SITEKEY,
+    });
+    expect(await sitekeyOnly.text()).not.toContain("cf-turnstile");
+
+    const secretOnly = await handleRequest(new Request(`${BASE}/beta`), {
+      ...deps,
+      turnstileSecret: TS_SECRET,
+    });
+    expect(await secretOnly.text()).not.toContain("cf-turnstile");
+
+    const neither = await handleRequest(new Request(`${BASE}/beta`), deps);
+    expect(await neither.text()).not.toContain("cf-turnstile");
   });
 });
