@@ -32,7 +32,7 @@ function shell(title: string, body: string): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(title)} · Mediary Scout Connect</title>
+<title>${escapeHtml(title)} · Mediary Connect</title>
 <style>
 :root{--green:#1ED760;--green-dark:#0B3B1E;--ink:#1a2b22;--muted:#5b6b62;--line:#e3e9e5;--card:#fff;--bg:#f4f7f5}
 *{box-sizing:border-box}

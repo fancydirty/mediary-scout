@@ -33,7 +33,7 @@ export function buildAgentPrompt(input: {
   if (!/^[a-zA-Z0-9.-]+$/.test(input.hostname)) {
     throw new Error("hostname contains characters that cannot be embedded");
   }
-  return `你是在帮用户配置 Mediary Scout 的「Scout Connect」远程访问。
+  return `你是在帮用户配置 Mediary Scout 的「Mediary Connect」远程访问。
 
 目标:让用户的自托管实例经 Cloudflare Tunnel 发布到:
   https://${input.hostname}
@@ -285,7 +285,7 @@ export function buildAgentPromptOrManual(input: {
   if (canEmbedTunnelToken(input.tunnelToken)) {
     return buildAgentPrompt(input);
   }
-  return `你是在帮用户配置 Mediary Scout 的「Scout Connect」远程访问。
+  return `你是在帮用户配置 Mediary Scout 的「Mediary Connect」远程访问。
 
 ⚠️ 这个 tunnel token 的格式不常见(含换行或保留标记),自动脚本无法安全生成。
 请让用户联系支持重新签发 token,不要尝试手工拼 shell 命令写入。

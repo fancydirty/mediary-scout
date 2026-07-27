@@ -28,7 +28,7 @@ describe("buildAgentPrompt", () => {
 
   it("contains key fixed phrases", () => {
     const out = buildAgentPrompt(INPUT);
-    expect(out).toContain("Scout Connect");
+    expect(out).toContain("Mediary Connect");
     expect(out).toContain("docker compose --profile tunnel up -d");
     expect(out).toContain("TUNNEL_TRANSPORT_PROTOCOL=http2");
     expect(out).toContain("Registered tunnel connection");

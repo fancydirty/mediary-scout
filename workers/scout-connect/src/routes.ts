@@ -176,7 +176,7 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
   if (method === "GET" && path === "/") {
     // The beta subdomain's root IS the signup page: "beta.mediaryconnect.app"
     // is the canonical marketing URL, so "beta.…/beta" would stutter. Apex
-    // keeps the Scout Connect home page; the check is host-exact so no other
+    // keeps the Mediary Connect home page; the check is host-exact so no other
     // subdomain (or the apex) accidentally gets the signup page.
     // Normalize BOTH sides: url.hostname is already lowercase, but
     // deps.rootDomain comes from env (CONNECT_ROOT_DOMAIN) untrimmed — a

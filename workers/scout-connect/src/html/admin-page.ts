@@ -7,7 +7,7 @@ export function adminPage(): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Scout Connect Admin</title>
+<title>Mediary Connect Admin</title>
 <style>
 body{font-family:system-ui,sans-serif;max-width:1000px;margin:2rem auto;padding:0 1rem;color:#222;font-size:14px}
 input,button{font:inherit;padding:.35rem .5rem}
@@ -21,7 +21,7 @@ h1{font-size:1.3rem}h2{font-size:1.05rem;margin-top:2rem}
 </style>
 </head>
 <body>
-<h1>Scout Connect Admin</h1>
+<h1>Mediary Connect Admin</h1>
 <p>
 <label>Admin Token <input id="token" type="password" size="42" autocomplete="off"></label>
 <button id="save-token">保存 Token</button>

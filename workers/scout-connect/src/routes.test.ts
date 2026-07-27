@@ -128,23 +128,23 @@ async function seedProvisioned(deps: RouteDeps): Promise<InviteCreated & Provisi
 }
 
 describe("handleRequest", () => {
-  it("GET / → 200 HTML containing Scout Connect", async () => {
+  it("GET / → 200 HTML containing Mediary Connect", async () => {
     const { deps } = setup();
     const res = await handleRequest(new Request(`${BASE}/`), deps);
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/html");
-    expect(await res.text()).toContain("Scout Connect");
+    expect(await res.text()).toContain("Mediary Connect");
   });
 
   it("GET / on the beta subdomain serves the signup page (canonical URL is the bare host)", async () => {
     const { deps } = setup();
     // beta.mediaryconnect.app 就是规范地址——"beta.…/beta" 是结巴。
-    // 该子域名的根路径必须直接给报名表单，而不是 Scout Connect 说明页。
+    // 该子域名的根路径必须直接给报名表单，而不是 Mediary Connect 说明页。
     const res = await handleRequest(new Request("https://beta.mediaryconnect.app/"), deps);
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("申请内测席位");
-    expect(html).not.toContain("Scout Connect 说明");
+    expect(html).not.toContain("Mediary Connect 说明");
   });
 
   it("beta root routing survives an un-normalized rootDomain env value", async () => {
@@ -161,7 +161,7 @@ describe("handleRequest", () => {
     const { deps } = setup();
     const res = await handleRequest(new Request(`${BASE}/`), deps);
     const html = await res.text();
-    expect(html).toContain("Scout Connect");
+    expect(html).toContain("Mediary Connect");
     expect(html).not.toContain("申请内测席位");
   });
 
@@ -394,7 +394,7 @@ describe("handleRequest", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8");
     const body = await res.text();
-    expect(body).toContain("Scout Connect 远程访问 · 内测");
+    expect(body).toContain("Mediary Connect 远程访问 · 内测");
     expect(body).toContain('<form id="signup"');
     // The page's inline script POSTs fetch("/waitlist") same-origin. Under the
     // old CSP (default-src 'none', no connect-src) a real browser REFUSES that
