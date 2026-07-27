@@ -157,6 +157,9 @@ export async function dismissSettingsAttentionItem(
 ): Promise<void> {
   // 存储层自己把关，不指望调用方：路由现在会校验，但这个导出函数很容易被
   // 别处直接调用，届时任意键就会写进 account_settings。
+  // 未认证哨兵绝不增行——与上面 markSettingsAttentionSeen 同一条不变式，
+  // 这里此前漏了。
+  if (accountId === UNAUTHENTICATED_ACCOUNT_ID) return;
   if (!isAttentionItemId(id)) return;
   const repository = getWorkflowRepository();
   const dismissed = parseAttentionTimeMap(

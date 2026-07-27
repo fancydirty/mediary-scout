@@ -149,6 +149,17 @@ describe("loadSettingsAttentionSummary — per-account state", () => {
     expect(owner.items.some((i) => i.kind === "update_available")).toBe(true);
   });
 
+  it("never writes for the unauthenticated sentinel (same invariant as markSettingsAttentionSeen)", async () => {
+    const { accountSettings, repository } = makeRepository([]);
+    await dismissSettingsAttentionItem(
+      "acct_unauthenticated",
+      "frozen:cs1",
+      "2026-07-27T01:00:00.000Z",
+    );
+    expect(repository.setAccountSetting).not.toHaveBeenCalled();
+    expect(accountSettings.get("acct_unauthenticatedattention_dismissed")).toBeUndefined();
+  });
+
   it("rejects a non-allowlisted id at the storage layer (never writes arbitrary keys)", async () => {
     const { accountSettings, repository } = makeRepository([]);
     await dismissSettingsAttentionItem("acct_default", "__proto__", "2026-07-27T01:00:00.000Z");
