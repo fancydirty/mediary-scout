@@ -120,8 +120,9 @@ export async function resolveRemoteAccessState(opts: {
  * 内测报名站的对外地址（唯一来源）。
  *
  * 指向 worker 承载的报名页——与 /waitlist API 同部署，只换了更好记的域名。
- * 根路径即是表单（worker 对 beta 子域名按 Host 分流到 /beta 处理器），
- * 不要再加 /beta 后缀——"beta.…/beta" 是结巴。
+ * 根路径即是表单（worker 对 beta 子域名的 GET / 按 Host 直接 serving 同一
+ * 页面函数——不是内部转发到 /beta 路由）。不要再加 /beta 后缀——
+ * "beta.…/beta" 是结巴。
  * 设置页「远程访问」tab 的跳转链接从这里取，不要在组件里另写一份。
  * 注意：没有「链接可用性」的自动探测。如果 beta 站未来下线或迁移，
  * 需要的动作是改代码——把 tab 的 not_provisioned 分支改回 return null
