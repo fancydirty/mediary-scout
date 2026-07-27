@@ -538,7 +538,14 @@ function turnstileSitekeyIfConfigured(deps: RouteDeps): string | undefined {
   // 与页面同一个归一化（trim + 字符集校验）：畸形 sitekey 会让页面不渲染
   // widget，此时门也必须关——否则用户没有任何途径拿到 token，报名全 400。
   const key = normalizeTurnstileSitekey(deps.turnstileSitekey);
-  return key && deps.turnstileSecret ? key : undefined;
+  return key && turnstileSecretIfConfigured(deps) ? key : undefined;
+}
+
+/** 归一化后的 secret：`wrangler secret put` 从文件/echo 灌进来常带尾换行，
+ *  原样用会让门「开着但永远验不过」（报名 100% 静默死）。纯空白 = 未配置。 */
+function turnstileSecretIfConfigured(deps: RouteDeps): string | undefined {
+  const secret = deps.turnstileSecret?.trim();
+  return secret ? secret : undefined;
 }
 
 /** Turnstile 门是否启用——与 turnstileSitekeyIfConfigured 同一条「成对」规则。 */
@@ -653,7 +660,8 @@ async function addToWaitlist(request: Request, deps: RouteDeps): Promise<Respons
     }
     const remoteIp = request.headers.get("cf-connecting-ip")?.trim() || null;
     // turnstileGateEnabled 只表达规则，不给 TS 收窄——secret 在此单独取值收窄。
-    const secret = deps.turnstileSecret;
+    // 必须走同一个归一化，否则送去 siteverify 的还是带空白的原值。
+    const secret = turnstileSecretIfConfigured(deps);
     if (!secret) throw new HttpError(500, "internal");
     const ok = await verifyTurnstile(secret, token, remoteIp);
     if (!ok) {

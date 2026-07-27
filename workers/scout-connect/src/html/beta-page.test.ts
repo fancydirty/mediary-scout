@@ -110,9 +110,10 @@ describe("betaPage", () => {
 });
 
 describe("betaPage Turnstile (sitekey configured)", () => {
-  // Public value by design (it ships in the page and in wrangler.jsonc vars) —
-  // this is the real production sitekey, used here as the fixture.
-  const SITEKEY = "0x4AAAAAAD-wkGraJigl3YK0";
+  // Sitekey 是公开值（随页面和 wrangler.jsonc vars 一起发布），但这里刻意
+  // 用「形状合法的假 key」而不是生产实际值：测试断言的是插值行为，不该在
+  // widget 轮换时被迫改测试。
+  const SITEKEY = "0xAAAAAAAAfixture-key01";
   const withKey = betaPage(SITEKEY);
 
   it("loads the Turnstile api.js (deferred) and renders the widget inside the signup form", () => {

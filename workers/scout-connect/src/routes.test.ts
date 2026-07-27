@@ -417,8 +417,14 @@ describe("handleRequest", () => {
     // silently breaks the widget in production while tests stay green):
     expect(csp).toContain("script-src 'unsafe-inline' https://challenges.cloudflare.com");
     // 最小权限：没有任何同源脚本资源（每个 <script> 要么内联、要么是上面的
-    // Turnstile CDN），所以 script-src 不该出现 'self'。
-    expect(csp).not.toContain("script-src 'unsafe-inline' 'self'");
+    // Turnstile CDN），所以 script-src 指令里不该出现 'self' —— 按指令解析，
+    // 不靠子串匹配（子串写法漏掉 "…https://… 'self'" 这种换序）。
+    const scriptSrc = (csp.split(";").find((d) => d.trim().startsWith("script-src ")) ?? "")
+      .trim()
+      .split(/\s+/)
+      .slice(1);
+    expect(scriptSrc).not.toContain("'self'");
+    expect(scriptSrc).toEqual(["'unsafe-inline'", "https://challenges.cloudflare.com"]);
     expect(csp).toContain("frame-src https://challenges.cloudflare.com");
     expect(csp).toContain("connect-src 'self' https://challenges.cloudflare.com");
     // Pre-existing directives unchanged:
@@ -1905,6 +1911,47 @@ describe("POST /waitlist Turnstile gate", () => {
     const logged = errSpy.mock.calls.map((c) => c.join(" ")).join("\n");
     expect(logged).toMatch(/TimeoutError/);
     expect(logged).not.toMatch(/unknown error/);
+  });
+
+  // wrangler secret put 从文件/echo 灌进来时极易带上尾换行。带空白的 secret
+  // 会让门「开着但永远验不过」——报名漏斗 100% 静默死，且用户侧只看到 403。
+  it("secret with surrounding whitespace: gate stays on and siteverify receives the TRIMMED secret", async () => {
+    const { db, deps } = setup();
+    let sentSecret: string | null = null;
+    vi.stubGlobal("fetch", async (_input: unknown, init?: RequestInit) => {
+      sentSecret = new URLSearchParams(String(init?.body ?? "")).get("secret");
+      return siteverifyJson({ success: true });
+    });
+    const res = await handleRequest(
+      waitlistPost({ email: "human@example.com", turnstile_token: "tok-ws" }),
+      { ...deps, turnstileSitekey: TS_SITEKEY, turnstileSecret: `  ${TS_SECRET}\n` },
+    );
+    expect(res.status).toBe(201);
+    expect(sentSecret).toBe(TS_SECRET);
+    expect(await db.countWaitlist(1)).toBe(1);
+  });
+
+  it("whitespace-only secret counts as UNCONFIGURED (gate off), never as a usable secret", async () => {
+    const { db, deps } = setup();
+    const fetchSpy = forbidFetch();
+    const res = await handleRequest(waitlistPost({ email: "free@example.com" }), {
+      ...deps,
+      turnstileSitekey: TS_SITEKEY,
+      turnstileSecret: "   \n",
+    });
+    expect(res.status).toBe(201); // 门关着=按未配置处理，报名照常
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(await db.countWaitlist(1)).toBe(1);
+  });
+
+  it("whitespace-only secret also keeps the widget OFF the page (page and gate stay in lockstep)", async () => {
+    const { deps } = setup();
+    const page = await handleRequest(new Request(`${BASE}/beta`), {
+      ...deps,
+      turnstileSitekey: TS_SITEKEY,
+      turnstileSecret: "   ",
+    });
+    expect(await page.text()).not.toContain("cf-turnstile");
   });
 
   it("unconfigured (no turnstile deps) → unchanged behavior, fetch NEVER called", async () => {
