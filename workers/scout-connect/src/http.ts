@@ -23,8 +23,10 @@ export function htmlPage(body: string, status = 200): Response {
     status,
     headers: {
       "content-type": "text/html; charset=utf-8",
-      // Pages are fully self-contained (inline style/script only), so a strict
-      // CSP is free defense-in-depth for a page that carries a one-time token.
+      // Pages carry inline style/script only — no first-party asset requests —
+      // so a strict CSP is free defense-in-depth for a page that carries a
+      // one-time token. The ONE third-party source is conditional: the beta
+      // page's Turnstile widget (allowlisted below).
       // connect-src 'self' is load-bearing, not decorative: every page's
       // inline script POSTs same-origin (invite reveal, admin console, beta
       // signup), and connect-src falls back to default-src when absent —

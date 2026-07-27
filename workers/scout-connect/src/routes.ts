@@ -514,14 +514,20 @@ function isUniqueViolation(e: unknown): boolean {
 /**
  * POST /waitlist — public, unauthenticated signup.
  *
- * Request: `{ email: string }` (≤ EMAIL_MAX_LENGTH bytes; trimmed+lowercased).
+ * Request: `{ email: string, turnstile_token?: string }`
+ * (email ≤ EMAIL_MAX_LENGTH bytes; trimmed+lowercased. turnstile_token is
+ * REQUIRED when the Turnstile gate is configured — see turnstileGateEnabled —
+ * and ignored entirely when it is not.)
  *
  * Responses — `position` is present on EVERY success path, new or repeat:
  *   201 `{ id: string, position: number }`
  *   200 `{ already_exists: true, id: string, position: number }`
- *   400 `{ error: "email required" | "invalid email" }`
- *       (plus "invalid json" / "invalid body" from the
- *        shared body reader)
+ *   400 `{ error: "email required" | "invalid email" | "turnstile required" }`
+ *       ("turnstile required" only when the gate is on and the token is
+ *        missing/blank/non-string; plus "invalid json" / "invalid body"
+ *        from the shared body reader)
+ *   403 `{ error: "turnstile failed" }` — gate on and siteverify did not
+ *       return success (fail CLOSED: network/timeout/non-2xx count as failure)
  *   409 `{ error: "本批内测席位已满" }` — founding batch at WAITLIST_SEAT_CAP;
  *       NEW emails only, repeats still get their 200 below
  *   413 `{ error: "body too large" }`
