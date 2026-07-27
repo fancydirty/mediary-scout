@@ -9,6 +9,8 @@ export function homePage(): string {
 body{font-family:system-ui,sans-serif;max-width:640px;margin:4rem auto;padding:0 1rem;color:#222;line-height:1.7}
 h1{font-size:1.6rem}
 a{color:#06c}
+.cta{display:inline-block;margin:1.5rem 0 .5rem;padding:.7rem 1.4rem;border-radius:999px;background:#1ed760;color:#06210f;font-weight:700;text-decoration:none}
+.cta-note{margin:0;font-size:.9rem;color:#666}
 </style>
 </head>
 <body>
@@ -16,6 +18,8 @@ a{color:#06c}
 <h1>Scout Connect</h1>
 <p lang="zh">Scout Connect 是自托管 Mediary Scout 的远程访问之门:通过 Cloudflare Tunnel 把你自己的实例安全地发布到一个专属域名,入口由应用自身的访问密码把守(首次打开时设置)。你的媒体内容与各类凭据始终留在你自己的机器上,这里只负责开门。</p>
 <p lang="en">Scout Connect is the remote access door for self-hosted Mediary Scout: it publishes your own instance to a dedicated hostname over a Cloudflare Tunnel, gated by the app's own access password (set on first open). Your content and credentials always stay on your own machines — this service only opens the door.</p>
+<p><a class="cta" href="https://beta.mediaryconnect.app">申请内测席位 →</a></p>
+<p class="cta-note">内测期免费，创始批 100 席。</p>
 <p><a href="https://github.com/fancydirty/mediary-scout">github.com/fancydirty/mediary-scout</a></p>
 </main>
 </body>

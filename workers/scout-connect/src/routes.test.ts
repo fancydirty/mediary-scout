@@ -162,7 +162,20 @@ describe("handleRequest", () => {
     const res = await handleRequest(new Request(`${BASE}/`), deps);
     const html = await res.text();
     expect(html).toContain("Scout Connect");
-    expect(html).not.toContain("申请内测席位");
+    // 断言的是「apex 不发报名表单本体」，而不是某句文案——apex 现在有一个
+    // 指向 beta 站的 CTA，文案里出现"申请内测席位"是对的。
+    expect(html).not.toContain('type="email"');
+    expect(html).not.toContain("cf-turnstile");
+  });
+
+  it("apex home page links to the beta signup site (it must not be a dead end)", async () => {
+    // apex 曾经只有介绍文字 + 一个 GitHub 链接：真人落在这里无从报名，
+    // 而主站的 CTA 一度就指向这里 —— 白漏掉的注册流量。说明页可以留，
+    // 但必须给出口。
+    const { deps } = setup();
+    const html = await handleRequest(new Request(`${BASE}/`), deps).then((r) => r.text());
+    expect(html).toContain("https://beta.mediaryconnect.app");
+    expect(html).toMatch(/申请内测|内测席位|报名/);
   });
 
   it("GET /beta keeps working on both hosts (no regression)", async () => {
