@@ -4,12 +4,14 @@ import { buildSettingsAttentionItems, summarizeSettingsAttention } from "./setti
 const brandLabel = (provider: string) =>
   ({ pan115: "115网盘", quark: "夸克网盘", guangya: "光鸭云盘" }[provider] ?? provider);
 
+const ORIGIN = "https://mediary.example.com";
+
 describe("buildSettingsAttentionItems", () => {
   it("returns empty in demo mode even with problems", () => {
     const items = buildSettingsAttentionItems({
       demo: true,
       drives: [{ id: "cs1", provider: "quark", label: null, status: "frozen" }],
-      brandLabel,
+      brandLabel, origin: ORIGIN,
       llmConfigured: false,
       update: {
         kind: "container",
@@ -28,7 +30,7 @@ describe("buildSettingsAttentionItems", () => {
         { id: "cs_q", provider: "quark", label: null, status: "frozen" },
         { id: "cs_a", provider: "pan115", label: "家里115", status: "active" },
       ],
-      brandLabel,
+      brandLabel, origin: ORIGIN,
       llmConfigured: true,
       update: null,
     });
@@ -48,7 +50,7 @@ describe("buildSettingsAttentionItems", () => {
     const items = buildSettingsAttentionItems({
       demo: false,
       drives: [],
-      brandLabel,
+      brandLabel, origin: ORIGIN,
       llmConfigured: false,
       update: null,
     });
@@ -60,7 +62,7 @@ describe("buildSettingsAttentionItems", () => {
     const container = buildSettingsAttentionItems({
       demo: false,
       drives: [],
-      brandLabel,
+      brandLabel, origin: ORIGIN,
       llmConfigured: true,
       update: {
         kind: "container",
@@ -79,7 +81,7 @@ describe("buildSettingsAttentionItems", () => {
       const items = buildSettingsAttentionItems({
         demo: false,
         drives: [],
-        brandLabel,
+        brandLabel, origin: ORIGIN,
         llmConfigured: true,
         update: { kind, behind: true, currentShort: "a", latestShort: "b" },
       });
@@ -91,7 +93,7 @@ describe("buildSettingsAttentionItems", () => {
     const items = buildSettingsAttentionItems({
       demo: false,
       drives: [{ id: "cs1", provider: "quark", label: null, status: "frozen" }],
-      brandLabel,
+      brandLabel, origin: ORIGIN,
       llmConfigured: true,
       update: {
         kind: "container",
@@ -110,7 +112,7 @@ describe("buildSettingsAttentionItems", () => {
       buildSettingsAttentionItems({
         demo: false,
         drives: [],
-        brandLabel,
+        brandLabel, origin: ORIGIN,
         llmConfigured: true,
         update: {
           kind: "container",
@@ -127,7 +129,7 @@ describe("buildSettingsAttentionItems", () => {
     const items = buildSettingsAttentionItems({
       demo: false,
       drives: [{ id: "cs_q", provider: "quark", label: null, status: "frozen" }],
-      brandLabel,
+      brandLabel, origin: ORIGIN,
       llmConfigured: false,
       update: null,
       activeStorageId: "cs_other",

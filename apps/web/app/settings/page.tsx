@@ -1,6 +1,7 @@
 import { driveConnectionBadge } from "../../lib/settings-badge";
 import { maskProviderUid } from "../../lib/mask-provider-uid";
 import { connection } from "next/server";
+import { headers } from "next/headers";
 import { Suspense } from "react";
 import { Bell, Bot, Cable, CalendarClock, Clapperboard, Gauge, KeyRound, Languages, Radio, ShieldCheck, Subtitles, TriangleAlert, Users } from "lucide-react";
 import { AppSidebar } from "../../components/app-sidebar";
@@ -24,6 +25,7 @@ import { RemoteAccessSection } from "../../components/settings/remote-access-sec
 import { GitHubNameplate } from "../../components/github-nameplate";
 import { SettingsActionInbox } from "../../components/settings-action-inbox";
 import { loadSettingsAttentionSummary } from "../../lib/settings-attention-server";
+import { resolveRequestOrigin } from "../../lib/request-origin";
 import {
   getAccountConnectedStorages,
   getAccountScopedSettings,
@@ -175,7 +177,8 @@ async function SettingsAttentionSection({
   // Loader resolves account/drives once (including optional ?w deep-link context).
   await connection();
   const { w } = await searchParams;
-  const summary = await loadSettingsAttentionSummary(w ? { w } : undefined);
+  const origin = resolveRequestOrigin(await headers());
+  const summary = await loadSettingsAttentionSummary({ ...(w ? { w } : {}), origin });
   return <SettingsActionInbox items={summary.items} />;
 }
 

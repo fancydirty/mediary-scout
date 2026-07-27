@@ -49,6 +49,8 @@ export function buildSettingsAttentionItems(input: {
   brandLabel: (provider: string) => string;
   llmConfigured: boolean;
   update: Pick<DeploymentUpdateState, "kind" | "behind" | "currentShort" | "latestShort"> | null;
+  /** Public request origin — baked into the update prompt's SSH/health-check steps. */
+  origin: string;
   /** Non-primary workspace id — preserved on deep-links so inbox actions don't reset context. */
   activeStorageId?: string;
   settingsHref?: (tab?: SettingsAttentionTab) => string;
@@ -104,6 +106,7 @@ export function buildSettingsAttentionItems(input: {
       prompt: buildContainerUpgradePrompt({
         currentShort: input.update.currentShort,
         latestShort: input.update.latestShort,
+        origin: input.origin,
       }),
     });
   }

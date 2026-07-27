@@ -73,19 +73,28 @@ export async function getDeploymentUpdateState(input: {
   };
 }
 
-/** Instruction copied to the owner's local coding/deploy agent. Deliberately
- *  asks for the repo's own self-verifying deploy script and health proof instead
- *  of a blind `docker compose up` — this is the safe "almost in-place update". */
+/** Instruction copied to the owner's LOCAL coding agent (the agent runs on the
+ *  user's laptop; Mediary Scout is deployed on a DIFFERENT machine). The prompt
+ *  therefore never assumes repo/container access: the agent must SSH over, and
+ *  every step is either verified or a hard stop — the deploy script's own
+ *  self-check (BUILD_COMMIT == HEAD + DB-backed /api/health) is the gate. The
+ *  page `origin` is threaded in by the caller (request headers) so the agent can
+ *  derive the deploy host and re-probe health from outside. */
 export function buildContainerUpgradePrompt(input: {
   currentShort: string;
   latestShort: string;
+  origin: string;
 }): string {
   return [
-    "请在这台部署机的 Mediary Scout 仓库目录执行一次安全升级：",
-    `1. 确认当前服务 commit 是 ${input.currentShort}，远端 main 目标是 ${input.latestShort}。`,
-    "2. 运行 `git pull --ff-only`，然后执行 `./scripts/deploy.sh`。",
-    "3. deploy.sh 必须证明运行容器 BUILD_COMMIT 等于新 HEAD，并通过 DB-backed /api/health；如果失败，停止并报告日志，不要绕过校验。",
-    "4. 完成后检查 `docker compose ps` 与 `/api/health`，告诉我升级结果。",
+    `你在我的笔记本上，Mediary Scout 部署在另一台机器（我通过 ${input.origin} 访问它）。`,
+    `1. 从 ${input.origin} 推出部署机的 SSH 目标（主机名/IP，端口与用户不确定就问我），先 ssh 上去；连不上就停下问我，绝不猜地址乱试。`,
+    "2. 在部署机上 `docker ps` 找到 Mediary Scout 的 web 容器。",
+    '3. `docker inspect <容器> --format \'{{index .Config.Labels "com.docker.compose.project.working_dir"}}\'` 拿到仓库目录并 cd 进去。',
+    `4. \`git rev-parse --short HEAD\` 必须等于 ${input.currentShort}（当前运行版本）；不等就停下报告，不要继续。`,
+    `5. \`git pull --ff-only\` 更新到 ${input.latestShort}，然后执行 \`./scripts/deploy.sh\`。`,
+    "6. deploy.sh 自检必须全过：运行容器 BUILD_COMMIT == 新 HEAD，且 /api/health（走真实 DB）正常；任一失败即视为升级失败。",
+    `7. 最后复核 \`docker compose ps\` 全部就绪，且 \`curl -fsS ${input.origin}/api/health\` 正常。`,
+    "任何一步失败：立即停止，不做任何破坏性操作（不 force push、不删容器/卷、不 docker system prune），把完整日志贴给我。",
   ].join("\n");
 }
 

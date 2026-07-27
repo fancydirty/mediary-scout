@@ -32,9 +32,27 @@ describe("GET /api/settings/attention", () => {
 
   it("returns count/severity and omits items by default (badge poll)", async () => {
     const res = await GET(new NextRequest("http://localhost/api/settings/attention?w=cs_other"));
-    expect(loadSettingsAttentionSummary).toHaveBeenCalledWith({ w: "cs_other" });
+    expect(loadSettingsAttentionSummary).toHaveBeenCalledWith({
+      w: "cs_other",
+      origin: "http://localhost:3300",
+    });
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({ count: 1, severity: "warning", items: [] });
+  });
+
+  it("derives the prompt origin from the first forwarded hop (public tunnel origin)", async () => {
+    await GET(
+      new NextRequest("http://localhost/api/settings/attention", {
+        headers: {
+          "x-forwarded-proto": "https",
+          "x-forwarded-host": "mediary.example.com",
+        },
+      }),
+    );
+    expect(loadSettingsAttentionSummary).toHaveBeenCalledWith({
+      w: null,
+      origin: "https://mediary.example.com",
+    });
   });
 
   it("includes full items when items=1", async () => {

@@ -5,6 +5,7 @@ import {
 } from "@media-track/workflow";
 import { isDemoMode } from "./demo-mode";
 import { loadDeploymentUpdateState } from "./deployment-update-server";
+import { DEFAULT_LOCAL_ORIGIN } from "./request-origin";
 import {
   buildSettingsAttentionItems,
   summarizeSettingsAttention,
@@ -26,9 +27,11 @@ function brandLabel(provider: string): string {
 }
 
 /** Account-scoped attention items for Settings badge + Action Inbox.
- *  Resolves account + drives once; optional `w` preserves workspace on deep-links. */
+ *  Resolves account + drives once; optional `w` preserves workspace on deep-links.
+ *  `origin` (public request origin) is baked into the update prompt. */
 export async function loadSettingsAttentionSummary(options?: {
   w?: string | null;
+  origin?: string;
 }): Promise<SettingsAttentionSummary> {
   if (isDemoMode()) {
     return { count: 0, severity: null, items: [] };
@@ -58,6 +61,7 @@ export async function loadSettingsAttentionSummary(options?: {
     brandLabel,
     llmConfigured: Boolean(llm.baseURL && llm.modelId),
     update,
+    origin: options?.origin ?? DEFAULT_LOCAL_ORIGIN,
     ...(workspace.activeStorageId ? { activeStorageId: workspace.activeStorageId } : {}),
   });
   return summarizeSettingsAttention(items);
