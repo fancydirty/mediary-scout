@@ -1773,7 +1773,7 @@ describe("POST /waitlist Turnstile gate", () => {
     expect(res.status).toBe(201);
     expect(calls).toHaveLength(1);
     const call = calls[0]!;
-    expect(call.url).toBe("https://challenges.cloudflare.com/siteverify");
+    expect(call.url).toBe("https://challenges.cloudflare.com/turnstile/v0/siteverify");
     expect(call.init?.method).toBe("POST");
     expect(call.init?.headers).toMatchObject({
       "content-type": "application/x-www-form-urlencoded",

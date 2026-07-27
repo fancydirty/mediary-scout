@@ -553,7 +553,7 @@ async function verifyTurnstile(secret: string, token: string, remoteIp: string |
   form.set("response", token);
   if (remoteIp) form.set("remoteip", remoteIp);
   try {
-    const res = await fetch("https://challenges.cloudflare.com/siteverify", {
+    const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: form.toString(),
@@ -594,9 +594,6 @@ async function addToWaitlist(request: Request, deps: RouteDeps): Promise<Respons
     throw new HttpError(400, "invalid email");
   }
 
-  // Turnstile 门：仅在配置了 secret 时启用（与页面 widget 成对；未配置=本地
-  // 开发，全链路不设防）。位置刻意在邮箱形状校验**之后**——siteverify 的
-  // token 是一次性的，不能浪费在一个注定 400 的请求上。
   // Turnstile 门：仅在 sitekey+secret 成对配置时启用（未配置=本地开发，
   // 全链路不设防）。位置刻意在邮箱形状校验**之后**——siteverify 的
   // token 是一次性的，不能浪费在一个注定 400 的请求上。
