@@ -16,6 +16,11 @@
     }
   ],
   "vars": {
-    "CONNECT_ROOT_DOMAIN": "mediaryconnect.app"
+    "CONNECT_ROOT_DOMAIN": "mediaryconnect.app",
+    // Public Turnstile sitekey for the beta signup widget (safe to commit —
+    // sitekeys ship in page HTML by design). The paired TURNSTILE_SECRET stays
+    // a `wrangler secret`. The gate activates only when BOTH are configured;
+    // either missing → no widget, no verification (src/routes.ts).
+    "TURNSTILE_SITEKEY": "0x4AAAAAAD-wkGraJigl3YK0"
   }
 }

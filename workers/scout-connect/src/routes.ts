@@ -29,6 +29,11 @@ export interface RouteDeps {
   newEndpointId: () => string;
   newAuditId: () => string;
   newInviteCode: () => string;
+  // Cloudflare Turnstile config for the public waitlist gate. Both optional —
+  // the gate is active ONLY when both are set (see turnstileConfig below);
+  // either absent → no widget rendered, POST /waitlist skips verification.
+  turnstileSitekey?: string | undefined;
+  turnstileSecret?: string | undefined;
 }
 
 export async function handleRequest(request: Request, deps: RouteDeps): Promise<Response> {

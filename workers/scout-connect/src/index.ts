@@ -21,6 +21,8 @@ export default {
       newEndpointId: () => newId("ep"),
       newAuditId: () => newId("aud"),
       newInviteCode,
+      turnstileSitekey: env.TURNSTILE_SITEKEY,
+      turnstileSecret: env.TURNSTILE_SECRET,
     });
   },
 };
