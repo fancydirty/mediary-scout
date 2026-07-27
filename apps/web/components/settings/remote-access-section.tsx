@@ -36,8 +36,9 @@ export async function RemoteAccessSection({
 
   if (state.kind === "not_provisioned") {
     // 内嵌报名表单已随设计改为**跳转链接**（beta.mediaryconnect.app 已上线，
-    // 报名与问卷都在站上完成）。链接是唯一入口——它指向的站点真实存在时
-    // 这个 tab 才有意义；链接失效时应该让 tab 隐藏而不是留一个死按钮。
+    // 报名与问卷都在站上完成）。链接是唯一入口。
+    // 没有「链接是否还活着」的自动检查：若 beta 站未来下线/迁移，把此分支
+    // 改回 return null 即可让整个 tab 自动隐藏（settings-tabs.tsx 的机制）。
     return (
       <section className="panel" style={{ maxWidth: 720, marginTop: 24 }}>
         <div className="panel-header">
