@@ -415,9 +415,10 @@ describe("handleRequest", () => {
     const csp = res.headers.get("content-security-policy") ?? "";
     // New Turnstile sources (exact directive bodies — a dropped source here
     // silently breaks the widget in production while tests stay green):
-    expect(csp).toContain(
-      "script-src 'unsafe-inline' 'self' https://challenges.cloudflare.com",
-    );
+    expect(csp).toContain("script-src 'unsafe-inline' https://challenges.cloudflare.com");
+    // 最小权限：没有任何同源脚本资源（每个 <script> 要么内联、要么是上面的
+    // Turnstile CDN），所以 script-src 不该出现 'self'。
+    expect(csp).not.toContain("script-src 'unsafe-inline' 'self'");
     expect(csp).toContain("frame-src https://challenges.cloudflare.com");
     expect(csp).toContain("connect-src 'self' https://challenges.cloudflare.com");
     // Pre-existing directives unchanged:

@@ -33,8 +33,11 @@ export function htmlPage(body: string, status = 200): Response {
       // challenges.cloudflare.com (script/frame/connect) is the beta page's
       // Turnstile widget. On the shared policy for all pages — htmlPage() is
       // shared, per-page CSP would only invite drift.
+      // script-src 刻意不含 'self'：本 worker 的每个 <script> 要么内联、要么
+      // 是上面那个 Turnstile CDN 地址，没有任何同源脚本资源。加了不解决问题，
+      // 只是白白放宽（connect-src 'self' 是另一回事，那条是 fetch 用的）。
       "content-security-policy":
-        "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline' 'self' https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+        "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline' https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
       "x-content-type-options": "nosniff",
       // frame-ancestors only works as a CSP directive (above); x-frame-options
       // is the legacy header that actually blocks framing in older browsers.
