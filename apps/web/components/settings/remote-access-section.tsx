@@ -4,11 +4,9 @@ import { getCurrentAccountSummary, hasLoginPassword } from "../../lib/workflow-r
 import {
   instanceTunnelToken,
   resolveRemoteAccessState,
-  scoutConnectBaseUrl,
-  isWaitlistOpen,
   accountPasswordHref,
+  BETA_SITE_URL,
 } from "../../lib/remote-access";
-import { RemoteAccessWaitlistForm } from "./remote-access-waitlist";
 
 /**
  * 「远程访问」设置 section。
@@ -37,11 +35,9 @@ export async function RemoteAccessSection({
   const state = await resolveRemoteAccessState({ token: instanceTunnelToken() });
 
   if (state.kind === "not_provisioned") {
-    // 后端未就绪时**整个 tab 不渲染**（返回 null → tab 自动隐藏，与非站主同款机制）。
-    // 容器用户 git pull 就能吃到 main，所以「代码已合并」不等于「功能可用」：
-    // 生产 worker 上 POST /waitlist 目前返回 404，此时给出报名框只会让人白填一次。
-    // 开启条件见 lib/remote-access.ts 的 isWaitlistOpen()。
-    if (!isWaitlistOpen()) return null;
+    // 内嵌报名表单已随设计改为**跳转链接**（beta.mediaryconnect.app 已上线，
+    // 报名与问卷都在站上完成）。链接是唯一入口——它指向的站点真实存在时
+    // 这个 tab 才有意义；链接失效时应该让 tab 隐藏而不是留一个死按钮。
     return (
       <section className="panel" style={{ maxWidth: 720, marginTop: 24 }}>
         <div className="panel-header">
@@ -52,11 +48,22 @@ export async function RemoteAccessSection({
             </h2>
             <p className="panel-note">
               从任何设备经加密隧道访问你的实例：不开端口、不需公网 IP、不需域名。
-              内容与凭据始终只在你自己的机器上。目前免费内测，席位有限。
+              内容与凭据始终只在你自己的机器上。
             </p>
           </div>
         </div>
-        <RemoteAccessWaitlistForm workerBaseUrl={scoutConnectBaseUrl()} />
+        <a
+          className="primary-button"
+          href={BETA_SITE_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ display: "inline-block", textDecoration: "none" }}
+        >
+          了解详情并申请内测 →
+        </a>
+        <p className="panel-note" style={{ marginTop: 10 }}>
+          内测期免费，创始批 100 席。开通后回到这里会看到远程访问状态。
+        </p>
       </section>
     );
   }

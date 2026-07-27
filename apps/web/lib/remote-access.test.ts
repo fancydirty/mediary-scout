@@ -4,7 +4,7 @@ import {
   resolveRemoteAccessState,
   scoutConnectBaseUrl,
   accountPasswordHref,
-  isWaitlistOpen,
+  BETA_SITE_URL,
   type RemoteAccessState,
 } from "./remote-access";
 
@@ -222,18 +222,10 @@ describe("accountPasswordHref（保留 ?w 工作区上下文）", () => {
   });
 });
 
-describe("isWaitlistOpen（默认关闭的发布开关）", () => {
-  it("未设 / 空 / 非 \"1\" → 关闭；只有 \"1\" 才开", () => {
-    delete process.env.MEDIA_TRACK_WAITLIST_OPEN;
-    expect(isWaitlistOpen()).toBe(false);
-    for (const v of ["", "  ", "0", "true", "yes", "on"]) {
-      process.env.MEDIA_TRACK_WAITLIST_OPEN = v;
-      expect(isWaitlistOpen()).toBe(false);
-    }
-    process.env.MEDIA_TRACK_WAITLIST_OPEN = "1";
-    expect(isWaitlistOpen()).toBe(true);
-    process.env.MEDIA_TRACK_WAITLIST_OPEN = "  1  ";
-    expect(isWaitlistOpen()).toBe(true);
+describe("BETA_SITE_URL（设置页跳转链接的唯一来源）", () => {
+  it("是 https 绝对地址、无尾斜杠——它失效时 tab 应隐藏而不是留死按钮", () => {
+    expect(BETA_SITE_URL).toMatch(/^https:\/\/[a-z0-9.-]+$/);
+    expect(BETA_SITE_URL.endsWith("/")).toBe(false);
   });
 });
 

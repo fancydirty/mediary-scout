@@ -3,7 +3,11 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-06-01",
   "workers_dev": false,
-  "routes": [{ "pattern": "mediaryconnect.app", "custom_domain": true }],
+  "routes": [
+    { "pattern": "mediaryconnect.app", "custom_domain": true },
+    // 内测报名站：与 API 同源，beta-page + /waitlist 一处部署
+    { "pattern": "beta.mediaryconnect.app", "custom_domain": true }
+  ],
   "d1_databases": [
     {
       "binding": "DB",
