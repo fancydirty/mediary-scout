@@ -172,7 +172,11 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
     // is the canonical marketing URL, so "beta.…/beta" would stutter. Apex
     // keeps the Scout Connect home page; the check is host-exact so no other
     // subdomain (or the apex) accidentally gets the signup page.
-    if (url.hostname.toLowerCase() === `beta.${deps.rootDomain}`) {
+    // Normalize BOTH sides: url.hostname is already lowercase, but
+    // deps.rootDomain comes from env (CONNECT_ROOT_DOMAIN) untrimmed — a
+    // mixed-case or space-padded value would silently break this routing.
+    const betaHost = `beta.${deps.rootDomain.trim().toLowerCase()}`;
+    if (url.hostname.toLowerCase() === betaHost) {
       return htmlPage(betaPage());
     }
     return htmlPage(homePage());

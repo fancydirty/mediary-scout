@@ -147,6 +147,16 @@ describe("handleRequest", () => {
     expect(html).not.toContain("Scout Connect 说明");
   });
 
+  it("beta root routing survives an un-normalized rootDomain env value", async () => {
+    // CONNECT_ROOT_DOMAIN 从 env 原样进来，不 trim 不小写。带大小写/空格的
+    // 配置不该让 beta 根路径静默退回说明页（Copilot PR #183）。
+    const { deps } = setup();
+    const messyDeps = { ...deps, rootDomain: "  MediaryConnect.APP  " };
+    const res = await handleRequest(new Request("https://beta.mediaryconnect.app/"), messyDeps);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("申请内测席位");
+  });
+
   it("GET / on apex still serves the home page (host routing must not leak)", async () => {
     const { deps } = setup();
     const res = await handleRequest(new Request(`${BASE}/`), deps);
