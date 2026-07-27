@@ -60,7 +60,7 @@ Ranking counts every row in the batch regardless of `waitlist.status`. Only
 TRIPWIRE tests in `src/schema.test.ts` and `src/db.test.ts`.
 
 `POST /waitlist/survey` — the optional post-signup survey offered by
-`GET /beta` after a successful signup. Body
+`GET /beta` (also served at the beta subdomain's root; the canonical URL is bare `beta.mediaryconnect.app`) after a successful signup. Body
 `{ id, willing_to_pay?, price_point?, use_cases?, donate?, feedback? }`.
 
 | Status | Body |

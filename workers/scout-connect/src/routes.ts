@@ -640,7 +640,8 @@ async function waitlistPosition(
 const SURVEY_FEEDBACK_MAX = 500;
 
 /**
- * POST /waitlist/survey — the optional post-signup survey from GET /beta.
+ * POST /waitlist/survey — the optional post-signup survey from the beta page
+ * (served at GET /beta, and at GET / on the beta subdomain).
  * Public and unauthenticated like POST /waitlist; the same 8 KB capped body
  * reader applies.
  *

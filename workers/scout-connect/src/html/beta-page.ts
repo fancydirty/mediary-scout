@@ -1,4 +1,8 @@
-// Public beta signup page (GET /beta) — a single-page two-step flow:
+// Public beta signup page — a single-page two-step flow.
+//
+// Entry points: GET /beta on any host, and GET / on the beta subdomain
+// (host-routed in routes.ts). The canonical public URL is the bare
+// beta.mediaryconnect.app — print that one everywhere, never …/beta.
 // step 1 collects the email (POST /waitlist, same origin), step 2 offers an
 // optional survey (POST /waitlist/survey). Fully self-contained: inline
 // style/script only, no external requests.
