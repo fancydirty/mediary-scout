@@ -116,8 +116,6 @@ export async function resolveRemoteAccessState(opts: {
   return { kind: "active", hostname: opts.hostname ?? null };
 }
 
-/** 服务端读实例隧道 token（docker-compose 需把 `TUNNEL_TOKEN` 也传给 web 服务）。 */
-
 /**
  * 内测报名站的对外地址（唯一来源）。
  *
@@ -129,6 +127,7 @@ export async function resolveRemoteAccessState(opts: {
  */
 export const BETA_SITE_URL = "https://beta.mediaryconnect.app/beta";
 
+/** 服务端读实例隧道 token（docker-compose 需把 `TUNNEL_TOKEN` 也传给 web 服务）。 */
 export function instanceTunnelToken(): string | undefined {
   return process.env.TUNNEL_TOKEN?.trim() || undefined;
 }
