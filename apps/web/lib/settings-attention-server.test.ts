@@ -207,4 +207,27 @@ describe("dismissSettingsAttentionItem", () => {
     expect(Object.keys(map)).toHaveLength(100);
     expect(map["missing_llm"]).toBe("2026-07-27T01:00:00.000Z");
   });
+
+  it("bounds by ACTUAL time, not string order: a -05:00 entry newer than a Z entry survives", async () => {
+    // parseAttentionTimeMap 接受带时区偏移的合法 ISO 串，所以裁剪不能按
+    // 字典序排。keeper 的字典序比 filler 小、真实时间却更晚——字典序实现
+    // 会把它当成最旧的一批丢掉。
+    const { accountSettings } = makeRepository([]);
+    const existing: Record<string, string> = {
+      // 实际 = 2026-06-02T01:00Z，晚于下面所有 filler；但字典序("…T20…")
+      // 比 filler("…T23…") 小，字典序实现会把它当最旧的丢掉。
+      keeper: "2026-06-01T20:00:00.000-05:00",
+    };
+    for (let i = 0; i < 100; i += 1) {
+      // 实际 = 2026-06-01T09:00Z（早于 keeper），字典序却更大。
+      existing[`frozen:cs_${String(i).padStart(3, "0")}`] =
+        `2026-06-01T23:00:${String(i % 60).padStart(2, "0")}.000+14:00`;
+    }
+    accountSettings.set("acct_defaultattention_dismissed", JSON.stringify(existing));
+    await dismissSettingsAttentionItem("acct_default", "missing_llm", "2026-07-27T01:00:00.000Z");
+    const map = JSON.parse(accountSettings.get("acct_defaultattention_dismissed")!);
+    expect(Object.keys(map)).toHaveLength(100);
+    expect(map["missing_llm"]).toBe("2026-07-27T01:00:00.000Z");
+    expect(map["keeper"]).toBe("2026-06-01T20:00:00.000-05:00");
+  });
 });

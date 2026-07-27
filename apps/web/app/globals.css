@@ -3544,17 +3544,6 @@ select.setting-control {
   padding: 8px 12px;
   font-size: 12px;
 }
-.attention-item-secondary {
-  flex: 0 0 auto;
-  font-size: 12px;
-  padding: 7px 12px;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  color: var(--text);
-  background: transparent;
-  text-decoration: none;
-  cursor: pointer;
-}
 .attention-item-prompt {
   margin-top: 8px;
 }

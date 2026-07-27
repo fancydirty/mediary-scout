@@ -157,9 +157,11 @@ export async function dismissSettingsAttentionItem(
   );
   dismissed[id] = now;
   // Bound growth: keep the most recent MAX_DISMISSALS entries.
+  // 按数值时间戳排序：parseAttentionTimeMap 允许带时区偏移的合法 ISO 串，
+  // 字典序会把「字符串大但实际更早」的条目误判成最新而留下它、丢掉真正最新的。
   const bounded = Object.fromEntries(
     Object.entries(dismissed)
-      .sort((a, b) => (a[1] < b[1] ? 1 : -1))
+      .sort((a, b) => Date.parse(b[1]) - Date.parse(a[1]))
       .slice(0, MAX_DISMISSALS),
   );
   await repository.setAccountSetting(
