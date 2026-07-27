@@ -30,7 +30,8 @@ export interface RouteDeps {
   newAuditId: () => string;
   newInviteCode: () => string;
   // Cloudflare Turnstile config for the public waitlist gate. Both optional —
-  // the gate is active ONLY when both are set (see turnstileConfig below);
+  // the gate is active ONLY when both are set — the paired rule lives in
+  // turnstileSitekeyIfConfigured() / turnstileGateEnabled() below;
   // either absent → no widget rendered, POST /waitlist skips verification.
   turnstileSitekey?: string | undefined;
   turnstileSecret?: string | undefined;
@@ -562,15 +563,59 @@ async function verifyTurnstile(secret: string, token: string, remoteIp: string |
       body: form.toString(),
       signal: AbortSignal.timeout(5_000),
     });
-    const data = (await res.json().catch(() => null)) as { success?: boolean } | null;
-    return data?.success === true;
+    // 基础设施异常必须与「正常拦截」在日志里可区分：两者对用户都是 403，
+    // 若日志也一样，CF 挂掉/secret 配错会让报名漏斗静默归零且无人知情。
+    if (!res.ok) {
+      console.error("turnstile siteverify HTTP error, status:", res.status);
+      return false;
+    }
+    const data = (await res.json().catch(() => null)) as TurnstileVerifyResponse | null;
+    if (data === null) {
+      console.error("turnstile siteverify returned a non-JSON body, status:", res.status);
+      return false;
+    }
+    if (data.success === true) return true;
+    const actionable = turnstileActionableCodes(data);
+    if (actionable.length > 0) {
+      // error-codes 是 CF 的固定枚举，既不含 secret 也不含用户 token。
+      console.error("turnstile siteverify config/infra error:", actionable.join(","));
+    }
+    return false;
   } catch (e) {
-    console.error(
-      "turnstile siteverify failed:",
-      e instanceof Error ? e.name : "unknown error",
-    );
+    console.error("turnstile siteverify failed:", errorName(e));
     return false;
   }
+}
+
+type TurnstileVerifyResponse = { success?: boolean; "error-codes"?: unknown };
+
+/** 需要运维介入的 siteverify error-codes（其余属于正常拦截，不该刷日志）。
+ *  见 developers.cloudflare.com/turnstile/get-started/server-side-validation。
+ *  刻意排除 missing/invalid-input-response 与 timeout-or-duplicate——过期、
+ *  重放、机器人是这条公开漏斗的日常，报警值为零。 */
+const TURNSTILE_ACTIONABLE_CODES = new Set([
+  "missing-input-secret",
+  "invalid-input-secret",
+  "invalid-widget-id",
+  "invalid-parsed-secret",
+  "bad-request",
+  "internal-error",
+]);
+
+function turnstileActionableCodes(data: TurnstileVerifyResponse): string[] {
+  const raw = data["error-codes"];
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((c): c is string => typeof c === "string" && TURNSTILE_ACTIONABLE_CODES.has(c));
+}
+
+/** 某些运行时的 DOMException 不是 `instanceof Error`（AbortSignal.timeout 抛的
+ *  就是它）——只按 instanceof 取名字会把 TimeoutError 记成 "unknown error"。 */
+function errorName(e: unknown): string {
+  if (typeof e === "object" && e !== null && "name" in e) {
+    const n = (e as { name?: unknown }).name;
+    if (typeof n === "string" && n.length > 0) return n;
+  }
+  return "unknown error";
 }
 
 async function addToWaitlist(request: Request, deps: RouteDeps): Promise<Response> {

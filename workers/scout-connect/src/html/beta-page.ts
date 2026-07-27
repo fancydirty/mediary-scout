@@ -4,8 +4,11 @@
 // (host-routed in routes.ts). The canonical public URL is the bare
 // beta.mediaryconnect.app — print that one everywhere, never …/beta.
 // step 1 collects the email (POST /waitlist, same origin), step 2 offers an
-// optional survey (POST /waitlist/survey). Fully self-contained: inline
-// style/script only, no external requests.
+// optional survey (POST /waitlist/survey). Style/script are inline only —
+// the page ships no first-party asset requests. The ONE external dependency
+// is conditional: when the Turnstile gate is configured it loads
+// challenges.cloudflare.com (api.js + challenge iframe); ungated, the page
+// makes no external requests at all.
 //
 // Visual language mirrors the official site (site/index.html + site/style.css):
 // dark base, radial green hero gradient, hairline borders, pill buttons, mono

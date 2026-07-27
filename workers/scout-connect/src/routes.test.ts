@@ -1820,6 +1820,92 @@ describe("POST /waitlist Turnstile gate", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  // 运维可观测性：CF 挂掉 / secret 配错 与「来的全是机器人」在 fail-closed
+  // 之下产生完全相同的用户可见结果（403）。若日志也一样，报名漏斗静默归零
+  // 且无人知情。基础设施异常必须留下 console.error，且绝不带 secret/token。
+  it("siteverify non-2xx → still 403 (fail closed) but logs an error carrying the status, never the secret/token", async () => {
+    const { db, deps } = setup();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubGlobal("fetch", async () => new Response("upstream boom", { status: 502 }));
+    const res = await handleRequest(
+      waitlistPost({ email: "human@example.com", turnstile_token: "tok-502" }),
+      tsDeps(deps),
+    );
+    expect(res.status).toBe(403);
+    expect(await db.countWaitlist(1)).toBe(0);
+    const logged = errSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+    expect(logged).toMatch(/502/);
+    expect(logged).not.toContain(TS_SECRET);
+    expect(logged).not.toContain("tok-502");
+  });
+
+  it("siteverify 200 with a non-JSON body → 403 and an error log (not silently indistinguishable from a bot)", async () => {
+    const { deps } = setup();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubGlobal(
+      "fetch",
+      async () => new Response("<html>nope</html>", { status: 200, headers: { "content-type": "text/html" } }),
+    );
+    const res = await handleRequest(
+      waitlistPost({ email: "human@example.com", turnstile_token: "tok-html" }),
+      tsDeps(deps),
+    );
+    expect(res.status).toBe(403);
+    expect(errSpy).toHaveBeenCalled();
+    const logged = errSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+    expect(logged).not.toContain(TS_SECRET);
+    expect(logged).not.toContain("tok-html");
+  });
+
+  it("success:false carrying a CONFIG error-code (invalid-input-secret) is logged — a misconfigured secret must not look like bot traffic", async () => {
+    const { deps } = setup();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubGlobal("fetch", async () =>
+      siteverifyJson({ success: false, "error-codes": ["invalid-input-secret"] }),
+    );
+    const res = await handleRequest(
+      waitlistPost({ email: "human@example.com", turnstile_token: "tok-cfg" }),
+      tsDeps(deps),
+    );
+    expect(res.status).toBe(403);
+    const logged = errSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+    expect(logged).toMatch(/invalid-input-secret/);
+    expect(logged).not.toContain(TS_SECRET);
+    expect(logged).not.toContain("tok-cfg");
+  });
+
+  it("a plain bot rejection (invalid-input-response) stays quiet — no error spam on the normal path", async () => {
+    const { deps } = setup();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubGlobal("fetch", async () =>
+      siteverifyJson({ success: false, "error-codes": ["invalid-input-response"] }),
+    );
+    const res = await handleRequest(
+      waitlistPost({ email: "bot@example.com", turnstile_token: "tok-bot" }),
+      tsDeps(deps),
+    );
+    expect(res.status).toBe(403);
+    expect(errSpy).not.toHaveBeenCalled();
+  });
+
+  it("a DOMException-like timeout is logged by NAME, not as \"unknown error\"", async () => {
+    const { deps } = setup();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    // Some runtimes' DOMException is not `instanceof Error`; the logger must
+    // still surface TimeoutError instead of a useless "unknown error".
+    vi.stubGlobal("fetch", async () => {
+      throw { name: "TimeoutError", message: "The operation was aborted due to timeout" };
+    });
+    const res = await handleRequest(
+      waitlistPost({ email: "human@example.com", turnstile_token: "tok-timeout" }),
+      tsDeps(deps),
+    );
+    expect(res.status).toBe(403);
+    const logged = errSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+    expect(logged).toMatch(/TimeoutError/);
+    expect(logged).not.toMatch(/unknown error/);
+  });
+
   it("unconfigured (no turnstile deps) → unchanged behavior, fetch NEVER called", async () => {
     const { db, deps } = setup();
     const fetchSpy = forbidFetch();
