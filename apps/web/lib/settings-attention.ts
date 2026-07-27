@@ -228,9 +228,10 @@ export function applySettingsAttentionState(input: {
     }
   }
   for (const key of Object.keys(input.stateSince)) {
-    // 必须查自有属性：`in` 会顺着原型链找到 toString/valueOf 这类键
-    // （它们能被 parseAttentionTimeMap 正常保留），把已删除的条目误判成
-    // 「还在」，于是清理永远不会被落盘。
+    // 必须查自有属性：`in` 会顺着原型链找到 toString/valueOf 这类键，把已
+    // 删除的条目误判成「还在」，于是清理永远不会被落盘。上一处的白名单现在
+    // 已让 parseAttentionTimeMap 丢掉这些键，但 stateSince 是本函数的入参，
+    // 调用方不一定经过那个解析器（测试就直接构造），所以这道守卫仍然必要。
     if (!Object.prototype.hasOwnProperty.call(nextStateSince, key)) stateSinceChanged = true;
   }
 
