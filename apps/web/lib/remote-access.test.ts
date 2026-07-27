@@ -223,10 +223,10 @@ describe("accountPasswordHref（保留 ?w 工作区上下文）", () => {
 });
 
 describe("BETA_SITE_URL（设置页跳转链接的唯一来源）", () => {
-  it("是 https 绝对地址且以 /beta 结尾——根路径是说明页，不是报名表单", () => {
-    // Copilot PR #182：只校验域名会把「指到域名根」当成通过，
-    // 而 GET / 返回的是 Scout Connect 说明页，报名页在 GET /beta。
-    expect(BETA_SITE_URL).toMatch(/^https:\/\/[a-z0-9.-]+\/beta$/);
+  it("是 https 绝对地址、无尾斜杠、无路径——根即表单（worker Host 分流）", () => {
+    // 规范地址就是裸子域名：worker 对 beta.* 的根路径直接 serving 报名页，
+    // "beta.…/beta" 是结巴。若有人把路径改回 /beta 或别处，这条测试先红。
+    expect(BETA_SITE_URL).toMatch(/^https:\/\/beta\.[a-z0-9.-]+$/);
     expect(BETA_SITE_URL.endsWith("/")).toBe(false);
   });
 });

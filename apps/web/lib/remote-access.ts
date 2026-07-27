@@ -119,15 +119,15 @@ export async function resolveRemoteAccessState(opts: {
 /**
  * 内测报名站的对外地址（唯一来源）。
  *
- * 指向 worker 承载的 /beta 页——与 /waitlist API 同部署，只换了更好记的域名。
- * 必须带 /beta 路径：该子域名的根路径 `GET /` 是 Scout Connect 说明页，
- * 报名表单只在 `GET /beta`。
+ * 指向 worker 承载的报名页——与 /waitlist API 同部署，只换了更好记的域名。
+ * 根路径即是表单（worker 对 beta 子域名按 Host 分流到 /beta 处理器），
+ * 不要再加 /beta 后缀——"beta.…/beta" 是结巴。
  * 设置页「远程访问」tab 的跳转链接从这里取，不要在组件里另写一份。
  * 注意：没有「链接可用性」的自动探测。如果 beta 站未来下线或迁移，
  * 需要的动作是改代码——把 tab 的 not_provisioned 分支改回 return null
  * （触发 settings-tabs 的自动隐藏），而不是指望某个开关。
  */
-export const BETA_SITE_URL = "https://beta.mediaryconnect.app/beta";
+export const BETA_SITE_URL = "https://beta.mediaryconnect.app";
 
 /** 服务端读实例隧道 token（docker-compose 需把 `TUNNEL_TOKEN` 也传给 web 服务）。 */
 export function instanceTunnelToken(): string | undefined {

@@ -168,6 +168,13 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
   }
 
   if (method === "GET" && path === "/") {
+    // The beta subdomain's root IS the signup page: "beta.mediaryconnect.app"
+    // is the canonical marketing URL, so "beta.…/beta" would stutter. Apex
+    // keeps the Scout Connect home page; the check is host-exact so no other
+    // subdomain (or the apex) accidentally gets the signup page.
+    if (url.hostname.toLowerCase() === `beta.${deps.rootDomain}`) {
+      return htmlPage(betaPage());
+    }
     return htmlPage(homePage());
   }
   if (method === "GET" && path === "/healthz") {
