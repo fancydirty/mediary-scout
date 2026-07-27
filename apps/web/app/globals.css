@@ -3577,10 +3577,12 @@ select.setting-control {
   background: var(--warning);
   color: #121212;
 }
-/* info tier: 纯提示，不能借用 warning 的琥珀色否则会虚报严重度 */
+/* info tier: 纯提示，不能借用 warning 的琥珀色否则会虚报严重度。
+   用 --accent 与 inbox 里的 .kind-info 信号条同色，三档在两处一致：
+   info=绿 / warning=琥珀 / blocker=红。 */
 .nav-badge-info {
-  background: var(--info);
-  color: #fff;
+  background: var(--accent);
+  color: #06210f;
 }
 
 /* ---------- deployment update hint (self-host compose, Settings top) ---------- */

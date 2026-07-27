@@ -81,11 +81,14 @@ export async function loadSettingsAttentionSummary(options?: {
     options?.w ?? undefined,
   );
 
-  const [llm, update, isOwner] = await Promise.all([
+  const [llm, isOwner] = await Promise.all([
     getLlmConfig(getAccountScopedSettings(accountId)),
-    loadDeploymentUpdateState(),
     resolveIsOwner(accountId),
   ]);
+  // update_available 只对站主存在（见 buildSettingsAttentionItems 的 isOwner
+  // 门控），所以非站主不该付这份代价：两次文件读 + 可能的 GitHub 探测，冷
+  // 缓存时最多要等满 5s 超时——而徽章每 8s 轮询一次。
+  const update = isOwner ? await loadDeploymentUpdateState() : null;
 
   const items = buildSettingsAttentionItems({
     demo: false,

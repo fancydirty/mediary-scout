@@ -149,6 +149,21 @@ describe("loadSettingsAttentionSummary — per-account state", () => {
     expect(owner.items.some((i) => i.kind === "update_available")).toBe(true);
   });
 
+  it("non-owners never trigger the update probe (badge polls every 8s; the probe can block 5s cold)", async () => {
+    (loadDeploymentUpdateState as ReturnType<typeof vi.fn>).mockResolvedValue(UPDATE_BEHIND);
+    (isMultiUserEnabled as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    (getCurrentAccountId as ReturnType<typeof vi.fn>).mockResolvedValue("acct_bob");
+
+    makeRepository([], { acct_bob: { isOwner: false } });
+    await loadSettingsAttentionSummary({ origin: "https://o.example" });
+    expect(loadDeploymentUpdateState).not.toHaveBeenCalled();
+
+    // 站主仍照常探测。
+    makeRepository([], { acct_bob: { isOwner: true } });
+    await loadSettingsAttentionSummary({ origin: "https://o.example" });
+    expect(loadDeploymentUpdateState).toHaveBeenCalled();
+  });
+
   it("never writes attention state for the unauthenticated sentinel", async () => {
     (getCurrentAccountId as ReturnType<typeof vi.fn>).mockResolvedValue("acct_unauthenticated");
     const { repository } = makeRepository([]);
