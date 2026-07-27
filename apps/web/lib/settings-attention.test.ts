@@ -10,6 +10,7 @@ describe("buildSettingsAttentionItems", () => {
   it("returns empty in demo mode even with problems", () => {
     const items = buildSettingsAttentionItems({
       demo: true,
+      isOwner: true,
       drives: [{ id: "cs1", provider: "quark", label: null, status: "frozen" }],
       brandLabel, origin: ORIGIN,
       llmConfigured: false,
@@ -26,6 +27,7 @@ describe("buildSettingsAttentionItems", () => {
   it("lists frozen drives as blockers with plain labels", () => {
     const items = buildSettingsAttentionItems({
       demo: false,
+      isOwner: true,
       drives: [
         { id: "cs_q", provider: "quark", label: null, status: "frozen" },
         { id: "cs_a", provider: "pan115", label: "家里115", status: "active" },
@@ -46,21 +48,24 @@ describe("buildSettingsAttentionItems", () => {
     ]);
   });
 
-  it("flags missing LLM config", () => {
+  it("flags missing LLM config as a warning", () => {
     const items = buildSettingsAttentionItems({
       demo: false,
+      isOwner: true,
       drives: [],
       brandLabel, origin: ORIGIN,
       llmConfigured: false,
       update: null,
     });
     expect(items.map((i) => i.kind)).toEqual(["missing_llm"]);
+    expect(items[0]?.severity).toBe("warning");
     expect(items[0]?.href).toBe("/settings?tab=services");
   });
 
-  it("adds container update with agent prompt, skips desktop/web", () => {
+  it("adds container update as info severity with version-scoped id + origin-threaded prompt", () => {
     const container = buildSettingsAttentionItems({
       demo: false,
+      isOwner: true,
       drives: [],
       brandLabel, origin: ORIGIN,
       llmConfigured: true,
@@ -73,13 +78,17 @@ describe("buildSettingsAttentionItems", () => {
     });
     expect(container).toHaveLength(1);
     expect(container[0]?.kind).toBe("update_available");
-    expect(container[0]?.severity).toBe("warning");
+    // Version-scoped id: a NEW remote version gets a NEW id → reappears after dismiss/seen.
+    expect(container[0]?.id).toBe("update:bbbbbbb");
+    expect(container[0]?.severity).toBe("info");
     expect(container[0]?.prompt).toContain("./scripts/deploy.sh");
     expect(container[0]?.prompt).toContain("aaaaaaa");
+    expect(container[0]?.prompt).toContain(ORIGIN);
 
     for (const kind of ["desktop", "web"] as const) {
       const items = buildSettingsAttentionItems({
         demo: false,
+        isOwner: true,
         drives: [],
         brandLabel, origin: ORIGIN,
         llmConfigured: true,
@@ -89,45 +98,64 @@ describe("buildSettingsAttentionItems", () => {
     }
   });
 
-  it("aggregates severity: any blocker wins", () => {
+  it("hides update_available from non-owners (multi-user) but keeps per-account items", () => {
     const items = buildSettingsAttentionItems({
       demo: false,
-      drives: [{ id: "cs1", provider: "quark", label: null, status: "frozen" }],
+      isOwner: false,
+      drives: [{ id: "cs_q", provider: "quark", label: null, status: "frozen" }],
       brandLabel, origin: ORIGIN,
-      llmConfigured: true,
+      llmConfigured: false,
       update: {
         kind: "container",
         behind: true,
-        currentShort: "1111111",
-        latestShort: "2222222",
+        currentShort: "aaaaaaa",
+        latestShort: "bbbbbbb",
       },
     });
-    const summary = summarizeSettingsAttention(items);
-    expect(summary.count).toBe(2);
-    expect(summary.severity).toBe("blocker");
+    expect(items.map((i) => i.kind).sort()).toEqual(["frozen_drive", "missing_llm"]);
+    expect(items.some((i) => i.kind === "update_available")).toBe(false);
   });
 
-  it("warning-only when only update is open", () => {
-    const summary = summarizeSettingsAttention(
+  it("aggregates severity: blocker > warning > info", () => {
+    const base = {
+      demo: false,
+      isOwner: true,
+      drives: [] as Array<{ id: string; provider: string; label: string | null; status: "active" | "frozen" }>,
+      brandLabel, origin: ORIGIN,
+      llmConfigured: true,
+      update: null,
+    };
+    const updateOnly = summarizeSettingsAttention(
       buildSettingsAttentionItems({
-        demo: false,
-        drives: [],
-        brandLabel, origin: ORIGIN,
-        llmConfigured: true,
-        update: {
-          kind: "container",
-          behind: true,
-          currentShort: "1111111",
-          latestShort: "2222222",
-        },
+        ...base,
+        update: { kind: "container", behind: true, currentShort: "1111111", latestShort: "2222222" },
       }),
     );
-    expect(summary).toMatchObject({ count: 1, severity: "warning" });
+    expect(updateOnly).toMatchObject({ count: 1, severity: "info" });
+
+    const warningOnly = summarizeSettingsAttention(
+      buildSettingsAttentionItems({ ...base, llmConfigured: false }),
+    );
+    expect(warningOnly).toMatchObject({ count: 1, severity: "warning" });
+
+    const all = summarizeSettingsAttention(
+      buildSettingsAttentionItems({
+        ...base,
+        drives: [{ id: "cs1", provider: "quark", label: null, status: "frozen" }],
+        llmConfigured: false,
+        update: { kind: "container", behind: true, currentShort: "1111111", latestShort: "2222222" },
+      }),
+    );
+    expect(all.count).toBe(3);
+    expect(all.severity).toBe("blocker");
+
+    expect(summarizeSettingsAttention([])).toEqual({ count: 0, severity: null, items: [] });
   });
 
   it("preserves non-primary workspace on deep-links", () => {
     const items = buildSettingsAttentionItems({
       demo: false,
+      isOwner: true,
       drives: [{ id: "cs_q", provider: "quark", label: null, status: "frozen" }],
       brandLabel, origin: ORIGIN,
       llmConfigured: false,

@@ -2,7 +2,7 @@ import type { DeploymentUpdateState } from "./deployment-update";
 import { buildContainerUpgradePrompt } from "./deployment-update";
 import { DEFAULT_SETTINGS_TAB, type SettingsTabId } from "./settings-tabs-model";
 
-export type AttentionSeverity = "warning" | "blocker";
+export type AttentionSeverity = "info" | "warning" | "blocker";
 export type AttentionKind = "frozen_drive" | "update_available" | "missing_llm";
 export type SettingsAttentionTab = SettingsTabId;
 
@@ -40,6 +40,9 @@ export function settingsAttentionHref(
 
 export function buildSettingsAttentionItems(input: {
   demo: boolean;
+  /** update_available is instance-level (BUILD_COMMIT vs remote main) — owner-only.
+   *  Single-user passes true (implicit owner). frozen_drive/missing_llm stay per-account. */
+  isOwner: boolean;
   drives: Array<{
     id: string;
     provider: string;
@@ -80,7 +83,7 @@ export function buildSettingsAttentionItems(input: {
     items.push({
       id: "missing_llm",
       kind: "missing_llm",
-      severity: "blocker",
+      severity: "warning",
       title: "还没配置 AI 模型",
       body: "填写 Base URL 和模型名后才能自动搜索与获取。",
       actionLabel: "去填写",
@@ -89,6 +92,7 @@ export function buildSettingsAttentionItems(input: {
   }
 
   if (
+    input.isOwner &&
     input.update &&
     input.update.kind === "container" &&
     input.update.behind === true &&
@@ -96,9 +100,11 @@ export function buildSettingsAttentionItems(input: {
     input.update.latestShort
   ) {
     items.push({
-      id: "update_available",
+      // Version-scoped id: when remote main moves to a NEW latestShort this item
+      // gets a NEW id, so it reappears even after the user dismissed/saw the old one.
+      id: `update:${input.update.latestShort}`,
       kind: "update_available",
-      severity: "warning",
+      severity: "info",
       title: "有新版本可用",
       body: `当前 ${input.update.currentShort} · 远端 ${input.update.latestShort}。复制指令给本地 Agent 按自检流程升级。`,
       actionLabel: "复制指令",
@@ -117,8 +123,10 @@ export function buildSettingsAttentionItems(input: {
 export function summarizeSettingsAttention(items: SettingsAttentionItem[]): SettingsAttentionSummary {
   const severity = items.some((item) => item.severity === "blocker")
     ? "blocker"
-    : items.length > 0
+    : items.some((item) => item.severity === "warning")
       ? "warning"
-      : null;
+      : items.length > 0
+        ? "info"
+        : null;
   return { count: items.length, severity, items };
 }

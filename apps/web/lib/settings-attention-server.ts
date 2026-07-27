@@ -16,6 +16,7 @@ import {
   getCurrentAccountId,
   getLlmConfig,
   getWorkflowRepository,
+  isMultiUserEnabled,
 } from "./workflow-runtime";
 
 function brandLabel(provider: string): string {
@@ -24,6 +25,14 @@ function brandLabel(provider: string): string {
   } catch {
     return provider;
   }
+}
+
+/** update_available is an instance-level signal (BUILD_COMMIT vs remote main):
+ *  multi-user shows it to the owner only; single-user is the implicit owner. */
+async function resolveIsOwner(accountId: string): Promise<boolean> {
+  if (!isMultiUserEnabled()) return true;
+  const account = await getWorkflowRepository().getAccountById(accountId);
+  return account?.isOwner ?? false;
 }
 
 /** Account-scoped attention items for Settings badge + Action Inbox.
@@ -45,13 +54,15 @@ export async function loadSettingsAttentionSummary(options?: {
     options?.w ?? undefined,
   );
 
-  const [llm, update] = await Promise.all([
+  const [llm, update, isOwner] = await Promise.all([
     getLlmConfig(getAccountScopedSettings(accountId)),
     loadDeploymentUpdateState(),
+    resolveIsOwner(accountId),
   ]);
 
   const items = buildSettingsAttentionItems({
     demo: false,
+    isOwner,
     drives: drives.map((drive) => ({
       id: drive.id,
       provider: drive.provider,
