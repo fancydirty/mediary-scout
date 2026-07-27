@@ -164,8 +164,10 @@ describe("handleRequest", () => {
     expect(html).toContain("Scout Connect");
     // 断言的是「apex 不发报名表单本体」，而不是某句文案——apex 现在有一个
     // 指向 beta 站的 CTA，文案里出现"申请内测席位"是对的。
-    expect(html).not.toContain('type="email"');
-    expect(html).not.toContain("cf-turnstile");
+    // 用正则而非子串：单/双引号与 = 两侧空格都不该让这条断言失效。
+    expect(html).not.toMatch(/type\s*=\s*["']email["']/i);
+    expect(html).not.toMatch(/class\s*=\s*["'][^"']*cf-turnstile/i);
+    expect(html).not.toMatch(/<form\b/i);
   });
 
   it("apex home page links to the beta signup site (it must not be a dead end)", async () => {
