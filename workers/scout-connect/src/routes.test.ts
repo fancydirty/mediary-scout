@@ -1754,7 +1754,7 @@ describe("POST /waitlist Turnstile gate", () => {
 
   it("configured + siteverify success:true → 201; request is form-encoded with secret+token+remoteip and a timeout signal", async () => {
     const { deps } = setup();
-    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const calls: Array<{ url: string; init?: RequestInit | undefined }> = [];
     vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
       calls.push({
         url:

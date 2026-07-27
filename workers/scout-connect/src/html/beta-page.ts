@@ -11,11 +11,17 @@
 // dark base, radial green hero gradient, hairline borders, pill buttons, mono
 // eyebrows — so the page reads as the same product family as mediaryscout.app.
 //
-// Escaping discipline: unlike invite-page this page is FULLY STATIC — the
-// server interpolates zero values into it, so there is nothing to escape
-// here. Client-side, every dynamic value (position, server error text) is
-// inserted via textContent only; innerHTML is deliberately never used, and a
-// test pins both properties.
+// Escaping discipline: the ONLY server-interpolated value is the Turnstile
+// sitekey (a public, Cloudflare-issued identifier — escaped via esc() below).
+// The secret NEVER reaches this page. Client-side, every dynamic value
+// (position, server error text) is inserted via textContent only; innerHTML
+// is deliberately never used, and a test pins both properties.
+
+function esc(s: string): string {
+  return s.replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c,
+  );
+}
 
 // Aperture mark — same as apps/web/app/icon.svg and the nav logo on
 // mediaryscout.app, inlined so the page stays fully self-contained (no
@@ -23,13 +29,35 @@
 const LOGO =
   '<svg width="28" height="28" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Mediary Scout"><circle cx="16" cy="16" r="16" fill="#1ED760"/><g transform="translate(4,4)" fill="none" stroke="#0B3B1E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m14.31 8 5.74 9.94"/><path d="M9.69 8h11.48"/><path d="m7.38 12 5.74-9.94"/><path d="M9.69 16 3.95 6.06"/><path d="M14.31 16H2.83"/><path d="m16.62 12-5.74 9.94"/></g></svg>';
 
-export function betaPage(): string {
+export function betaPage(turnstileSitekey?: string): string {
+  // Turnstile 仅在配置了公开 sitekey 时启用（与 worker 的 secret 成对出现；
+  // 缺任意一个，页面与 /waitlist 都不设防，供本地开发用）。三个片段——
+  // api.js script、widget div、提交 JS 的 token 逻辑——必须同源注入或同源缺席，
+  // 否则 absent 形态会泄漏 cf-turnstile / 人机验证 字样（有测试钉着）。
+  const rawKey = (turnstileSitekey ?? "").trim();
+  // env 进来的值会被插进 HTML 属性：只接受 Turnstile key 的真实字符集
+  // （0x4AAAAAAD-… 这类 [0-9A-Za-z_-]）。恶意/畸形值整体降级为无 widget，
+  // 绝不靠转义硬插（esc 挡得住引号，挡不住"为什么把怪东西放进页面"）。
+  const sitekey = /^[0-9A-Za-z_-]+$/.test(rawKey) ? rawKey : "";
+  const tsScript = sitekey
+    ? `\n<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" defer></script>`
+    : "";
+  const tsWidget = sitekey
+    ? `<div class="cf-turnstile" data-sitekey="${esc(sitekey)}" data-theme="dark"></div>`
+    : "";
+  const tsTokenRead = sitekey
+    ? `const tsToken=(document.querySelector("[name=cf-turnstile-response]")||{value:""}).value.trim();
+  if(!tsToken){setJoinPending(false);showErr(err,"人机验证未完成，请稍候");return;}`
+    : "";
+  const tsBody = sitekey
+    ? `JSON.stringify({email:email,turnstile_token:tsToken})`
+    : `JSON.stringify({email:email})`;
   return `<!doctype html>
 <html lang="zh">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Scout Connect 远程访问 · 内测 · Mediary Scout Connect</title>
+<title>Scout Connect 远程访问 · 内测 · Mediary Scout Connect</title>${tsScript}
 <style>
 :root{--bg-base:#121212;--bg-surface:#181818;--bg-raised:#1f1f1f;--bg-card:#252525;--accent:#1ed760;--accent-press:#169c46;--text:#fff;--text-muted:#b3b3b3;--border:#4d4d4d;--border-outline:#7c7c7c;--err:#f3727f;--hairline:linear-gradient(90deg,transparent,#2c2c2c 25%,#2c2c2c 75%,transparent);--font:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;--mono:ui-monospace,SFMono-Regular,monospace;color-scheme:dark}
 *{box-sizing:border-box}
@@ -138,6 +166,7 @@ input[type=radio],input[type=checkbox]{accent-color:var(--accent);margin:0}
 <form id="signup">
 <p class="field"><label for="email">邮箱</label>
 <input id="email" name="email" type="email" required autocomplete="email" placeholder="you@example.com"></p>
+${tsWidget}
 <button id="join" type="submit" class="btn-primary" aria-label="申请内测席位" aria-busy="false">申请内测席位</button>
 <p id="err" class="err" role="alert" hidden></p>
 </form>
@@ -202,8 +231,9 @@ $("signup").onsubmit=async(ev)=>{
   const err=$("err");
   err.hidden=true;err.textContent="";
   setJoinPending(true);
+  ${tsTokenRead}
   let r=null;
-  try{r=await fetch("/waitlist",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({email:email})});}
+  try{r=await fetch("/waitlist",{method:"POST",headers:{"content-type":"application/json"},body:${tsBody}});}
   catch(_){setJoinPending(false);showErr(err,"网络异常，提交失败——请稍后再试。");return;}
   let d=null;
   try{d=await r.json();}catch(_){}

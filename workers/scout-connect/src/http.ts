@@ -30,8 +30,11 @@ export function htmlPage(body: string, status = 200): Response {
       // signup), and connect-src falls back to default-src when absent —
       // 'none' made the browser refuse those fetches outright (verified
       // empirically: "Failed to fetch" without the directive, 200 with it).
+      // challenges.cloudflare.com (script/frame/connect) is the beta page's
+      // Turnstile widget. On the shared policy for all pages — htmlPage() is
+      // shared, per-page CSP would only invite drift.
       "content-security-policy":
-        "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+        "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline' 'self' https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
       "x-content-type-options": "nosniff",
       // frame-ancestors only works as a CSP directive (above); x-frame-options
       // is the legacy header that actually blocks framing in older browsers.

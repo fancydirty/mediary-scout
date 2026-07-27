@@ -182,7 +182,7 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
     // mixed-case or space-padded value would silently break this routing.
     const betaHost = `beta.${deps.rootDomain.trim().toLowerCase()}`;
     if (url.hostname.toLowerCase() === betaHost) {
-      return htmlPage(betaPage());
+      return htmlPage(betaPage(turnstileSitekeyIfConfigured(deps)));
     }
     return htmlPage(homePage());
   }
@@ -205,7 +205,7 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
     return htmlPage(adminPage());
   }
   if (method === "GET" && path === "/beta") {
-    return htmlPage(betaPage());
+    return htmlPage(betaPage(turnstileSitekeyIfConfigured(deps)));
   }
 
   // ---- admin api (bearer required) ----
@@ -529,6 +529,47 @@ function isUniqueViolation(e: unknown): boolean {
  * omits `position` there is stale — see the comment on the branch itself for
  * why it is deliberate. `position` is 1-based within the batch.
  */
+/**
+ * sitekey 只在两半齐备时下发页面（sitekey 无 secret → 铸出验不了的 token；
+ * secret 无 sitekey → 没有 widget 可铸）。与 /waitlist 的门同一条规则。
+ */
+function turnstileSitekeyIfConfigured(deps: RouteDeps): string | undefined {
+  return deps.turnstileSitekey && deps.turnstileSecret ? deps.turnstileSitekey : undefined;
+}
+
+/** Turnstile 门是否启用——与 turnstileSitekeyIfConfigured 同一条「成对」规则。 */
+function turnstileGateEnabled(deps: RouteDeps): boolean {
+  return Boolean(deps.turnstileSitekey && deps.turnstileSecret);
+}
+
+/**
+ * Cloudflare Turnstile 服务端校验（siteverify）。project 硬规则：外部 HTTP
+ * 一律带超时。失败一律 fail CLOSED（这是公开报名漏斗，宁误杀不放过）——
+ * 但日志里绝不带 secret 与用户 token。
+ */
+async function verifyTurnstile(secret: string, token: string, remoteIp: string | null): Promise<boolean> {
+  const form = new URLSearchParams();
+  form.set("secret", secret);
+  form.set("response", token);
+  if (remoteIp) form.set("remoteip", remoteIp);
+  try {
+    const res = await fetch("https://challenges.cloudflare.com/siteverify", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: form.toString(),
+      signal: AbortSignal.timeout(5_000),
+    });
+    const data = (await res.json().catch(() => null)) as { success?: boolean } | null;
+    return data?.success === true;
+  } catch (e) {
+    console.error(
+      "turnstile siteverify failed:",
+      e instanceof Error ? e.name : "unknown error",
+    );
+    return false;
+  }
+}
+
 async function addToWaitlist(request: Request, deps: RouteDeps): Promise<Response> {
   const body = await readJsonBody(request);
   const emailRaw = body.email;
@@ -551,6 +592,28 @@ async function addToWaitlist(request: Request, deps: RouteDeps): Promise<Respons
   const email = emailRaw.trim().toLowerCase();
   if (email.length > EMAIL_MAX_LENGTH || !EMAIL_RE.test(email)) {
     throw new HttpError(400, "invalid email");
+  }
+
+  // Turnstile 门：仅在配置了 secret 时启用（与页面 widget 成对；未配置=本地
+  // 开发，全链路不设防）。位置刻意在邮箱形状校验**之后**——siteverify 的
+  // token 是一次性的，不能浪费在一个注定 400 的请求上。
+  // Turnstile 门：仅在 sitekey+secret 成对配置时启用（未配置=本地开发，
+  // 全链路不设防）。位置刻意在邮箱形状校验**之后**——siteverify 的
+  // token 是一次性的，不能浪费在一个注定 400 的请求上。
+  if (turnstileGateEnabled(deps)) {
+    const rawToken = body.turnstile_token;
+    const token = typeof rawToken === "string" ? rawToken.trim() : "";
+    if (token === "") {
+      throw new HttpError(400, "turnstile required");
+    }
+    const remoteIp = request.headers.get("cf-connecting-ip")?.trim() || null;
+    // turnstileGateEnabled 只表达规则，不给 TS 收窄——secret 在此单独取值收窄。
+    const secret = deps.turnstileSecret;
+    if (!secret) throw new HttpError(500, "internal");
+    const ok = await verifyTurnstile(secret, token, remoteIp);
+    if (!ok) {
+      throw new HttpError(403, "turnstile failed");
+    }
   }
 
   const batch = WAITLIST_BATCH;
