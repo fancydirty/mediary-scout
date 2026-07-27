@@ -83,6 +83,11 @@ export function SettingsAttentionBadge({
   }, [storageId, visible]);
 
   if (!visible || count <= 0) return null;
-  const tone = severity === "blocker" ? "nav-badge-alert" : "nav-badge-warning";
+  const tone =
+    severity === "blocker"
+      ? "nav-badge-alert"
+      : severity === "info"
+        ? "nav-badge-info"
+        : "nav-badge-warning";
   return <span className={`nav-badge ${tone}`}>{count}</span>;
 }

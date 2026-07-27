@@ -3583,6 +3583,11 @@ select.setting-control {
   background: var(--warning);
   color: #121212;
 }
+/* info tier: 纯提示，不能借用 warning 的琥珀色否则会虚报严重度 */
+.nav-badge-info {
+  background: var(--info);
+  color: #fff;
+}
 
 /* ---------- deployment update hint (self-host compose, Settings top) ---------- */
 .update-card {

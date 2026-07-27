@@ -1,37 +1,44 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 
 /**
- * 条目级删除按钮（client）。成功后从 DOM 移除所在行——badge 每 8s 自轮询，
- * 不需要手动同步。删除是「记住」的：版本类条目等远端再更新时自然复现，
- * 状态类条目（盘失效/缺 LLM）等状态变化后自动重置（见 settings-attention.ts）。
+ * 条目级删除按钮（client）。成功后走 router.refresh() 让服务端重渲染 inbox——
+ * 直接 querySelector().remove() 会把 DOM 改到 React 树之外，下一次 re-render
+ * 会把删掉的行又画回来（且空态收尾也得手工模拟）。
+ * 删除是「记住」的：版本类条目等远端再更新时自然复现，状态类条目（盘失效/
+ * 缺 LLM）等状态变化后自动重置（见 settings-attention.ts）。
  */
 export function DismissAttentionButton({ id }: { id: string }) {
-  const [pending, setPending] = useState(false);
+  const router = useRouter();
+  const [saving, setSaving] = useState(false);
+  const [refreshing, startRefresh] = useTransition();
+  // refresh 期间也保持禁用，避免同一条被连点两次。
+  const pending = saving || refreshing;
+
   const dismiss = async () => {
     if (pending) return;
-    setPending(true);
+    setSaving(true);
     try {
       const res = await fetch("/api/settings/attention/dismiss", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ id }),
       });
-      if (!res.ok) {
-        setPending(false);
-        return;
-      }
-      // 服务端已记住删除；本地把这一行拿掉即可，下次刷新也不再来。
-      const btn = document.querySelector(`[data-dismiss-id="${CSS.escape(id)}"]`);
-      btn?.closest(".attention-item")?.remove();
-      // 若这是最后一条，把整个 inbox 收掉（空态=安静，与非站主同款机制）。
-      document.querySelectorAll(".attention-inbox-list .attention-item").length === 0 &&
-        document.querySelector(".attention-inbox")?.remove();
+      // 失败（含网络异常）不刷新，按钮恢复可点，用户可重试。
+      if (!res.ok) return;
+      // 服务端已记住删除；重渲染后这一条不再出现，最后一条删完 inbox 整体消失。
+      startRefresh(() => {
+        router.refresh();
+      });
     } catch {
-      setPending(false);
+      // keep retryable
+    } finally {
+      setSaving(false);
     }
   };
+
   return (
     <button
       type="button"

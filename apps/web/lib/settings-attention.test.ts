@@ -305,4 +305,33 @@ describe("applySettingsAttentionState", () => {
     expect(r.count).toBe(1);
     expect(r.severity).toBe("info");
   });
+
+  // 时间必须按「瞬时」比较，不能按字符串字典序。parseAttentionTimeMap 的
+  // ISO_DATE_RE 没有 $ 锚点、seenAt 只校验 Date.parse 有限，所以带时区偏移的
+  // 合法值（手改 DB / 旧写入器）会真的走到比较里。下面两条都用「字典序更小、
+  // 实际时间更晚」的 -05:00 偏移串，字典序实现会给出相反结论。
+  const T1_MINUS5 = "2026-07-01T20:00:00.000-05:00"; // = 2026-07-02T01:00Z，晚于 T1
+
+  it("dismissal with a timezone-offset timestamp still hides the ongoing occurrence", () => {
+    const r = applySettingsAttentionState({
+      items: baseItems,
+      stateSince: { "frozen:cs1": T1, missing_llm: T0, "update:2222222": T0 },
+      dismissed: { "frozen:cs1": T1_MINUS5 }, // 实际晚于 createdAt=T1 → 应隐藏
+      seenAt: null, now: T2,
+    });
+    expect(r.items.map((i) => i.id)).not.toContain("frozen:cs1");
+    expect(r.count).toBe(2);
+  });
+
+  it("seen_at with a timezone-offset timestamp does not re-count already-seen items", () => {
+    const r = applySettingsAttentionState({
+      items: baseItems.filter((i) => i.id === "missing_llm"),
+      stateSince: { missing_llm: T1 }, // createdAt=T1 早于 seenAt 的真实瞬时
+      dismissed: {},
+      seenAt: T1_MINUS5, now: T2,
+    });
+    expect(r.items).toHaveLength(1); // 仍在 inbox 里
+    expect(r.count).toBe(0); // 但不再计数
+    expect(r.severity).toBe(null);
+  });
 });

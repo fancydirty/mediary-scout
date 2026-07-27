@@ -229,12 +229,15 @@ export function applySettingsAttentionState(input: {
     // A dismissal suppresses only the occurrence it was recorded on: when the
     // state ended and restarted, createdAt is NEWER than dismissedAt and the
     // stale dismissal entry (deliberately never cleaned eagerly) no longer applies.
-    if (dismissedAt && dismissedAt >= createdAt) continue;
+    // 比较必须用数值时间戳而非字符串字典序：带时区偏移的合法 ISO 串
+    // （2026-07-01T00:00:00+08:00）在字典序下会得出错误的先后关系。
+    if (dismissedAt && Date.parse(dismissedAt) >= Date.parse(createdAt)) continue;
     visible.push({ ...item, createdAt });
   }
 
+  const seenAtMs = input.seenAt === null ? null : Date.parse(input.seenAt);
   const counted = visible.filter(
-    (item) => input.seenAt === null || item.createdAt! > input.seenAt,
+    (item) => seenAtMs === null || Date.parse(item.createdAt!) > seenAtMs,
   );
   const severity = counted.some((item) => item.severity === "blocker")
     ? "blocker"
