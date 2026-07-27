@@ -47,7 +47,7 @@ CREATE INDEX idx_endpoints_status ON endpoints(status);
 -- endpoint by token hash; without this it is a full table scan.
 CREATE INDEX idx_endpoints_token_sha256 ON endpoints(token_sha256);
 
--- Waitlist for Scout Connect beta (阶段 1).
+-- Waitlist for Mediary Connect beta (阶段 1).
 CREATE TABLE waitlist (
   id TEXT PRIMARY KEY,
   email TEXT NOT NULL,

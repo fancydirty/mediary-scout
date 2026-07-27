@@ -1,4 +1,4 @@
-# Scout Connect 原子化 .env 操作设计
+# Mediary Connect 原子化 .env 操作设计
 
 ## 问题
 当前 agent 直接修改 .env，风险：

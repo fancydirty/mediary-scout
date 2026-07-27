@@ -1,4 +1,4 @@
-# Scout Connect — remote access control plane
+# Mediary Connect — remote access control plane
 
 Invite-only remote access for self-hosted Mediary Scout instances. The control
 plane provisions, per invitee, a Cloudflare Tunnel + public hostname

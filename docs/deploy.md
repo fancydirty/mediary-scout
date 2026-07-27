@@ -271,9 +271,9 @@ d. 登录身份默认走 One-time PIN(邮箱一次性验证码);若登录页提�
 完成后用简短中文汇报:隧道是否 Registered、Access 是否配置、面板是否(由用户确认)能进。
 ```
 
-### 方式三:Scout Connect（受邀）
+### 方式三:Mediary Connect（受邀）
 
-若你收到作者的 Scout Connect 邀请链接（`https://mediaryconnect.app/i/...`）:
+若你收到作者的 Mediary Connect 邀请链接（`https://mediaryconnect.app/i/...`）:
 
 1. 打开链接，按页显示一次连接信息（含 `TUNNEL_TOKEN`）。
 2. 写入实例 `.env` 的 `TUNNEL_TOKEN=...`（可复制页上的 Agent 提示词交给 coding agent 代配）。

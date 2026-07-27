@@ -64,7 +64,7 @@ services:
       # queue (获取 stuck "排队", category dirs never provisioned). Must be vercel-ai.
       MEDIA_TRACK_AGENT_ADAPTER: vercel-ai
       MEDIA_TRACK_DEMO_SEED: "0"
-      # 隧道 token 也给 web:设置页「远程访问」用它作实例身份，向 Scout Connect
+      # 隧道 token 也给 web:设置页「远程访问」用它作实例身份，向 Mediary Connect
       # 报到查状态(仅发 Bearer 头做存活探针,不回传任何端点信息)。不传的话已开通
       # 的实例会把自己显示成「未开通」。cloudflared 那边同样需要它,两处读同一个
       # .env 变量。未设时为空 → tab 显示未开通,这正是自建/未开通实例的正确状态。
