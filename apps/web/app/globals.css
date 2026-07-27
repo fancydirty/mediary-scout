@@ -3558,9 +3558,14 @@ select.setting-control {
   cursor: pointer;
   line-height: 1;
 }
-.attention-item-dismiss:hover {
+.attention-item-dismiss:hover:not(:disabled) {
   color: var(--text);
   background: rgba(255, 255, 255, 0.06);
+}
+/* 提交中禁用：不能还长得像能点（pending 现在覆盖到 refresh 结束，窗口更长）。 */
+.attention-item-dismiss:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 .attention-item-actions {
   display: flex;

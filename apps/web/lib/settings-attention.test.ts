@@ -323,6 +323,29 @@ describe("applySettingsAttentionState", () => {
     expect(r.count).toBe(2);
   });
 
+  it("an unparseable seen_at counts everything (never silently zeroes the badge)", () => {
+    // 数值比较意味着 Date.parse 会给出 NaN，而任何与 NaN 的比较都是 false ——
+    // 若不归一化，一个坏 seen_at 会让徽章整体消失（提醒系统最不能犯的错）。
+    const r = applySettingsAttentionState({
+      items: baseItems,
+      stateSince: { "frozen:cs1": T0, missing_llm: T0, "update:2222222": T0 },
+      dismissed: {},
+      seenAt: "not-a-date", now: T2,
+    });
+    expect(r.count).toBe(3);
+    expect(r.severity).toBe("blocker");
+  });
+
+  it("an unparseable createdAt still counts (visible beats silently suppressed)", () => {
+    const r = applySettingsAttentionState({
+      items: baseItems.filter((i) => i.id === "missing_llm"),
+      stateSince: { missing_llm: "garbage" },
+      dismissed: {},
+      seenAt: T1, now: T2,
+    });
+    expect(r.count).toBe(1);
+  });
+
   it("seen_at with a timezone-offset timestamp does not re-count already-seen items", () => {
     const r = applySettingsAttentionState({
       items: baseItems.filter((i) => i.id === "missing_llm"),

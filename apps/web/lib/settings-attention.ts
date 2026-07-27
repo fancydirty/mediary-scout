@@ -177,13 +177,16 @@ export function parseAttentionTimeMap(raw: string | null | undefined): Record<st
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
   const map: Record<string, string> = {};
+  let kept = 0;
   for (const [key, value] of Object.entries(parsed)) {
     if (key.length > 128) continue;
     if (typeof value !== "string" || !ISO_DATE_RE.test(value) || !Number.isFinite(Date.parse(value))) {
       continue;
     }
     map[key] = value;
-    if (Object.keys(map).length >= MAX_TIME_MAP_ENTRIES) break;
+    kept += 1;
+    // 计数器而非 Object.keys(map).length：后者每次都要枚举一遍键（O(n²)）。
+    if (kept >= MAX_TIME_MAP_ENTRIES) break;
   }
   return map;
 }
@@ -235,10 +238,16 @@ export function applySettingsAttentionState(input: {
     visible.push({ ...item, createdAt });
   }
 
-  const seenAtMs = input.seenAt === null ? null : Date.parse(input.seenAt);
-  const counted = visible.filter(
-    (item) => seenAtMs === null || Date.parse(item.createdAt!) > seenAtMs,
-  );
+  // 坏 seen_at 归一为 null（=全部计数）。NaN 与任何值比较都是 false，若不
+  // 归一化，一个坏值会让徽章整体归零——提醒系统最不能犯的错是「安静地漏报」。
+  const seenAtRaw = input.seenAt === null ? NaN : Date.parse(input.seenAt);
+  const seenAtMs = Number.isFinite(seenAtRaw) ? seenAtRaw : null;
+  const counted = visible.filter((item) => {
+    if (seenAtMs === null) return true;
+    const createdMs = Date.parse(item.createdAt!);
+    // 同理：createdAt 解析不出来时宁可多显示，也不静默吞掉。
+    return !Number.isFinite(createdMs) || createdMs > seenAtMs;
+  });
   const severity = counted.some((item) => item.severity === "blocker")
     ? "blocker"
     : counted.some((item) => item.severity === "warning")
