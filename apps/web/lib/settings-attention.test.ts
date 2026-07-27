@@ -196,6 +196,24 @@ describe("parseAttentionTimeMap", () => {
   });
 });
 
+describe("parseAttentionTimeMap prototype keys", () => {
+  it("skips __proto__/constructor/prototype keys without spending the entry budget", () => {
+    // 说明：值必须先过 typeof === "string" 才会被赋值，而把字符串赋给
+    // __proto__ 是静默 no-op（不会污染原型，实测确认）。真正的毛病是这类键
+    // 什么也没存进去，却照样占掉一格上限配额——显式跳过，账目才对得上。
+    const raw = JSON.stringify({
+      __proto__: "2026-07-01T00:00:00.000Z",
+      constructor: "2026-07-01T00:00:00.000Z",
+      prototype: "2026-07-01T00:00:00.000Z",
+      "frozen:cs1": "2026-07-02T00:00:00.000Z",
+    });
+    const map = parseAttentionTimeMap(raw);
+    expect(Object.keys(map)).toEqual(["frozen:cs1"]);
+    expect(Object.getPrototypeOf(map)).toBe(Object.prototype);
+    expect(({} as Record<string, unknown>)["polluted"]).toBeUndefined();
+  });
+});
+
 describe("isAttentionItemId", () => {
   it("accepts the three known id shapes", () => {
     expect(isAttentionItemId("missing_llm")).toBe(true);

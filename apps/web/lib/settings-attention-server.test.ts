@@ -149,6 +149,19 @@ describe("loadSettingsAttentionSummary — per-account state", () => {
     expect(owner.items.some((i) => i.kind === "update_available")).toBe(true);
   });
 
+  it("rejects a non-allowlisted id at the storage layer (never writes arbitrary keys)", async () => {
+    const { accountSettings, repository } = makeRepository([]);
+    await dismissSettingsAttentionItem("acct_default", "__proto__", "2026-07-27T01:00:00.000Z");
+    await dismissSettingsAttentionItem("acct_default", "../../etc/passwd", "2026-07-27T01:00:00.000Z");
+    expect(repository.setAccountSetting).not.toHaveBeenCalled();
+    expect(accountSettings.get("acct_defaultattention_dismissed")).toBeUndefined();
+    // 合法 id 照常写入。
+    await dismissSettingsAttentionItem("acct_default", "frozen:cs1", "2026-07-27T01:00:00.000Z");
+    expect(JSON.parse(accountSettings.get("acct_defaultattention_dismissed")!)).toEqual({
+      "frozen:cs1": "2026-07-27T01:00:00.000Z",
+    });
+  });
+
   it("non-owners never trigger the update probe (badge polls every 8s; the probe can block 5s cold)", async () => {
     (loadDeploymentUpdateState as ReturnType<typeof vi.fn>).mockResolvedValue(UPDATE_BEHIND);
     (isMultiUserEnabled as ReturnType<typeof vi.fn>).mockReturnValue(true);

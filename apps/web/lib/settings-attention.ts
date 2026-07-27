@@ -180,6 +180,10 @@ export function parseAttentionTimeMap(raw: string | null | undefined): Record<st
   let kept = 0;
   for (const [key, value] of Object.entries(parsed)) {
     if (key.length > 128) continue;
+    // 原型键显式跳过。注意这里并不存在原型污染：值必须先过下面的
+    // typeof === "string"，而把字符串赋给 __proto__ 是静默 no-op（已实测）。
+    // 真正的毛病是这类键什么都存不进去、却照样吃掉一格上限配额。
+    if (key === "__proto__" || key === "constructor" || key === "prototype") continue;
     if (typeof value !== "string" || !ISO_DATE_RE.test(value) || !Number.isFinite(Date.parse(value))) {
       continue;
     }

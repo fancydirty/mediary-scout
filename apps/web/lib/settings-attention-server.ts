@@ -13,6 +13,7 @@ import {
   ATTENTION_STATE_SINCE_KEY,
   applySettingsAttentionState,
   buildSettingsAttentionItems,
+  isAttentionItemId,
   parseAttentionTimeMap,
   type SettingsAttentionSummary,
 } from "./settings-attention";
@@ -154,6 +155,9 @@ export async function dismissSettingsAttentionItem(
   id: string,
   now: string = new Date().toISOString(),
 ): Promise<void> {
+  // 存储层自己把关，不指望调用方：路由现在会校验，但这个导出函数很容易被
+  // 别处直接调用，届时任意键就会写进 account_settings。
+  if (!isAttentionItemId(id)) return;
   const repository = getWorkflowRepository();
   const dismissed = parseAttentionTimeMap(
     await repository.getAccountSetting(accountId, ATTENTION_DISMISSED_KEY),
