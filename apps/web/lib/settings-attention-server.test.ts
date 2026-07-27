@@ -244,7 +244,8 @@ describe("dismissSettingsAttentionItem", () => {
     const existing: Record<string, string> = {
       // 实际 = 2026-06-02T01:00Z，晚于下面所有 filler；但字典序("…T20…")
       // 比 filler("…T23…") 小，字典序实现会把它当最旧的丢掉。
-      keeper: "2026-06-01T20:00:00.000-05:00",
+      // id 必须用真实形态：解析层现在按白名单过滤，假 id 会被直接丢掉。
+      "frozen:cs_keeper": "2026-06-01T20:00:00.000-05:00",
     };
     for (let i = 0; i < 100; i += 1) {
       // 实际 = 2026-06-01T09:00Z（早于 keeper），字典序却更大。
@@ -256,6 +257,6 @@ describe("dismissSettingsAttentionItem", () => {
     const map = JSON.parse(accountSettings.get("acct_defaultattention_dismissed")!);
     expect(Object.keys(map)).toHaveLength(100);
     expect(map["missing_llm"]).toBe("2026-07-27T01:00:00.000Z");
-    expect(map["keeper"]).toBe("2026-06-01T20:00:00.000-05:00");
+    expect(map["frozen:cs_keeper"]).toBe("2026-06-01T20:00:00.000-05:00");
   });
 });

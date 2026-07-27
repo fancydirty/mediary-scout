@@ -212,6 +212,22 @@ describe("parseAttentionTimeMap prototype keys", () => {
     expect(Object.getPrototypeOf(map)).toBe(Object.prototype);
     expect(({} as Record<string, unknown>)["polluted"]).toBeUndefined();
   });
+
+  it("drops keys that are not allow-listed attention ids (they'd eat the entry budget)", () => {
+    const raw = JSON.stringify({
+      "frozen:cs_1": "2026-07-02T00:00:00.000Z",
+      missing_llm: "2026-07-02T00:00:00.000Z",
+      "update:1234abc": "2026-07-02T00:00:00.000Z",
+      keeper: "2026-07-02T00:00:00.000Z", // 非法形态
+      "frozen:": "2026-07-02T00:00:00.000Z", // 空 storage id
+      "update:xyz": "2026-07-02T00:00:00.000Z", // 非十六进制
+    });
+    expect(Object.keys(parseAttentionTimeMap(raw)).sort()).toEqual([
+      "frozen:cs_1",
+      "missing_llm",
+      "update:1234abc",
+    ]);
+  });
 });
 
 describe("isAttentionItemId", () => {
