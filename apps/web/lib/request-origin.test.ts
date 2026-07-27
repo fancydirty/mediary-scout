@@ -48,6 +48,19 @@ describe("resolveRequestOrigin", () => {
     expect(resolveRequestOrigin(headers({}))).toBe(DEFAULT_LOCAL_ORIGIN);
   });
 
+  it("rejects out-of-range ports instead of emitting an unusable origin", () => {
+    // \d{1,5} 本身放行 99999 / 0，可它们不是合法端口——冒出来的 origin 会被
+    // 原样贴进升级提示词，让那台冷启动的 agent 去 curl 一个永远连不上的地址。
+    for (const host of ["nas.local:99999", "nas.local:65536", "nas.local:0"]) {
+      expect(resolveRequestOrigin(headers({ host }))).toBe(DEFAULT_LOCAL_ORIGIN);
+    }
+    // 边界内的仍然放行
+    expect(resolveRequestOrigin(headers({ host: "nas.local:65535" }))).toBe(
+      "http://nas.local:65535",
+    );
+    expect(resolveRequestOrigin(headers({ host: "nas.local:1" }))).toBe("http://nas.local:1");
+  });
+
   it("ignores unknown forwarded protocols (never emits gopher:// etc.)", () => {
     const origin = resolveRequestOrigin(
       headers({ "x-forwarded-proto": "gopher", host: "nas.local:3300" }),

@@ -11,7 +11,7 @@
  */
 export const DEFAULT_LOCAL_ORIGIN = "http://localhost:3300";
 
-const HOST_RE = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:\d{1,5})?$/i;
+const HOST_RE = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:(\d{1,5}))?$/i;
 
 export function resolveRequestOrigin(headers: {
   get(name: string): string | null;
@@ -26,7 +26,15 @@ export function resolveRequestOrigin(headers: {
   const hostRaw = (
     headers.get("x-forwarded-host")?.split(",")[0] ?? headers.get("host")
   )?.trim();
-  if (hostRaw && HOST_RE.test(hostRaw)) {
+  const match = hostRaw ? HOST_RE.exec(hostRaw) : null;
+  if (match) {
+    // 端口还得落在合法区间：\d{1,5} 本身放行 :0 和 :99999，那种 origin 会被
+    // 原样写进升级提示词，让冷启动的 agent 去连一个不存在的地址。
+    const port = match[3];
+    if (port !== undefined) {
+      const n = Number(port);
+      if (!Number.isInteger(n) || n < 1 || n > 65535) return DEFAULT_LOCAL_ORIGIN;
+    }
     return `${proto}://${hostRaw}`;
   }
   return DEFAULT_LOCAL_ORIGIN;
