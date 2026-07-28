@@ -160,7 +160,7 @@ input[type=radio],input[type=checkbox]{accent-color:var(--accent);margin:0}
 <header class="brand">${LOGO}<span class="wordmark">Mediary Scout</span><span class="connect-tag">CONNECT</span></header>
 
 <section class="hero">
-<p class="eyebrow rise d1">SCOUT CONNECT · BETA</p>
+<p class="eyebrow rise d1">MEDIARY CONNECT · BETA</p>
 <h1 class="rise d2">Mediary Connect 远程访问 · 内测</h1>
 <p class="sub rise d3">在外网也能打开家里实例的浏览器界面——出差时下发新任务、查转存进度、改配置。</p>
 <p class="sub2 rise d4">经 Cloudflare 加密隧道，不开端口、不要公网 IP、不需要域名。内容与凭据始终只在你自己的机器上。</p>
