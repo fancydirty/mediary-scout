@@ -54,7 +54,9 @@ async function hmac(key: string, message: string): Promise<Uint8Array> {
   return new Uint8Array(sig);
 }
 
-/** 常量时间比较,避免签名比对的时序侧信道。 */
+/** 尽力常量时间比较签名。长度不等时提前返回(签名长度是公开的固定值,
+ *  不构成侧信道);长度相等时不按首个失配字节短路,逐字节累积差异。
+ *  JS 无法保证真常量时间(JIT 可能优化),故为尽力而为。 */
 function timingSafeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
   let diff = 0;
@@ -113,7 +115,11 @@ export async function verifyToken(token: string, opts: VerifyOptions): Promise<V
 
   const expiry = Number(expiryStr);
   const now = opts.now ?? Date.now();
-  if (!Number.isFinite(expiry) || now > expiry) return { ok: false, reason: "expired" };
+  // now 非有限(调用方传了 Date.parse(坏值)=NaN)必须判过期:否则 now > expiry
+  // 恒为 false,token 永不过期——fail closed。
+  if (!Number.isFinite(expiry) || !Number.isFinite(now) || now > expiry) {
+    return { ok: false, reason: "expired" };
+  }
 
   return { ok: true, purpose: purpose as TokenPurpose, subject: b64urlDecodeStr(subjectPart) };
 }

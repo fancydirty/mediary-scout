@@ -91,7 +91,7 @@ CREATE TABLE accounts (
   created_at TEXT NOT NULL,
   last_login_at TEXT
 );
-CREATE INDEX idx_accounts_email ON accounts(email);
+-- accounts.email 已由 UNIQUE 约束自动建索引,不再重复建。
 CREATE INDEX idx_accounts_paddle_customer ON accounts(paddle_customer_id);
 
 CREATE TABLE entitlements (

@@ -1,5 +1,5 @@
 import type { CfApi } from "./cf-api.js";
-import type { ConnectDb } from "./db.js";
+import type { AccountRow, ConnectDb } from "./db.js";
 import { HttpError, handleError, htmlPage, json } from "./http.js";
 import { requireAdmin } from "./auth.js";
 import { provisionEndpoint } from "./provision.js";
@@ -378,6 +378,28 @@ async function requestMagicLink(request: Request, deps: RouteDeps): Promise<Resp
   return json({ ok: true }, 202, { noStore: true });
 }
 
+/** 按 email upsert 账号,race-safe:两个并发请求可能都读到 null,第二个
+ *  INSERT 撞 UNIQUE(email) —— 捕获后重读,而不是让登录 500(Copilot round 2)。 */
+async function upsertAccount(email: string, deps: RouteDeps): Promise<AccountRow> {
+  const existing = await deps.db.getAccountByEmail(email);
+  if (existing !== null) return existing;
+  try {
+    return await deps.db.insertAccount({
+      id: deps.newAccountId(),
+      email,
+      paddle_customer_id: null,
+      created_at: deps.now(),
+      last_login_at: null,
+    });
+  } catch (e) {
+    if (!isUniqueViolation(e)) throw e;
+    // 并发对手赢了这一插:重读它插入的行。
+    const raced = await deps.db.getAccountByEmail(email);
+    if (raced === null) throw e; // UNIQUE 失败却读不到 → 真异常,不吞
+    return raced;
+  }
+}
+
 async function magicCallback(url: URL, deps: RouteDeps): Promise<Response> {
   const token = url.searchParams.get("t") ?? "";
   const result = await verifyToken(token, {
@@ -389,18 +411,8 @@ async function magicCallback(url: URL, deps: RouteDeps): Promise<Response> {
   const email = result.subject;
 
   // 账号 upsert:首次登录建号,之后复用。
-  let account = await deps.db.getAccountByEmail(email);
-  if (account === null) {
-    account = await deps.db.insertAccount({
-      id: deps.newAccountId(),
-      email,
-      paddle_customer_id: null,
-      created_at: deps.now(),
-      last_login_at: deps.now(),
-    });
-  } else {
-    await deps.db.updateAccountLastLogin(account.id, deps.now());
-  }
+  const account = await upsertAccount(email, deps);
+  await deps.db.updateAccountLastLogin(account.id, deps.now());
 
   const cookie = await buildSessionCookie(account.id, {
     secret: deps.sessionSecret,
@@ -449,16 +461,7 @@ async function adminGrant(request: Request, deps: RouteDeps): Promise<Response> 
     : "manual";
 
   // account upsert
-  let account = await deps.db.getAccountByEmail(email);
-  if (account === null) {
-    account = await deps.db.insertAccount({
-      id: deps.newAccountId(),
-      email,
-      paddle_customer_id: null,
-      created_at: deps.now(),
-      last_login_at: null,
-    });
-  }
+  const account = await upsertAccount(email, deps);
   // 从当前最新到期时刻叠加
   const ents = await deps.db.listEntitlements(account.id);
   let current: string | null = null;

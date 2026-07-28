@@ -171,6 +171,66 @@ describe("GET /auth/callback (魔法链接落地)", () => {
     expect(acct!.id).toBe("act_existing"); // 复用,没有新建
   });
 
+  it("concurrent first-login for same email does not 500 (race-safe upsert)", async () => {
+    // 模拟并发:getAccountByEmail 恒返回 null(两个请求都以为要新建),
+    // 但第二次 insertAccount 撞 UNIQUE。upsertAccount 应捕获后重读而非 500。
+    const { deps } = setup();
+    let insertCount = 0;
+    const realInsert = deps.db.insertAccount.bind(deps.db);
+    const stored: Record<string, unknown> = {};
+    deps.db.getAccountByEmail = async (email: string) => {
+      // 第一次读返回 null；被"对手"插入后（stored 有值）才返回。
+      return (stored[email] as never) ?? null;
+    };
+    deps.db.insertAccount = async (row) => {
+      insertCount += 1;
+      if (insertCount === 1) {
+        stored[row.email] = { ...row };
+        return realInsert(row);
+      }
+      throw new Error("UNIQUE constraint failed: accounts.email");
+    };
+    const captured: string[] = [];
+    deps.sendMagicLink = async (_to, url) => captured.push(new URL(url).searchParams.get("t")!);
+    // 第一次登录建号
+    await handleRequest(
+      new Request(`${BASE}/api/auth/magic`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "race@example.com" }),
+      }),
+      deps,
+    );
+    const first = await handleRequest(
+      new Request(`${BASE}/auth/callback?t=${encodeURIComponent(captured[0]!)}`),
+      deps,
+    );
+    expect(first.status).toBe(302);
+    // 强制走"新建"分支：清掉 stored 让 getAccountByEmail 先返回 null，
+    // 再让 insert 抛 UNIQUE，但重读时（stored 已恢复）拿到行。
+    let readCount = 0;
+    deps.db.getAccountByEmail = async (email: string) => {
+      readCount += 1;
+      if (readCount === 1) return null; // 第一次读：以为要新建
+      return (stored[email] as never) ?? null; // 重读：拿到对手插的
+    };
+    const second = await handleRequest(
+      new Request(`${BASE}/api/auth/magic`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "race@example.com" }),
+      }),
+      deps,
+    );
+    expect(second.status).toBe(202);
+    const secondLogin = await handleRequest(
+      new Request(`${BASE}/auth/callback?t=${encodeURIComponent(captured[1]!)}`),
+      deps,
+    );
+    // 关键：撞 UNIQUE 后重读命中，登录成功 302，而不是 500。
+    expect(secondLogin.status).toBe(302);
+  });
+
   it("expired/forged token → 400, no session", async () => {
     const { deps } = setup();
     const res = await handleRequest(

@@ -9,7 +9,7 @@ CREATE TABLE accounts (
   created_at TEXT NOT NULL,             -- ISO 8601 UTC
   last_login_at TEXT                    -- 最近一次魔法链接登入
 );
-CREATE INDEX idx_accounts_email ON accounts(email);
+-- accounts.email 已由 UNIQUE 约束自动建索引,不再重复建。
 CREATE INDEX idx_accounts_paddle_customer ON accounts(paddle_customer_id);
 
 -- 预付时长账本:每次充值一行,expires_at 叠加
