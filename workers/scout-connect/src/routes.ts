@@ -6,6 +6,7 @@ import { provisionEndpoint } from "./provision.js";
 import { revokeEndpoint } from "./revoke.js";
 import { revealByCode } from "./reveal.js";
 import { assertSlug } from "./slug.js";
+import { checkSlug, type IsTaken } from "./slug-availability.js";
 import { homePage } from "./html/home-page.js";
 import { adminPage } from "./html/admin-page.js";
 import { invitePage, type InvitePageState } from "./html/invite-page.js";
@@ -227,6 +228,9 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
   if (method === "GET" && path === "/console") {
     return await consoleRoute(request, deps);
   }
+  if (method === "GET" && path === "/api/slug/check") {
+    return await slugCheckRoute(url, request, deps);
+  }
   // Brand logo for Access Custom Pages + invite page — self-hosted so we don't
   // depend on any external asset host.
   if (method === "GET" && path === "/logo.svg") {
@@ -379,6 +383,21 @@ async function requestMagicLink(request: Request, deps: RouteDeps): Promise<Resp
   }
   // 固定 202,无论邮箱存在与否。
   return json({ ok: true }, 202, { noStore: true });
+}
+
+/** slug 实时查重 + 相似推荐(登录后选 slug 用)。需 session。 */
+async function slugCheckRoute(url: URL, request: Request, deps: RouteDeps): Promise<Response> {
+  const session = await parseSessionCookie(request.headers.get("cookie"), {
+    secret: deps.sessionSecret,
+    now: Date.parse(deps.now()),
+  });
+  if (!session.ok) throw new HttpError(401, "unauthorized");
+  const slug = url.searchParams.get("s") ?? "";
+  // 占用判定查所有状态的行(含 revoked/purged):slug 永久保留不释放(决策 #9)。
+  const isTaken: IsTaken = async (s) =>
+    (await deps.db.findEndpointBySlugOrHostname(s, `${s}.${deps.rootDomain}`)) !== null;
+  const result = await checkSlug(slug, isTaken);
+  return json(result, 200, { noStore: true });
 }
 
 /** 按 email upsert 账号,race-safe:两个并发请求可能都读到 null,第二个
