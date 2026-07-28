@@ -26,6 +26,12 @@ export interface EndpointRow {
   last_seen_at: string | null;
   created_at: string;
   revoked_at: string | null;
+  // P3 (migration 0003): 付费账号关联 + 到期三阶段(决策 #14)。均可空:
+  // 内测邀请制的行 account_id 为 null;未进入到期流程的行三个时间戳为 null。
+  account_id?: string | null;
+  grace_until?: string | null;
+  suspended_at?: string | null;
+  purge_after?: string | null;
 }
 
 /** P3: 付费账号。邮箱即身份;paddle_customer_id 内测手工开的为 null。 */

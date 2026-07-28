@@ -10,6 +10,9 @@ export function createMagicLinkSender(apiKey: string): (to: string, url: string)
   return async (to: string, url: string) => {
     const res = await fetch(RESEND_ENDPOINT, {
       method: "POST",
+      // project 硬规则:外部 HTTP 一律带超时(同 routes.ts 的 siteverify),
+      // 否则上游抖动会挂住 Worker、占用并发。
+      signal: AbortSignal.timeout(5_000),
       headers: {
         authorization: `Bearer ${apiKey}`,
         "content-type": "application/json",

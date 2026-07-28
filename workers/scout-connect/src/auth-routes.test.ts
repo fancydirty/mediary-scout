@@ -77,6 +77,39 @@ describe("POST /api/auth/magic (魔法链接请求)", () => {
   });
 });
 
+describe("POST /api/auth/magic Turnstile gate", () => {
+  it("gate on + missing token → 400, no email sent", async () => {
+    const { deps, sent } = setup({
+      turnstileSitekey: "0x4AAAAAAD-test",
+      turnstileSecret: "secret-fixture",
+    });
+    const res = await handleRequest(
+      new Request(`${BASE}/api/auth/magic`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "a@example.com" }),
+      }),
+      deps,
+    );
+    expect(res.status).toBe(400);
+    expect(sent).toHaveLength(0);
+  });
+
+  it("gate off (no turnstile config) → no token required, email sent", async () => {
+    const { deps, sent } = setup();
+    const res = await handleRequest(
+      new Request(`${BASE}/api/auth/magic`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "a@example.com" }),
+      }),
+      deps,
+    );
+    expect(res.status).toBe(202);
+    expect(sent).toHaveLength(1);
+  });
+});
+
 describe("GET /auth/callback (魔法链接落地)", () => {
   it("valid token → creates account on first login, sets session cookie, 302 to /console", async () => {
     const { deps } = setup();

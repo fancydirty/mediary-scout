@@ -222,7 +222,7 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
     return await magicCallback(url, deps);
   }
   if (method === "GET" && path === "/login") {
-    return htmlPage(loginPage());
+    return htmlPage(loginPage(turnstileSitekeyIfConfigured(deps)));
   }
   if (method === "GET" && path === "/console") {
     return await consoleRoute(request, deps);
@@ -356,6 +356,10 @@ async function requestMagicLink(request: Request, deps: RouteDeps): Promise<Resp
   if (email.length > EMAIL_MAX_LENGTH || !EMAIL_RE.test(email)) {
     throw new HttpError(400, "invalid email");
   }
+  // 与 /waitlist 同一条防滥用规则:Turnstile 成对配置时,发信入口也要过人机
+  // 校验——否则这是个公开的「触发发邮件」放大面。校验在邮箱形状之后:
+  // 一次性 token 不浪费在注定 400 的请求上。
+  await requireTurnstileIfEnabled(request, body, deps);
   // 注册即登录:不论邮箱是否已存在都发信,不泄露注册状态。账号在 callback
   // 落地时才创建(避免未验证邮箱污染 accounts 表)。
   const token = await signToken(
@@ -405,7 +409,7 @@ async function magicCallback(url: URL, deps: RouteDeps): Promise<Response> {
   });
   return new Response(null, {
     status: 302,
-    headers: { location: "/console", "set-cookie": cookie },
+    headers: { location: "/console", "set-cookie": cookie, "cache-control": "no-store" },
   });
 }
 
@@ -481,9 +485,13 @@ async function createInvite(request: Request, url: URL, deps: RouteDeps): Promis
     throw new HttpError(400, "email required");
   }
   const email = emailRaw.trim().toLowerCase();
-  if (!email.includes("@")) {
+  if (email.length > EMAIL_MAX_LENGTH || !EMAIL_RE.test(email)) {
     throw new HttpError(400, "invalid email");
   }
+  // 与 /waitlist 同一条防滥用规则:Turnstile 成对配置时,发信入口也要过人机
+  // 校验——否则这是个公开的「触发发邮件」放大面(骚扰 + 成本 + 投递信誉)。
+  // 校验在邮箱形状之后:一次性 token 不浪费在注定 400 的请求上。
+  await requireTurnstileIfEnabled(request, body, deps);
   // Validate/normalize the slug at creation time so a bad slug fails fast
   // (400 here) instead of later at provision.
   const slugRaw = optString(body.slug);
@@ -732,6 +740,25 @@ function turnstileGateEnabled(deps: RouteDeps): boolean {
  * 一律带超时。失败一律 fail CLOSED（这是公开报名漏斗，宁误杀不放过）——
  * 但日志里绝不带 secret 与用户 token。
  */
+/** 若 Turnstile 成对配置则强制校验;否则放行。发信入口(/api/auth/magic)与
+ *  报名入口(/waitlist)共用,消除两处逻辑漂移。约定:调用方须先做完邮箱形状
+ *  校验,不把一次性 token 浪费在注定失败的请求上。 */
+async function requireTurnstileIfEnabled(
+  request: Request,
+  body: Record<string, unknown>,
+  deps: RouteDeps,
+): Promise<void> {
+  if (!turnstileGateEnabled(deps)) return;
+  const rawToken = body.turnstile_token;
+  const token = typeof rawToken === "string" ? rawToken.trim() : "";
+  if (token === "") throw new HttpError(400, "turnstile required");
+  const remoteIp = request.headers.get("cf-connecting-ip")?.trim() || null;
+  const secret = turnstileSecretIfConfigured(deps);
+  if (!secret) throw new HttpError(500, "internal");
+  const ok = await verifyTurnstile(secret, token, remoteIp);
+  if (!ok) throw new HttpError(403, "turnstile failed");
+}
+
 async function verifyTurnstile(secret: string, token: string, remoteIp: string | null): Promise<boolean> {
   const form = new URLSearchParams();
   form.set("secret", secret);
@@ -823,25 +850,9 @@ async function addToWaitlist(request: Request, deps: RouteDeps): Promise<Respons
     throw new HttpError(400, "invalid email");
   }
 
-  // Turnstile 门：仅在 sitekey+secret 成对配置时启用（未配置=本地开发，
-  // 全链路不设防）。位置刻意在邮箱形状校验**之后**——siteverify 的
-  // token 是一次性的，不能浪费在一个注定 400 的请求上。
-  if (turnstileGateEnabled(deps)) {
-    const rawToken = body.turnstile_token;
-    const token = typeof rawToken === "string" ? rawToken.trim() : "";
-    if (token === "") {
-      throw new HttpError(400, "turnstile required");
-    }
-    const remoteIp = request.headers.get("cf-connecting-ip")?.trim() || null;
-    // turnstileGateEnabled 只表达规则，不给 TS 收窄——secret 在此单独取值收窄。
-    // 必须走同一个归一化，否则送去 siteverify 的还是带空白的原值。
-    const secret = turnstileSecretIfConfigured(deps);
-    if (!secret) throw new HttpError(500, "internal");
-    const ok = await verifyTurnstile(secret, token, remoteIp);
-    if (!ok) {
-      throw new HttpError(403, "turnstile failed");
-    }
-  }
+  // Turnstile 门(成对配置时启用)。位置刻意在邮箱形状校验之后:一次性
+  // token 不浪费在注定 400 的请求上。与 /api/auth/magic 共用同一 helper。
+  await requireTurnstileIfEnabled(request, body, deps);
 
   const batch = WAITLIST_BATCH;
 
