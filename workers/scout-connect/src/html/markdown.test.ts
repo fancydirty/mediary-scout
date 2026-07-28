@@ -46,6 +46,15 @@ describe("renderMarkdown", () => {
     expect(html2).toContain('href="https://ok.example/?a=1&amp;b=2"');
   });
 
+  it("does not process markdown syntax inside code spans", () => {
+    // `[x](https://a)` 里的链接语法必须原样呈现——code 的意义就是字面量。
+    const html = renderMarkdown("用 `[x](https://a.example)` 与 `**bold**` 语法。");
+    expect(html).toContain("<code>[x](https://a.example)</code>");
+    expect(html).toContain("<code>**bold**</code>");
+    expect(html).not.toContain("<code><a");
+    expect(html).not.toContain("<code><strong>");
+  });
+
   it("renders hr", () => {
     expect(renderMarkdown("上\n\n---\n\n下")).toContain("<hr>");
   });

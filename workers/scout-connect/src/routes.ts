@@ -192,7 +192,9 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
   // 两个 host 都放行：审核看的是 mediaryconnect.app，但 beta 页脚也要能链到。
   if (method === "GET" && path.length > 1) {
     const key = path.slice(1);
-    if (key in COMPLIANCE_PAGES) {
+    // Object.hasOwn 而非 `in`：后者沿原型链找到 toString/valueOf，
+    // 随后 compliancePage() 因内容缺失抛错变 500（round 1 评审抓到）。
+    if (Object.hasOwn(COMPLIANCE_PAGES, key)) {
       return htmlPage(compliancePage(key as CompliancePageKey));
     }
   }

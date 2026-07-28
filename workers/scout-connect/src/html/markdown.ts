@@ -28,8 +28,14 @@ function escapeHtml(text: string): string {
  *  顺序:code(内部不再处理)→ 链接 → 粗体。 */
 function renderInline(raw: string): string {
   const escaped = escapeHtml(raw);
-  // `code`
-  let out = escaped.replace(/`([^`]+)`/g, "<code>$1</code>");
+  // code span 先摘出为占位符：code 的意义就是字面量，链接/粗体语法在
+  // 其内部必须原样呈现（round 1 评审抓到占位前的实现会继续处理内部）。
+  // 占位符用 \u0000 包裹索引——escapeHtml 之后的文本里不可能自然出现 NUL。
+  const codes: string[] = [];
+  let out = escaped.replace(/`([^`]+)`/g, (_m, code: string) => {
+    codes.push(code);
+    return `\u0000${codes.length - 1}\u0000`;
+  });
   // [text](href) — href 只放行 http(s);其余整体降级为纯文本(去掉语法糖)。
   out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_m, text: string, href: string) => {
     if (/^https?:\/\//i.test(href)) {
@@ -39,6 +45,8 @@ function renderInline(raw: string): string {
   });
   // **bold**
   out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  // 还原 code span
+  out = out.replace(/\u0000(\d+)\u0000/g, (_m, i: string) => `<code>${codes[Number(i)]}</code>`);
   return out;
 }
 

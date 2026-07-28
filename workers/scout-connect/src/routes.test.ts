@@ -179,6 +179,16 @@ describe("handleRequest", () => {
     expect(await refund.text()).toContain("14 天");
   });
 
+  it("prototype-chain paths like /toString never hit the compliance branch (404, not 500)", async () => {
+    // `key in COMPLIANCE_PAGES` 会沿原型链找到 toString/valueOf——
+    // 随后 compliancePage() 因内容缺失抛错变 500。必须查自有属性。
+    const { deps } = setup();
+    for (const path of ["/toString", "/valueOf", "/constructor", "/hasOwnProperty"]) {
+      const res = await handleRequest(new Request(`${BASE}${path}`), deps);
+      expect(res.status, path).toBe(404);
+    }
+  });
+
   it("apex home page links to the compliance pages (Paddle 审核员要能点着找到)", async () => {
     const { deps } = setup();
     const html = await handleRequest(new Request(`${BASE}/`), deps).then((r) => r.text());

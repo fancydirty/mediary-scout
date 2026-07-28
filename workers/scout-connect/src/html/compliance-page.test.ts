@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { COMPLIANCE_MARKDOWN } from "./compliance-content.gen.js";
 import { compliancePage, COMPLIANCE_PAGES } from "./compliance-page.js";
@@ -7,7 +8,9 @@ import { compliancePage, COMPLIANCE_PAGES } from "./compliance-page.js";
 describe("generated content freshness", () => {
   it("compliance-content.gen.ts matches src/content/*.md byte-for-byte", () => {
     // 生成文件进 git；.md 改了但忘了重新生成 → 这里红。
-    const contentDir = join(__dirname, "..", "content");
+    // import.meta.url 而非 __dirname：本仓测试跑在 ESM 语义下，__dirname
+    // 依赖 vitest 的 CJS shim，换 runner/配置就碎（round 1 评审指出）。
+    const contentDir = join(dirname(fileURLToPath(import.meta.url)), "..", "content");
     const files = readdirSync(contentDir).filter((f) => f.endsWith(".md")).sort();
     expect(files.map((f) => f.replace(/\.md$/, ""))).toEqual(
       Object.keys(COMPLIANCE_MARKDOWN).sort(),
