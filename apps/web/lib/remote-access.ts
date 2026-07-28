@@ -37,8 +37,8 @@ export type RemoteAccessState =
   | { kind: "active_degraded" };
 
 /** 心跳三态。ok=worker 认这个 token(204);unauthorized=worker 明确不认(401,
- *  多半是自带的旧隧道 token,不是 Mediary Connect 发的);unreachable=网络
- *  抖动/超时/5xx——拿不准,按「已开通但暂时联系不上」处理。 */
+ *  多半是自带的旧隧道 token,不是 Mediary Connect 发的);unreachable=
+ *  其余状态码/网络错误(超时、4xx、5xx 等)——拿不准,按「已开通但暂时联系不上」处理。 */
 export type HeartbeatResult = "ok" | "unauthorized" | "unreachable";
 
 const DEFAULT_WORKER_BASE = "https://mediaryconnect.app";
@@ -92,7 +92,7 @@ async function defaultSendHeartbeat(token: string): Promise<HeartbeatResult> {
   if (res.status === 204) return "ok";
   // 401 是 worker 明确「不认这个 token」——多半是自带旧隧道的 token,不是
   // Mediary Connect 开通的。据此把状态显示为「未开通」(露出报名入口),而不是
-  // 「已开通但状态未知」。其余状态码当作暂时不可达。
+  // 「已开通但状态未知」。其余状态码(含其它 4xx/5xx)一律当作暂时不可达。
   if (res.status === 401) return "unauthorized";
   return "unreachable";
 }
@@ -125,6 +125,7 @@ export async function resolveRemoteAccessState(opts: {
       return { kind: "not_provisioned" };
     }
     if (result === "unreachable") {
+      // 其余状态码/网络错误:拿不准,保持「已开通但联系不上」。
       return { kind: "active_degraded" };
     }
   } catch {
