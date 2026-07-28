@@ -534,8 +534,12 @@ async function consoleRoute(request: Request, deps: RouteDeps): Promise<Response
     return new Response(null, { status: 302, headers: { location: "/login" } });
   }
   const entitlements = await deps.db.listEntitlements(account.id);
+  // 该账号的 active endpoint(可能为 null:已付费但还没选 slug,或未开通)。
+  // 控制台据此决定显示「选专属地址」入口还是「接入命令」提示词区。
+  const endpoint = await deps.db.getActiveEndpointByAccountId(account.id);
+  const url = new URL(request.url);
   return htmlPage(
-    consolePage({ account, entitlements, now: deps.now() }),
+    consolePage({ account, entitlements, endpoint, baseUrl: url.origin, now: deps.now() }),
     { noStore: true }, // 用户专属页面,不可缓存(Copilot round 3)
   );
 }

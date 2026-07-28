@@ -25,7 +25,7 @@ describe("generated content freshness", () => {
 });
 
 describe("compliance pages", () => {
-  it("exposes exactly the five pages with zh titles", () => {
+  it("exposes exactly the five pages with EN + zh titles", () => {
     expect(Object.keys(COMPLIANCE_PAGES).sort()).toEqual([
       "contact",
       "pricing",
@@ -33,23 +33,36 @@ describe("compliance pages", () => {
       "refund",
       "terms",
     ]);
+    // 每页都有英文与中文标题(双语版式)。
+    for (const t of Object.values(COMPLIANCE_PAGES)) {
+      expect(typeof t.en).toBe("string");
+      expect(typeof t.zh).toBe("string");
+    }
   });
 
-  it("renders a full HTML document with the page title and footer nav", () => {
+  it("renders a full dark-themed English-primary document with brand + favicon + footer nav", () => {
     const html = compliancePage("refund");
     expect(html).toContain("<!doctype html>");
-    expect(html).toContain("<title>退款政策 · Mediary Connect</title>");
-    expect(html).toContain("<h1>退款政策</h1>");
+    expect(html).toContain('<html lang="en">');
+    expect(html).toContain("<title>Refund Policy · Mediary Connect</title>");
+    expect(html).toContain("--accent:#1ed760");
+    expect(html).toContain('rel="icon"');
+    expect(html).toContain("CONNECT");
+    // English H1 primary, 中文 subtitle dimmed via zh class
+    expect(html).toContain("<h1>Refund Policy</h1>");
+    expect(html).toContain('<h2 class="zh">退款政策</h2>');
     // 页脚互链：五页彼此可达（Paddle 审核员会点着看）。
     for (const path of ["/terms", "/privacy", "/refund", "/pricing", "/contact"]) {
       expect(html).toContain(`href="${path}"`);
     }
   });
 
-  it("refund page states the 14-day minimum explicitly (Paddle rejection letter item)", () => {
+  it("refund page states the 14-day minimum in both languages (Paddle rejection letter item)", () => {
     const html = compliancePage("refund");
+    expect(html).toContain("14 days");
     expect(html).toContain("14 天");
     expect(html).toContain("无理由");
+    expect(html).toContain("no-questions-asked");
     // 必须链到 Paddle Buyer Terms —— 拒信原文点名要求一致性。
     expect(html).toContain("https://www.paddle.com/legal/checkout-buyer-terms");
   });
@@ -60,11 +73,13 @@ describe("compliance pages", () => {
       expect(html).toContain(amount);
     }
     expect(html).toContain("不自动扣款");
+    expect(html).toContain("never auto-charged");
   });
 
   it("privacy page keeps the honesty guardrails", () => {
     const html = compliancePage("privacy");
     expect(html).toContain("始终只在你自己的机器上");
+    expect(html).toContain("always stay on your own machine");
     expect(html).not.toMatch(/我们会存储你的(媒体|内容)/);
   });
 

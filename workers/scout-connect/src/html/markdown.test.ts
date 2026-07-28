@@ -7,26 +7,27 @@ import { renderMarkdown } from "./markdown.js";
 // 这样内容文件永远不可能变成 XSS 注入面。
 describe("renderMarkdown", () => {
   it("renders headings h1-h3", () => {
-    const html = renderMarkdown("# 标题一\n\n## 标题二\n\n### 标题三");
-    expect(html).toContain("<h1>标题一</h1>");
-    expect(html).toContain("<h2>标题二</h2>");
-    expect(html).toContain("<h3>标题三</h3>");
+    const html = renderMarkdown("# Title One\n\n## Title Two\n\n### Title Three");
+    expect(html).toContain("<h1>Title One</h1>");
+    expect(html).toContain("<h2>Title Two</h2>");
+    expect(html).toContain("<h3>Title Three</h3>");
   });
 
-  it("renders paragraphs and unordered lists", () => {
+  it("renders paragraphs and unordered lists (CJK blocks carry the zh class)", () => {
     const html = renderMarkdown("第一段。\n\n- 甲\n- 乙\n\n第二段。");
-    expect(html).toContain("<p>第一段。</p>");
-    expect(html).toContain("<ul>");
+    expect(html).toContain('<p class="zh">第一段。</p>');
+    expect(html).toContain('<ul class="zh">');
     expect(html).toContain("<li>甲</li>");
     expect(html).toContain("<li>乙</li>");
-    expect(html).toContain("<p>第二段。</p>");
+    expect(html).toContain('<p class="zh">第二段。</p>');
   });
 
-  it("renders links, bold and inline code", () => {
-    const html = renderMarkdown("看 [Paddle](https://paddle.com) 与 **重点** 与 `code`。");
+  it("renders links, bold and inline code (English block stays unclassed)", () => {
+    const html = renderMarkdown("See [Paddle](https://paddle.com) with **bold** and `code`.");
     expect(html).toContain('<a href="https://paddle.com">Paddle</a>');
-    expect(html).toContain("<strong>重点</strong>");
+    expect(html).toContain("<strong>bold</strong>");
     expect(html).toContain("<code>code</code>");
+    expect(html).toContain("<p>See");
   });
 
   it("escapes raw HTML — content files can never become an XSS surface", () => {
@@ -57,5 +58,22 @@ describe("renderMarkdown", () => {
 
   it("renders hr", () => {
     expect(renderMarkdown("上\n\n---\n\n下")).toContain("<hr>");
+  });
+
+  it("tags CJK-majority blocks with class=zh for the bilingual (EN-above-中文) layout", () => {
+    // 英文主、中文次：中文块自动加 .zh，模板据此渲成略暗的次级色。
+    const html = renderMarkdown(
+      "Full refund within 14 days.\n\n自付款起 14 天内可全额退款。",
+    );
+    expect(html).toContain("<p>Full refund within 14 days.</p>");
+    expect(html).toContain('<p class="zh">自付款起 14 天内可全额退款。</p>');
+  });
+
+  it("tags CJK headings and list items too", () => {
+    const html = renderMarkdown("## How to request\n\n## 如何申请\n\n- English item\n\n- 中文条目");
+    expect(html).toContain("<h2>How to request</h2>");
+    expect(html).toContain('<h2 class="zh">如何申请</h2>');
+    expect(html).toContain('<ul class="zh"><li>中文条目</li></ul>');
+    expect(html).toContain("<ul><li>English item</li></ul>");
   });
 });

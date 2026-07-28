@@ -1,11 +1,7 @@
-import type { AccountRow, EntitlementRow } from "../db.js";
+import type { AccountRow, EndpointRow, EntitlementRow } from "../db.js";
 import { isEntitlementActive } from "../entitlement.js";
-
-function esc(s: string): string {
-  return s.replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c,
-  );
-}
+import { buildConnectPrompt, CLAIM_CODE_PLACEHOLDER } from "./connect-prompt.js";
+import { BRAND_BAR, BRAND_CSS, esc, FAVICON_LINK, THEME_BASE, THEME_TOKENS } from "./theme.js";
 
 /** 最新到期时刻 = entitlements 里 expires_at 最大者。 */
 function latestExpiry(entitlements: EntitlementRow[]): string | null {
@@ -18,19 +14,33 @@ function latestExpiry(entitlements: EntitlementRow[]): string | null {
   return latest;
 }
 
+/**
+ * 控制台 v2(决策 #13:智能给 agent、确定性给脚本)。
+ *
+ * 三种状态:
+ *  - 未开通(无有效时长):只显示状态 + 「开通」CTA,不显示接入区。
+ *  - 已开通但还没选 slug / 没 endpoint:显示「选择你的专属地址」入口。
+ *  - 已开通且有 active endpoint:接入区为主角——一段交给 AI 助手的提示词
+ *    (大框 + 复制按钮),真实取件码由客户端向 /api/claim-code 现取后
+ *    替换占位符注入;裸 curl 命令降级进「或手动」折叠区。
+ *
+ * 提示词模板在服务端用占位符 CLAIM_CODE_PLACEHOLDER 生成(此时还没有码),
+ * 客户端点「获取接入命令」时才 POST /api/claim-code 拿 15 分钟有效的真码,
+ * 把占位符替换成真码——提示词天然是临时生成的(码短命),token 从不出现。
+ */
 export function consolePage(input: {
   account: AccountRow;
   entitlements: EntitlementRow[];
+  endpoint: EndpointRow | null;
+  baseUrl: string;
   now: string;
 }): string {
   const expiry = latestExpiry(input.entitlements);
   const active = isEntitlementActive(expiry, input.now);
-  const statusLine = active
-    ? `<p class="status ok">✅ 有效 · 到期 ${esc(expiry!.slice(0, 10))}</p>`
-    : `<p class="status none">尚未开通（无有效时长）</p>`;
-  const cta = active
-    ? `<a class="btn" href="/pricing">续期</a>`
-    : `<a class="btn" href="/pricing">开通</a>`;
+
+  const statusBadge = active
+    ? `<span class="badge ok">● 有效 · 到期 ${esc(expiry!.slice(0, 10))}</span>`
+    : `<span class="badge none">尚未开通</span>`;
 
   return `<!doctype html>
 <html lang="zh">
@@ -38,31 +48,156 @@ export function consolePage(input: {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>控制台 · Mediary Connect</title>
+${FAVICON_LINK}
 <style>
-body{font-family:system-ui,sans-serif;max-width:640px;margin:3rem auto;padding:0 1.2rem;color:#222;line-height:1.7}
-h1{font-size:1.5rem}
-.card{border:1px solid #e5e5e5;border-radius:12px;padding:1.2rem 1.4rem;margin:1.5rem 0}
-.status{font-size:1.05rem;font-weight:600}
-.status.ok{color:#169c46}
-.status.none{color:#a00}
-.btn{display:inline-block;margin-top:.6rem;padding:.55rem 1.2rem;border-radius:999px;background:#1ed760;color:#06210f;font-weight:700;text-decoration:none}
-.email{color:#666;font-size:.92rem}
-footer{margin-top:3rem;font-size:.85rem;color:#666}
-footer a{color:#666}
+${THEME_TOKENS}
+${THEME_BASE}
+${BRAND_CSS}
+main{max-width:680px;margin:0 auto;padding:36px 24px 90px}
+.email-line{color:var(--text-muted);font-size:.85rem;margin:22px 0 18px;font-family:var(--mono)}
+.status-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:6px}
+h1{font-size:1.5rem;font-weight:900;letter-spacing:-.5px;margin:0}
+.badge{font-family:var(--mono);font-size:11px;letter-spacing:1px;padding:5px 12px;border-radius:999px}
+.badge.ok{background:rgba(30,215,96,.12);color:var(--accent);border:1px solid rgba(30,215,96,.35)}
+.badge.none{background:rgba(243,114,127,.1);color:var(--err);border:1px solid rgba(243,114,127,.35)}
+.sub{color:var(--text-muted);font-size:.92rem;margin:2px 0 0}
+.addr{color:var(--accent);font-family:var(--mono);font-size:.92rem}
+.btn{display:inline-block;margin-top:14px;font:inherit;font-weight:700;cursor:pointer;border:1px solid transparent;border-radius:500px;background:var(--accent);color:#000;padding:12px 26px;font-size:.96rem;text-decoration:none;transition:transform .15s ease,background .15s ease,opacity .15s ease}
+.btn:hover:not(:disabled){transform:scale(1.02)}
+.btn:active:not(:disabled){background:var(--accent-press)}
+.btn:disabled{opacity:.55;cursor:default}
+.panel{position:relative;background:rgba(24,24,24,.8);border:1px solid #2b2b2b;border-radius:18px;box-shadow:inset 0 1px 0 rgba(255,255,255,.07),rgba(0,0,0,.55) 0 18px 40px -12px;padding:26px;margin-top:26px}
+.step{font-family:var(--mono);font-size:11px;letter-spacing:1.5px;color:var(--accent);margin:0 0 6px}
+.lead{font-size:1.05rem;font-weight:700;margin:0 0 4px}
+.lead-sub{color:var(--text-muted);font-size:.9rem;margin:0 0 18px;line-height:1.6}
+.prompt-wrap{position:relative}
+.prompt{background:#0d0d0d;border:1px solid #2b2b2b;border-radius:12px;padding:16px;font-family:var(--mono);font-size:12px;line-height:1.7;color:#cfcfcf;max-height:230px;overflow:auto;white-space:pre-wrap;word-break:break-word}
+.copy-btn{width:100%;margin-top:14px}
+.helprow{display:flex;gap:8px;align-items:center;color:#8f8f8f;font-size:12.5px;margin-top:14px}
+.helprow svg{color:var(--accent);flex:none}
+.msg{font-size:.9rem;margin-top:12px;color:var(--text-muted)}
+.msg.err{color:var(--err)}
+details{margin-top:18px;border-top:1px solid #222;padding-top:16px}
+summary{cursor:pointer;font-size:.9rem;color:var(--text-muted);list-style:none;display:flex;align-items:center;gap:8px}
+summary::-webkit-details-marker{display:none}
+summary .chev{transition:transform .15s;color:var(--accent)}
+details[open] summary .chev{transform:rotate(90deg)}
+.manual-note{color:#8f8f8f;font-size:12.5px;margin:12px 0 10px;line-height:1.6}
+.cmd{background:#0d0d0d;border:1px solid #2b2b2b;border-radius:10px;padding:13px 15px;font-family:var(--mono);font-size:12px;color:#cfcfcf;overflow-x:auto;white-space:nowrap}
+.expire{font-family:var(--mono);font-size:11px;color:#777;margin-top:16px;text-align:center}
+.footer{position:relative;margin-top:48px;padding-top:20px;text-align:center;font-size:.82rem;color:var(--text-muted)}
+.footer::before{content:"";position:absolute;top:0;left:12%;right:12%;height:1px;background:var(--hairline)}
+.footer a{color:var(--text-muted);text-decoration:none}
+.footer a:hover{color:var(--text)}
+[hidden]{display:none!important}
 </style>
 </head>
 <body>
 <main>
-<h1>Mediary Connect 控制台</h1>
-<p class="email">${esc(input.account.email)}</p>
-<div class="card">
-${statusLine}
-${cta}
-</div>
+${BRAND_BAR}
+<p class="email-line">${esc(input.account.email)}</p>
+<div class="status-row"><h1>远程访问</h1>${statusBadge}</div>
+${renderBody(input, active)}
+<div class="footer"><a href="/pricing">定价</a> · <a href="/terms">服务条款</a> · <a href="/privacy">隐私政策</a> · <a href="/refund">退款政策</a> · <a href="/contact">联系我们</a></div>
 </main>
-<footer>
-<a href="/pricing">定价</a> · <a href="/terms">服务条款</a> · <a href="/privacy">隐私政策</a> · <a href="/refund">退款政策</a> · <a href="/contact">联系我们</a>
-</footer>
+${renderScript(input, active)}
 </body>
 </html>`;
+}
+
+function renderBody(
+  input: {
+    account: AccountRow;
+    endpoint: EndpointRow | null;
+    baseUrl: string;
+  },
+  active: boolean,
+): string {
+  if (!active) {
+    return `<p class="sub">你还没有有效时长。开通后即可为自托管实例生成专属远程访问地址。</p>
+<a class="btn" href="/pricing">开通</a>`;
+  }
+  if (input.endpoint === null) {
+    // 已付费但还没选 slug（自助 provision 的入口——主流程补齐前先给占位入口）。
+    return `<p class="sub">你已开通，还差最后一步：选择你的专属访问地址（slug）。</p>
+<a class="btn" href="/pricing#slug">选择我的专属地址</a>`;
+  }
+
+  const hostname = input.endpoint.hostname;
+  // 服务端用占位符生成提示词模板（此刻还没有取件码）；客户端点按钮时
+  // 现取真码并替换。占位符本身是白名单字符，buildConnectPrompt 接受它。
+  const promptTemplate = buildConnectPrompt({
+    hostname,
+    claimCode: CLAIM_CODE_PLACEHOLDER,
+    baseUrl: input.baseUrl,
+  });
+  return `<p class="sub">你的专属地址：<span class="addr">${esc(hostname)}</span>（配置好后浏览器打开它即可）</p>
+<div class="panel">
+<p class="step">接入你的实例</p>
+<p class="lead">把下面这段交给你的 AI 助手</p>
+<p class="lead-sub">Claude Code / Codex / opencode 都行。它会找到你部署 Mediary Scout 的那台机器、连上去、配好隧道并验证连通——你不用自己敲命令。</p>
+<button class="btn" id="gen" type="button">获取接入命令</button>
+<p class="msg" id="msg" hidden></p>
+<div id="result" hidden>
+<div class="prompt-wrap"><div class="prompt" id="prompt"></div></div>
+<button class="btn copy-btn" id="copy" type="button">复制提示词</button>
+<div class="helprow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg>取件码已内嵌在提示词里，15 分钟有效</div>
+<details>
+<summary><span class="chev">▸</span> 或者：我能直接操作那台机器，手动接</summary>
+<p class="manual-note">如果你现在就在部署 Mediary Scout 的那台机器上（或能直接 SSH 过去），进到部署目录直接跑这一条：</p>
+<div class="cmd" id="cmd"></div>
+</details>
+<p class="expire">取件码 15 分钟后失效 · 过期回这里再点一次「获取接入命令」即可</p>
+</div>
+</div>`;
+}
+
+/** active + 有 endpoint 时才需要客户端脚本(取码 → 注入 → 复制)。 */
+function renderScript(
+  input: { endpoint: EndpointRow | null; baseUrl: string },
+  active: boolean,
+): string {
+  if (!active || input.endpoint === null) return "";
+  return `<script type="module">
+const $=(id)=>document.getElementById(id);
+const PLACEHOLDER=${JSON.stringify(CLAIM_CODE_PLACEHOLDER)};
+const template=$("prompt").dataset.template=${JSON.stringify(
+    buildConnectPrompt({
+      hostname: input.endpoint.hostname,
+      claimCode: CLAIM_CODE_PLACEHOLDER,
+      baseUrl: input.baseUrl,
+    }),
+  )};
+const cmdTemplate=${JSON.stringify(
+    `curl -fsSL ${new URL(input.baseUrl).origin}/connect.sh | sh -s -- ${CLAIM_CODE_PLACEHOLDER}`,
+  )};
+const gen=$("gen"),msg=$("msg"),result=$("result");
+gen.addEventListener("click",async()=>{
+  gen.disabled=true;msg.hidden=true;msg.className="msg";
+  try{
+    const res=await fetch("/api/claim-code",{method:"POST",headers:{"content-type":"application/json"}});
+    if(!res.ok){
+      msg.textContent=res.status===404?"还没有可接入的实例——请先选择你的专属地址。":"获取失败，请稍后重试。";
+      msg.className="msg err";msg.hidden=false;gen.disabled=false;return;
+    }
+    const data=await res.json();
+    const code=typeof data.code==="string"?data.code:"";
+    if(code===""){msg.textContent="返回数据异常，请重试。";msg.className="msg err";msg.hidden=false;gen.disabled=false;return;}
+    // 用 split/join 替换所有占位符（真码只用于本次会话，不落任何存储）。
+    $("prompt").textContent=template.split(PLACEHOLDER).join(code);
+    $("cmd").textContent=cmdTemplate.split(PLACEHOLDER).join(code);
+    result.hidden=false;
+    gen.textContent="重新生成取件码";gen.disabled=false;
+  }catch{
+    msg.textContent="网络错误，请稍后重试。";msg.className="msg err";msg.hidden=false;gen.disabled=false;
+  }
+});
+$("copy").addEventListener("click",async()=>{
+  try{await navigator.clipboard.writeText($("prompt").textContent);$("copy").textContent="已复制 ✓";setTimeout(()=>{$("copy").textContent="复制提示词";},1800);}
+  catch{
+    const r=document.createRange();r.selectNodeContents($("prompt"));
+    const s=window.getSelection();s.removeAllRanges();s.addRange(r);
+  }
+});
+</script>`;
 }

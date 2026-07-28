@@ -60,10 +60,14 @@ export function renderMarkdown(md: string): string {
       html.push("<hr>");
       continue;
     }
+    // 双语版式(英文主、中文次):CJK 占多数的块自动加 class="zh",模板把
+    // 它渲成略暗的次级色。作者只需先写英文块、再写中文块,"EN above 中文"
+    // 自然成立,无需发明新语法。attr 只在中文块出现,英文块保持原样。
+    const zh = isCjkMajority(trimmed) ? ' class="zh"' : "";
     const heading = /^(#{1,3})\s+(.+)$/.exec(trimmed);
     if (heading) {
       const level = heading[1]!.length;
-      html.push(`<h${level}>${renderInline(heading[2]!)}</h${level}>`);
+      html.push(`<h${level}${zh}>${renderInline(heading[2]!)}</h${level}>`);
       continue;
     }
     const lines = trimmed.split("\n");
@@ -71,10 +75,23 @@ export function renderMarkdown(md: string): string {
       const items = lines
         .map((l) => `<li>${renderInline(l.replace(/^-\s+/, ""))}</li>`)
         .join("");
-      html.push(`<ul>${items}</ul>`);
+      html.push(`<ul${zh}>${items}</ul>`);
       continue;
     }
-    html.push(`<p>${renderInline(lines.join(" "))}</p>`);
+    html.push(`<p${zh}>${renderInline(lines.join(" "))}</p>`);
   }
   return html.join("\n");
+}
+
+/** 块内 CJK 字符是否多于 ASCII 字母。用来区分英文块与中文块(双语版式)。
+ *  只数「CJK 统一表意文字」区间;标点/数字不计,避免纯数字块误判。 */
+function isCjkMajority(text: string): boolean {
+  let cjk = 0;
+  let latin = 0;
+  for (const ch of text) {
+    const code = ch.codePointAt(0)!;
+    if (code >= 0x4e00 && code <= 0x9fff) cjk++;
+    else if ((code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a)) latin++;
+  }
+  return cjk > latin;
 }

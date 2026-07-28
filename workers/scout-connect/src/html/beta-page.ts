@@ -20,6 +20,8 @@
 // (position, server error text) is inserted via textContent only; innerHTML
 // is deliberately never used, and a test pins both properties.
 
+import { FAVICON_LINK } from "./theme.js";
+
 /**
  * env 进来的 sitekey 会被插进 HTML 属性：只接受 Turnstile key 的真实字符集
  * （0x4AAAAAAD-… 这类 [0-9A-Za-z_-]）。恶意/畸形值归一为空串（=无 widget），
@@ -70,6 +72,7 @@ export function betaPage(turnstileSitekey?: string): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mediary Connect 远程访问 · 内测</title>${tsScript}
+${FAVICON_LINK}
 <style>
 :root{--bg-base:#121212;--bg-surface:#181818;--bg-raised:#1f1f1f;--bg-card:#252525;--accent:#1ed760;--accent-press:#169c46;--text:#fff;--text-muted:#b3b3b3;--border:#4d4d4d;--border-outline:#7c7c7c;--err:#f3727f;--hairline:linear-gradient(90deg,transparent,#2c2c2c 25%,#2c2c2c 75%,transparent);--font:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;--mono:ui-monospace,SFMono-Regular,monospace;color-scheme:dark}
 *{box-sizing:border-box}

@@ -1,3 +1,5 @@
+import { FAVICON_LINK } from "./theme.js";
+
 export function homePage(): string {
   return `<!doctype html>
 <html lang="zh">
@@ -5,6 +7,7 @@ export function homePage(): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mediary Connect</title>
+${FAVICON_LINK}
 <style>
 body{font-family:system-ui,sans-serif;max-width:640px;margin:4rem auto;padding:0 1rem;color:#222;line-height:1.7}
 h1{font-size:1.6rem}
