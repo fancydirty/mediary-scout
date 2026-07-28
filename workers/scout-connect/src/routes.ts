@@ -497,10 +497,6 @@ async function createInvite(request: Request, url: URL, deps: RouteDeps): Promis
   if (email.length > EMAIL_MAX_LENGTH || !EMAIL_RE.test(email)) {
     throw new HttpError(400, "invalid email");
   }
-  // 与 /waitlist 同一条防滥用规则:Turnstile 成对配置时,发信入口也要过人机
-  // 校验——否则这是个公开的「触发发邮件」放大面(骚扰 + 成本 + 投递信誉)。
-  // 校验在邮箱形状之后:一次性 token 不浪费在注定 400 的请求上。
-  await requireTurnstileIfEnabled(request, body, deps);
   // Validate/normalize the slug at creation time so a bad slug fails fast
   // (400 here) instead of later at provision.
   const slugRaw = optString(body.slug);
