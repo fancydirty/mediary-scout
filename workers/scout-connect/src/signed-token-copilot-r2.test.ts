@@ -15,7 +15,7 @@ describe("verifyToken NaN now fail-closed (Copilot round 2)", () => {
       expectPurpose: "magic",
     });
     expect(result.ok).toBe(false);
-    expect(result.reason).toBe("expired");
+    if (!result.ok) expect(result.reason).toBe("expired");
   });
 
   it("now=Infinity must reject", async () => {

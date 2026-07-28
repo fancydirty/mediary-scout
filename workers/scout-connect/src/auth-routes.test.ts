@@ -191,7 +191,7 @@ describe("GET /auth/callback (魔法链接落地)", () => {
       throw new Error("UNIQUE constraint failed: accounts.email");
     };
     const captured: string[] = [];
-    deps.sendMagicLink = async (_to, url) => captured.push(new URL(url).searchParams.get("t")!);
+    deps.sendMagicLink = async (_to, url) => { captured.push(new URL(url).searchParams.get("t")!); };
     // 第一次登录建号
     await handleRequest(
       new Request(`${BASE}/api/auth/magic`, {
