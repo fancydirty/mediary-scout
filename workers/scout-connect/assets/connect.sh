@@ -26,6 +26,13 @@ if [ -z "$CLAIM_CODE" ]; then
   echo "用法: connect.sh <取件码> [--dir 部署目录]" >&2
   exit 2
 fi
+# 取件码字符集校验:与服务端签名 token 一致([A-Za-z0-9_.-])。误带引号/
+# 换行/空格会让下面拼的 JSON 非法→worker 400,若不先拦会被当成「码过期」
+# 误诊。这里直接提示重新复制,不发请求。
+if printf '%s' "$CLAIM_CODE" | LC_ALL=C grep -q '[^A-Za-z0-9_.-]'; then
+  echo "❌ 取件码含非法字符(应只有字母/数字/._-)。多半是复制时带了引号或空格,请回控制台重新复制。" >&2
+  exit 2
+fi
 
 # 1) 定位部署目录:--dir 指定 > 当前目录。必须含 docker-compose.yml 且有 web 服务。
 if [ -n "$DEPLOY_DIR" ]; then

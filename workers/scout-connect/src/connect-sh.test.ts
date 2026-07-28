@@ -34,6 +34,10 @@ describe("GET /connect.sh", () => {
     expect(body).toContain("docker compose --profile tunnel up -d");
     expect(body).toContain("/api/claim/exchange");
     expect(body).toContain("/api/health");
+    // 客户端取件码字符集守卫(挡住带引号/空格的误粘,免得 JSON 拼坏被误诊)
+    expect(body).toContain("[^A-Za-z0-9_.-]");
+    // 分级报错:403 撤销 与 400 过期 区分
+    expect(body).toContain("endpoint not active");
   });
 
   it("is servable over the beta host too (curl | sh 从任一入口)", async () => {
