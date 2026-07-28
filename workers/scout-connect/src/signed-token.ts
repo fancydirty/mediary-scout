@@ -31,9 +31,15 @@ function b64urlDecodeStr(s: string): string {
   return new TextDecoder().decode(bytes);
 }
 
+const KEY_BYTES = 32; // openssl rand -hex 32
+
 function hexToBytes(hex: string): Uint8Array {
   if (hex.length % 2 !== 0 || !/^[0-9a-fA-F]+$/.test(hex)) {
     throw new Error("key must be even-length hex");
+  }
+  // 强制 32 字节:配错成更短的 secret 仍能"工作"但削弱 HMAC,且难以察觉。
+  if (hex.length !== KEY_BYTES * 2) {
+    throw new Error(`key must be ${KEY_BYTES} bytes (${KEY_BYTES * 2} hex chars)`);
   }
   const out = new Uint8Array(hex.length / 2);
   for (let i = 0; i < out.length; i++) {

@@ -68,6 +68,12 @@ describe("signed-token (魔法链接 + 取件码共用的 HMAC 自包含凭据)"
     expect(result).toEqual({ ok: true, purpose: "claim", subject: "ep_abc" });
   });
 
+  it("rejects a key that is not exactly 32 bytes (weak HMAC guard)", async () => {
+    await expect(
+      signToken({ purpose: "login", subject: "x" }, { key: "abcd", ttlMs: 1000 }),
+    ).rejects.toThrow(/32 bytes/);
+  });
+
   it("rejects a malformed token (wrong part count)", async () => {
     const result = await verifyToken("garbage", { key: KEY, now: 1_800_000_000_000 });
     expect(result).toEqual({ ok: false, reason: "malformed" });

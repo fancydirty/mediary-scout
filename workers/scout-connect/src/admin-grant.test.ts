@@ -66,6 +66,17 @@ describe("POST /api/admin/grant (内测手工授予时长)", () => {
     expect(latest).toBe("2028-07-28T00:00:00.000Z");
   });
 
+  it("id primary-key collision is a real error, not silently treated as idempotent", async () => {
+    // insertEntitlement 只把 paddle_transaction_id 冲突当幂等;id 主键冲突
+    // 必须原样抛(否则 webhook 事故被误判成"重复交易"而静默丢失)。
+    const deps = baseDeps();
+    deps.newEntitlementId = () => "ent_dup"; // 恒返回同一 id → 第二次撞主键
+    await handleRequest(grant({ email: "a@example.com", months: 12 }), deps);
+    const res = await handleRequest(grant({ email: "a@example.com", months: 12 }), deps);
+    // memory 实现对 id 冲突抛错 → handleError 转 500,不是"幂等成功"的 200。
+    expect(res.status).toBe(500);
+  });
+
   it("rejects invalid months (400)", async () => {
     const deps = baseDeps();
     for (const months of [0, -1, 0.5, 1000, "x"]) {

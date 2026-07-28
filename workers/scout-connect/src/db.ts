@@ -543,25 +543,35 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
     },
 
     async insertEntitlement(row) {
-      // 幂等:paddle_transaction_id 的部分唯一索引挡住 webhook 重投。
-      // INSERT OR IGNORE + changes 判定是否真的插入了。
-      const res = (await d1
-        .prepare(
-          `INSERT OR IGNORE INTO entitlements
-             (id, account_id, expires_at, source, paddle_transaction_id, months, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .bind(
-          row.id,
-          row.account_id,
-          row.expires_at,
-          row.source,
-          row.paddle_transaction_id,
-          row.months,
-          row.created_at,
-        )
-        .run()) as { meta?: { changes?: number } };
-      return (res.meta?.changes ?? 0) > 0;
+      // 幂等只针对 paddle_transaction_id 重投:用普通 INSERT,仅当报错确实是
+      // paddle_transaction_id 的唯一冲突时才当幂等返回 false。INSERT OR IGNORE
+      // 会连 id 主键冲突也一起吞掉,把真事故误判成"重复交易"(Copilot round 4)。
+      try {
+        await d1
+          .prepare(
+            `INSERT INTO entitlements
+               (id, account_id, expires_at, source, paddle_transaction_id, months, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .bind(
+            row.id,
+            row.account_id,
+            row.expires_at,
+            row.source,
+            row.paddle_transaction_id,
+            row.months,
+            row.created_at,
+          )
+          .run();
+        return true;
+      } catch (e) {
+        // 只把 idx_ent_txn(paddle_transaction_id 部分唯一索引)的冲突当幂等。
+        const msg = e instanceof Error ? e.message : String(e);
+        if (/UNIQUE constraint failed/i.test(msg) && /paddle_transaction_id|idx_ent_txn/i.test(msg)) {
+          return false;
+        }
+        throw e; // id 主键冲突等其它唯一冲突是真事故,原样抛。
+      }
     },
 
     async listEntitlements(accountId) {
