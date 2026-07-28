@@ -37,6 +37,10 @@ function makeFakeCf(calls: string[], opts: FakeCfOptions = {}): CfApi {
       calls.push(`tunnel:${name}`);
       return { tunnelId: "tid-1", token: PLAIN_TOKEN };
     },
+    async getTunnelToken(tunnelId) {
+      calls.push(`getToken:${tunnelId}`);
+      return PLAIN_TOKEN;
+    },
     async putTunnelIngress(tunnelId, hostname) {
       calls.push(`ingress:${tunnelId}:${hostname}`);
       if (opts.failOn === "ingress") throw new Error("cf ingress boom");

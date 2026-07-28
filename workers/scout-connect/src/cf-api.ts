@@ -4,6 +4,9 @@ const CATCH_ALL_SERVICE = "http_status:404";
 
 export interface CfApi {
   createTunnel(name: string): Promise<{ tunnelId: string; token: string }>;
+  /** 重新取回现有隧道的 connector token。已实测:可用、幂等(同一隧道恒返回
+   *  同一 token,不踢已连接实例)。这让我们无需在 D1 存 token —— 需要时现取。 */
+  getTunnelToken(tunnelId: string): Promise<string>;
   /** service fixed http://web:3000 + catch-all 404 */
   putTunnelIngress(tunnelId: string, hostname: string): Promise<void>;
   createDnsCname(slug: string, tunnelId: string): Promise<{ recordId: string }>;
@@ -176,6 +179,16 @@ export function createCfApi(opts: CfApiOptions): CfApi {
         tunnelId: requireString(result?.id, "tunnel id"),
         token: requireString(result?.token, "tunnel token"),
       };
+    },
+
+    async getTunnelToken(tunnelId) {
+      // GET /cfd_tunnel/{id}/token → result 是 token 字符串本身。
+      const result = (await cfJson(
+        resolved,
+        "GET",
+        `${accountPath}/cfd_tunnel/${tunnelId}/token`,
+      )) as unknown;
+      return requireString(result, "tunnel token");
     },
 
     async putTunnelIngress(tunnelId, hostname) {

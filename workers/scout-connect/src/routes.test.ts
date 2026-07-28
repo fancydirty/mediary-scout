@@ -27,6 +27,10 @@ function makeFakeCf(): { cf: CfApi; calls: CfCall[] } {
       tunnels += 1;
       return { tunnelId: `tid-${tunnels}`, token: `fixture-tunnel-token-${tunnels}` };
     },
+    async getTunnelToken(tunnelId) {
+      rec("getTunnelToken", tunnelId);
+      return `fixture-tunnel-token-for-${tunnelId}`;
+    },
     async putTunnelIngress(tunnelId, hostname) {
       rec("putTunnelIngress", tunnelId, hostname);
     },

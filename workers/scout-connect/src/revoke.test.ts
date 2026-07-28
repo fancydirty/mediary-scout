@@ -72,6 +72,9 @@ function makeFakeCf(calls: string[], opts: FakeCfOptions = {}): CfApi {
     async createTunnel() {
       throw new Error("unexpected createTunnel call during revoke");
     },
+    async getTunnelToken() {
+      throw new Error("unexpected getTunnelToken call during revoke");
+    },
     async putTunnelIngress() {
       throw new Error("unexpected putTunnelIngress call during revoke");
     },
