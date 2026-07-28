@@ -129,9 +129,9 @@ function renderBody(
 <input id="slug" type="text" placeholder="yourname" autocomplete="off" spellcheck="false" maxlength="32" aria-label="专属地址前缀">
 <span class="slug-suffix">.${esc(input.rootDomain)}</span>
 </div>
-<p class="msg" id="slug-msg" hidden></p>
+<p class="msg" id="slug-msg" aria-live="polite" hidden></p>
 <button class="btn" id="provision" type="button" disabled>开通</button>
-<p class="msg err" id="prov-msg" hidden></p>
+<p class="msg err" id="prov-msg" role="alert" hidden></p>
 </div>`;
   }
 
@@ -231,6 +231,7 @@ input.addEventListener("input",()=>{
     try{
       const res=await fetch("/api/slug/check?s="+encodeURIComponent(v));
       if(mySeq!==seq)return; // 过期响应丢弃(快速连打)
+      if(res.status===401){location.href="/login";return;} // session 过期,别让用户卡死
       if(!res.ok){setMsg("查询失败，请稍后重试。","err");return;}
       const d=await res.json();
       if(d.available===true){setMsg("✓ 可用","ok");btn.disabled=false;}
@@ -247,6 +248,7 @@ btn.addEventListener("click",async()=>{
   try{
     const res=await fetch("/api/provision",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({slug:v})});
     if(res.ok){location.reload();return;}
+    if(res.status===401){location.href="/login";return;} // session 过期
     let d=null;try{d=await res.json();}catch{}
     const e=d&&typeof d.error==="string"?d.error:"";
     if(res.status===402){perr.textContent="时长已过期，请先续期。";}
