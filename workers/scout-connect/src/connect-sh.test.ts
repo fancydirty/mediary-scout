@@ -40,4 +40,18 @@ describe("GET /connect.sh", () => {
     const res = await handleRequest(new Request("https://beta.mediaryconnect.app/connect.sh"), deps());
     expect(res.status).toBe(200);
   });
+
+  it("rewrites WORKER_BASE default to the request origin (self-consistent per host)", async () => {
+    // 生产主机:默认仍是生产 origin。
+    const prod = await (await handleRequest(new Request(`${BASE}/connect.sh`), deps())).text();
+    expect(prod).toContain('WORKER_BASE="${MEDIARY_CONNECT_BASE:-https://mediaryconnect.app}"');
+
+    // 不同主机(staging/preview):默认改写成该主机,不再硬打生产 API。
+    const staging = await (
+      await handleRequest(new Request("https://staging.example.com/connect.sh"), deps())
+    ).text();
+    expect(staging).toContain('WORKER_BASE="${MEDIARY_CONNECT_BASE:-https://staging.example.com}"');
+    // 功能性默认已改写;头部注释里的示例 URL(mediaryconnect.app)不影响运行。
+    expect(staging).not.toContain("MEDIARY_CONNECT_BASE:-https://mediaryconnect.app");
+  });
 });

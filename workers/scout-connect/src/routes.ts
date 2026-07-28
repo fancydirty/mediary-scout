@@ -241,7 +241,16 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
   if (method === "GET" && path === "/connect.sh") {
     const script = RAW_ASSETS["connect.sh"];
     if (script !== undefined) {
-      return new Response(script, {
+      // 让下载到的脚本自洽于它的来源主机:把内置的生产默认 WORKER_BASE
+      // 改写成当前请求的 origin。否则在 staging/preview(不同 rootDomain)下
+      // 用户从该主机 curl 脚本,脚本却仍打生产 API——staging 签的取件码拿到
+      // 生产去 exchange 必然失败(secret 不同)。用户仍可用 MEDIARY_CONNECT_BASE
+      // 覆盖(:- 默认写法保留)。只替换首个默认值,精确匹配那一行的字面量。
+      const served = script.replace(
+        'WORKER_BASE="${MEDIARY_CONNECT_BASE:-https://mediaryconnect.app}"',
+        `WORKER_BASE="\${MEDIARY_CONNECT_BASE:-${url.origin}}"`,
+      );
+      return new Response(served, {
         headers: {
           "content-type": "text/x-shellscript; charset=utf-8",
           "cache-control": "public, max-age=300",
