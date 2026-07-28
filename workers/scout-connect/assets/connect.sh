@@ -53,12 +53,28 @@ fi
 
 # 3) 凭码换 token(worker 现场向 CF 取)
 echo "→ 用取件码换取隧道凭据…"
-EXCHANGE=$(curl -fsS --max-time 20 -X POST "$WORKER_BASE/api/claim/exchange" \
+# 不用 -f:让 4xx 也返回响应体,以便按状态码分类报错(-f 会吞掉状态)。
+# 末行追加 HTTP 状态码,再拆出来。
+RESP=$(curl -sS --max-time 20 -w '\n%{http_code}' -X POST "$WORKER_BASE/api/claim/exchange" \
   -H "content-type: application/json" \
   -d "{\"code\":\"$CLAIM_CODE\"}" 2>/dev/null) || {
-  echo "❌ 换取失败:取件码可能已过期(15 分钟)或无效。回控制台重新生成一个。" >&2
+  echo "❌ 网络错误:连不上 $WORKER_BASE。检查这台机器能否访问外网后重试。" >&2
   exit 1
 }
+HTTP_CODE=$(printf '%s' "$RESP" | tail -n1)
+EXCHANGE=$(printf '%s' "$RESP" | sed '$d')
+case "$HTTP_CODE" in
+  2*) : ;;  # 成功,继续
+  403)
+    echo "❌ 这个接入端点已被撤销(endpoint not active)。请回控制台确认服务仍有效,或重新选择专属地址。" >&2
+    exit 1 ;;
+  400)
+    echo "❌ 取件码已过期(15 分钟)或无效。回控制台点「获取接入命令」重新生成一个。" >&2
+    exit 1 ;;
+  *)
+    echo "❌ 换取失败(HTTP $HTTP_CODE)。稍后重试;持续失败请把这个状态码告诉支持。" >&2
+    exit 1 ;;
+esac
 # 从 JSON 抠出 token 与 hostname(不引 jq,用 sed;两个字段都是简单字符串)
 TUNNEL_TOKEN=$(printf '%s' "$EXCHANGE" | sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
 HOSTNAME=$(printf '%s' "$EXCHANGE" | sed -n 's/.*"hostname"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')

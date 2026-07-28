@@ -164,6 +164,24 @@ describe("POST /api/claim/exchange (脚本凭码换 token,无 session)", () => {
     expect(res.headers.get("cache-control")).toBe("no-store");
   });
 
+  it("fails closed (500) on malformed now instead of misreporting 400 expired", async () => {
+    const cfCalls: string[] = [];
+    const { deps, db } = setup(cfCalls);
+    await seedEndpoint(db, "act_1");
+    const code = await issueCode(deps, "act_1");
+    const badDeps: RouteDeps = { ...deps, now: () => "not-a-date" };
+    const res = await handleRequest(
+      new Request(`${BASE}/api/claim/exchange`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ code }),
+      }),
+      badDeps,
+    );
+    // now 畸形是服务端问题,应 500,而非把有效码误判成 400 过期。
+    expect(res.status).toBe(500);
+  });
+
   it("code is reusable within its window (脚本重试/换机器)", async () => {
     const cfCalls: string[] = [];
     const { deps, db } = setup(cfCalls);

@@ -450,9 +450,14 @@ async function exchangeClaimCode(request: Request, deps: RouteDeps): Promise<Res
   const body = await readJsonBody(request);
   const codeRaw = body.code;
   const code = typeof codeRaw === "string" ? codeRaw : "";
+  // now 取一次 + finite 守卫,与 issueClaimCode 对称:now 畸形时若直接传给
+  // verifyToken,会把 token 判成过期→400 client error,把服务端时间/配置问题
+  // 误报为「码失效」。显式 500 才诚实。
+  const nowMs = Date.parse(deps.now());
+  if (!Number.isFinite(nowMs)) throw new HttpError(500, "server time unavailable");
   const result = await verifyToken(code, {
     key: deps.sessionSecret,
-    now: Date.parse(deps.now()),
+    now: nowMs,
     expectPurpose: "claim",
   });
   if (!result.ok) throw new HttpError(400, "invalid or expired code");
