@@ -165,6 +165,28 @@ describe("handleRequest", () => {
     expect(html).not.toContain("申请内测席位");
   });
 
+  it("GET compliance pages (/terms /privacy /refund /pricing /contact) → 200 HTML on both hosts", async () => {
+    const { deps } = setup();
+    for (const path of ["/terms", "/privacy", "/refund", "/pricing", "/contact"]) {
+      for (const host of [BASE, "https://beta.mediaryconnect.app"]) {
+        const res = await handleRequest(new Request(`${host}${path}`), deps);
+        expect(res.status, `${host}${path}`).toBe(200);
+        expect(res.headers.get("content-type")).toContain("text/html");
+      }
+    }
+    // 退款页必须明写 14 天（Paddle 拒信点名项）。
+    const refund = await handleRequest(new Request(`${BASE}/refund`), deps);
+    expect(await refund.text()).toContain("14 天");
+  });
+
+  it("apex home page links to the compliance pages (Paddle 审核员要能点着找到)", async () => {
+    const { deps } = setup();
+    const html = await handleRequest(new Request(`${BASE}/`), deps).then((r) => r.text());
+    for (const path of ["/terms", "/privacy", "/refund", "/pricing", "/contact"]) {
+      expect(html).toContain(`href="${path}"`);
+    }
+  });
+
   it("GET /beta keeps working on both hosts (no regression)", async () => {
     const { deps } = setup();
     for (const host of [BASE, "https://beta.mediaryconnect.app"]) {

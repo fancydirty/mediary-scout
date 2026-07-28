@@ -10,6 +10,7 @@ import { homePage } from "./html/home-page.js";
 import { adminPage } from "./html/admin-page.js";
 import { invitePage, type InvitePageState } from "./html/invite-page.js";
 import { betaPage, normalizeTurnstileSitekey } from "./html/beta-page.js";
+import { compliancePage, COMPLIANCE_PAGES, type CompliancePageKey } from "./html/compliance-page.js";
 import { EMAIL_MAX_LENGTH, EMAIL_RE } from "./validation.js";
 import { newId } from "./ids.js";
 import { sha256Hex } from "./crypto-token.js";
@@ -186,6 +187,14 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
       return htmlPage(betaPage(turnstileSitekeyIfConfigured(deps)));
     }
     return htmlPage(homePage());
+  }
+  // 合规五页（条款/隐私/退款/定价/联系）——Paddle 域名审核硬性要求。
+  // 两个 host 都放行：审核看的是 mediaryconnect.app，但 beta 页脚也要能链到。
+  if (method === "GET" && path.length > 1) {
+    const key = path.slice(1);
+    if (key in COMPLIANCE_PAGES) {
+      return htmlPage(compliancePage(key as CompliancePageKey));
+    }
   }
   if (method === "GET" && path === "/healthz") {
     return new Response("ok", {
