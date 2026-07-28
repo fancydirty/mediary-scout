@@ -27,7 +27,13 @@ CREATE TABLE endpoints (
   token_shown_at TEXT,
   last_seen_at TEXT,
   created_at TEXT NOT NULL,
-  revoked_at TEXT
+  revoked_at TEXT,
+  -- P3: 关联付费账号(自助开通);内测期邀请制的行为 NULL。migrations/0003.
+  account_id TEXT REFERENCES accounts(id),
+  -- P3: 到期处置三阶段时间戳(决策 #14)。migrations/0003.
+  grace_until TEXT,
+  suspended_at TEXT,
+  purge_after TEXT
 );
 
 CREATE TABLE audit_events (
@@ -74,6 +80,33 @@ CREATE UNIQUE INDEX idx_waitlist_email_batch ON waitlist(email, batch);
 -- index. On (batch, created_at) alone SQLite added a
 -- "USE TEMP B-TREE FOR LAST TERM OF ORDER BY" to break the same-second ties.
 CREATE INDEX idx_waitlist_batch_created ON waitlist(batch, created_at, id);
+
+-- P3: 付费账号 + 预付时长账本。migrations/0003-accounts-entitlements.sql。
+-- endpoints.account_id 外键引用 accounts,故这两表逻辑上先于 endpoints,
+-- 但 SQLite 建表时不强制外键目标已存在,放文件末尾亦可。
+CREATE TABLE accounts (
+  id TEXT PRIMARY KEY,
+  email TEXT NOT NULL UNIQUE,
+  paddle_customer_id TEXT,
+  created_at TEXT NOT NULL,
+  last_login_at TEXT
+);
+CREATE INDEX idx_accounts_email ON accounts(email);
+CREATE INDEX idx_accounts_paddle_customer ON accounts(paddle_customer_id);
+
+CREATE TABLE entitlements (
+  id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL REFERENCES accounts(id),
+  expires_at TEXT NOT NULL,
+  source TEXT NOT NULL,
+  paddle_transaction_id TEXT,
+  months INTEGER NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX idx_entitlements_account ON entitlements(account_id);
+CREATE UNIQUE INDEX idx_ent_txn ON entitlements(paddle_transaction_id)
+  WHERE paddle_transaction_id IS NOT NULL;
+CREATE INDEX idx_endpoints_account ON endpoints(account_id);
 
 -- Schema changes need a matching file in ./migrations for already-deployed
 -- instances — schema.sql alone only covers fresh installs. See README → Deploy.

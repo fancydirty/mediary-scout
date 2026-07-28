@@ -20,6 +20,10 @@ const MIGRATION2_SQL = readFileSync(
   new URL("../migrations/0002-waitlist-survey.sql", import.meta.url),
   "utf8",
 );
+const MIGRATION3_SQL = readFileSync(
+  new URL("../migrations/0003-accounts-entitlements.sql", import.meta.url),
+  "utf8",
+);
 
 // The production shape BEFORE this Worker version: schema.sql as of 884f4c4.
 // `cf_access_app_id` is NOT NULL and `last_seen_at` does not exist — exactly
@@ -648,6 +652,8 @@ describe("migration 0001 — existing install against real SQLite", () => {
   it("migrated shape matches a fresh schema.sql install exactly", () => {
     const migrated = freshDb(LEGACY_SCHEMA_SQL);
     migrated.sqlite.exec(MIGRATION_SQL);
+    migrated.sqlite.exec(MIGRATION2_SQL);
+    migrated.sqlite.exec(MIGRATION3_SQL);
     const fresh = freshDb(SCHEMA_SQL);
 
     const shapeOf = (sqlite: Sqlite): unknown =>
@@ -754,6 +760,7 @@ describe("migration 0001 — legacy install that predates the waitlist table", (
     const migrated = freshDb(PRE_WAITLIST_SCHEMA_SQL);
     migrated.sqlite.exec(MIGRATION_SQL);
     migrated.sqlite.exec(MIGRATION2_SQL);
+    migrated.sqlite.exec(MIGRATION3_SQL);
     const fresh = freshDb(SCHEMA_SQL);
 
     const shapeOf = (sqlite: Sqlite, table: string): unknown =>
@@ -813,6 +820,7 @@ describe("migration 0002 — waitlist.survey_json against real SQLite", () => {
     const migrated = freshDb(LEGACY_SCHEMA_SQL);
     migrated.sqlite.exec(MIGRATION_SQL);
     migrated.sqlite.exec(MIGRATION2_SQL);
+    migrated.sqlite.exec(MIGRATION3_SQL);
     const fresh = freshDb(SCHEMA_SQL);
 
     const shapeOf = (sqlite: Sqlite, table: string): unknown =>
@@ -882,5 +890,46 @@ describe("migration 0002 — waitlist.survey_json against real SQLite", () => {
       feedback: "好",
     });
     expect(await db.getWaitlistById("wl_missing")).toBeNull();
+  });
+});
+
+describe("migration 0003: accounts + entitlements + endpoints.account_id", () => {
+  it("runs cleanly on the legacy schema (post-m2), adds accounts/entitlements tables", () => {
+    const sql = new Database(":memory:");
+    sql.exec(LEGACY_SCHEMA_SQL);
+    sql.exec(MIGRATION_SQL);
+    sql.exec(MIGRATION2_SQL);
+    sql.exec(MIGRATION3_SQL);
+    sql.prepare("INSERT INTO accounts(id,email,created_at) VALUES(?,?,?)").run(
+      "act_test","user@example.com","2026-07-28T12:00:00Z",
+    );
+    const acct = sql.prepare("SELECT * FROM accounts WHERE email=?").get("user@example.com") as any;
+    expect(acct.id).toBe("act_test");
+    sql.prepare("INSERT INTO entitlements(id,account_id,expires_at,source,months,created_at) VALUES(?,?,?,?,?,?)").run(
+      "ent_1","act_test","2027-07-28T12:00:00Z","founding",12,"2026-07-28T12:00:00Z",
+    );
+    const ent = sql.prepare("SELECT * FROM entitlements WHERE account_id=?").get("act_test") as any;
+    expect(ent.months).toBe(12);
+    // 补齐所有 NOT NULL 列;account_id 是 m3 新增的可空外键。
+    sql.prepare(
+      "INSERT INTO endpoints(id,invite_id,slug,hostname,cf_tunnel_id,cf_dns_record_id,status,token_sha256,account_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+    ).run("ep_1","inv_1","test","test.mediaryconnect.app","tun_x","dns_x","active","abc","act_test","2026-07-28T12:00:00Z");
+    const ep = sql.prepare("SELECT * FROM endpoints WHERE id=?").get("ep_1") as any;
+    expect(ep.account_id).toBe("act_test");
+  });
+
+  it("fresh schema.sql includes accounts/entitlements + endpoints.account_id", () => {
+    const sql = new Database(":memory:");
+    sql.exec(SCHEMA_SQL);
+    sql.prepare("INSERT INTO accounts(id,email,created_at) VALUES(?,?,?)").run(
+      "act_new","new@example.com","2026-07-28T12:00:00Z",
+    );
+    expect(sql.prepare("SELECT id FROM accounts WHERE email=?").get("new@example.com")).toBeTruthy();
+    sql.prepare("INSERT INTO entitlements(id,account_id,expires_at,source,months,created_at) VALUES(?,?,?,?,?,?)").run(
+      "ent_new","act_new","2027-07-28T12:00:00Z","paddle",12,"2026-07-28T12:00:00Z",
+    );
+    expect(sql.prepare("SELECT id FROM entitlements WHERE account_id=?").get("act_new")).toBeTruthy();
+    const cols = sql.prepare("PRAGMA table_info(endpoints)").all() as any[];
+    expect(cols.find((c: any) => c.name === "account_id")).toBeTruthy();
   });
 });
