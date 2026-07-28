@@ -81,6 +81,20 @@ describe("cf-api", () => {
     expect(call.body).toEqual({ name: "my-tunnel", config_src: "cloudflare" });
   });
 
+  it("getTunnelToken GETs the token endpoint with an encoded tunnel id", async () => {
+    const { api, calls } = makeApi([
+      { json: { success: true, errors: [], result: "cf-connector-token-xyz" } },
+    ]);
+    const out = await api.getTunnelToken("tid with/slash");
+    expect(out).toBe("cf-connector-token-xyz");
+    const call = calls[0]!;
+    expect(call.method).toBe("GET");
+    // tunnelId 必须 URL 编码(与 putTunnelIngress 一致)
+    expect(call.url).toBe(
+      `${BASE}/accounts/${ACCOUNT_ID}/cfd_tunnel/${encodeURIComponent("tid with/slash")}/token`,
+    );
+  });
+
   it("putTunnelIngress sends web service + catch-all 404", async () => {
     const { api, calls } = makeApi([{}]);
     await api.putTunnelIngress("tid", "slug.example.com");

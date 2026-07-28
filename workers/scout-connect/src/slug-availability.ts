@@ -25,7 +25,7 @@ export async function suggestSlugs(baseRaw: string, isTaken: IsTaken, n: number)
   candidates.push(`${base}-nas`, `${base}-home`, `${base}-mc`);
   for (const c of candidates) {
     if (out.length >= n) break;
-    // 截断到长度上限;形状不合法(如太长)跳过
+    // 形状不合法(太长/保留字/字符集不符)直接跳过——不截断,只筛选。
     if (slugShape(c) !== "ok") continue;
     if (await isTaken(c)) continue;
     out.push(c);

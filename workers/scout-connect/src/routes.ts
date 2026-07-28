@@ -394,8 +394,10 @@ async function slugCheckRoute(url: URL, request: Request, deps: RouteDeps): Prom
   if (!session.ok) throw new HttpError(401, "unauthorized");
   const slug = url.searchParams.get("s") ?? "";
   // 占用判定查所有状态的行(含 revoked/purged):slug 永久保留不释放(决策 #9)。
+  // rootDomain normalize:与本文件别处一致(CONNECT_ROOT_DOMAIN 可能带空白/大小写)。
+  const domain = deps.rootDomain.trim().toLowerCase();
   const isTaken: IsTaken = async (s) =>
-    (await deps.db.findEndpointBySlugOrHostname(s, `${s}.${deps.rootDomain}`)) !== null;
+    (await deps.db.findEndpointBySlugOrHostname(s, `${s}.${domain}`)) !== null;
   const result = await checkSlug(slug, isTaken);
   return json(result, 200, { noStore: true });
 }

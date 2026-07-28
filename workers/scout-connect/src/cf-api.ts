@@ -98,6 +98,9 @@ function requireString(value: unknown, field: string): string {
 function requestInit(resolved: ResolvedOptions, method: string, body: unknown): RequestInit {
   return {
     method,
+    // project 硬规则:外部 HTTP 一律带超时。统一放在 requestInit,所有 CF
+    // 调用(建/删隧道、DNS、token 取回…)都受益,不必逐个方法加。
+    signal: AbortSignal.timeout(10_000),
     headers: {
       Authorization: `Bearer ${resolved.apiToken}`,
       "content-type": "application/json",
@@ -186,7 +189,7 @@ export function createCfApi(opts: CfApiOptions): CfApi {
       const result = (await cfJson(
         resolved,
         "GET",
-        `${accountPath}/cfd_tunnel/${tunnelId}/token`,
+        `${accountPath}/cfd_tunnel/${encodeURIComponent(tunnelId)}/token`,
       )) as unknown;
       return requireString(result, "tunnel token");
     },
