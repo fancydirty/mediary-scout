@@ -1,4 +1,4 @@
-// DO NOT EDIT — generated from src/content/*.md by scripts/generate-content.mjs
+// DO NOT EDIT — generated from assets/*.sh by scripts/generate-content.mjs
 // Regenerate: node scripts/generate-content.mjs
 
 export const RAW_ASSETS: Record<string, string> = {

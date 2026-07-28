@@ -109,7 +109,6 @@ function renderBody(
   input: {
     account: AccountRow;
     endpoint: EndpointRow | null;
-    baseUrl: string;
   },
   active: boolean,
 ): string {
@@ -124,13 +123,8 @@ function renderBody(
   }
 
   const hostname = input.endpoint.hostname;
-  // 服务端用占位符生成提示词模板（此刻还没有取件码）；客户端点按钮时
-  // 现取真码并替换。占位符本身是白名单字符，buildConnectPrompt 接受它。
-  const promptTemplate = buildConnectPrompt({
-    hostname,
-    claimCode: CLAIM_CODE_PLACEHOLDER,
-    baseUrl: input.baseUrl,
-  });
+  // 提示词模板由 renderScript 在客户端脚本里生成(带占位符),点按钮时现取
+  // 真码替换。这里不预生成——服务端渲染时页面里的 #prompt 是空的。
   return `<p class="sub">你的专属地址：<span class="addr">${esc(hostname)}</span>（配置好后浏览器打开它即可）</p>
 <div class="panel">
 <p class="step">接入你的实例</p>

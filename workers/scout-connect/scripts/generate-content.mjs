@@ -50,9 +50,14 @@ const assetEntries = assetFiles.map((f) => {
   const raw = readFileSync(join(assetsDir, f), "utf8");
   return `  ${JSON.stringify(f)}: ${JSON.stringify(raw)},`;
 });
+// 独立 banner:这个文件来自 assets/*.sh,不是 content/*.md(复用 compliance
+// 的 banner 会把来源写错,误导后续调试)。
+const assetBanner = `// DO NOT EDIT — generated from assets/*.sh by scripts/generate-content.mjs
+// Regenerate: node scripts/generate-content.mjs
+`;
 writeFileSync(
   assetOut,
-  `${banner}
+  `${assetBanner}
 export const RAW_ASSETS: Record<string, string> = {
 ${assetEntries.join("\n")}
 };

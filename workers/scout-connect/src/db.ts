@@ -334,8 +334,12 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
     },
 
     async getActiveEndpointByAccountId(accountId) {
+      // ORDER BY 保证多 active 行时确定性(schema 不阻止一账号多 endpoint;
+      // 无 ORDER BY 时 SQLite 返回任意行,取件码签发会不确定)。取最早建的。
       const row = await d1
-        .prepare(`SELECT * FROM endpoints WHERE account_id = ? AND status = 'active' LIMIT 1`)
+        .prepare(
+          `SELECT * FROM endpoints WHERE account_id = ? AND status = 'active' ORDER BY created_at ASC, id ASC LIMIT 1`,
+        )
         .bind(accountId)
         .first<RawRow>();
       return row === null ? null : mapEndpoint(row);
@@ -688,12 +692,16 @@ export function createMemoryConnectDb(): ConnectDb {
     },
 
     async getActiveEndpointByAccountId(accountId) {
-      for (const row of endpoints.values()) {
-        if (row.account_id === accountId && row.status === "active") {
-          return { ...row };
-        }
-      }
-      return null;
+      // 与 D1 实现一致:多 active 行时按 created_at,id 取最早,保证确定性。
+      const matches = [...endpoints.values()].filter(
+        (row) => row.account_id === accountId && row.status === "active",
+      );
+      if (matches.length === 0) return null;
+      matches.sort((a, b) => {
+        const t = Date.parse(a.created_at) - Date.parse(b.created_at);
+        return t !== 0 ? t : a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+      });
+      return { ...matches[0]! };
     },
 
     async findEndpointBySlugOrHostname(slug, hostname) {

@@ -56,3 +56,4 @@ apps/desktop/dist-app/
 docs/promo/
 docs/images/devto-cover.*
 .opencode/
+.opencode/ralph-loop.local.md
