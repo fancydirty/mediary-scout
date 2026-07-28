@@ -28,6 +28,26 @@ export interface EndpointRow {
   revoked_at: string | null;
 }
 
+/** P3: 付费账号。邮箱即身份;paddle_customer_id 内测手工开的为 null。 */
+export interface AccountRow {
+  id: string;
+  email: string;
+  paddle_customer_id: string | null;
+  created_at: string;
+  last_login_at: string | null;
+}
+
+/** P3: 预付时长账本。每次充值一行,expires_at 由业务层叠加计算后写入。 */
+export interface EntitlementRow {
+  id: string;
+  account_id: string;
+  expires_at: string;
+  source: "paddle" | "founding" | "manual" | "beta";
+  paddle_transaction_id: string | null;
+  months: number;
+  created_at: string;
+}
+
 export interface AuditRow {
   id: string;
   at: string;
@@ -111,6 +131,14 @@ export interface ConnectDb {
   listWaitlist(batch: number): Promise<WaitlistRow[]>;
   getEndpointByTokenSha256(sha256: string): Promise<EndpointRow | null>;
   updateEndpointLastSeen(endpointId: string, lastSeenAt: string): Promise<void>;
+  // P3: accounts + entitlements
+  insertAccount(row: AccountRow): Promise<AccountRow>;
+  getAccountById(id: string): Promise<AccountRow | null>;
+  getAccountByEmail(email: string): Promise<AccountRow | null>;
+  updateAccountLastLogin(id: string, at: string): Promise<void>;
+  /** 幂等插入时长记录。paddle_transaction_id 已存在时返回 false(不重复加时长)。 */
+  insertEntitlement(row: EntitlementRow): Promise<boolean>;
+  listEntitlements(accountId: string): Promise<EntitlementRow[]>;
 }
 
 // Minimal ambient D1 types (intentionally not @cloudflare/workers-types).
@@ -479,6 +507,64 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
         .bind(lastSeenAt, endpointId)
         .run();
     },
+
+    async insertAccount(row) {
+      await d1
+        .prepare(
+          `INSERT INTO accounts (id, email, paddle_customer_id, created_at, last_login_at)
+           VALUES (?, ?, ?, ?, ?)`,
+        )
+        .bind(row.id, row.email, row.paddle_customer_id, row.created_at, row.last_login_at)
+        .run();
+      return { ...row };
+    },
+
+    async getAccountById(id) {
+      const row = await d1.prepare(`SELECT * FROM accounts WHERE id = ?`).bind(id).first<AccountRow>();
+      return row === null ? null : row;
+    },
+
+    async getAccountByEmail(email) {
+      const row = await d1
+        .prepare(`SELECT * FROM accounts WHERE email = ?`)
+        .bind(email)
+        .first<AccountRow>();
+      return row === null ? null : row;
+    },
+
+    async updateAccountLastLogin(id, at) {
+      await d1.prepare(`UPDATE accounts SET last_login_at = ? WHERE id = ?`).bind(at, id).run();
+    },
+
+    async insertEntitlement(row) {
+      // 幂等:paddle_transaction_id 的部分唯一索引挡住 webhook 重投。
+      // INSERT OR IGNORE + changes 判定是否真的插入了。
+      const res = (await d1
+        .prepare(
+          `INSERT OR IGNORE INTO entitlements
+             (id, account_id, expires_at, source, paddle_transaction_id, months, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          row.id,
+          row.account_id,
+          row.expires_at,
+          row.source,
+          row.paddle_transaction_id,
+          row.months,
+          row.created_at,
+        )
+        .run()) as { meta?: { changes?: number } };
+      return (res.meta?.changes ?? 0) > 0;
+    },
+
+    async listEntitlements(accountId) {
+      const rows = await d1
+        .prepare(`SELECT * FROM entitlements WHERE account_id = ? ORDER BY created_at ASC`)
+        .bind(accountId)
+        .all<EntitlementRow>();
+      return rows.results;
+    },
   };
 }
 
@@ -502,6 +588,8 @@ export function createMemoryConnectDb(): ConnectDb {
   const endpoints = new Map<string, EndpointRow>();
   const audits = new Map<string, AuditRow>();
   const waitlist = new Map<string, WaitlistRow>();
+  const accounts = new Map<string, AccountRow>();
+  const entitlements = new Map<string, EntitlementRow>();
 
   return {
     async insertInvite(row) {
@@ -731,6 +819,59 @@ export function createMemoryConnectDb(): ConnectDb {
       if (row !== undefined) {
         row.last_seen_at = lastSeenAt;
       }
+    },
+
+    async insertAccount(row) {
+      if (accounts.has(row.id)) {
+        throw new Error(`UNIQUE constraint failed: accounts.id (${row.id})`);
+      }
+      for (const existing of accounts.values()) {
+        if (existing.email === row.email) {
+          throw new Error(`UNIQUE constraint failed: accounts.email (${row.email})`);
+        }
+      }
+      accounts.set(row.id, { ...row });
+      return { ...row };
+    },
+
+    async getAccountById(id) {
+      const row = accounts.get(id);
+      return row === undefined ? null : { ...row };
+    },
+
+    async getAccountByEmail(email) {
+      for (const row of accounts.values()) {
+        if (row.email === email) return { ...row };
+      }
+      return null;
+    },
+
+    async updateAccountLastLogin(id, at) {
+      const row = accounts.get(id);
+      if (row !== undefined) row.last_login_at = at;
+    },
+
+    async insertEntitlement(row) {
+      if (entitlements.has(row.id)) {
+        throw new Error(`UNIQUE constraint failed: entitlements.id (${row.id})`);
+      }
+      // 幂等:paddle_transaction_id 重复 → 不插入,返回 false(镜像部分唯一索引)。
+      if (row.paddle_transaction_id !== null) {
+        for (const existing of entitlements.values()) {
+          if (existing.paddle_transaction_id === row.paddle_transaction_id) {
+            return false;
+          }
+        }
+      }
+      entitlements.set(row.id, { ...row });
+      return true;
+    },
+
+    async listEntitlements(accountId) {
+      return [...entitlements.values()]
+        .filter((e) => e.account_id === accountId)
+        .sort((a, b) => a.created_at.localeCompare(b.created_at))
+        .map((e) => ({ ...e }));
     },
   };
 }

@@ -14,4 +14,8 @@ export interface Env {
   // put TURNSTILE_SECRET`. Either missing → no widget, no verification.
   TURNSTILE_SITEKEY?: string;
   TURNSTILE_SECRET?: string;
+  // P3: 魔法链接登录 + session 签名密钥(64 hex = 32 字节),wrangler secret。
+  SESSION_SECRET: string;
+  // P3: Resend 发信 API key(魔法链接邮件),wrangler secret。
+  RESEND_API_KEY: string;
 }

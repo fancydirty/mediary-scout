@@ -102,6 +102,8 @@ sha256. After `token_shown_at` is set, the plaintext is unrecoverable.
 | `CF_ACCOUNT_ID` | account holding Zero Trust / tunnels |
 | `CF_ZONE_ID` | mediaryconnect.app zone |
 | `TOKEN_WRAP_KEY` | `openssl rand -hex 32` — AES-256-GCM key for token-at-rest |
+| `SESSION_SECRET` | `openssl rand -hex 32` — HMAC key for magic-link + session cookies (P3) |
+| `RESEND_API_KEY` | Resend API key for magic-link emails (P3) |
 
 Vars (wrangler.jsonc, non-secret): `CONNECT_ROOT_DOMAIN=mediaryconnect.app`.
 

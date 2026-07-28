@@ -11,9 +11,14 @@ import { adminPage } from "./html/admin-page.js";
 import { invitePage, type InvitePageState } from "./html/invite-page.js";
 import { betaPage, normalizeTurnstileSitekey } from "./html/beta-page.js";
 import { compliancePage, COMPLIANCE_PAGES, type CompliancePageKey } from "./html/compliance-page.js";
+import { consolePage } from "./html/console-page.js";
+import { loginPage } from "./html/login-page.js";
 import { EMAIL_MAX_LENGTH, EMAIL_RE } from "./validation.js";
 import { newId } from "./ids.js";
 import { sha256Hex } from "./crypto-token.js";
+import { signToken, verifyToken } from "./signed-token.js";
+import { buildSessionCookie, parseSessionCookie } from "./session.js";
+import { computeExpiry } from "./entitlement.js";
 
 // Same aperture mark as apps/web/app/icon.svg — the product brand.
 const LOGO_SVG =
@@ -36,6 +41,12 @@ export interface RouteDeps {
   // either absent → no widget rendered, POST /waitlist skips verification.
   turnstileSitekey?: string | undefined;
   turnstileSecret?: string | undefined;
+  // P3: 魔法链接登录
+  newAccountId: () => string;
+  newEntitlementId: () => string;
+  sessionSecret: string;
+  /** 发一封含魔法链接的邮件。注入以便测试不打真 Resend。 */
+  sendMagicLink: (to: string, url: string) => Promise<void>;
 }
 
 export async function handleRequest(request: Request, deps: RouteDeps): Promise<Response> {
@@ -203,6 +214,19 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
       headers: { "content-type": "text/plain; charset=utf-8" },
     });
   }
+  // P3: 魔法链接登录
+  if (method === "POST" && path === "/api/auth/magic") {
+    return await requestMagicLink(request, deps);
+  }
+  if (method === "GET" && path === "/auth/callback") {
+    return await magicCallback(url, deps);
+  }
+  if (method === "GET" && path === "/login") {
+    return htmlPage(loginPage());
+  }
+  if (method === "GET" && path === "/console") {
+    return await consoleRoute(request, deps);
+  }
   // Brand logo for Access Custom Pages + invite page — self-hosted so we don't
   // depend on any external asset host.
   if (method === "GET" && path === "/logo.svg") {
@@ -253,10 +277,12 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
 
   if (path === "/api/admin/waitlist" && method === "GET") {
     requireAdmin(request, deps.adminToken);
-    // Queue order straight from the db — (created_at, id) ascending, the same
-    // composite waitlistRankOf counts under, so the 1-based array index here
-    // IS the position POST /waitlist reported to the user.
+    // Queue order straight from the db
     return json({ waitlist: await deps.db.listWaitlist(WAITLIST_BATCH) });
+  }
+
+  if (path === "/api/admin/grant" && method === "POST") {
+    return await adminGrant(request, deps);
   }
 
   if (path === "/api/admin/audits" && method === "GET") {
@@ -315,6 +341,137 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
   }
 
   throw new HttpError(404, "not found");
+}
+
+// P3: 魔法链接登录 —— magic purpose token 有效期 30 分钟。
+const MAGIC_TTL_MS = 30 * 60_000;
+// session 有效期 30 天(低频访问,长会话减少重复登录摩擦)。
+const SESSION_TTL_MS = 30 * 24 * 3600_000;
+
+async function requestMagicLink(request: Request, deps: RouteDeps): Promise<Response> {
+  const body = await readJsonBody(request);
+  const emailRaw = body.email;
+  if (typeof emailRaw !== "string") throw new HttpError(400, "email required");
+  const email = emailRaw.trim().toLowerCase();
+  if (email.length > EMAIL_MAX_LENGTH || !EMAIL_RE.test(email)) {
+    throw new HttpError(400, "invalid email");
+  }
+  // 注册即登录:不论邮箱是否已存在都发信,不泄露注册状态。账号在 callback
+  // 落地时才创建(避免未验证邮箱污染 accounts 表)。
+  const token = await signToken(
+    { purpose: "magic", subject: email },
+    { key: deps.sessionSecret, ttlMs: MAGIC_TTL_MS, now: Date.parse(deps.now()) },
+  );
+  const url = `https://${deps.rootDomain}/auth/callback?t=${encodeURIComponent(token)}`;
+  // 发信失败不改变对外结果(固定 202):既不泄露邮箱是否存在,也不让
+  // Resend 的抖动变成用户可见的 500。失败在 sender 内部已 console.error。
+  try {
+    await deps.sendMagicLink(email, url);
+  } catch {
+    // swallowed — sender logs its own diagnostics
+  }
+  // 固定 202,无论邮箱存在与否。
+  return json({ ok: true }, 202, { noStore: true });
+}
+
+async function magicCallback(url: URL, deps: RouteDeps): Promise<Response> {
+  const token = url.searchParams.get("t") ?? "";
+  const result = await verifyToken(token, {
+    key: deps.sessionSecret,
+    now: Date.parse(deps.now()),
+    expectPurpose: "magic",
+  });
+  if (!result.ok) throw new HttpError(400, "invalid or expired link");
+  const email = result.subject;
+
+  // 账号 upsert:首次登录建号,之后复用。
+  let account = await deps.db.getAccountByEmail(email);
+  if (account === null) {
+    account = await deps.db.insertAccount({
+      id: deps.newAccountId(),
+      email,
+      paddle_customer_id: null,
+      created_at: deps.now(),
+      last_login_at: deps.now(),
+    });
+  } else {
+    await deps.db.updateAccountLastLogin(account.id, deps.now());
+  }
+
+  const cookie = await buildSessionCookie(account.id, {
+    secret: deps.sessionSecret,
+    ttlMs: SESSION_TTL_MS,
+    now: Date.parse(deps.now()),
+  });
+  return new Response(null, {
+    status: 302,
+    headers: { location: "/console", "set-cookie": cookie },
+  });
+}
+
+async function consoleRoute(request: Request, deps: RouteDeps): Promise<Response> {
+  const session = await parseSessionCookie(request.headers.get("cookie"), {
+    secret: deps.sessionSecret,
+    now: Date.parse(deps.now()),
+  });
+  if (!session.ok) {
+    return new Response(null, { status: 302, headers: { location: "/login" } });
+  }
+  const account = await deps.db.getAccountById(session.accountId);
+  if (account === null) {
+    // 陈旧 cookie(账号已删)→ fail closed 回登录页。
+    return new Response(null, { status: 302, headers: { location: "/login" } });
+  }
+  const entitlements = await deps.db.listEntitlements(account.id);
+  return htmlPage(consolePage({ account, entitlements, now: deps.now() }));
+}
+
+/** 内测手工授予时长(admin)。P7 的 Paddle webhook 会复用同一 upsert+叠加逻辑。 */
+async function adminGrant(request: Request, deps: RouteDeps): Promise<Response> {
+  requireAdmin(request, deps.adminToken);
+  const body = await readJsonBody(request);
+  const emailRaw = body.email;
+  if (typeof emailRaw !== "string") throw new HttpError(400, "email required");
+  const email = emailRaw.trim().toLowerCase();
+  if (email.length > EMAIL_MAX_LENGTH || !EMAIL_RE.test(email)) {
+    throw new HttpError(400, "invalid email");
+  }
+  const months = body.months;
+  if (typeof months !== "number" || !Number.isInteger(months) || months < 1 || months > 120) {
+    throw new HttpError(400, "months must be an integer in [1,120]");
+  }
+  const source = body.source === "founding" || body.source === "manual" || body.source === "beta"
+    ? body.source
+    : "manual";
+
+  // account upsert
+  let account = await deps.db.getAccountByEmail(email);
+  if (account === null) {
+    account = await deps.db.insertAccount({
+      id: deps.newAccountId(),
+      email,
+      paddle_customer_id: null,
+      created_at: deps.now(),
+      last_login_at: null,
+    });
+  }
+  // 从当前最新到期时刻叠加
+  const ents = await deps.db.listEntitlements(account.id);
+  let current: string | null = null;
+  for (const e of ents) {
+    if (current === null || Date.parse(e.expires_at) > Date.parse(current)) current = e.expires_at;
+  }
+  const expiresAt = computeExpiry({ currentExpiry: current, months, now: deps.now() });
+  await deps.db.insertEntitlement({
+    id: deps.newEntitlementId(),
+    account_id: account.id,
+    expires_at: expiresAt,
+    source,
+    paddle_transaction_id: null,
+    months,
+    created_at: deps.now(),
+  });
+  return json({ ok: true, account_id: account.id, expires_at: expiresAt });
 }
 
 async function createInvite(request: Request, url: URL, deps: RouteDeps): Promise<Response> {

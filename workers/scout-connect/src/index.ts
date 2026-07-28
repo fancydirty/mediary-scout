@@ -2,6 +2,7 @@ import { createCfApi } from "./cf-api.js";
 import { createD1ConnectDb } from "./db.js";
 import { newId, newInviteCode } from "./ids.js";
 import { handleRequest } from "./routes.js";
+import { createMagicLinkSender } from "./magic-link-sender.js";
 import type { Env } from "./env.js";
 
 export default {
@@ -23,6 +24,10 @@ export default {
       newInviteCode,
       turnstileSitekey: env.TURNSTILE_SITEKEY,
       turnstileSecret: env.TURNSTILE_SECRET,
+      newAccountId: () => newId("act"),
+      newEntitlementId: () => newId("ent"),
+      sessionSecret: env.SESSION_SECRET,
+      sendMagicLink: createMagicLinkSender(env.RESEND_API_KEY),
     });
   },
 };
