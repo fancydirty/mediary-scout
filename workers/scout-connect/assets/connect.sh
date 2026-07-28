@@ -74,6 +74,10 @@ ENV_FILE=".env"
 BACKUP=".env.bak-$(date +%Y%m%d-%H%M%S)-$$"
 while [ -e "$BACKUP" ]; do BACKUP="$BACKUP-1"; done
 cp "$ENV_FILE" "$BACKUP"
+# 备份可能含历史/旧的 TUNNEL_TOKEN(长期有效机密);若原 .env 权限较宽
+# (常见 0644),cp 出的备份同样可读。显式收紧到仅属主可读写,别让 token
+# 对同机其他用户泄露。(chmod 失败不致命,只告警——备份本身已完成。)
+chmod 600 "$BACKUP" 2>/dev/null || echo "  ⚠️ 无法收紧备份权限,请自行检查 $BACKUP" >&2
 echo "  ✓ 已备份 .env → $BACKUP"
 
 TMP=$(mktemp ".env.tmp.XXXXXX") || { echo "❌ 无法创建临时文件" >&2; exit 1; }
