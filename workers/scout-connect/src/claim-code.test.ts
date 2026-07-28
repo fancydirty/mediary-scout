@@ -112,6 +112,22 @@ describe("POST /api/claim-code (登录用户签发取件码)", () => {
     );
     expect(res.status).toBe(404);
   });
+
+  it("fails closed (500, no throw) when deps.now() is malformed → NaN", async () => {
+    const { deps, db } = setup();
+    await seedEndpoint(db, "act_1");
+    const badDeps: RouteDeps = { ...deps, now: () => "not-a-date" };
+    const res = await handleRequest(
+      new Request(`${BASE}/api/claim-code`, {
+        method: "POST",
+        headers: { cookie: await cookieFor("act_1") },
+      }),
+      badDeps,
+    );
+    // new Date(NaN).toISOString() 会抛 RangeError;显式 finite 守卫把它变成
+    // 受控的 500 而不是裸崩。
+    expect(res.status).toBe(500);
+  });
 });
 
 describe("POST /api/claim/exchange (脚本凭码换 token,无 session)", () => {

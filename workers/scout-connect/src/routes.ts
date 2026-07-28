@@ -422,6 +422,10 @@ async function issueClaimCode(request: Request, deps: RouteDeps): Promise<Respon
   // now 只取一次:签名过期与返回的 expires_at 必须基于同一时刻,否则两次
   // deps.now() 之间若推进,签发的 token 过期时刻与告知用户的会漂移。
   const nowMs = Date.parse(deps.now());
+  // fail-closed:now 畸形(misconfig/坏 stub)时 nowMs=NaN,后面
+  // new Date(NaN).toISOString() 会抛 RangeError 变裸 500;且签出的 token
+  // 过期语义不可信。与别处「non-finite now 视为过期」的守卫一致,显式拒。
+  if (!Number.isFinite(nowMs)) throw new HttpError(500, "server time unavailable");
   const session = await parseSessionCookie(request.headers.get("cookie"), {
     secret: deps.sessionSecret,
     now: nowMs,
