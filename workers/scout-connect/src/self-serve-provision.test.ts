@@ -146,24 +146,31 @@ describe("POST /api/provision (自助开通)", () => {
     expect(ep?.token_ciphertext).toBeNull();
   });
 
-  it("409 slug taken when another endpoint owns the slug", async () => {
-    const { deps, db } = setup();
+  it("409 slug taken when another endpoint owns the slug — and burns no extra CF calls", async () => {
+    const cfCalls: string[] = [];
+    const { deps, db } = setup(cfCalls);
     await seedAccount(db, "act_1", FUTURE);
     await seedAccount(db, "act_2", FUTURE);
     expect((await handleRequest(post("alice", await cookieFor("act_1")), deps)).status).toBe(200);
+    const afterFirst = cfCalls.length;
     const res = await handleRequest(post("alice", await cookieFor("act_2")), deps);
     expect(res.status).toBe(409);
     expect(((await res.json()) as { error?: string }).error).toBe("slug taken");
+    // 预检在 CF 编排之前:冲突绝不烧隧道/DNS 资源。
+    expect(cfCalls.length).toBe(afterFirst);
   });
 
-  it("409 already provisioned when the account already has a live endpoint", async () => {
-    const { deps, db } = setup();
+  it("409 already provisioned when the account already has a live endpoint — zero extra CF calls", async () => {
+    const cfCalls: string[] = [];
+    const { deps, db } = setup(cfCalls);
     await seedAccount(db, "act_1", FUTURE);
     const cookie = await cookieFor("act_1");
     expect((await handleRequest(post("alice", cookie), deps)).status).toBe(200);
+    const afterFirst = cfCalls.length;
     const res = await handleRequest(post("second", cookie), deps);
     expect(res.status).toBe(409);
     expect(((await res.json()) as { error?: string }).error).toBe("already provisioned");
+    expect(cfCalls.length).toBe(afterFirst);
   });
 
   it("401 on a stale session whose account no longer exists (fail closed)", async () => {

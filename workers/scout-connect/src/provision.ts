@@ -74,7 +74,10 @@ export async function provisionEndpoint(input: {
   }
 
   const slug = assertSlug(input.slug);
-  const hostname = `${slug}.${deps.rootDomain}`;
+  // rootDomain normalize:CONNECT_ROOT_DOMAIN 可能带空白/大小写(与 magic-link
+  // / slug-check 各处同款处理),否则会生成畸形 hostname 误配 CF/DNS/查重。
+  const rootDomain = deps.rootDomain.trim().toLowerCase();
+  const hostname = `${slug}.${rootDomain}`;
 
   // Slug/hostname availability precheck: shrinks the window where a retry
   // would burn a full set of CF resources only to die on a UNIQUE constraint
