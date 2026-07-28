@@ -63,6 +63,19 @@ describe("POST /api/auth/magic (魔法链接请求)", () => {
     expect(sent).toHaveLength(0);
   });
 
+  it("normalizes a space-padded / mixed-case rootDomain in the magic link URL", async () => {
+    const { deps, sent } = setup({ rootDomain: "  MediaryConnect.APP  " });
+    await handleRequest(
+      new Request(`${BASE}/api/auth/magic`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "a@example.com" }),
+      }),
+      deps,
+    );
+    expect(sent[0]!.url).toMatch(/^https:\/\/mediaryconnect\.app\/auth\/callback\?t=/);
+  });
+
   it("normalizes email to lowercase before signing the link", async () => {
     const { deps, sent } = setup();
     await handleRequest(

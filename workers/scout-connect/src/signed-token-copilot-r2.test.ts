@@ -3,7 +3,7 @@ import { verifyToken, signToken } from "./signed-token.js";
 
 const KEY = "a".repeat(64);
 
-describe("verifyToken NaN now fail-closed (Copilot round 2)", () => {
+describe("verifyToken non-finite now must fail closed", () => {
   it("now=NaN must reject token, not make it immortal", async () => {
     const token = await signToken(
       { purpose: "magic", subject: "test@example.com" },

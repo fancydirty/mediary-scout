@@ -79,6 +79,19 @@ describe("GET /console (登录后控制台)", () => {
     expect(html).toContain("2027");         // 到期年份
   });
 
+  it("sets Cache-Control: no-store on the authenticated console page", async () => {
+    const deps = baseDeps();
+    await deps.db.insertAccount({
+      id: "act_c", email: "c@example.com", paddle_customer_id: null,
+      created_at: "2026-01-01T00:00:00.000Z", last_login_at: null,
+    });
+    const res = await handleRequest(
+      new Request(`${BASE}/console`, { headers: { cookie: await sessionCookieHeader("act_c") } }),
+      deps,
+    );
+    expect(res.headers.get("cache-control")).toBe("no-store");
+  });
+
   it("shows an expired/none state for an account with no active entitlement", async () => {
     const deps = baseDeps();
     await deps.db.insertAccount({

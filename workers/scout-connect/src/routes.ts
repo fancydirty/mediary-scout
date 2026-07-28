@@ -366,7 +366,10 @@ async function requestMagicLink(request: Request, deps: RouteDeps): Promise<Resp
     { purpose: "magic", subject: email },
     { key: deps.sessionSecret, ttlMs: MAGIC_TTL_MS, now: Date.parse(deps.now()) },
   );
-  const url = `https://${deps.rootDomain}/auth/callback?t=${encodeURIComponent(token)}`;
+  // rootDomain 需 normalize:CONNECT_ROOT_DOMAIN 可能带空白/大小写,直拼到邮件
+  // 链接里会坏掉——与路由期待的规范 host 不符(Copilot round 3)。
+  const domain = deps.rootDomain.trim().toLowerCase();
+  const url = `https://${domain}/auth/callback?t=${encodeURIComponent(token)}`;
   // 发信失败不改变对外结果(固定 202):既不泄露邮箱是否存在,也不让
   // Resend 的抖动变成用户可见的 500。失败在 sender 内部已 console.error。
   try {
@@ -439,7 +442,10 @@ async function consoleRoute(request: Request, deps: RouteDeps): Promise<Response
     return new Response(null, { status: 302, headers: { location: "/login" } });
   }
   const entitlements = await deps.db.listEntitlements(account.id);
-  return htmlPage(consolePage({ account, entitlements, now: deps.now() }));
+  return htmlPage(
+    consolePage({ account, entitlements, now: deps.now() }),
+    { noStore: true }, // 用户专属页面,不可缓存(Copilot round 3)
+  );
 }
 
 /** 内测手工授予时长(admin)。P7 的 Paddle webhook 会复用同一 upsert+叠加逻辑。 */

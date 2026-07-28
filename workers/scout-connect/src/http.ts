@@ -18,10 +18,9 @@ export function json(data: unknown, status = 200, opts: { noStore?: boolean } = 
   });
 }
 
-export function htmlPage(body: string, status = 200): Response {
-  return new Response(body, {
-    status,
-    headers: {
+export function htmlPage(body: string, opts: { status?: number; noStore?: boolean } = {}): Response {
+  const status = opts.status ?? 200;
+  const headers: Record<string, string> = {
       "content-type": "text/html; charset=utf-8",
       // Pages carry inline style/script only — no first-party asset requests —
       // so a strict CSP is free defense-in-depth for a page that carries a
@@ -45,8 +44,9 @@ export function htmlPage(body: string, status = 200): Response {
       // is the legacy header that actually blocks framing in older browsers.
       "x-frame-options": "DENY",
       "referrer-policy": "no-referrer",
-    },
-  });
+  };
+  if (opts.noStore) headers["cache-control"] = "no-store";
+  return new Response(body, { status, headers });
 }
 
 // SECURITY: never leak stack traces or internal error text to the client —
