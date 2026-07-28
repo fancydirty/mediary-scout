@@ -1,0 +1,72 @@
+/**
+ * 极小 Markdown 渲染器,专供合规页面(条款/隐私/退款/定价/联系)。
+ *
+ * 只支持这些页面实际用到的子集:h1-h3、段落、无序列表、链接、粗体、
+ * 行内代码、hr。**刻意不支持 HTML 透传**:.md 内容里的一切尖括号都被
+ * 转义,内容文件永远不可能成为 XSS 注入面——即便未来有人把不可信文本
+ * 粘进 .md。链接 href 只放行 http(s),`javascript:` 一类协议降级为纯文本。
+ *
+ * 为什么不用现成库:worker 的合规页面是构建期就固定的静态内容,
+ * 引一个完整 Markdown 库(及其解析器攻击面)不值得;而手写模板字符串
+ * 写长法律文本又不可维护。这个 60 行的子集是两者之间的甜点。
+ */
+
+const ESCAPE_RE = /[&<>"']/g;
+const ESCAPES: Record<string, string> = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&#39;",
+};
+
+function escapeHtml(text: string): string {
+  return text.replace(ESCAPE_RE, (ch) => ESCAPES[ch] ?? ch);
+}
+
+/** 行内元素:先整体转义,再在转义后的文本上做受控替换。
+ *  顺序:code(内部不再处理)→ 链接 → 粗体。 */
+function renderInline(raw: string): string {
+  const escaped = escapeHtml(raw);
+  // `code`
+  let out = escaped.replace(/`([^`]+)`/g, "<code>$1</code>");
+  // [text](href) — href 只放行 http(s);其余整体降级为纯文本(去掉语法糖)。
+  out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_m, text: string, href: string) => {
+    if (/^https?:\/\//i.test(href)) {
+      return `<a href="${href}">${text}</a>`;
+    }
+    return text;
+  });
+  // **bold**
+  out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  return out;
+}
+
+export function renderMarkdown(md: string): string {
+  const blocks = md.replace(/\r\n/g, "\n").split(/\n{2,}/);
+  const html: string[] = [];
+  for (const block of blocks) {
+    const trimmed = block.trim();
+    if (trimmed === "") continue;
+    if (trimmed === "---") {
+      html.push("<hr>");
+      continue;
+    }
+    const heading = /^(#{1,3})\s+(.+)$/.exec(trimmed);
+    if (heading) {
+      const level = heading[1]!.length;
+      html.push(`<h${level}>${renderInline(heading[2]!)}</h${level}>`);
+      continue;
+    }
+    const lines = trimmed.split("\n");
+    if (lines.every((l) => /^-\s+/.test(l))) {
+      const items = lines
+        .map((l) => `<li>${renderInline(l.replace(/^-\s+/, ""))}</li>`)
+        .join("");
+      html.push(`<ul>${items}</ul>`);
+      continue;
+    }
+    html.push(`<p>${renderInline(lines.join(" "))}</p>`);
+  }
+  return html.join("\n");
+}
