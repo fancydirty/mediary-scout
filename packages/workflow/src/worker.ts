@@ -18,7 +18,7 @@ import {
   requeueWorkflowRunForRetry,
 } from "./repository.js";
 import { isTransientAcquisitionError } from "./acquisition-v2/transient-error.js";
-import { describeAgentRunError } from "./agent-error.js";
+import { describeAgentRunError, summarizeErrorForNotification } from "./agent-error.js";
 import { formatReportPushText } from "./notification-report.js";
 import { isMovieUnreleased } from "./domain.js";
 import { isGuangYaAuthError } from "./guangya-client.js";
@@ -231,8 +231,12 @@ export async function handleWorkflowRunFailure(input: {
   if (willRetry) {
     workflowRun = requeueWorkflowRunForRetry(claimed.workflowRun, errorMessage, nowIso);
     const minutes = Math.round((AUTO_REQUEUE_BACKOFF_MS[priorCount] ?? 0) / 60_000);
+    // 把真实报因摘要带进「重试中」通知——以前一律「网络波动」把根因藏了,
+    // 用户和我们都得翻日志才知道发生了什么(issue #196)。摘要已脱敏+截断,
+    // 不会把 cookie/token 泄进推送渠道;原始错误仍在日志/auditEvents 里。
     report = failureReport(claimed, "retrying", [
       `网络波动 · 第 ${priorCount + 1} 次自动重试,约 ${minutes} 分钟后`,
+      `原因:${summarizeErrorForNotification(errorMessage)}`,
     ]);
   } else {
     workflowRun = failWorkflowRun(claimed.workflowRun, errorMessage, nowIso);

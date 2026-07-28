@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { LLM_AUTH_GUIDANCE, describeAgentRunError } from "./agent-error.js";
+import { LLM_AUTH_GUIDANCE, describeAgentRunError, summarizeErrorForNotification } from "./agent-error.js";
 
 describe("describeAgentRunError", () => {
   it("maps a bare 'Unauthorized' error to the actionable LLM-auth guidance", () => {
@@ -121,5 +121,47 @@ describe("describeAgentRunError — does NOT misclassify netdisk (brand) auth er
   it("does NOT map a bare numeric 401 in an unrelated message to the guidance", () => {
     const msg = "HTTP 401 while fetching subtitle index";
     expect(describeAgentRunError(new Error(msg))).toBe(msg);
+  });
+});
+
+describe("summarizeErrorForNotification", () => {
+  it("keeps a short human provider message intact (the whole point: show the real cause)", () => {
+    expect(summarizeErrorForNotification("QUARK_TRANSFER_FAILED: 分享已取消")).toBe(
+      "QUARK_TRANSFER_FAILED: 分享已取消",
+    );
+    expect(summarizeErrorForNotification("夸克登录超时,请重新登录")).toBe("夸克登录超时,请重新登录");
+  });
+
+  it("collapses newlines/whitespace into a single line", () => {
+    expect(summarizeErrorForNotification("line one\n\n  line   two\t")).toBe("line one line two");
+  });
+
+  it("redacts URL userinfo credentials", () => {
+    const out = summarizeErrorForNotification("fetch failed https://alice:s3cretPass@drive.quark.cn/x");
+    expect(out).toContain("https://***@drive.quark.cn/x");
+    expect(out).not.toContain("s3cretPass");
+  });
+
+  it("redacts cookie/token/key style assignments but keeps the field name", () => {
+    const out = summarizeErrorForNotification("QuarkAuthError access_token=abcdef123456ghijkl");
+    expect(out).not.toContain("abcdef123456ghijkl");
+    expect(out).toContain("access_token=***");
+  });
+
+  it("redacts a bare long opaque secret (>=32 chars)", () => {
+    const secret = "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8";
+    const out = summarizeErrorForNotification(`transfer rejected token ${secret} invalid`);
+    expect(out).not.toContain(secret);
+    expect(out).toContain("***");
+    // surrounding human words survive
+    expect(out).toContain("transfer rejected token");
+    expect(out).toContain("invalid");
+  });
+
+  it("truncates an over-long message with an ellipsis (after redaction, never mid-secret)", () => {
+    const long = `网络中断 ${"很".repeat(200)}`;
+    const out = summarizeErrorForNotification(long);
+    expect(out.length).toBeLessThanOrEqual(140);
+    expect(out.endsWith("…")).toBe(true);
   });
 });

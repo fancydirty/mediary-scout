@@ -72,6 +72,34 @@ describe("handleWorkflowRunFailure", () => {
     expect(saved.notifications[0]?.report?.status).toBe("retrying");
   });
 
+  it("surfaces the real cause in the retry notification (no longer hidden behind 网络波动, issue #196)", async () => {
+    const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
+    await handleWorkflowRunFailure({
+      claimed: snapshot(),
+      error: new Error("fetch failed: 夸克访问频繁,请稍后再试"),
+      repository: { saveWorkflowRunSnapshot: save },
+      now,
+    });
+    const report = save.mock.calls[0]![0].notifications[0]?.report;
+    expect(report?.status).toBe("retrying");
+    // 既保留「网络波动·重试」那句,又多一句「原因:…」把真错亮出来。
+    expect(report?.lines.some((l) => l.includes("网络波动"))).toBe(true);
+    expect(report?.lines.some((l) => l.includes("原因:") && l.includes("夸克访问频繁"))).toBe(true);
+  });
+
+  it("redacts secrets from the retry-cause line (never leak a cookie/token into a push)", async () => {
+    const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
+    await handleWorkflowRunFailure({
+      claimed: snapshot(),
+      error: new Error("fetch failed https://u:sup3rSecretPw@drive.quark.cn/x timeout"),
+      repository: { saveWorkflowRunSnapshot: save },
+      now,
+    });
+    const body = save.mock.calls[0]![0].notifications[0]?.body ?? "";
+    expect(body).not.toContain("sup3rSecretPw");
+    expect(body).toContain("原因:");
+  });
+
   it("terminally fails a transient error AT the cap (failed + failed notification)", async () => {
     const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
     const out = await handleWorkflowRunFailure({

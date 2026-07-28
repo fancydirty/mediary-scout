@@ -122,3 +122,39 @@ export function describeAgentRunError(error: unknown): string {
   }
   return "Workflow failed";
 }
+
+/** Max length of the error summary appended to a retry notification. Long enough
+ *  to carry a provider message ("夸克登录超时"/"分享已取消"/"访问频繁"…), short
+ *  enough for a push/card line. */
+const NOTIFY_SUMMARY_MAX = 140;
+
+/**
+ * A SHORT, SECRET-SAFE one-line summary of an error message, for surfacing the
+ * real cause in a *retry* notification (previously hidden behind "网络波动").
+ *
+ * Notifications are user-visible (in-app card + Bark/Server酱/企微 push), and a
+ * raw drive error can carry a cookie/token/query-credential. This collapses
+ * whitespace, redacts obvious secret material, then truncates — so the user sees
+ * WHY it is retrying without us leaking their credentials into a push channel.
+ *
+ * Order matters: redact BEFORE truncating (never truncate a secret in half and
+ * leak the prefix). The raw error is untouched — logs + auditEvents keep full
+ * detail for our own diagnosis.
+ */
+export function summarizeErrorForNotification(raw: string): string {
+  let s = raw.replace(/\s+/g, " ").trim();
+  // URL userinfo credentials: scheme://user:pass@host → scheme://***@host
+  s = s.replace(/([a-z][a-z0-9+.-]*:\/\/)[^/\s:@]+:[^/\s@]+@/gi, "$1***@");
+  // key/token/cookie/password style assignments: name=<value> → name=***
+  // (covers cookie=, token=, api_key=, access_token=, pwd=, stoken=, __puus=, sid=…)
+  s = s.replace(
+    /([A-Za-z_][A-Za-z0-9_-]*(?:key|token|cookie|secret|pass(?:word|wd)?|sign|stoken|puus|sid))\s*[=:]\s*[^\s,;&"']{6,}/gi,
+    "$1=***",
+  );
+  // Bare long opaque secrets (>=32 chars of base64url/hex-ish, no spaces) → ***
+  s = s.replace(/[A-Za-z0-9_-]{32,}/g, "***");
+  if (s.length > NOTIFY_SUMMARY_MAX) {
+    s = `${s.slice(0, NOTIFY_SUMMARY_MAX - 1)}…`;
+  }
+  return s;
+}
