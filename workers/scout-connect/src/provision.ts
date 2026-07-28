@@ -1,5 +1,5 @@
 import { assertSlug } from "./slug.js";
-import { sha256Hex, wrapToken } from "./crypto-token.js";
+import { sha256Hex } from "./crypto-token.js";
 import { buildAgentPromptOrManual } from "./agent-prompt.js";
 import type { CfApi } from "./cf-api.js";
 import type { ConnectDb } from "./db.js";
@@ -108,9 +108,8 @@ export async function provisionEndpoint(input: {
   // (which may itself fail if D1 is down).
   const endpointId = deps.newEndpointId();
   try {
-    // SECURITY: only ciphertext + sha256 persist. The plaintext token is
-    // returned to the caller once and never touches the db or the audit log.
-    const ciphertext = await wrapToken(token, deps.tokenWrapKeyHex);
+    // SECURITY: token 不落库(决策 #10/#11)。只存 sha256 供心跳按 token 反查
+    // endpoint;明文既不加密存也不存明文——需要时按 cf_tunnel_id 向 CF 现取。
     const sha = await sha256Hex(token);
 
     await db.insertEndpoint({
@@ -124,7 +123,7 @@ export async function provisionEndpoint(input: {
       cf_dns_record_id: recordId,
       status: "active",
       token_sha256: sha,
-      token_ciphertext: ciphertext,
+      token_ciphertext: null,
       token_shown_at: null,
       last_seen_at: null,
       created_at: deps.now(),

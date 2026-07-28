@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import { provisionEndpoint, type ProvisionDeps } from "./provision.js";
 import { createMemoryConnectDb, type ConnectDb, type InviteRow } from "./db.js";
 import type { CfApi } from "./cf-api.js";
-import { unwrapToken } from "./crypto-token.js";
 
 const NOW = "2026-07-24T10:00:00.000Z";
 const WRAP_KEY = "00".repeat(32);
@@ -107,7 +106,9 @@ describe("provisionEndpoint", () => {
     const endpoint = await db.getEndpointById("ep_test1");
     expect(endpoint).not.toBeNull();
     expect(endpoint?.status).toBe("active");
-    expect(endpoint?.token_ciphertext).toBeTruthy();
+    // P4: token 不落库,只留 sha256 供心跳反查。
+    expect(endpoint?.token_ciphertext).toBeNull();
+    expect(endpoint?.token_sha256).toBeTruthy();
     expect(endpoint?.token_shown_at).toBeNull();
     expect(endpoint?.invite_id).toBe("inv_1");
     expect(endpoint?.slug).toBe("alice");
@@ -227,7 +228,7 @@ describe("provisionEndpoint", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("stored ciphertext unwraps back to the returned token", async () => {
+  it("token is NOT persisted (P4): ciphertext null, only sha256 kept for heartbeat lookup", async () => {
     const db = createMemoryConnectDb();
     await db.insertInvite(makePendingInvite());
     const deps = makeDeps(db, makeFakeCf([]));
@@ -235,11 +236,10 @@ describe("provisionEndpoint", () => {
     const result = await provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps });
 
     const endpoint = await db.getEndpointById(result.endpointId);
-    if (endpoint === null || endpoint.token_ciphertext === null) {
-      throw new Error("expected persisted endpoint with ciphertext");
-    }
-    const unwrapped = await unwrapToken(endpoint.token_ciphertext, WRAP_KEY);
-    expect(unwrapped).toBe(result.token);
+    expect(endpoint?.token_ciphertext).toBeNull();
+    expect(endpoint?.token_sha256).toBeTruthy();
+    // 明文 token 只作返回值,决不出现在任何持久化行里
+    expect(JSON.stringify(await db.listEndpoints())).not.toContain(result.token);
   });
 
   it("hostname conflict error names the hostname, not the slug", async () => {
@@ -449,14 +449,20 @@ describe("provisionEndpoint", () => {
     expect(await db.listEndpoints()).toHaveLength(1);
   });
 
-  it("misconfigured wrap key: crypto failure inside persistence phase still cleans up cf resources", async () => {
+  it("persistence-phase failure (insertEndpoint throws) still cleans up cf resources", async () => {
     const db = createMemoryConnectDb();
     await db.insertInvite(makePendingInvite());
     const calls: string[] = [];
-    const deps = {
-      ...makeDeps(db, makeFakeCf(calls)),
-      tokenWrapKeyHex: "zz", // invalid hex — wrapToken throws
+    // P4 起 token 不再加密落库,原「wrap key 配错」失败路径消失。但持久化阶段
+    // 仍可能失败(D1 挂),补偿逻辑必须照样删掉已建的 CF 资源。用 insertEndpoint
+    // 抛错模拟持久化失败。
+    const failingDb: ConnectDb = {
+      ...db,
+      async insertEndpoint(): Promise<never> {
+        throw new Error("d1 insert boom");
+      },
     };
+    const deps = { ...makeDeps(failingDb, makeFakeCf(calls)) };
 
     await expect(
       provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps }),

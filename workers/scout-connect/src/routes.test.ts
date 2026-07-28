@@ -29,7 +29,9 @@ function makeFakeCf(): { cf: CfApi; calls: CfCall[] } {
     },
     async getTunnelToken(tunnelId) {
       rec("getTunnelToken", tunnelId);
-      return `fixture-tunnel-token-for-${tunnelId}`;
+      // 与 createTunnel 一致:tid-N → fixture-tunnel-token-N(幂等,同隧道同 token)
+      const n = tunnelId.replace(/^tid-/, "");
+      return `fixture-tunnel-token-${n}`;
     },
     async putTunnelIngress(tunnelId, hostname) {
       rec("putTunnelIngress", tunnelId, hostname);
@@ -298,10 +300,10 @@ describe("handleRequest", () => {
     expect(ep && "token_sha256" in ep).toBe(false);
     expect(JSON.stringify(list)).not.toContain("fixture-tunnel-token");
 
-    // db still holds the one-time ciphertext (not burned by listing)
+    // P4: token 不落库。db 里 ciphertext 恒为 null,只留 sha256 供心跳反查。
     const stored = await db.getEndpointByInviteId(created.id);
-    expect(stored?.token_ciphertext).not.toBeNull();
-    expect(stored?.token_shown_at).toBeNull();
+    expect(stored?.token_ciphertext).toBeNull();
+    expect(stored?.token_sha256).toBeTruthy();
   });
 
   // The heartbeat's only output was unobservable: POST /api/instance/status
@@ -507,15 +509,12 @@ describe("handleRequest", () => {
     expect(html).not.toContain(FIXTURE_TOKEN_1);
   });
 
-  it("GET ready page does not pre-burn: reveal afterwards still returns the token", async () => {
-    const { db, deps } = setup();
+  it("GET ready page renders reveal button without exposing the token; reveal still works after", async () => {
+    const { deps } = setup();
     const seeded = await seedProvisioned(deps);
 
-    await handleRequest(new Request(`${BASE}/i/${seeded.code}`), deps);
-    const invite = await db.getInviteByCode(seeded.code);
-    const ep = await db.getEndpointByInviteId(invite?.id ?? "");
-    expect(ep?.token_ciphertext).not.toBeNull();
-    expect(ep?.token_shown_at).toBeNull();
+    const page = await handleRequest(new Request(`${BASE}/i/${seeded.code}`), deps);
+    expect((await page.text())).not.toContain(FIXTURE_TOKEN_1);
 
     const reveal = await handleRequest(
       new Request(`${BASE}/api/i/${seeded.code}/reveal`, { method: "POST" }),
@@ -525,7 +524,7 @@ describe("handleRequest", () => {
     expect(((await reveal.json()) as { token?: string }).token).toBe(FIXTURE_TOKEN_1);
   });
 
-  it("POST reveal → 200 with token; second reveal → 200 alreadyShown without token", async () => {
+  it("POST reveal is idempotent: every call returns the token (P4 fetch-from-CF, no burn)", async () => {
     const { deps } = setup();
     const seeded = await seedProvisioned(deps);
 
@@ -545,11 +544,9 @@ describe("handleRequest", () => {
     );
     expect(second.status).toBe(200);
     const secondBody = (await second.json()) as Record<string, unknown>;
-    expect(secondBody).toEqual({
-      hostname: "alice.mediaryconnect.app",
-      alreadyShown: true,
-    });
-    expect("token" in secondBody).toBe(false);
+    // 换机器/重试都能再取:第二次同样返回 token,不再有 alreadyShown。
+    expect(secondBody.hostname).toBe("alice.mediaryconnect.app");
+    expect(secondBody.token).toBe(FIXTURE_TOKEN_1);
   });
 
   it("POST reveal with unknown code → 404", async () => {

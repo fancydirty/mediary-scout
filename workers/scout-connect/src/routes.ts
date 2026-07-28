@@ -656,13 +656,13 @@ async function inviteState(deps: RouteDeps, code: string): Promise<InvitePageSta
     return { kind: "waiting" };
   }
   // Match revealByCode: a non-active endpoint is an invalid link — never show
-  // a hostname or ready/revealed state for a revoked/revoke_failed endpoint.
+  // a hostname or ready state for a revoked/revoke_failed endpoint.
   if (endpoint.status !== "active") {
     return { kind: "not_found" };
   }
-  if (endpoint.token_shown_at !== null || endpoint.token_ciphertext === null) {
-    return { kind: "revealed", hostname: endpoint.hostname };
-  }
+  // P4: reveal 现在幂等(token 按需向 CF 取,无一次性 burn),所以 active 的
+  // endpoint 永远展示「获取接入信息」按钮——换机器/重试都能再取。不再有
+  // 「已展示过」的终态。
   return { kind: "ready", code };
 }
 
@@ -671,7 +671,7 @@ async function revealInvite(deps: RouteDeps, code: string): Promise<Response> {
     code,
     deps: {
       db: deps.db,
-      tokenWrapKeyHex: deps.tokenWrapKeyHex,
+      cf: deps.cf,
       now: deps.now,
       newAuditId: deps.newAuditId,
     },
@@ -681,8 +681,6 @@ async function revealInvite(deps: RouteDeps, code: string): Promise<Response> {
       throw new HttpError(404, "not found");
     case "not_ready":
       return json({ error: "not ready" }, 409);
-    case "already_shown":
-      return json({ hostname: outcome.hostname, alreadyShown: true });
     case "revealed":
       return json(
         {

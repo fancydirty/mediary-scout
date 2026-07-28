@@ -114,27 +114,6 @@ describe("memory ConnectDb", () => {
     ).rejects.toThrow(/UNIQUE/i);
   });
 
-  it("markTokenShown sets token_shown_at and nulls token_ciphertext", async () => {
-    const db = createMemoryConnectDb();
-    await db.insertEndpoint(makeEndpoint());
-    const burned = await db.markTokenShown("ep_1", "2026-07-24T02:00:00.000Z");
-    expect(burned).toBe(true);
-    const row = await db.getEndpointById("ep_1");
-    expect(row?.token_shown_at).toBe("2026-07-24T02:00:00.000Z");
-    expect(row?.token_ciphertext).toBeNull();
-  });
-
-  it("markTokenShown returns false on the second call (once-only race semantics)", async () => {
-    const db = createMemoryConnectDb();
-    await db.insertEndpoint(makeEndpoint());
-    expect(await db.markTokenShown("ep_1", "2026-07-24T02:00:00.000Z")).toBe(true);
-    expect(await db.markTokenShown("ep_1", "2026-07-24T03:00:00.000Z")).toBe(false);
-    // first burn wins
-    expect((await db.getEndpointById("ep_1"))?.token_shown_at).toBe("2026-07-24T02:00:00.000Z");
-    // nonexistent id also false
-    expect(await db.markTokenShown("nope", "2026-07-24T03:00:00.000Z")).toBe(false);
-  });
-
   it("markEndpointRevoked sets status revoked and revoked_at", async () => {
     const db = createMemoryConnectDb();
     await db.insertEndpoint(makeEndpoint());
@@ -194,8 +173,6 @@ describe("memory ConnectDb", () => {
 
   it("mutations on nonexistent ids are silent no-ops (D1 UPDATE parity contract)", async () => {
     const db = createMemoryConnectDb();
-    // markTokenShown returns false (no row burned); the others resolve void
-    await expect(db.markTokenShown("nope", "2026-07-24T04:00:00.000Z")).resolves.toBe(false);
     await expect(db.markEndpointRevoked("nope", "2026-07-24T04:00:00.000Z")).resolves.toBeUndefined();
     await expect(db.markEndpointRevokeFailed("nope")).resolves.toBeUndefined();
     await expect(db.updateInviteStatus("nope", { status: "revoked" })).resolves.toBeUndefined();
@@ -269,23 +246,6 @@ function createSpyD1(respond: { first?: unknown; all?: unknown[] } = {}): {
 }
 
 describe("D1 ConnectDb SQL", () => {
-  it("markTokenShown issues one conditional UPDATE and reports the burn from meta.changes", async () => {
-    const { d1, calls } = createSpyD1({ first: null, all: [] });
-    // spy run() returns {} — meta.changes undefined → false. Patch run to
-    // report one change so we can assert the true path too.
-    const db = createD1ConnectDb(d1);
-    const burned = await db.markTokenShown("ep_1", "2026-07-24T02:00:00.000Z");
-    expect(burned).toBe(false); // spy run() has no meta.changes
-    expect(calls).toHaveLength(1);
-    const call = calls[0];
-    expect(call?.method).toBe("run");
-    expect(call?.query).toContain("token_shown_at = ?");
-    expect(call?.query).toContain("token_ciphertext = NULL");
-    expect(call?.query).toContain("token_shown_at IS NULL");
-    expect(call?.query).toContain("token_ciphertext IS NOT NULL");
-    expect(call?.binds).toEqual(["2026-07-24T02:00:00.000Z", "ep_1"]);
-  });
-
   it("updateInviteStatus full patch keeps placeholder↔bind alignment", async () => {
     const { d1, calls } = createSpyD1();
     const db = createD1ConnectDb(d1);

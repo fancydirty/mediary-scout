@@ -98,7 +98,6 @@ export interface ConnectDb {
    * Returns true when THIS call performed the burn (won the race), false when
    * the token was already shown/burned — callers use this for once-only reveal.
    */
-  markTokenShown(endpointId: string, at: string): Promise<boolean>;
   markEndpointRevoked(endpointId: string, at: string): Promise<void>;
   markEndpointRevokeFailed(endpointId: string): Promise<void>;
   /** Best-effort row removal for orphan compensation (no-op when absent). */
@@ -347,17 +346,6 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
         .prepare(`SELECT * FROM endpoints ORDER BY created_at DESC, id DESC`)
         .all<RawRow>();
       return results.map(mapEndpoint);
-    },
-
-    async markTokenShown(endpointId, at) {
-      const result = (await d1
-        .prepare(
-          `UPDATE endpoints SET token_shown_at = ?, token_ciphertext = NULL
-           WHERE id = ? AND token_shown_at IS NULL AND token_ciphertext IS NOT NULL`,
-        )
-        .bind(at, endpointId)
-        .run()) as { meta?: { changes?: number } };
-      return result.meta?.changes === 1;
     },
 
     async markEndpointRevoked(endpointId, at) {
@@ -700,18 +688,6 @@ export function createMemoryConnectDb(): ConnectDb {
 
     async listEndpoints() {
       return [...endpoints.values()].sort(byCreatedAtDesc).map((row) => ({ ...row }));
-    },
-
-    async markTokenShown(endpointId, at) {
-      const row = endpoints.get(endpointId);
-      // Synchronous check-and-set is atomic here — mirrors the D1 conditional
-      // UPDATE's race semantics: only the first caller burns.
-      if (row === undefined || row.token_shown_at !== null || row.token_ciphertext === null) {
-        return false;
-      }
-      row.token_shown_at = at;
-      row.token_ciphertext = null;
-      return true;
     },
 
     async markEndpointRevoked(endpointId, at) {
