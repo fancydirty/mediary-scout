@@ -60,10 +60,11 @@ export function renderMarkdown(md: string): string {
       html.push("<hr>");
       continue;
     }
-    // 双语版式(英文主、中文次):CJK 占多数的块自动加 class="zh",模板把
-    // 它渲成略暗的次级色。作者只需先写英文块、再写中文块,"EN above 中文"
+    // 双语版式(英文主、中文次):CJK 占多数的块自动加 class="zh"(渲成略暗
+    // 次级色)+ lang="zh-Hans"(文档是 lang="en",给屏幕阅读器/分词正确的
+    // 发音与断句提示)。作者只需先写英文块、再写中文块,"EN above 中文"
     // 自然成立,无需发明新语法。attr 只在中文块出现,英文块保持原样。
-    const zh = isCjkMajority(trimmed) ? ' class="zh"' : "";
+    const zh = isCjkMajority(trimmed) ? ' class="zh" lang="zh-Hans"' : "";
     const heading = /^(#{1,3})\s+(.+)$/.exec(trimmed);
     if (heading) {
       const level = heading[1]!.length;

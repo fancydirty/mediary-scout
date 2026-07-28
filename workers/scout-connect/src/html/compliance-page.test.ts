@@ -50,7 +50,7 @@ describe("compliance pages", () => {
     expect(html).toContain("CONNECT");
     // English H1 primary, 中文 subtitle dimmed via zh class
     expect(html).toContain("<h1>Refund Policy</h1>");
-    expect(html).toContain('<h2 class="zh">退款政策</h2>');
+    expect(html).toContain('<h2 class="zh" lang="zh-Hans">退款政策</h2>');
     // 页脚互链：五页彼此可达（Paddle 审核员会点着看）。
     for (const path of ["/terms", "/privacy", "/refund", "/pricing", "/contact"]) {
       expect(html).toContain(`href="${path}"`);

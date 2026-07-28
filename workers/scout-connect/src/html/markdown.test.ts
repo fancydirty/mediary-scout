@@ -15,11 +15,11 @@ describe("renderMarkdown", () => {
 
   it("renders paragraphs and unordered lists (CJK blocks carry the zh class)", () => {
     const html = renderMarkdown("第一段。\n\n- 甲\n- 乙\n\n第二段。");
-    expect(html).toContain('<p class="zh">第一段。</p>');
-    expect(html).toContain('<ul class="zh">');
+    expect(html).toContain('<p class="zh" lang="zh-Hans">第一段。</p>');
+    expect(html).toContain('<ul class="zh" lang="zh-Hans">');
     expect(html).toContain("<li>甲</li>");
     expect(html).toContain("<li>乙</li>");
-    expect(html).toContain('<p class="zh">第二段。</p>');
+    expect(html).toContain('<p class="zh" lang="zh-Hans">第二段。</p>');
   });
 
   it("renders links, bold and inline code (English block stays unclassed)", () => {
@@ -66,14 +66,14 @@ describe("renderMarkdown", () => {
       "Full refund within 14 days.\n\n自付款起 14 天内可全额退款。",
     );
     expect(html).toContain("<p>Full refund within 14 days.</p>");
-    expect(html).toContain('<p class="zh">自付款起 14 天内可全额退款。</p>');
+    expect(html).toContain('<p class="zh" lang="zh-Hans">自付款起 14 天内可全额退款。</p>');
   });
 
   it("tags CJK headings and list items too", () => {
     const html = renderMarkdown("## How to request\n\n## 如何申请\n\n- English item\n\n- 中文条目");
     expect(html).toContain("<h2>How to request</h2>");
-    expect(html).toContain('<h2 class="zh">如何申请</h2>');
-    expect(html).toContain('<ul class="zh"><li>中文条目</li></ul>');
+    expect(html).toContain('<h2 class="zh" lang="zh-Hans">如何申请</h2>');
+    expect(html).toContain('<ul class="zh" lang="zh-Hans"><li>中文条目</li></ul>');
     expect(html).toContain("<ul><li>English item</li></ul>");
   });
 });
