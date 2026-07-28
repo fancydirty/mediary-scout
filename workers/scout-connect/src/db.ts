@@ -90,6 +90,8 @@ export interface ConnectDb {
   insertEndpoint(row: EndpointRow): Promise<EndpointRow>;
   getEndpointById(id: string): Promise<EndpointRow | null>;
   getEndpointByInviteId(inviteId: string): Promise<EndpointRow | null>;
+  /** 账号名下唯一的 active endpoint(P4/P5:取件码签发用)。 */
+  getActiveEndpointByAccountId(accountId: string): Promise<EndpointRow | null>;
   /** Targeted existence check for the slug/hostname availability precheck. */
   findEndpointBySlugOrHostname(slug: string, hostname: string): Promise<Pick<EndpointRow, "slug" | "hostname"> | null>;
   listEndpoints(): Promise<EndpointRow[]>;
@@ -327,6 +329,14 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
       const row = await d1
         .prepare(`SELECT * FROM endpoints WHERE invite_id = ?`)
         .bind(inviteId)
+        .first<RawRow>();
+      return row === null ? null : mapEndpoint(row);
+    },
+
+    async getActiveEndpointByAccountId(accountId) {
+      const row = await d1
+        .prepare(`SELECT * FROM endpoints WHERE account_id = ? AND status = 'active' LIMIT 1`)
+        .bind(accountId)
         .first<RawRow>();
       return row === null ? null : mapEndpoint(row);
     },
@@ -671,6 +681,15 @@ export function createMemoryConnectDb(): ConnectDb {
     async getEndpointByInviteId(inviteId) {
       for (const row of endpoints.values()) {
         if (row.invite_id === inviteId) {
+          return { ...row };
+        }
+      }
+      return null;
+    },
+
+    async getActiveEndpointByAccountId(accountId) {
+      for (const row of endpoints.values()) {
+        if (row.account_id === accountId && row.status === "active") {
           return { ...row };
         }
       }

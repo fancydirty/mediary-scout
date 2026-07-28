@@ -41,3 +41,21 @@ ${entries.join("\n")}
 );
 
 console.log(`generated ${outFile} from ${files.length} md files: ${files.join(", ")}`);
+
+// assets/*.sh(如 connect.sh)也内联进 .ts,worker 直接 serving,无需额外托管。
+const assetsDir = join(root, "..", "assets");
+const assetOut = join(root, "..", "src", "html", "assets.gen.ts");
+const assetFiles = readdirSync(assetsDir).filter((f) => f.endsWith(".sh")).sort();
+const assetEntries = assetFiles.map((f) => {
+  const raw = readFileSync(join(assetsDir, f), "utf8");
+  return `  ${JSON.stringify(f)}: ${JSON.stringify(raw)},`;
+});
+writeFileSync(
+  assetOut,
+  `${banner}
+export const RAW_ASSETS: Record<string, string> = {
+${assetEntries.join("\n")}
+};
+`,
+);
+console.log(`generated ${assetOut} from ${assetFiles.length} asset(s): ${assetFiles.join(", ")}`);

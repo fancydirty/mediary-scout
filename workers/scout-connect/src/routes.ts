@@ -12,6 +12,7 @@ import { adminPage } from "./html/admin-page.js";
 import { invitePage, type InvitePageState } from "./html/invite-page.js";
 import { betaPage, normalizeTurnstileSitekey } from "./html/beta-page.js";
 import { compliancePage, COMPLIANCE_PAGES, type CompliancePageKey } from "./html/compliance-page.js";
+import { RAW_ASSETS } from "./html/assets.gen.js";
 import { consolePage } from "./html/console-page.js";
 import { loginPage } from "./html/login-page.js";
 import { EMAIL_MAX_LENGTH, EMAIL_RE } from "./validation.js";
@@ -231,6 +232,23 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
   if (method === "GET" && path === "/api/slug/check") {
     return await slugCheckRoute(url, request, deps);
   }
+  if (method === "POST" && path === "/api/claim-code") {
+    return await issueClaimCode(request, deps);
+  }
+  if (method === "POST" && path === "/api/claim/exchange") {
+    return await exchangeClaimCode(request, deps);
+  }
+  if (method === "GET" && path === "/connect.sh") {
+    const script = RAW_ASSETS["connect.sh"];
+    if (script !== undefined) {
+      return new Response(script, {
+        headers: {
+          "content-type": "text/x-shellscript; charset=utf-8",
+          "cache-control": "public, max-age=300",
+        },
+      });
+    }
+  }
   // Brand logo for Access Custom Pages + invite page — self-hosted so we don't
   // depend on any external asset host.
   if (method === "GET" && path === "/logo.svg") {
@@ -351,6 +369,9 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
 const MAGIC_TTL_MS = 30 * 60_000;
 // session 有效期 30 天(低频访问,长会话减少重复登录摩擦)。
 const SESSION_TTL_MS = 30 * 24 * 3600_000;
+// 取件码有效期:15 分钟。够 agent 走完「SSH 到部署机 → 跑 connect.sh」,
+// 又短到即便泄露也很快作废(决策 #12:能取 token 的凭据必须短命)。
+const CLAIM_TTL_MS = 15 * 60_000;
 
 async function requestMagicLink(request: Request, deps: RouteDeps): Promise<Response> {
   const body = await readJsonBody(request);
@@ -386,6 +407,49 @@ async function requestMagicLink(request: Request, deps: RouteDeps): Promise<Resp
 }
 
 /** slug 实时查重 + 相似推荐(登录后选 slug 用)。需 session。 */
+/** 登录用户为自己的 active endpoint 签发一个短期取件码。code 是 claim purpose
+ *  的 signed-token,subject=endpointId,15 分钟过期,窗口内可重复用(脚本重试/
+ *  换机器)。D1 零写入——过期由签名自带。 */
+async function issueClaimCode(request: Request, deps: RouteDeps): Promise<Response> {
+  const session = await parseSessionCookie(request.headers.get("cookie"), {
+    secret: deps.sessionSecret,
+    now: Date.parse(deps.now()),
+  });
+  if (!session.ok) throw new HttpError(401, "unauthorized");
+  const endpoint = await deps.db.getActiveEndpointByAccountId(session.accountId);
+  if (endpoint === null) {
+    // 还没开通(付费但未 provision,或从未开通)→ 没有可接入的实例。
+    throw new HttpError(404, "no active endpoint");
+  }
+  const code = await signToken(
+    { purpose: "claim", subject: endpoint.id },
+    { key: deps.sessionSecret, ttlMs: CLAIM_TTL_MS, now: Date.parse(deps.now()) },
+  );
+  const expiresAt = new Date(Date.parse(deps.now()) + CLAIM_TTL_MS).toISOString();
+  return json({ code, expires_at: expiresAt }, 200, { noStore: true });
+}
+
+/** 脚本凭码换 token(无 session)。验签 → 查 endpoint 仍 active → 向 CF 现取
+ *  token。窗口内可重复换(脚本重试/换机器);endpoint 撤销后拒发。 */
+async function exchangeClaimCode(request: Request, deps: RouteDeps): Promise<Response> {
+  const body = await readJsonBody(request);
+  const codeRaw = body.code;
+  const code = typeof codeRaw === "string" ? codeRaw : "";
+  const result = await verifyToken(code, {
+    key: deps.sessionSecret,
+    now: Date.parse(deps.now()),
+    expectPurpose: "claim",
+  });
+  if (!result.ok) throw new HttpError(400, "invalid or expired code");
+  const endpoint = await deps.db.getEndpointById(result.subject);
+  if (endpoint === null || endpoint.status !== "active") {
+    // 撤销/不存在 → 不给已死隧道取 token。403 而非 404:码本身有效,是目标失效。
+    throw new HttpError(403, "endpoint not active");
+  }
+  const token = await deps.cf.getTunnelToken(endpoint.cf_tunnel_id);
+  return json({ hostname: endpoint.hostname, token }, 200, { noStore: true });
+}
+
 async function slugCheckRoute(url: URL, request: Request, deps: RouteDeps): Promise<Response> {
   const session = await parseSessionCookie(request.headers.get("cookie"), {
     secret: deps.sessionSecret,
