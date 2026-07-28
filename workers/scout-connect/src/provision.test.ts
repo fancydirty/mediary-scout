@@ -98,6 +98,8 @@ describe("provisionEndpoint", () => {
     ]);
 
     expect(result.endpointId).toBe("ep_test1");
+    expect(result.kind).toBe("invite");
+    if (result.kind !== "invite") throw new Error("unreachable");
     expect(result.inviteCode).toBe("code-abc");
     expect(result.hostname).toBe("alice.mediaryconnect.app");
     expect(result.token).toBe(PLAIN_TOKEN);
@@ -239,6 +241,7 @@ describe("provisionEndpoint", () => {
     expect(endpoint?.token_ciphertext).toBeNull();
     expect(endpoint?.token_sha256).toBeTruthy();
     // 明文 token 只作返回值,决不出现在任何持久化行里
+    if (result.kind !== "invite") throw new Error("unreachable");
     expect(JSON.stringify(await db.listEndpoints())).not.toContain(result.token);
   });
 

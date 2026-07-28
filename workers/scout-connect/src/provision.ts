@@ -20,18 +20,20 @@ export type ProvisionOrigin =
   | { kind: "invite"; inviteId: string }
   | { kind: "account"; accountId: string };
 
-export interface ProvisionResult {
-  endpointId: string;
-  hostname: string;
-  /** invite 分支专属(旧 reveal 流)。account 分支恒为 null:token 只能经
-   *  取件码换取(决策 #10/#12),把 token 放进自助开通的响应等于绕过取件码
-   *  的短命设计。 */
-  inviteCode: string | null;
-  /** plaintext connector token — invite 分支 return 值 ONLY,never persisted;
-   *  account 分支恒为 null。 */
-  token: string | null;
-  agentPrompt: string | null;
-}
+/** 判别联合:invite 分支必有 token/prompt(旧 reveal 流),account 分支在
+ *  类型上就没有这些字段——token 只能经取件码换取(决策 #10/#12),把 token
+ *  放进自助开通的响应等于绕过取件码的短命设计。编译期即杜绝误传播。 */
+export type ProvisionResult =
+  | {
+      kind: "invite";
+      endpointId: string;
+      hostname: string;
+      inviteCode: string;
+      /** plaintext connector token — return value ONLY, never persisted */
+      token: string;
+      agentPrompt: string;
+    }
+  | { kind: "account"; endpointId: string; hostname: string };
 
 export async function provisionEndpoint(input: {
   origin: ProvisionOrigin;
@@ -251,13 +253,16 @@ export async function provisionEndpoint(input: {
     throw e;
   }
 
-  // account 分支不返回 token/prompt:接入唯一路径是控制台取件码(决策 #10/#12)。
+  // account 分支在类型上就不含 token/prompt:接入唯一路径是控制台取件码。
   if (origin.kind === "account") {
-    return { endpointId, inviteCode: null, hostname, token: null, agentPrompt: null };
+    return { kind: "account", endpointId, hostname };
   }
   return {
+    kind: "invite",
     endpointId,
-    inviteCode,
+    // inviteCode 在 invite 分支的门禁里必然已赋值;这里的守卫让 TS 收窄,
+    // 也把"不可能"变成 fail-fast 而不是把 null 序列化给客户端。
+    inviteCode: inviteCode!,
     hostname,
     token,
     agentPrompt: buildAgentPromptOrManual({ hostname, tunnelToken: token }),

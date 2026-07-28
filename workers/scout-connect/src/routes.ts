@@ -796,6 +796,12 @@ async function provisionInvite(
     }
     throw e;
   }
+  // 判别联合的显式收窄:invite 来源必得 invite 分支结果。这不只是取悦 TS——
+  // 若未来重构把 account 分支的结果带到这里,fail-fast 500 好过把 null
+  // 序列化成 "/i/null" 发给客户端(Copilot #198 round-2)。
+  if (result.kind !== "invite") {
+    throw new Error("provisionEndpoint returned non-invite result for an invite origin");
+  }
   return json(
     {
       hostname: result.hostname,
