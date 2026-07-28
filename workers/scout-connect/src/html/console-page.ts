@@ -22,6 +22,9 @@ export function consolePage(input: {
   entitlements: EntitlementRow[];
   endpoint: EndpointRow | null;
   baseUrl: string;
+  /** slug 的后缀域(CONNECT_ROOT_DOMAIN,已 normalize)。不能用 baseUrl.host
+   *  推:控制台可从 beta 子域访问,host 会是 beta.<root>,后缀就错了。 */
+  rootDomain: string;
   now: string;
 }): string {
   const expiry = latestExpiry(input.entitlements);
@@ -106,6 +109,7 @@ function renderBody(
   input: {
     account: AccountRow;
     endpoint: EndpointRow | null;
+    rootDomain: string;
   },
   active: boolean,
 ): string {
@@ -122,8 +126,8 @@ function renderBody(
 <p class="lead">给你的实例起个名字</p>
 <p class="lead-sub">它会成为你的永久访问域名，选定后不可更改、永久保留（到期也不会被别人拿走）。只能用小写字母、数字和连字符。</p>
 <div class="slugrow">
-<input id="slug" type="text" placeholder="yourname" autocomplete="off" spellcheck="false" maxlength="63" aria-label="专属地址前缀">
-<span class="slug-suffix">.mediaryconnect.app</span>
+<input id="slug" type="text" placeholder="yourname" autocomplete="off" spellcheck="false" maxlength="32" aria-label="专属地址前缀">
+<span class="slug-suffix">.${esc(input.rootDomain)}</span>
 </div>
 <p class="msg" id="slug-msg" hidden></p>
 <button class="btn" id="provision" type="button" disabled>开通</button>

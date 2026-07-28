@@ -50,6 +50,7 @@ function base(over: Partial<Parameters<typeof consolePage>[0]>) {
     entitlements: [],
     endpoint: null,
     baseUrl: BASE,
+    rootDomain: "mediaryconnect.app",
     now: NOW,
     ...over,
   });

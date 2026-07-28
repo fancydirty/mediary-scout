@@ -419,9 +419,10 @@ async function requestMagicLink(request: Request, deps: RouteDeps): Promise<Resp
 }
 
 /** 自助开通(0004,spec 2026-07-28):登录 + 有效时长的账号选 slug 给自己开
- *  endpoint。门禁次序 session → entitlement → slug,402/409 级失败绝不烧 CF
- *  API 调用(门禁都在 provisionEndpoint 的 CF 编排之前)。响应绝不含 token:
- *  接入唯一路径是控制台取件码(决策 #10/#12)。 */
+ *  endpoint。门禁次序 session → slug 形状校验 → entitlement(后两步在
+ *  provisionEndpoint 内)→ slug 查重;402/409 级失败绝不烧 CF API 调用
+ *  (门禁都在 CF 编排之前)。响应绝不含 token:接入唯一路径是控制台取件码
+ *  (决策 #10/#12)。 */
 async function selfServeProvision(request: Request, deps: RouteDeps): Promise<Response> {
   const session = await parseSessionCookie(request.headers.get("cookie"), {
     secret: deps.sessionSecret,
@@ -630,7 +631,14 @@ async function consoleRoute(request: Request, deps: RouteDeps): Promise<Response
   const endpoint = await deps.db.getActiveEndpointByAccountId(account.id);
   const url = new URL(request.url);
   return htmlPage(
-    consolePage({ account, entitlements, endpoint, baseUrl: url.origin, now: deps.now() }),
+    consolePage({
+      account,
+      entitlements,
+      endpoint,
+      baseUrl: url.origin,
+      rootDomain: deps.rootDomain.trim().toLowerCase(),
+      now: deps.now(),
+    }),
     { noStore: true }, // 用户专属页面,不可缓存(Copilot round 3)
   );
 }
