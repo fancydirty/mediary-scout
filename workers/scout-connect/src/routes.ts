@@ -406,14 +406,16 @@ async function requestMagicLink(request: Request, deps: RouteDeps): Promise<Resp
   return json({ ok: true }, 202, { noStore: true });
 }
 
-/** slug 实时查重 + 相似推荐(登录后选 slug 用)。需 session。 */
 /** 登录用户为自己的 active endpoint 签发一个短期取件码。code 是 claim purpose
  *  的 signed-token,subject=endpointId,15 分钟过期,窗口内可重复用(脚本重试/
  *  换机器)。D1 零写入——过期由签名自带。 */
 async function issueClaimCode(request: Request, deps: RouteDeps): Promise<Response> {
+  // now 只取一次:签名过期与返回的 expires_at 必须基于同一时刻,否则两次
+  // deps.now() 之间若推进,签发的 token 过期时刻与告知用户的会漂移。
+  const nowMs = Date.parse(deps.now());
   const session = await parseSessionCookie(request.headers.get("cookie"), {
     secret: deps.sessionSecret,
-    now: Date.parse(deps.now()),
+    now: nowMs,
   });
   if (!session.ok) throw new HttpError(401, "unauthorized");
   const endpoint = await deps.db.getActiveEndpointByAccountId(session.accountId);
@@ -423,9 +425,9 @@ async function issueClaimCode(request: Request, deps: RouteDeps): Promise<Respon
   }
   const code = await signToken(
     { purpose: "claim", subject: endpoint.id },
-    { key: deps.sessionSecret, ttlMs: CLAIM_TTL_MS, now: Date.parse(deps.now()) },
+    { key: deps.sessionSecret, ttlMs: CLAIM_TTL_MS, now: nowMs },
   );
-  const expiresAt = new Date(Date.parse(deps.now()) + CLAIM_TTL_MS).toISOString();
+  const expiresAt = new Date(nowMs + CLAIM_TTL_MS).toISOString();
   return json({ code, expires_at: expiresAt }, 200, { noStore: true });
 }
 
@@ -450,6 +452,7 @@ async function exchangeClaimCode(request: Request, deps: RouteDeps): Promise<Res
   return json({ hostname: endpoint.hostname, token }, 200, { noStore: true });
 }
 
+/** slug 实时查重 + 相似推荐(登录后选 slug 用)。需 session。 */
 async function slugCheckRoute(url: URL, request: Request, deps: RouteDeps): Promise<Response> {
   const session = await parseSessionCookie(request.headers.get("cookie"), {
     secret: deps.sessionSecret,
