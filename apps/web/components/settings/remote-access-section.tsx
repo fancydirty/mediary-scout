@@ -58,7 +58,7 @@ export async function RemoteAccessSection({
           href={BETA_SITE_URL}
           target="_blank"
           rel="noopener noreferrer"
-          style={{ display: "inline-block", textDecoration: "none" }}
+          style={{ textDecoration: "none" }}
         >
           了解详情并申请内测 →
         </a>
