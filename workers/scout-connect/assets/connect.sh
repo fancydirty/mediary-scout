@@ -104,10 +104,41 @@ chmod 600 "$BACKUP" 2>/dev/null || echo "  ⚠️ 无法收紧备份权限,请�
 echo "  ✓ 已备份 .env → $BACKUP"
 
 TMP=$(mktemp ".env.tmp.XXXXXX") || { echo "❌ 无法创建临时文件" >&2; exit 1; }
-# 保留除 TUNNEL_TOKEN 外的所有行,再追加新 token
-grep -v '^TUNNEL_TOKEN=' "$ENV_FILE" > "$TMP" 2>/dev/null || true
+# cp -p 建立临时文件继承原 .env 的权限/属主(避免重写把 600 变宽成 644,
+# token 对同机他人可读)。失败即中止,不硬着头皮往下走。
+if ! cp -p "$ENV_FILE" "$TMP"; then
+  echo "❌ 创建临时文件失败(cp -p 非零),.env 未改动。" >&2
+  rm -f "$TMP"; exit 1
+fi
+# docker compose 认这些写法都算 TUNNEL_TOKEN:前导空格、= 两侧空格、export
+# 前缀。只匹配 '^TUNNEL_TOKEN=' 会漏掉它们,留下含旧密钥的重复行,取哪条变
+# 不确定。过滤/计数用同一个正则。
+TOKEN_RE='^[[:space:]]*(export[[:space:]]+)?TUNNEL_TOKEN[[:space:]]*='
+# 保留所有非 TUNNEL_TOKEN 行。必须区分 grep 退出码:0=有保留行,1=无保留行
+# (.env 只有 token,合法),>=2 才是真错误(.env 不可读/IO)。不区分而用
+# '|| true' 吞掉,>=2 时 '>' 已把 TMP 截空,继续 mv 会静默清掉全部其它配置。
+grep -Ev "$TOKEN_RE" "$ENV_FILE" > "$TMP" 2>/dev/null
+GREP_RC=$?
+if [ "$GREP_RC" -ge 2 ]; then
+  echo "❌ 读取 .env 失败(grep 退出码 ${GREP_RC}),.env 未改动。" >&2
+  rm -f "$TMP"; exit 1
+fi
 printf 'TUNNEL_TOKEN=%s\n' "$TUNNEL_TOKEN" >> "$TMP"
-mv "$TMP" "$ENV_FILE"
+# 替换前自检:新文件非 token 行数必须与原文件一致,且确有 TUNNEL_TOKEN。
+OLD_KEPT=$(grep -Ecv "$TOKEN_RE" "$ENV_FILE" 2>/dev/null || true)
+NEW_KEPT=$(grep -Ecv "$TOKEN_RE" "$TMP" 2>/dev/null || true)
+if [ "$OLD_KEPT" != "$NEW_KEPT" ]; then
+  echo "❌ 新文件丢了配置行(原 $OLD_KEPT → 新 $NEW_KEPT),已中止,.env 未改动。备份在 $BACKUP。" >&2
+  rm -f "$TMP"; exit 1
+fi
+if ! grep -Eq "$TOKEN_RE" "$TMP"; then
+  echo "❌ 新文件里没有 TUNNEL_TOKEN,已中止,.env 未改动。" >&2
+  rm -f "$TMP"; exit 1
+fi
+if ! mv "$TMP" "$ENV_FILE"; then
+  echo "❌ 替换 .env 失败(mv 非零),.env 未改动。备份在 $BACKUP。" >&2
+  rm -f "$TMP"; exit 1
+fi
 echo "  ✓ 已写入 TUNNEL_TOKEN"
 
 # 5) 带 --profile tunnel 启动(这个 flag 是关键:漏了它 cloudflared 根本不起,
