@@ -11,8 +11,8 @@ describe("betaPage", () => {
     expect(page).toContain("<title>Mediary Connect 远程访问 · 内测</title>");
   });
 
-  it("footer links to the compliance pages (terms/privacy/refund)", () => {
-    for (const path of ["/terms", "/privacy", "/refund"]) {
+  it("footer links to all five compliance pages", () => {
+    for (const path of ["/terms", "/privacy", "/refund", "/pricing", "/contact"]) {
       expect(page).toContain(`href="${path}"`);
     }
   });
