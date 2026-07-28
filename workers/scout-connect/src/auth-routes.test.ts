@@ -153,7 +153,7 @@ describe("GET /auth/callback (魔法链接落地)", () => {
     // (callback 期望 purpose=magic，session 是 purpose=login)。
     const { deps } = setup();
     const captured: string[] = [];
-    deps.sendMagicLink = async (_to, url) => captured.push(new URL(url).searchParams.get("t")!);
+    deps.sendMagicLink = async (_to, url) => { captured.push(new URL(url).searchParams.get("t")!); };
     await handleRequest(
       new Request(`${BASE}/api/auth/magic`, {
         method: "POST",

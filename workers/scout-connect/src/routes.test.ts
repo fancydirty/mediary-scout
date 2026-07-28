@@ -70,6 +70,10 @@ function makeDeps(db: ConnectDb, cf: CfApi): RouteDeps {
     newEndpointId: seq("ep"),
     newAuditId: seq("aud"),
     newInviteCode: seq("code"),
+    newAccountId: seq("act"),
+    newEntitlementId: seq("ent"),
+    sessionSecret: "f".repeat(64),
+    sendMagicLink: async () => {},
   };
 }
 

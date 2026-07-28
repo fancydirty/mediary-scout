@@ -21,7 +21,7 @@ export async function buildSessionCookie(
 ): Promise<string> {
   const token = await signToken(
     { purpose: "login", subject: accountId },
-    { key: opts.secret, ttlMs: opts.ttlMs, now: opts.now },
+    { key: opts.secret, ttlMs: opts.ttlMs, ...(opts.now !== undefined ? { now: opts.now } : {}) },
   );
   const maxAgeSec = Math.floor(opts.ttlMs / 1000);
   return `${SESSION_COOKIE}=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${maxAgeSec}`;
@@ -55,8 +55,8 @@ export async function parseSessionCookie(
   if (m === null) return { ok: false, reason: "absent" };
   const result = await verifyToken(m[1]!, {
     key: opts.secret,
-    now: opts.now,
     expectPurpose: "login",
+    ...(opts.now !== undefined ? { now: opts.now } : {}),
   });
   if (!result.ok) return { ok: false, reason: "invalid" };
   return { ok: true, accountId: result.subject };
