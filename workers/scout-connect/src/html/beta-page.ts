@@ -219,7 +219,7 @@ ${tsWidget}
 </section>
 </div>
 
-<div class="footer"><a href="https://github.com/fancydirty/mediary-scout" target="_blank" rel="noopener">开源</a> · 自部署 · <a href="https://mediaryscout.app" target="_blank" rel="noopener">mediaryscout.app</a></div>
+<div class="footer"><a href="https://github.com/fancydirty/mediary-scout" target="_blank" rel="noopener">开源</a> · 自部署 · <a href="https://mediaryscout.app" target="_blank" rel="noopener">mediaryscout.app</a><br><a href="/terms">服务条款</a> · <a href="/privacy">隐私政策</a> · <a href="/refund">退款政策</a> · <a href="/contact">联系我们</a></div>
 </main>
 <script type="module">
 const $=(id)=>document.getElementById(id);

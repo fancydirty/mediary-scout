@@ -11,6 +11,12 @@ describe("betaPage", () => {
     expect(page).toContain("<title>Mediary Connect 远程访问 · 内测</title>");
   });
 
+  it("footer links to the compliance pages (terms/privacy/refund)", () => {
+    for (const path of ["/terms", "/privacy", "/refund"]) {
+      expect(page).toContain(`href="${path}"`);
+    }
+  });
+
   it("renders the honest marketing copy (what it is, pricing, 100 seats)", () => {
     expect(page).toContain("Mediary Connect 远程访问 · 内测");
     // eyebrow 是大写形态，单独钉住——round 1 评审抓到它漏改。
