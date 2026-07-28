@@ -789,7 +789,9 @@ async function provisionInvite(
       throw new HttpError(409, `slug already in use: ${slug}`);
     }
     if (msg.includes("UNIQUE constraint failed: endpoints.hostname")) {
-      throw new HttpError(409, `hostname already in use: ${slug}.${deps.rootDomain}`);
+      // rootDomain normalize:与 provision.ts 拼 hostname 同款(trim+lowercase),
+      // 否则 env 带空白/大写时,竞态失败文案里的 hostname 与实际写入的对不上。
+      throw new HttpError(409, `hostname already in use: ${slug}.${deps.rootDomain.trim().toLowerCase()}`);
     }
     if (msg.includes("UNIQUE constraint failed: endpoints.invite_id")) {
       throw new HttpError(409, "invite already provisioned");
