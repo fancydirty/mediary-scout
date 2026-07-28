@@ -424,7 +424,14 @@ async function magicCallback(url: URL, deps: RouteDeps): Promise<Response> {
   });
   return new Response(null, {
     status: 302,
-    headers: { location: "/console", "set-cookie": cookie, "cache-control": "no-store" },
+    headers: {
+      location: "/console",
+      "set-cookie": cookie,
+      "cache-control": "no-store",
+      // URL query 里带着 ?t=<magic token>;不加 no-referrer,浏览器会把含
+      // token 的完整 referer 带到 /console 请求,进访问日志=泄露短期凭据。
+      "referrer-policy": "no-referrer",
+    },
   });
 }
 

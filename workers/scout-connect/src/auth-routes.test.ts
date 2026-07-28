@@ -148,6 +148,9 @@ describe("GET /auth/callback (魔法链接落地)", () => {
     expect(res.headers.get("location")).toBe("/console");
     const setCookie = res.headers.get("set-cookie") ?? "";
     expect(setCookie).toContain(`${SESSION_COOKIE}=`);
+    // magic token 在 ?t= query 里,302 必须 no-referrer 防 token 经 Referer 泄露
+    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(res.headers.get("cache-control")).toBe("no-store");
     expect(sessionCookieValue(setCookie).length).toBeGreaterThan(0);
     // 账号被创建了
     const acct = await deps.db.getAccountByEmail("alice@example.com");
