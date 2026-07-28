@@ -189,8 +189,10 @@ gen.addEventListener("click",async()=>{
 $("copy").addEventListener("click",async()=>{
   try{await navigator.clipboard.writeText($("prompt").textContent);$("copy").textContent="已复制 ✓";setTimeout(()=>{$("copy").textContent="复制提示词";},1800);}
   catch{
-    const r=document.createRange();r.selectNodeContents($("prompt"));
-    const s=window.getSelection();s.removeAllRanges();s.addRange(r);
+    // clipboard 不可用时降级为选中文本让用户手动复制。getSelection() 在
+    // 某些上下文可能返回 null,先判空再用,别让 fallback 自己抛。
+    const s=window.getSelection();
+    if(s){const r=document.createRange();r.selectNodeContents($("prompt"));s.removeAllRanges();s.addRange(r);}
   }
 });
 </script>`;
