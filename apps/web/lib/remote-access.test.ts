@@ -31,7 +31,7 @@ afterEach(() => {
 
 describe("resolveRemoteAccessState", () => {
   it("无 TUNNEL_TOKEN → not_provisioned，且**不发心跳**", async () => {
-    const sendHeartbeat = vi.fn(async () => true);
+    const sendHeartbeat = vi.fn(async () => "ok" as const);
     const state = await resolveRemoteAccessState({ token: undefined, sendHeartbeat });
     expect(state).toEqual({ kind: "not_provisioned" });
     // 没 token 就没身份可报——发了只会向 worker 暴露一台未开通实例的存在。
@@ -39,7 +39,7 @@ describe("resolveRemoteAccessState", () => {
   });
 
   it("空串 / 纯空白 token 视同未开通（.env 里 TUNNEL_TOKEN= 就是这形状）", async () => {
-    const sendHeartbeat = vi.fn(async () => true);
+    const sendHeartbeat = vi.fn(async () => "ok" as const);
     for (const token of ["", "   "]) {
       expect(await resolveRemoteAccessState({ token, sendHeartbeat })).toEqual({
         kind: "not_provisioned",
@@ -51,7 +51,7 @@ describe("resolveRemoteAccessState", () => {
   it("心跳 204 → active（hostname 无本地来源时为 null，绝不臆造）", async () => {
     const state = await resolveRemoteAccessState({
       token: "tok",
-      sendHeartbeat: async () => true,
+      sendHeartbeat: async () => "ok",
     });
     expect(state).toEqual({ kind: "active", hostname: null });
   });
@@ -60,15 +60,25 @@ describe("resolveRemoteAccessState", () => {
     const state = await resolveRemoteAccessState({
       token: "tok",
       hostname: "s1.mediaryconnect.app",
-      sendHeartbeat: async () => true,
+      sendHeartbeat: async () => "ok",
     });
     expect(state).toEqual({ kind: "active", hostname: "s1.mediaryconnect.app" });
   });
 
-  it("心跳失败（非 204）→ active_degraded", async () => {
+  it("心跳 401（token 不是我们发的，比如作者自带的旧隧道）→ not_provisioned，露出报名入口", async () => {
+    // 关键修复:有 TUNNEL_TOKEN 但 worker 不认(401)= 不是 Mediary Connect 开通的,
+    // 应显示未开通 + 报名入口,而不是「已开通但状态未知」。
+    const state = await resolveRemoteAccessState({
+      token: "someone-elses-tunnel-token",
+      sendHeartbeat: async () => "unauthorized",
+    });
+    expect(state).toEqual({ kind: "not_provisioned" });
+  });
+
+  it("心跳网络失败（超时/5xx，非 401）→ active_degraded,不劝退已开通用户重排队", async () => {
     const state = await resolveRemoteAccessState({
       token: "tok",
-      sendHeartbeat: async () => false,
+      sendHeartbeat: async () => "unreachable",
     });
     expect(state).toEqual({ kind: "active_degraded" });
   });
@@ -80,14 +90,15 @@ describe("resolveRemoteAccessState", () => {
         throw new Error("ECONNREFUSED");
       },
     });
+    // 抛错按不可达处理（degraded），不当成 401——网络炸了不该劝用户重排队。
     expect(state).toEqual({ kind: "active_degraded" });
   });
 
   it("token 绝不出现在返回的 state 里（这东西会被序列化进 RSC 载荷）", async () => {
     const token = "super-secret-connector-token";
     const states: RemoteAccessState[] = [
-      await resolveRemoteAccessState({ token, sendHeartbeat: async () => true }),
-      await resolveRemoteAccessState({ token, sendHeartbeat: async () => false }),
+      await resolveRemoteAccessState({ token, sendHeartbeat: async () => "ok" }),
+      await resolveRemoteAccessState({ token, sendHeartbeat: async () => "unreachable" }),
       await resolveRemoteAccessState({
         token,
         sendHeartbeat: async () => {
@@ -129,9 +140,9 @@ describe("resolveRemoteAccessState", () => {
     expect(url).toBe("https://mediaryconnect.app/api/instance/status");
   });
 
-  it("默认心跳：401（token 已吊销）→ active_degraded", async () => {
+  it("默认心跳：401（worker 不认这个 token）→ not_provisioned，露出报名入口", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 })));
-    expect(await resolveRemoteAccessState({ token: "revoked" })).toEqual({ kind: "active_degraded" });
+    expect(await resolveRemoteAccessState({ token: "not-ours" })).toEqual({ kind: "not_provisioned" });
   });
 
   it("默认心跳：200 也算失败——契约明确是 204 无 body", async () => {

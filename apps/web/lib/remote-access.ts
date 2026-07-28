@@ -36,6 +36,11 @@ export type RemoteAccessState =
   | { kind: "active"; hostname: string | null }
   | { kind: "active_degraded" };
 
+/** 心跳三态。ok=worker 认这个 token(204);unauthorized=worker 明确不认(401,
+ *  多半是自带的旧隧道 token,不是 Mediary Connect 发的);unreachable=网络
+ *  抖动/超时/5xx——拿不准,按「已开通但暂时联系不上」处理。 */
+export type HeartbeatResult = "ok" | "unauthorized" | "unreachable";
+
 const DEFAULT_WORKER_BASE = "https://mediaryconnect.app";
 
 /**
@@ -72,8 +77,9 @@ export function scoutConnectBaseUrl(): string {
  */
 const HEARTBEAT_TIMEOUT_MS = 5_000;
 
-/** 心跳一次。`true` = worker 明确回了 204（契约里唯一的成功）。 */
-async function defaultSendHeartbeat(token: string): Promise<boolean> {
+/** 心跳一次。契约里 204=ok,401=unauthorized(token 不是我们发的),
+ *  其余状态码/网络错误=unreachable。 */
+async function defaultSendHeartbeat(token: string): Promise<HeartbeatResult> {
   const res = await fetch(`${scoutConnectBaseUrl()}/api/instance/status`, {
     method: "POST",
     // 契约是 Bearer 头；worker 压根不读 body（大 body 都不会被读取）。
@@ -83,7 +89,12 @@ async function defaultSendHeartbeat(token: string): Promise<boolean> {
   });
   // 严格判 204：契约就是 204 无 body。放宽成 res.ok 会把任何反代/门禁塞回来的
   // 200 登录页当成「隧道健康」，那是最需要被显示为降级的场景。
-  return res.status === 204;
+  if (res.status === 204) return "ok";
+  // 401 是 worker 明确「不认这个 token」——多半是自带旧隧道的 token,不是
+  // Mediary Connect 开通的。据此把状态显示为「未开通」(露出报名入口),而不是
+  // 「已开通但状态未知」。其余状态码当作暂时不可达。
+  if (res.status === 401) return "unauthorized";
+  return "unreachable";
 }
 
 /**
@@ -96,7 +107,7 @@ export async function resolveRemoteAccessState(opts: {
   token: string | undefined;
   /** 本地已知的公网域名（当前无来源，见文件头注释）。 */
   hostname?: string | null;
-  sendHeartbeat?: (token: string) => Promise<boolean>;
+  sendHeartbeat?: (token: string) => Promise<HeartbeatResult>;
 }): Promise<RemoteAccessState> {
   const token = opts.token?.trim();
   if (!token) {
@@ -107,10 +118,17 @@ export async function resolveRemoteAccessState(opts: {
   try {
     // 捕获一切：这是在渲染路径上做的一次网络调用，worker 挂了不该炸掉设置页。
     // 也刻意不把 error 放进返回值——报错串里可能带着 token（见测试）。
-    if (!(await sendHeartbeat(token))) {
+    const result = await sendHeartbeat(token);
+    if (result === "unauthorized") {
+      // worker 不认这个 token = 不是 Mediary Connect 开通的(如自带旧隧道)。
+      // 显示未开通,露出报名入口,而不是把用户卡在「已开通但状态未知」。
+      return { kind: "not_provisioned" };
+    }
+    if (result === "unreachable") {
       return { kind: "active_degraded" };
     }
   } catch {
+    // 网络炸了按不可达处理:不劝退一个已付出配置成本的用户重新排队。
     return { kind: "active_degraded" };
   }
   return { kind: "active", hostname: opts.hostname ?? null };
