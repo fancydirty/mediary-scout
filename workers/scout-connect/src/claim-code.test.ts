@@ -65,7 +65,7 @@ async function seedEndpoint(db: ConnectDb, accountId: string): Promise<void> {
     cf_tunnel_id: "tid-1", cf_access_app_id: null, cf_access_policy_id: null,
     cf_dns_record_id: "rec-1", status: "active", token_sha256: "x",
     token_ciphertext: null, token_shown_at: null, last_seen_at: null,
-    created_at: NOW, revoked_at: null, account_id: accountId,
+    created_at: NOW, revoked_at: null, account_id: accountId, grace_until: null, suspended_at: null, purge_after: null,
   });
 }
 

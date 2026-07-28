@@ -24,6 +24,10 @@ const MIGRATION3_SQL = readFileSync(
   new URL("../migrations/0003-accounts-entitlements.sql", import.meta.url),
   "utf8",
 );
+const MIGRATION4_SQL = readFileSync(
+  new URL("../migrations/0004-self-serve-provision.sql", import.meta.url),
+  "utf8",
+);
 
 // The production shape BEFORE this Worker version: schema.sql as of 884f4c4.
 // `cf_access_app_id` is NOT NULL and `last_seen_at` does not exist — exactly
@@ -137,7 +141,7 @@ function postAccessEndpoint(overrides: Partial<EndpointRow> = {}): EndpointRow {
     token_shown_at: null,
     last_seen_at: null,
     created_at: "2026-07-26T00:00:00.000Z",
-    revoked_at: null,
+    revoked_at: null, account_id: null, grace_until: null, suspended_at: null, purge_after: null,
     ...overrides,
   };
 }
@@ -537,19 +541,28 @@ describe("migration 0001 — existing install against real SQLite", () => {
     // errors before the NOT NULL (CRITICAL-2) is ever evaluated.
     const legacy = freshDb(LEGACY_SCHEMA_SQL);
     await expect(legacy.db.insertEndpoint(postAccessEndpoint())).rejects.toThrow(
-      /no column named last_seen_at/i,
+      /no column named/i,
     );
 
-    // Isolate CRITICAL-2: add only the missing column, and the NOT NULL on
-    // cf_access_app_id is still what kills the insert.
+    // Isolate CRITICAL-2: add the 0001/0003/0004 columns only, and the NOT NULL
+    // on cf_access_app_id is still what kills the insert.
     const halfMigrated = freshDb(LEGACY_SCHEMA_SQL);
     halfMigrated.sqlite.exec(`ALTER TABLE endpoints ADD COLUMN last_seen_at TEXT`);
+    halfMigrated.sqlite.exec(`ALTER TABLE endpoints ADD COLUMN account_id TEXT`);
+    halfMigrated.sqlite.exec(`ALTER TABLE endpoints ADD COLUMN grace_until TEXT`);
+    halfMigrated.sqlite.exec(`ALTER TABLE endpoints ADD COLUMN suspended_at TEXT`);
+    halfMigrated.sqlite.exec(`ALTER TABLE endpoints ADD COLUMN purge_after TEXT`);
     await expect(halfMigrated.db.insertEndpoint(postAccessEndpoint())).rejects.toThrow(
       /NOT NULL constraint failed: endpoints\.cf_access_app_id/i,
     );
 
+    // "After migration" = the FULL chain: today's insertEndpoint writes the
+    // 0003 columns and needs 0004's nullable invite_id shape.
     const { sqlite, db } = freshDb(LEGACY_SCHEMA_SQL);
     sqlite.exec(MIGRATION_SQL);
+    sqlite.exec(MIGRATION2_SQL);
+    sqlite.exec(MIGRATION3_SQL);
+    sqlite.exec(MIGRATION4_SQL);
 
     await expect(db.insertEndpoint(postAccessEndpoint())).resolves.toMatchObject({ id: "ep_1" });
     await db.updateEndpointLastSeen("ep_1", "2026-07-26T10:00:00.000Z");
@@ -654,6 +667,7 @@ describe("migration 0001 — existing install against real SQLite", () => {
     migrated.sqlite.exec(MIGRATION_SQL);
     migrated.sqlite.exec(MIGRATION2_SQL);
     migrated.sqlite.exec(MIGRATION3_SQL);
+    migrated.sqlite.exec(MIGRATION4_SQL);
     const fresh = freshDb(SCHEMA_SQL);
 
     const shapeOf = (sqlite: Sqlite): unknown =>
@@ -750,6 +764,11 @@ describe("migration 0001 — legacy install that predates the waitlist table", (
   it("the endpoints rebuild still lands (the atomic-rollback casualty)", async () => {
     const { sqlite, db } = freshDb(PRE_WAITLIST_SCHEMA_SQL);
     sqlite.exec(MIGRATION_SQL);
+    // 今天的 insertEndpoint 写 0003 的四列并依赖 0004 的可空 invite_id,
+    // 所以「迁移后可写入」要跑完整条链——这正是生产实例的真实路径。
+    sqlite.exec(MIGRATION2_SQL);
+    sqlite.exec(MIGRATION3_SQL);
+    sqlite.exec(MIGRATION4_SQL);
 
     // This is what step 8's failure used to take down with it.
     await expect(db.insertEndpoint(postAccessEndpoint())).resolves.toMatchObject({ id: "ep_1" });
@@ -761,6 +780,7 @@ describe("migration 0001 — legacy install that predates the waitlist table", (
     migrated.sqlite.exec(MIGRATION_SQL);
     migrated.sqlite.exec(MIGRATION2_SQL);
     migrated.sqlite.exec(MIGRATION3_SQL);
+    migrated.sqlite.exec(MIGRATION4_SQL);
     const fresh = freshDb(SCHEMA_SQL);
 
     const shapeOf = (sqlite: Sqlite, table: string): unknown =>
@@ -821,6 +841,7 @@ describe("migration 0002 — waitlist.survey_json against real SQLite", () => {
     migrated.sqlite.exec(MIGRATION_SQL);
     migrated.sqlite.exec(MIGRATION2_SQL);
     migrated.sqlite.exec(MIGRATION3_SQL);
+    migrated.sqlite.exec(MIGRATION4_SQL);
     const fresh = freshDb(SCHEMA_SQL);
 
     const shapeOf = (sqlite: Sqlite, table: string): unknown =>
@@ -931,5 +952,71 @@ describe("migration 0003: accounts + entitlements + endpoints.account_id", () =>
     expect(sql.prepare("SELECT id FROM entitlements WHERE account_id=?").get("act_new")).toBeTruthy();
     const cols = sql.prepare("PRAGMA table_info(endpoints)").all() as any[];
     expect(cols.find((c: any) => c.name === "account_id")).toBeTruthy();
+  });
+});
+
+describe("migration 0004 — self-serve rows against real SQLite", () => {
+  const chain = (): Sqlite => {
+    const sql = new Database(":memory:");
+    sql.exec(LEGACY_SCHEMA_SQL);
+    sql.exec(MIGRATION_SQL);
+    sql.exec(MIGRATION2_SQL);
+    sql.exec(MIGRATION3_SQL);
+    sql.exec(MIGRATION4_SQL);
+    return sql;
+  };
+  const seedAccount = (sql: Sqlite, id: string): void => {
+    // endpoints.account_id 是外键;先把被引用的账号行种下(FK 开着)。
+    sql
+      .prepare("INSERT OR IGNORE INTO accounts(id,email,created_at) VALUES(?,?,?)")
+      .run(id, `${id}@example.com`, "2026-07-28T12:00:00Z");
+  };
+  const insertEp = (
+    sql: Sqlite,
+    id: string,
+    inviteId: string | null,
+    slug: string,
+    accountId: string | null,
+    status = "active",
+  ): void => {
+    if (accountId !== null) seedAccount(sql, accountId);
+    sql
+      .prepare(
+        `INSERT INTO endpoints(id,invite_id,slug,hostname,cf_tunnel_id,cf_dns_record_id,status,token_sha256,account_id,created_at)
+         VALUES(?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(id, inviteId, slug, `${slug}.mediaryconnect.app`, "tun", "dns", status, "sha", accountId, "2026-07-28T12:00:00Z");
+  };
+
+  it("many self-serve rows (invite_id NULL) coexist; invite rows keep UNIQUE", () => {
+    const sql = chain();
+    insertEp(sql, "ep_a", null, "alice", "act_a");
+    insertEp(sql, "ep_b", null, "bob", "act_b");
+    // 两条 NULL invite_id 共存(SQLite UNIQUE 不判 NULL)
+    expect(sql.prepare("SELECT COUNT(*) c FROM endpoints").get()).toEqual({ c: 2 });
+    // 邀请行的 UNIQUE 仍在
+    insertEp(sql, "ep_c", "inv_1", "carol", null);
+    expect(() => insertEp(sql, "ep_d", "inv_1", "dave", null)).toThrow(/UNIQUE/i);
+  });
+
+  it("one live endpoint per account: second active row for the same account dies on the partial index", () => {
+    const sql = chain();
+    insertEp(sql, "ep_1", null, "alice", "act_1");
+    expect(() => insertEp(sql, "ep_2", null, "alice2", "act_1")).toThrow(
+      /UNIQUE constraint failed.*account_id/i,
+    );
+    // revoked 行不占坑:同账号 revoke 后可以再开
+    sql.prepare("UPDATE endpoints SET status='revoked' WHERE id='ep_1'").run();
+    insertEp(sql, "ep_3", null, "alice3", "act_1");
+    expect(sql.prepare("SELECT COUNT(*) c FROM endpoints WHERE account_id='act_1'").get()).toEqual({ c: 2 });
+  });
+
+  it("re-running 0004 is a safe no-op rebuild", () => {
+    const sql = chain();
+    insertEp(sql, "ep_keep", null, "keeper", "act_k");
+    sql.exec(MIGRATION4_SQL);
+    const row = sql.prepare("SELECT * FROM endpoints WHERE id='ep_keep'").get() as Record<string, unknown>;
+    expect(row.slug).toBe("keeper");
+    expect(row.account_id).toBe("act_k");
   });
 });

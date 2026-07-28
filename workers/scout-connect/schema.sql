@@ -12,7 +12,10 @@ CREATE TABLE invites (
 
 CREATE TABLE endpoints (
   id TEXT PRIMARY KEY,
-  invite_id TEXT NOT NULL UNIQUE,
+  -- Nullable since self-serve provisioning (migrations/0004): a paid account's
+  -- endpoint has no invite. UNIQUE still holds for invite rows (SQLite UNIQUE
+  -- ignores NULLs, so self-serve rows coexist freely).
+  invite_id TEXT UNIQUE,
   slug TEXT NOT NULL UNIQUE,
   hostname TEXT NOT NULL UNIQUE,
   cf_tunnel_id TEXT NOT NULL,
@@ -52,6 +55,11 @@ CREATE INDEX idx_endpoints_status ON endpoints(status);
 -- Every /api/instance/status heartbeat (and every failed probe) looks up an
 -- endpoint by token hash; without this it is a full table scan.
 CREATE INDEX idx_endpoints_token_sha256 ON endpoints(token_sha256);
+-- 一账号最多一个 live endpoint(live = status 'active';grace/suspended 是时间戳
+-- 态,status 仍 'active' 所以天然算占用)。挡「同账号并发双开」烧 CF 隧道配额。
+-- migrations/0004.
+CREATE UNIQUE INDEX idx_endpoints_account_live ON endpoints(account_id)
+  WHERE account_id IS NOT NULL AND status = 'active';
 
 -- Waitlist for Mediary Connect beta (阶段 1).
 CREATE TABLE waitlist (

@@ -35,13 +35,16 @@ export async function revokeEndpoint(input: {
   // and revealByCode would still hand out the (deleted) tunnel's token. Flip
   // the invite here when it's not already revoked.
   if (endpoint.status === "revoked") {
-    const invite = await db.getInviteById(endpoint.invite_id);
-    if (invite !== null && invite.status !== "revoked") {
-      await db.updateInviteStatus(invite.id, {
-        status: "revoked",
-        slug: null,
-        revoked_at: deps.now(),
-      });
+    // 0004:自助行没有 invite(invite_id null),没有可自愈的 invite 状态。
+    if (endpoint.invite_id !== null) {
+      const invite = await db.getInviteById(endpoint.invite_id);
+      if (invite !== null && invite.status !== "revoked") {
+        await db.updateInviteStatus(invite.id, {
+          status: "revoked",
+          slug: null,
+          revoked_at: deps.now(),
+        });
+      }
     }
     return { endpointId, hostname: endpoint.hostname };
   }
@@ -71,11 +74,14 @@ export async function revokeEndpoint(input: {
 
   if (failures.length === 0) {
     await db.markEndpointRevoked(endpointId, deps.now());
-    await db.updateInviteStatus(endpoint.invite_id, {
-      status: "revoked",
-      slug: null,
-      revoked_at: deps.now(),
-    });
+    // 0004:自助行 invite_id 为 null,没有 invite 状态要翻。
+    if (endpoint.invite_id !== null) {
+      await db.updateInviteStatus(endpoint.invite_id, {
+        status: "revoked",
+        slug: null,
+        revoked_at: deps.now(),
+      });
+    }
     await db.insertAudit({
       id: deps.newAuditId(),
       at: deps.now(),

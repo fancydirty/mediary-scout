@@ -12,7 +12,8 @@ export interface InviteRow {
 
 export interface EndpointRow {
   id: string;
-  invite_id: string;
+  /** null since 0004:自助开通的行没有 invite;邀请制的行仍非空且 UNIQUE。 */
+  invite_id: string | null;
   slug: string;
   hostname: string;
   cf_tunnel_id: string;
@@ -28,10 +29,12 @@ export interface EndpointRow {
   revoked_at: string | null;
   // P3 (migration 0003): 付费账号关联 + 到期三阶段(决策 #14)。均可空:
   // 内测邀请制的行 account_id 为 null;未进入到期流程的行三个时间戳为 null。
-  account_id?: string | null;
-  grace_until?: string | null;
-  suspended_at?: string | null;
-  purge_after?: string | null;
+  // 0004 起为必填字段(值仍可 null):读写路径都必须携带,否则 D1 写路径
+  // 静默丢列而内存 mock 整行展开——「内存绿生产坏」(spec 断点 #2)。
+  account_id: string | null;
+  grace_until: string | null;
+  suspended_at: string | null;
+  purge_after: string | null;
 }
 
 /** P3: 付费账号。邮箱即身份;paddle_customer_id 内测手工开的为 null。 */
@@ -179,7 +182,7 @@ function mapInvite(row: RawRow): InviteRow {
 function mapEndpoint(row: RawRow): EndpointRow {
   return {
     id: row.id as string,
-    invite_id: row.invite_id as string,
+    invite_id: row.invite_id as string | null,
     slug: row.slug as string,
     hostname: row.hostname as string,
     cf_tunnel_id: row.cf_tunnel_id as string,
@@ -193,6 +196,12 @@ function mapEndpoint(row: RawRow): EndpointRow {
     last_seen_at: row.last_seen_at as string | null,
     created_at: row.created_at as string,
     revoked_at: row.revoked_at as string | null,
+    // ?? null:0003 之前建的行 SELECT * 不带这些列(undefined),归一为 null,
+    // 避免上游要区分「没有这列」与「值是 null」两种形态。
+    account_id: (row.account_id as string | null | undefined) ?? null,
+    grace_until: (row.grace_until as string | null | undefined) ?? null,
+    suspended_at: (row.suspended_at as string | null | undefined) ?? null,
+    purge_after: (row.purge_after as string | null | undefined) ?? null,
   };
 }
 
@@ -291,10 +300,12 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
     },
 
     async insertEndpoint(row) {
+      // 四个 0003 列必须在列清单里:漏掉的话 D1 静默丢值而内存 mock 整行
+      // 展开,测试绿、生产 account_id 丢失(spec 断点 #2 的「内存绿生产坏」)。
       await d1
         .prepare(
-          `INSERT INTO endpoints (id, invite_id, slug, hostname, cf_tunnel_id, cf_access_app_id, cf_access_policy_id, cf_dns_record_id, status, token_sha256, token_ciphertext, token_shown_at, last_seen_at, created_at, revoked_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO endpoints (id, invite_id, slug, hostname, cf_tunnel_id, cf_access_app_id, cf_access_policy_id, cf_dns_record_id, status, token_sha256, token_ciphertext, token_shown_at, last_seen_at, created_at, revoked_at, account_id, grace_until, suspended_at, purge_after)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
           row.id,
@@ -312,6 +323,10 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
           row.last_seen_at,
           row.created_at,
           row.revoked_at,
+          row.account_id,
+          row.grace_until,
+          row.suspended_at,
+          row.purge_after,
         )
         .run();
       return { ...row };
@@ -663,7 +678,9 @@ export function createMemoryConnectDb(): ConnectDb {
         throw new Error(`UNIQUE constraint failed: endpoints.id (${row.id})`);
       }
       for (const existing of endpoints.values()) {
-        if (existing.invite_id === row.invite_id) {
+        // SQLite UNIQUE 对 NULL 不判重(0004):自助行 invite_id 全为 null,
+        // 彼此共存;只有非空 invite_id 才判撞。
+        if (row.invite_id !== null && existing.invite_id === row.invite_id) {
           throw new Error(`UNIQUE constraint failed: endpoints.invite_id (${row.invite_id})`);
         }
         if (existing.slug === row.slug) {
@@ -671,6 +688,16 @@ export function createMemoryConnectDb(): ConnectDb {
         }
         if (existing.hostname === row.hostname) {
           throw new Error(`UNIQUE constraint failed: endpoints.hostname (${row.hostname})`);
+        }
+        // idx_endpoints_account_live(0004):一账号最多一个 live(active)行。
+        // 与 D1 的部分唯一索引同款报错词面,让路由层的错误映射两侧一致。
+        if (
+          row.account_id !== null &&
+          row.status === "active" &&
+          existing.account_id === row.account_id &&
+          existing.status === "active"
+        ) {
+          throw new Error(`UNIQUE constraint failed: endpoints.account_id (${row.account_id})`);
         }
       }
       endpoints.set(row.id, { ...row });

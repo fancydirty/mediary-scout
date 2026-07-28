@@ -1,18 +1,7 @@
 import type { AccountRow, EndpointRow, EntitlementRow } from "../db.js";
-import { isEntitlementActive } from "../entitlement.js";
+import { isEntitlementActive, latestExpiry } from "../entitlement.js";
 import { buildConnectPrompt, CLAIM_CODE_PLACEHOLDER } from "./connect-prompt.js";
 import { BRAND_BAR, BRAND_CSS, esc, FAVICON_LINK, THEME_BASE, THEME_TOKENS } from "./theme.js";
-
-/** 最新到期时刻 = entitlements 里 expires_at 最大者。 */
-function latestExpiry(entitlements: EntitlementRow[]): string | null {
-  let latest: string | null = null;
-  for (const e of entitlements) {
-    if (latest === null || Date.parse(e.expires_at) > Date.parse(latest)) {
-      latest = e.expires_at;
-    }
-  }
-  return latest;
-}
 
 /**
  * 控制台 v2(决策 #13:智能给 agent、确定性给脚本)。
@@ -77,6 +66,14 @@ h1{font-size:1.5rem;font-weight:900;letter-spacing:-.5px;margin:0}
 .helprow svg{color:var(--accent);flex:none}
 .msg{font-size:.9rem;margin-top:12px;color:var(--text-muted)}
 .msg.err{color:var(--err)}
+.msg.ok{color:var(--accent)}
+.slugrow{display:flex;align-items:center;gap:8px}
+.slugrow input{flex:1;min-width:0;font:inherit;font-family:var(--mono);padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:var(--bg-raised);color:var(--text);transition:border-color .15s ease,box-shadow .15s ease}
+.slugrow input::placeholder{color:#6b6b6b}
+.slugrow input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,215,96,.18)}
+.slug-suffix{font-family:var(--mono);font-size:.92rem;color:var(--text-muted);flex:none}
+#provision{margin-top:16px;width:100%}
+.btn:disabled{opacity:.55;cursor:default;transform:none}
 details{margin-top:18px;border-top:1px solid #222;padding-top:16px}
 summary{cursor:pointer;font-size:.9rem;color:var(--text-muted);list-style:none;display:flex;align-items:center;gap:8px}
 summary::-webkit-details-marker{display:none}
@@ -117,9 +114,21 @@ function renderBody(
 <a class="btn" href="/pricing">开通</a>`;
   }
   if (input.endpoint === null) {
-    // 已付费但还没选 slug（自助 provision 的入口——主流程补齐前先给占位入口）。
-    return `<p class="sub">你已开通，还差最后一步：选择你的专属访问地址（slug）。</p>
-<a class="btn" href="/pricing#slug">选择我的专属地址</a>`;
+    // 已付费未开通:内嵌 slug 选择表单(实时查重走 /api/slug/check,开通走
+    // /api/provision;成功后整页刷新进入接入区三态)。
+    return `<p class="sub">你已开通，还差最后一步：选择你的专属访问地址。</p>
+<div class="panel">
+<p class="step">选择专属地址</p>
+<p class="lead">给你的实例起个名字</p>
+<p class="lead-sub">它会成为你的永久访问域名，选定后不可更改、永久保留（到期也不会被别人拿走）。只能用小写字母、数字和连字符。</p>
+<div class="slugrow">
+<input id="slug" type="text" placeholder="yourname" autocomplete="off" spellcheck="false" maxlength="63" aria-label="专属地址前缀">
+<span class="slug-suffix">.mediaryconnect.app</span>
+</div>
+<p class="msg" id="slug-msg" hidden></p>
+<button class="btn" id="provision" type="button" disabled>开通</button>
+<p class="msg err" id="prov-msg" hidden></p>
+</div>`;
   }
 
   const hostname = input.endpoint.hostname;
@@ -146,12 +155,14 @@ function renderBody(
 </div>`;
 }
 
-/** active + 有 endpoint 时才需要客户端脚本(取码 → 注入 → 复制)。 */
+/** active 时才需要客户端脚本:有 endpoint → 取码/复制;无 endpoint → slug
+ *  选择表单(实时查重 + 开通)。 */
 function renderScript(
   input: { endpoint: EndpointRow | null; baseUrl: string },
   active: boolean,
 ): string {
-  if (!active || input.endpoint === null) return "";
+  if (!active) return "";
+  if (input.endpoint === null) return SLUG_FORM_SCRIPT;
   return `<script type="module">
 const $=(id)=>document.getElementById(id);
 const PLACEHOLDER=${JSON.stringify(CLAIM_CODE_PLACEHOLDER)};
@@ -197,3 +208,48 @@ $("copy").addEventListener("click",async()=>{
 });
 </script>`;
 }
+
+/** slug 选择表单的客户端逻辑:输入防抖 → /api/slug/check 实时查重(可用/
+ *  占用+推荐)→ 可用才解锁「开通」→ POST /api/provision → 成功整页刷新
+ *  (服务端按新状态渲染接入区)。所有动态文本走 textContent,不用 innerHTML。 */
+const SLUG_FORM_SCRIPT = `<script type="module">
+const $=(id)=>document.getElementById(id);
+const input=$("slug"),msg=$("slug-msg"),btn=$("provision"),perr=$("prov-msg");
+let timer=null,seq=0;
+function setMsg(text,cls){msg.textContent=text;msg.className="msg "+cls;msg.hidden=text==="";}
+input.addEventListener("input",()=>{
+  btn.disabled=true;perr.hidden=true;
+  const v=input.value.trim().toLowerCase();
+  if(timer)clearTimeout(timer);
+  if(v===""){setMsg("","");return;}
+  timer=setTimeout(async()=>{
+    const mySeq=++seq;
+    try{
+      const res=await fetch("/api/slug/check?s="+encodeURIComponent(v));
+      if(mySeq!==seq)return; // 过期响应丢弃(快速连打)
+      if(!res.ok){setMsg("查询失败，请稍后重试。","err");return;}
+      const d=await res.json();
+      if(d.available===true){setMsg("✓ 可用","ok");btn.disabled=false;}
+      else{
+        const sug=Array.isArray(d.suggestions)&&d.suggestions.length>0?"，试试："+d.suggestions.join("、"):"";
+        setMsg((d.reason==="reserved"||d.reason==="invalid"?"这个名字不能用":"已被占用")+sug,"err");
+      }
+    }catch{if(mySeq===seq)setMsg("网络错误，请稍后重试。","err");}
+  },300);
+});
+btn.addEventListener("click",async()=>{
+  btn.disabled=true;perr.hidden=true;
+  const v=input.value.trim().toLowerCase();
+  try{
+    const res=await fetch("/api/provision",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({slug:v})});
+    if(res.ok){location.reload();return;}
+    let d=null;try{d=await res.json();}catch{}
+    const e=d&&typeof d.error==="string"?d.error:"";
+    if(res.status===402){perr.textContent="时长已过期，请先续期。";}
+    else if(e==="already provisioned"){location.reload();return;}
+    else if(e==="slug taken"){perr.textContent="刚被别人抢先占用了，换一个吧。";}
+    else{perr.textContent="开通失败，请稍后重试。";}
+    perr.hidden=false;btn.disabled=false;
+  }catch{perr.textContent="网络错误，请稍后重试。";perr.hidden=false;btn.disabled=false;}
+});
+</script>`;

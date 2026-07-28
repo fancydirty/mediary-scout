@@ -177,7 +177,7 @@ input[type=radio],input[type=checkbox]{accent-color:var(--accent);margin:0}
 <div class="panel rise d6">
 <section id="step-signup">
 <p class="peyebrow">BETA WAITLIST</p>
-<p class="price">内测期免费，创始批 100 席；正式定价 ¥19/月 或 ¥199/年（创始价 ¥149/年）。先填邮箱，开通时邮件通知。</p>
+<p class="price">内测期免费，创始批 100 席；正式定价 季 ¥45 / 年 ¥108（创始价 ¥88/年，前 100 席续期同价）。先填邮箱，开通时邮件通知。</p>
 <form id="signup">
 <p class="field"><label for="email">邮箱</label>
 <input id="email" name="email" type="email" required autocomplete="email" placeholder="you@example.com"></p>
@@ -197,10 +197,10 @@ ${tsWidget}
 <label><input type="radio" name="willing_to_pay" value="depends"> 看情况</label>
 </fieldset>
 <fieldset><legend>心理价位</legend>
-<label><input type="radio" name="price_point" value="9"> ¥9/月</label>
-<label><input type="radio" name="price_point" value="19"> ¥19/月</label>
-<label><input type="radio" name="price_point" value="29"> ¥29/月</label>
-<label><input type="radio" name="price_point" value="year149"> 年付 ¥149</label>
+<label><input type="radio" name="price_point" value="q45"> 季付 ¥45</label>
+<label><input type="radio" name="price_point" value="year88"> 创始年付 ¥88</label>
+<label><input type="radio" name="price_point" value="year108"> 年付 ¥108</label>
+<label><input type="radio" name="price_point" value="cheaper"> 还是觉得贵</label>
 <label><input type="radio" name="price_point" value="unsure"> 说不好</label>
 </fieldset>
 <fieldset><legend>你会在哪些场景用它</legend>

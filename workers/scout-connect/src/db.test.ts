@@ -40,7 +40,7 @@ function makeEndpoint(overrides: Partial<EndpointRow> = {}): EndpointRow {
     token_shown_at: null,
     last_seen_at: null,
     created_at: "2026-07-24T00:00:00.000Z",
-    revoked_at: null,
+    revoked_at: null, account_id: null, grace_until: null, suspended_at: null, purge_after: null,
     ...overrides,
   };
 }
@@ -112,6 +112,35 @@ describe("memory ConnectDb", () => {
     await expect(
       db.insertEndpoint(makeEndpoint({ id: "ep_2", invite_id: "inv_2", slug: "other" })),
     ).rejects.toThrow(/UNIQUE/i);
+  });
+
+  it("0004: many NULL invite_id rows coexist (SQLite UNIQUE ignores NULLs — memory must match)", async () => {
+    const db = createMemoryConnectDb();
+    await db.insertEndpoint(
+      makeEndpoint({ id: "ep_a", invite_id: null, slug: "sa", hostname: "sa.x", account_id: "act_a" }),
+    );
+    await db.insertEndpoint(
+      makeEndpoint({ id: "ep_b", invite_id: null, slug: "sb", hostname: "sb.x", account_id: "act_b" }),
+    );
+    expect(await db.getEndpointById("ep_a")).not.toBeNull();
+    expect(await db.getEndpointById("ep_b")).not.toBeNull();
+  });
+
+  it("0004: one live endpoint per account — second active row dies, revoked row frees the slot", async () => {
+    const db = createMemoryConnectDb();
+    await db.insertEndpoint(
+      makeEndpoint({ id: "ep_1", invite_id: null, slug: "s1", hostname: "s1.x", account_id: "act_1" }),
+    );
+    await expect(
+      db.insertEndpoint(
+        makeEndpoint({ id: "ep_2", invite_id: null, slug: "s2", hostname: "s2.x", account_id: "act_1" }),
+      ),
+    ).rejects.toThrow(/UNIQUE constraint failed: endpoints\.account_id/);
+    await db.markEndpointRevoked("ep_1", "2026-07-28T03:00:00.000Z");
+    await db.insertEndpoint(
+      makeEndpoint({ id: "ep_3", invite_id: null, slug: "s3", hostname: "s3.x", account_id: "act_1" }),
+    );
+    expect((await db.getActiveEndpointByAccountId("act_1"))?.id).toBe("ep_3");
   });
 
   it("markEndpointRevoked sets status revoked and revoked_at", async () => {

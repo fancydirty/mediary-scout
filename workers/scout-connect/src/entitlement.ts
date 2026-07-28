@@ -45,3 +45,15 @@ export function isEntitlementActive(latestExpiry: string | null, now: string): b
   if (!Number.isFinite(expMs)) return false;
   return expMs > Date.parse(now);
 }
+
+/** 最新到期时刻 = entitlements 里 expires_at 最大者(账本式,每次充值一行)。
+ *  原先是 console-page 的私有函数;自助 provision 的门禁也要用,提为共享。 */
+export function latestExpiry(entitlements: { expires_at: string }[]): string | null {
+  let latest: string | null = null;
+  for (const e of entitlements) {
+    if (latest === null || Date.parse(e.expires_at) > Date.parse(latest)) {
+      latest = e.expires_at;
+    }
+  }
+  return latest;
+}

@@ -89,7 +89,7 @@ describe("provisionEndpoint", () => {
     const calls: string[] = [];
     const deps = makeDeps(db, makeFakeCf(calls));
 
-    const result = await provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps });
+    const result = await provisionEndpoint({ origin: { kind: "invite", inviteId: "inv_1" }, slug: "alice", deps });
 
     expect(calls).toEqual([
       "tunnel:scout-alice",
@@ -149,7 +149,7 @@ describe("provisionEndpoint", () => {
     const calls: string[] = [];
     const deps = makeDeps(db, makeFakeCf(calls, { failOn: "access" }));
 
-    const result = await provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps });
+    const result = await provisionEndpoint({ origin: { kind: "invite", inviteId: "inv_1" }, slug: "alice", deps });
 
     expect(result.hostname).toBe("alice.mediaryconnect.app");
     expect(countCalls(calls, "access:")).toBe(0);
@@ -164,7 +164,7 @@ describe("provisionEndpoint", () => {
     const deps = makeDeps(db, makeFakeCf(calls, { failOn: "dns" }));
 
     await expect(
-      provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps }),
+      provisionEndpoint({ origin: { kind: "invite", inviteId: "inv_1" }, slug: "alice", deps }),
     ).rejects.toThrow("cf dns boom");
 
     expect(countCalls(calls, "del-tunnel")).toBe(1);
@@ -181,7 +181,7 @@ describe("provisionEndpoint", () => {
     const deps = makeDeps(db, makeFakeCf(calls, { failOn: "ingress" }));
 
     await expect(
-      provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps }),
+      provisionEndpoint({ origin: { kind: "invite", inviteId: "inv_1" }, slug: "alice", deps }),
     ).rejects.toThrow("cf ingress boom");
 
     expect(countCalls(calls, "del-tunnel")).toBe(1);
@@ -199,7 +199,7 @@ describe("provisionEndpoint", () => {
     const deps = makeDeps(db, makeFakeCf(calls));
 
     await expect(
-      provisionEndpoint({ inviteId: "missing", slug: "alice", deps }),
+      provisionEndpoint({ origin: { kind: "invite", inviteId: "missing" }, slug: "alice", deps }),
     ).rejects.toThrow(/not found/);
     expect(calls).toHaveLength(0);
   });
@@ -211,7 +211,7 @@ describe("provisionEndpoint", () => {
     const deps = makeDeps(db, makeFakeCf(calls));
 
     await expect(
-      provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps }),
+      provisionEndpoint({ origin: { kind: "invite", inviteId: "inv_1" }, slug: "alice", deps }),
     ).rejects.toThrow(/not pending/);
     expect(calls).toHaveLength(0);
   });
@@ -223,7 +223,7 @@ describe("provisionEndpoint", () => {
     const deps = makeDeps(db, makeFakeCf(calls));
 
     await expect(
-      provisionEndpoint({ inviteId: "inv_1", slug: "Admin", deps }),
+      provisionEndpoint({ origin: { kind: "invite", inviteId: "inv_1" }, slug: "Admin", deps }),
     ).rejects.toThrow(/reserved slug/);
     expect(calls).toHaveLength(0);
   });
@@ -233,7 +233,7 @@ describe("provisionEndpoint", () => {
     await db.insertInvite(makePendingInvite());
     const deps = makeDeps(db, makeFakeCf([]));
 
-    const result = await provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps });
+    const result = await provisionEndpoint({ origin: { kind: "invite", inviteId: "inv_1" }, slug: "alice", deps });
 
     const endpoint = await db.getEndpointById(result.endpointId);
     expect(endpoint?.token_ciphertext).toBeNull();
@@ -263,11 +263,11 @@ describe("provisionEndpoint", () => {
       token_shown_at: null,
       created_at: NOW,
       revoked_at: null,
-      last_seen_at: null,
+      last_seen_at: null, account_id: null, grace_until: null, suspended_at: null, purge_after: null,
     });
 
     await expect(
-      provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps }),
+      provisionEndpoint({ origin: { kind: "invite", inviteId: "inv_1" }, slug: "alice", deps }),
     ).rejects.toThrow(/hostname already in use/);
     expect(calls).toHaveLength(0);
   });
@@ -277,11 +277,11 @@ describe("provisionEndpoint", () => {
     await db.insertInvite(makePendingInvite());
     const calls: string[] = [];
     const deps = makeDeps(db, makeFakeCf(calls));
-    await provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps });
+    await provisionEndpoint({ origin: { kind: "invite", inviteId: "inv_1" }, slug: "alice", deps });
 
     await db.insertInvite(makePendingInvite({ id: "inv_2", code: "code-def" }));
     await expect(
-      provisionEndpoint({ inviteId: "inv_2", slug: "alice", deps }),
+      provisionEndpoint({ origin: { kind: "invite", inviteId: "inv_2" }, slug: "alice", deps }),
     ).rejects.toThrow(/already in use/);
     // only the first provision's cf calls exist — no second tunnel was created
     expect(countCalls(calls, "tunnel:")).toBe(1);
@@ -295,7 +295,7 @@ describe("provisionEndpoint", () => {
 
     // first provision occupies the endpoint id so the retry's insertEndpoint
     // dies on the endpoints.id PRIMARY KEY after CF resources already exist
-    await provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps });
+    await provisionEndpoint({ origin: { kind: "invite", inviteId: "inv_1" }, slug: "alice", deps });
 
     await db.insertInvite(makePendingInvite({ id: "inv_2", code: "code-def" }));
     const otherDeps = {
@@ -304,7 +304,7 @@ describe("provisionEndpoint", () => {
       newAuditId: () => "aud_test2",
     };
     await expect(
-      provisionEndpoint({ inviteId: "inv_2", slug: "bob", deps: otherDeps }),
+      provisionEndpoint({ origin: { kind: "invite", inviteId: "inv_2" }, slug: "bob", deps: otherDeps }),
     ).rejects.toThrow(/UNIQUE/i);
 
     // second tunnel's full resource set was cleaned up
@@ -343,7 +343,7 @@ describe("provisionEndpoint", () => {
     const deps = makeDeps(db, makeFakeCf(calls));
 
     // Winner runs to completion.
-    await provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps });
+    await provisionEndpoint({ origin: { kind: "invite", inviteId: "inv_1" }, slug: "alice", deps });
     expect((await db.getInviteById("inv_1"))?.status).toBe("provisioned");
 
     // Loser: its precheck reads happened BEFORE the winner committed — model
@@ -365,7 +365,7 @@ describe("provisionEndpoint", () => {
       newAuditId: () => "aud_loser",
     };
     await expect(
-      provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps: { ...loserDeps, db: staleDb } }),
+      provisionEndpoint({ origin: { kind: "invite", inviteId: "inv_1" }, slug: "alice", deps: { ...loserDeps, db: staleDb } }),
     ).rejects.toThrow(/UNIQUE/i);
 
     // The winner's state must survive the loser's compensation untouched.
@@ -405,14 +405,14 @@ describe("provisionEndpoint", () => {
     };
     // first, occupy the endpoint id so the insert fails
     await provisionEndpoint({
-      inviteId: "inv_1",
+      origin: { kind: "invite", inviteId: "inv_1" },
       slug: "alice",
       deps: makeDeps(db, makeFakeCf([])),
     });
     await db.insertInvite(makePendingInvite({ id: "inv_2", code: "code-def" }));
 
     await expect(
-      provisionEndpoint({ inviteId: "inv_2", slug: "bob", deps }),
+      provisionEndpoint({ origin: { kind: "invite", inviteId: "inv_2" }, slug: "bob", deps }),
     ).rejects.toThrow(/UNIQUE/i);
     expect(calls).toContain("del-dns:boom");
     expect(calls).toContain("del-tunnel:boom");
@@ -433,7 +433,7 @@ describe("provisionEndpoint", () => {
       },
     };
     await expect(
-      provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps: { ...deps, db: failingDb } }),
+      provisionEndpoint({ origin: { kind: "invite", inviteId: "inv_1" }, slug: "alice", deps: { ...deps, db: failingDb } }),
     ).rejects.toThrow(/d1 update boom/);
 
     // phantom endpoint row removed
@@ -444,7 +444,7 @@ describe("provisionEndpoint", () => {
     // invite still pending, and a retry with the same slug now succeeds
     expect((await db.getInviteById("inv_1"))?.status).toBe("pending");
     const retryDeps = { ...deps, newEndpointId: () => "ep_retry", newAuditId: () => "aud_retry" };
-    const retry = await provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps: retryDeps });
+    const retry = await provisionEndpoint({ origin: { kind: "invite", inviteId: "inv_1" }, slug: "alice", deps: retryDeps });
     expect(retry.hostname).toBe("alice.mediaryconnect.app");
     expect(await db.listEndpoints()).toHaveLength(1);
   });
@@ -465,7 +465,7 @@ describe("provisionEndpoint", () => {
     const deps = { ...makeDeps(failingDb, makeFakeCf(calls)) };
 
     await expect(
-      provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps }),
+      provisionEndpoint({ origin: { kind: "invite", inviteId: "inv_1" }, slug: "alice", deps }),
     ).rejects.toThrow();
 
     expect(countCalls(calls, "tunnel:")).toBe(1);
@@ -500,7 +500,7 @@ describe("provisionEndpoint", () => {
       },
     };
     await expect(
-      provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps: { ...deps, db: failingDb } }),
+      provisionEndpoint({ origin: { kind: "invite", inviteId: "inv_1" }, slug: "alice", deps: { ...deps, db: failingDb } }),
     ).rejects.toThrow(/d1 audit boom/);
 
     // invite rolled back (NOT stuck provisioned pointing at deleted resources)
@@ -530,7 +530,7 @@ describe("provisionEndpoint", () => {
       },
     };
     await expect(
-      provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps: { ...deps, db: failingAuditDb } }),
+      provisionEndpoint({ origin: { kind: "invite", inviteId: "inv_1" }, slug: "alice", deps: { ...deps, db: failingAuditDb } }),
     ).rejects.toThrow(/d1 audit boom/);
 
     // invite rolled back to pending (not stuck provisioned-without-endpoint)
@@ -546,7 +546,7 @@ describe("provisionEndpoint", () => {
 
     // retry works end-to-end
     const retryDeps = { ...deps, newEndpointId: () => "ep_retry", newAuditId: () => "aud_retry" };
-    const retry = await provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps: retryDeps });
+    const retry = await provisionEndpoint({ origin: { kind: "invite", inviteId: "inv_1" }, slug: "alice", deps: retryDeps });
     expect(retry.hostname).toBe("alice.mediaryconnect.app");
     expect(await db.listEndpoints()).toHaveLength(1);
   });
@@ -570,7 +570,7 @@ describe("provisionEndpoint", () => {
     // tunnel boom" when the real problem was "cf dns boom". (This test used to
     // assert the opposite — it pinned that bug as the contract.)
     await expect(
-      provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps }),
+      provisionEndpoint({ origin: { kind: "invite", inviteId: "inv_1" }, slug: "alice", deps }),
     ).rejects.toThrow(/cf dns boom/);
     // ...but the delete must still have been ATTEMPTED. Twice, deliberately:
     // deleteTunnelOnce() latches only AFTER a successful await, so the inner
@@ -599,7 +599,7 @@ describe("provisionEndpoint", () => {
     const deps = makeDeps(db, cf);
 
     await expect(
-      provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps }),
+      provisionEndpoint({ origin: { kind: "invite", inviteId: "inv_1" }, slug: "alice", deps }),
     ).rejects.toThrow(/cf dns boom/);
     // inner catch failed → outer catch retried → succeeded → latch set. No third call.
     expect(countCalls(calls, "del-tunnel:")).toBe(2);
@@ -620,7 +620,7 @@ describe("provisionEndpoint", () => {
     const deps = makeDeps(db, cf);
 
     await expect(
-      provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps }),
+      provisionEndpoint({ origin: { kind: "invite", inviteId: "inv_1" }, slug: "alice", deps }),
     ).rejects.toThrow(/cf ingress boom/);
     // ingress never reaches the inner try, so only the outer catch compensates
     expect(countCalls(calls, "del-tunnel:")).toBe(1);
@@ -633,7 +633,7 @@ describe("provisionEndpoint", () => {
     const cf = makeFakeCf(calls);
     const deps = makeDeps(db, cf);
 
-    const result = await provisionEndpoint({ inviteId: "inv_1", slug: "alice", deps });
+    const result = await provisionEndpoint({ origin: { kind: "invite", inviteId: "inv_1" }, slug: "alice", deps });
 
     expect(result.hostname).toBe("alice.mediaryconnect.app");
     expect(calls.filter((c) => c.startsWith("access:"))).toHaveLength(0);

@@ -41,7 +41,7 @@ const endpoint: EndpointRow = {
   last_seen_at: null,
   created_at: NOW,
   revoked_at: null,
-  account_id: "act_1",
+  account_id: "act_1", grace_until: null, suspended_at: null, purge_after: null,
 };
 
 function base(over: Partial<Parameters<typeof consolePage>[0]>) {
@@ -77,13 +77,20 @@ describe("console page — not entitled", () => {
 });
 
 describe("console page — entitled but no endpoint yet", () => {
-  it("prompts to choose a slug, no prompt box", () => {
+  it("renders the inline slug form wired to /api/slug/check + /api/provision (no dead link)", () => {
     const html = base({
       entitlements: [ent("2027-07-28T00:00:00.000Z")],
       endpoint: null,
     });
     expect(html).toContain("有效");
-    expect(html).toContain("选择我的专属地址");
+    expect(html).toContain("选择专属地址");
+    expect(html).toContain('id="slug"');
+    expect(html).toContain(".mediaryconnect.app");
+    expect(html).toContain('"/api/slug/check?s="');
+    expect(html).toContain('"/api/provision"');
+    // 旧死链占位必须消失
+    expect(html).not.toContain("/pricing#slug");
+    // 未开出 endpoint,不该出现接入区
     expect(html).not.toContain("获取接入命令");
   });
 });

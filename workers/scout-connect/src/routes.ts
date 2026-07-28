@@ -235,6 +235,9 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
   if (method === "POST" && path === "/api/claim-code") {
     return await issueClaimCode(request, deps);
   }
+  if (method === "POST" && path === "/api/provision") {
+    return await selfServeProvision(request, deps);
+  }
   if (method === "POST" && path === "/api/claim/exchange") {
     return await exchangeClaimCode(request, deps);
   }
@@ -413,6 +416,73 @@ async function requestMagicLink(request: Request, deps: RouteDeps): Promise<Resp
   }
   // 固定 202,无论邮箱存在与否。
   return json({ ok: true }, 202, { noStore: true });
+}
+
+/** 自助开通(0004,spec 2026-07-28):登录 + 有效时长的账号选 slug 给自己开
+ *  endpoint。门禁次序 session → entitlement → slug,402/409 级失败绝不烧 CF
+ *  API 调用(门禁都在 provisionEndpoint 的 CF 编排之前)。响应绝不含 token:
+ *  接入唯一路径是控制台取件码(决策 #10/#12)。 */
+async function selfServeProvision(request: Request, deps: RouteDeps): Promise<Response> {
+  const session = await parseSessionCookie(request.headers.get("cookie"), {
+    secret: deps.sessionSecret,
+    now: Date.parse(deps.now()),
+  });
+  if (!session.ok) throw new HttpError(401, "unauthorized");
+  const body = await readJsonBody(request);
+  const slugRaw = optString(body.slug);
+  if (slugRaw === null) throw new HttpError(400, "slug required");
+  let slug: string;
+  try {
+    slug = assertSlug(slugRaw);
+  } catch (e) {
+    throw new HttpError(400, e instanceof Error ? e.message : "invalid slug");
+  }
+  try {
+    const result = await provisionEndpoint({
+      origin: { kind: "account", accountId: session.accountId },
+      slug,
+      deps: {
+        cf: deps.cf,
+        db: deps.db,
+        rootDomain: deps.rootDomain,
+        tokenWrapKeyHex: deps.tokenWrapKeyHex,
+        now: deps.now,
+        newEndpointId: deps.newEndpointId,
+        newAuditId: deps.newAuditId,
+      },
+    });
+    // 只回 hostname——token/agentPrompt 在 account 分支本就是 null,这里再
+    // 显式收窄一层,响应形状永远不含敏感字段。
+    return json({ hostname: result.hostname }, 200, { noStore: true });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "";
+    // 无有效时长:语义上最诚实的 402(前端据此引导去 /pricing 续期/开通)。
+    if (msg.includes("no active entitlement")) {
+      throw new HttpError(402, "no active entitlement");
+    }
+    // 陈旧 session(账号已删)fail closed。
+    if (msg.includes("account not found")) {
+      throw new HttpError(401, "unauthorized");
+    }
+    // 一账号一 live endpoint:预检消息 + 部分唯一索引的 UNIQUE 兜底,两条路
+    // 归并为同一个 409 语义,body error 供前端区分于 slug 冲突。
+    if (
+      msg.includes("already provisioned") ||
+      msg.includes("UNIQUE constraint failed: endpoints.account_id")
+    ) {
+      throw new HttpError(409, "already provisioned");
+    }
+    // slug/hostname 冲突:预检消息与 UNIQUE 兜底同样归并(与 provisionInvite
+    // 的映射一致——绝不回显裸 UNIQUE 文本泄 schema)。
+    if (
+      msg.includes("already in use") ||
+      msg.includes("UNIQUE constraint failed: endpoints.slug") ||
+      msg.includes("UNIQUE constraint failed: endpoints.hostname")
+    ) {
+      throw new HttpError(409, "slug taken");
+    }
+    throw e;
+  }
 }
 
 /** 登录用户为自己的 active endpoint 签发一个短期取件码。code 是 claim purpose
@@ -678,7 +748,7 @@ async function provisionInvite(
   let result;
   try {
     result = await provisionEndpoint({
-      inviteId: invite.id,
+      origin: { kind: "invite", inviteId: invite.id },
       slug,
       deps: {
         cf: deps.cf,

@@ -27,8 +27,12 @@ describe("betaPage", () => {
     expect(page).toContain("内容与凭据始终只在你自己的机器上");
     expect(page).toContain("内测期免费");
     expect(page).toContain("创始批 100 席");
-    expect(page).toContain("¥19/月 或 ¥199/年");
-    expect(page).toContain("创始价 ¥149/年");
+    // 定价与母 spec 决策 #3/#4 对齐(季 ¥45 / 年 ¥108 / 创始 ¥88,无月付)。
+    expect(page).toContain("季 ¥45 / 年 ¥108");
+    expect(page).toContain("创始价 ¥88/年");
+    expect(page).not.toContain("¥19/月");
+    expect(page).not.toContain("¥199");
+    expect(page).not.toContain("¥149");
     expect(page).toContain("先填邮箱，开通时邮件通知");
     // Honesty guardrail: 转存到用户自己的网盘, never "download to our server"
     // or streaming/viewing claims.
@@ -72,10 +76,10 @@ describe("betaPage", () => {
     expect(page).toContain("看情况");
     // 心理价位 — radios
     expect(page).toContain("心理价位");
-    for (const v of ["9", "19", "29", "year149", "unsure"]) {
+    for (const v of ["q45", "year88", "year108", "cheaper", "unsure"]) {
       expect(page).toContain(`name="price_point" value="${v}"`);
     }
-    for (const label of ["¥9/月", "¥29/月", "年付 ¥149", "说不好"]) {
+    for (const label of ["季付 ¥45", "创始年付 ¥88", "年付 ¥108", "还是觉得贵", "说不好"]) {
       expect(page).toContain(label);
     }
     // 场景 — checkboxes

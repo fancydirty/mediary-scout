@@ -42,7 +42,7 @@ function makeEndpoint(overrides: Partial<EndpointRow> = {}): EndpointRow {
     token_shown_at: null,
     created_at: "2026-07-24T01:00:00.000Z",
     revoked_at: null,
-    last_seen_at: null,
+    last_seen_at: null, account_id: null, grace_until: null, suspended_at: null, purge_after: null,
     ...overrides,
   };
 }

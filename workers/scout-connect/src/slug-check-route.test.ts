@@ -54,7 +54,7 @@ describe("GET /api/slug/check", () => {
       cf_tunnel_id: "t", cf_access_app_id: null, cf_access_policy_id: null,
       cf_dns_record_id: "d", status: "revoked", token_sha256: "x",
       token_ciphertext: null, token_shown_at: null, last_seen_at: null,
-      created_at: "2026-01-01T00:00:00.000Z", revoked_at: "2026-02-01T00:00:00.000Z",
+      created_at: "2026-01-01T00:00:00.000Z", revoked_at: "2026-02-01T00:00:00.000Z", account_id: null, grace_until: null, suspended_at: null, purge_after: null,
     });
     const res = await handleRequest(
       new Request(`${BASE}/api/slug/check?s=alice`, { headers: { cookie: await cookie() } }),
