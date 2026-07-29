@@ -149,12 +149,16 @@ describe("parseTransactionCompleted", () => {
     }
   });
 
-  it("累加结果超出 [1,120] 时拒绝", () => {
+  it("累加结果超出 [1,120] 时拒绝,reason 与 unknown_price 区分", () => {
     const r = parseTransactionCompleted(
       txnData({ items: [{ price: { id: YEAR_PRICE }, quantity: 11 }] }), // 132 个月
       SANDBOX_PRICE_MONTHS,
     );
     expect(r.ok).toBe(false);
+    if (r.ok) return;
+    // 这类失败意味着 quantity 异常或白名单配错,不是"没见过这个 price"。
+    // reason 会被拼成审计 action,混淆会让告警失准。
+    expect(r.reason).toBe("months_out_of_range");
   });
 
   // account_email 是权威:用户可能用公司卡/家人的卡付款,但时长必须落在他

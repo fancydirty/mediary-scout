@@ -36,6 +36,7 @@ export type ParseFailure =
   | "not_completed"
   | "no_items"
   | "unknown_price"
+  | "months_out_of_range"
   | "months_mismatch"
   | "no_email";
 
@@ -143,7 +144,14 @@ export function parseTransactionCompleted(
     months += mapped * qty;
   }
   if (months < 1 || months > 120) {
-    return { ok: false, reason: "unknown_price", detail: `computed months out of range: ${months}` };
+    // 与 unknown_price 分开:routes.ts 会用 reason 拼审计 action
+    // (paddle.unprocessable.<reason>),混在一起会让告警指向错误的原因。
+    // 这类失败通常意味着 quantity 异常或白名单配错,不是"没见过这个 price"。
+    return {
+      ok: false,
+      reason: "months_out_of_range",
+      detail: `computed months out of range: ${months}`,
+    };
   }
 
   const custom = typeof d.custom_data === "object" && d.custom_data !== null ? d.custom_data : {};

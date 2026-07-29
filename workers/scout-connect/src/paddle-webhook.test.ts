@@ -173,6 +173,18 @@ describe("POST /api/paddle/webhook", () => {
     expect(ents.length, "只应有一条时长").toBe(1);
   });
 
+  // reason 会被拼成审计 action(paddle.unprocessable.<reason>),
+  // 与 unknown_price 混在一起会让告警指向错误的原因。
+  it("累加月数超范围 → 独立的 months_out_of_range,而非 unknown_price", async () => {
+    const { db, deps } = setup();
+    const body = eventBody({}, { items: [{ price: { id: YEAR_PRICE }, quantity: 11 }] });
+    const res = await post(deps, body, await signed(body));
+    expect(await res.json()).toMatchObject({ unprocessable: "months_out_of_range" });
+    const audits = await db.listAudits();
+    expect(audits.some((a) => a.action === "paddle.unprocessable.months_out_of_range")).toBe(true);
+    expect(audits.some((a) => a.action === "paddle.unprocessable.unknown_price")).toBe(false);
+  });
+
   it("未知 price_id → 200 + 审计,不入账", async () => {
     const { db, deps } = setup();
     const body = eventBody({}, { items: [{ price: { id: "pri_fake" }, quantity: 1 }] });
@@ -215,17 +227,40 @@ describe("POST /api/paddle/webhook", () => {
     expect(await db.getAccountByEmail("buyer@example.com")).toBeNull();
   });
 
-  it("adjustment.created(退款)记审计并 200", async () => {
+  // 只记 event_id 的话,人工核查退款时无法关联到是哪一笔付款、退了多少。
+  it("adjustment.created(退款)审计里记全交易关联信息", async () => {
     const { db, deps } = setup();
     const body = JSON.stringify({
       event_id: "evt_adj",
       event_type: "adjustment.created",
-      data: { id: "adj_1", action: "refund", transaction_id: "txn_abc" },
+      data: {
+        id: "adj_1",
+        action: "refund",
+        transaction_id: "txn_abc",
+        customer_id: "ctm_9",
+      },
     });
     const res = await post(deps, body, await signed(body));
     expect(res.status).toBe(200);
-    const audits = await db.listAudits();
-    expect(audits.some((a) => a.action === "paddle.adjustment")).toBe(true);
+    const a = (await db.listAudits()).find((x) => x.action === "paddle.adjustment");
+    expect(a).toBeDefined();
+    const d = JSON.parse(a!.detail_json!) as Record<string, unknown>;
+    expect(d).toMatchObject({
+      event_id: "evt_adj",
+      adjustment_id: "adj_1",
+      transaction_id: "txn_abc",
+      adjustment_action: "refund",
+      customer_id: "ctm_9",
+    });
+  });
+
+  it("adjustment 缺字段时审计记 null 而不报错", async () => {
+    const { db, deps } = setup();
+    const body = JSON.stringify({ event_id: "e", event_type: "adjustment.created", data: {} });
+    expect((await post(deps, body, await signed(body))).status).toBe(200);
+    const a = (await db.listAudits()).find((x) => x.action === "paddle.adjustment");
+    const d = JSON.parse(a!.detail_json!) as Record<string, unknown>;
+    expect(d.transaction_id).toBeNull();
   });
 
   it("未订阅的事件类型礼貌 200,不入账", async () => {
@@ -240,10 +275,31 @@ describe("POST /api/paddle/webhook", () => {
     expect(await res.json()).toMatchObject({ ignored: "subscription.created" });
   });
 
-  it("验签通过但 JSON 畸形 → 200(重投也不会变好)", async () => {
-    const { deps } = setup();
+  // 200 是对的(重投也解析不出来),但必须留审计 —— 否则只会看到
+  // 「Paddle 说投递成功而我们没入账」却无从查起。
+  it("验签通过但 JSON 畸形 → 200 且留审计(唯一排障线索)", async () => {
+    const { db, deps } = setup();
     const body = "{not json";
     const res = await post(deps, body, await signed(body));
+    expect(res.status).toBe(200);
+    const audits = await db.listAudits();
+    const a = audits.find((x) => x.action === "paddle.unprocessable.malformed_json");
+    expect(a, "必须有审计").toBeDefined();
+    expect(a?.detail_json).toContain("bytes");
+  });
+
+  // 审计不可用时不能把请求变成 500 —— 那会触发对一个永远解析不了的 body 的
+  // 无限重投。
+  it("JSON 畸形且审计写入也失败时仍返回 200", async () => {
+    const { db, deps } = setup();
+    const noAudit: ConnectDb = {
+      ...db,
+      async insertAudit() {
+        throw new Error("audit table unavailable");
+      },
+    };
+    const body = "{not json";
+    const res = await post({ ...deps, db: noAudit }, body, await signed(body));
     expect(res.status).toBe(200);
   });
 

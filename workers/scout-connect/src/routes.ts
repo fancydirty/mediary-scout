@@ -591,7 +591,24 @@ async function paddleWebhook(request: Request, deps: RouteDeps): Promise<Respons
   try {
     event = JSON.parse(rawBody) as typeof event;
   } catch {
-    // 验签通过却不是合法 JSON —— 理论上不该发生。200 避免无意义重投。
+    // 验签通过却不是合法 JSON —— 理论上不该发生(说明上游异常或传输损坏)。
+    // 200 避免无意义重投,但**必须留审计**:这是唯一的排障线索,否则只会看到
+    // 「Paddle 说投递成功而我们没入账」却无从查起。
+    // best-effort:审计写失败也不能让这个请求变 500(那会触发无意义重投)。
+    try {
+      await deps.db.insertAudit({
+        id: deps.newAuditId(),
+        at: deps.now(),
+        actor: "paddle",
+        action: "paddle.unprocessable.malformed_json",
+        invite_id: null,
+        endpoint_id: null,
+        // 只留长度与开头片段:body 可能含敏感字段,且不该把整个畸形串塞进审计。
+        detail_json: JSON.stringify({ bytes: rawBody.length, head: rawBody.slice(0, 120) }),
+      });
+    } catch {
+      // 审计不可用时静默继续:比让 Paddle 无限重投一个永远解析不了的 body 好。
+    }
     return json({ ok: true, ignored: "malformed json" }, 200, { noStore: true });
   }
   const eventType = typeof event.event_type === "string" ? event.event_type : "";
@@ -600,6 +617,14 @@ async function paddleWebhook(request: Request, deps: RouteDeps): Promise<Respons
   // 退款/调整:释放资源。与到期路径一致 —— 退款是明确的「不要了」,若只删 DNS
   // 而留着隧道,就会出现「退了款还占着容量配额」(与售罄闸门直接冲突)。
   if (eventType === "adjustment.created") {
+    // 审计必须能对应到**具体交易**:只记 event_id 的话,人工核查退款时无从
+    // 关联到是哪一笔付款、退的是全额还是部分。adjustment 的 action 字段
+    // (refund/chargeback/credit...)也决定后续处置是否相同。
+    const adj =
+      typeof event.data === "object" && event.data !== null
+        ? (event.data as { id?: unknown; transaction_id?: unknown; action?: unknown; customer_id?: unknown })
+        : {};
+    const pick = (v: unknown): string | null => (typeof v === "string" ? v : null);
     await deps.db.insertAudit({
       id: deps.newAuditId(),
       at: deps.now(),
@@ -607,7 +632,13 @@ async function paddleWebhook(request: Request, deps: RouteDeps): Promise<Respons
       action: "paddle.adjustment",
       invite_id: null,
       endpoint_id: null,
-      detail_json: JSON.stringify({ event_id: eventId }),
+      detail_json: JSON.stringify({
+        event_id: eventId,
+        adjustment_id: pick(adj.id),
+        transaction_id: pick(adj.transaction_id),
+        adjustment_action: pick(adj.action),
+        customer_id: pick(adj.customer_id),
+      }),
     });
     // 实际停用在 PR-C3 的到期状态机里统一实现(它已有删 DNS + 删隧道的完整
     // 补偿逻辑)。这里先记审计:漏记等于查不到为什么某人被停用。
