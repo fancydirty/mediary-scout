@@ -662,8 +662,11 @@ async function consoleRoute(request: Request, deps: RouteDeps): Promise<Response
   //   1. 还没开通(已开通用户不受配额影响)
   //   2. 有有效时长(无时长的用户在 console-page 走早返回分支,压根用不到这个值)
   // 否则未付费/已过期用户每次进控制台都白跑一次全表 COUNT。
+  // now 只取一次:同一请求里若取两次,在到期边界附近会出现「判断条件用的时刻」
+  // 与「页面渲染的时刻」不一致(状态显示与实际门禁矛盾)。
+  const now = deps.now();
   const eligibleToProvision =
-    endpoint === null && isEntitlementActive(latestExpiry(entitlements), deps.now());
+    endpoint === null && isEntitlementActive(latestExpiry(entitlements), now);
   const atCapacity = eligibleToProvision
     ? (await deps.db.countLiveEndpoints()) >= CAPACITY_LIMIT
     : false;
@@ -675,7 +678,7 @@ async function consoleRoute(request: Request, deps: RouteDeps): Promise<Response
       endpoint,
       baseUrl: url.origin,
       rootDomain: deps.rootDomain.trim().toLowerCase(),
-      now: deps.now(),
+      now,
       atCapacity,
     }),
     { noStore: true }, // 用户专属页面,不可缓存(Copilot round 3)

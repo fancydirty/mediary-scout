@@ -103,7 +103,7 @@ ${BRAND_BAR}
 ${renderBody({ ...input, atCapacity: input.atCapacity === true }, active)}
 <div class="footer"><a href="/pricing">定价</a> · <a href="/terms">服务条款</a> · <a href="/privacy">隐私政策</a> · <a href="/refund">退款政策</a> · <a href="/contact">联系我们</a></div>
 </main>
-${renderScript(input, active)}
+${renderScript({ ...input, atCapacity: input.atCapacity === true }, active)}
 </body>
 </html>`;
 }
@@ -126,7 +126,7 @@ function renderBody(
     // 满容量:**不渲染表单**。让用户输完名字、点开通、再吃 503 是最差的体验
     // (他会以为自己名字填错了)。直接说清是我方容量、以及他能做什么。
     // 已付费才会走到这里,所以必须给退款出口 —— 14 天内无条件。
-    return `<p class="sub">你已开通，但目前暂时无法分配新地址。</p>
+    return `<p class="sub">你的时长已生效，但目前暂时无法分配新地址。</p>
 <div class="panel">
 <p class="step" style="color:var(--err)">暂时售罄</p>
 <p class="lead">隧道配额已满</p>
@@ -179,10 +179,13 @@ function renderBody(
 /** active 时才需要客户端脚本:有 endpoint → 取码/复制;无 endpoint → slug
  *  选择表单(实时查重 + 开通)。 */
 function renderScript(
-  input: { endpoint: EndpointRow | null; baseUrl: string },
+  input: { endpoint: EndpointRow | null; baseUrl: string; atCapacity?: boolean },
   active: boolean,
 ): string {
   if (!active) return "";
+  // 满容量时 renderBody 不渲染 #slug/#provision,注入表单脚本会对 null 调
+  // addEventListener 直接抛错、整段脚本崩掉。条件必须与 renderBody 的分支一致。
+  if (input.endpoint === null && input.atCapacity === true) return "";
   if (input.endpoint === null) return SLUG_FORM_SCRIPT;
   return `<script type="module">
 const $=(id)=>document.getElementById(id);

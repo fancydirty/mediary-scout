@@ -336,6 +336,13 @@ describe("控制台在满容量时的呈现", () => {
     expect(html).toContain("你的时长不会流失");
     expect(html).toContain('href="/refund"'); // 已付费,必须给退款出口
     expect(html, "不该渲染 slug 输入框").not.toContain('id="slug"');
+    // DOM 里没有 #slug 时若仍注入表单脚本,浏览器端会对 null 调
+    // addEventListener 直接抛错、整段脚本崩掉(Copilot round-2 的 details 指出)。
+    expect(html, "不该注入 slug 表单脚本").not.toContain('getElementById("slug")');
+    expect(html, "不该注入 slug 表单脚本").not.toContain("/api/slug/check");
+    // 文案:此时用户还没拿到地址,说「你已开通」会被误解
+    expect(html).toContain("你的时长已生效");
+    expect(html).not.toContain("你已开通，但目前");
   });
 
   it("未满容量正常渲染 slug 表单", async () => {
