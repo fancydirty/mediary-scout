@@ -12,6 +12,9 @@ import { adminPage } from "./html/admin-page.js";
 import { invitePage, type InvitePageState } from "./html/invite-page.js";
 import { betaPage, normalizeTurnstileSitekey } from "./html/beta-page.js";
 import { CAPACITY_LIMIT, isAtCapacityError } from "./capacity.js";
+import { grantEntitlement } from "./grant.js";
+import { parseTransactionCompleted, SANDBOX_PRICE_MONTHS, type PriceMonthsMap } from "./paddle-event.js";
+import { verifyPaddleSignature } from "./paddle-signature.js";
 import { buyPage } from "./html/buy-page.js";
 import { compliancePage, COMPLIANCE_PAGES, type CompliancePageKey } from "./html/compliance-page.js";
 import { RAW_ASSETS } from "./html/assets.gen.js";
@@ -48,6 +51,12 @@ export interface RouteDeps {
   // 「结账未开放」(见 buyPage),绝不白页。
   paddleClientToken?: string | undefined;
   paddleEnvironment?: string | undefined;
+  /** notification destination 的 endpoint secret(pdl_ntfset_ 前缀)。
+   *  **未配置时 webhook 一律 503**(fail closed):没有密钥就无法验签,
+   *  而无法验签的 webhook 绝不能当真 —— 那等于任何人都能凭空发时长。 */
+  paddleWebhookSecret?: string | undefined;
+  /** price_id → 月数白名单。默认 sandbox;live 上线时换成 live 的 id。 */
+  paddlePriceMonths?: PriceMonthsMap | undefined;
   turnstileSecret?: string | undefined;
   // P3: 魔法链接登录
   newAccountId: () => string;
@@ -206,6 +215,9 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
       return htmlPage(betaPage(turnstileSitekeyIfConfigured(deps)));
     }
     return htmlPage(homePage());
+  }
+  if (method === "POST" && path === "/api/paddle/webhook") {
+    return paddleWebhook(request, deps);
   }
   // /buy —— Paddle 的 default payment link 落地页(拼 ?_ptxn= 打开结账窗)。
   if (method === "GET" && path === "/buy") {
@@ -514,6 +526,129 @@ async function selfServeProvision(request: Request, deps: RouteDeps): Promise<Re
   }
 }
 
+/**
+ * `POST /api/paddle/webhook` —— Paddle 付款入账。
+ *
+ * 设计要点(每条都对应一种会真丢钱或真送钱的失败):
+ *
+ * 1. **fail closed**:未配置 secret → 503。绝不 200 —— 200 会让 Paddle 认为
+ *    投递成功并停止重试,而我们压根没入账,用户付了钱拿不到时长。503 会让它重投。
+ * 2. **验签用原始 body 文本**,不经 JSON.parse 再 stringify(那会改变字节)。
+ * 3. **幂等靠 DB**(entitlements 的 paddle_transaction_id 偏唯一索引),不靠
+ *    内存去重 —— worker 是无状态多实例的。
+ * 4. **解析失败一律留审计并返回 200**:这类事件重投一万次结果也一样(未知
+ *    price、月数不一致、拿不到邮箱),让 Paddle 无限重试只会淹掉日志。但
+ *    `no_email` 意味着**有人付了钱而系统不知道给谁**,必须人工介入,所以审计
+ *    里记全 transaction id。
+ * 5. **入账失败(DB 故障)返回 503**:那是可重试的,必须让 Paddle 重投。
+ */
+async function paddleWebhook(request: Request, deps: RouteDeps): Promise<Response> {
+  const secret = deps.paddleWebhookSecret?.trim() ?? "";
+  if (secret === "") {
+    // 没密钥就无法验签。返回 503 而非 200:让 Paddle 重投,等我们配好密钥后
+    // 那些付款仍能入账。返回 200 会让它放弃重试 → 真丢钱。
+    return json({ error: "webhook not configured" }, 503, { noStore: true });
+  }
+
+  // 必须先拿原始文本:任何解析/重新序列化都会让签名失配。
+  const rawBody = await request.text();
+  const header = request.headers.get("paddle-signature") ?? "";
+  const ok = await verifyPaddleSignature({
+    rawBody,
+    header,
+    secret,
+    nowMs: Date.parse(deps.now()),
+  });
+  if (!ok) {
+    // 401 而非 400:这是身份问题。不回显原因(不给攻击者调试信息)。
+    return json({ error: "invalid signature" }, 401, { noStore: true });
+  }
+
+  let event: { event_type?: unknown; event_id?: unknown; data?: unknown };
+  try {
+    event = JSON.parse(rawBody) as typeof event;
+  } catch {
+    // 验签通过却不是合法 JSON —— 理论上不该发生。200 避免无意义重投。
+    return json({ ok: true, ignored: "malformed json" }, 200, { noStore: true });
+  }
+  const eventType = typeof event.event_type === "string" ? event.event_type : "";
+  const eventId = typeof event.event_id === "string" ? event.event_id : "";
+
+  // 退款/调整:释放资源。与到期路径一致 —— 退款是明确的「不要了」,若只删 DNS
+  // 而留着隧道,就会出现「退了款还占着容量配额」(与售罄闸门直接冲突)。
+  if (eventType === "adjustment.created") {
+    await deps.db.insertAudit({
+      id: deps.newAuditId(),
+      at: deps.now(),
+      actor: "paddle",
+      action: "paddle.adjustment",
+      invite_id: null,
+      endpoint_id: null,
+      detail_json: JSON.stringify({ event_id: eventId }),
+    });
+    // 实际停用在 PR-C3 的到期状态机里统一实现(它已有删 DNS + 删隧道的完整
+    // 补偿逻辑)。这里先记审计:漏记等于查不到为什么某人被停用。
+    return json({ ok: true, recorded: "adjustment" }, 200, { noStore: true });
+  }
+
+  if (eventType !== "transaction.completed") {
+    // 我们只订了两种事件;其它一律礼貌 200(可能是后台改了订阅项)。
+    return json({ ok: true, ignored: eventType }, 200, { noStore: true });
+  }
+
+  const parsed = parseTransactionCompleted(
+    event.data,
+    deps.paddlePriceMonths ?? SANDBOX_PRICE_MONTHS,
+  );
+  if (!parsed.ok) {
+    // 这类失败重投也不会变好(未知 price / 月数不一致 / 无邮箱),故 200。
+    // 但必须留审计 —— 尤其 no_email:有人付了钱而系统不知道该给谁,要人工处理。
+    await deps.db.insertAudit({
+      id: deps.newAuditId(),
+      at: deps.now(),
+      actor: "paddle",
+      action: `paddle.unprocessable.${parsed.reason}`,
+      invite_id: null,
+      endpoint_id: null,
+      detail_json: JSON.stringify({ event_id: eventId, detail: parsed.detail }),
+    });
+    return json({ ok: true, unprocessable: parsed.reason }, 200, { noStore: true });
+  }
+
+  try {
+    const r = await grantEntitlement(
+      {
+        email: parsed.grant.email,
+        months: parsed.grant.months,
+        source: parsed.grant.source,
+        paddleTransactionId: parsed.grant.transactionId,
+      },
+      deps,
+    );
+    await deps.db.insertAudit({
+      id: deps.newAuditId(),
+      at: deps.now(),
+      actor: "paddle",
+      action: r.applied ? "paddle.granted" : "paddle.replay",
+      invite_id: null,
+      endpoint_id: null,
+      detail_json: JSON.stringify({
+        event_id: eventId,
+        txn: parsed.grant.transactionId,
+        months: parsed.grant.months,
+        expires_at: r.expiresAt,
+      }),
+    });
+    return json({ ok: true, applied: r.applied, expires_at: r.expiresAt }, 200, {
+      noStore: true,
+    });
+  } catch {
+    // DB 故障是**可重试**的:必须 503 让 Paddle 重投,否则这笔付款永久丢失。
+    // 不回显内部错误文本。
+    return json({ error: "grant failed" }, 503, { noStore: true });
+  }
+}
+
 /** 登录用户为自己的 active endpoint 签发一个短期取件码。code 是 claim purpose
  *  的 signed-token,subject=endpointId,15 分钟过期,窗口内可重复用(脚本重试/
  *  换机器)。D1 零写入——过期由签名自带。 */
@@ -702,25 +837,14 @@ async function adminGrant(request: Request, deps: RouteDeps): Promise<Response> 
     ? body.source
     : "manual";
 
-  // account upsert
-  const account = await upsertAccount(email, deps);
-  // 从当前最新到期时刻叠加
-  const ents = await deps.db.listEntitlements(account.id);
-  let current: string | null = null;
-  for (const e of ents) {
-    if (current === null || Date.parse(e.expires_at) > Date.parse(current)) current = e.expires_at;
-  }
-  const expiresAt = computeExpiry({ currentExpiry: current, months, now: deps.now() });
-  await deps.db.insertEntitlement({
-    id: deps.newEntitlementId(),
-    account_id: account.id,
-    expires_at: expiresAt,
-    source,
-    paddle_transaction_id: null,
-    months,
-    created_at: deps.now(),
-  });
-  return json({ ok: true, account_id: account.id, expires_at: expiresAt });
+  // 与 Paddle webhook 共用同一套发放逻辑(grant.ts):续费叠加语义、账号 upsert
+  // 的竞态处理、幂等判定必须完全一致。此前这里手写了一遍「找最新到期」的 for
+  // 循环,而 entitlement.ts 早就有 latestExpiry() —— 两份实现迟早漂移。
+  const r = await grantEntitlement(
+    { email, months, source, paddleTransactionId: null },
+    deps,
+  );
+  return json({ ok: true, account_id: r.accountId, expires_at: r.expiresAt });
 }
 
 async function createInvite(request: Request, url: URL, deps: RouteDeps): Promise<Response> {

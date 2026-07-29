@@ -25,6 +25,7 @@ export default {
       turnstileSitekey: env.TURNSTILE_SITEKEY,
       paddleClientToken: env.PADDLE_CLIENT_TOKEN,
       paddleEnvironment: env.PADDLE_ENVIRONMENT,
+      paddleWebhookSecret: env.PADDLE_WEBHOOK_SECRET,
       turnstileSecret: env.TURNSTILE_SECRET,
       newAccountId: () => newId("act"),
       newEntitlementId: () => newId("ent"),
