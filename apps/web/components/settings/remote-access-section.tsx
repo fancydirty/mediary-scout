@@ -7,7 +7,7 @@ import {
   resolveRemoteAccessState,
   accountPasswordHref,
   BETA_SITE_URL,
-  CONSOLE_URL,
+  consoleUrl,
 } from "../../lib/remote-access";
 import { PasswordChangeForm } from "../password-change-form";
 
@@ -169,7 +169,7 @@ export async function RemoteAccessSection({
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
         <a
           className="primary-button"
-          href={CONSOLE_URL}
+          href={consoleUrl()}
           target="_blank"
           rel="noopener noreferrer"
           style={{ textDecoration: "none" }}

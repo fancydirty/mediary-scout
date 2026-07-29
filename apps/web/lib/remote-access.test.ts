@@ -6,7 +6,7 @@ import {
   scoutConnectBaseUrl,
   accountPasswordHref,
   BETA_SITE_URL,
-  CONSOLE_URL,
+  consoleUrl,
   type RemoteAccessState,
 } from "./remote-access";
 
@@ -303,8 +303,24 @@ describe("instanceConnectHostname（connect.sh 写进 .env 的本地域名来源
   });
 });
 
-describe("CONSOLE_URL", () => {
+describe("consoleUrl", () => {
   it("指向控制台登录页（魔法链接入口）", () => {
-    expect(CONSOLE_URL).toBe("https://mediaryconnect.app/login");
+    expect(consoleUrl()).toBe("https://mediaryconnect.app/login");
+  });
+
+  // 不能写死生产域名:本模块的既定设计是 worker base 只有一个来源
+  // (scoutConnectBaseUrl)。SCOUT_CONNECT_URL 指向预发/自建 worker 时,若控制台
+  // 链接仍钉在生产,用户会被从预发实例送去生产控制台——那里没有他这台机器的
+  // 记录,看起来就是「开通了但控制台查不到」。
+  it("跟随 SCOUT_CONNECT_URL（预发/自建 worker 不会被送去生产控制台）", () => {
+    process.env.SCOUT_CONNECT_URL = "https://connect.test";
+    expect(consoleUrl()).toBe("https://connect.test/login");
+  });
+
+  it("SCOUT_CONNECT_URL 误配（漏协议/只有斜杠）时回落生产,不产出相对路径", () => {
+    process.env.SCOUT_CONNECT_URL = "mediaryconnect.app";
+    expect(consoleUrl()).toBe("https://mediaryconnect.app/login");
+    process.env.SCOUT_CONNECT_URL = "///";
+    expect(consoleUrl()).toBe("https://mediaryconnect.app/login");
   });
 });

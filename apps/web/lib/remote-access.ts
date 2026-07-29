@@ -154,8 +154,19 @@ export function instanceTunnelToken(): string | undefined {
   return process.env.TUNNEL_TOKEN?.trim() || undefined;
 }
 
-/** 用户控制台(登录页即入口,魔法链接无密码)。 */
-export const CONSOLE_URL = "https://mediaryconnect.app/login";
+/**
+ * 用户控制台入口（登录页即入口，魔法链接无密码）。
+ *
+ * 从 `scoutConnectBaseUrl()` 派生而非再写死一个生产域名：本模块的既定设计就是
+ * 「worker base 只有一个来源」（见上），`SCOUT_CONNECT_URL` 指向预发/自建 worker
+ * 时若控制台链接仍钉在生产，用户会被从预发实例送去生产控制台——那里没有他这台
+ * 机器的记录，看起来就是「开通了但控制台查不到」。
+ *
+ * 必须是函数而非常量：顶层求值在 `cacheComponents` 下会把构建期 env 烤死进产物。
+ */
+export function consoleUrl(): string {
+  return `${scoutConnectBaseUrl()}/login`;
+}
 
 /**
  * 实例的公网域名——connect.sh 接入时写进 .env 的本地来源
