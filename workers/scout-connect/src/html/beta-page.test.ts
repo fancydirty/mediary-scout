@@ -25,10 +25,13 @@ describe("betaPage", () => {
     expect(page).toContain("在外网也能打开家里实例的浏览器界面");
     expect(page).toContain("经 Cloudflare 加密隧道，不开端口、不要公网 IP、不需要域名");
     expect(page).toContain("内容与凭据始终只在你自己的机器上");
-    expect(page).toContain("内测期免费");
-    expect(page).toContain("创始批 100 席");
+    // 「内测期免费」已删:不做免费试用,留着即虚假宣传(改用 14 天无理由退款)。
+    expect(page).not.toContain("内测期免费");
+    expect(page).toContain("14 天无理由退款");
+    expect(page).toContain("预付时长，不自动续费");
     // 定价与母 spec 决策 #3/#4 对齐(季 ¥45 / 年 ¥108 / 创始 ¥88,无月付)。
     expect(page).toContain("季 ¥45 / 年 ¥108");
+    expect(page).toContain("两年 ¥188");
     expect(page).toContain("创始价 ¥88/年");
     expect(page).not.toContain("¥19/月");
     expect(page).not.toContain("¥199");

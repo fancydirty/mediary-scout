@@ -10,9 +10,9 @@ Last updated: 2026-07-28
 
 ## 14 天无理由退款
 
-Within **14 days** of payment you may request a full refund for any reason — the setup didn't work, it's not a fit, or you simply changed your mind.
+Within **14 days** of payment you may request a full refund for any reason, **whether or not you have used the service**. No conditions, no exceptions, no deductions — the setup didn't work, it's not a fit, or you simply changed your mind.
 
-自付款之日起 **14 天内**,你可以无理由申请全额退款 —— 无论出于什么原因:配置没跑通、觉得不合适、或者单纯改了主意。
+自付款之日起 **14 天内**,你可以无理由申请全额退款,**无论是否已经使用过本服务**。没有任何条件、例外或扣费 —— 配置没跑通、觉得不合适、或者单纯改了主意,都可以。
 
 This meets and supplements the [Paddle Buyer Terms](https://www.paddle.com/legal/checkout-buyer-terms): Paddle is the Merchant of Record for your payment, and nothing here limits the rights its buyer terms grant you.
 

@@ -23,6 +23,8 @@ export default {
       newAuditId: () => newId("aud"),
       newInviteCode,
       turnstileSitekey: env.TURNSTILE_SITEKEY,
+      paddleClientToken: env.PADDLE_CLIENT_TOKEN,
+      paddleEnvironment: env.PADDLE_ENVIRONMENT,
       turnstileSecret: env.TURNSTILE_SECRET,
       newAccountId: () => newId("act"),
       newEntitlementId: () => newId("ent"),

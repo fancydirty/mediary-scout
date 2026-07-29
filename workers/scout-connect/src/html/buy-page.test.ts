@@ -1,0 +1,110 @@
+import { describe, expect, it } from "vitest";
+import { buyPage } from "./buy-page.js";
+
+const CONFIGURED = { paddleClientToken: "live_abc123", paddleEnvironment: "production" };
+
+describe("buyPage (Paddle default payment link 落地页)", () => {
+  it("配好 token 时加载 Paddle.js 并按 _ptxn 打开结账", () => {
+    const html = buyPage(CONFIGURED);
+    expect(html).toContain("https://cdn.paddle.com/paddle/v2/paddle.js");
+    expect(html).toContain("_ptxn");
+    expect(html).toContain("Paddle.Checkout.open");
+    expect(html).toContain('"live_abc123"');
+  });
+
+  // sandbox 必须显式 set,否则 Paddle.js 默认打生产,sandbox 交易一律报错。
+  it("sandbox 环境显式设置,其它值一律按 production", () => {
+    expect(buyPage({ ...CONFIGURED, paddleEnvironment: "sandbox" })).toContain(
+      'Paddle.Environment.set("sandbox")',
+    );
+    expect(buyPage(CONFIGURED)).toContain('Paddle.Environment.set("production")');
+    // 垃圾值不能"半配置"成 sandbox——回落 production 更安全(不会误导测试单)
+    expect(buyPage({ ...CONFIGURED, paddleEnvironment: "SaNdBoX-typo" })).toContain(
+      'Paddle.Environment.set("production")',
+    );
+  });
+
+  // 未配置时白页最糟:用户与 Paddle 审核员都会以为坏了。
+  it("未配置 token 时不加载 Paddle.js,并明确说明结账未开放", () => {
+    for (const input of [{}, { paddleClientToken: "" }, { paddleClientToken: "   " }]) {
+      const html = buyPage(input);
+      expect(html, "不应加载 paddle.js").not.toContain("cdn.paddle.com");
+      expect(html, "应明确说明").toContain("结账功能尚未开放");
+      expect(html).not.toContain("Paddle.Checkout.open");
+    }
+  });
+
+  // 早先这条断言写成 toContain(JSON.stringify(token)),而 JSON.stringify
+  // **不转义 `/`** —— 断言恰好通过,却完全没测到脚本截断。改为直接检查产物:
+  // 页面里不得出现多余的 </script>,注入的标签不得进入 HTML。
+  it("token 里的 </script> 被转义,不能提前闭合脚本或注入标签", () => {
+    const evil = 'tok</script><img src=x onerror=alert(1)>';
+    const html = buyPage({ paddleClientToken: evil });
+    // 正常页面只有固定数量的 </script>;注入成功会多出一个
+    const baseline = (buyPage({ paddleClientToken: "clean" }).match(/<\/script>/g) ?? []).length;
+    const withEvil = (html.match(/<\/script>/g) ?? []).length;
+    expect(withEvil, "不得多出 </script>").toBe(baseline);
+    expect(html, "注入的标签不得进入 HTML").not.toContain("<img src=x");
+    // 但转义后的字面量仍须保留 token 原值(\u003c 在 JS 字符串里等价于 <)
+    expect(html).toContain("\\u003c/script>");
+  });
+
+  it("结账中转页不该被收录,且给出定价/退款/联系的出口", () => {
+    const html = buyPage(CONFIGURED);
+    expect(html).toContain('name="robots" content="noindex"');
+    expect(html).toContain('href="/pricing"');
+    expect(html).toContain('href="/refund"');
+    expect(html).toContain('href="/contact"');
+  });
+
+  // Paddle domain review:实体名与 MoR 关系要在结账路径上可见。
+  it("写明 DF Digital 与 Paddle 作为记录商户", () => {
+    const html = buyPage(CONFIGURED);
+    expect(html).toContain("DF Digital");
+    expect(html).toContain("Merchant of Record");
+  });
+
+  it("无 JS 时有 noscript 提示", () => {
+    expect(buyPage(CONFIGURED)).toContain("<noscript>");
+  });
+});
+
+describe("/buy 的 CSP 必须放行 Paddle,其余页面必须维持最严", () => {
+  it("/buy 放行 cdn.paddle.com 与 *.paddle.com(否则 100% 收不到钱)", async () => {
+    const { handleRequest } = await import("../routes.js");
+    const { createMemoryConnectDb } = await import("../db.js");
+    const res = await handleRequest(new Request("https://mediaryconnect.app/buy"), {
+      db: createMemoryConnectDb(),
+      cf: {} as never,
+      adminToken: "t",
+      rootDomain: "mediaryconnect.app",
+      now: () => "2026-07-29T00:00:00.000Z",
+    } as never);
+    const csp = res.headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("https://cdn.paddle.com");
+    // 结账 UI 是 iframe;图标若被 default-src 'none' 挡掉,窗口看起来像坏了
+    expect(csp).toMatch(/frame-src[^;]*paddle\.com/);
+    expect(csp).toMatch(/img-src[^;]*paddle\.com/);
+    expect(csp).toMatch(/connect-src[^;]*paddle\.com/);
+    // 仍不放宽 frame-ancestors(那是"谁能嵌入本页")
+    expect(csp).toContain("frame-ancestors 'none'");
+  });
+
+  it("非 /buy 页面不得出现 paddle 来源(不为一个页面放宽全站)", async () => {
+    const { handleRequest } = await import("../routes.js");
+    const { createMemoryConnectDb } = await import("../db.js");
+    const deps = {
+      db: createMemoryConnectDb(),
+      cf: {} as never,
+      adminToken: "t",
+      rootDomain: "mediaryconnect.app",
+      now: () => "2026-07-29T00:00:00.000Z",
+    } as never;
+    for (const path of ["/terms", "/pricing", "/refund", "/"]) {
+      const res = await handleRequest(new Request(`https://mediaryconnect.app${path}`), deps);
+      const csp = res.headers.get("content-security-policy") ?? "";
+      expect(csp, `${path} 不应放行 paddle`).not.toContain("paddle.com");
+      expect(csp, `${path} 不应有 img-src 放宽`).not.toContain("img-src");
+    }
+  });
+});

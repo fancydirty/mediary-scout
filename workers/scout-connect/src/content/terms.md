@@ -50,9 +50,9 @@ Mediary Connect 为自托管的 Mediary Scout 实例提供远程访问通道:一
 
 ## 服务水平
 
-The service runs on Cloudflare's global network. We make reasonable efforts to keep it available but **offer no SLA**; the beta and personal subscription are positioned as a hobbyist service. Unavailability caused by Cloudflare, your home network, or your instance itself is not a breach. If our fault causes 72+ consecutive hours of unavailability, you may request a refund per the Refund Policy.
+The service runs on Cloudflare's global network. We make reasonable efforts to keep it available but **offer no SLA**; this is positioned as a hobbyist-grade personal service. Unavailability caused by Cloudflare, your home network, or your instance itself is not a breach. If our fault causes 72+ consecutive hours of unavailability, you may request a refund per the Refund Policy.
 
-本服务基于 Cloudflare 的全球网络。我们尽合理努力保持可用,但**不承诺 SLA**;内测与个人订阅定位为爱好者服务。因 Cloudflare、你的家庭网络或你实例本身导致的不可用,不构成违约。因我方原因连续不可用超过 72 小时的,你可按退款政策申请退款。
+本服务基于 Cloudflare 的全球网络。我们尽合理努力保持可用,但**不承诺 SLA**;本服务定位为个人爱好者级服务。因 Cloudflare、你的家庭网络或你实例本身导致的不可用,不构成违约。因我方原因连续不可用超过 72 小时的,你可按退款政策申请退款。
 
 ## Termination
 
@@ -73,6 +73,14 @@ The service runs on Cloudflare's global network. We make reasonable efforts to k
 Term updates are dated on this page; material changes are emailed. Continued use is acceptance.
 
 条款更新会在本页标注日期;重大变更会邮件通知。继续使用即视为接受。
+
+## Operating entity
+
+## 运营主体
+
+This service is operated by **DF Digital**, a sole proprietorship. Payment is handled by Paddle as Merchant of Record: Paddle is the seller of record for your transaction, and issues all invoices and receipts.
+
+本服务由 **DF Digital**(个体工商户)运营。付款由 Paddle 作为记录商户(Merchant of Record)处理:Paddle 是你这笔交易的销售方,并负责出具所有发票与收据。
 
 ## Governing law
 

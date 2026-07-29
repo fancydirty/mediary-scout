@@ -11,6 +11,7 @@ import { homePage } from "./html/home-page.js";
 import { adminPage } from "./html/admin-page.js";
 import { invitePage, type InvitePageState } from "./html/invite-page.js";
 import { betaPage, normalizeTurnstileSitekey } from "./html/beta-page.js";
+import { buyPage } from "./html/buy-page.js";
 import { compliancePage, COMPLIANCE_PAGES, type CompliancePageKey } from "./html/compliance-page.js";
 import { RAW_ASSETS } from "./html/assets.gen.js";
 import { consolePage } from "./html/console-page.js";
@@ -42,6 +43,10 @@ export interface RouteDeps {
   // turnstileSitekeyIfConfigured() / turnstileGateEnabled() below;
   // either absent → no widget rendered, POST /waitlist skips verification.
   turnstileSitekey?: string | undefined;
+  // Paddle 结账所需的公开 client token 与环境。两者都缺 → /buy 显示
+  // 「结账未开放」(见 buyPage),绝不白页。
+  paddleClientToken?: string | undefined;
+  paddleEnvironment?: string | undefined;
   turnstileSecret?: string | undefined;
   // P3: 魔法链接登录
   newAccountId: () => string;
@@ -201,6 +206,17 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
     }
     return htmlPage(homePage());
   }
+  // /buy —— Paddle 的 default payment link 落地页(拼 ?_ptxn= 打开结账窗)。
+  if (method === "GET" && path === "/buy") {
+    return htmlPage(
+      buyPage({
+        paddleClientToken: deps.paddleClientToken,
+        paddleEnvironment: deps.paddleEnvironment,
+      }),
+      // 唯一放行 Paddle 第三方来源的页面(见 http.ts 的 PADDLE_CSP_SOURCES)。
+      { paddle: true },
+    );
+  }
   // 合规五页（条款/隐私/退款/定价/联系）——Paddle 域名审核硬性要求。
   // 两个 host 都放行：审核看的是 mediaryconnect.app，但 beta 页脚也要能链到。
   if (method === "GET" && path.length > 1) {
@@ -208,7 +224,11 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
     // Object.hasOwn 而非 `in`：后者沿原型链找到 toString/valueOf，
     // 随后 compliancePage() 因内容缺失抛错变 500（round 1 评审抓到）。
     if (Object.hasOwn(COMPLIANCE_PAGES, key)) {
-      return htmlPage(compliancePage(key as CompliancePageKey));
+      // 中文默认(受众是中文用户);?lang=en 给英文页。任何其它值(含空串、
+      // 大小写变体、垃圾值)都回落中文而非报错——法律页面必须永远打得开,
+      // 一个拼错的 query 不该变成 4xx。
+      const lang = url.searchParams.get("lang")?.trim().toLowerCase() === "en" ? "en" : "zh";
+      return htmlPage(compliancePage(key as CompliancePageKey, lang));
     }
   }
   if (method === "GET" && path === "/healthz") {

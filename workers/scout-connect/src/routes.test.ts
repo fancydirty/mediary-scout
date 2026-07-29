@@ -2065,3 +2065,56 @@ describe("POST /waitlist Turnstile gate", () => {
     expect(await neither.text()).not.toContain("cf-turnstile");
   });
 });
+
+describe("GET /buy — Paddle default payment link", () => {
+  it("serves the checkout landing page", async () => {
+    const res = await handleRequest(new Request(`${BASE}/buy`), setup().deps);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+    const body = await res.text();
+    expect(body).toContain("结账");
+    expect(body).toContain("_ptxn");
+  });
+
+  it("未配置 Paddle token 时仍 200 且明确说明(不是白页/不是 500)", async () => {
+    const res = await handleRequest(new Request(`${BASE}/buy?_ptxn=txn_abc`), setup().deps);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("结账功能尚未开放");
+  });
+
+  it("配置后把 client token 与环境透传给页面", async () => {
+    const res = await handleRequest(new Request(`${BASE}/buy`), {
+      ...setup().deps,
+      paddleClientToken: "test_tok_xyz",
+      paddleEnvironment: "sandbox",
+    });
+    const body = await res.text();
+    expect(body).toContain("test_tok_xyz");
+    expect(body).toContain('Paddle.Environment.set("sandbox")');
+  });
+});
+
+describe("合规页语言切换", () => {
+  it("默认中文,?lang=en 给英文", async () => {
+    const zh = await handleRequest(new Request(`${BASE}/refund`), setup().deps);
+    expect(await zh.text()).toContain('<html lang="zh-Hans">');
+    const en = await handleRequest(new Request(`${BASE}/refund?lang=en`), setup().deps);
+    expect(await en.text()).toContain('<html lang="en">');
+  });
+
+  // 法律页面必须永远打得开:拼错的 query 不该变成 4xx/5xx。
+  it("非法 lang 值回落中文而不报错", async () => {
+    // 注意 "lang=EN%20" 不在此列:大小写/空白不敏感是**有意**行为,
+    // 由下一个用例覆盖。这里只放真正无法解读的值。
+    for (const q of ["lang=", "lang=fr", "lang=english", "lang[]=en", "lang=zh"]) {
+      const res = await handleRequest(new Request(`${BASE}/terms?${q}`), setup().deps);
+      expect(res.status, q).toBe(200);
+      expect(await res.text(), q).toContain('<html lang="zh-Hans">');
+    }
+  });
+
+  it("大小写与空白不敏感(?lang=EN 也给英文)", async () => {
+    const res = await handleRequest(new Request(`${BASE}/terms?lang=%20EN%20`), setup().deps);
+    expect(await res.text()).toContain('<html lang="en">');
+  });
+});

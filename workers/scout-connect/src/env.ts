@@ -18,4 +18,9 @@ export interface Env {
   SESSION_SECRET: string;
   // P3: Resend 发信 API key(魔法链接邮件),wrangler secret。
   RESEND_API_KEY: string;
+  // Paddle 结账。client token 是**公开**值(设计上就要下发浏览器),放
+  // wrangler.jsonc vars;未配置时 /buy 明确显示「结账未开放」而不是白页。
+  // PADDLE_ENVIRONMENT: "sandbox" | "production"(缺省视为 production)。
+  PADDLE_CLIENT_TOKEN?: string;
+  PADDLE_ENVIRONMENT?: string;
 }

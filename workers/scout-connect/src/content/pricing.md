@@ -32,29 +32,17 @@ Prices are in CNY, checked out securely by Paddle (Alipay and international card
 
 价格以人民币计,由 Paddle 安全结账(支持支付宝与国际信用卡)。
 
-## Free tier
-
-## 免费档
-
-- A random 6-character slug (e.g. `k7m2x9.mediaryconnect.app`), fully functional;
-- The slug rotates every 30 days, with an email announcing the new address before rotation;
-- Paying lets you pick a custom slug and keep it permanently.
-
-- 随机 6 位域名前缀(如 `k7m2x9.mediaryconnect.app`),功能完整;
-- 前缀每 30 天轮换一次,轮换前邮件通知新地址;
-- 付费即可自选专属前缀并永久保留。
-
 ## Every tier includes
 
 ## 每一档都包含
 
-- A `<your-name>.mediaryconnect.app` dedicated hostname (custom and permanent on paid tiers)
+- A `<your-name>.mediaryconnect.app` dedicated hostname — you pick it, and it stays yours permanently
 - An encrypted Cloudflare global-edge tunnel — no public IP, no open ports, no domain of your own
 - Log in once in the browser; no repeat login while the cookie is valid (the gate is your instance's own password)
 - Self-service recovery anytime you switch machines or reinstall — no need to contact anyone
-- After expiry the slug is kept permanently: renew anytime and your config restores as-is
+- After expiry the slug is kept permanently: renew anytime and your config restores as-is (never reassigned)
 
-- `<你选的名字>.mediaryconnect.app` 专属域名(付费档自选,永久保留)
+- `<你选的名字>.mediaryconnect.app` 专属域名 —— 由你自己选定,永久保留
 - Cloudflare 全球边缘加密隧道,无需公网 IP / 开端口 / 自备域名
 - 浏览器登录一次,Cookie 有效期内免重复登录(门禁是你实例自己的密码)
 - 换机器 / 重装随时自助恢复,不需要联系任何人
