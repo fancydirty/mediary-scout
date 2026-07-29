@@ -214,7 +214,9 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
         paddleEnvironment: deps.paddleEnvironment,
       }),
       // 唯一放行 Paddle 第三方来源的页面(见 http.ts 的 PADDLE_CSP_SOURCES)。
-      { paddle: true },
+      // noStore:URL 带交易 ID(?_ptxn=),不该被浏览器/中间缓存落盘或复用;
+      // 也避免「未配置 token → 已配置」后旧的「结账未开放」页面被缓存住。
+      { paddle: true, noStore: true },
     );
   }
   // 合规五页（条款/隐私/退款/定价/联系）——Paddle 域名审核硬性要求。

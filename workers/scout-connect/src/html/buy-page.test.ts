@@ -92,6 +92,8 @@ describe("/buy 的 CSP 必须放行 Paddle,其余页面必须维持最严", () =
       rootDomain: "mediaryconnect.app",
       now: () => "2026-07-29T00:00:00.000Z",
     } as never);
+    // URL 带交易 ID,不得被缓存(也避免「结账未开放」旧页面被复用)
+    expect(res.headers.get("cache-control")).toBe("no-store");
     const csp = res.headers.get("content-security-policy") ?? "";
     expect(csp).toContain("https://cdn.paddle.com");
     // 结账 UI 是 iframe;图标若被 default-src 'none' 挡掉,窗口看起来像坏了
