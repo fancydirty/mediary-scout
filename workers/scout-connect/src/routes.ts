@@ -14,6 +14,7 @@ import { betaPage, normalizeTurnstileSitekey } from "./html/beta-page.js";
 import { CAPACITY_LIMIT, isAtCapacityError } from "./capacity.js";
 import { grantEntitlement } from "./grant.js";
 import { parseTransactionCompleted, SANDBOX_PRICE_MONTHS, type PriceMonthsMap } from "./paddle-event.js";
+import { isKnownPriceId, type PaddleApi } from "./paddle-api.js";
 import { verifyPaddleSignature } from "./paddle-signature.js";
 import { buyPage } from "./html/buy-page.js";
 import { compliancePage, COMPLIANCE_PAGES, type CompliancePageKey } from "./html/compliance-page.js";
@@ -57,6 +58,8 @@ export interface RouteDeps {
   paddleWebhookSecret?: string | undefined;
   /** price_id → 月数白名单。默认 sandbox;live 上线时换成 live 的 id。 */
   paddlePriceMonths?: PriceMonthsMap | undefined;
+  /** Paddle 服务端 API(创建交易)。未配置时 /api/checkout 返回 503。 */
+  paddleApi?: PaddleApi | undefined;
   turnstileSecret?: string | undefined;
   // P3: 魔法链接登录
   newAccountId: () => string;
@@ -238,6 +241,9 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
   }
   if (method === "POST" && path === "/api/paddle/webhook") {
     return paddleWebhook(request, deps);
+  }
+  if (method === "POST" && path === "/api/checkout") {
+    return createCheckout(request, deps);
   }
   // /buy —— Paddle 的 default payment link 落地页(拼 ?_ptxn= 打开结账窗)。
   if (method === "GET" && path === "/buy") {
@@ -547,6 +553,59 @@ async function selfServeProvision(request: Request, deps: RouteDeps): Promise<Re
 }
 
 /**
+ * `POST /api/checkout` —— 登录用户发起购买。
+ *
+ * 由**我方**创建 Paddle 交易(而非让 Paddle 自己生成),因为只有这样才能写入
+ * `custom_data.account_email` —— webhook 唯一可靠的「这笔钱属于谁」的载体。
+ * 实测确认 transaction.completed 的 payload 里没有嵌套 customer 对象,
+ * 只有 customer_id;而 custom_data 会原样透传。
+ *
+ * 返回结账 URL,前端跳过去即可(Paddle 会拼上 ?_ptxn=)。
+ */
+async function createCheckout(request: Request, deps: RouteDeps): Promise<Response> {
+  const session = await parseSessionCookie(request.headers.get("cookie"), {
+    secret: deps.sessionSecret,
+    now: Date.parse(deps.now()),
+  });
+  if (!session.ok) throw new HttpError(401, "unauthorized");
+  const account = await deps.db.getAccountById(session.accountId);
+  if (account === null) throw new HttpError(401, "unauthorized");
+
+  const api = deps.paddleApi;
+  if (api === undefined) {
+    // 未配置 Paddle API key:结账尚未开放。503 而非 500 —— 这是配置缺失,
+    // 不是代码故障,且配好之后同样的请求就能成功。
+    return json({ error: "checkout not configured" }, 503, { noStore: true });
+  }
+
+  const body = await readJsonBody(request);
+  const priceId = optString(body.price_id) ?? "";
+  // **绝不能让客户端随便传 price_id**:那等于允许任何人拿一个更便宜的 price
+  // 去结账。只放行白名单里的档位,与 webhook 共用同一份表。
+  if (!isKnownPriceId(priceId, deps.paddlePriceMonths ?? SANDBOX_PRICE_MONTHS)) {
+    throw new HttpError(400, "unknown price");
+  }
+
+  try {
+    const result = await api.createTransaction({
+      priceId,
+      // 用**登录账号**的邮箱,不是用户可填的输入:时长必须落在他登录的账号上
+      // (他可能用公司卡/家人的卡付款)。
+      accountEmail: account.email,
+      checkoutUrl: `${new URL(request.url).origin}/buy`,
+    });
+    return json(
+      { checkout_url: result.checkoutUrl, transaction_id: result.transactionId },
+      200,
+      { noStore: true },
+    );
+  } catch {
+    // 不回显 Paddle 的响应内容。502:上游失败,可重试。
+    return json({ error: "checkout unavailable" }, 502, { noStore: true });
+  }
+}
+
+/**
  * `POST /api/paddle/webhook` —— Paddle 付款入账。
  *
  * 设计要点(每条都对应一种会真丢钱或真送钱的失败):
@@ -593,7 +652,14 @@ async function paddleWebhook(request: Request, deps: RouteDeps): Promise<Respons
 
   let event: { event_type?: unknown; event_id?: unknown; data?: unknown };
   try {
-    event = JSON.parse(rawBody) as typeof event;
+    const decoded: unknown = JSON.parse(rawBody);
+    // **必须查 null 与非对象**:JSON.parse("null") 成功返回 null,随后
+    // `event.event_type` 抛 TypeError → 500 → Paddle 无限重投一个永远处理不了
+    // 的 body(实测复现)。"123"/'"s"'/[]/true 走这里也一并归到畸形分支。
+    if (typeof decoded !== "object" || decoded === null || Array.isArray(decoded)) {
+      throw new Error("payload is not a JSON object");
+    }
+    event = decoded as typeof event;
   } catch {
     // 验签通过却不是合法 JSON —— 理论上不该发生(说明上游异常或传输损坏)。
     // 200 避免无意义重投,但**必须留审计**:这是唯一的排障线索,否则只会看到

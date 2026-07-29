@@ -20,6 +20,10 @@ import type { EntitlementRow } from "./db.js";
  *
  * sandbox 与 live 的 price_id 完全不同(两套独立环境),故按环境分别列出。
  */
+/** webhook 单笔可发放的月数上限。取实际最长档位(两年=24)。
+ *  adminGrant 用 120 是因为 admin 可信;webhook 来源不可信,上限必须贴着真实售卖。 */
+export const MAX_WEBHOOK_MONTHS = 24;
+
 export interface PriceMonthsMap {
   readonly [priceId: string]: number;
 }
@@ -38,6 +42,7 @@ export type ParseFailure =
   | "unknown_price"
   | "months_out_of_range"
   | "bad_quantity"
+  | "too_many_items"
   | "months_mismatch"
   | "no_email";
 
@@ -117,14 +122,27 @@ export function parseTransactionCompleted(
   if (items.length === 0) {
     return { ok: false, reason: "no_items", detail: "items is empty" };
   }
+  // 一笔交易只该有一个档位。多 items(哪怕是同一个 price_id 重复)会累加月数,
+  // 是又一条放大路径。产品上不存在"一次买两段时长"的场景,故直接拒绝。
+  if (items.length > 1) {
+    return { ok: false, reason: "too_many_items", detail: `items=${items.length}` };
+  }
 
   // 累加所有条目的月数 × 数量。正常只会有一条(price 的 quantity 上限设为 1),
   // 但按累加处理更稳:将来若允许一次买两段时长,语义天然正确。
   let months = 0;
   for (const item of items) {
-    const priceId = typeof item.price?.id === "string" ? item.price.id : "";
-    const mapped = priceId === "" ? undefined : priceMonths[priceId];
-    if (mapped === undefined) {
+    // M5: item 本身可能是 null(items 通过了 Array.isArray 但元素为 null),
+    // `item.price?.id` 的 ?. 保护的是 price 而不是 item。
+    const priceId = typeof item?.price?.id === "string" ? item.price.id : "";
+    // **必须用 Object.hasOwn**:普通对象字面量的原型链上有 toString/valueOf/
+    // constructor/__proto__,`priceMonths["toString"]` 会返回一个 function 而非
+    // undefined,于是逃过下面的 unknown_price 检查,随后 `function * 1 = NaN`,
+    // 而 `NaN < 1` 与 `NaN > 120` **两边都是 false** —— 连范围检查也逃过。
+    // 实测确认这条路径能产出 months=NaN。
+    const mapped =
+      priceId !== "" && Object.hasOwn(priceMonths, priceId) ? priceMonths[priceId] : undefined;
+    if (typeof mapped !== "number" || !Number.isInteger(mapped) || mapped < 1) {
       // 未知 price_id:可能是新建了档位但没更新白名单,也可能是伪造。
       // 一律拒绝 —— 凭猜发时长比不发更糟。
       return { ok: false, reason: "unknown_price", detail: `price_id=${priceId}` };
@@ -142,20 +160,23 @@ export function parseTransactionCompleted(
     // **收钱路径不做"默认放行"。** 早先畸形 quantity(0/负数/小数/字符串)会被
     // 当成 1 继续发时长 —— 那是在上游或集成异常时替它猜,可能过发。
     // 一律拒绝并留审计,让人工核对比静默发时长安全。
-    if (
-      typeof item.quantity !== "number" ||
-      !Number.isInteger(item.quantity) ||
-      item.quantity < 1
-    ) {
+    // **quantity 必须恰好是 1。** 早先只查「整数且 >=1」,于是 quantity=10 能把
+    // 12 个月放大到 120(买 1 年拿 10 年)—— 而 120 恰好等于旧上限,顺利通过。
+    // 目前唯一的防线是 Paddle 后台给每个 price 设了 quantity.maximum=1,那道防线
+    // **在 Paddle 侧而不在我们的代码里**:后台一次误改就白送 9 年。
+    // 一人一实例是产品决策(见 idx_endpoints_account_live),这里 assert 它。
+    if (item?.quantity !== 1) {
       return {
         ok: false,
         reason: "bad_quantity",
-        detail: `price_id=${priceId} quantity=${JSON.stringify(item.quantity)}`,
+        detail: `price_id=${priceId} quantity=${JSON.stringify(item?.quantity)}`,
       };
     }
-    months += mapped * item.quantity;
+    months += mapped;
   }
-  if (months < 1 || months > 120) {
+  // 上限收到**实际最长档位**(两年=24)而非 adminGrant 的 120:admin 是可信来源,
+  // webhook 不是。留一点余量到 24 以应对将来加档位,但绝不留到 120。
+  if (months < 1 || months > MAX_WEBHOOK_MONTHS) {
     // 与 unknown_price 分开:routes.ts 会用 reason 拼审计 action
     // (paddle.unprocessable.<reason>),混在一起会让告警指向错误的原因。
     // 这类失败通常意味着 quantity 异常或白名单配错,不是"没见过这个 price"。

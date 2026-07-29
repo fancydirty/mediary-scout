@@ -175,15 +175,34 @@ describe("POST /api/paddle/webhook", () => {
 
   // reason 会被拼成审计 action(paddle.unprocessable.<reason>),
   // 与 unknown_price 混在一起会让告警指向错误的原因。
-  it("累加月数超范围 → 独立的 months_out_of_range,而非 unknown_price", async () => {
-    const { db, deps } = setup();
-    const body = eventBody({}, { items: [{ price: { id: YEAR_PRICE }, quantity: 11 }] });
+  it("白名单值超过 MAX_WEBHOOK_MONTHS → months_out_of_range(独立 reason)", async () => {
+    const { db, deps } = setup({ paddlePriceMonths: { pri_absurd: 36 } });
+    const body = eventBody({}, { items: [{ price: { id: "pri_absurd" }, quantity: 1 }] });
     const res = await post(deps, body, await signed(body));
     expect(await res.json()).toMatchObject({ unprocessable: "months_out_of_range" });
     const audits = await db.listAudits();
     expect(audits.some((a) => a.action === "paddle.unprocessable.months_out_of_range")).toBe(true);
     expect(audits.some((a) => a.action === "paddle.unprocessable.unknown_price")).toBe(false);
   });
+
+  // quantity>1 在更早一道防线被拦(bad_quantity),买 1 年拿 10 年的路径已封。
+  it("quantity=10 被 bad_quantity 拦下,不产生 120 个月", async () => {
+    const { db, deps } = setup();
+    const body = eventBody({}, { items: [{ price: { id: YEAR_PRICE }, quantity: 10 }] });
+    const res = await post(deps, body, await signed(body));
+    expect(await res.json()).toMatchObject({ unprocessable: "bad_quantity" });
+    expect(await db.getAccountByEmail("buyer@example.com")).toBeNull();
+  });
+
+  // JSON.parse("null") 返回 null → event.event_type 抛 TypeError → 500 → 无限重投。
+  it.each(['null', '123', '"str"', "[]", "true"])(
+    "非对象 JSON payload(%s)归到畸形分支而非 500",
+    async (raw) => {
+      const { deps } = setup();
+      const res = await post(deps, raw, await signed(raw));
+      expect(res.status, `raw=${raw}`).toBe(200);
+    },
+  );
 
   it("未知 price_id → 200 + 审计,不入账", async () => {
     const { db, deps } = setup();

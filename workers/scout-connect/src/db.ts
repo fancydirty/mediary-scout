@@ -622,10 +622,19 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
     },
 
     async updateEntitlementExpiry(entitlementId, expiresAt) {
-      await d1
+      // **必须检查 meta.changes。** 0 行受影响与"成功"在 D1 里无法从返回值区分,
+      // 而这个 UPDATE 是并发收敛的最后一步:静默失败会让基于陈旧快照的错值
+      // 永久留下(用户永久少拿一个周期),且没有任何后台任务会重算账本。
+      // 抛错则冒泡到 webhook → 503 → Paddle 重投 → 幂等分支自愈。
+      // 同款先例见 markTokenShown(它也依赖 meta.changes)。
+      const res = (await d1
         .prepare(`UPDATE entitlements SET expires_at = ? WHERE id = ?`)
         .bind(expiresAt, entitlementId)
-        .run();
+        .run()) as { meta?: { changes?: number } };
+      const changes = res?.meta?.changes;
+      if (typeof changes === "number" && changes === 0) {
+        throw new Error(`updateEntitlementExpiry affected 0 rows: ${entitlementId}`);
+      }
     },
 
     async getEntitlementByTransactionId(txnId) {
@@ -974,9 +983,12 @@ export function createMemoryConnectDb(): ConnectDb {
     },
 
     async updateEntitlementExpiry(entitlementId, expiresAt) {
-      // 与 D1 分支同款语义(parity):不存在的 id 静默无操作,与 SQL UPDATE 一致。
+      // parity:D1 分支在 0 行受影响时抛错(那是并发收敛静默失败的信号),
+      // 这里也必须抛,否则 memory 测试会绿而生产会留下错值。
       const row = entitlements.get(entitlementId);
-      if (row === undefined) return;
+      if (row === undefined) {
+        throw new Error(`updateEntitlementExpiry affected 0 rows: ${entitlementId}`);
+      }
       entitlements.set(entitlementId, { ...row, expires_at: expiresAt });
     },
 

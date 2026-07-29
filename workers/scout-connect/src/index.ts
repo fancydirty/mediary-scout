@@ -4,6 +4,7 @@ import { newId, newInviteCode } from "./ids.js";
 import { handleRequest } from "./routes.js";
 import { createMagicLinkSender } from "./magic-link-sender.js";
 import type { Env } from "./env.js";
+import { createPaddleApi } from "./paddle-api.js";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -26,6 +27,13 @@ export default {
       paddleClientToken: env.PADDLE_CLIENT_TOKEN,
       paddleEnvironment: env.PADDLE_ENVIRONMENT,
       paddleWebhookSecret: env.PADDLE_WEBHOOK_SECRET,
+      paddleApi:
+        env.PADDLE_API_KEY === undefined || env.PADDLE_API_KEY.trim() === ""
+          ? undefined
+          : createPaddleApi({
+              apiKey: env.PADDLE_API_KEY,
+              environment: env.PADDLE_ENVIRONMENT ?? "production",
+            }),
       turnstileSecret: env.TURNSTILE_SECRET,
       newAccountId: () => newId("act"),
       newEntitlementId: () => newId("ent"),

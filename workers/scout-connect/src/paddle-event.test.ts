@@ -117,7 +117,9 @@ describe("parseTransactionCompleted", () => {
     expect(r.reason).toBe("months_mismatch");
   });
 
-  it("多条目累加(将来若允许一次买两段时长)", () => {
+  // 多 items(哪怕同一 price 重复)会累加月数,是一条放大路径。
+  // 产品上不存在「一次买两段时长」,故直接拒绝。
+  it("多条目一律拒绝(累加是放大路径)", () => {
     const r = parseTransactionCompleted(
       txnData({
         items: [
@@ -127,15 +129,36 @@ describe("parseTransactionCompleted", () => {
       }),
       SANDBOX_PRICE_MONTHS,
     );
-    expect(r.ok && r.grant.months).toBe(15);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reason).toBe("too_many_items");
   });
 
-  it("quantity 参与计算", () => {
+  it("同一 price 重复两次也拒绝", () => {
     const r = parseTransactionCompleted(
-      txnData({ items: [{ price: { id: QUARTER_PRICE }, quantity: 2 }] }),
+      txnData({
+        items: [
+          { price: { id: YEAR_PRICE }, quantity: 1 },
+          { price: { id: YEAR_PRICE }, quantity: 1 },
+        ],
+      }),
       SANDBOX_PRICE_MONTHS,
     );
-    expect(r.ok && r.grant.months).toBe(6);
+    expect(r.ok).toBe(false);
+  });
+
+  // quantity=10 曾能把 12 个月放大到 120(买 1 年拿 10 年),而 120 恰好等于旧上限。
+  // 唯一防线是 Paddle 后台的 quantity.maximum=1 —— 那在 Paddle 侧,不在我们代码里。
+  it("quantity 必须恰好是 1(>1 是放大路径)", () => {
+    for (const q of [2, 10, 11, 100]) {
+      const r = parseTransactionCompleted(
+        txnData({ items: [{ price: { id: QUARTER_PRICE }, quantity: q }] }),
+        SANDBOX_PRICE_MONTHS,
+      );
+      expect(r.ok, `quantity=${q} 应被拒`).toBe(false);
+      if (r.ok) continue;
+      expect(r.reason).toBe("bad_quantity");
+    }
   });
 
   // 收钱路径不做「默认放行」:早先畸形 quantity 被当成 1 继续发时长,那是在
@@ -152,16 +175,23 @@ describe("parseTransactionCompleted", () => {
     }
   });
 
-  it("累加结果超出 [1,120] 时拒绝,reason 与 unknown_price 区分", () => {
+  // 上限收到实际最长档位(24)而非 adminGrant 的 120:webhook 来源不可信。
+  it("超出 MAX_WEBHOOK_MONTHS 的白名单值被拒(reason 独立)", () => {
     const r = parseTransactionCompleted(
-      txnData({ items: [{ price: { id: YEAR_PRICE }, quantity: 11 }] }), // 132 个月
-      SANDBOX_PRICE_MONTHS,
+      txnData({ items: [{ price: { id: "pri_absurd" }, quantity: 1 }] }),
+      { pri_absurd: 36 }, // 白名单里配了个超过 24 的值
     );
     expect(r.ok).toBe(false);
     if (r.ok) return;
-    // 这类失败意味着 quantity 异常或白名单配错,不是"没见过这个 price"。
-    // reason 会被拼成审计 action,混淆会让告警失准。
     expect(r.reason).toBe("months_out_of_range");
+  });
+
+  it("恰好 24 个月(两年档)通过", () => {
+    const r = parseTransactionCompleted(
+      txnData({ items: [{ price: { id: "pri_01kypfzvpf02z5731sbnva3n82" }, quantity: 1 }] }),
+      SANDBOX_PRICE_MONTHS,
+    );
+    expect(r.ok && r.grant.months).toBe(24);
   });
 
   // account_email 是权威:用户可能用公司卡/家人的卡付款,但时长必须落在他
@@ -228,4 +258,50 @@ describe("SANDBOX_PRICE_MONTHS", () => {
   it("四个档位与定价页一致(季3/年12/两年24/创始12)", () => {
     expect(Object.values(SANDBOX_PRICE_MONTHS).sort((a, b) => a - b)).toEqual([3, 12, 12, 24]);
   });
+});
+
+describe("原型链污染:未知 price_id 不得命中 Object.prototype", () => {
+  // priceMonths 是普通对象字面量,原型链上有 toString/valueOf/constructor/__proto__。
+  // `priceMonths["toString"]` 返回 function 而非 undefined → 逃过 unknown_price;
+  // 随后 `function * 1 = NaN`,而 `NaN < 1` 与 `NaN > 24` **两边都是 false**
+  // → 连范围检查也逃过,最终产出 months=NaN。实测复现过。
+  it.each(["toString", "valueOf", "constructor", "__proto__", "hasOwnProperty", "isPrototypeOf"])(
+    "price_id=%s 被判为 unknown_price(而非 NaN 月数)",
+    (evil) => {
+      const r = parseTransactionCompleted(
+        txnData({ items: [{ price: { id: evil }, quantity: 1 }] }),
+        SANDBOX_PRICE_MONTHS,
+      );
+      expect(r.ok, `${evil} 必须被拒`).toBe(false);
+      if (r.ok) return;
+      expect(r.reason).toBe("unknown_price");
+    },
+  );
+
+  it("白名单值本身畸形时也拒(非整数/负数/NaN)", () => {
+    for (const bad of [0, -1, 1.5, NaN, Infinity]) {
+      const r = parseTransactionCompleted(
+        txnData({ items: [{ price: { id: "pri_bad" }, quantity: 1 }] }),
+        { pri_bad: bad },
+      );
+      expect(r.ok, `白名单值=${bad}`).toBe(false);
+    }
+  });
+});
+
+describe("items 元素为 null 不得抛错(500 → 无限重投)", () => {
+  it("items:[null] 安全归到 unknown_price", () => {
+    const r = parseTransactionCompleted(txnData({ items: [null] }), SANDBOX_PRICE_MONTHS);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reason).toBe("unknown_price");
+  });
+
+  it.each([[[{}]], [[{ price: null }]], [[{ price: {} }]]])(
+    "畸形 item 结构安全拒绝:%j",
+    (items) => {
+      const r = parseTransactionCompleted(txnData({ items }), SANDBOX_PRICE_MONTHS);
+      expect(r.ok).toBe(false);
+    },
+  );
 });
