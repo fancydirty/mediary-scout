@@ -36,9 +36,11 @@ export async function RemoteAccessSection({
   // 写进 .env(worker 的 204 无 body 契约不变,不碰元数据端点)。
   const { w } = await searchParams;
   const passwordHref = accountPasswordHref(w);
+  // 只求值一次:重复调用会重跑校验,理论上还可能在同一次渲染里读到不同 env。
+  const localHostname = instanceConnectHostname();
   const state = await resolveRemoteAccessState({
     token: instanceTunnelToken(),
-    hostname: instanceConnectHostname(),
+    hostname: localHostname,
   });
 
   if (state.kind === "not_provisioned") {
@@ -160,9 +162,7 @@ export async function RemoteAccessSection({
         <p className="panel-note" style={{ margin: "0 0 14px" }}>
           远程访问已开启，但暂时联系不上控制面，无法确认隧道状态。
           这通常是本机出站网络波动；不影响已建立的隧道，稍后刷新即可。
-          {state.kind === "active_degraded" && instanceConnectHostname()
-            ? `（专属地址：${instanceConnectHostname()}）`
-            : ""}
+          {localHostname ? `（专属地址：${localHostname}）` : ""}
         </p>
       )}
 
@@ -182,22 +182,29 @@ export async function RemoteAccessSection({
       </div>
 
       {/* 远程访问的门禁就是本实例的登录密码——改它不必再跳去「账号」tab。
-          改完服务端撤销所有会话,表单会把用户送回 /login 用新密码登入。 */}
-      <div
-        style={{
-          marginTop: 18,
-          paddingTop: 16,
-          borderTop: "1px solid var(--border, #2c2c2c)",
-        }}
-      >
-        <p className="panel-note" style={{ margin: "0 0 4px", fontWeight: 600 }}>
-          修改远程访问登录密码
-        </p>
-        <p className="panel-note" style={{ margin: "0 0 12px" }}>
-          这就是打开专属地址时要输的密码（本实例的登录密码）。修改后所有设备需要重新登录。
-        </p>
-        <PasswordChangeForm />
-      </div>
+          改完服务端撤销所有会话,表单会把用户送回 /login 用新密码登入。
+          **只在确知已设过密码时渲染**:changePasswordAction 要求填当前密码,
+          没设密码的新实例根本填不出来,而且会紧贴在上面那条「还没设密码」
+          警告下面,更让人糊涂——那种情况走警告里的「去设置密码」。
+          passwordState === "unknown"(DB 读失败)同样不渲染:宁可少给一个
+          表单,也不摆一个可能一提交就失败的东西。 */}
+      {passwordState === true ? (
+        <div
+          style={{
+            marginTop: 18,
+            paddingTop: 16,
+            borderTop: "1px solid var(--border, #2c2c2c)",
+          }}
+        >
+          <p className="panel-note" style={{ margin: "0 0 4px", fontWeight: 600 }}>
+            修改远程访问登录密码
+          </p>
+          <p className="panel-note" style={{ margin: "0 0 12px" }}>
+            这就是打开专属地址时要输的密码（本实例的登录密码）。修改后所有设备需要重新登录。
+          </p>
+          <PasswordChangeForm />
+        </div>
+      ) : null}
     </section>
   );
 }

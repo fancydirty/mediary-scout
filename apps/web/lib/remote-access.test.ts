@@ -292,6 +292,10 @@ describe("instanceConnectHostname（connect.sh 写进 .env 的本地域名来源
       "no dots",                     // 空格
       "-bad.example.com",            // 以连字符开头
       'x.example.com" onload="evil', // 引号注入
+      "a..b.example.com",            // 连续点(宽松正则会放过)
+      "bad-.example.com",            // label 以连字符结尾(宽松正则会放过)
+      "a.b.example.c",               // TLD 只有 1 位
+      ".example.com",                // 以点开头
     ]) {
       process.env.MEDIARY_CONNECT_HOSTNAME = bad;
       expect(instanceConnectHostname(), bad).toBeNull();
