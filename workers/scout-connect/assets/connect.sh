@@ -89,6 +89,16 @@ if [ -z "$TUNNEL_TOKEN" ] || [ -z "$HOSTNAME" ]; then
   echo "❌ 换取响应里没有 token/hostname,无法继续。" >&2
   exit 1
 fi
+# hostname 要被持久化进 .env(apps/web 靠它渲染专属地址链接),所以在**碰 .env
+# 之前**就校验形状:逐 label 白名单,只放行 a-z0-9 与连字符,每段不以连字符
+# 起止,末段是 2+ 位字母 TLD。这样空白/斜杠/冒号/引号/连续点/端口一律挡掉,
+# 免得写出一个解析不出或点了就坏的值,而 .env 已经被改过。
+# (真换行进不来:sed 是行式的,JSON 里的 \n 也只会变成字面 \ + n;
+#  但空格、斜杠这类会原样穿过,那才是这里真正要挡的。)
+if ! printf '%s' "$HOSTNAME" | grep -Eq '^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$'; then
+  echo "❌ 换取响应里的 hostname 形状不合法,已中止,.env 未改动。" >&2
+  exit 1
+fi
 echo "  ✓ 已获取,目标地址:https://$HOSTNAME"
 
 # 4) 原子写入 .env(先备份,再临时文件 + mv;绝不半途留下损坏的 .env)

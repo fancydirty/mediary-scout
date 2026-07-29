@@ -46,6 +46,11 @@ describe("GET /connect.sh", () => {
     // 「.env 里只有托管键」时 grep 返回 1,-e 会直接中止脚本,下面按退出码
     // 区分 1 与 >=2 的分支就永远走不到(实测 set -eu 下确实立刻退出 1)。
     expect(body).toMatch(/set \+e\s*\ngrep -Ev "\$MANAGED_RE"[^\n]*\nGREP_RC=\$\?\s*\nset -e/);
+    // hostname 会被持久化进 .env,写之前必须校验形状(空格/斜杠/冒号/引号/
+    // 连续点/端口都要挡掉),且校验发生在碰 .env 之前——否则 .env 已被改过
+    // 才发现值是坏的。
+    expect(body).toMatch(/grep -Eq '\^\(\[a-z0-9\]\(\[a-z0-9-\]\*\[a-z0-9\]\)\?\\\.\)\+\[a-z\]\{2,\}\$'/);
+    expect(body.indexOf("hostname 形状不合法")).toBeLessThan(body.indexOf('cp -p "$ENV_FILE"'));
   });
 
   it("is servable over the beta host too (curl | sh 从任一入口)", async () => {
