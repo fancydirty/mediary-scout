@@ -11,6 +11,7 @@ import { homePage } from "./html/home-page.js";
 import { adminPage } from "./html/admin-page.js";
 import { invitePage, type InvitePageState } from "./html/invite-page.js";
 import { betaPage, normalizeTurnstileSitekey } from "./html/beta-page.js";
+import { CAPACITY_LIMIT } from "./capacity.js";
 import { buyPage } from "./html/buy-page.js";
 import { compliancePage, COMPLIANCE_PAGES, type CompliancePageKey } from "./html/compliance-page.js";
 import { RAW_ASSETS } from "./html/assets.gen.js";
@@ -504,6 +505,11 @@ async function selfServeProvision(request: Request, deps: RouteDeps): Promise<Re
     ) {
       throw new HttpError(409, "slug taken");
     }
+    // 容量已满 → 503 而非 4xx:这是**我方**容量问题(CF 隧道 1000 硬上限),
+    // 用户的请求本身完全合法。4xx 会让用户以为自己填错了。
+    if (msg === "at capacity") {
+      throw new HttpError(503, "at capacity");
+    }
     throw e;
   }
 }
@@ -651,6 +657,11 @@ async function consoleRoute(request: Request, deps: RouteDeps): Promise<Response
   // 该账号的 active endpoint(可能为 null:已付费但还没选 slug,或未开通)。
   // 控制台据此决定显示「选专属地址」入口还是「接入命令」提示词区。
   const endpoint = await deps.db.getActiveEndpointByAccountId(account.id);
+  // 仅在「还没开通」时才数配额:已开通用户不受配额影响,不该为他们每次进控制台
+  // 都多跑一次 COUNT。满容量时前端不渲染 slug 表单(见 console-page),免得用户
+  // 填完名字才吃 503。
+  const atCapacity =
+    endpoint === null ? (await deps.db.countLiveEndpoints()) >= CAPACITY_LIMIT : false;
   const url = new URL(request.url);
   return htmlPage(
     consolePage({
@@ -660,6 +671,7 @@ async function consoleRoute(request: Request, deps: RouteDeps): Promise<Response
       baseUrl: url.origin,
       rootDomain: deps.rootDomain.trim().toLowerCase(),
       now: deps.now(),
+      atCapacity,
     }),
     { noStore: true }, // 用户专属页面,不可缓存(Copilot round 3)
   );

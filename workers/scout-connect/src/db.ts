@@ -98,6 +98,15 @@ export interface ConnectDb {
   /** Targeted existence check for the slug/hostname availability precheck. */
   findEndpointBySlugOrHostname(slug: string, hostname: string): Promise<Pick<EndpointRow, "slug" | "hostname"> | null>;
   listEndpoints(): Promise<EndpointRow[]>;
+  /** 仍占用 CF 隧道配额的 endpoint 数(容量闸门用)。
+   *
+   *  **计数语义是可卖不可卖的分界,改它前先读 capacity.test.ts:**
+   *  - `active` 计入(含宽限期/已停用但未删隧道——schema 注释明确这两种是
+   *    时间戳态,status 仍 'active',确实还占着隧道)
+   *  - `revoke_failed` **偏保守计入**:CF 侧删除失败,隧道可能还在。宁可少卖
+   *    (可人工核查),不可超卖(撞 CF 上限就是收了钱交不了货)
+   *  - `revoked` 不计入:隧道已删,不占配额 */
+  countLiveEndpoints(): Promise<number>;
   /**
    * Atomic burn: sets shown_at + nulls ciphertext only if not already burned.
    * Returns true when THIS call performed the burn (won the race), false when
@@ -375,6 +384,18 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
         .prepare(`SELECT * FROM endpoints ORDER BY created_at DESC, id DESC`)
         .all<RawRow>();
       return results.map(mapEndpoint);
+    },
+
+    async countLiveEndpoints() {
+      // 只数仍占 CF 配额的状态(见接口注释)。用 IN 而非 != 'revoked':
+      // 将来新增 status 值时,默认**不**计入比默认计入更安全——漏计会超卖,
+      // 而多计只是少卖。显式白名单让新状态必须主动决定归属。
+      const row = await d1
+        .prepare(
+          `SELECT COUNT(*) as cnt FROM endpoints WHERE status IN ('active', 'revoke_failed')`,
+        )
+        .first<{ cnt: number }>();
+      return row?.cnt ?? 0;
     },
 
     async markEndpointRevoked(endpointId, at) {
@@ -742,6 +763,13 @@ export function createMemoryConnectDb(): ConnectDb {
 
     async listEndpoints() {
       return [...endpoints.values()].sort(byCreatedAtDesc).map((row) => ({ ...row }));
+    },
+
+    async countLiveEndpoints() {
+      // 与 D1 分支同款白名单(parity)。
+      return [...endpoints.values()].filter(
+        (r) => r.status === "active" || r.status === "revoke_failed",
+      ).length;
     },
 
     async markEndpointRevoked(endpointId, at) {

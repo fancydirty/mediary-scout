@@ -1,3 +1,4 @@
+import { CAPACITY_LIMIT } from "./capacity.js";
 import { assertSlug } from "./slug.js";
 import { sha256Hex } from "./crypto-token.js";
 import { buildAgentPromptOrManual } from "./agent-prompt.js";
@@ -89,6 +90,16 @@ export async function provisionEndpoint(input: {
       throw new Error(`slug already in use: ${slug}`);
     }
     throw new Error(`hostname already in use: ${hostname}`);
+  }
+
+  // 容量闸门。**必须在烧任何 CF 资源之前**:CF 隧道硬上限 1000/账号(所有套餐
+  // 一致,含 Enterprise),撞上时 createTunnel 会失败,用户已付款却拿到
+  // 「开通失败,请稍后重试」——而重试永远不会成功。放在这里(slug 查重之后、
+  // createTunnel 之前)既不浪费一次查重,也保证零 CF 副作用。
+  // 路由层把这条映射成 503(我方容量问题,不是用户请求错误)。
+  const live = await db.countLiveEndpoints();
+  if (live >= CAPACITY_LIMIT) {
+    throw new Error("at capacity");
   }
 
   const { tunnelId, token } = await cf.createTunnel(`scout-${slug}`);

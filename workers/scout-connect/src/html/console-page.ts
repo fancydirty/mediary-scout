@@ -26,6 +26,9 @@ export function consolePage(input: {
    *  推:控制台可从 beta 子域访问,host 会是 beta.<root>,后缀就错了。 */
   rootDomain: string;
   now: string;
+  /** 隧道配额是否已满(CF 1000 硬上限)。只影响「已付费未开通」态:满了就不给
+   *  slug 表单,免得用户填完名字才吃 503。已开通用户完全不受影响。 */
+  atCapacity?: boolean;
 }): string {
   const expiry = latestExpiry(input.entitlements);
   const active = isEntitlementActive(expiry, input.now);
@@ -97,7 +100,7 @@ details[open] summary .chev{transform:rotate(90deg)}
 ${BRAND_BAR}
 <p class="email-line">${esc(input.account.email)}</p>
 <div class="status-row"><h1>远程访问</h1>${statusBadge}</div>
-${renderBody(input, active)}
+${renderBody({ ...input, atCapacity: input.atCapacity === true }, active)}
 <div class="footer"><a href="/pricing">定价</a> · <a href="/terms">服务条款</a> · <a href="/privacy">隐私政策</a> · <a href="/refund">退款政策</a> · <a href="/contact">联系我们</a></div>
 </main>
 ${renderScript(input, active)}
@@ -110,12 +113,26 @@ function renderBody(
     account: AccountRow;
     endpoint: EndpointRow | null;
     rootDomain: string;
+    /** 隧道配额已满(CF 1000 硬上限)。已开通用户不受影响,只挡新开通。 */
+    atCapacity: boolean;
   },
   active: boolean,
 ): string {
   if (!active) {
     return `<p class="sub">你还没有有效时长。开通后即可为自托管实例生成专属远程访问地址。</p>
 <a class="btn" href="/pricing">开通</a>`;
+  }
+  if (input.endpoint === null && input.atCapacity) {
+    // 满容量:**不渲染表单**。让用户输完名字、点开通、再吃 503 是最差的体验
+    // (他会以为自己名字填错了)。直接说清是我方容量、以及他能做什么。
+    // 已付费才会走到这里,所以必须给退款出口 —— 14 天内无条件。
+    return `<p class="sub">你已开通，但目前暂时无法分配新地址。</p>
+<div class="panel">
+<p class="step" style="color:var(--err)">暂时售罄</p>
+<p class="lead">隧道配额已满</p>
+<p class="lead-sub">我们的 Cloudflare 隧道配额（每账号上限 1000 条，所有套餐一致）已用尽，暂时无法为新实例分配地址。你的时长不会流失——配额释放后回到这里即可开通，我们也会邮件通知你。</p>
+<p class="lead-sub">如果不想等，14 天内可无条件全额退款：<a href="/refund">退款政策</a> · <a href="/contact">联系我们</a></p>
+</div>`;
   }
   if (input.endpoint === null) {
     // 已付费未开通:内嵌 slug 选择表单(实时查重走 /api/slug/check,开通走
