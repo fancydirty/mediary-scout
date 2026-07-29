@@ -12,16 +12,28 @@ describe("buyPage (Paddle default payment link 落地页)", () => {
     expect(html).toContain('"live_abc123"');
   });
 
-  // sandbox 必须显式 set,否则 Paddle.js 默认打生产,sandbox 交易一律报错。
-  it("sandbox 环境显式设置,其它值一律按 production", () => {
+  // Paddle.Environment.set() 官方定义为「只用于切到 sandbox」,不调用时默认生产,
+  // go-live checklist 要求上线前移除。显式 set("production") 非受支持用法,
+  // 可能抛错 → 结账 100% 失败。故:sandbox 必须有,生产必须没有。
+  it("只有 sandbox 才调 Environment.set,生产环境一律不调", () => {
     expect(buyPage({ ...CONFIGURED, paddleEnvironment: "sandbox" })).toContain(
       'Paddle.Environment.set("sandbox")',
     );
-    expect(buyPage(CONFIGURED)).toContain('Paddle.Environment.set("production")');
-    // 垃圾值不能"半配置"成 sandbox——回落 production 更安全(不会误导测试单)
-    expect(buyPage({ ...CONFIGURED, paddleEnvironment: "SaNdBoX-typo" })).toContain(
-      'Paddle.Environment.set("production")',
-    );
+    for (const envVal of [undefined, "production", "", "SaNdBoX-typo", "live"]) {
+      const html = buyPage({ ...CONFIGURED, paddleEnvironment: envVal });
+      expect(html, `env=${String(envVal)} 不该调 Environment.set`).not.toContain(
+        "Paddle.Environment.set",
+      );
+    }
+  });
+
+  // 大小写/空白不敏感:配成 "SANDBOX" 若静默变生产,沙箱测试会打到生产账号。
+  it("环境值解析大小写与空白不敏感", () => {
+    for (const envVal of ["SANDBOX", " sandbox ", "Sandbox"]) {
+      expect(buyPage({ ...CONFIGURED, paddleEnvironment: envVal }), envVal).toContain(
+        'Paddle.Environment.set("sandbox")',
+      );
+    }
   });
 
   // 未配置时白页最糟:用户与 Paddle 审核员都会以为坏了。

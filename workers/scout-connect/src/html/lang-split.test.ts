@@ -1,26 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { extractLang, isCjkMajority } from "./lang-split.js";
+import { extractLang, isZhBlock } from "./lang-split.js";
 import { COMPLIANCE_MARKDOWN } from "./compliance-content.gen.js";
 
-describe("isCjkMajority", () => {
-  it("按 CJK 与拉丁字母的数量对比判语种", () => {
-    expect(isCjkMajority("退款政策")).toBe(true);
-    expect(isCjkMajority("Refund Policy")).toBe(false);
+describe("isZhBlock", () => {
+  it("含汉字判中文,纯英文判英文", () => {
+    expect(isZhBlock("退款政策")).toBe(true);
+    expect(isZhBlock("Refund Policy")).toBe(false);
   });
 
-  it("标点/数字不计入,纯数字块不会被误判成中文", () => {
-    // 只有 CJK 严格多于拉丁字母才算中文;纯数字两边都是 0,不构成 >
-    expect(isCjkMajority("2026-07-28")).toBe(false);
-    expect(isCjkMajority("---")).toBe(false);
+  it("既无汉字也无 CJK 专属标点 → 不判中文(纯数字/纯符号块)", () => {
+    expect(isZhBlock("2026-07-28")).toBe(false);
+    expect(isZhBlock("---")).toBe(false);
   });
 
   // em dash / ellipsis 在英文排版里同样常用(本仓 content 里有 10 个纯英文块
   // 用了 em dash)。曾把它们当中文信号,导致整段英文正文从英文页消失。
   it("em dash 与省略号不算中文信号(英文排版同样常用)", () => {
-    expect(isCjkMajority("No conditions, no exceptions, no deductions — it just works")).toBe(false);
-    expect(isCjkMajority("Pay once … and that is it")).toBe(false);
+    expect(isZhBlock("No conditions, no exceptions, no deductions — it just works")).toBe(false);
+    expect(isZhBlock("Pay once … and that is it")).toBe(false);
     // 但真正 CJK 专属的标点仍应判中文
-    expect(isCjkMajority("如有争议,以 Paddle Buyer Terms 与适用法律为准。")).toBe(true);
+    expect(isZhBlock("如有争议,以 Paddle Buyer Terms 与适用法律为准。")).toBe(true);
   });
 
   // URL/域名/代码里的拉丁字母不表达语种,计数前必须剔除。
@@ -32,14 +31,14 @@ describe("isCjkMajority", () => {
   it("URL/域名/代码里的拉丁字母不计入语种判定", () => {
     // 中文 6 字 vs URL 里 40+ 拉丁字母:不剔除就会误判成英文
     expect(
-      isCjkMajority("详见 [退款政策](https://mediaryconnect.app/refund/policy/details)"),
+      isZhBlock("详见 [退款政策](https://mediaryconnect.app/refund/policy/details)"),
     ).toBe(true);
     // 裸域名同理
-    expect(isCjkMajority("专属域名 alice.mediaryconnect.app 永久保留")).toBe(true);
+    expect(isZhBlock("专属域名 alice.mediaryconnect.app 永久保留")).toBe(true);
     // 行内代码同理
-    expect(isCjkMajority("在设置里填 `MEDIARY_CONNECT_HOSTNAME` 这一项")).toBe(true);
+    expect(isZhBlock("在设置里填 `MEDIARY_CONNECT_HOSTNAME` 这一项")).toBe(true);
     // 反面:剔除后确实以英文为主的块仍判英文
-    expect(isCjkMajority("Visit [the docs](https://example.com/docs) for setup steps")).toBe(false);
+    expect(isZhBlock("Visit [the docs](https://example.com/docs) for setup steps")).toBe(false);
   });
 
   // 判据是「剔除 URL/代码后含任何汉字 → 中文」,而非比数量。
@@ -48,14 +47,14 @@ describe("isCjkMajority", () => {
   // 数量比较是更弱的近似,会在邮箱/专名/链接多的块上翻车(contact.md 曾因此
   // 丢掉支持邮箱)。
   it("含汉字即判中文(不比数量,专名与邮箱再多也不翻车)", () => {
-    expect(isCjkMajority("本服务由 Paddle 作为记录商户处理你的付款")).toBe(true);
+    expect(isZhBlock("本服务由 Paddle 作为记录商户处理你的付款")).toBe(true);
     // 这两个是真实翻车案例:按数量判会被当成英文
-    expect(isCjkMajority("支持与商务:**support@mediaryconnect.app**")).toBe(true);
+    expect(isZhBlock("支持与商务:**support@mediaryconnect.app**")).toBe(true);
     expect(
-      isCjkMajority("Mediary Scout 是开源项目:[github.com/fancydirty/mediary-scout](https://github.com/fancydirty/mediary-scout)"),
+      isZhBlock("Mediary Scout 是开源项目:[github.com/fancydirty/mediary-scout](https://github.com/fancydirty/mediary-scout)"),
     ).toBe(true);
     // 纯英文仍是英文
-    expect(isCjkMajority("Your slug is kept forever and nobody can take it")).toBe(false);
+    expect(isZhBlock("Your slug is kept forever and nobody can take it")).toBe(false);
   });
 });
 

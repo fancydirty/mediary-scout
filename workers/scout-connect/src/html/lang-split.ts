@@ -6,7 +6,7 @@
  * 用切换按钮互跳。
  *
  * 为什么不发明新语法(如 `<!-- en -->` 分隔符):内容已经是「先英文块、
- * 再中文块」的成对结构,而 renderMarkdown 早就靠 `isCjkMajority` 正确区分
+ * 再中文块」的成对结构,而 renderMarkdown 早就靠同一判据正确区分
  * 两者(合规页已上线验证过)。复用同一判据拆分,.md 一个字都不用改,也不会
  * 出现「作者忘了写分隔符」这类新故障模式。
  *
@@ -39,7 +39,7 @@ function stripLangNeutralTokens(text: string): string {
     .replace(/\b[a-z0-9-]+(?:\.[a-z0-9-]+)+\b/gi, " ");
 }
 
-/** CJK **专属**全角标点。出现即中文——这是比"数字数"更强的信号:
+/** CJK **专属**全角标点。出现即中文侧——这是比"数字数"更强的信号:
  *  「如有争议,以 Paddle Buyer Terms 与适用法律为准。」中文 12 字但英文专名
  *  16 个字母,靠数量判会翻车;而全角逗号/句号只会出现在中文写作里。
  *
@@ -50,7 +50,10 @@ function stripLangNeutralTokens(text: string): string {
  *  只保留中日韩排版专属的那些。 */
 const CJK_PUNCT_RE = /[，。；：、！？（）「」『』《》〈〉【】〔〕·]/;
 
-/** 块内是否为中文。
+/** 块内是否为中文块。
+ *
+ *  名字刻意不叫 isCjkMajority:它**不做**多数/数量对比(改过判据后语义已变),
+ *  沿用旧名会误导调用方。
  *
  *  判据:**剔除 URL/代码/域名后仍含任何 CJK 表意文字 → 中文**。
  *
@@ -67,7 +70,7 @@ const CJK_PUNCT_RE = /[，。；：、！？（）「」『』《》〈〉【】
  *  URL/代码/域名仍要先剔除:它们可能含 CJK 吗?域名不会,但行内代码里可能
  *  写中文占位符(如 `<你选的名字>.mediaryconnect.app`)。那种块的**语种由其余
  *  正文决定**,不该被代码里的占位符绑定,故剔除后再判。 */
-export function isCjkMajority(text: string): boolean {
+export function isZhBlock(text: string): boolean {
   const cleaned = stripLangNeutralTokens(text);
   for (const ch of cleaned) {
     const code = ch.codePointAt(0)!;
@@ -83,9 +86,9 @@ export type Lang = "en" | "zh";
  * 取出 md 中属于指定语言的块。
  *
  * 规则:
- * - CJK 占多数的块 → 中文页;其余 → 英文页。
+ * - 含汉字(或 CJK 专属标点)的块 → 中文页;其余 → 英文页。
  * - **语言中立的块两页都留**:`---`(hr)、纯 URL、纯代码、纯数字/符号。
- *   这类块 `isCjkMajority` 返回 false(CJK 计数为 0),若简单按 false 归给
+ *   这类块 `isZhBlock` 返回 false(既无汉字也无 CJK 标点),若简单按 false 归给
  *   英文页,中文页就会丢掉分隔线之类的结构元素,版式塌掉。
  */
 export function extractLang(md: string, lang: Lang): string {
@@ -98,7 +101,7 @@ export function extractLang(md: string, lang: Lang): string {
       kept.push(trimmed);
       continue;
     }
-    const blockLang: Lang = isCjkMajority(trimmed) ? "zh" : "en";
+    const blockLang: Lang = isZhBlock(trimmed) ? "zh" : "en";
     if (blockLang === lang) kept.push(trimmed);
   }
   return lang === "zh" ? promoteFirstHeading(kept).join("\n\n") : kept.join("\n\n");

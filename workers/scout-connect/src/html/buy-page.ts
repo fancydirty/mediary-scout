@@ -13,6 +13,10 @@ import { BRAND_BAR, BRAND_CSS, FAVICON_LINK, THEME_BASE, THEME_TOKENS } from "./
  * Paddle.js。用户正常路径是从控制台点购买 → Paddle 生成带 `_ptxn` 的链接
  * → 落到这里 → 结账窗自动弹出。
  *
+ * 环境切换:Paddle 官方定义该方法「仅用于切到 sandbox」,不调用时 Paddle.js
+ * 默认生产,且 go-live checklist 要求上线前移除。显式传 production 不是受支持
+ * 的用法(可能抛错 → 结账 100% 失败),故本页仅在 sandbox 时注入该调用。
+ *
  * 无 token / 无 `_ptxn` 时**不留白页**:给出明确指引并链回 /pricing 与控制台,
  * 否则用户(和 Paddle 审核员)看到的是一个空页面,像是坏了。
  */
@@ -22,7 +26,9 @@ export function buyPage(input: {
   paddleEnvironment?: string | undefined;
 }): string {
   const token = input.paddleClientToken?.trim();
-  const env = input.paddleEnvironment?.trim() === "sandbox" ? "sandbox" : "production";
+  // 大小写/空白不敏感(与 routes.ts 处理 ?lang= 一致):配成 "SANDBOX" 不该
+  // 静默变成生产——那会让沙箱测试打到生产账号。
+  const isSandbox = input.paddleEnvironment?.trim().toLowerCase() === "sandbox";
   // token 是公开的 client-side token(设计上就要下发到浏览器),但仍需安全内联。
   // **JSON.stringify 不够**:它不转义 `/`,所以 token 里的 `</script>` 会原样
   // 输出,提前闭合 <script> 并把后续内容当 HTML 解析(实测可注入 <img onerror>)。
@@ -87,7 +93,7 @@ ${configured ? '<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></scrip
     configured
       ? `if (!window.Paddle) { fail("支付组件加载失败，请检查网络或稍后重试。"); return; }
   try {
-    window.Paddle.Environment.set(${JSON.stringify(env)});
+    ${isSandbox ? 'window.Paddle.Environment.set("sandbox");' : "// production: 环境默认即生产,刻意不做任何环境切换调用"}
     window.Paddle.Initialize({ token: ${tokenLiteral} });
   } catch (e) {
     fail("支付组件初始化失败：" + (e && e.message ? e.message : String(e)));

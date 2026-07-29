@@ -11,7 +11,7 @@
  * 写长法律文本又不可维护。这个 60 行的子集是两者之间的甜点。
  */
 
-import { isCjkMajority } from "./lang-split.js";
+import { isZhBlock } from "./lang-split.js";
 
 const ESCAPE_RE = /[&<>"']/g;
 const ESCAPES: Record<string, string> = {
@@ -66,7 +66,7 @@ export function renderMarkdown(md: string): string {
     // 次级色)+ lang="zh-Hans"(文档是 lang="en",给屏幕阅读器/分词正确的
     // 发音与断句提示)。作者只需先写英文块、再写中文块,"EN above 中文"
     // 自然成立,无需发明新语法。attr 只在中文块出现,英文块保持原样。
-    const zh = isCjkMajority(trimmed) ? ' class="zh" lang="zh-Hans"' : "";
+    const zh = isZhBlock(trimmed) ? ' class="zh" lang="zh-Hans"' : "";
     const heading = /^(#{1,3})\s+(.+)$/.exec(trimmed);
     if (heading) {
       const level = heading[1]!.length;
