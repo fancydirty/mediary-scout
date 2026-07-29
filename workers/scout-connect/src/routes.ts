@@ -12,7 +12,6 @@ import { adminPage } from "./html/admin-page.js";
 import { invitePage, type InvitePageState } from "./html/invite-page.js";
 import { betaPage, normalizeTurnstileSitekey } from "./html/beta-page.js";
 import { CAPACITY_LIMIT } from "./capacity.js";
-import { isEntitlementActive, latestExpiry } from "./entitlement.js";
 import { buyPage } from "./html/buy-page.js";
 import { compliancePage, COMPLIANCE_PAGES, type CompliancePageKey } from "./html/compliance-page.js";
 import { RAW_ASSETS } from "./html/assets.gen.js";
@@ -23,7 +22,7 @@ import { newId } from "./ids.js";
 import { sha256Hex } from "./crypto-token.js";
 import { signToken, verifyToken } from "./signed-token.js";
 import { buildSessionCookie, parseSessionCookie } from "./session.js";
-import { computeExpiry } from "./entitlement.js";
+import { computeExpiry, isEntitlementActive, latestExpiry } from "./entitlement.js";
 
 // Same aperture mark as apps/web/app/icon.svg — the product brand.
 const LOGO_SVG =
