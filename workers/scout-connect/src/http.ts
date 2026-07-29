@@ -37,7 +37,7 @@ const PADDLE_CSP_SOURCES = {
   // 逐个枚举会随 Paddle 改版而漏,故按通配子域放行(仍限定在 paddle.com)。
   frame: "https://*.paddle.com https://cdn.paddle.com",
   connect: "https://*.paddle.com https://cdn.paddle.com",
-  img: "https://*.paddle.com https://cdn.paddle.com data:",
+  img: "https://*.paddle.com https://cdn.paddle.com",
   style: "https://cdn.paddle.com",
 } as const;
 
@@ -54,7 +54,11 @@ export function htmlPage(
     `script-src 'unsafe-inline' https://challenges.cloudflare.com${p ? ` ${PADDLE_CSP_SOURCES.script}` : ""}`,
     `connect-src 'self' https://challenges.cloudflare.com${p ? ` ${PADDLE_CSP_SOURCES.connect}` : ""}`,
     `frame-src https://challenges.cloudflare.com${p ? ` ${PADDLE_CSP_SOURCES.frame}` : ""}`,
-    ...(p ? [`img-src ${PADDLE_CSP_SOURCES.img}`] : []),
+    // img-src 对**所有**页面都必需:每页都带 data: URI 的 favicon
+    // (theme.ts 的 FAVICON_LINK),而 default-src 'none' 会把它挡掉。
+    // 这是本次之前就存在的缺陷,先前只给 /buy 加 img-src 反而让它更显眼。
+    // 'self' 供将来的同源图标;data: 不产生网络请求,不放宽攻击面。
+    `img-src 'self' data:${p ? ` ${PADDLE_CSP_SOURCES.img}` : ""}`,
     "base-uri 'none'",
     "form-action 'self'",
     // 结账 iframe 由 paddle.js 在**本页**创建,不需要放宽 frame-ancestors

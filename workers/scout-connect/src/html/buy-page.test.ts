@@ -116,7 +116,9 @@ describe("/buy 的 CSP 必须放行 Paddle,其余页面必须维持最严", () =
       const res = await handleRequest(new Request(`https://mediaryconnect.app${path}`), deps);
       const csp = res.headers.get("content-security-policy") ?? "";
       expect(csp, `${path} 不应放行 paddle`).not.toContain("paddle.com");
-      expect(csp, `${path} 不应有 img-src 放宽`).not.toContain("img-src");
+      // 但 img-src 必须存在:每页都带 data: URI favicon,default-src 'none'
+      // 会把它挡掉(Copilot round-3 指出的既有缺陷)。
+      expect(csp, `${path} 必须允许 data: favicon`).toContain("img-src 'self' data:");
     }
   });
 });
