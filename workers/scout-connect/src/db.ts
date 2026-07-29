@@ -163,6 +163,9 @@ export interface ConnectDb {
    *  (两笔都基于同一快照,用户付 24 个月只拿到 12)。写入后从整本账重算,
    *  与快照不符就用这个方法修正。见 grant.ts 与 entitlement.ts:recomputeExpiry。 */
   updateEntitlementExpiry(entitlementId: string, expiresAt: string): Promise<void>;
+  /** 按 paddle_transaction_id 查那笔时长。幂等重投时用来定位「上次收敛失败
+   *  留下的错值行」并自愈,见 grant.ts。 */
+  getEntitlementByTransactionId(txnId: string): Promise<EntitlementRow | null>;
   listEntitlements(accountId: string): Promise<EntitlementRow[]>;
 }
 
@@ -625,6 +628,15 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
         .run();
     },
 
+    async getEntitlementByTransactionId(txnId) {
+      // 与 listEntitlements 同款:entitlements 的列与 EntitlementRow 一一对应,
+      // 不需要 mapper(其它表有 nullable 归一才需要)。
+      return await d1
+        .prepare(`SELECT * FROM entitlements WHERE paddle_transaction_id = ? LIMIT 1`)
+        .bind(txnId)
+        .first<EntitlementRow>();
+    },
+
     async listEntitlements(accountId) {
       const rows = await d1
         .prepare(`SELECT * FROM entitlements WHERE account_id = ? ORDER BY created_at ASC`)
@@ -966,6 +978,13 @@ export function createMemoryConnectDb(): ConnectDb {
       const row = entitlements.get(entitlementId);
       if (row === undefined) return;
       entitlements.set(entitlementId, { ...row, expires_at: expiresAt });
+    },
+
+    async getEntitlementByTransactionId(txnId) {
+      for (const row of entitlements.values()) {
+        if (row.paddle_transaction_id === txnId) return { ...row };
+      }
+      return null;
     },
   };
 }

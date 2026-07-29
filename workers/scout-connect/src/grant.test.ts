@@ -225,3 +225,78 @@ describe("并发安全:lost update", () => {
     expect(second.expiresAt).toBe("2027-01-29T12:00:00.000Z");
   });
 });
+
+describe("重投自愈:上次并发收敛失败留下的错值要能修正", () => {
+  // 并发收敛发生在 insert 之后、update 之前。若 update 因 D1 抖动失败 →
+  // webhook 返回 503 → Paddle 重投 → 走幂等分支。若幂等分支只回读不重算,
+  // 那个基于陈旧快照的错值会**永久留下**,用户永久少拿一个周期(实测复现)。
+  it("幂等重投会把错的 expires_at 修正为账本真值", async () => {
+    const db = createMemoryConnectDb();
+    const d = deps(db);
+    await grantEntitlement(
+      { email: "heal@example.com", months: 12, source: "paddle", paddleTransactionId: "t1" },
+      d,
+    );
+    const acct = await db.getAccountByEmail("heal@example.com");
+    // 种一个「上次收敛失败留下的错值行」:基于陈旧快照算的 2027 而非应有的 2028
+    await db.insertEntitlement({
+      id: "ent_stale",
+      account_id: acct!.id,
+      expires_at: "2027-07-29T12:00:00.000Z",
+      source: "paddle",
+      paddle_transaction_id: "t2",
+      months: 12,
+      created_at: NOW,
+    });
+    const before = (await db.listEntitlements(acct!.id)).map((e) => e.expires_at).sort().pop();
+    expect(before, "前置条件:错值存在").toBe("2027-07-29T12:00:00.000Z");
+
+    const replay = await grantEntitlement(
+      { email: "heal@example.com", months: 12, source: "paddle", paddleTransactionId: "t2" },
+      d,
+    );
+    expect(replay.applied, "仍是幂等命中").toBe(false);
+    expect(replay.expiresAt, "返回账本真值").toBe("2028-07-29T12:00:00.000Z");
+    const after = (await db.listEntitlements(acct!.id)).map((e) => e.expires_at).sort().pop();
+    expect(after, "DB 里的错值必须被改正").toBe("2028-07-29T12:00:00.000Z");
+  });
+
+  it("值已正确时重投不做多余写入", async () => {
+    const db = createMemoryConnectDb();
+    let updates = 0;
+    const counted: ConnectDb = {
+      ...db,
+      async updateEntitlementExpiry(id: string, exp: string) {
+        updates++;
+        return db.updateEntitlementExpiry(id, exp);
+      },
+    };
+    const d = deps(counted);
+    await grantEntitlement(
+      { email: "noop@example.com", months: 12, source: "paddle", paddleTransactionId: "n1" },
+      d,
+    );
+    const baseline = updates;
+    await grantEntitlement(
+      { email: "noop@example.com", months: 12, source: "paddle", paddleTransactionId: "n1" },
+      d,
+    );
+    expect(updates, "无需修正时不该写").toBe(baseline);
+  });
+
+  // 手工授予没有 txn id,幂等分支的自愈靠 txn id 定位,这条路径不该炸。
+  it("手工授予(null txn id)的重投路径安全", async () => {
+    const db = createMemoryConnectDb();
+    const d = deps(db);
+    const r1 = await grantEntitlement(
+      { email: "man@example.com", months: 1, source: "manual", paddleTransactionId: null },
+      d,
+    );
+    expect(r1.applied).toBe(true);
+    const r2 = await grantEntitlement(
+      { email: "man@example.com", months: 1, source: "manual", paddleTransactionId: null },
+      d,
+    );
+    expect(r2.applied, "null txn id 不参与幂等,应真入账").toBe(true);
+  });
+});

@@ -108,8 +108,12 @@ export async function verifyPaddleSignature(input: VerifyInput): Promise<boolean
     const mac = await crypto.subtle.sign(
       "HMAC",
       key,
-      // 签名对象:ts 与 body 用冒号连接。ts 用头里的原始值(而非重新格式化),
-      // 否则前导零之类的差异会让签名对不上。
+      // 签名对象:ts 与 body 用冒号连接。
+      // 注意这里用的是**解析后的数字**(parsed.ts),所以头里若写成带前导零的
+      // "ts=0170..." 会与 Paddle 的签名对不上。实践中 Paddle 永远发规范的
+      // Unix 秒,且 parsePaddleSignature 已用 /^\d+$/ 卡过形状;真要完全保真
+      // 就得把原始文本一路带下来,那对现实收益为零而复杂度实在。
+      // (早先这里的注释写着"用头里的原始值",与实现不符 —— 已纠正。)
       new TextEncoder().encode(`${parsed.ts}:${input.rawBody}`),
     );
     const expected = toHex(mac);

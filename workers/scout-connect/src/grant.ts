@@ -91,7 +91,23 @@ export async function grantEntitlement(
     // 上面算出的 expiresAt —— 那个值是「假设本次入账」算出来的,比真实到期多
     // 一个周期。Paddle 重投很常见,回错值会让控制台显示比实际更长的有效期。
     const after = await deps.db.listEntitlements(account.id);
-    return { accountId: account.id, expiresAt: latestExpiry(after) ?? expiresAt, applied: false };
+    // **重投要有自愈能力。** 上一次的并发收敛(下面那段)可能在 insert 之后、
+    // update 之前失败(D1 抖动 → webhook 503 → Paddle 重投)。若幂等分支只回读,
+    // 那个基于陈旧快照的错值会**永久留下** —— 用户永久少拿一个周期(实测复现)。
+    // 所以这里也重算,并在必要时修正本笔交易对应的那行。
+    const truth = recomputeExpiry(after);
+    if (truth !== null && input.paddleTransactionId !== null) {
+      const existing = await deps.db.getEntitlementByTransactionId(input.paddleTransactionId);
+      if (existing !== null && existing.expires_at !== truth) {
+        await deps.db.updateEntitlementExpiry(existing.id, truth);
+        return { accountId: account.id, expiresAt: truth, applied: false };
+      }
+    }
+    return {
+      accountId: account.id,
+      expiresAt: truth ?? latestExpiry(after) ?? expiresAt,
+      applied: false,
+    };
   }
 
   // **并发安全:写入后从整本账重算,并在需要时修正本行。**
