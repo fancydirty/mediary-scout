@@ -12,6 +12,7 @@ import { adminPage } from "./html/admin-page.js";
 import { invitePage, type InvitePageState } from "./html/invite-page.js";
 import { betaPage, normalizeTurnstileSitekey } from "./html/beta-page.js";
 import { CAPACITY_LIMIT } from "./capacity.js";
+import { isEntitlementActive, latestExpiry } from "./entitlement.js";
 import { buyPage } from "./html/buy-page.js";
 import { compliancePage, COMPLIANCE_PAGES, type CompliancePageKey } from "./html/compliance-page.js";
 import { RAW_ASSETS } from "./html/assets.gen.js";
@@ -657,11 +658,15 @@ async function consoleRoute(request: Request, deps: RouteDeps): Promise<Response
   // 该账号的 active endpoint(可能为 null:已付费但还没选 slug,或未开通)。
   // 控制台据此决定显示「选专属地址」入口还是「接入命令」提示词区。
   const endpoint = await deps.db.getActiveEndpointByAccountId(account.id);
-  // 仅在「还没开通」时才数配额:已开通用户不受配额影响,不该为他们每次进控制台
-  // 都多跑一次 COUNT。满容量时前端不渲染 slug 表单(见 console-page),免得用户
-  // 填完名字才吃 503。
-  const atCapacity =
-    endpoint === null ? (await deps.db.countLiveEndpoints()) >= CAPACITY_LIMIT : false;
+  // 仅在「真的能走到 slug 表单」时才数配额,两个条件都要满足:
+  //   1. 还没开通(已开通用户不受配额影响)
+  //   2. 有有效时长(无时长的用户在 console-page 走早返回分支,压根用不到这个值)
+  // 否则未付费/已过期用户每次进控制台都白跑一次全表 COUNT。
+  const eligibleToProvision =
+    endpoint === null && isEntitlementActive(latestExpiry(entitlements), deps.now());
+  const atCapacity = eligibleToProvision
+    ? (await deps.db.countLiveEndpoints()) >= CAPACITY_LIMIT
+    : false;
   const url = new URL(request.url);
   return htmlPage(
     consolePage({

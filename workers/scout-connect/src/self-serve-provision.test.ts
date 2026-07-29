@@ -225,7 +225,9 @@ describe("容量闸门(CF 隧道 1000 硬上限)", () => {
         cf_access_policy_id: null,
         cf_dns_record_id: `d_${i}`,
         status,
-        token_sha256: null,
+        // NOT NULL(schema.sql:28)。memory 实现不校验约束,但保持与真 schema
+        // 一致才能避免 parity 盲区(capacity.test.ts 就因此踩过一次)。
+        token_sha256: `sha_${i}`,
         token_ciphertext: null,
         token_shown_at: null,
         last_seen_at: null,
@@ -306,7 +308,9 @@ describe("控制台在满容量时的呈现", () => {
         slug: `c-${i}`, hostname: `c-${i}.mediaryconnect.app`,
         cf_tunnel_id: `t${i}`, cf_access_app_id: null, cf_access_policy_id: null,
         cf_dns_record_id: `d${i}`, status: "active",
-        token_sha256: null, token_ciphertext: null, token_shown_at: null,
+        // NOT NULL(schema.sql:28)。memory 实现不校验约束,但保持与真 schema
+        // 一致才能避免 parity 盲区(capacity.test.ts 就因此踩过一次)。
+        token_sha256: `sha_${i}`, token_ciphertext: null, token_shown_at: null,
         last_seen_at: null, created_at: NOW, revoked_at: null,
         account_id: null, grace_until: null, suspended_at: null, purge_after: null,
       } as never);
@@ -354,5 +358,55 @@ describe("控制台在满容量时的呈现", () => {
     const html = await console_(db, deps, "act_c3");
     expect(html).toContain("mine.mediaryconnect.app");
     expect(html).not.toContain("暂时售罄");
+  });
+});
+
+describe("容量计数的调用时机(避免无谓的全表 COUNT)", () => {
+  /** 包一层 db,记录 countLiveEndpoints 被调用次数。 */
+  function counting(db: ConnectDb): { db: ConnectDb; hits: () => number } {
+    let n = 0;
+    const wrapped: ConnectDb = {
+      ...db,
+      async countLiveEndpoints() {
+        n++;
+        return db.countLiveEndpoints();
+      },
+    };
+    return { db: wrapped, hits: () => n };
+  }
+
+  async function openConsole(deps: RouteDeps, accountId: string): Promise<number> {
+    const res = await handleRequest(
+      new Request(`${BASE}/console`, { headers: { cookie: await cookieFor(accountId) } }),
+      deps,
+    );
+    return res.status;
+  }
+
+  // 无有效时长的用户在 console-page 走早返回分支,压根用不到 atCapacity。
+  // 为他们跑一次全表 COUNT 纯属浪费(Copilot round-1 指出)。
+  it("无有效时长时不查容量", async () => {
+    const { deps, db } = setup();
+    await seedAccount(db, "act_np", "2026-01-01T00:00:00.000Z"); // 已过期
+    const c = counting(db);
+    expect(await openConsole({ ...deps, db: c.db }, "act_np")).toBe(200);
+    expect(c.hits(), "过期用户不该触发 COUNT").toBe(0);
+  });
+
+  it("有时长且未开通时才查容量", async () => {
+    const { deps, db } = setup();
+    await seedAccount(db, "act_el", "2027-01-01T00:00:00.000Z");
+    const c = counting(db);
+    expect(await openConsole({ ...deps, db: c.db }, "act_el")).toBe(200);
+    expect(c.hits()).toBe(1);
+  });
+
+  it("已开通用户不查容量(不受配额影响)", async () => {
+    const { deps, db } = setup();
+    await seedAccount(db, "act_done", "2027-01-01T00:00:00.000Z");
+    expect((await handleRequest(post("done", await cookieFor("act_done")), deps)).status).toBe(200);
+    const c = counting(db);
+    expect(await openConsole({ ...deps, db: c.db }, "act_done")).toBe(200);
+    expect(c.hits(), "已开通用户不该触发 COUNT").toBe(0);
   });
 });
