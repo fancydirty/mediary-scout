@@ -95,6 +95,23 @@ describe("extractLang", () => {
     }
   });
 
+  // 「只含中文全角标点、无汉字」的块曾被判成语言中立 → 同时出现在两页,
+  // 且与 isZhBlock「全角标点算中文侧」自相矛盾(Copilot round-2 的 details 指出,
+  // 实测确认)。
+  it("只含中文全角标点(无汉字)的块归中文页,不得两页都出现", () => {
+    const md = ["# Title", "标题", "。。。", "Body", "正文"].join("\n\n");
+    expect(extractLang(md, "zh")).toContain("。。。");
+    expect(extractLang(md, "en")).not.toContain("。。。");
+  });
+
+  it("真正语言中立的块(hr/纯日期)仍两页都留", () => {
+    const md = ["# T", "标题", "---", "2026-07-28", "Body", "正文"].join("\n\n");
+    for (const lang of ["en", "zh"] as const) {
+      expect(extractLang(md, lang), lang).toContain("---");
+      expect(extractLang(md, lang), lang).toContain("2026-07-28");
+    }
+  });
+
   it("空块被丢弃,不产生连续空行", () => {
     const out = extractLang("# A\n\n\n\n\nBody", "en");
     expect(out).toBe("# A\n\nBody");
@@ -177,6 +194,13 @@ describe("compliancePage 单语渲染", () => {
     const { compliancePage } = await import("./compliance-page.js");
     expect(compliancePage("privacy", "zh")).toContain('href="/privacy?lang=en"');
     expect(compliancePage("privacy", "en")).toContain('href="/privacy"');
+  });
+
+  // padding 只给 span 时,真正可点的 <a> 触控目标明显小于 pill(round-2 指出)。
+  it("切换条的 a 与 span 同款 padding(可点区域不得小于 pill)", async () => {
+    const { compliancePage } = await import("./compliance-page.js");
+    const html = compliancePage("terms", "zh");
+    expect(html).toMatch(/\.lang-bar span,\.lang-bar a\{padding:/);
   });
 
   // 页脚互链不带语言,用户每翻一页都得重新切一次。

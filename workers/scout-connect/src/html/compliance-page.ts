@@ -63,7 +63,10 @@ ${THEME_BASE}
 ${BRAND_CSS}
 main{max-width:760px;margin:0 auto;padding:36px 24px 96px}
 .lang-bar{display:inline-flex;font-family:var(--mono);font-size:11px;letter-spacing:1px;border:1px solid #2b2b2b;border-radius:999px;overflow:hidden;margin:26px 0 8px}
-.lang-bar span{padding:5px 14px}
+/* span 与 a 同款 padding：a 是真正可点的那一侧，只给 span 会让点击/触控
+   目标明显小于 pill，视觉上也破形（Copilot round-2 指出）。 */
+.lang-bar span,.lang-bar a{padding:5px 14px;text-decoration:none}
+.lang-bar a:hover{color:var(--text)}
 .lang-bar .on{background:var(--accent);color:#000}
 .lang-bar .off{color:var(--text-muted)}
 /* 单语成页后不再需要「中文次级色」——那是中英并排时区分主次用的。

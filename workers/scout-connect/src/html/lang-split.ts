@@ -76,7 +76,8 @@ export function isZhBlock(text: string): boolean {
     const code = ch.codePointAt(0)!;
     if (code >= 0x4e00 && code <= 0x9fff) return true;
   }
-  // 无汉字但有 CJK 专属标点(如整块只有「——」或「、」)也算中文侧。
+  // 无汉字但有 CJK 专属标点(如整块只有「、」「。」)也算中文侧。
+  // em dash「——」与省略号「…」**不算**(见 CJK_PUNCT_RE:英文排版同样常用)。
   return CJK_PUNCT_RE.test(cleaned);
 }
 
@@ -127,11 +128,16 @@ function promoteFirstHeading(blocks: string[]): string[] {
   return out;
 }
 
-/** 语言中立块:不含任何 CJK 字符**且**不含任何 ASCII 字母(同样先剔除
+/** 语言中立块:既无汉字、无 CJK 专属标点,也无 ASCII 字母(同样先剔除
  *  URL/代码/域名——一个只有链接的块不表达语种,两页都该留)。
- *  例:`---`、`2026-07-28`、纯符号行。 */
+ *  例:`---`、`2026-07-28`、纯符号行。
+ *
+ *  **必须把 CJK 专属标点计入**:否则「只含全角标点、无汉字」的块(如整块
+ *  只有「。。。」)会被判成中立而**同时出现在中英两页**(实测确认),且与
+ *  isZhBlock「全角标点算中文侧」的规则自相矛盾。 */
 function isLangNeutral(text: string): boolean {
   const cleaned = stripLangNeutralTokens(text);
+  if (CJK_PUNCT_RE.test(cleaned)) return false;
   let cjk = 0;
   let latin = 0;
   for (const ch of cleaned) {
