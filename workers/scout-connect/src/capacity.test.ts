@@ -25,11 +25,16 @@ import { CAPACITY_LIMIT } from "./capacity.js";
  */
 
 function endpoint(over: Partial<EndpointRow>): EndpointRow {
+  // 先算成局部变量再复用:原先 hostname 用 `over.slug ?? "x"`,不传 slug 时
+  // slug 是随机的、hostname 却固定成 x.mediaryconnect.app —— 两者不一致,且
+  // 第二次调用就撞 hostname UNIQUE。token_sha256 同理会退化成 sha_x。
+  const id = over.id ?? crypto.randomUUID();
+  const slug = over.slug ?? `s${Math.random().toString(36).slice(2, 8)}`;
   return {
-    id: over.id ?? crypto.randomUUID(),
+    id,
     invite_id: null,
-    slug: over.slug ?? `s${Math.random().toString(36).slice(2, 8)}`,
-    hostname: over.hostname ?? `${over.slug ?? "x"}.mediaryconnect.app`,
+    slug,
+    hostname: over.hostname ?? `${slug}.mediaryconnect.app`,
     cf_tunnel_id: "t1",
     cf_access_app_id: null,
     cf_access_policy_id: null,
@@ -37,7 +42,7 @@ function endpoint(over: Partial<EndpointRow>): EndpointRow {
     status: over.status ?? "active",
     // NOT NULL(schema.sql:28)。memory 实现不校验约束,真 SQLite 会拒——
     // parity 测试因此顺带发现了原 helper 造的是生产里非法的行。
-    token_sha256: `sha_${over.id ?? over.slug ?? "x"}`,
+    token_sha256: `sha_${id}`,
     token_ciphertext: null,
     token_shown_at: null,
     last_seen_at: null,
@@ -56,6 +61,21 @@ async function seed(db: ConnectDb, rows: Partial<EndpointRow>[]): Promise<void> 
     await db.insertEndpoint(endpoint({ slug: `slug${i}`, hostname: `slug${i}.mediaryconnect.app`, ...r }));
   }
 }
+
+describe("测试 helper 自身的正确性", () => {
+  // 原 helper 的默认 hostname 与 slug 不一致(hostname 固定 x.…),连续两条就撞
+  // UNIQUE;而真 SQLite 才会拒,memory 实现不会 —— 又一处 parity 盲区。
+  it("不传 slug 时 slug 与 hostname 自洽,可连续插多条", async () => {
+    const db = realD1();
+    await db.insertEndpoint(endpoint({}));
+    await db.insertEndpoint(endpoint({}));
+    expect(await db.countLiveEndpoints()).toBe(2);
+    const all = await db.listEndpoints();
+    for (const r of all) {
+      expect(r.hostname, "hostname 必须由自身 slug 派生").toBe(`${r.slug}.mediaryconnect.app`);
+    }
+  });
+});
 
 describe("countLiveEndpoints —— 计数语义(决定卖不卖得出去)", () => {
   it("空库为 0", async () => {
