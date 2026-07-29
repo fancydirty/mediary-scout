@@ -346,3 +346,94 @@ describe("POST /api/paddle/webhook", () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe("时间基准:用事件的 occurred_at 而非投递到达时刻", () => {
+  // Paddle 重试是指数退避,失败后可能几小时后才成功投递。若按到达时刻算,
+  // 一笔「到期前 1 分钟成交」的续费会被当成「已过期 → 从当下重启」,
+  // 用户白丢那段延迟的时长(延迟 24h 就丢 24h)。
+  it("延迟投递的续费仍从旧到期叠加(不被当成已过期重启)", async () => {
+    const { db, deps } = setup();
+    // 先有一笔到 2026-08-01 到期的时长
+    const acct = await db.insertAccount({
+      id: "act_pre",
+      email: "buyer@example.com",
+      paddle_customer_id: null,
+      created_at: "2026-07-01T00:00:00.000Z",
+      last_login_at: null,
+    });
+    await db.insertEntitlement({
+      id: "ent_pre",
+      account_id: acct.id,
+      expires_at: "2026-08-01T00:00:00.000Z",
+      source: "manual",
+      paddle_transaction_id: null,
+      months: 1,
+      created_at: "2026-07-01T00:00:00.000Z",
+    });
+    // 成交时刻在到期之前;但 now() 是到期之后(模拟投递延迟)
+    const occurred = "2026-07-31T23:00:00.000Z";
+    const body = eventBody({ occurred_at: occurred }, { id: "txn_late" });
+    const lateNow = "2026-08-02T00:00:00.000Z";
+    const res = await post(
+      { ...deps, now: () => lateNow },
+      body,
+      await signed(body, SECRET, Date.parse(lateNow)),
+    );
+    expect(res.status).toBe(200);
+    // 从旧到期 2026-08-01 叠加 12 个月 → 2027-08-01
+    // (若按 lateNow 算会是 2027-08-02,白丢一天)
+    expect((await res.json()) as { expires_at: string }).toMatchObject({
+      expires_at: "2027-08-01T00:00:00.000Z",
+    });
+  });
+
+  it("occurred_at 缺失/畸形时回落 now(不阻断入账)", async () => {
+    for (const occurred of [undefined, "", "not-a-date", 12345]) {
+      const { deps } = setup();
+      const body = eventBody({ occurred_at: occurred }, { id: `txn_${String(occurred)}` });
+      const res = await post(deps, body, await signed(body));
+      expect(res.status, `occurred_at=${String(occurred)}`).toBe(200);
+      expect((await res.json()) as { applied: boolean }).toMatchObject({ applied: true });
+    }
+  });
+
+  // 离谱的 occurred_at 不该把到期推到很远(防上游 bug;payload 已验签,非攻击面)。
+  it("occurred_at 偏离当下过远时回落 now", async () => {
+    const { deps } = setup();
+    const body = eventBody({ occurred_at: "2099-01-01T00:00:00.000Z" }, { id: "txn_future" });
+    const res = await post(deps, body, await signed(body));
+    // 回落 NOW(2026-07-29)+12 个月,而不是 2100
+    expect((await res.json()) as { expires_at: string }).toMatchObject({
+      expires_at: "2027-07-29T12:00:00.000Z",
+    });
+  });
+});
+
+describe("审计写入必须 best-effort(不可把不可重试的失败变成无限重投)", () => {
+  it("解析失败且审计写入也失败时仍返回 200", async () => {
+    const { db, deps } = setup();
+    const noAudit: ConnectDb = {
+      ...db,
+      async insertAudit() {
+        throw new Error("audit unavailable");
+      },
+    };
+    const body = eventBody({}, { items: [{ price: { id: "pri_fake" }, quantity: 1 }] });
+    const res = await post({ ...deps, db: noAudit }, body, await signed(body));
+    expect(res.status, "审计故障不该变成 500 → 那会无限重投").toBe(200);
+    expect(await res.json()).toMatchObject({ unprocessable: "unknown_price" });
+  });
+
+  it("畸形 JSON 的审计记录真实字节数(非 UTF-16 长度)", async () => {
+    const { db, deps } = setup();
+    const body = '{"x":"退款政策"'; // 非 ASCII,字节数 > length
+    const res = await post(deps, body, await signed(body));
+    expect(res.status).toBe(200);
+    const a = (await db.listAudits()).find(
+      (x) => x.action === "paddle.unprocessable.malformed_json",
+    );
+    const d = JSON.parse(a!.detail_json!) as { bytes: number };
+    expect(d.bytes, "应为真实字节数").toBe(new TextEncoder().encode(body).byteLength);
+    expect(d.bytes).toBeGreaterThan(body.length);
+  });
+});

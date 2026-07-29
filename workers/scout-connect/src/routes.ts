@@ -101,6 +101,10 @@ export const MAX_JSON_BODY_BYTES = 8 * 1024;
  * 写的正是这个放大漏洞)。
  */
 export const MAX_WEBHOOK_BODY_BYTES = 128 * 1024;
+/** occurred_at 与当下的最大容许偏差。超出则回落 deps.now()。
+ *  7 天足够覆盖 Paddle 最长的重试退避,又不至于让一个离谱的 occurred_at
+ *  把到期时刻推到很远。 */
+export const OCCURRED_AT_MAX_SKEW_MS = 7 * 24 * 60 * 60_000;
 
 /**
  * Cheap pre-read rejection on the DECLARED size. Costs nothing and refuses the
@@ -604,7 +608,12 @@ async function paddleWebhook(request: Request, deps: RouteDeps): Promise<Respons
         invite_id: null,
         endpoint_id: null,
         // 只留长度与开头片段:body 可能含敏感字段,且不该把整个畸形串塞进审计。
-        detail_json: JSON.stringify({ bytes: rawBody.length, head: rawBody.slice(0, 120) }),
+        // 用 TextEncoder 数真实字节:rawBody.length 是 UTF-16 code units,
+        // 含非 ASCII 时会明显偏小,排障时按"bytes"读会被误导。
+        detail_json: JSON.stringify({
+          bytes: new TextEncoder().encode(rawBody).byteLength,
+          head: rawBody.slice(0, 120),
+        }),
       });
     } catch {
       // 审计不可用时静默继续:比让 Paddle 无限重投一个永远解析不了的 body 好。
@@ -650,6 +659,22 @@ async function paddleWebhook(request: Request, deps: RouteDeps): Promise<Respons
     return json({ ok: true, ignored: eventType }, 200, { noStore: true });
   }
 
+  // **时间基准用事件的 occurred_at,而非投递到达时刻。**
+  // Paddle 重试是指数退避,失败后可能几小时后才成功投递。若用 deps.now(),
+  // 一笔"到期前 1 分钟成交"的续费在延迟投递后会被当成"已过期 → 从当下重启",
+  // 用户白丢那段延迟的时长(实测:延迟 24h 就丢 24h)。
+  // occurred_at 不可信时(缺失/畸形/偏离当下过远)回落 now:宁可少给一点,
+  // 也不能让伪造的 occurred_at 把到期时刻推到很远的未来 —— 但注意 payload
+  // 已通过 HMAC 验签,这里主要防的是上游 bug 而非攻击。
+  const occurredRaw = typeof (event as { occurred_at?: unknown }).occurred_at === "string"
+    ? (event as { occurred_at: string }).occurred_at
+    : "";
+  const occurredMs = occurredRaw === "" ? NaN : Date.parse(occurredRaw);
+  const grantNow =
+    Number.isFinite(occurredMs) && Math.abs(occurredMs - nowMs) <= OCCURRED_AT_MAX_SKEW_MS
+      ? new Date(occurredMs).toISOString()
+      : deps.now();
+
   const parsed = parseTransactionCompleted(
     event.data,
     deps.paddlePriceMonths ?? SANDBOX_PRICE_MONTHS,
@@ -657,15 +682,21 @@ async function paddleWebhook(request: Request, deps: RouteDeps): Promise<Respons
   if (!parsed.ok) {
     // 这类失败重投也不会变好(未知 price / 月数不一致 / 无邮箱),故 200。
     // 但必须留审计 —— 尤其 no_email:有人付了钱而系统不知道该给谁,要人工处理。
-    await deps.db.insertAudit({
-      id: deps.newAuditId(),
-      at: deps.now(),
-      actor: "paddle",
-      action: `paddle.unprocessable.${parsed.reason}`,
-      invite_id: null,
-      endpoint_id: null,
-      detail_json: JSON.stringify({ event_id: eventId, detail: parsed.detail }),
-    });
+    // best-effort:审计写入若因 DB 故障抛错,会被 handleError 转成 500 → Paddle
+    // 无限重投一个永远处理不了的事件并淹掉日志,与本分支"重投也不会变好"相悖。
+    try {
+      await deps.db.insertAudit({
+        id: deps.newAuditId(),
+        at: deps.now(),
+        actor: "paddle",
+        action: `paddle.unprocessable.${parsed.reason}`,
+        invite_id: null,
+        endpoint_id: null,
+        detail_json: JSON.stringify({ event_id: eventId, detail: parsed.detail }),
+      });
+    } catch {
+      // 同上:审计不可用不该把"不可重试的失败"变成无限重投。
+    }
     return json({ ok: true, unprocessable: parsed.reason }, 200, { noStore: true });
   }
 
@@ -677,7 +708,8 @@ async function paddleWebhook(request: Request, deps: RouteDeps): Promise<Respons
         source: parsed.grant.source,
         paddleTransactionId: parsed.grant.transactionId,
       },
-      deps,
+      // 时间基准换成事件成交时刻(见上)。其余依赖不变。
+      { ...deps, now: () => grantNow },
     );
     await deps.db.insertAudit({
       id: deps.newAuditId(),
