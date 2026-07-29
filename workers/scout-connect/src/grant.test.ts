@@ -149,3 +149,79 @@ describe("grantEntitlement", () => {
     expect(ents.length).toBe(2);
   });
 });
+
+describe("并发安全:lost update", () => {
+  /** 让第一次 listEntitlements 延迟返回,制造「两个请求都在对方写入前读到账本」
+   *  的真交错 —— 这正是多实例 worker 同时收到两个 webhook 时会发生的。 */
+  function racingDb(base: ConnectDb): ConnectDb {
+    let first = true;
+    return {
+      ...base,
+      async listEntitlements(id: string) {
+        const rows = await base.listEntitlements(id);
+        if (first) {
+          first = false;
+          await new Promise((r) => setTimeout(r, 20));
+        }
+        return rows;
+      },
+    };
+  }
+
+  // 修复前:两笔都基于同一个空快照算出 2027-07-29,用户付了 24 个月只拿到 12
+  // (已用确定性交错实测复现)。D1 没有跨请求事务,所以靠「写入后从整本账重算
+  // 并修正本行」收敛 —— 重算结果与写入顺序无关。
+  it("并发两笔不同交易,时长不丢(24 个月全给到)", async () => {
+    const db = racingDb(createMemoryConnectDb());
+    const d = deps(db);
+    await Promise.all([
+      grantEntitlement(
+        { email: "race@example.com", months: 12, source: "paddle", paddleTransactionId: "t1" },
+        d,
+      ),
+      grantEntitlement(
+        { email: "race@example.com", months: 12, source: "paddle", paddleTransactionId: "t2" },
+        d,
+      ),
+    ]);
+    const acct = await db.getAccountByEmail("race@example.com");
+    const ents = await db.listEntitlements(acct!.id);
+    expect(ents.length, "两笔都要入账").toBe(2);
+    const max = ents.map((e) => e.expires_at).sort().pop();
+    expect(max, "24 个月应到 2028-07-29,而非 2027(少给 12 个月)").toBe(
+      "2028-07-29T12:00:00.000Z",
+    );
+  });
+
+  it("并发三笔:36 个月全给到", async () => {
+    const db = racingDb(createMemoryConnectDb());
+    const d = deps(db);
+    await Promise.all(
+      ["a", "b", "c"].map((t) =>
+        grantEntitlement(
+          { email: "race3@example.com", months: 12, source: "paddle", paddleTransactionId: t },
+          d,
+        ),
+      ),
+    );
+    const acct = await db.getAccountByEmail("race3@example.com");
+    const ents = await db.listEntitlements(acct!.id);
+    expect(ents.length).toBe(3);
+    expect(ents.map((e) => e.expires_at).sort().pop()).toBe("2029-07-29T12:00:00.000Z");
+  });
+
+  // 非并发路径不该被重算改坏。
+  it("串行两笔仍是正常叠加(重算不引入回归)", async () => {
+    const db = createMemoryConnectDb();
+    const d = deps(db);
+    await grantEntitlement(
+      { email: "seq@example.com", months: 3, source: "paddle", paddleTransactionId: "s1" },
+      d,
+    );
+    const second = await grantEntitlement(
+      { email: "seq@example.com", months: 3, source: "paddle", paddleTransactionId: "s2" },
+      d,
+    );
+    expect(second.expiresAt).toBe("2027-01-29T12:00:00.000Z");
+  });
+});

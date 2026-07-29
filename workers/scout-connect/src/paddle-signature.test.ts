@@ -159,3 +159,52 @@ describe("verifyPaddleSignature", () => {
     ).toBe(true);
   });
 });
+
+describe("契约:任何失败返回 false,绝不抛错", () => {
+  const BODY2 = '{"a":1}';
+
+  // Math.abs(NaN - x) > tolerance 恒为 false → 时间窗被静默跳过,重放放行。
+  // 这是最隐蔽的一类漏洞:代码看着有检查,实际等于没有。
+  it("nowMs 为 NaN 时拒绝(而不是绕过时间窗)", async () => {
+    const ts = "1700000000";
+    const header = `ts=${ts};h1=${await sign(ts, BODY2)}`;
+    expect(
+      await verifyPaddleSignature({ rawBody: BODY2, header, secret: SECRET, nowMs: NaN }),
+    ).toBe(false);
+  });
+
+  it.each([Infinity, -Infinity])("nowMs 为 %s 时拒绝", async (nowMs) => {
+    const ts = "1700000000";
+    const header = `ts=${ts};h1=${await sign(ts, BODY2)}`;
+    expect(await verifyPaddleSignature({ rawBody: BODY2, header, secret: SECRET, nowMs })).toBe(
+      false,
+    );
+  });
+
+  it("toleranceMs 畸形时拒绝(不可放大成无限窗)", async () => {
+    const nowMs = 1_700_000_000_000;
+    const ts = String(Math.floor(nowMs / 1000));
+    const header = `ts=${ts};h1=${await sign(ts, BODY2)}`;
+    for (const toleranceMs of [NaN, Infinity, -1]) {
+      expect(
+        await verifyPaddleSignature({ rawBody: BODY2, header, secret: SECRET, nowMs, toleranceMs }),
+        `tolerance=${toleranceMs}`,
+      ).toBe(false);
+    }
+  });
+
+  // 契约是"不抛错"。WebCrypto 对某些输入会抛,必须被吞成 false。
+  it("超长密钥等 WebCrypto 异常输入不抛错", async () => {
+    const nowMs = 1_700_000_000_000;
+    const ts = String(Math.floor(nowMs / 1000));
+    const header = `ts=${ts};h1=${"f".repeat(64)}`;
+    await expect(
+      verifyPaddleSignature({
+        rawBody: BODY2,
+        header,
+        secret: "\u0000".repeat(10),
+        nowMs,
+      }),
+    ).resolves.toBe(false);
+  });
+});

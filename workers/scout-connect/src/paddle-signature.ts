@@ -86,25 +86,36 @@ export async function verifyPaddleSignature(input: VerifyInput): Promise<boolean
   const parsed = parsePaddleSignature(input.header);
   if (parsed === null) return false;
 
+  // **nowMs 必须先卡 finite**:NaN 会让下面的时间窗检查被静默绕过 ——
+  // `Math.abs(NaN - x) > tolerance` 恒为 false,于是任何重放都放行。
+  // 调用方传的是 Date.parse(deps.now()),now() 若返回坏值就是 NaN。
+  if (!Number.isFinite(input.nowMs)) return false;
   const tolerance = input.toleranceMs ?? SIGNATURE_TOLERANCE_MS;
+  if (!Number.isFinite(tolerance) || tolerance < 0) return false;
   // 双向都要卡:太旧是重放,太新则意味着时钟漂移或伪造。
   if (Math.abs(input.nowMs - parsed.ts * 1000) > tolerance) return false;
 
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(input.secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const mac = await crypto.subtle.sign(
-    "HMAC",
-    key,
-    // 签名对象:ts 与 body 用冒号连接。ts 用头里的原始值(而非重新格式化),
-    // 否则前导零之类的差异会让签名对不上。
-    new TextEncoder().encode(`${parsed.ts}:${input.rawBody}`),
-  );
-  const expected = toHex(mac);
-  // hex 大小写不敏感:统一小写后再常量时间比较。
-  return parsed.h1.some((candidate) => timingSafeEqualHex(candidate.toLowerCase(), expected));
+  // WebCrypto 会抛(如密钥长度不被支持)。本函数的契约是「任何失败返回 false,
+  // 不抛错」—— webhook 端点会被随机扫描,一个畸形输入不该变成 500。
+  try {
+    const key = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(input.secret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+    const mac = await crypto.subtle.sign(
+      "HMAC",
+      key,
+      // 签名对象:ts 与 body 用冒号连接。ts 用头里的原始值(而非重新格式化),
+      // 否则前导零之类的差异会让签名对不上。
+      new TextEncoder().encode(`${parsed.ts}:${input.rawBody}`),
+    );
+    const expected = toHex(mac);
+    // hex 大小写不敏感:统一小写后再常量时间比较。
+    return parsed.h1.some((candidate) => timingSafeEqualHex(candidate.toLowerCase(), expected));
+  } catch {
+    return false;
+  }
 }

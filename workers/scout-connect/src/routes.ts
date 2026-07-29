@@ -91,6 +91,16 @@ export async function handleRequest(request: Request, deps: RouteDeps): Promise<
  * degrades provisioning and revocation, not just the waitlist.
  */
 export const MAX_JSON_BODY_BYTES = 8 * 1024;
+/**
+ * Paddle webhook 的 body 上限,比普通 API 请求宽。
+ *
+ * 真实 transaction.completed payload 粗估约 2KB,但含 receipt_data、payments
+ * 数组、多 line_items 时会明显更大。**上限设太紧会拒掉真实付款通知 —— 那是
+ * 直接丢钱**,所以留足余量。仍然要有上限:webhook 端点公开可打,裸
+ * request.text() 会把 500MB body 全缓存进内存(readBodyTextCapped 的注释里
+ * 写的正是这个放大漏洞)。
+ */
+export const MAX_WEBHOOK_BODY_BYTES = 128 * 1024;
 
 /**
  * Cheap pre-read rejection on the DECLARED size. Costs nothing and refuses the
@@ -98,13 +108,16 @@ export const MAX_JSON_BODY_BYTES = 8 * 1024;
  * because Content-Length is absent under chunked encoding and is attacker-
  * controlled besides. readBodyTextCapped() enforces the real limit.
  */
-function assertDeclaredSizeWithinCap(request: Request): void {
+function assertDeclaredSizeWithinCap(
+  request: Request,
+  cap: number = MAX_JSON_BODY_BYTES,
+): void {
   const declared = request.headers.get("content-length");
   if (declared === null) {
     return;
   }
   const bytes = Number(declared);
-  if (Number.isFinite(bytes) && bytes > MAX_JSON_BODY_BYTES) {
+  if (Number.isFinite(bytes) && bytes > cap) {
     throw new HttpError(413, "body too large");
   }
 }
@@ -120,7 +133,10 @@ function assertDeclaredSizeWithinCap(request: Request): void {
  * code units, so a multibyte payload is up to 3x larger than a post-decode
  * length check would suggest.
  */
-async function readBodyTextCapped(request: Request): Promise<string> {
+async function readBodyTextCapped(
+  request: Request,
+  cap: number = MAX_JSON_BODY_BYTES,
+): Promise<string> {
   const body = request.body;
   if (body === null) {
     return "";
@@ -138,7 +154,7 @@ async function readBodyTextCapped(request: Request): Promise<string> {
         continue;
       }
       total += value.byteLength;
-      if (total > MAX_JSON_BODY_BYTES) {
+      if (total > cap) {
         await reader.cancel();
         throw new HttpError(413, "body too large");
       }
@@ -550,15 +566,22 @@ async function paddleWebhook(request: Request, deps: RouteDeps): Promise<Respons
     return json({ error: "webhook not configured" }, 503, { noStore: true });
   }
 
-  // 必须先拿原始文本:任何解析/重新序列化都会让签名失配。
-  const rawBody = await request.text();
+  // body 上限:webhook 端点公开可打,裸 request.text() 会把超大 body 全缓存进
+  // 内存(readBodyTextCapped 的注释写的正是这个放大漏洞)。两道防线都用 webhook
+  // 专用的宽上限 —— 设太紧会拒掉真实付款通知,那是直接丢钱。
+  assertDeclaredSizeWithinCap(request, MAX_WEBHOOK_BODY_BYTES);
+  // 必须拿**原始**文本:任何解析/重新序列化都会让签名失配。
+  const rawBody = await readBodyTextCapped(request, MAX_WEBHOOK_BODY_BYTES);
   const header = request.headers.get("paddle-signature") ?? "";
-  const ok = await verifyPaddleSignature({
-    rawBody,
-    header,
-    secret,
-    nowMs: Date.parse(deps.now()),
-  });
+  // now 只取一次并卡 finite:Date.parse 坏值会得 NaN,而
+  // `Math.abs(NaN - x) > tolerance` 恒为 false —— 时间窗会被静默绕过。
+  // verifyPaddleSignature 内部也有这道守卫(双层),这里提前失败以免白算 HMAC。
+  const nowMs = Date.parse(deps.now());
+  if (!Number.isFinite(nowMs)) {
+    // 时钟坏了是我方故障且可重试 → 503 让 Paddle 重投。
+    return json({ error: "clock unavailable" }, 503, { noStore: true });
+  }
+  const ok = await verifyPaddleSignature({ rawBody, header, secret, nowMs });
   if (!ok) {
     // 401 而非 400:这是身份问题。不回显原因(不给攻击者调试信息)。
     return json({ error: "invalid signature" }, 401, { noStore: true });

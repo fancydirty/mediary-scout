@@ -57,3 +57,36 @@ export function latestExpiry(entitlements: { expires_at: string }[]): string | n
   }
   return latest;
 }
+
+/**
+ * 从**整本账**重算最新到期时刻(并发安全的核心)。
+ *
+ * 为什么需要它:`grantEntitlement` 的「读最新到期 → 加 N 个月 → 写入」在并发下
+ * 有 lost update —— 两个 webhook 同时进来,都读到同一个 currentExpiry,各自算出
+ * 同一个 expires_at,结果**用户付了 24 个月只拿到 12 个月**(已用确定性交错实测
+ * 复现)。D1 没有跨请求事务,加不了锁。
+ *
+ * 解法是让账本自身可重算:`expires_at` 列只是缓存,真值由「所有 months 之和」
+ * 决定。按 created_at 顺序把每笔的月数依次叠加,得到的结果与写入顺序无关 ——
+ * 无论两个请求谁先谁后,重算出来都一样。
+ *
+ * 续费语义保持不变:每一步都用 computeExpiry(未到期从旧到期叠加,已过期从
+ * 当笔的时刻重启)。
+ */
+export function recomputeExpiry(
+  entitlements: { expires_at: string; months: number; created_at: string }[],
+): string | null {
+  if (entitlements.length === 0) return null;
+  // 按创建时间排序(同一时刻则按 expires_at 稳定化,避免顺序不确定)。
+  const sorted = [...entitlements].sort((a, b) => {
+    const d = Date.parse(a.created_at) - Date.parse(b.created_at);
+    if (d !== 0) return d;
+    return Date.parse(a.expires_at) - Date.parse(b.expires_at);
+  });
+  let acc: string | null = null;
+  for (const e of sorted) {
+    // 以「这笔充值发生的时刻」为 now:已过期就从那一刻重启,未过期则叠加。
+    acc = computeExpiry({ currentExpiry: acc, months: e.months, now: e.created_at });
+  }
+  return acc;
+}

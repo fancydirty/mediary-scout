@@ -1,4 +1,4 @@
-import { computeExpiry, latestExpiry } from "./entitlement.js";
+import { computeExpiry, latestExpiry, recomputeExpiry } from "./entitlement.js";
 import type { AccountRow, ConnectDb, EntitlementRow } from "./db.js";
 
 /**
@@ -75,8 +75,9 @@ export async function grantEntitlement(
     now,
   });
 
+  const entitlementId = deps.newEntitlementId();
   const applied = await deps.db.insertEntitlement({
-    id: deps.newEntitlementId(),
+    id: entitlementId,
     account_id: account.id,
     expires_at: expiresAt,
     source: input.source,
@@ -91,6 +92,19 @@ export async function grantEntitlement(
     // 一个周期。Paddle 重投很常见,回错值会让控制台显示比实际更长的有效期。
     const after = await deps.db.listEntitlements(account.id);
     return { accountId: account.id, expiresAt: latestExpiry(after) ?? expiresAt, applied: false };
+  }
+
+  // **并发安全:写入后从整本账重算,并在需要时修正本行。**
+  // 「读最新到期 → 加 N 个月 → 写」在并发下有 lost update:两个 webhook 同时
+  // 进来会读到同一个 currentExpiry,各自算出同一个 expires_at,结果用户付了
+  // 24 个月只拿到 12 个月(已用确定性交错实测复现)。D1 没有跨请求事务,加不了锁。
+  // 重算的结果与写入顺序无关,所以两个并发请求最终都会收敛到正确值。
+  const all = await deps.db.listEntitlements(account.id);
+  const truth = recomputeExpiry(all);
+  if (truth !== null && truth !== expiresAt) {
+    // 本行的 expires_at 是基于陈旧快照算的,按账本真值修正。
+    await deps.db.updateEntitlementExpiry(entitlementId, truth);
+    return { accountId: account.id, expiresAt: truth, applied: true };
   }
   return { accountId: account.id, expiresAt, applied: true };
 }

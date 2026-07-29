@@ -157,6 +157,12 @@ export interface ConnectDb {
   updateAccountLastLogin(id: string, at: string): Promise<void>;
   /** 幂等插入时长记录。paddle_transaction_id 已存在时返回 false(不重复加时长)。 */
   insertEntitlement(row: EntitlementRow): Promise<boolean>;
+  /** 修正某笔时长的 expires_at。
+   *
+   *  用于并发下的账本收敛:「读最新到期→加N月→写」在并发时会 lost update
+   *  (两笔都基于同一快照,用户付 24 个月只拿到 12)。写入后从整本账重算,
+   *  与快照不符就用这个方法修正。见 grant.ts 与 entitlement.ts:recomputeExpiry。 */
+  updateEntitlementExpiry(entitlementId: string, expiresAt: string): Promise<void>;
   listEntitlements(accountId: string): Promise<EntitlementRow[]>;
 }
 
@@ -612,6 +618,13 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
       }
     },
 
+    async updateEntitlementExpiry(entitlementId, expiresAt) {
+      await d1
+        .prepare(`UPDATE entitlements SET expires_at = ? WHERE id = ?`)
+        .bind(expiresAt, entitlementId)
+        .run();
+    },
+
     async listEntitlements(accountId) {
       const rows = await d1
         .prepare(`SELECT * FROM entitlements WHERE account_id = ? ORDER BY created_at ASC`)
@@ -946,6 +959,13 @@ export function createMemoryConnectDb(): ConnectDb {
         .filter((e) => e.account_id === accountId)
         .sort((a, b) => a.created_at.localeCompare(b.created_at))
         .map((e) => ({ ...e }));
+    },
+
+    async updateEntitlementExpiry(entitlementId, expiresAt) {
+      // 与 D1 分支同款语义(parity):不存在的 id 静默无操作,与 SQL UPDATE 一致。
+      const row = entitlements.get(entitlementId);
+      if (row === undefined) return;
+      entitlements.set(entitlementId, { ...row, expires_at: expiresAt });
     },
   };
 }
