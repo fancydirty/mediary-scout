@@ -11,7 +11,7 @@ import { homePage } from "./html/home-page.js";
 import { adminPage } from "./html/admin-page.js";
 import { invitePage, type InvitePageState } from "./html/invite-page.js";
 import { betaPage, normalizeTurnstileSitekey } from "./html/beta-page.js";
-import { CAPACITY_LIMIT } from "./capacity.js";
+import { CAPACITY_LIMIT, isAtCapacityError } from "./capacity.js";
 import { buyPage } from "./html/buy-page.js";
 import { compliancePage, COMPLIANCE_PAGES, type CompliancePageKey } from "./html/compliance-page.js";
 import { RAW_ASSETS } from "./html/assets.gen.js";
@@ -505,9 +505,9 @@ async function selfServeProvision(request: Request, deps: RouteDeps): Promise<Re
     ) {
       throw new HttpError(409, "slug taken");
     }
-    // 容量已满 → 503 而非 4xx:这是**我方**容量问题(CF 隧道 1000 硬上限),
-    // 用户的请求本身完全合法。4xx 会让用户以为自己填错了。
-    if (msg === "at capacity") {
+    // 容量已满 → 503(共享 helper,见 capacity.ts:两条 provision 路由必须
+    // 用同一个判定,否则漏掉的那条会把容量满变成 500)。
+    if (isAtCapacityError(e)) {
       throw new HttpError(503, "at capacity");
     }
     throw e;
@@ -815,6 +815,12 @@ async function provisionInvite(
     // The actual race loser dies on the UNIQUE constraint — "UNIQUE
     // constraint failed: endpoints.slug" (same wording in D1 and the memory
     // mock) — which contains neither pre-check message, so map it explicitly.
+    // 容量已满 → 503。**必须与自助路径用同一个判定**:provisionEndpoint 是
+    // 共享函数,这条路径原先漏了映射,容量满时会变成 500(且语义不对——那不是
+    // 服务器故障,而是我方配额用尽)。
+    if (isAtCapacityError(e)) {
+      throw new HttpError(503, "at capacity");
+    }
     const msg = e instanceof Error ? e.message : "";
     if (msg.includes("invite not pending") || msg.includes("already in use")) {
       throw new HttpError(409, msg);

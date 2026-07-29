@@ -11,3 +11,20 @@
  * entitlement 门禁,在 createTunnel 才拿到 CF 报错。
  */
 export const CAPACITY_LIMIT = 990;
+
+/** provisionEndpoint 在容量满时抛出的确切 message。
+ *  两条 provision 路由(自助 /api/provision 与 admin invite)都要能识别它并映射
+ *  503,所以常量化——字符串字面量散在两处迟早对不上。 */
+export const AT_CAPACITY_MESSAGE = "at capacity";
+
+/** 把「容量已满」映射成 503。
+ *
+ *  503 而非 4xx:这是**我方**容量问题(CF 隧道 1000 硬上限),用户的请求本身
+ *  完全合法。4xx 会让用户以为自己填错了。
+ *
+ *  两条路由共用同一个 helper,而不是各写一遍 includes 判断 —— provisionEndpoint
+ *  是共享函数,任何调用方漏掉这个映射都会让容量满变成 500(Copilot round-4
+ *  指出 admin invite 路径正是如此)。 */
+export function isAtCapacityError(e: unknown): boolean {
+  return e instanceof Error && e.message === AT_CAPACITY_MESSAGE;
+}

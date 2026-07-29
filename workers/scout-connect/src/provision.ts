@@ -1,4 +1,4 @@
-import { CAPACITY_LIMIT } from "./capacity.js";
+import { AT_CAPACITY_MESSAGE, CAPACITY_LIMIT } from "./capacity.js";
 import { assertSlug } from "./slug.js";
 import { sha256Hex } from "./crypto-token.js";
 import { buildAgentPromptOrManual } from "./agent-prompt.js";
@@ -110,7 +110,7 @@ export async function provisionEndpoint(input: {
   // 因配额失败的审计记录。
   const live = await db.countLiveEndpoints();
   if (live >= CAPACITY_LIMIT) {
-    throw new Error("at capacity");
+    throw new Error(AT_CAPACITY_MESSAGE);
   }
 
   const { tunnelId, token } = await cf.createTunnel(`scout-${slug}`);

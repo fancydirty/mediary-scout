@@ -2118,3 +2118,43 @@ describe("合规页语言切换", () => {
     expect(await res.text()).toContain('<html lang="en">');
   });
 });
+
+describe("容量满时 admin invite 路径也必须是 503", () => {
+  // provisionEndpoint 是**共享**函数,容量闸门在它内部。自助 /api/provision 早就
+  // 映射了 503,但 admin invite 路径原先漏了 → 容量满时变成 500(语义也不对:
+  // 那不是服务器故障,而是我方配额用尽)。Copilot round-4 的 details 指出。
+  it("invite provision 在容量满时返回 503 而非 500", async () => {
+    const { db, deps, calls } = setup();
+    for (let i = 0; i < 990; i++) {
+      await db.insertEndpoint({
+        id: `cap_${i}`,
+        invite_id: null,
+        slug: `cap-${i}`,
+        hostname: `cap-${i}.mediaryconnect.app`,
+        cf_tunnel_id: `t${i}`,
+        cf_access_app_id: null,
+        cf_access_policy_id: null,
+        cf_dns_record_id: `d${i}`,
+        status: "active",
+        token_sha256: `sha_${i}`,
+        token_ciphertext: null,
+        token_shown_at: null,
+        last_seen_at: null,
+        created_at: "2026-07-29T00:00:00.000Z",
+        revoked_at: null,
+        account_id: null,
+        grace_until: null,
+        suspended_at: null,
+        purge_after: null,
+      });
+    }
+    const createRes = await createInviteViaApi(deps, { email: "cap@example.com", slug: "capped" });
+    const created = (await createRes.json()) as InviteCreated;
+    const before = calls.length;
+    const res = await provisionViaApi(deps, created.id);
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: "at capacity" });
+    // 同样必须零 CF 副作用
+    expect(calls.length, `不该有新的 CF 调用: ${calls.slice(before).join(", ")}`).toBe(before);
+  });
+});
