@@ -38,6 +38,10 @@ describe("GET /connect.sh", () => {
     expect(body).toContain("[^A-Za-z0-9_.-]");
     // 分级报错:403 撤销 与 400 过期 区分
     expect(body).toContain("endpoint not active");
+    // 实例公网域名随 setup 写入 .env——apps/web 的远程访问 tab 靠它在本地
+    // 显示专属地址(没有这个本地来源时只能显示「已开启」给不出链接)。
+    expect(body).toContain("MEDIARY_CONNECT_HOSTNAME");
+    expect(body).toContain('printf \'MEDIARY_CONNECT_HOSTNAME=%s\\n\' "$HOSTNAME"');
   });
 
   it("is servable over the beta host too (curl | sh 从任一入口)", async () => {

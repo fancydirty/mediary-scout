@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   instanceTunnelToken,
+  instanceConnectHostname,
   resolveRemoteAccessState,
   scoutConnectBaseUrl,
   accountPasswordHref,
   BETA_SITE_URL,
+  CONSOLE_URL,
   type RemoteAccessState,
 } from "./remote-access";
 
@@ -13,6 +15,7 @@ import {
 // 测试文件）会继续读一个已经不再更新的快照。
 const prevScoutConnectUrl = process.env.SCOUT_CONNECT_URL;
 const prevTunnelToken = process.env.TUNNEL_TOKEN;
+const prevConnectHostname = process.env.MEDIARY_CONNECT_HOSTNAME;
 
 afterEach(() => {
   // 原值为 undefined 时必须删除而非跳过，否则本套件设的值会泄漏给后续测试文件
@@ -25,6 +28,11 @@ afterEach(() => {
     process.env.TUNNEL_TOKEN = prevTunnelToken;
   } else {
     delete process.env.TUNNEL_TOKEN;
+  }
+  if (prevConnectHostname !== undefined) {
+    process.env.MEDIARY_CONNECT_HOSTNAME = prevConnectHostname;
+  } else {
+    delete process.env.MEDIARY_CONNECT_HOSTNAME;
   }
   vi.unstubAllGlobals();
 });
@@ -255,5 +263,44 @@ describe("instanceTunnelToken", () => {
     expect(instanceTunnelToken()).toBeUndefined();
     process.env.TUNNEL_TOKEN = "   ";
     expect(instanceTunnelToken()).toBeUndefined();
+  });
+});
+
+describe("instanceConnectHostname（connect.sh 写进 .env 的本地域名来源）", () => {
+  it("正常值 → 返回小写 hostname", () => {
+    process.env.MEDIARY_CONNECT_HOSTNAME = "dirtyfancy.mediaryconnect.app";
+    expect(instanceConnectHostname()).toBe("dirtyfancy.mediaryconnect.app");
+  });
+
+  it("带空白/大写 → normalize", () => {
+    process.env.MEDIARY_CONNECT_HOSTNAME = "  Dirtyfancy.MediaryConnect.App  ";
+    expect(instanceConnectHostname()).toBe("dirtyfancy.mediaryconnect.app");
+  });
+
+  it("缺失/空串 → null（早期接入的实例没有这行，UI 回落到不给链接）", () => {
+    delete process.env.MEDIARY_CONNECT_HOSTNAME;
+    expect(instanceConnectHostname()).toBeNull();
+    process.env.MEDIARY_CONNECT_HOSTNAME = "   ";
+    expect(instanceConnectHostname()).toBeNull();
+  });
+
+  it("畸形值一律 null——绝不把怪东西拼进 href", () => {
+    for (const bad of [
+      "https://x.example.com",       // 带协议
+      "x.example.com/path",          // 带路径
+      "localhost",                   // 无 TLD
+      "no dots",                     // 空格
+      "-bad.example.com",            // 以连字符开头
+      'x.example.com" onload="evil', // 引号注入
+    ]) {
+      process.env.MEDIARY_CONNECT_HOSTNAME = bad;
+      expect(instanceConnectHostname(), bad).toBeNull();
+    }
+  });
+});
+
+describe("CONSOLE_URL", () => {
+  it("指向控制台登录页（魔法链接入口）", () => {
+    expect(CONSOLE_URL).toBe("https://mediaryconnect.app/login");
   });
 });

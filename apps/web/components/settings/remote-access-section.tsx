@@ -3,10 +3,13 @@ import { Globe, ShieldAlert, TriangleAlert } from "lucide-react";
 import { getCurrentAccountSummary, hasLoginPassword } from "../../lib/workflow-runtime";
 import {
   instanceTunnelToken,
+  instanceConnectHostname,
   resolveRemoteAccessState,
   accountPasswordHref,
   BETA_SITE_URL,
+  CONSOLE_URL,
 } from "../../lib/remote-access";
+import { PasswordChangeForm } from "../password-change-form";
 
 /**
  * 「远程访问」设置 section。
@@ -29,10 +32,14 @@ export async function RemoteAccessSection({
   const me = await getCurrentAccountSummary();
   if (!me?.isOwner) return null;
 
-  // hostname 当前无本地来源，故不传（详见 lib/remote-access.ts 文件头）。
+  // hostname 现在有本地来源了:connect.sh 接入时把 MEDIARY_CONNECT_HOSTNAME
+  // 写进 .env(worker 的 204 无 body 契约不变,不碰元数据端点)。
   const { w } = await searchParams;
   const passwordHref = accountPasswordHref(w);
-  const state = await resolveRemoteAccessState({ token: instanceTunnelToken() });
+  const state = await resolveRemoteAccessState({
+    token: instanceTunnelToken(),
+    hostname: instanceConnectHostname(),
+  });
 
   if (state.kind === "not_provisioned") {
     // 内嵌报名表单已随设计改为**跳转链接**（beta.mediaryconnect.app 已上线，
@@ -127,19 +134,70 @@ export async function RemoteAccessSection({
         </p>
       ) : null}
 
-      {state.kind === "active" ? (
-        // 刻意不显示专属域名/链接：worker 的状态端点回 204 无 body（不泄露任何
-        // 端点元数据），而实例本地并没有存过自己的公网域名。臆造一个只会给出
-        // 点了 404 的链接。详见 lib/remote-access.ts 文件头注释。
-        <p className="panel-note" style={{ margin: 0 }}>
+      {state.kind === "active" && state.hostname ? (
+        // 有本地 hostname(connect.sh 写进 .env)→ 直接给专属地址与链接。
+        <div style={{ marginBottom: 14 }}>
+          <p className="panel-note" style={{ margin: "0 0 6px" }}>你的专属地址</p>
+          <a
+            href={`https://${state.hostname}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ fontFamily: "var(--font-mono, ui-monospace)", fontSize: "0.95rem" }}
+          >
+            {state.hostname}
+          </a>
+          <p className="panel-note" style={{ margin: "6px 0 0" }}>
+            隧道连接正常。在任何设备的浏览器打开这个地址即可（收藏它）。
+          </p>
+        </div>
+      ) : state.kind === "active" ? (
+        // 早期接入的实例 .env 里没有 MEDIARY_CONNECT_HOSTNAME(connect.sh 后加的)
+        // —— 回落到不给链接的旧文案,绝不臆造一个点了 404 的地址。
+        <p className="panel-note" style={{ margin: "0 0 14px" }}>
           远程访问已开启，隧道连接正常。请使用开通时收到的专属地址访问（浏览器里收藏即可）。
         </p>
       ) : (
-        <p className="panel-note" style={{ margin: 0 }}>
+        <p className="panel-note" style={{ margin: "0 0 14px" }}>
           远程访问已开启，但暂时联系不上控制面，无法确认隧道状态。
           这通常是本机出站网络波动；不影响已建立的隧道，稍后刷新即可。
+          {state.kind === "active_degraded" && instanceConnectHostname()
+            ? `（专属地址：${instanceConnectHostname()}）`
+            : ""}
         </p>
       )}
+
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+        <a
+          className="primary-button"
+          href={CONSOLE_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ textDecoration: "none" }}
+        >
+          打开 Mediary Connect 控制台 →
+        </a>
+        <span className="panel-note" style={{ margin: 0 }}>
+          续期、换机器重新接入、查看到期时间都在控制台（用开通邮箱登录，无需密码）。
+        </span>
+      </div>
+
+      {/* 远程访问的门禁就是本实例的登录密码——改它不必再跳去「账号」tab。
+          改完服务端撤销所有会话,表单会把用户送回 /login 用新密码登入。 */}
+      <div
+        style={{
+          marginTop: 18,
+          paddingTop: 16,
+          borderTop: "1px solid var(--border, #2c2c2c)",
+        }}
+      >
+        <p className="panel-note" style={{ margin: "0 0 4px", fontWeight: 600 }}>
+          修改远程访问登录密码
+        </p>
+        <p className="panel-note" style={{ margin: "0 0 12px" }}>
+          这就是打开专属地址时要输的密码（本实例的登录密码）。修改后所有设备需要重新登录。
+        </p>
+        <PasswordChangeForm />
+      </div>
     </section>
   );
 }
