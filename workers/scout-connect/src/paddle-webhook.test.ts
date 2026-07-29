@@ -437,3 +437,62 @@ describe("审计写入必须 best-effort(不可把不可重试的失败变成无
     expect(d.bytes).toBeGreaterThan(body.length);
   });
 });
+
+describe("入账与审计的失败要分开处置", () => {
+  // 入账已成功时,审计写不进去不该推翻既成事实。返回 503 会让 Paddle 重投,
+  // 语义上等于"明明成功了却说失败"。
+  it("入账成功但审计失败 → 仍 200(不让 Paddle 重投)", async () => {
+    const { db, deps } = setup();
+    let calls = 0;
+    const flaky: ConnectDb = {
+      ...db,
+      async insertAudit(row) {
+        calls++;
+        throw new Error("audit unavailable");
+      },
+    };
+    const body = eventBody();
+    const res = await post({ ...deps, db: flaky }, body, await signed(body));
+    expect(res.status).toBe(200);
+    expect((await res.json()) as { applied: boolean }).toMatchObject({ applied: true });
+    expect(calls, "确实尝试过写审计").toBeGreaterThan(0);
+    // 关键:钱真的变成了时长
+    const acct = await db.getAccountByEmail("buyer@example.com");
+    expect((await db.listEntitlements(acct!.id)).length).toBe(1);
+  });
+
+  // 退款事件本身可处理,只是暂时写不进审计 → 503 让重投。退款审计是后续
+  // 停用处置的唯一依据,丢了就查不到某人为什么被停。
+  it("退款事件审计失败 → 503(可重试),而非 unhandled 500", async () => {
+    const { db, deps } = setup();
+    const noAudit: ConnectDb = {
+      ...db,
+      async insertAudit() {
+        throw new Error("audit unavailable");
+      },
+    };
+    const body = JSON.stringify({
+      event_id: "e",
+      event_type: "adjustment.created",
+      data: { id: "adj", transaction_id: "txn_x", action: "refund" },
+    });
+    const res = await post({ ...deps, db: noAudit }, body, await signed(body));
+    expect(res.status).toBe(503);
+    // 契约:不回显内部错误文本。响应文案刻意与内部异常消息不同 ——
+    // 否则将来改了内部消息,这条契约会悄悄失效。
+    const text = await res.text();
+    expect(text).not.toContain("audit unavailable");
+    expect(text).toContain("temporarily unavailable");
+  });
+
+  it("畸形 quantity → 200 + bad_quantity 审计,不入账", async () => {
+    const { db, deps } = setup();
+    const body = eventBody({}, { items: [{ price: { id: YEAR_PRICE }, quantity: 0 }] });
+    const res = await post(deps, body, await signed(body));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ unprocessable: "bad_quantity" });
+    expect(await db.getAccountByEmail("buyer@example.com")).toBeNull();
+    const audits = await db.listAudits();
+    expect(audits.some((a) => a.action === "paddle.unprocessable.bad_quantity")).toBe(true);
+  });
+});

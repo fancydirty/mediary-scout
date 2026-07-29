@@ -130,22 +130,25 @@ describe("parseTransactionCompleted", () => {
     expect(r.ok && r.grant.months).toBe(15);
   });
 
-  it("quantity 参与计算,畸形值按 1", () => {
-    expect(
-      (() => {
-        const r = parseTransactionCompleted(
-          txnData({ items: [{ price: { id: QUARTER_PRICE }, quantity: 2 }] }),
-          SANDBOX_PRICE_MONTHS,
-        );
-        return r.ok && r.grant.months;
-      })(),
-    ).toBe(6);
-    for (const q of [0, -1, 1.5, "2", null, undefined]) {
+  it("quantity 参与计算", () => {
+    const r = parseTransactionCompleted(
+      txnData({ items: [{ price: { id: QUARTER_PRICE }, quantity: 2 }] }),
+      SANDBOX_PRICE_MONTHS,
+    );
+    expect(r.ok && r.grant.months).toBe(6);
+  });
+
+  // 收钱路径不做「默认放行」:早先畸形 quantity 被当成 1 继续发时长,那是在
+  // 上游或集成异常时替它猜,可能过发。宁可拒绝 + 留审计等人工核对。
+  it("畸形 quantity 一律拒绝,不当成 1", () => {
+    for (const q of [0, -1, 1.5, "2", null, undefined, NaN]) {
       const r = parseTransactionCompleted(
         txnData({ items: [{ price: { id: QUARTER_PRICE }, quantity: q }] }),
         SANDBOX_PRICE_MONTHS,
       );
-      expect(r.ok && r.grant.months, `quantity=${String(q)}`).toBe(3);
+      expect(r.ok, `quantity=${String(q)} 应被拒`).toBe(false);
+      if (r.ok) continue;
+      expect(r.reason).toBe("bad_quantity");
     }
   });
 

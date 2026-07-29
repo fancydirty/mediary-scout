@@ -37,6 +37,7 @@ export type ParseFailure =
   | "no_items"
   | "unknown_price"
   | "months_out_of_range"
+  | "bad_quantity"
   | "months_mismatch"
   | "no_email";
 
@@ -138,10 +139,21 @@ export function parseTransactionCompleted(
         detail: `price_id=${priceId} whitelist=${mapped} custom_data=${declared}`,
       };
     }
-    const qty = typeof item.quantity === "number" && Number.isInteger(item.quantity) && item.quantity > 0
-      ? item.quantity
-      : 1;
-    months += mapped * qty;
+    // **收钱路径不做"默认放行"。** 早先畸形 quantity(0/负数/小数/字符串)会被
+    // 当成 1 继续发时长 —— 那是在上游或集成异常时替它猜,可能过发。
+    // 一律拒绝并留审计,让人工核对比静默发时长安全。
+    if (
+      typeof item.quantity !== "number" ||
+      !Number.isInteger(item.quantity) ||
+      item.quantity < 1
+    ) {
+      return {
+        ok: false,
+        reason: "bad_quantity",
+        detail: `price_id=${priceId} quantity=${JSON.stringify(item.quantity)}`,
+      };
+    }
+    months += mapped * item.quantity;
   }
   if (months < 1 || months > 120) {
     // 与 unknown_price 分开:routes.ts 会用 reason 拼审计 action

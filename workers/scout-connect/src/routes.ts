@@ -634,21 +634,28 @@ async function paddleWebhook(request: Request, deps: RouteDeps): Promise<Respons
         ? (event.data as { id?: unknown; transaction_id?: unknown; action?: unknown; customer_id?: unknown })
         : {};
     const pick = (v: unknown): string | null => (typeof v === "string" ? v : null);
-    await deps.db.insertAudit({
-      id: deps.newAuditId(),
-      at: deps.now(),
-      actor: "paddle",
-      action: "paddle.adjustment",
-      invite_id: null,
-      endpoint_id: null,
-      detail_json: JSON.stringify({
-        event_id: eventId,
-        adjustment_id: pick(adj.id),
-        transaction_id: pick(adj.transaction_id),
-        adjustment_action: pick(adj.action),
-        customer_id: pick(adj.customer_id),
-      }),
-    });
+    try {
+      await deps.db.insertAudit({
+        id: deps.newAuditId(),
+        at: deps.now(),
+        actor: "paddle",
+        action: "paddle.adjustment",
+        invite_id: null,
+        endpoint_id: null,
+        detail_json: JSON.stringify({
+          event_id: eventId,
+          adjustment_id: pick(adj.id),
+          transaction_id: pick(adj.transaction_id),
+          adjustment_action: pick(adj.action),
+          customer_id: pick(adj.customer_id),
+        }),
+      });
+    } catch {
+      // 与不可重试的解析失败不同:退款事件本身是**可处理**的,只是暂时写不进
+      // 审计。503 让 Paddle 重投(而不是变成 unhandled 500) —— 退款审计是后续
+      // 停用处置的唯一依据,丢了就查不到某人为什么被停。
+      return json({ error: "temporarily unavailable" }, 503, { noStore: true });
+    }
     // 实际停用在 PR-C3 的到期状态机里统一实现(它已有删 DNS + 删隧道的完整
     // 补偿逻辑)。这里先记审计:漏记等于查不到为什么某人被停用。
     return json({ ok: true, recorded: "adjustment" }, 200, { noStore: true });
@@ -700,8 +707,12 @@ async function paddleWebhook(request: Request, deps: RouteDeps): Promise<Respons
     return json({ ok: true, unprocessable: parsed.reason }, 200, { noStore: true });
   }
 
+  // 入账与审计**分开 try**:早先共用一个 catch,导致审计失败也报 "grant failed"
+  // 误导排障;更要紧的是入账已成功时若因审计失败返回 503,Paddle 会重投 ——
+  // 虽然幂等能挡住重复入账,但语义是错的(明明成功了却说失败)。
+  let granted;
   try {
-    const r = await grantEntitlement(
+    granted = await grantEntitlement(
       {
         email: parsed.grant.email,
         months: parsed.grant.months,
@@ -711,28 +722,35 @@ async function paddleWebhook(request: Request, deps: RouteDeps): Promise<Respons
       // 时间基准换成事件成交时刻(见上)。其余依赖不变。
       { ...deps, now: () => grantNow },
     );
+  } catch {
+    // 入账失败是**可重试**的:必须 503 让 Paddle 重投,否则这笔付款永久丢失。
+    // 不回显内部错误文本。
+    return json({ error: "grant failed" }, 503, { noStore: true });
+  }
+
+  // 到这里钱已经变成时长了。审计写不进去是遗憾但不该推翻既成事实 ——
+  // best-effort,失败也返回 200(否则重投会让日志里出现一堆"重复"记录)。
+  try {
     await deps.db.insertAudit({
       id: deps.newAuditId(),
       at: deps.now(),
       actor: "paddle",
-      action: r.applied ? "paddle.granted" : "paddle.replay",
+      action: granted.applied ? "paddle.granted" : "paddle.replay",
       invite_id: null,
       endpoint_id: null,
       detail_json: JSON.stringify({
         event_id: eventId,
         txn: parsed.grant.transactionId,
         months: parsed.grant.months,
-        expires_at: r.expiresAt,
+        expires_at: granted.expiresAt,
       }),
     });
-    return json({ ok: true, applied: r.applied, expires_at: r.expiresAt }, 200, {
-      noStore: true,
-    });
   } catch {
-    // DB 故障是**可重试**的:必须 503 让 Paddle 重投,否则这笔付款永久丢失。
-    // 不回显内部错误文本。
-    return json({ error: "grant failed" }, 503, { noStore: true });
+    // 入账已成功,不因审计失败而让 Paddle 重投。
   }
+  return json({ ok: true, applied: granted.applied, expires_at: granted.expiresAt }, 200, {
+    noStore: true,
+  });
 }
 
 /** 登录用户为自己的 active endpoint 签发一个短期取件码。code 是 claim purpose
