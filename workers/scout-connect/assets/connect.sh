@@ -119,8 +119,13 @@ MANAGED_RE='^[[:space:]]*(export[[:space:]]+)?(TUNNEL_TOKEN|MEDIARY_CONNECT_HOST
 # 保留所有非托管键的行。必须区分 grep 退出码:0=有保留行,1=无保留行
 # (.env 只有托管键,合法),>=2 才是真错误(.env 不可读/IO)。不区分而用
 # '|| true' 吞掉,>=2 时 '>' 已把 TMP 截空,继续 mv 会静默清掉全部其它配置。
+# 这里必须临时关掉 -e:否则 rc=1(合法的「无保留行」)会被 -e 直接中止脚本,
+# 下面的 GREP_RC 分支永远走不到。已实测:set -eu 下该 grep 返回 1 时脚本
+# 立刻以 1 退出,不会执行后续任何一行。
+set +e
 grep -Ev "$MANAGED_RE" "$ENV_FILE" > "$TMP" 2>/dev/null
 GREP_RC=$?
+set -e
 if [ "$GREP_RC" -ge 2 ]; then
   echo "❌ 读取 .env 失败(grep 退出码 ${GREP_RC}),.env 未改动。" >&2
   rm -f "$TMP"; exit 1

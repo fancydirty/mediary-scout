@@ -42,6 +42,10 @@ describe("GET /connect.sh", () => {
     // 显示专属地址(没有这个本地来源时只能显示「已开启」给不出链接)。
     expect(body).toContain("MEDIARY_CONNECT_HOSTNAME");
     expect(body).toContain('printf \'MEDIARY_CONNECT_HOSTNAME=%s\\n\' "$HOSTNAME"');
+    // 过滤托管键的 grep 必须被 set +e/-e 包起来:脚本头是 set -eu,而
+    // 「.env 里只有托管键」时 grep 返回 1,-e 会直接中止脚本,下面按退出码
+    // 区分 1 与 >=2 的分支就永远走不到(实测 set -eu 下确实立刻退出 1)。
+    expect(body).toMatch(/set \+e\s*\ngrep -Ev "\$MANAGED_RE"[^\n]*\nGREP_RC=\$\?\s*\nset -e/);
   });
 
   it("is servable over the beta host too (curl | sh 从任一入口)", async () => {
