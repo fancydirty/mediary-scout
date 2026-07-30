@@ -7,7 +7,9 @@
  * 提前给用户看,服务端的 assertSlug 才是权威。
  */
 
-export const SLUG_MAX_LENGTH = 32;
+// 从 slug.ts 引单一来源(assertSlug 的权威值)并再导出,不再 hardcode。
+import { SLUG_MAX_LENGTH } from "../slug.js";
+export { SLUG_MAX_LENGTH };
 
 /** 允许的字符:小写字母、数字、连字符。 */
 const ALLOWED_RE = /^[a-z0-9-]*$/;

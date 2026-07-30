@@ -129,6 +129,14 @@ describe("slugFormScript —— 客户端交互", () => {
     expect(script).toContain("input.disabled=false");
   });
 
+  // Copilot round-5:确定性失败(slug taken/售罄/校验错)要置 lastAvailable=false,
+  // 否则用户能对着服务端已拒的 slug 反复点开通。
+  it("确定性失败置 lastAvailable=false,按钮按它决定是否启用", () => {
+    expect(script).toContain('e==="slug taken"){perr.textContent="刚被别人抢先占用了，换一个吧。";lastAvailable=false;}');
+    expect(script).toContain('e==="at capacity"){perr.textContent="暂时售罄，请稍后再试或联系支持。";lastAvailable=false;}');
+    expect(script).toContain("btn.disabled=!lastAvailable");
+  });
+
   it("查重期间显示 spinner,过期响应丢弃", () => {
     expect(script).toContain('setState("spin"');
     expect(script).toContain("mySeq!==seq");

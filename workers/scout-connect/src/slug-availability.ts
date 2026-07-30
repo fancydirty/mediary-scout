@@ -1,4 +1,4 @@
-import { RESERVED_SLUGS, SLUG_RE, normalizeSlug } from "./slug.js";
+import { RESERVED_SLUGS, SLUG_MAX_LENGTH, SLUG_RE, normalizeSlug } from "./slug.js";
 
 /** 一个 slug 是否已被占用(D1 查询,由调用方注入)。 */
 export type IsTaken = (slug: string) => Promise<boolean>;
@@ -7,7 +7,6 @@ export type CheckResult =
   | { available: true }
   | { available: false; reason: "invalid" | "reserved" | "taken"; suggestions: string[] };
 
-const SLUG_MAX_LENGTH = 32;
 
 function slugShape(slug: string): "ok" | "invalid" | "reserved" {
   if (slug.length < 1 || slug.length > SLUG_MAX_LENGTH || !SLUG_RE.test(slug)) return "invalid";

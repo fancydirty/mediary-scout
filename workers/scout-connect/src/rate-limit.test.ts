@@ -32,7 +32,7 @@ describe("rate limiter —— 滑动窗口", () => {
   });
 
   // Copilot round-2:Map 单调增长,长寿命 worker 需要 prune。
-  it("窗口外且空的 key 被惰性清理(不无限增长)", () => {
+  it("大量一次性 key 后,过期 key 仍能被正确放行(sweep 不破坏语义)", () => {
     let now = 0;
     const limiter = createRateLimiter({ limit: 5, windowMs: 1000, now: () => now });
     // 制造大量一次性 key(超过 sweep 阈值 1024)

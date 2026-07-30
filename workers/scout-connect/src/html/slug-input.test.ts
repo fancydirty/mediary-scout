@@ -6,6 +6,15 @@ import {
   slugIssues,
 } from "./slug-input.js";
 
+describe("SLUG_MAX_LENGTH 单一来源(不再三处 hardcode)", () => {
+  it("slug-input 与 slug.ts 引的是同一个值", async () => {
+    const fromInput = (await import("./slug-input.js")).SLUG_MAX_LENGTH;
+    const fromSlug = (await import("../slug.js")).SLUG_MAX_LENGTH;
+    expect(fromInput).toBe(fromSlug);
+    expect(fromInput).toBe(32);
+  });
+});
+
 describe("sanitizeSlug —— 输入即净化(消灭显示值与校验值的漂移)", () => {
   // 这是原实现最核心的 bug:输 `Alice` 显示 `Alice` 却提示「✓ 可用」,
   // 实际开通的是 `alice`。iOS 默认首字母大写,这是必然触发的。

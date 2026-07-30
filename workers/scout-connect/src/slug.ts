@@ -105,7 +105,9 @@ export const RESERVED_SLUGS: ReadonlySet<string> = new Set([
 
 export const SLUG_RE = /^(?:[a-z0-9]|[a-z0-9][a-z0-9-]{0,30}[a-z0-9])$/;
 
-const SLUG_MAX_LENGTH = 32;
+/** slug 最大长度。**单一权威来源** —— slug-availability / html/slug-input
+ *  都从这里 import,不再各自 hardcode(PR 文案强调「必须与 assertSlug 一致」)。 */
+export const SLUG_MAX_LENGTH = 32;
 
 export function normalizeSlug(input: string): string {
   return input.trim().toLowerCase();

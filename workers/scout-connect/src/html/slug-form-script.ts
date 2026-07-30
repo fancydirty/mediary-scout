@@ -177,21 +177,25 @@ form.addEventListener("submit",async(ev)=>{
     if(res.status===401){reloading=true;location.href="/login";return;}
     let d=null;try{d=await res.json();}catch{}
     const e=d&&typeof d.error==="string"?d.error:"";
+    // **确定性失败**(这个 slug 明确不能用)把 lastAvailable 置 false —— 否则
+    // 用户能对着一个服务端已拒的 slug 反复点开通。这些情形必须换名字才有意义。
     if(res.status===402){perr.textContent="时长已过期，请先续期。";}
     else if(e==="already provisioned"){reloading=true;location.reload();return;}
-    else if(e==="slug taken"){perr.textContent="刚被别人抢先占用了，换一个吧。";}
-    else if(e==="at capacity"){perr.textContent="暂时售罄，请稍后再试或联系支持。";}
+    else if(e==="slug taken"){perr.textContent="刚被别人抢先占用了，换一个吧。";lastAvailable=false;}
+    else if(e==="at capacity"){perr.textContent="暂时售罄，请稍后再试或联系支持。";lastAvailable=false;}
     // 校验错误说清差在哪,而不是「稍后重试」(那永远不会成功)。
-    else if(res.status===400){perr.textContent="这个名字不符合规则，请检查后再试。";}
+    else if(res.status===400){perr.textContent="这个名字不符合规则，请检查后再试。";lastAvailable=false;}
+    // 其余(网络/5xx 等)是**可重试**的,保持 lastAvailable 让用户能再点一次。
     else{perr.textContent="开通失败，请检查网络后重试。";}
     perr.hidden=false;
-    btn.textContent="开通 "+slug+"."+DOMAIN;
+    btn.textContent=lastAvailable?"开通 "+slug+"."+DOMAIN:"开通";
   }catch{
     perr.textContent="网络错误，请稍后重试。";perr.hidden=false;
     btn.textContent="开通 "+slug+"."+DOMAIN;
   }finally{
     // 页面正在跳转/刷新时不必恢复(避免闪一下可编辑态)。
-    if(!reloading){input.disabled=false;btn.disabled=false;}
+    // 按钮只在「仍可用」时才重新启用 —— 确定性失败后不该还能直接提交旧 slug。
+    if(!reloading){input.disabled=false;btn.disabled=!lastAvailable;}
   }
 });
 </script>`;

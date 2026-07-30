@@ -62,7 +62,6 @@ export const SLUG_FORM_CSS = `
 .slug-preview{display:flex;flex-direction:column;gap:3px;padding:13px 14px;background:var(--bg-raised,#1f1f1f);border:1px dashed #333;border-radius:12px;margin:14px 0 16px;overflow-wrap:break-word;line-height:1.5}
 .slug-preview .preview-name{font-family:var(--mono);font-size:17px;color:var(--text-muted,#b3b3b3);font-style:italic;word-break:break-all}
 .slug-preview .preview-tail{font-family:var(--mono);font-size:12px;color:#5a5a5a;word-break:break-all}
-.slug-preview .preview-name{color:var(--text-muted,#b3b3b3);font-style:italic}
 .slug-preview.filled .preview-name{color:var(--accent,#1ed760);font-style:normal;font-weight:700}
 .slug-preview.ok{border-style:solid;border-color:var(--accent,#1ed760)}
 #slug-form{margin:0}
