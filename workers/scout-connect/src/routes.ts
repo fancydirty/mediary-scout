@@ -5,6 +5,7 @@ import { requireAdmin } from "./auth.js";
 import { provisionEndpoint } from "./provision.js";
 import { revokeEndpoint } from "./revoke.js";
 import { revealByCode } from "./reveal.js";
+import { SLUG_CHECK_RATE_LIMIT, SLUG_CHECK_RATE_WINDOW_MS, createRateLimiter } from "./rate-limit.js";
 import { assertSlug } from "./slug.js";
 import { checkSlug, type IsTaken } from "./slug-availability.js";
 import { homePage } from "./html/home-page.js";
@@ -68,6 +69,14 @@ export interface RouteDeps {
   /** 发一封含魔法链接的邮件。注入以便测试不打真 Resend。 */
   sendMagicLink: (to: string, url: string) => Promise<void>;
 }
+
+// slug/check 限流器,worker 实例生命周期内有效(单实例内存窗口,
+// 见 rate-limit.ts 对「挡不住分布式滥用」的诚实标注)。
+const slugCheckLimiter = createRateLimiter({
+  limit: SLUG_CHECK_RATE_LIMIT,
+  windowMs: SLUG_CHECK_RATE_WINDOW_MS,
+  now: () => Date.now(),
+});
 
 export async function handleRequest(request: Request, deps: RouteDeps): Promise<Response> {
   try {
@@ -898,6 +907,12 @@ async function exchangeClaimCode(request: Request, deps: RouteDeps): Promise<Res
 async function slugCheckRoute(url: URL, request: Request, deps: RouteDeps): Promise<Response> {
   const session = await parseSessionWithValidatedNow(request.headers.get("cookie"), deps);
   if (!session.ok) throw new HttpError(401, "unauthorized");
+  // 限流:此端点登录即可访问,且每个查询可能触发上百次 D1 查重。
+  // 不限流的话任一登录用户能无限枚举全站 slug 占用情况(隐私 + 资源放大)。
+  // 按账号限 —— 比按 IP 准(用户可能在 NAT 后),且它本就是登录态端点。
+  if (!slugCheckLimiter.allow(session.accountId)) {
+    return json({ error: "too many requests" }, 429, { noStore: true });
+  }
   const slug = url.searchParams.get("s") ?? "";
   // 占用判定查所有状态的行(含 revoked/purged):slug 永久保留不释放(决策 #9)。
   // rootDomain normalize:与本文件别处一致(CONNECT_ROOT_DOMAIN 可能带空白/大小写)。

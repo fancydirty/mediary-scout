@@ -324,7 +324,8 @@ describe("控制台在满容量时的呈现", () => {
     await seedAccount(db, "act_c1", "2027-01-01T00:00:00.000Z");
     await fillEndpoints(db, 990);
     const html = await console_(db, deps, "act_c1");
-    expect(html).toContain("暂时售罄");
+    expect(html).toContain("隧道配额已满");
+    expect(html).toContain("暂时无法分配新地址");
     expect(html).toContain("你的时长不会流失");
     expect(html).toContain('href="/refund"'); // 已付费,必须给退款出口
     expect(html, "不该渲染 slug 输入框").not.toContain('id="slug"');
@@ -343,7 +344,11 @@ describe("控制台在满容量时的呈现", () => {
     await fillEndpoints(db, 989);
     const html = await console_(db, deps, "act_c2");
     expect(html).toContain('id="slug"');
-    expect(html).not.toContain("暂时售罄");
+    // 「暂时售罄」字样会出现在**客户端脚本的 at-capacity 错误文案**里(那是给
+    // 提交后才撞配额的人看的,正常),所以不能用 not.toContain("暂时售罄")判断
+    // 售罄分支 —— 用该分支独有的「隧道配额已满」标识。
+    expect(html, "不该渲染售罄分支").not.toContain("隧道配额已满");
+    expect(html).not.toContain("暂时无法分配新地址");
   });
 
   // 已开通用户不受配额影响 —— 满容量也不该干扰他的接入区。

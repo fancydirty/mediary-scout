@@ -37,7 +37,15 @@ export interface PriceMonthsMap {
  *
  * sandbox 与 live 的 price_id 完全不同(两套独立环境),所以不能复用。
  */
-export const LIVE_PRICE_MONTHS: PriceMonthsMap = {};
+export const LIVE_PRICE_MONTHS: PriceMonthsMap = {
+  // 用户在 live 后台所建(2026-07-30),price_id 由用户截图提供。
+  // **必须经过一次真实 live webhook 端到端验证**才视为生效 —— 这些 id 没经过
+  // live API 直接核对(我们的 paddle 工具只能访问 sandbox)。见 PR #202 的部署注记。
+  pri_01kyrvxr4kwqq8sz1bnkbwge7r: 3, // 季度 ¥45
+  pri_01kyrvywnxzj5se3vevghz3sym: 12, // 年度 ¥108
+  pri_01kyrvzv3ya0dgg30r8ngcm3tc: 24, // 两年 ¥188
+  pri_01kyrw1773tc65xxdtgqcqyfpk: 12, // 创始价 ¥88(前 100 席)
+};
 
 /**
  * 按环境选白名单。

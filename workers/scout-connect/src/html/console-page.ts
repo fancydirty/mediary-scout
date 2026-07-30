@@ -2,6 +2,8 @@ import type { AccountRow, EndpointRow, EntitlementRow } from "../db.js";
 import { GRACE_PERIOD_DAYS, daysLeftInGrace } from "../expiry.js";
 import { isEntitlementActive, latestExpiry } from "../entitlement.js";
 import { buildConnectPrompt, CLAIM_CODE_PLACEHOLDER } from "./connect-prompt.js";
+import { SLUG_FORM_CSS, slugFormHtml } from "./slug-form.js";
+import { slugFormScript } from "./slug-form-script.js";
 import { BRAND_BAR, BRAND_CSS, esc, FAVICON_LINK, THEME_BASE, THEME_TOKENS } from "./theme.js";
 
 /**
@@ -94,11 +96,7 @@ h1{font-size:1.5rem;font-weight:900;letter-spacing:-.5px;margin:0}
 .msg{font-size:.9rem;margin-top:12px;color:var(--text-muted)}
 .msg.err{color:var(--err)}
 .msg.ok{color:var(--accent)}
-.slugrow{display:flex;align-items:center;gap:8px}
-.slugrow input{flex:1;min-width:0;font:inherit;font-family:var(--mono);padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:var(--bg-raised);color:var(--text);transition:border-color .15s ease,box-shadow .15s ease}
-.slugrow input::placeholder{color:#6b6b6b}
-.slugrow input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(30,215,96,.18)}
-.slug-suffix{font-family:var(--mono);font-size:.92rem;color:var(--text-muted);flex:none}
+${SLUG_FORM_CSS}
 #provision{margin-top:16px;width:100%}
 .btn:disabled{opacity:.55;cursor:default;transform:none}
 details{margin-top:18px;border-top:1px solid #222;padding-top:16px}
@@ -156,21 +154,9 @@ function renderBody(
 </div>`;
   }
   if (input.endpoint === null) {
-    // 已付费未开通:内嵌 slug 选择表单(实时查重走 /api/slug/check,开通走
-    // /api/provision;成功后整页刷新进入接入区三态)。
-    return `<p class="sub">你已开通，还差最后一步：选择你的专属访问地址。</p>
-<div class="panel">
-<p class="step">选择专属地址</p>
-<p class="lead">给你的实例起个名字</p>
-<p class="lead-sub">它会成为你的永久访问域名，选定后不可更改、永久保留（到期也不会被别人拿走）。只能用小写字母、数字和连字符。</p>
-<div class="slugrow">
-<input id="slug" type="text" placeholder="yourname" autocomplete="off" spellcheck="false" maxlength="32" aria-label="专属地址前缀">
-<span class="slug-suffix">.${esc(input.rootDomain)}</span>
-</div>
-<p class="msg" id="slug-msg" aria-live="polite" hidden></p>
-<button class="btn" id="provision" type="button" disabled>开通</button>
-<p class="msg err" id="prov-msg" role="alert" hidden></p>
-</div>`;
+    // 已付费未开通:内嵌 slug 选择表单(方向 B:活体域名预览为主角;
+    // 实时查重走 /api/slug/check,开通走 /api/provision,成功后整页刷新)。
+    return slugFormHtml({ rootDomain: input.rootDomain });
   }
 
   const hostname = input.endpoint.hostname;
@@ -200,14 +186,14 @@ function renderBody(
 /** active 时才需要客户端脚本:有 endpoint → 取码/复制;无 endpoint → slug
  *  选择表单(实时查重 + 开通)。 */
 function renderScript(
-  input: { endpoint: EndpointRow | null; baseUrl: string; atCapacity?: boolean },
+  input: { endpoint: EndpointRow | null; baseUrl: string; rootDomain: string; atCapacity?: boolean },
   active: boolean,
 ): string {
   if (!active) return "";
   // 满容量时 renderBody 不渲染 #slug/#provision,注入表单脚本会对 null 调
   // addEventListener 直接抛错、整段脚本崩掉。条件必须与 renderBody 的分支一致。
   if (input.endpoint === null && input.atCapacity === true) return "";
-  if (input.endpoint === null) return SLUG_FORM_SCRIPT;
+  if (input.endpoint === null) return slugFormScript(input.rootDomain);
   return `<script type="module">
 const $=(id)=>document.getElementById(id);
 const PLACEHOLDER=${JSON.stringify(CLAIM_CODE_PLACEHOLDER)};
@@ -257,46 +243,4 @@ $("copy").addEventListener("click",async()=>{
 /** slug 选择表单的客户端逻辑:输入防抖 → /api/slug/check 实时查重(可用/
  *  占用+推荐)→ 可用才解锁「开通」→ POST /api/provision → 成功整页刷新
  *  (服务端按新状态渲染接入区)。所有动态文本走 textContent,不用 innerHTML。 */
-const SLUG_FORM_SCRIPT = `<script type="module">
-const $=(id)=>document.getElementById(id);
-const input=$("slug"),msg=$("slug-msg"),btn=$("provision"),perr=$("prov-msg");
-let timer=null,seq=0;
-function setMsg(text,cls){msg.textContent=text;msg.className="msg "+cls;msg.hidden=text==="";}
-input.addEventListener("input",()=>{
-  btn.disabled=true;perr.hidden=true;
-  const v=input.value.trim().toLowerCase();
-  if(timer)clearTimeout(timer);
-  if(v===""){setMsg("","");return;}
-  timer=setTimeout(async()=>{
-    const mySeq=++seq;
-    try{
-      const res=await fetch("/api/slug/check?s="+encodeURIComponent(v));
-      if(mySeq!==seq)return; // 过期响应丢弃(快速连打)
-      if(res.status===401){location.href="/login";return;} // session 过期,别让用户卡死
-      if(!res.ok){setMsg("查询失败，请稍后重试。","err");return;}
-      const d=await res.json();
-      if(d.available===true){setMsg("✓ 可用","ok");btn.disabled=false;}
-      else{
-        const sug=Array.isArray(d.suggestions)&&d.suggestions.length>0?"，试试："+d.suggestions.join("、"):"";
-        setMsg((d.reason==="reserved"||d.reason==="invalid"?"这个名字不能用":"已被占用")+sug,"err");
-      }
-    }catch{if(mySeq===seq)setMsg("网络错误，请稍后重试。","err");}
-  },300);
-});
-btn.addEventListener("click",async()=>{
-  btn.disabled=true;perr.hidden=true;
-  const v=input.value.trim().toLowerCase();
-  try{
-    const res=await fetch("/api/provision",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({slug:v})});
-    if(res.ok){location.reload();return;}
-    if(res.status===401){location.href="/login";return;} // session 过期
-    let d=null;try{d=await res.json();}catch{}
-    const e=d&&typeof d.error==="string"?d.error:"";
-    if(res.status===402){perr.textContent="时长已过期，请先续期。";}
-    else if(e==="already provisioned"){location.reload();return;}
-    else if(e==="slug taken"){perr.textContent="刚被别人抢先占用了，换一个吧。";}
-    else{perr.textContent="开通失败，请稍后重试。";}
-    perr.hidden=false;btn.disabled=false;
-  }catch{perr.textContent="网络错误，请稍后重试。";perr.hidden=false;btn.disabled=false;}
-});
-</script>`;
+

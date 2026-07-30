@@ -564,13 +564,12 @@ describe("priceMonthsFor —— 按环境选白名单,绝不跨环境回落", ()
     expect(priceMonthsFor(" SANDBOX ")).toBe(sandbox); // 大小写/空白不敏感
   });
 
-  // live 白名单还没填(上线前必须填)。返回 null 让调用方 fail-closed,
-  // 而不是悄悄用 sandbox 的 price_id —— 那些 id 在 live 根本不存在。
+  // LIVE_PRICE_MONTHS 已填(用户在 live 后台所建)。非 sandbox 环境得到 live 表。
   it.each([undefined, "production", "live", ""])(
-    "非 sandbox 环境(%s)在 live 表为空时返回 null",
+    "非 sandbox 环境(%s)得到 live 白名单",
     async (env) => {
-      const { priceMonthsFor } = await import("./paddle-event.js");
-      expect(priceMonthsFor(env)).toBeNull();
+      const { priceMonthsFor, LIVE_PRICE_MONTHS } = await import("./paddle-event.js");
+      expect(priceMonthsFor(env)).toBe(LIVE_PRICE_MONTHS);
     },
   );
 
@@ -578,6 +577,20 @@ describe("priceMonthsFor —— 按环境选白名单,绝不跨环境回落", ()
     const { priceMonthsFor, SANDBOX_PRICE_MONTHS: sandbox } = await import("./paddle-event.js");
     for (const env of [undefined, "production", "live"]) {
       expect(priceMonthsFor(env), `env=${String(env)}`).not.toBe(sandbox);
+    }
+  });
+
+  // fail-closed 的前提:白名单为空时才回落 null。这条直接测空表情形,
+  // 不依赖 LIVE_PRICE_MONTHS 现在是否有值(它以后会一直非空)。
+  it("空表时 priceMonthsFor 返回 null(fail-closed)", async () => {
+    const { priceMonthsFor, LIVE_PRICE_MONTHS } = await import("./paddle-event.js");
+    // 备份并清空
+    const saved = { ...LIVE_PRICE_MONTHS };
+    for (const k of Object.keys(LIVE_PRICE_MONTHS)) delete (LIVE_PRICE_MONTHS as Record<string, number>)[k];
+    try {
+      expect(priceMonthsFor("production")).toBeNull();
+    } finally {
+      Object.assign(LIVE_PRICE_MONTHS, saved);
     }
   });
 });
