@@ -146,6 +146,72 @@ describe("handleRequest", () => {
     expect(await res.text()).toContain("Mediary Connect");
   });
 
+  // HEAD 此前没有任何处理,一路落到末尾的 404 JSON —— 线上实测
+  // `HEAD /` 返回 content-type: application/json,而 `GET /` 返回 text/html。
+  // 部分抓取器/链接校验器先发 HEAD,会把首页误判成非 HTML 资源。
+  it("HEAD / → 200 且 content-type 与 GET 一致(text/html),body 为空", async () => {
+    const { deps } = setup();
+    const res = await handleRequest(new Request(`${BASE}/`, { method: "HEAD" }), deps);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+    expect(await res.text()).toBe("");
+  });
+
+  it("HEAD /pricing → 200 text/html(合规页同样要能被 HEAD 探测)", async () => {
+    const { deps } = setup();
+    const res = await handleRequest(new Request(`${BASE}/pricing`, { method: "HEAD" }), deps);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+  });
+
+  it("HEAD 不存在的路径 → 404(不是 200)", async () => {
+    const { deps } = setup();
+    const res = await handleRequest(new Request(`${BASE}/nope-not-here`, { method: "HEAD" }), deps);
+    expect(res.status).toBe(404);
+  });
+
+  // robots.txt 此前由 Cloudflare 给一份纯注释样板(去注释后零有效指令),
+  // 且没有 Sitemap 声明。worker 接管,给出真指令。
+  it("GET /robots.txt → 200 纯文本,含 Allow 与 Sitemap 声明", async () => {
+    const { deps } = setup();
+    const res = await handleRequest(new Request(`${BASE}/robots.txt`), deps);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/plain");
+    const body = await res.text();
+    expect(body).toContain("User-agent: *");
+    expect(body).toContain("Allow: /");
+    expect(body).toContain("Sitemap: https://mediaryconnect.app/sitemap.xml");
+    // 绝不能出现 Disallow: / —— 那会让爬虫读不到页面上的 noindex,
+    // 已索引的 URL 反而会留在索引里(Google: block-indexing)。
+    expect(body).not.toContain("Disallow: /");
+  });
+
+  it("GET /sitemap.xml → 200 XML,含 apex 与 pricing 双语", async () => {
+    const { deps } = setup();
+    const res = await handleRequest(new Request(`${BASE}/sitemap.xml`), deps);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("xml");
+    const body = await res.text();
+    expect(body).toContain("<loc>https://mediaryconnect.app/</loc>");
+    expect(body).toContain("<loc>https://mediaryconnect.app/pricing</loc>");
+    // 法务页不进 sitemap(它们是给人看的,不该竞争索引配额)。
+    expect(body).not.toContain("/terms");
+  });
+
+  it("beta 页带 noindex(报名表单不该被索引:内测结束即失效 + 与 apex 语义重复)", async () => {
+    const { deps } = setup();
+    const res = await handleRequest(
+      new Request("https://beta.mediaryconnect.app/", {
+        headers: { host: "beta.mediaryconnect.app" },
+      }),
+      deps,
+    );
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain('name="robots"');
+    expect(body).toContain("noindex");
+  });
+
   it("GET / on the beta subdomain serves the signup page (canonical URL is the bare host)", async () => {
     const { deps } = setup();
     // beta.mediaryconnect.app 就是规范地址——"beta.…/beta" 是结巴。

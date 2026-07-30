@@ -80,6 +80,27 @@ const slugCheckLimiter = createRateLimiter({
 
 export async function handleRequest(request: Request, deps: RouteDeps): Promise<Response> {
   try {
+    // HEAD 按 RFC 9110 必须与 GET 返回**相同的头**、只是没有 body。此前
+    // 没有任何 HEAD 分支,于是所有 HEAD 一路落到末尾的 404 JSON —— 线上
+    // 实测 `HEAD /` 是 application/json 而 `GET /` 是 text/html。部分抓取器
+    // 和链接校验器先发 HEAD,会把首页误判成非 HTML 资源。
+    //
+    // 做法:用同一个 URL 造一个 GET 走完整路由,再把 body 换成 null。
+    // 这样头(content-type / cache-control / X-Robots-Tag …)天然与 GET 一致,
+    // 不需要在每个页面分支里各写一遍,也不会漏掉将来新增的路由。
+    if (request.method === "HEAD") {
+      const asGet = new Request(request.url, {
+        method: "GET",
+        headers: request.headers,
+      });
+      const res = await route(asGet, deps);
+      // 复用原 Response 的 status/headers,只丢 body。
+      return new Response(null, {
+        status: res.status,
+        statusText: res.statusText,
+        headers: res.headers,
+      });
+    }
     return await route(request, deps);
   } catch (e) {
     return handleError(e);
@@ -280,6 +301,62 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
       const lang = url.searchParams.get("lang")?.trim().toLowerCase() === "en" ? "en" : "zh";
       return htmlPage(compliancePage(key as CompliancePageKey, lang));
     }
+  }
+  // robots.txt —— worker 接管。此前是 Cloudflare 的纯注释样板(去注释后
+  // **零有效指令**),既没声明 Sitemap,也没显式 Allow。
+  //
+  // **必须是 Allow,绝不能 Disallow。** 被 robots.txt 屏蔽的 URL 仍可能因外链
+  // 被索引(只是显示无描述),而且屏蔽后爬虫**读不到**页面上的 noindex ——
+  // 想让某页不被索引,唯一可靠的组合是「允许抓取 + noindex」。
+  // 见 https://developers.google.com/search/docs/crawling-indexing/block-indexing
+  if (method === "GET" && path === "/robots.txt") {
+    const root = deps.rootDomain.trim().toLowerCase();
+    const body = [
+      "User-agent: *",
+      "Allow: /",
+      "",
+      `Sitemap: https://${root}/sitemap.xml`,
+      "",
+    ].join("\n");
+    return new Response(body, {
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    });
+  }
+  // sitemap.xml —— 只放**该被索引且有搜索价值**的页:首页 + 定价(中英)。
+  // 法务五页不进:它们对搜索用户零价值,进 sitemap 只是稀释抓取配额。
+  // 用户实例子域(<slug>.…)**永远不进** —— 那是私有实例,slug 可能含真名,
+  // 被索引即隐私事件(边缘已加 X-Robots-Tag: noindex 兜底)。
+  if (method === "GET" && path === "/sitemap.xml") {
+    const root = deps.rootDomain.trim().toLowerCase();
+    const base = `https://${root}`;
+    // 两个语言版本共用同一组 hreflang,且**每组都包含自己**(Google 要求
+    // alternate 集合自含,否则算「无返回标记」错误)。x-default 指中文 ——
+    // 主受众是中文用户。
+    const hreflang = [
+      `    <xhtml:link rel="alternate" hreflang="zh-Hans" href="${base}/pricing"/>`,
+      `    <xhtml:link rel="alternate" hreflang="en" href="${base}/pricing?lang=en"/>`,
+      `    <xhtml:link rel="alternate" hreflang="x-default" href="${base}/pricing"/>`,
+    ].join("\n");
+    // `?lang=en` 里的 & 若将来出现须转义成 &amp;(当前只有单参数,无此问题)。
+    const body = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:xhtml="http://www.w3.org/1999/xhtml">
+  <url>
+    <loc>${base}/</loc>
+  </url>
+  <url>
+    <loc>${base}/pricing</loc>
+${hreflang}
+  </url>
+  <url>
+    <loc>${base}/pricing?lang=en</loc>
+${hreflang}
+  </url>
+</urlset>
+`;
+    return new Response(body, {
+      headers: { "content-type": "application/xml; charset=utf-8" },
+    });
   }
   if (method === "GET" && path === "/healthz") {
     return new Response("ok", {

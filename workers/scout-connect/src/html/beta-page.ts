@@ -71,6 +71,10 @@ export function betaPage(turnstileSitekey?: string): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- 报名表单不该进索引:内测结束即失效、Googlebot 抓到的是交互失败的空表单
+     (Turnstile 挡着)、且与 apex 讲同一件事会稀释主题聚焦。
+     注意 robots.txt 必须保持 Allow —— 屏蔽了爬虫就读不到这行 noindex。 -->
+<meta name="robots" content="noindex, nofollow">
 <title>Mediary Connect 远程访问 · 内测</title>${tsScript}
 ${FAVICON_LINK}
 <style>
