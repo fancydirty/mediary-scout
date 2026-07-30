@@ -103,6 +103,9 @@ function onInput(){
   if(clean!==raw)input.value=clean;
   const slug=input.value;
   btn.disabled=true;perr.hidden=true;lastAvailable=false;
+  // 同步按钮文案:清空回到占位「开通」,非空但未确认时也回到占位
+  // (旧 slug 的「开通 xxx.domain」文案会残留,造成 UI 与当前输入不一致)。
+  btn.textContent="开通";
   updateCount(slug);
   updatePreview(slug,false);
   updateRules(slug,null);
@@ -146,6 +149,10 @@ function onInput(){
 }
 
 input.addEventListener("input",onInput);
+// 首屏初始化:把空输入的占位/隐藏状态同步到 DOM。
+// 不调用的话,预览尾部初始空串、规则勾选态不按空值计算,首屏与逻辑不一致。
+onInput();
+
 // Enter 走原生 form 提交(真 <form>,不再需要手写回车监听)。
 form.addEventListener("submit",async(ev)=>{
   ev.preventDefault();

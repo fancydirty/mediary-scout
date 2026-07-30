@@ -62,6 +62,15 @@ describe("slugFormHtml —— 方向 B 的静态骨架", () => {
 describe("slugFormScript —— 客户端交互", () => {
   const script = slugFormScript("mediaryconnect.app");
 
+  // Copilot round-1:首屏不调 onInput() 会留不一致状态。
+  it("脚本末尾调用 onInput() 做首屏初始化", () => {
+    expect(script).toContain("onInput();");
+  });
+
+  it("输入变化时按钮文案同步重置(不残留旧域名)", () => {
+    expect(script).toContain('btn.textContent="开通";');
+  });
+
   it("输入即净化:回写 sanitizeSlug 后的值(消灭显示与结果的漂移)", () => {
     expect(script).toContain("sanitizeSlug");
     expect(script).toContain("input.value=clean");

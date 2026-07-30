@@ -86,7 +86,6 @@ export const SLUG_FORM_CSS = `
 .slug-rules .rule{display:flex;align-items:center;gap:7px;font-size:12px;color:#9a9a9a}
 .slug-rules .rule-mark{font-size:11px;width:14px;text-align:center;flex:none}
 .slug-rules .rule.pass{color:var(--accent,#1ed760)}
-.slug-rules .rule.pass .rule-mark{content:"✓"}
 .slug-suggest{margin:12px 0 0}
 .suggest-label{font-size:12px;color:#9a9a9a}
 .slug-suggest .chip{display:inline-block;font-family:var(--mono);font-size:12px;padding:5px 11px;margin:6px 6px 0 0;border:1px solid var(--accent,#1ed760);border-radius:999px;color:var(--accent,#1ed760);background:none;cursor:pointer}

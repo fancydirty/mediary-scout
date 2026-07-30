@@ -2164,6 +2164,14 @@ describe("GET /api/slug/check 限流", () => {
   // 不限流的话任一登录用户能无限枚举全站 slug 占用情况。
   it("超限返回 429,且不触发查重", async () => {
     const { deps, db } = setup();
+    let checkCalls = 0;
+    const wrappedDeps = { ...deps, db: {
+      ...db,
+      async findEndpointBySlugOrHostname(slug: string, hostname: string) {
+        checkCalls++;
+        return db.findEndpointBySlugOrHostname(slug, hostname);
+      },
+    } };
     // 造一个登录账号
     await db.insertAccount({
       id: "act_rl",
@@ -2185,11 +2193,15 @@ describe("GET /api/slug/check 限流", () => {
     for (let i = 0; i < 15; i++) {
       const res = await handleRequest(
         new Request(`${BASE}/api/slug/check?s=name${i}`, { headers: { cookie } }),
-        deps,
+        wrappedDeps,
       );
       last = res.status;
       if (res.status === 429) break;
     }
     expect(last, "超限应 429").toBe(429);
+    // 限流后不再查重(Copilot 指出:断言里要实际验证查重没被调用)
+    // 注意:前 10 次通过了限流且确实做了查重,checkCalls > 0 是正常的;
+    // 关键是第 11 次被 429 拦下时 checkCalls 不再增长(只有 10 次查重)。
+    expect(checkCalls, "限流后不再查重").toBeLessThanOrEqual(10);
   });
 });

@@ -43,6 +43,21 @@ describe("taken(非保留字被占用)仍可以 base 为根给候选", () => {
   });
 });
 
+describe("基础分支(回归护栏)", () => {
+  it("合法且未占用 → available:true", async () => {
+    const r = await checkSlug("alice-nas-2024", noneTaken);
+    expect(r).toEqual({ available: true });
+  });
+
+  it("形状非法 → invalid,不生成候选", async () => {
+    const r = await checkSlug("!!!", noneTaken);
+    expect(r.available).toBe(false);
+    if (r.available) return;
+    expect(r.reason).toBe("invalid");
+    expect(r.suggestions).toEqual([]);
+  });
+});
+
 describe("suggestSlugs 本身的行为不变", () => {
   it("跳过已占用与形状不合法的候选", async () => {
     const taken: IsTaken = async (s) => s === "alice1" || s === "alice-nas";
