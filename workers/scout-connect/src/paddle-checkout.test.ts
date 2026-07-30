@@ -284,3 +284,44 @@ describe("外部调用必须有超时", () => {
     expect(seen[1]).toBe("https://api.paddle.com/transactions");
   });
 });
+
+describe("服务器时钟畸形时 fail-closed(不伪装成未登录)", () => {
+  // 裸 Date.parse(deps.now()) 在 now 坏值时得 NaN → session 总被判无效 → 401,
+  // 误导排障(以为用户没登录,真正的问题是服务器时钟)。本仓已有两处
+  // `server time unavailable` 的先例,这条契约要统一。
+  it.each(["NOT-A-DATE", "", "2026-13-45T99:99:99Z"])(
+    "now()=%s 时返回 500 server time unavailable,而非 401",
+    async (badNow) => {
+      const { db, deps } = setup({ now: () => badNow });
+      await seedAccount(db, "act_clock", "clock@example.com");
+      const res = await handleRequest(
+        new Request(`${BASE}/api/checkout`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            // cookie 用正常时刻签发,确保"无效"只可能来自坏 now
+            cookie: await cookieFor("act_clock"),
+          },
+          body: JSON.stringify({ price_id: YEAR_PRICE }),
+        }),
+        deps,
+      );
+      expect(res.status, `now=${badNow} 不该是 401`).toBe(500);
+      expect(await res.text()).toContain("server time unavailable");
+    },
+  );
+
+  // 同一守卫覆盖所有走 session 的路由,不只是新加的 checkout。
+  it("其它 session 路由同样 fail-closed(不是只修了 checkout)", async () => {
+    const { db, deps } = setup({ now: () => "BAD" });
+    await seedAccount(db, "act_c2", "c2@example.com");
+    const cookie = await cookieFor("act_c2");
+    for (const path of ["/console", "/api/slug/check?s=abc"]) {
+      const res = await handleRequest(
+        new Request(`${BASE}${path}`, { headers: { cookie } }),
+        deps,
+      );
+      expect(res.status, `${path} 应 fail-closed`).toBe(500);
+    }
+  });
+});

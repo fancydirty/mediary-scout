@@ -484,11 +484,21 @@ async function requestMagicLink(request: Request, deps: RouteDeps): Promise<Resp
  *  provisionEndpoint 内)→ slug 查重;402/409 级失败绝不烧 CF API 调用
  *  (门禁都在 CF 编排之前)。响应绝不含 token:接入唯一路径是控制台取件码
  *  (决策 #10/#12)。 */
+/** 解析 session cookie,若 deps.now() 畸形则 fail-closed 而不是伪装成"未登录"。
+ *  早先多处裸写 `Date.parse(deps.now())`:now 坏值 → NaN → session 总被判无效 →
+ *  401 误导排障,以为用户没登录而真正的问题是服务器时钟。
+ *  现在一处守卫,四处复用,与别处「non-finite now 视为过期」的守卫契约一致。 */
+async function parseSessionWithValidatedNow(
+  cookie: string | null,
+  deps: Pick<RouteDeps, "sessionSecret" | "now">,
+): Promise<{ ok: false } | { ok: true; accountId: string }> {
+  const nowMs = Date.parse(deps.now());
+  if (!Number.isFinite(nowMs)) throw new HttpError(500, "server time unavailable");
+  return parseSessionCookie(cookie, { secret: deps.sessionSecret, now: nowMs });
+}
+
 async function selfServeProvision(request: Request, deps: RouteDeps): Promise<Response> {
-  const session = await parseSessionCookie(request.headers.get("cookie"), {
-    secret: deps.sessionSecret,
-    now: Date.parse(deps.now()),
-  });
+  const session = await parseSessionWithValidatedNow(request.headers.get("cookie"), deps);
   if (!session.ok) throw new HttpError(401, "unauthorized");
   const body = await readJsonBody(request);
   const slugRaw = optString(body.slug);
@@ -563,10 +573,7 @@ async function selfServeProvision(request: Request, deps: RouteDeps): Promise<Re
  * 返回结账 URL,前端跳过去即可(Paddle 会拼上 ?_ptxn=)。
  */
 async function createCheckout(request: Request, deps: RouteDeps): Promise<Response> {
-  const session = await parseSessionCookie(request.headers.get("cookie"), {
-    secret: deps.sessionSecret,
-    now: Date.parse(deps.now()),
-  });
+  const session = await parseSessionWithValidatedNow(request.headers.get("cookie"), deps);
   if (!session.ok) throw new HttpError(401, "unauthorized");
   const account = await deps.db.getAccountById(session.accountId);
   if (account === null) throw new HttpError(401, "unauthorized");
@@ -889,10 +896,7 @@ async function exchangeClaimCode(request: Request, deps: RouteDeps): Promise<Res
 
 /** slug 实时查重 + 相似推荐(登录后选 slug 用)。需 session。 */
 async function slugCheckRoute(url: URL, request: Request, deps: RouteDeps): Promise<Response> {
-  const session = await parseSessionCookie(request.headers.get("cookie"), {
-    secret: deps.sessionSecret,
-    now: Date.parse(deps.now()),
-  });
+  const session = await parseSessionWithValidatedNow(request.headers.get("cookie"), deps);
   if (!session.ok) throw new HttpError(401, "unauthorized");
   const slug = url.searchParams.get("s") ?? "";
   // 占用判定查所有状态的行(含 revoked/purged):slug 永久保留不释放(决策 #9)。
@@ -959,10 +963,7 @@ async function magicCallback(url: URL, deps: RouteDeps): Promise<Response> {
 }
 
 async function consoleRoute(request: Request, deps: RouteDeps): Promise<Response> {
-  const session = await parseSessionCookie(request.headers.get("cookie"), {
-    secret: deps.sessionSecret,
-    now: Date.parse(deps.now()),
-  });
+  const session = await parseSessionWithValidatedNow(request.headers.get("cookie"), deps);
   if (!session.ok) {
     return new Response(null, { status: 302, headers: { location: "/login" } });
   }
