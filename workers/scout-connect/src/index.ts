@@ -7,6 +7,7 @@ import type { Env } from "./env.js";
 import { createPaddleApi } from "./paddle-api.js";
 import { priceMonthsFor } from "./paddle-event.js";
 import { sweepExpiredEndpoints } from "./expiry-sweep.js";
+import { createEmailSender } from "./email-sender.js";
 
 // Workers 运行时注入的类型。本仓不引 @cloudflare/workers-types(只为这一个
 // 签名拉整个包不值),这里做最小声明。scheduled/cron 的真实签名见
@@ -34,6 +35,12 @@ export default {
         }),
         now: () => new Date().toISOString(),
         newAuditId: () => newId("aud"),
+        // dry-run 时不需要发信器(sweep 只在 live 且配置了时才调它)。
+        // 没配 RESEND key 时即便 live 也只是邮件发不出去,回收照走。
+        sendEmail:
+          env.RESEND_API_KEY === undefined || env.RESEND_API_KEY.trim() === ""
+            ? undefined
+            : createEmailSender(env.RESEND_API_KEY),
         live: env.EXPIRY_SWEEP_LIVE === "true",
       }).catch((e) => {
         // 顶层兜底:任一轮失败不能让 cron 静默消失 —— 记录日志,下一轮再试。

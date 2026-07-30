@@ -1,6 +1,7 @@
 import type { CfApi } from "./cf-api.js";
 import type { ConnectDb } from "./db.js";
 import { daysLeftInGrace, daysUntilExpiry, graceUntil, phaseOf, reminderKind } from "./expiry.js";
+import { expiryReminderText } from "./email-sender.js";
 import { revokeEndpoint } from "./revoke.js";
 
 /**
@@ -22,7 +23,7 @@ export interface SweepDeps {
   now: () => string;
   newAuditId: () => string;
   /** 发提醒邮件。dry-run 时不调用。 */
-  sendEmail?: (input: { to: string; subject: string; text: string }) => Promise<void>;
+  sendEmail?: ((input: { to: string; subject: string; text: string }) => Promise<void>) | undefined;
   /** false(默认)= dry-run,只记审计。true = 真删真发。 */
   live?: boolean;
 }
@@ -74,10 +75,11 @@ export async function sweepExpiredEndpoints(deps: SweepDeps): Promise<SweepResul
                 kind === "7d"
                   ? "Mediary Connect 将于 7 天后到期"
                   : "Mediary Connect 明天到期",
-              text:
-                `你的 Mediary Connect 远程访问将于 ${row.latestExpiry.slice(0, 10)} 到期` +
-                `（还有 ${days} 天）。到期后有 7 天宽限期,宽限期后域名会停止解析;` +
-                `随时回来续期,配置原样恢复。续期:https://mediaryconnect.app/pricing`,
+              text: expiryReminderText({
+                expiryDate: row.latestExpiry.slice(0, 10),
+                daysLeft: days,
+                hostname: row.hostname,
+              }),
             });
           } catch (e) {
             result.errors.push({

@@ -120,6 +120,7 @@ describe("sweepExpiredEndpoints —— 到期状态机执行层", () => {
     expect(r.dryRun).toBe(true);
     expect(r.scanned).toBe(3);
     expect(cfCalls, "dry-run 不得删任何 CF 资源").toEqual([]);
+    // dry-run 即便传了 sendEmail 也不得真发 —— 这是最关键的护栏。
     expect(emails, "dry-run 不得发邮件").toEqual([]);
     expect(r.reclaimed, "dry-run 不计真回收").toBe(0);
     const audits = await db.listAudits();
@@ -220,5 +221,14 @@ describe("sweepExpiredEndpoints —— 到期状态机执行层", () => {
     const r = await sweepExpiredEndpoints(deps);
     expect(cfCalls.some((c) => c.startsWith("delTunnel"))).toBe(true);
     expect(r.reclaimed).toBe(1);
+  });
+});
+
+describe("dry-run 的护栏即便给了发信器也成立", () => {
+  it("传了 sendEmail 但 live=false,邮件仍一封都不发", async () => {
+    const { db, deps, emails } = setup({ live: false });
+    await seed(db, "ep1", "a@e.com", "2026-08-06T12:00:00.000Z");
+    await sweepExpiredEndpoints(deps);
+    expect(emails).toEqual([]);
   });
 });
