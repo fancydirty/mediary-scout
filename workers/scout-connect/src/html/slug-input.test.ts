@@ -61,9 +61,11 @@ describe("slugIssues —— 「还差什么」而非「哪里错了」", () => {
     expect(slugIssues("")).toContain("empty");
   });
 
-  it("太短(1-2 字符)给提示但不硬拒", () => {
-    expect(slugIssues("ab")).toContain("too_short");
-    expect(slugIssues("abc")).not.toContain("too_short");
+  // too_short 现在是**软提示**(slugHint),不进 slugIssues,不阻断开通 ——
+  // assertSlug 允许 1 字符,前端不该更严。
+  it("1-2 字符不进 slugIssues(不阻断)", () => {
+    expect(slugIssues("ab")).not.toContain("too_short" as never);
+    expect(slugIssues("a")).toEqual([]);
   });
 
   it("超长", () => {
@@ -80,5 +82,34 @@ describe("slugIssues —— 「还差什么」而非「哪里错了」", () => {
     for (const issue of slugIssues("")) {
       expect(ISSUE_TEXT[issue]).toBeTruthy();
     }
+  });
+});
+
+describe("slugHint —— 软提示(不阻断开通)", () => {
+  it("1-2 字符给提示", async () => {
+    const { slugHint, HINT_TEXT } = await import("./slug-input.js");
+    expect(slugHint("a")).toBe("too_short");
+    expect(slugHint("ab")).toBe("too_short");
+    expect(HINT_TEXT.too_short).toBeTruthy();
+  });
+  it("3+ 字符与空串不提示", async () => {
+    const { slugHint } = await import("./slug-input.js");
+    expect(slugHint("abc")).toBeNull();
+    expect(slugHint("")).toBeNull();
+  });
+});
+
+describe("isValidSlugChar —— 名副其实只判单字符", () => {
+  it("单个合法字符 true", async () => {
+    const { isValidSlugChar } = await import("./slug-input.js");
+    expect(isValidSlugChar("a")).toBe(true);
+    expect(isValidSlugChar("-")).toBe(true);
+  });
+  it("空串/多字符/非法字符 false", async () => {
+    const { isValidSlugChar } = await import("./slug-input.js");
+    expect(isValidSlugChar("")).toBe(false);
+    expect(isValidSlugChar("ab")).toBe(false);
+    expect(isValidSlugChar("A")).toBe(false);
+    expect(isValidSlugChar("_")).toBe(false);
   });
 });

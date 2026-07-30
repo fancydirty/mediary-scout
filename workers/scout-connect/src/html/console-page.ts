@@ -97,8 +97,6 @@ h1{font-size:1.5rem;font-weight:900;letter-spacing:-.5px;margin:0}
 .msg.err{color:var(--err)}
 .msg.ok{color:var(--accent)}
 ${SLUG_FORM_CSS}
-#provision{margin-top:16px;width:100%}
-.btn:disabled{opacity:.55;cursor:default;transform:none}
 details{margin-top:18px;border-top:1px solid #222;padding-top:16px}
 summary{cursor:pointer;font-size:.9rem;color:var(--text-muted);list-style:none;display:flex;align-items:center;gap:8px}
 summary::-webkit-details-marker{display:none}

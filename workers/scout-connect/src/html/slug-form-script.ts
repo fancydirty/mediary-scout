@@ -1,4 +1,4 @@
-import { ISSUE_TEXT, SLUG_MAX_LENGTH, sanitizeSlug, slugIssues } from "./slug-input.js";
+import { HINT_TEXT, ISSUE_TEXT, SLUG_MAX_LENGTH, sanitizeSlug, slugHint, slugIssues } from "./slug-input.js";
 
 /**
  * slug 表单的客户端逻辑(方向 B)。
@@ -33,6 +33,8 @@ const ISSUE_TEXT=${JSON.stringify(ISSUE_TEXT)};
 // 若两个函数体里出现新的外部引用,这里必须同步 —— 否则脚本会因 ReferenceError 整段崩掉。
 const sanitizeSlug=${sanitizeSlug.toString().replace(/\bSLUG_MAX_LENGTH\b/g, "MAX")};
 const slugIssues=${slugIssues.toString().replace(/\bSLUG_MAX_LENGTH\b/g, "MAX")};
+const slugHint=${slugHint.toString()};
+const HINT_TEXT=${JSON.stringify(HINT_TEXT)};
 
 let timer=null,seq=0,lastAvailable=false;
 
@@ -60,7 +62,6 @@ function updatePreview(slug,available){
   preview.classList.toggle("ok",available===true);
 }
 function updateRules(slug,availability){
-  const issues=slugIssues(slug);
   const pass={
     chars:/^[a-z0-9-]*$/.test(slug)||slug==="",
     edge:!(slug.startsWith("-")||slug.endsWith("-")),
@@ -119,8 +120,11 @@ function onInput(){
     setMsg(issues.map((i)=>ISSUE_TEXT[i]).join("、"),"err");
     return;
   }
+  // too_short 是**软提示不阻断**:assertSlug 允许 1 字符,前端不该更严。
+  // 显示提醒但继续查重、可开通。
+  const hint=slugHint(slug);
   setState("spin","");
-  setMsg("检查中…","");
+  setMsg(hint?HINT_TEXT[hint]:"检查中…","");
   timer=setTimeout(async()=>{
     const mySeq=++seq;
     const d=await check(slug);

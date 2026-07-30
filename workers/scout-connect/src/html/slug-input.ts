@@ -36,7 +36,10 @@ export function sanitizeSlug(raw: string): string {
     .slice(0, SLUG_MAX_LENGTH);
 }
 
-export type SlugIssue = "empty" | "too_short" | "edge_hyphen" | "too_long";
+export type SlugIssue = "empty" | "edge_hyphen" | "too_long";
+/** 软提示(不阻断开通):太短。assertSlug 允许 1 字符,前端不该比后端更严 ——
+ *  只给个「短名字更易被抢」的善意提醒,用户坚持用单字符仍放行。 */
+export type SlugHint = "too_short";
 
 /**
  * 净化后的候选还差什么才能用。返回空数组 = 可直接用。
@@ -46,25 +49,32 @@ export type SlugIssue = "empty" | "too_short" | "edge_hyphen" | "too_long";
  */
 export function slugIssues(slug: string): SlugIssue[] {
   const issues: SlugIssue[] = [];
+  // **硬性阻断项**放这里:空、超长、首尾连字符 —— 这些会让 assertSlug 直接拒。
   if (slug.length === 0) issues.push("empty");
-  // assertSlug 允许 1 个字符,但太短的名字没意义(且容易被抢注心态裹挟)。
-  // 这里给个**提示性**的门槛,不是硬性拒绝 —— 见 ISSUE_TEXT,单字符仍放行。
-  if (slug.length > 0 && slug.length < 3) issues.push("too_short");
   if (slug.length > SLUG_MAX_LENGTH) issues.push("too_long");
   // edge_hyphen 已被 sanitizeSlug 去掉,这里防御性保留(服务端若收到未净化值)。
   if (slug.startsWith("-") || slug.endsWith("-")) issues.push("edge_hyphen");
   return issues;
 }
 
-/** 逐条打勾的文案(zh)。 */
+/** 硬性阻断项的文案(zh)。 */
 export const ISSUE_TEXT: Record<SlugIssue, string> = {
   empty: "输入一个名字",
-  too_short: "至少 3 个字符",
   edge_hyphen: "不以连字符开头或结尾",
   too_long: `不超过 ${SLUG_MAX_LENGTH} 个字符`,
 };
 
-/** 判断规则是否满足(用于逐条打勾的 UI)。 */
+/** 软提示文案(不阻断)。 */
+export const HINT_TEXT: Record<SlugHint, string> = {
+  too_short: "短名字更容易被别人先占,建议 3 个字符以上",
+};
+
+/** 太短的软提示(不进 slugIssues,不阻断开通)。 */
+export function slugHint(slug: string): SlugHint | null {
+  return slug.length > 0 && slug.length < 3 ? "too_short" : null;
+}
+
+/** 单个字符是否合法(名副其实:只判 1 个字符)。 */
 export function isValidSlugChar(ch: string): boolean {
-  return ALLOWED_RE.test(ch);
+  return ch.length === 1 && ALLOWED_RE.test(ch);
 }

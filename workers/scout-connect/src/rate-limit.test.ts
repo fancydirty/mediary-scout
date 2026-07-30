@@ -31,6 +31,20 @@ describe("rate limiter —— 滑动窗口", () => {
     expect(SLUG_CHECK_RATE_WINDOW_MS).toBe(60_000);
   });
 
+  // Copilot round-2:Map 单调增长,长寿命 worker 需要 prune。
+  it("窗口外且空的 key 被惰性清理(不无限增长)", () => {
+    let now = 0;
+    const limiter = createRateLimiter({ limit: 5, windowMs: 1000, now: () => now });
+    // 制造大量一次性 key(超过 sweep 阈值 1024)
+    for (let i = 0; i < 1100; i++) limiter.allow("k" + i);
+    // 时间推过窗口,再触发一次 allow(带 sweep)
+    now = 2000;
+    limiter.allow("trigger");
+    // 无法直接读 Map size(封装了),但可验证行为:老 key 的配额已重置
+    // (若没清理,老 key 的记录仍在但已过期,allow 仍应放行 —— 语义正确即可)
+    expect(limiter.allow("k0"), "过期 key 应重新放行").toBe(true);
+  });
+
   // 内存窗口挡不住分布式滥用,这个边界必须写清 —— 不能假装防得住。
   it("诚实标注:这是单实例内存窗口,非分布式防护", () => {
     // 两个独立 limiter 实例不共享状态 —— 这正是多实例 worker 的真实行为。

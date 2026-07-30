@@ -1,5 +1,5 @@
 import { esc } from "./theme.js";
-import { ISSUE_TEXT, SLUG_MAX_LENGTH } from "./slug-input.js";
+import { SLUG_MAX_LENGTH } from "./slug-input.js";
 
 /**
  * slug 选择表单 —— 方向 B(已冻结设计):活体域名预览为主角。
@@ -8,10 +8,10 @@ import { ISSUE_TEXT, SLUG_MAX_LENGTH } from "./slug-input.js";
  * 输入框退为配角。状态图标内联在输入框右侧(不是下方一行灰字),
  * 规则逐条打勾,按钮复述完整域名。
  *
- * 所有文案/状态都是服务端预渲染的静态骨架 + 客户端纯文本更新(textContent,
- * 不用 innerHTML)。规则清单的初始勾选态由服务端按空 slug 渲染,客户端再按
- * 输入实时更新 —— 服务端与客户端对同一规则的判定**必须一致**,故规则文案
- * 从 slug-input.ts 共享。
+ * 服务端渲染静态骨架(规则清单初始全部 ○),客户端脚本用 textContent 实时更新
+ * 勾选态与预览(不用 innerHTML)。与 slug-input.ts 的共享点是 SLUG_MAX_LENGTH
+ * 与那几个纯函数(sanitizeSlug/slugIssues/slugHint,由脚本内联);RULES 的**展示
+ * 文案**在本文件,因为它是 UI 层措辞,与校验逻辑解耦。
  */
 
 export interface SlugFormInput {

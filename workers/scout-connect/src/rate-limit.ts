@@ -33,12 +33,28 @@ export function createRateLimiter(input: {
       const now = input.now();
       const cutoff = now - input.windowMs;
       const list = (hits.get(key) ?? []).filter((t) => t > cutoff);
+      // 顺手 prune:Map 会随不同 key 单调增长,长寿命 worker + 大量账号下
+      // 空闲 key 永久占内存。每次访问时清一次当前 key,并**惰性清理**其它
+      // 已全部过期的 key(不做定时器,worker 无常驻定时器习惯)。
+      if (list.length === 0) {
+        // 这个 key 窗口内已无记录 —— 但下面还要 push,所以不能删自己,
+        // 只在"被拒/不 push"时才可能删。真正的清理交给下面的 sweep。
+      }
       if (list.length >= input.limit) {
         hits.set(key, list);
         return false;
       }
       list.push(now);
       hits.set(key, list);
+      // 惰性 sweep:Map 超过一定规模时,清掉窗口外且空的 key。
+      // 阈值避免每次都全表扫描 —— 只在真的攒多了才清一次。
+      if (hits.size > 1024) {
+        for (const [k, v] of hits) {
+          const alive = v.filter((t) => t > cutoff);
+          if (alive.length === 0) hits.delete(k);
+          else hits.set(k, alive);
+        }
+      }
       return true;
     },
   };
