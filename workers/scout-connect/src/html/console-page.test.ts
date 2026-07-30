@@ -77,6 +77,39 @@ describe("console page — not entitled", () => {
   });
 });
 
+describe("console page — 到期三态(不再把已付费过期误报成尚未开通)", () => {
+  it("宽限期中显示「宽限期中 · 剩 N 天」,不显示尚未开通", () => {
+    // 到期 7-29,now 7-31 → 宽限中,剩约 5 天
+    const html = base({
+      entitlements: [ent("2026-07-29T00:00:00.000Z")],
+      endpoint: null,
+      now: "2026-07-31T00:00:00.000Z",
+    });
+    expect(html).toContain("宽限期中");
+    expect(html).toContain("剩 ");
+    expect(html).not.toContain("尚未开通");
+  });
+
+  it("宽限期已过显示「已过期 · 续期即恢复」,不误报成尚未开通", () => {
+    // 到期 7-01,now 7-31 → 宽限早过
+    const html = base({
+      entitlements: [ent("2026-07-01T00:00:00.000Z")],
+      endpoint: null,
+      now: "2026-07-31T00:00:00.000Z",
+    });
+    expect(html).toContain("已过期");
+    expect(html).toContain("续期即恢复");
+    expect(html).not.toContain("尚未开通");
+  });
+
+  it("从未付费才是「尚未开通」", () => {
+    const html = base({ entitlements: [] });
+    expect(html).toContain("尚未开通");
+    expect(html).not.toContain("宽限期中");
+    expect(html).not.toContain("已过期");
+  });
+});
+
 describe("console page — entitled but no endpoint yet", () => {
   it("renders the inline slug form wired to /api/slug/check + /api/provision (no dead link)", () => {
     const html = base({

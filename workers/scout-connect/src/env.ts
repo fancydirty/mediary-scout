@@ -30,4 +30,7 @@ export interface Env {
   // Paddle 服务端 API key(创建交易用)。**wrangler secret**,不是 vars。
   // 未配置时 /api/checkout 返回 503(结账未开放),不影响其它路径。
   PADDLE_API_KEY?: string;
+  // 到期巡检是否真删。"true" 才开;任何其它值/未设 = dry-run 只记审计。
+  // 四个 PR 里唯一会真删生产资源的路径,先在实例验证时间边界再放开。
+  EXPIRY_SWEEP_LIVE?: string;
 }

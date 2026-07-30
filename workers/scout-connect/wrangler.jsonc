@@ -15,12 +15,23 @@
       "database_id": "493fb312-2301-4a85-a22f-15e68460ed98"
     }
   ],
+  // 到期巡检:cron 每天跑一次。driest 情况下只记审计(dry-run),
+  // 见 expiry-sweep.ts —— 真删生产资源前先验证时间边界。
+  "triggers": {
+    "crons": ["0 3 * * *"]
+  },
   "vars": {
     "CONNECT_ROOT_DOMAIN": "mediaryconnect.app",
     // Public Turnstile sitekey for the beta signup widget (safe to commit —
     // sitekeys ship in page HTML by design). The paired TURNSTILE_SECRET stays
     // a `wrangler secret`. The gate activates only when BOTH are configured;
     // either missing → no widget, no verification (src/routes.ts).
-    "TURNSTILE_SITEKEY": "0x4AAAAAAD-wkGraJigl3YK0"
+    "TURNSTILE_SITEKEY": "0x4AAAAAAD-wkGraJigl3YK0",
+    // Paddle 环境(sandbox|production)。决定 priceMonthsFor 选哪份白名单:
+    // 不设 = undefined = priceMonthsFor 返回 null → webhook 一律 503。
+    // 上线时改 "production",并在 paddle-event.ts 填 LIVE_PRICE_MONTHS。
+    "PADDLE_ENVIRONMENT": "sandbox"
   }
+  // EXPIRY_SWEEP_LIVE 用 `wrangler secret put` 或 dashboard 设 —— 它是行为开关
+  // (true 才真删生产资源),刻意不放 vars 防误开。见 src/index.ts 的注释。
 }

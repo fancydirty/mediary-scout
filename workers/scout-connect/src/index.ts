@@ -6,8 +6,41 @@ import { createMagicLinkSender } from "./magic-link-sender.js";
 import type { Env } from "./env.js";
 import { createPaddleApi } from "./paddle-api.js";
 import { priceMonthsFor } from "./paddle-event.js";
+import { sweepExpiredEndpoints } from "./expiry-sweep.js";
+
+// Workers 运行时注入的类型。本仓不引 @cloudflare/workers-types(只为这一个
+// 签名拉整个包不值),这里做最小声明。scheduled/cron 的真实签名见
+// developers.cloudflare.com/workers/runtime-apis/scheduled-event。
+interface CronScheduledEvent {
+  readonly scheduledTime: number;
+  readonly cron: string;
+}
+interface WorkersExecutionContext {
+  waitUntil(promise: Promise<unknown>): void;
+}
 
 export default {
+  // 到期巡检。cron 触发时**默认 dry-run**:只把「将做什么」写进审计,
+  // 不真删 DNS/隧道、不发邮件。EXPIRY_SWEEP_LIVE=true 才开真删 ——
+  // 这是唯一会真删生产资源的路径,先在实例上验证时间边界再放开。
+  async scheduled(_event: CronScheduledEvent, env: Env, ctx: WorkersExecutionContext): Promise<void> {
+    ctx.waitUntil(
+      sweepExpiredEndpoints({
+        db: createD1ConnectDb(env.DB),
+        cf: createCfApi({
+          accountId: env.CF_ACCOUNT_ID,
+          zoneId: env.CF_ZONE_ID,
+          apiToken: env.CF_API_TOKEN,
+        }),
+        now: () => new Date().toISOString(),
+        newAuditId: () => newId("aud"),
+        live: env.EXPIRY_SWEEP_LIVE === "true",
+      }).catch((e) => {
+        // 顶层兜底:任一轮失败不能让 cron 静默消失 —— 记录日志,下一轮再试。
+        console.error("expiry sweep failed:", e instanceof Error ? e.message : String(e));
+      }),
+    );
+  },
   async fetch(request: Request, env: Env): Promise<Response> {
     return handleRequest(request, {
       db: createD1ConnectDb(env.DB),

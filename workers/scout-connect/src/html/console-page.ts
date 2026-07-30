@@ -1,4 +1,5 @@
 import type { AccountRow, EndpointRow, EntitlementRow } from "../db.js";
+import { daysLeftInGrace } from "../expiry.js";
 import { isEntitlementActive, latestExpiry } from "../entitlement.js";
 import { buildConnectPrompt, CLAIM_CODE_PLACEHOLDER } from "./connect-prompt.js";
 import { BRAND_BAR, BRAND_CSS, esc, FAVICON_LINK, THEME_BASE, THEME_TOKENS } from "./theme.js";
@@ -33,9 +34,19 @@ export function consolePage(input: {
   const expiry = latestExpiry(input.entitlements);
   const active = isEntitlementActive(expiry, input.now);
 
+  // **三态,不是二态。** 原先把「已付费但已过期」误报成「尚未开通」——
+  // 一个真实付过钱的老用户被当成从没来过。现在区分:
+  //   有效 / 宽限期中(已过期但 7 天内仍可续期恢复) / 已过期。
+  // 宽限期判断与 cron 用同一份 GRACE_PERIOD_DAYS,保证两边算的是同一段时间。
+  const daysLeft = expiry === null ? 0 : daysLeftInGrace(expiry, input.now);
+  const inGrace = !active && expiry !== null && daysLeft > 0;
   const statusBadge = active
     ? `<span class="badge ok">● 有效 · 到期 ${esc(expiry!.slice(0, 10))}</span>`
-    : `<span class="badge none">尚未开通</span>`;
+    : inGrace
+      ? `<span class="badge warn">● 宽限期中 · 剩 ${daysLeft} 天</span>`
+      : expiry !== null
+        ? `<span class="badge none">已过期 · 续期即恢复</span>`
+        : `<span class="badge none">尚未开通</span>`;
 
   return `<!doctype html>
 <html lang="zh">
@@ -55,6 +66,7 @@ h1{font-size:1.5rem;font-weight:900;letter-spacing:-.5px;margin:0}
 .badge{font-family:var(--mono);font-size:11px;letter-spacing:1px;padding:5px 12px;border-radius:999px}
 .badge.ok{background:rgba(30,215,96,.12);color:var(--accent);border:1px solid rgba(30,215,96,.35)}
 .badge.none{background:rgba(243,114,127,.1);color:var(--err);border:1px solid rgba(243,114,127,.35)}
+.badge.warn{background:rgba(255,176,32,.12);color:#ffb020;border:1px solid rgba(255,176,32,.35)}
 .sub{color:var(--text-muted);font-size:.92rem;margin:2px 0 0}
 .addr{color:var(--accent);font-family:var(--mono);font-size:.92rem}
 .btn{display:inline-block;margin-top:14px;font:inherit;font-weight:700;cursor:pointer;border:1px solid transparent;border-radius:500px;background:var(--accent);color:#000;padding:12px 26px;font-size:.96rem;text-decoration:none;transition:transform .15s ease,background .15s ease,opacity .15s ease}

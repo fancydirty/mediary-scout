@@ -107,6 +107,20 @@ export interface ConnectDb {
    *    (可人工核查),不可超卖(撞 CF 上限就是收了钱交不了货)
    *  - `revoked` 不计入:隧道已删,不占配额 */
   countLiveEndpoints(): Promise<number>;
+  /** cron 到期巡检的扫描面:status='active' 且挂了账号的 endpoint,
+   *  每行带上账号邮箱与该账号**最新**到期时刻(无付费则为 null)。
+   *  revoke_failed 不在此列 —— 它的隧道处置由 revoke 流程负责,不由到期负责。 */
+  listActiveEndpointsForSweep(): Promise<
+    {
+      endpointId: string;
+      accountId: string;
+      accountEmail: string;
+      hostname: string;
+      cfTunnelId: string;
+      cfDnsRecordId: string;
+      latestExpiry: string | null;
+    }[]
+  >;
   /**
    * Atomic burn: sets shown_at + nulls ciphertext only if not already burned.
    * Returns true when THIS call performed the burn (won the race), false when
@@ -393,6 +407,32 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
         .prepare(`SELECT * FROM endpoints ORDER BY created_at DESC, id DESC`)
         .all<RawRow>();
       return results.map(mapEndpoint);
+    },
+
+    async listActiveEndpointsForSweep() {
+      // 子查询取每账号最新到期 —— 而不是 join 出多行再在 JS 里取 max,
+      // 那样会随 entitlement 数量放大行数。
+      const { results } = await d1
+        .prepare(
+          `SELECT e.id AS endpointId, e.account_id AS accountId, a.email AS accountEmail,
+                  e.hostname AS hostname, e.cf_tunnel_id AS cfTunnelId,
+                  e.cf_dns_record_id AS cfDnsRecordId,
+                  (SELECT MAX(en.expires_at) FROM entitlements en
+                    WHERE en.account_id = e.account_id) AS latestExpiry
+             FROM endpoints e
+             JOIN accounts a ON a.id = e.account_id
+            WHERE e.status = 'active' AND e.account_id IS NOT NULL`,
+        )
+        .all<{
+          endpointId: string;
+          accountId: string;
+          accountEmail: string;
+          hostname: string;
+          cfTunnelId: string;
+          cfDnsRecordId: string;
+          latestExpiry: string | null;
+        }>();
+      return results;
     },
 
     async countLiveEndpoints() {
@@ -798,6 +838,39 @@ export function createMemoryConnectDb(): ConnectDb {
 
     async listEndpoints() {
       return [...endpoints.values()].sort(byCreatedAtDesc).map((row) => ({ ...row }));
+    },
+
+    async listActiveEndpointsForSweep() {
+      // 与 D1 分支同款语义(parity):active + 有账号 + 该账号最新到期。
+      const out: {
+        endpointId: string;
+        accountId: string;
+        accountEmail: string;
+        hostname: string;
+        cfTunnelId: string;
+        cfDnsRecordId: string;
+        latestExpiry: string | null;
+      }[] = [];
+      for (const ep of endpoints.values()) {
+        if (ep.status !== "active" || ep.account_id === null) continue;
+        const acct = accounts.get(ep.account_id);
+        if (acct === undefined) continue;
+        let latest: string | null = null;
+        for (const en of entitlements.values()) {
+          if (en.account_id !== ep.account_id) continue;
+          if (latest === null || en.expires_at > latest) latest = en.expires_at;
+        }
+        out.push({
+          endpointId: ep.id,
+          accountId: ep.account_id,
+          accountEmail: acct.email,
+          hostname: ep.hostname,
+          cfTunnelId: ep.cf_tunnel_id,
+          cfDnsRecordId: ep.cf_dns_record_id,
+          latestExpiry: latest,
+        });
+      }
+      return out;
     },
 
     async countLiveEndpoints() {

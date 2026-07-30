@@ -37,12 +37,12 @@ Mediary Connect 为自托管的 Mediary Scout 实例提供远程访问通道:一
 ## 付费与时长
 
 - The service is billed as **prepaid time**: you buy several months of access, get an email reminder before expiry, and are **never auto-charged**.
-- After expiry there is a 7-day grace period (service continues); then the hostname stops resolving; tunnel resources are deleted 180 days after suspension.
+- After expiry there is a 7-day grace period (service continues); when grace ends, the hostname stops resolving and the tunnel is reclaimed immediately to free capacity. Renewing later restores the same slug — you re-run the one-line setup command once to bring the tunnel back up.
 - Your slug is kept permanently and restores as-is on any future renewal, with no reconfiguration.
 - See the [Refund Policy](https://mediaryconnect.app/refund). Payment is handled by Paddle as Merchant of Record, whose [Buyer Terms](https://www.paddle.com/legal/checkout-buyer-terms) also apply.
 
 - 服务按**预付时长**计费:付费购买若干个月的访问权,到期前会邮件提醒续期,**不会自动扣款**。
-- 到期后有 7 天宽限期(服务照常);宽限期后域名停止解析;停用 180 天后隧道资源删除。
+- 到期后有 7 天宽限期(服务照常);宽限期满域名停止解析,并**立即回收隧道**以释放配额。之后续期,slug 原样恢复,需重跑一次一行接入命令让隧道重新上线。
 - 你的 slug 永久保留,任何时候续期都可原样恢复,不需要重新配置。
 - 退款见[退款政策](https://mediaryconnect.app/refund)。付款由 Paddle 作为记录商户(Merchant of Record)处理,其 [Buyer Terms](https://www.paddle.com/legal/checkout-buyer-terms) 同时适用。
 
