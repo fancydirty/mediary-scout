@@ -218,7 +218,7 @@ describe("sweepExpiredEndpoints —— 到期状态机执行层", () => {
     const audits = await db.listAudits();
     const a = audits.find((x) => x.action === "expiry.remind.7d");
     expect(a, "提醒审计不能被跳过").toBeDefined();
-    expect(a?.detail_json).toContain("email_sent");
+    expect(a?.detail_json).toContain('"email_status":"failed"');
     expect(a?.detail_json).toContain("email_error");
   });
 
@@ -227,7 +227,7 @@ describe("sweepExpiredEndpoints —— 到期状态机执行层", () => {
     await seed(db, "ep1", "ok@e.com", "2026-08-06T12:00:00.000Z");
     await sweepExpiredEndpoints(deps);
     const a = (await db.listAudits()).find((x) => x.action === "expiry.remind.7d");
-    expect(a?.detail_json).toContain('"email_sent":true');
+    expect(a?.detail_json).toContain('"email_status":"sent"');
     expect(a?.detail_json).not.toContain("email_error");
   });
 
@@ -246,5 +246,26 @@ describe("dry-run 的护栏即便给了发信器也成立", () => {
     await seed(db, "ep1", "a@e.com", "2026-08-06T12:00:00.000Z");
     await sweepExpiredEndpoints(deps);
     expect(emails).toEqual([]);
+  });
+});
+
+describe("email_status 必须客观准确(Copilot round-2)", () => {
+  // 早先用 emailFailed===null && live 会在「live 但没配发信器」时记成 sent:true,
+  // 而发送根本没发生 —— 审计记录客观上就是错的。
+  it("live 但没配发信器 → skipped,不是 sent", async () => {
+    const { db, deps } = setup({ live: true, sendEmail: undefined });
+    await seed(db, "ep1", "noe@e.com", "2026-08-06T12:00:00.000Z");
+    await sweepExpiredEndpoints(deps);
+    const a = (await db.listAudits()).find((x) => x.action === "expiry.remind.7d");
+    expect(a?.detail_json, "发送没发生不该报 sent").toContain('"email_status":"skipped"');
+    expect(a?.detail_json).not.toContain('"email_status":"sent"');
+  });
+
+  it("dry-run → dry_run,不进入 sent/failed/skipped 任何一类", async () => {
+    const { db, deps } = setup({ live: false });
+    await seed(db, "ep1", "dr@e.com", "2026-08-06T12:00:00.000Z");
+    await sweepExpiredEndpoints(deps);
+    const a = (await db.listAudits()).find((x) => x.action === "expiry.remind.7d");
+    expect(a?.detail_json).toContain('"email_status":"dry_run"');
   });
 });

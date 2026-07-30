@@ -108,7 +108,16 @@ export async function sweepExpiredEndpoints(deps: SweepDeps): Promise<SweepResul
           detail_json: JSON.stringify({
             days,
             expiry: row.latestExpiry,
-            email_sent: emailFailed === null && live,
+            // 区分四种状态,审计必须**客观准确**:
+            //   sent    = live + 有发信器 + 发送成功
+            //   failed  = live + 有发信器 + 发送抛错(email_error 里有原因)
+            //   skipped = live 但**没配发信器**(发送尝试根本没发生)
+            //   dry-run = 本就不发
+            // 早先用 `emailFailed === null && live` 会在「live 但没配发信器」时
+            // 记成 sent:true —— 发送根本没发生却报"已发",审计记录客观上就是错的
+            // (Copilot round-2 指出)。
+            email_status:
+              !live ? "dry_run" : deps.sendEmail === undefined ? "skipped" : emailFailed === null ? "sent" : "failed",
             ...(emailFailed === null ? {} : { email_error: emailFailed }),
             dry_run: !live,
           }),
