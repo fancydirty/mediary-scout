@@ -74,7 +74,8 @@ export function latestExpiry(entitlements: { expires_at: string }[]): string | n
  * 当笔的时刻重启)。
  */
 export function recomputeExpiry(
-  entitlements: { id: string; expires_at: string; months: number; created_at: string }[],
+  // 刻意不要 expires_at:它是本函数改写的派生缓存,不该参与计算或排序。
+  entitlements: { id: string; months: number; created_at: string }[],
 ): string | null {
   if (entitlements.length === 0) return null;
   // 按创建时间排序。
@@ -85,17 +86,20 @@ export function recomputeExpiry(
   // created_at/expires_at 都是固定宽度的 ISO-8601 UTC,字典序即时间序
   // (本仓 byCreatedAtAsc/Desc 也是这么做的)。
   //
-  // **tie-break 必须带上 id**:同毫秒时前两个键都可能相等 —— 尤其自愈逻辑会把
-  // 同账号多行的 expires_at 写成同一个值,那时第二个键退化成 no-op,顺序就交给
-  // 了 DB。而 SQLite 的 ORDER BY 对相等键不保证稳定(EXPLAIN 显示走 TEMP
-  // B-TREE),memory 实现的顺序又与 D1 不同。而月加法不满足结合律
-  // (addMonths(addMonths(x,1),1) ≠ addMonths(x,2),月末钳位是有损的),
-  // 所以顺序不同真会算出差一天的结果。id 是主键,保证全序。
+  // **只用内在键排序:created_at 然后 id。刻意不含 expires_at。**
+  // expires_at 是本函数自己会改写的**派生缓存**(grant.ts 的收敛会把它写成
+  // truth)。把它当排序键意味着「重算结果依赖上一次重算写下的缓存」——
+  // 那让本该幂等的重算变成有状态的,同 created_at 时甚至可能因为缓存被改而
+  // 在两次重算间得到不同答案。
+  // id 是主键,天然全序,足以打破 created_at 相等的平局。
+  //
+  // 为什么必须有确定的全序:月加法**不满足结合律**
+  // (addMonths(addMonths(x,1),1) ≠ addMonths(x,2),月末钳位有损),
+  // 所以顺序不同真会算出差一天的到期。而 SQLite 的 ORDER BY 对相等键不保证
+  // 稳定(EXPLAIN 显示走 TEMP B-TREE),memory 实现的顺序又与 D1 不同 ——
+  // 排序不能指望 DB。
   const sorted = [...entitlements].sort(
-    (a, b) =>
-      a.created_at.localeCompare(b.created_at) ||
-      a.expires_at.localeCompare(b.expires_at) ||
-      a.id.localeCompare(b.id),
+    (a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id),
   );
   let acc: string | null = null;
   for (const e of sorted) {

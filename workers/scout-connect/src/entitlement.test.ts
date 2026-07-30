@@ -116,6 +116,30 @@ describe("recomputeExpiry 的排序稳健性", () => {
     expect(recomputeExpiry([row("a", "BAD", 12), row("b", "", 12)])).toBeNull();
   });
 
+  // expires_at 是本函数自己会改写的派生缓存(grant.ts 的收敛会写它)。
+  // 若把它当排序键,「重算结果」就依赖「上次重算写下的缓存」—— 本该幂等的
+  // 重算变成有状态的。这条钉住:同 created_at 时,expires_at 取任何值都不影响结果。
+  it("结果不受 expires_at 缓存影响(它是派生字段)", () => {
+    const same = "2026-01-31T00:00:00.000Z";
+    // months=[1,2] 在 01-31 基准上,两种叠加顺序差 2 天(月末钳位有损):
+    //   先+1再+2 → 2026-04-28;先+2再+1 → 2026-04-30
+    // 让 expires_at 的大小顺序与 id 顺序**相反**:若 expires_at 参与排序,
+    // 叠加顺序就会翻转,结果随之变化。
+    const a = { id: "id_a", created_at: same, months: 1 };
+    const b = { id: "id_b", created_at: same, months: 2 };
+    // 按 id 定序(a→b):先 +1 再 +2
+    const byId = recomputeExpiry([a, b]);
+    expect(byId).toBe("2026-04-28T00:00:00.000Z");
+    // 塞入会诱导反向排序的 expires_at 缓存;结果必须不变
+    const withCache = recomputeExpiry([
+      { ...a, expires_at: "2099-12-31T00:00:00.000Z" },
+      { ...b, expires_at: "2000-01-01T00:00:00.000Z" },
+    ] as never);
+    expect(withCache, "expires_at 不该影响叠加顺序").toBe(byId);
+    // 输入顺序也不该影响(id 决定一切)
+    expect(recomputeExpiry([b, a])).toBe(byId);
+  });
+
   it("空账本返回 null", () => {
     expect(recomputeExpiry([])).toBeNull();
   });
