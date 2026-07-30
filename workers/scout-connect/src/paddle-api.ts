@@ -38,6 +38,11 @@ export function createPaddleApi(input: {
     async createTransaction({ priceId, accountEmail, checkoutUrl }) {
       const res = await fetch(`${base}/transactions`, {
         method: "POST",
+        // 超时是必需的,不是保险:没有它,上游抖动会让请求长时间挂起、占用
+        // worker 并发额度并放大故障面。同仓其它外部调用(cf-api 10s、
+        // magic-link 5s、turnstile 5s)都设了。创建交易走的是用户点「购买」
+        // 的同步路径,10s 已经比人能忍的等待更长。
+        signal: AbortSignal.timeout(10_000),
         headers: {
           authorization: `Bearer ${input.apiKey}`,
           "content-type": "application/json",

@@ -28,6 +28,32 @@ export interface PriceMonthsMap {
   readonly [priceId: string]: number;
 }
 
+/**
+ * live 的四个 one-time price。**上线前必须填**。
+ *
+ * 空表意味着 live 环境没有任何合法 price_id —— 这是刻意的:见
+ * `priceMonthsFor()`,非 sandbox 环境拿到空表会让调用方 fail-closed(503,
+ * 可重试),而不是把真实付款判成 unknown_price 后返回不可重试的 200。
+ *
+ * sandbox 与 live 的 price_id 完全不同(两套独立环境),所以不能复用。
+ */
+export const LIVE_PRICE_MONTHS: PriceMonthsMap = {};
+
+/**
+ * 按环境选白名单。
+ *
+ * 这里刻意**不做**「缺失就回落 sandbox」:那会让 live 上线后真实 price_id 被判
+ * unknown_price → 返回 200(不可重试)→ Paddle 停止重投 → **真实付款静默丢失**,
+ * 把「白名单没同步」这种可恢复的配置错误变成不可恢复的丢钱。
+ * 返回 null 表示「本环境白名单未配置」,调用方必须 fail-closed。
+ */
+export function priceMonthsFor(environment: string | undefined): PriceMonthsMap | null {
+  const env = environment?.trim().toLowerCase();
+  if (env === "sandbox") return SANDBOX_PRICE_MONTHS;
+  // 非 sandbox(含 undefined,默认按生产处理)必须有显式的 live 白名单。
+  return Object.keys(LIVE_PRICE_MONTHS).length > 0 ? LIVE_PRICE_MONTHS : null;
+}
+
 /** sandbox 的四个 one-time price(2026-07-29 建)。 */
 export const SANDBOX_PRICE_MONTHS: PriceMonthsMap = {
   pri_01kypfzv2jqg2qv0g25bn05v28: 3, // 季度 ¥45

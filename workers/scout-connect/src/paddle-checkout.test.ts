@@ -46,6 +46,7 @@ function setup(over: Partial<RouteDeps> = {}): {
     sessionSecret: SECRET,
     sendMagicLink: async () => {},
     paddleApi: fakeApi(calls),
+    paddlePriceMonths: SANDBOX_PRICE_MONTHS,
     ...over,
   };
   return { db, deps, calls };
@@ -211,5 +212,72 @@ describe("isKnownPriceId", () => {
   it("空串与未知 id 拒绝", () => {
     expect(isKnownPriceId("", SANDBOX_PRICE_MONTHS)).toBe(false);
     expect(isKnownPriceId("pri_nope", SANDBOX_PRICE_MONTHS)).toBe(false);
+  });
+});
+
+describe("白名单未配置时 checkout 也 fail-closed", () => {
+  // 回落 sandbox 的后果:用户拿 live price_id 结账被判 400「未知档位」,
+  // 而真正的问题是我方配置没同步 —— 503 才是诚实的状态码。
+  it("白名单缺失 → 503(而非把合法 price 判成 400)", async () => {
+    const { db, deps, calls } = setup({ paddlePriceMonths: undefined });
+    await seedAccount(db, "act_np", "np@example.com");
+    const res = await post(deps, { price_id: YEAR_PRICE }, await cookieFor("act_np"));
+    expect(res.status).toBe(503);
+    expect(calls, "不该碰 Paddle").toEqual([]);
+  });
+});
+
+describe("外部调用必须有超时", () => {
+  // 没有超时,上游抖动会让请求挂住并占用 worker 并发额度、放大故障面。
+  // 同仓其它外部调用(cf-api 10s、magic-link 5s、turnstile 5s)都设了,
+  // 这里原先是唯一的例外。
+  it("createTransaction 带 AbortSignal 超时", async () => {
+    const { createPaddleApi } = await import("./paddle-api.js");
+    let seenSignal: unknown = undefined;
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = (async (_url: unknown, init?: { signal?: unknown }) => {
+      seenSignal = init?.signal;
+      return new Response(
+        JSON.stringify({ data: { id: "txn_t", checkout: { url: "https://x/buy?_ptxn=txn_t" } } }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as typeof globalThis.fetch;
+    try {
+      const api = createPaddleApi({ apiKey: "k", environment: "sandbox" });
+      await api.createTransaction({
+        priceId: YEAR_PRICE,
+        accountEmail: "a@b.c",
+        checkoutUrl: "https://x/buy",
+      });
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+    expect(seenSignal, "必须传 signal").toBeInstanceOf(AbortSignal);
+  });
+
+  it("sandbox 与 production 打不同的 base URL", async () => {
+    const { createPaddleApi } = await import("./paddle-api.js");
+    const seen: string[] = [];
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: unknown) => {
+      seen.push(String(url));
+      return new Response(
+        JSON.stringify({ data: { id: "t", checkout: { url: "https://x/buy?_ptxn=t" } } }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as typeof globalThis.fetch;
+    try {
+      for (const env of ["sandbox", "production"]) {
+        await createPaddleApi({ apiKey: "k", environment: env }).createTransaction({
+          priceId: YEAR_PRICE,
+          accountEmail: "a@b.c",
+          checkoutUrl: "https://x/buy",
+        });
+      }
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+    expect(seen[0]).toContain("sandbox-api.paddle.com");
+    expect(seen[1]).toBe("https://api.paddle.com/transactions");
   });
 });

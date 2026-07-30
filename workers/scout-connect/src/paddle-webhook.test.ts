@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createMemoryConnectDb, type ConnectDb } from "./db.js";
 import { handleRequest, type RouteDeps } from "./routes.js";
+import { SANDBOX_PRICE_MONTHS } from "./paddle-event.js";
 
 const BASE = "https://mediaryconnect.app";
 const NOW = "2026-07-29T12:00:00.000Z";
@@ -26,6 +27,7 @@ function setup(over: Partial<RouteDeps> = {}): { db: ConnectDb; deps: RouteDeps 
     sessionSecret: "f".repeat(64),
     sendMagicLink: async () => {},
     paddleWebhookSecret: SECRET,
+    paddlePriceMonths: SANDBOX_PRICE_MONTHS,
     ...over,
   };
   return { db, deps };
@@ -513,5 +515,50 @@ describe("入账与审计的失败要分开处置", () => {
     expect(await db.getAccountByEmail("buyer@example.com")).toBeNull();
     const audits = await db.listAudits();
     expect(audits.some((a) => a.action === "paddle.unprocessable.bad_quantity")).toBe(true);
+  });
+});
+
+describe("白名单未配置时必须 fail-closed(否则 live 上线即丢钱)", () => {
+  // 原实现在 paddlePriceMonths 缺失时回落 SANDBOX_PRICE_MONTHS。而 index.ts
+  // 压根没注入它 —— 于是 live 上线后真实 price_id 会被判 unknown_price →
+  // 返回 200(不可重试)→ Paddle 停止重投 → **真实付款静默丢失**。
+  // 503 把「白名单没同步」这种可恢复的配置错误,从不可恢复的丢钱里救回来。
+  it("webhook 在白名单缺失时返回 503(可重试),不入账", async () => {
+    const { db, deps } = setup({ paddlePriceMonths: undefined });
+    const body = eventBody();
+    const res = await post(deps, body, await signed(body));
+    expect(res.status).toBe(503);
+    expect(await db.getAccountByEmail("buyer@example.com")).toBeNull();
+  });
+
+  it("白名单为空对象时同样 503(空表 = 未配置)", async () => {
+    const { deps } = setup({ paddlePriceMonths: undefined });
+    const body = eventBody();
+    expect((await post(deps, body, await signed(body))).status).toBe(503);
+  });
+});
+
+describe("priceMonthsFor —— 按环境选白名单,绝不跨环境回落", () => {
+  it("sandbox 得到 sandbox 表", async () => {
+    const { priceMonthsFor, SANDBOX_PRICE_MONTHS: sandbox } = await import("./paddle-event.js");
+    expect(priceMonthsFor("sandbox")).toBe(sandbox);
+    expect(priceMonthsFor(" SANDBOX ")).toBe(sandbox); // 大小写/空白不敏感
+  });
+
+  // live 白名单还没填(上线前必须填)。返回 null 让调用方 fail-closed,
+  // 而不是悄悄用 sandbox 的 price_id —— 那些 id 在 live 根本不存在。
+  it.each([undefined, "production", "live", ""])(
+    "非 sandbox 环境(%s)在 live 表为空时返回 null",
+    async (env) => {
+      const { priceMonthsFor } = await import("./paddle-event.js");
+      expect(priceMonthsFor(env)).toBeNull();
+    },
+  );
+
+  it("绝不把 sandbox 表交给非 sandbox 环境", async () => {
+    const { priceMonthsFor, SANDBOX_PRICE_MONTHS: sandbox } = await import("./paddle-event.js");
+    for (const env of [undefined, "production", "live"]) {
+      expect(priceMonthsFor(env), `env=${String(env)}`).not.toBe(sandbox);
+    }
   });
 });

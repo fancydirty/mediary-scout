@@ -626,7 +626,8 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
       // 而这个 UPDATE 是并发收敛的最后一步:静默失败会让基于陈旧快照的错值
       // 永久留下(用户永久少拿一个周期),且没有任何后台任务会重算账本。
       // 抛错则冒泡到 webhook → 503 → Paddle 重投 → 幂等分支自愈。
-      // 同款先例见 markTokenShown(它也依赖 meta.changes)。
+      // (注:D1 把受影响行数放在 run() 返回值的 meta.changes 里;
+      //  这里刻意只在**确定为 0** 时抛,拿不到该字段的运行时不误报。)
       const res = (await d1
         .prepare(`UPDATE entitlements SET expires_at = ? WHERE id = ?`)
         .bind(expiresAt, entitlementId)
