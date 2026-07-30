@@ -218,8 +218,11 @@ describe("isKnownPriceId", () => {
 describe("白名单未配置时 checkout 也 fail-closed", () => {
   // 回落 sandbox 的后果:用户拿 live price_id 结账被判 400「未知档位」,
   // 而真正的问题是我方配置没同步 —— 503 才是诚实的状态码。
-  it("白名单缺失 → 503(而非把合法 price 判成 400)", async () => {
-    const { db, deps, calls } = setup({ paddlePriceMonths: undefined });
+  it.each([
+    ["undefined", undefined],
+    ["空对象(误注入)", {}],
+  ])("白名单%s → 503(而非把合法 price 判成 400)", async (_name, map) => {
+    const { db, deps, calls } = setup({ paddlePriceMonths: map });
     await seedAccount(db, "act_np", "np@example.com");
     const res = await post(deps, { price_id: YEAR_PRICE }, await cookieFor("act_np"));
     expect(res.status).toBe(503);

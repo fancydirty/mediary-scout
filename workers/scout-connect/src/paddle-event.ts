@@ -47,6 +47,15 @@ export const LIVE_PRICE_MONTHS: PriceMonthsMap = {};
  * 把「白名单没同步」这种可恢复的配置错误变成不可恢复的丢钱。
  * 返回 null 表示「本环境白名单未配置」,调用方必须 fail-closed。
  */
+export function isPriceMapConfigured(
+  map: PriceMonthsMap | undefined,
+): map is PriceMonthsMap {
+  // **空表等同未配置。** 只判 undefined 不够:误注入 `{}` 会让每个真实 price_id
+  // 都走 unknown_price → 200(不可重试)→ 静默丢钱,恰恰是 fail-closed 要防的
+  // 那件事。判据放在一处,webhook 与 checkout 共用,免得两边漂移。
+  return map !== undefined && Object.keys(map).length > 0;
+}
+
 export function priceMonthsFor(environment: string | undefined): PriceMonthsMap | null {
   const env = environment?.trim().toLowerCase();
   if (env === "sandbox") return SANDBOX_PRICE_MONTHS;

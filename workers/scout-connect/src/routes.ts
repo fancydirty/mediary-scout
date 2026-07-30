@@ -13,7 +13,7 @@ import { invitePage, type InvitePageState } from "./html/invite-page.js";
 import { betaPage, normalizeTurnstileSitekey } from "./html/beta-page.js";
 import { CAPACITY_LIMIT, isAtCapacityError } from "./capacity.js";
 import { grantEntitlement } from "./grant.js";
-import { parseTransactionCompleted, type PriceMonthsMap } from "./paddle-event.js";
+import { isPriceMapConfigured, parseTransactionCompleted, type PriceMonthsMap } from "./paddle-event.js";
 import { isKnownPriceId, type PaddleApi } from "./paddle-api.js";
 import { verifyPaddleSignature } from "./paddle-signature.js";
 import { buyPage } from "./html/buy-page.js";
@@ -584,7 +584,9 @@ async function createCheckout(request: Request, deps: RouteDeps): Promise<Respon
   // 去结账。只放行白名单里的档位,与 webhook 共用同一份表。
   // 同 webhook:白名单未配置时不回落 sandbox。这里回落的后果是用户拿着 live
   // price_id 结账被判 400「未知档位」,而真正的问题是我方配置没同步。
-  if (deps.paddlePriceMonths === undefined) {
+  if (!isPriceMapConfigured(deps.paddlePriceMonths)) {
+    // 空表时返回 503 而非 400:400 会让用户以为自己选错了档位,而真正的问题
+    // 是我方白名单没同步。
     return json({ error: "checkout not configured" }, 503, { noStore: true });
   }
   if (!isKnownPriceId(priceId, deps.paddlePriceMonths)) {
@@ -757,11 +759,12 @@ async function paddleWebhook(request: Request, deps: RouteDeps): Promise<Respons
   // 回落的后果:live 上线后真实 price_id 被判 unknown_price → 返回 200
   // (不可重试)→ Paddle 停止重投 → 真实付款静默丢失。503 让它重投,等白名单
   // 配好后那些付款仍能入账 —— 把不可恢复的丢钱降级成可恢复的配置错误。
-  const priceMonths = deps.paddlePriceMonths;
-  if (priceMonths === undefined) {
+  // 空表也算未配置(见 isPriceMapConfigured):误注入 `{}` 会让每个真实 price_id
+  // 走 unknown_price → 200(不可重试)→ 静默丢钱。
+  if (!isPriceMapConfigured(deps.paddlePriceMonths)) {
     return json({ error: "price map not configured" }, 503, { noStore: true });
   }
-  const parsed = parseTransactionCompleted(event.data, priceMonths);
+  const parsed = parseTransactionCompleted(event.data, deps.paddlePriceMonths);
   if (!parsed.ok) {
     // 这类失败重投也不会变好(未知 price / 月数不一致 / 无邮箱),故 200。
     // 但必须留审计 —— 尤其 no_email:有人付了钱而系统不知道该给谁,要人工处理。

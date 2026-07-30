@@ -531,10 +531,29 @@ describe("白名单未配置时必须 fail-closed(否则 live 上线即丢钱)",
     expect(await db.getAccountByEmail("buyer@example.com")).toBeNull();
   });
 
+  // 早先这个用例名说「空对象」而实参传的是 undefined —— 与上一条重复,
+  // 给了空表场景一个**虚假的覆盖感**。空表是独立的失败模式:每个真实
+  // price_id 都会走 unknown_price → 200(不可重试)→ 静默丢钱。
   it("白名单为空对象时同样 503(空表 = 未配置)", async () => {
-    const { deps } = setup({ paddlePriceMonths: undefined });
+    const { deps } = setup({ paddlePriceMonths: {} });
     const body = eventBody();
     expect((await post(deps, body, await signed(body))).status).toBe(503);
+  });
+});
+
+describe("isPriceMapConfigured —— 空表等同未配置", () => {
+  it("空表与 undefined 都算未配置", async () => {
+    const { isPriceMapConfigured } = await import("./paddle-event.js");
+    expect(isPriceMapConfigured(undefined)).toBe(false);
+    expect(isPriceMapConfigured({}), "误注入空表是独立的失败模式").toBe(false);
+  });
+
+  it("非空表算已配置", async () => {
+    const { isPriceMapConfigured, SANDBOX_PRICE_MONTHS: sandbox } = await import(
+      "./paddle-event.js"
+    );
+    expect(isPriceMapConfigured(sandbox)).toBe(true);
+    expect(isPriceMapConfigured({ pri_x: 3 })).toBe(true);
   });
 });
 
