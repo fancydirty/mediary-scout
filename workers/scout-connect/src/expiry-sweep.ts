@@ -169,7 +169,7 @@ export async function sweepExpiredEndpoints(deps: SweepDeps): Promise<SweepResul
       try {
         // 复用 revoke 的删除顺序与错误收集(access app → dns → tunnel,
         // 一步失败不阻止其余尝试)。
-        await revokeEndpoint({ endpointId: row.endpointId, deps: { cf: deps.cf, db: deps.db, now: () => now, newAuditId: deps.newAuditId } });
+        await revokeEndpoint({ endpointId: row.endpointId, deps: { cf: deps.cf, db: deps.db, now: () => now, newAuditId: deps.newAuditId, actor: "cron" } });
         result.reclaimed++;
         await deps.db.insertAudit({
           id: deps.newAuditId(),

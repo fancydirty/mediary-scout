@@ -269,3 +269,39 @@ describe("email_status 必须客观准确(Copilot round-2)", () => {
     expect(a?.detail_json).toContain('"email_status":"dry_run"');
   });
 });
+
+describe("cron 回收的审计归因(Copilot round-3)", () => {
+  // revokeEndpoint 默认把审计记成 actor:"admin"。cron 到期回收若不带 actor
+  // 参数,自动回收会被记成人工操作,误导排查。
+  it("回收的 revoke 审计 actor 是 cron,不是 admin", async () => {
+    const { db, deps } = setup({ live: true });
+    await seed(db, "ep1", "attr@e.com", "2026-07-01T00:00:00.000Z");
+    await sweepExpiredEndpoints(deps);
+    const audits = await db.listAudits();
+    const revokeAudit = audits.find((x) => x.action === "endpoint.revoke");
+    expect(revokeAudit, "revoke 审计存在").toBeDefined();
+    expect(JSON.parse(revokeAudit!.detail_json || "{}"), "detail 可读").toBeTruthy();
+    // actor 字段在 AuditRow 顶层,不在 detail_json
+    expect(revokeAudit?.actor, "自动回收不该记成 admin").toBe("cron");
+  });
+
+  it("回收失败的 revoke_failed 审计同样是 cron", async () => {
+    const db = createMemoryConnectDb();
+    const calls: string[] = [];
+    let n = 0;
+    const failingCf: CfApi = {
+      ...({ async createTunnel(){return {tunnelId:"t",token:"x"}},
+        async getTunnelToken(){return "x"}, async putTunnelIngress(){},
+        async createDnsCname(){return {recordId:"r"}},
+        async createAccessApp(){return {appId:"a",policyId:"p"}},
+        async deleteTunnel(){throw new Error("boom")}, async deleteDnsRecord(){},
+        async deleteAccessApp(){} } as unknown as CfApi),
+    };
+    const deps: SweepDeps = { db, cf: failingCf, now: () => NOW,
+      newAuditId: () => `aud_${++n}`, live: true };
+    await seed(db, "ep1", "f@e.com", "2026-07-01T00:00:00.000Z");
+    await sweepExpiredEndpoints(deps);
+    const a = (await db.listAudits()).find((x) => x.action === "endpoint.revoke_failed");
+    expect(a?.actor).toBe("cron");
+  });
+});

@@ -41,7 +41,8 @@ describe("phaseOf —— 三态边界(最容易算错的地方)", () => {
   it("宽限截止的精确瞬间仍是 grace,过 1ms 即 expired", () => {
     const expiry = "2026-07-23T00:00:00.000Z";
     const boundary = graceUntil(expiry); // 2026-07-30T00:00:00.000Z
-    expect(phaseOf(expiry, boundary)).toBe("grace");
+    expect(boundary).toBe("2026-07-30T00:00:00.000Z");
+    expect(phaseOf(expiry, boundary!)).toBe("grace");
     expect(phaseOf(expiry, "2026-07-30T00:00:00.001Z")).toBe("expired");
   });
 
@@ -94,5 +95,13 @@ describe("reminderKind —— 到期前 7 天 / 1 天", () => {
 describe("graceUntil", () => {
   it("到期 + 7 天", () => {
     expect(graceUntil("2026-07-23T00:00:00.000Z")).toBe("2026-07-30T00:00:00.000Z");
+  });
+
+  // 与本模块 phaseOf/daysLeftInGrace 的 fail-closed 契约一致:
+  // 坏时刻返回 null 而非抛 RangeError —— DB 里的坏值是数据事故,
+  // 不该让整个状态机崩掉。
+  it("坏值返回 null 而不抛错", () => {
+    expect(graceUntil("BAD")).toBeNull();
+    expect(graceUntil("")).toBeNull();
   });
 });

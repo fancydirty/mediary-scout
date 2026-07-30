@@ -14,9 +14,12 @@ export const GRACE_PERIOD_DAYS = 7;
 
 const DAY_MS = 24 * 60 * 60_000;
 
-/** 到期时刻(N 个 entitlement 中 expires_at 最大者)过期 N 天后的宽限截止。 */
-export function graceUntil(expiry: string): string {
+/** 到期时刻(N 个 entitlement 中 expires_at 最大者)过期 N 天后的宽限截止。
+ *  坏值返回 null 而非抛错 —— 与本模块 phaseOf/daysLeftInGrace 的
+ *  fail-closed 契约一致:DB 里的坏时刻是数据事故,不该让整个状态机崩掉。 */
+export function graceUntil(expiry: string): string | null {
   const ms = Date.parse(expiry);
+  if (!Number.isFinite(ms)) return null;
   return new Date(ms + GRACE_PERIOD_DAYS * DAY_MS).toISOString();
 }
 

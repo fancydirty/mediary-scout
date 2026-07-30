@@ -6,6 +6,9 @@ export interface RevokeDeps {
   db: ConnectDb;
   now: () => string;
   newAuditId: () => string;
+  /** 审计归因。默认 "admin"(人工操作);cron 到期回收传 "cron" ——
+   *  否则自动回收的审计会被记成人工操作,误导排查。 */
+  actor?: "admin" | "cron";
 }
 
 export interface RevokeResult {
@@ -85,7 +88,7 @@ export async function revokeEndpoint(input: {
     await db.insertAudit({
       id: deps.newAuditId(),
       at: deps.now(),
-      actor: "admin",
+      actor: deps.actor ?? "admin",
       action: "endpoint.revoke",
       invite_id: endpoint.invite_id,
       endpoint_id: endpointId,
@@ -102,7 +105,7 @@ export async function revokeEndpoint(input: {
   await db.insertAudit({
     id: deps.newAuditId(),
     at: deps.now(),
-    actor: "admin",
+    actor: deps.actor ?? "admin",
     action: "endpoint.revoke_failed",
     invite_id: endpoint.invite_id,
     endpoint_id: endpointId,
