@@ -137,6 +137,14 @@ describe("slugFormScript —— 客户端交互", () => {
     expect(script).toContain("btn.disabled=!lastAvailable");
   });
 
+  // Copilot round-6:内联 rootDomain 若含 `<` 用裸 JSON.stringify 会被 `</script>`
+  // 提前闭合(注入面)。转义成 \u003c(与 buy-page.ts 同款)。
+  it("含 </script> 的 rootDomain 被转义,不提前闭合脚本", () => {
+    const evil = slugFormScript("evil</script><script>alert(1)</script>.app");
+    expect(evil).not.toContain("</script><script>alert(1)");
+    expect(evil).toContain("\\u003c/script");
+  });
+
   it("查重期间显示 spinner,过期响应丢弃", () => {
     expect(script).toContain('setState("spin"');
     expect(script).toContain("mySeq!==seq");

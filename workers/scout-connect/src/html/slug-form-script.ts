@@ -16,9 +16,17 @@ import { HINT_TEXT, ISSUE_TEXT, SLUG_MAX_LENGTH, sanitizeSlug, slugHint, slugIss
 
 // 把纯函数注入客户端(模块打包由 worker 的内联 <script type="module"> 处理,
 // 这些 import 在生成脚本时被内联)。
+/** 安全内联到 <script> 的 JSON 字面量。
+ *  JSON.stringify 不转义 `<`,`</script>` 会提前闭合脚本(与 buy-page.ts 同款
+ *  注入面)。追加把 `<` 转成 \u003c —— JS 字符串字面量里等价,HTML 解析器
+ *  再也看不到 `</script`。三处内联(域名/文案)统一走这里,免得漏一处。 */
+function jsonInline(value: unknown): string {
+  return JSON.stringify(value).replace(/</g, "\\u003c");
+}
+
 export function slugFormScript(rootDomain: string): string {
-  // rootDomain 是已 normalize 的服务端值,注入为 JSON 字面量(防引号截断)。
-  const domainLiteral = JSON.stringify(rootDomain);
+  // rootDomain 是已 normalize 的服务端值,安全内联(防引号截断 + </script> 注入)。
+  const domainLiteral = jsonInline(rootDomain);
   return `<script type="module">
 const $=(id)=>document.getElementById(id);
 const form=$("slug-form"),input=$("slug"),state=$("slug-state"),count=$("slug-count"),
@@ -26,7 +34,7 @@ const form=$("slug-form"),input=$("slug"),state=$("slug-state"),count=$("slug-co
       btn=$("provision"),perr=$("prov-msg"),preview=$("slug-preview"),pname=$("preview-name");
 const DOMAIN=${domainLiteral};
 const MAX=${SLUG_MAX_LENGTH};
-const ISSUE_TEXT=${JSON.stringify(ISSUE_TEXT)};
+const ISSUE_TEXT=${jsonInline(ISSUE_TEXT)};
 
 // —— 纯函数(与 src/html/slug-input.ts 同一份逻辑,生成时内联)——
 // toString() 不会带上模块作用域的 SLUG_MAX_LENGTH 引用,注入时替换成上面的 MAX。
@@ -34,7 +42,7 @@ const ISSUE_TEXT=${JSON.stringify(ISSUE_TEXT)};
 const sanitizeSlug=${sanitizeSlug.toString().replace(/\bSLUG_MAX_LENGTH\b/g, "MAX")};
 const slugIssues=${slugIssues.toString().replace(/\bSLUG_MAX_LENGTH\b/g, "MAX")};
 const slugHint=${slugHint.toString()};
-const HINT_TEXT=${JSON.stringify(HINT_TEXT)};
+const HINT_TEXT=${jsonInline(HINT_TEXT)};
 
 let timer=null,seq=0,lastAvailable=false;
 
