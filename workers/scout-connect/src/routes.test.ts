@@ -1861,6 +1861,34 @@ describe("发信入口限流(Turnstile 关闭后的替代防线)", () => {
     expect(ok.status).toBe(202);
   });
 
+  // Copilot round-1:Turnstile 必须在限流**之前**。否则门禁将来重开时,
+  // 攻击者能用无效 token 反复请求,每次消耗配额,把真实用户锁死在 429(DoS)。
+  it("Turnstile 开启时:无效 token 的请求不消耗限流配额", async () => {
+    const { deps } = setup();
+    deps.turnstileSitekey = "0x4AAAAAAD-test";
+    deps.turnstileSecret = "secret-fixture";
+    // siteverify 一律失败 → 这些请求都该被 Turnstile 拦在限流之前
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ success: false }), { status: 200 })) as typeof fetch;
+    try {
+      for (let i = 0; i < 8; i++) {
+        const res = await handleRequest(
+          post("/api/auth/magic", { email: "victim@example.com", turnstile_token: "bad" }, "4.4.4.4"),
+          deps,
+        );
+        expect(res.status).toBe(403);
+      }
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+    // 8 次失败请求后关掉门禁,真实用户仍应有配额(没被无效请求耗光)
+    deps.turnstileSitekey = undefined;
+    deps.turnstileSecret = undefined;
+    const ok = await handleRequest(post("/api/auth/magic", { email: "victim@example.com" }, "4.4.4.4"), deps);
+    expect(ok.status).toBe(202);
+  });
+
   // 生产已关门禁(wrangler.jsonc 注释掉 sitekey)。这两条钉住「关掉后仍能用」。
   it("sitekey 未配置 → 登录页不注入 Turnstile 脚本(国内可加载)", async () => {
     const { deps } = setup();

@@ -600,16 +600,19 @@ async function requestMagicLink(request: Request, deps: RouteDeps): Promise<Resp
   if (email.length > EMAIL_MAX_LENGTH || !EMAIL_RE.test(email)) {
     throw new HttpError(400, "invalid email");
   }
-  // 限流在邮箱形状校验之后(无效邮箱不消耗配额),且在 Turnstile 之前 ——
-  // Turnstile 在生产已关(challenges.cloudflare.com 在中国大陆不可靠,
-  // 挡住的是真实用户而非脚本),限流是它的替代防线。
-  if (signupRateLimited(request, email, deps)) {
-    return json({ error: "too many requests" }, 429, { noStore: true });
-  }
   // 与 /waitlist 同一条防滥用规则:Turnstile 成对配置时,发信入口也要过人机
   // 校验——否则这是个公开的「触发发邮件」放大面。校验在邮箱形状之后:
   // 一次性 token 不浪费在注定 400 的请求上。
+  // **生产已关**(challenges.cloudflare.com 在中国大陆不可靠),此时直接放行。
   await requireTurnstileIfEnabled(request, body, deps);
+  // 限流:在邮箱形状校验之后(无效邮箱不消耗配额),且**在 Turnstile 之后**。
+  //
+  // 顺序不能反:若限流在前,门禁将来重开时攻击者能用无效 token 反复请求,
+  // 每次消耗 IP/邮箱配额,把真实用户锁死在 429 —— 那些请求本该先被
+  // Turnstile 拦掉、根本不该计入配额。与 /waitlist 的顺序保持一致。
+  if (signupRateLimited(request, email, deps)) {
+    return json({ error: "too many requests" }, 429, { noStore: true });
+  }
   // 注册即登录:不论邮箱是否已存在都发信,不泄露注册状态。账号在 callback
   // 落地时才创建(避免未验证邮箱污染 accounts 表)。
   const token = await signToken(
