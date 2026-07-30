@@ -121,6 +121,14 @@ describe("slugFormScript —— 客户端交互", () => {
     expect(script).toContain("ev.preventDefault()");
   });
 
+  // Copilot round-4:提交期间禁用输入框,finally 恢复(否则途中编辑造成
+  // 「按钮看似可点但 submit 直接 return」的不一致)。
+  it("提交期间禁用输入框且 finally 恢复", () => {
+    expect(script).toContain("input.disabled=true");
+    expect(script).toContain("finally");
+    expect(script).toContain("input.disabled=false");
+  });
+
   it("查重期间显示 spinner,过期响应丢弃", () => {
     expect(script).toContain('setState("spin"');
     expect(script).toContain("mySeq!==seq");

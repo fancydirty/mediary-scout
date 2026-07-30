@@ -41,6 +41,14 @@ describe("sanitizeSlug —— 输入即净化(消灭显示值与校验值的漂�
     expect(sanitizeSlug("a".repeat(50)).length).toBe(SLUG_MAX_LENGTH);
   });
 
+  // Copilot round-4:slice 可能正好切在连字符处,重新造出尾连字符。
+  it("截断后不以连字符结尾(slice 边界正好是连字符时)", () => {
+    // 31 个字符 + 分隔符 + 更多 → 净化成 "aaa...(31)-bbb",slice(0,32)="...a-"
+    const out = sanitizeSlug("a".repeat(31) + " " + "b".repeat(10));
+    expect(out.endsWith("-"), `${out} 不该以连字符结尾`).toBe(false);
+    expect(out.length).toBeLessThanOrEqual(SLUG_MAX_LENGTH);
+  });
+
   it("混合场景", () => {
     expect(sanitizeSlug("  My--Home_NAS-  ")).toBe("my-home-nas");
   });

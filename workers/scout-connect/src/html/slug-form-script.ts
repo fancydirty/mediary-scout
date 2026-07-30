@@ -165,24 +165,33 @@ form.addEventListener("submit",async(ev)=>{
   if(btn.disabled||!lastAvailable)return;
   const slug=input.value;
   btn.disabled=true;btn.textContent="正在开通…";perr.hidden=true;
+  // **提交期间禁用输入框**:否则用户在请求途中继续编辑会触发 onInput()
+  // 把 lastAvailable 置 false、重置 UI,而请求失败回滚又复述旧 slug,
+  // 出现「按钮看似可点但 submit 直接 return」的不一致。finally 保证所有
+  // 返回路径(含 reload 前)都恢复。
+  input.disabled=true;
+  let reloading=false;
   try{
     const res=await fetch("/api/provision",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({slug})});
-    if(res.ok){location.reload();return;}
-    if(res.status===401){location.href="/login";return;}
+    if(res.ok){reloading=true;location.reload();return;}
+    if(res.status===401){reloading=true;location.href="/login";return;}
     let d=null;try{d=await res.json();}catch{}
     const e=d&&typeof d.error==="string"?d.error:"";
     if(res.status===402){perr.textContent="时长已过期，请先续期。";}
-    else if(e==="already provisioned"){location.reload();return;}
+    else if(e==="already provisioned"){reloading=true;location.reload();return;}
     else if(e==="slug taken"){perr.textContent="刚被别人抢先占用了，换一个吧。";}
     else if(e==="at capacity"){perr.textContent="暂时售罄，请稍后再试或联系支持。";}
     // 校验错误说清差在哪,而不是「稍后重试」(那永远不会成功)。
     else if(res.status===400){perr.textContent="这个名字不符合规则，请检查后再试。";}
     else{perr.textContent="开通失败，请检查网络后重试。";}
     perr.hidden=false;
-    btn.disabled=false;btn.textContent="开通 "+slug+"."+DOMAIN;
+    btn.textContent="开通 "+slug+"."+DOMAIN;
   }catch{
     perr.textContent="网络错误，请稍后重试。";perr.hidden=false;
-    btn.disabled=false;btn.textContent="开通 "+slug+"."+DOMAIN;
+    btn.textContent="开通 "+slug+"."+DOMAIN;
+  }finally{
+    // 页面正在跳转/刷新时不必恢复(避免闪一下可编辑态)。
+    if(!reloading){input.disabled=false;btn.disabled=false;}
   }
 });
 </script>`;

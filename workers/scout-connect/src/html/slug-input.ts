@@ -25,15 +25,21 @@ const ALLOWED_RE = /^[a-z0-9-]*$/;
  * 净化后的结果交给 slugIssues 判「还差什么」。
  */
 export function sanitizeSlug(raw: string): string {
-  return raw
-    .toLowerCase()
-    // **字母数字之间的非法序列转成单个连字符,而不是删掉。**
-    // 「my_nas」「my nas」「my.nas」的用户意图是分隔(想要 my-nas),
-    // 直接删会粘连成 mynas —— 与原实现「显示 Alice 实际开通 alice」是
-    // 同一类「显示值与结果值漂移」。开头的非法字符同样归一后,首尾再统一剥。
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, SLUG_MAX_LENGTH);
+  return (
+    raw
+      .toLowerCase()
+      // **字母数字之间的非法序列转成单个连字符,而不是删掉。**
+      // 「my_nas」「my nas」「my.nas」的用户意图是分隔(想要 my-nas),
+      // 直接删会粘连成 mynas —— 与原实现「显示 Alice 实际开通 alice」是
+      // 同一类「显示值与结果值漂移」。开头的非法字符同样归一后,首尾再统一剥。
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, SLUG_MAX_LENGTH)
+      // **截断后再剥一次**:slice 可能正好切在连字符处,重新造出尾连字符
+      // (如 31 个字符 + 分隔符 → slice 到 "...a-")。不补这刀,输出会违反
+      // 自己的「不以连字符结尾」承诺,且下游 assertSlug 会拒。
+      .replace(/-+$/g, "")
+  );
 }
 
 export type SlugIssue = "empty" | "edge_hyphen" | "too_long";
