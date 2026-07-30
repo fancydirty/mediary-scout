@@ -74,17 +74,38 @@ export function latestExpiry(entitlements: { expires_at: string }[]): string | n
  * 当笔的时刻重启)。
  */
 export function recomputeExpiry(
-  entitlements: { expires_at: string; months: number; created_at: string }[],
+  entitlements: { id: string; expires_at: string; months: number; created_at: string }[],
 ): string | null {
   if (entitlements.length === 0) return null;
-  // 按创建时间排序(同一时刻则按 expires_at 稳定化,避免顺序不确定)。
-  const sorted = [...entitlements].sort((a, b) => {
-    const d = Date.parse(a.created_at) - Date.parse(b.created_at);
-    if (d !== 0) return d;
-    return Date.parse(a.expires_at) - Date.parse(b.expires_at);
-  });
+  // 按创建时间排序。
+  //
+  // **用 localeCompare 而非 Date.parse 相减**:坏值会让 Date.parse 得 NaN,
+  // 比较器返回 NaN 等同于返回 0 → 排序保证静默失效。实测一个坏值就能把
+  // 2026-03 排到 2026-01 前面;而 localeCompare 对坏值仍给确定顺序,结果可复现。
+  // created_at/expires_at 都是固定宽度的 ISO-8601 UTC,字典序即时间序
+  // (本仓 byCreatedAtAsc/Desc 也是这么做的)。
+  //
+  // **tie-break 必须带上 id**:同毫秒时前两个键都可能相等 —— 尤其自愈逻辑会把
+  // 同账号多行的 expires_at 写成同一个值,那时第二个键退化成 no-op,顺序就交给
+  // 了 DB。而 SQLite 的 ORDER BY 对相等键不保证稳定(EXPLAIN 显示走 TEMP
+  // B-TREE),memory 实现的顺序又与 D1 不同。而月加法不满足结合律
+  // (addMonths(addMonths(x,1),1) ≠ addMonths(x,2),月末钳位是有损的),
+  // 所以顺序不同真会算出差一天的结果。id 是主键,保证全序。
+  const sorted = [...entitlements].sort(
+    (a, b) =>
+      a.created_at.localeCompare(b.created_at) ||
+      a.expires_at.localeCompare(b.expires_at) ||
+      a.id.localeCompare(b.id),
+  );
   let acc: string | null = null;
   for (const e of sorted) {
+    // **跳过 created_at 坏值的行。** 不只是排序问题:坏值会让 addMonths 里的
+    // `new Date("BAD")` 变成 Invalid Date,`toISOString()` 抛 RangeError,
+    // 冒到 webhook 就是 500 → Paddle 无限重投(测试抓到过)。
+    // 账本里出现坏时刻本身是数据事故,但重算的职责是「用能用的数据算出真值」,
+    // 而不是整笔崩掉 —— 崩掉会连带让好的那些行也拿不到时长。
+    if (!Number.isFinite(Date.parse(e.created_at))) continue;
+    if (!Number.isInteger(e.months) || e.months < 1) continue;
     // 以「这笔充值发生的时刻」为 now:已过期就从那一刻重启,未过期则叠加。
     acc = computeExpiry({ currentExpiry: acc, months: e.months, now: e.created_at });
   }

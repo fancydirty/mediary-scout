@@ -649,7 +649,7 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
 
     async listEntitlements(accountId) {
       const rows = await d1
-        .prepare(`SELECT * FROM entitlements WHERE account_id = ? ORDER BY created_at ASC`)
+        .prepare(`SELECT * FROM entitlements WHERE account_id = ? ORDER BY created_at ASC, id ASC`)
         .bind(accountId)
         .all<EntitlementRow>();
       return rows.results;
@@ -979,7 +979,9 @@ export function createMemoryConnectDb(): ConnectDb {
     async listEntitlements(accountId) {
       return [...entitlements.values()]
         .filter((e) => e.account_id === accountId)
-        .sort((a, b) => a.created_at.localeCompare(b.created_at))
+        // 与 D1 分支同款 ORDER BY created_at ASC, id ASC:相等 created_at 时
+        // SQLite 不保证稳定,不带 id 两个实现会给出不同顺序(parity 缺口)。
+        .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id))
         .map((e) => ({ ...e }));
     },
 
