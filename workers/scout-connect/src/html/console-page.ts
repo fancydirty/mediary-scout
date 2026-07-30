@@ -1,5 +1,5 @@
 import type { AccountRow, EndpointRow, EntitlementRow } from "../db.js";
-import { daysLeftInGrace } from "../expiry.js";
+import { GRACE_PERIOD_DAYS, daysLeftInGrace } from "../expiry.js";
 import { isEntitlementActive, latestExpiry } from "../entitlement.js";
 import { buildConnectPrompt, CLAIM_CODE_PLACEHOLDER } from "./connect-prompt.js";
 import { BRAND_BAR, BRAND_CSS, esc, FAVICON_LINK, THEME_BASE, THEME_TOKENS } from "./theme.js";
@@ -38,8 +38,17 @@ export function consolePage(input: {
   // 一个真实付过钱的老用户被当成从没来过。现在区分:
   //   有效 / 宽限期中(已过期但 7 天内仍可续期恢复) / 已过期。
   // 宽限期判断与 cron 用同一份 GRACE_PERIOD_DAYS,保证两边算的是同一段时间。
-  const daysLeft = expiry === null ? 0 : daysLeftInGrace(expiry, input.now);
-  const inGrace = !active && expiry !== null && daysLeft > 0;
+  // **必须与 cron 的边界语义一致**(`<=`):宽限截止的精确瞬间仍属宽限期。
+  // daysLeftInGrace 在那一刻返回 0,若用 `daysLeft > 0` 会把仍在宽限的用户
+  // 误报成「已过期」—— UI 与 cron 的边界就分叉了。用毫秒边界直接判。
+  const expMs = expiry === null ? NaN : Date.parse(expiry);
+  const nowMs = Date.parse(input.now);
+  const inGrace =
+    !active &&
+    Number.isFinite(expMs) &&
+    Number.isFinite(nowMs) &&
+    nowMs <= expMs + GRACE_PERIOD_DAYS * 24 * 60 * 60_000;
+  const daysLeft = inGrace ? daysLeftInGrace(expiry!, input.now) : 0;
   const statusBadge = active
     ? `<span class="badge ok">● 有效 · 到期 ${esc(expiry!.slice(0, 10))}</span>`
     : inGrace

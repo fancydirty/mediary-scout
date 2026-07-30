@@ -37,7 +37,7 @@ export function createEmailSender(apiKey: string): EmailSender {
   };
 }
 
-/** 到期提醒文案(纯文本)。`
+/** 到期提醒文案(纯文本)。
  *  用占位符而非模板库:只有三个变量(日期/天数/地址),引模板引擎不值。 */
 export function expiryReminderText(input: {
   expiryDate: string;

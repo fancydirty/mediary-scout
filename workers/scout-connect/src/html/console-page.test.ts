@@ -90,6 +90,19 @@ describe("console page — 到期三态(不再把已付费过期误报成尚未�
     expect(html).not.toContain("尚未开通");
   });
 
+  // Copilot round-1 指出:daysLeftInGrace 在截止瞬间返回 0,用 `>0` 会把仍在
+  // 宽限的用户误报成已过期。必须与 cron 的 <= 语义一致。
+  it("宽限截止的精确瞬间仍显示「宽限期中」(与 cron 边界语义一致)", () => {
+    // 到期 7-23 → 宽限到 7-30 00:00:00;now 就是那个精确瞬间
+    const html = base({
+      entitlements: [ent("2026-07-23T00:00:00.000Z")],
+      endpoint: null,
+      now: "2026-07-30T00:00:00.000Z",
+    });
+    expect(html, "截止瞬间仍属宽限期,不该误报成已过期").toContain("宽限期中");
+    expect(html).not.toContain("已过期");
+  });
+
   it("宽限期已过显示「已过期 · 续期即恢复」,不误报成尚未开通", () => {
     // 到期 7-01,now 7-31 → 宽限早过
     const html = base({

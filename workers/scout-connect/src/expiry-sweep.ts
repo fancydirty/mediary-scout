@@ -11,10 +11,13 @@ import { revokeEndpoint } from "./revoke.js";
  * 在实例上跑过一轮、确认时间边界算对了,再开真删 —— 这是四个 PR 里唯一会
  * 真删生产资源的,不可逆。
  *
- * 三个动作按阶段分:
- *   - 到期前 7/1 天:提醒邮件
- *   - 宽限期中:写 grace_until(标出还剩几天,供 console 显示),不发第二封
- *   - 宽限期满:revokeEndpoint(删 DNS + 删隧道,复用既有补偿逻辑),写 suspended_at
+ * 三个动作按阶段分(状态推进以审计行为准;不再维护 grace_until/suspended_at 列):
+ *   - 到期前 7/1 天:提醒邮件 + 审计
+ *   - 宽限期中:审计标出还剩几天(console 由 latestExpiry+GRACE_PERIOD_DAYS 现场算,
+ *     与 cron 用同一份常量,不依赖这两列)
+ *   - 宽限期满:revokeEndpoint(删 DNS + 删隧道,标 status='revoked',复用既有补偿逻辑)
+ * 说明:宽限/到期的真值由 entitlements 的最新到期时刻决定,审计只做可观测留痕;
+ * grace_until/suspended_at/purge_after 三列自 spec D1 起废弃(见设计文档)。
  */
 
 export interface SweepDeps {
@@ -67,6 +70,7 @@ export async function sweepExpiredEndpoints(deps: SweepDeps): Promise<SweepResul
         const days = daysUntilExpiry(row.latestExpiry, now);
         result.reminders++;
         const auditAction = `expiry.remind.${kind}`;
+        let emailFailed: string | null = null;
         if (live && deps.sendEmail !== undefined) {
           try {
             await deps.sendEmail({
@@ -87,9 +91,13 @@ export async function sweepExpiredEndpoints(deps: SweepDeps): Promise<SweepResul
               action: "email",
               error: e instanceof Error ? e.message : String(e),
             });
-            continue; // 邮件失败不影响该行后续动作
+            emailFailed = e instanceof Error ? e.message : String(e);
           }
         }
+        // **无论邮件成败都记审计** —— 邮件失败恰恰是更需要留痕的情形
+        // (这是事后核对「是否通知到了用户」的唯一依据;失败会让"提醒过"
+        // 在审计里消失,用户断联时无从排查)。早先 catch 里 continue 会跳过这步,
+        // 与「邮件失败不影响该行后续动作」的注释直接相反。
         await deps.db.insertAudit({
           id: deps.newAuditId(),
           at: now,
@@ -97,7 +105,13 @@ export async function sweepExpiredEndpoints(deps: SweepDeps): Promise<SweepResul
           action: auditAction,
           invite_id: null,
           endpoint_id: row.endpointId,
-          detail_json: JSON.stringify({ days, expiry: row.latestExpiry, dry_run: !live }),
+          detail_json: JSON.stringify({
+            days,
+            expiry: row.latestExpiry,
+            email_sent: emailFailed === null && live,
+            ...(emailFailed === null ? {} : { email_error: emailFailed }),
+            dry_run: !live,
+          }),
         });
       }
       continue;
@@ -106,8 +120,8 @@ export async function sweepExpiredEndpoints(deps: SweepDeps): Promise<SweepResul
     if (phase === "grace" && row.latestExpiry !== null) {
       result.inGrace++;
       const daysLeft = daysLeftInGrace(row.latestExpiry, now);
-      // 标记宽限期(console 据此显示「宽限期中,剩 N 天」)。只在没写过时写,
-      // 否则每轮 cron 都会覆盖一次 grace_until。
+      // 宽限期标记以**审计**形式记录(每轮 cron 一条,便于回看「第几天还在宽限」)。
+      // 不再写 grace_until 列 —— 那列自 spec D1 起废弃,console 由 latestExpiry 现场算。
       await deps.db.insertAudit({
         id: deps.newAuditId(),
         at: now,
@@ -146,7 +160,7 @@ export async function sweepExpiredEndpoints(deps: SweepDeps): Promise<SweepResul
       try {
         // 复用 revoke 的删除顺序与错误收集(access app → dns → tunnel,
         // 一步失败不阻止其余尝试)。
-        await revokeEndpoint({ endpointId: row.endpointId, deps: { cf: deps.cf, db: deps.db, now: deps.now, newAuditId: deps.newAuditId } });
+        await revokeEndpoint({ endpointId: row.endpointId, deps: { cf: deps.cf, db: deps.db, now: () => now, newAuditId: deps.newAuditId } });
         result.reclaimed++;
         await deps.db.insertAudit({
           id: deps.newAuditId(),

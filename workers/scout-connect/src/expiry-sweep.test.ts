@@ -203,7 +203,9 @@ describe("sweepExpiredEndpoints —— 到期状态机执行层", () => {
     expect(cfCalls).toEqual([]);
   });
 
-  it("邮件发送失败:记 error 继续,不因此跳过该行的审计", async () => {
+  // Copilot round-1 指出:catch 里 continue 会让「提醒过」在审计里消失。
+  // 审计是事后核对「是否通知到用户」的唯一依据 —— 邮件失败恰恰更需要留痕。
+  it("邮件发送失败:仍记 reminder 审计,且带上失败原因", async () => {
     const { db, deps } = setup({
       live: true,
       sendEmail: async () => {
@@ -213,6 +215,20 @@ describe("sweepExpiredEndpoints —— 到期状态机执行层", () => {
     await seed(db, "ep1", "bounce@e.com", "2026-08-06T12:00:00.000Z");
     const r = await sweepExpiredEndpoints(deps);
     expect(r.errors.some((e) => e.action === "email")).toBe(true);
+    const audits = await db.listAudits();
+    const a = audits.find((x) => x.action === "expiry.remind.7d");
+    expect(a, "提醒审计不能被跳过").toBeDefined();
+    expect(a?.detail_json).toContain("email_sent");
+    expect(a?.detail_json).toContain("email_error");
+  });
+
+  it("邮件成功时审计记 email_sent:true,不带 email_error", async () => {
+    const { db, deps } = setup({ live: true });
+    await seed(db, "ep1", "ok@e.com", "2026-08-06T12:00:00.000Z");
+    await sweepExpiredEndpoints(deps);
+    const a = (await db.listAudits()).find((x) => x.action === "expiry.remind.7d");
+    expect(a?.detail_json).toContain('"email_sent":true');
+    expect(a?.detail_json).not.toContain("email_error");
   });
 
   it("无 entitlement 的账号按 expired 处理(未付费却占着隧道)", async () => {

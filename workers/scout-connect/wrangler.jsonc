@@ -15,7 +15,7 @@
       "database_id": "493fb312-2301-4a85-a22f-15e68460ed98"
     }
   ],
-  // 到期巡检:cron 每天跑一次。driest 情况下只记审计(dry-run),
+  // 到期巡检:cron 每天跑一次。dry-run 模式下只记审计,
   // 见 expiry-sweep.ts —— 真删生产资源前先验证时间边界。
   "triggers": {
     "crons": ["0 3 * * *"]
