@@ -64,3 +64,24 @@ export function createRateLimiter(input: {
  *  正常用户连点几次查重远到不了这个量;脚本猛刷会立刻撞墙。 */
 export const SLUG_CHECK_RATE_LIMIT = 10;
 export const SLUG_CHECK_RATE_WINDOW_MS = 60_000;
+
+/**
+ * 发信入口(/api/auth/magic、/waitlist)的限流参数。
+ *
+ * **为什么需要**:Turnstile 门禁已在生产关闭 —— `challenges.cloudflare.com`
+ * 在中国大陆不可靠,挡住的是真实用户而非脚本(登录进不去=付不了钱,
+ * 报名进不去=拿不到内测用户)。门禁代码保留(sitekey 一配就恢复),
+ * 但既然它现在不生效,发信入口必须有替代防线,否则这是个公开的
+ * 「触发发邮件」放大面 —— 有人能刷爆 Resend 配额,或拿我们的域名发垃圾邮件。
+ *
+ * **双维度**:
+ * - 按 IP:挡同一来源的脚本猛刷。窗口放宽到 10 分钟 5 次 —— 正常人
+ *   收不到信会重试 1-2 次,家庭 NAT 后可能有几个人共用出口 IP。
+ * - 按邮箱:挡「换 IP 但轰同一个人」的骚扰(用别人邮箱刷登录信)。
+ *   同一邮箱 10 分钟 2 次 —— 魔法链接 15 分钟有效,正常人不需要更多。
+ *
+ * 两个维度**都要过**才放行。内存窗口的分布式局限见本文件顶部说明。
+ */
+export const SIGNUP_IP_RATE_LIMIT = 5;
+export const SIGNUP_EMAIL_RATE_LIMIT = 2;
+export const SIGNUP_RATE_WINDOW_MS = 600_000; // 10 分钟

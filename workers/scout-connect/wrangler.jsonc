@@ -22,11 +22,19 @@
   },
   "vars": {
     "CONNECT_ROOT_DOMAIN": "mediaryconnect.app",
-    // Public Turnstile sitekey for the beta signup widget (safe to commit —
-    // sitekeys ship in page HTML by design). The paired TURNSTILE_SECRET stays
-    // a `wrangler secret`. The gate activates only when BOTH are configured;
-    // either missing → no widget, no verification (src/routes.ts).
-    "TURNSTILE_SITEKEY": "0x4AAAAAAD-wkGraJigl3YK0",
+    // Turnstile sitekey —— **刻意留空以关闭人机验证门禁**。
+    //
+    // 为什么关:`challenges.cloudflare.com` 在中国大陆不可靠。挡住的不是脚本,
+    // 是**真实用户** —— 登录页过不去 = 付不了钱,报名页过不去 = 拿不到内测
+    // 用户(waitlist 长期只有 1 个报名,很可能就是被它挡住的)。
+    //
+    // 门禁代码**完整保留**(gate 需 sitekey + secret 成对配置才激活,
+    // 见 src/routes.ts 的 turnstileGateEnabled)。想恢复只需把这行填回来 ——
+    // TURNSTILE_SECRET 仍在 wrangler secret 里,不用重新申请。
+    //
+    // 替代防线:发信入口(/api/auth/magic、/waitlist)已加限流,
+    // 见 src/rate-limit.ts 的 SIGNUP_* 参数与那里对取舍的说明。
+    // "TURNSTILE_SITEKEY": "0x4AAAAAAD-wkGraJigl3YK0",
     // Paddle 环境(sandbox|production)。决定 priceMonthsFor 选哪份白名单:
     // 不设 = undefined = priceMonthsFor 返回 null → webhook 一律 503。
     // 上线时改 "production",并在 paddle-event.ts 填 LIVE_PRICE_MONTHS。

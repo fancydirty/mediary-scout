@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { handleRequest, MAX_JSON_BODY_BYTES, type RouteDeps } from "./routes.js";
+import {
+  createRateLimiter,
+  SIGNUP_IP_RATE_LIMIT,
+  SIGNUP_EMAIL_RATE_LIMIT,
+  SIGNUP_RATE_WINDOW_MS,
+} from "./rate-limit.js";
 import { createMemoryConnectDb, type ConnectDb } from "./db.js";
 import type { CfApi } from "./cf-api.js";
 import { EMAIL_MAX_LENGTH, EMAIL_RE } from "./validation.js";
@@ -80,6 +86,12 @@ function makeDeps(db: ConnectDb, cf: CfApi): RouteDeps {
     newEntitlementId: seq("ent"),
     sessionSecret: "f".repeat(64),
     sendMagicLink: async () => {},
+    // 每个 setup() 拿一对**全新**限流器 —— 模块级单例会让测试互相污染
+    // (一个测试打满配额,后面全 429)。这也是生产代码把它做成可注入的原因。
+    signupLimiters: {
+      ip: createRateLimiter({ limit: SIGNUP_IP_RATE_LIMIT, windowMs: SIGNUP_RATE_WINDOW_MS, now: () => Date.now() }),
+      email: createRateLimiter({ limit: SIGNUP_EMAIL_RATE_LIMIT, windowMs: SIGNUP_RATE_WINDOW_MS, now: () => Date.now() }),
+    },
   };
 }
 
@@ -1800,6 +1812,87 @@ describe("request body size cap", () => {
 });
 
 // Cloudflare Turnstile gate on the public signup funnel (bot protection).
+// 发信入口限流:Turnstile 在生产已关(中国大陆不可达),限流是替代防线。
+// 两个维度都要过:按 IP(挡脚本猛刷)+ 按邮箱(挡轰炸同一个人)。
+describe("发信入口限流(Turnstile 关闭后的替代防线)", () => {
+  function post(path: string, body: unknown, ip: string): Request {
+    return new Request(`${BASE}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "cf-connecting-ip": ip },
+      body: JSON.stringify(body),
+    });
+  }
+
+  it("同一 IP 超过 5 次 → 429,且不再发信", async () => {
+    const { deps } = setup();
+    const sent: string[] = [];
+    deps.sendMagicLink = async (to: string) => { sent.push(to); };
+    for (let i = 0; i < 5; i++) {
+      const res = await handleRequest(post("/api/auth/magic", { email: `u${i}@example.com` }, "9.9.9.1"), deps);
+      expect(res.status).toBe(202);
+    }
+    const blocked = await handleRequest(post("/api/auth/magic", { email: "u9@example.com" }, "9.9.9.1"), deps);
+    expect(blocked.status).toBe(429);
+    // 关键:被限流的请求绝不能触发发信(否则限流形同虚设)
+    expect(sent.length).toBe(5);
+  });
+
+  it("同一邮箱超过 2 次 → 429,即使换 IP", async () => {
+    const { deps } = setup();
+    const sent: string[] = [];
+    deps.sendMagicLink = async (to: string) => { sent.push(to); };
+    for (let i = 0; i < 2; i++) {
+      const res = await handleRequest(post("/api/auth/magic", { email: "victim@example.com" }, `8.8.8.${i}`), deps);
+      expect(res.status).toBe(202);
+    }
+    const blocked = await handleRequest(post("/api/auth/magic", { email: "victim@example.com" }, "8.8.8.99"), deps);
+    expect(blocked.status).toBe(429);
+    expect(sent.length).toBe(2);
+  });
+
+  it("限流在邮箱形状校验之后 —— 无效邮箱不消耗配额", async () => {
+    const { deps } = setup();
+    for (let i = 0; i < 8; i++) {
+      const res = await handleRequest(post("/api/auth/magic", { email: "not-an-email" }, "7.7.7.7"), deps);
+      expect(res.status).toBe(400);
+    }
+    // 8 次无效请求后,合法请求仍应放行(配额没被 400 消耗掉)
+    const ok = await handleRequest(post("/api/auth/magic", { email: "real@example.com" }, "7.7.7.7"), deps);
+    expect(ok.status).toBe(202);
+  });
+
+  // 生产已关门禁(wrangler.jsonc 注释掉 sitekey)。这两条钉住「关掉后仍能用」。
+  it("sitekey 未配置 → 登录页不注入 Turnstile 脚本(国内可加载)", async () => {
+    const { deps } = setup();
+    const res = await handleRequest(new Request(`${BASE}/login`), deps);
+    const html = await res.text();
+    // 关键是**不加载外部脚本、不渲染 widget** —— 那才是国内加载不出的东西。
+    // (`.cf-turnstile{}` CSS 规则和 querySelector 兜底代码无论配不配都会输出,
+    //  前者匹配不到元素、后者拿到 null,都无害。断言不该过严。)
+    expect(html).not.toContain("challenges.cloudflare.com");
+    expect(html).not.toContain('class="cf-turnstile"');
+    expect(html).not.toContain("data-sitekey");
+  });
+
+  it("sitekey 未配置 → 发信/报名不需要 turnstile_token 即可通过", async () => {
+    const { deps } = setup();
+    const magic = await handleRequest(post("/api/auth/magic", { email: "cn@example.com" }, "5.5.5.5"), deps);
+    expect(magic.status).toBe(202);
+    const wl = await handleRequest(post("/waitlist", { email: "cn2@example.com" }, "5.5.5.6"), deps);
+    expect([200, 201]).toContain(wl.status);
+  });
+
+  it("/waitlist 同样受限流保护", async () => {
+    const { deps } = setup();
+    for (let i = 0; i < 5; i++) {
+      const res = await handleRequest(post("/waitlist", { email: `w${i}@example.com` }, "6.6.6.6"), deps);
+      expect([200, 201, 202]).toContain(res.status);
+    }
+    const blocked = await handleRequest(post("/waitlist", { email: "w9@example.com" }, "6.6.6.6"), deps);
+    expect(blocked.status).toBe(429);
+  });
+});
+
 // Active ONLY when BOTH turnstileSitekey (public var) and turnstileSecret
 // (wrangler secret) are configured in deps — either missing → the route
 // behaves exactly as before and siteverify is never called.
