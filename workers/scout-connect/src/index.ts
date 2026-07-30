@@ -4,6 +4,16 @@ import { newId, newInviteCode } from "./ids.js";
 import { handleRequest } from "./routes.js";
 import { createMagicLinkSender } from "./magic-link-sender.js";
 import type { Env } from "./env.js";
+
+/** 取值或显式抛错。某些 env(如 RESEND_API_KEY)对**部分**路径可选(到期提醒),
+ *  但对其它路径(登录)是必需的 —— 在必需处显式断言,比让 undefined 流到下游
+ *  变成隐晦失败好。 */
+function requireEnv(value: string | undefined, name: string): string {
+  if (value === undefined || value.trim() === "") {
+    throw new Error(`${name} is required but not configured`);
+  }
+  return value;
+}
 import { createPaddleApi } from "./paddle-api.js";
 import { priceMonthsFor } from "./paddle-event.js";
 import { sweepExpiredEndpoints } from "./expiry-sweep.js";
@@ -82,7 +92,10 @@ export default {
       newAccountId: () => newId("act"),
       newEntitlementId: () => newId("ent"),
       sessionSecret: env.SESSION_SECRET,
-      sendMagicLink: createMagicLinkSender(env.RESEND_API_KEY),
+      // 登录魔法链接**必需** key —— 缺失时显式抛错(而不是让 Bearer undefined
+      // 流到 fetch 里变成隐晦的上游 401)。到期提醒可无(上面 sendEmail 的条件),
+      // 但登录是核心功能,没 key 就该 fail fast。
+      sendMagicLink: createMagicLinkSender(requireEnv(env.RESEND_API_KEY, "RESEND_API_KEY")),
     });
   },
 };

@@ -55,11 +55,11 @@ Account and service config are stored in Cloudflare D1 (database). Payment data 
 ## 数据保留
 
 - Account and slug records: kept long-term (a slug is never released to others — that is part of the product promise).
-- After service expiry: tunnel and DNS records are deleted 180 days after suspension; account records are kept so you can return and renew anytime.
+- After the 7-day grace period ends, the tunnel and its DNS record are reclaimed immediately to free capacity; account and slug records are kept so you can return and renew anytime.
 - You may email us at any time to delete your account and all related data (payment records are retained by Paddle as required by law).
 
 - 账号与 slug 记录:长期保留(slug 永不释放给他人,这是产品承诺的一部分)。
-- 服务到期后:隧道与解析记录在停用 180 天后删除;账号记录保留以便你随时回来续期。
+- 7 天宽限期满后,隧道与其解析记录**立即回收**以释放配额;账号与 slug 记录保留,以便你随时回来续期。
 - 你可以随时发邮件要求删除账号及全部相关数据(付款记录受法律要求由 Paddle 保留)。
 
 ## Cookies
