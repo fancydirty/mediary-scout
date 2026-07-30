@@ -42,6 +42,8 @@ function setState(kind,text){
   state.className="slug-state "+(kind==="spin"?"spin":kind);
   state.textContent=kind==="ok"?"✓":kind==="bad"?"✕":"";
   if(kind==="ok")input.className="ok";else if(kind==="bad")input.className="bad";else input.className="";
+  // 无障碍:校验失败时同步 aria-invalid,否则读屏用户在出错时仍听到「未无效」。
+  input.setAttribute("aria-invalid",kind==="bad"?"true":"false");
 }
 function setMsg(text,cls){msg.textContent=text;msg.className="msg "+(cls||"");msg.hidden=text==="";}
 function updateCount(v){
@@ -65,7 +67,7 @@ function updateRules(slug,availability){
   const pass={
     chars:/^[a-z0-9-]*$/.test(slug)||slug==="",
     edge:!(slug.startsWith("-")||slug.endsWith("-")),
-    len:slug.length>=3&&slug.length<=MAX,
+    len:slug.length>=1&&slug.length<=MAX,
     free:availability===true,
   };
   for(const li of rules.querySelectorAll(".rule")){

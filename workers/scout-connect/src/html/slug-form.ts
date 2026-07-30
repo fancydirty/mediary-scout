@@ -22,7 +22,7 @@ export interface SlugFormInput {
 const RULES: { id: string; label: string }[] = [
   { id: "chars", label: "小写字母、数字、连字符" },
   { id: "edge", label: "不以连字符开头或结尾" },
-  { id: "len", label: `3 到 ${SLUG_MAX_LENGTH} 个字符` },
+  { id: "len", label: `1 到 ${SLUG_MAX_LENGTH} 个字符` },
   { id: "free", label: "尚未被占用" },
 ];
 

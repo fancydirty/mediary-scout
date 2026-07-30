@@ -71,6 +71,17 @@ describe("slugFormScript —— 客户端交互", () => {
     expect(script).toContain('btn.textContent="开通";');
   });
 
+  // Copilot round-3:len 规则的下限必须与真实可提交范围一致(1..MAX),
+  // 否则「3 到 32」这条规则永远打不上勾却仍能开通,用户困惑。
+  it("len 规则下限是 1(与可提交范围一致,3+ 由软提示承担)", () => {
+    expect(script).toContain("slug.length>=1&&slug.length<=MAX");
+    expect(script).not.toContain("slug.length>=3&&slug.length<=MAX");
+  });
+
+  it("setState 同步 aria-invalid(无障碍)", () => {
+    expect(script).toContain('setAttribute("aria-invalid"');
+  });
+
   it("输入即净化:回写 sanitizeSlug 后的值(消灭显示与结果的漂移)", () => {
     expect(script).toContain("sanitizeSlug");
     expect(script).toContain("input.value=clean");
