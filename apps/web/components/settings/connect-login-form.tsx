@@ -21,9 +21,20 @@ export function ConnectLoginForm() {
     <form
       onSubmit={(e) => {
         e.preventDefault();
+        setMsg(null);
         startTransition(async () => {
-          const r = await requestConnectLoginAction(email);
-          setMsg({ ok: r.ok, text: r.message });
+          // **必须 catch**:server action 会 throw ——
+          // demo 门禁(assertNotDemo → DemoReadOnlyError)、Next 的运行时错误、
+          // 部署不一致导致的 action 找不到,都会走这里。不 catch 就是一个
+          // 未处理的 promise rejection,而用户界面上**什么都不会变**
+          // (按钮从 pending 复位,没有任何提示),他只会以为点了没反应。
+          try {
+            const r = await requestConnectLoginAction(email);
+            setMsg({ ok: r.ok, text: r.message });
+          } catch {
+            // 不回显异常内容(可能含内部细节),给一句可操作的话。
+            setMsg({ ok: false, text: "提交失败了。刷新页面后再试一次。" });
+          }
         });
       }}
     >

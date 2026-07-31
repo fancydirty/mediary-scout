@@ -373,3 +373,22 @@ describe("requestConnectLogin(设置页内发起 Connect 登录)", () => {
     expect(seen!.body).toEqual({ email: "a@b.com" });
   });
 });
+
+// 组件层的异常路径:项目没有 React 渲染测试基建(无 @testing-library),
+// 不为一条 catch 引入不成比例的依赖 —— 改用源码断言钉住它。
+// 这条测的是「server action throw 时用户能看到提示」,而那正是
+// 单元测试覆盖不到、只能靠代码结构保证的部分。
+describe("ConnectLoginForm 的异常处理(源码断言)", () => {
+  it("startTransition 里 catch 了 server action 的异常", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync(
+      new URL("../components/settings/connect-login-form.tsx", import.meta.url),
+      "utf8",
+    );
+    // action 会 throw:demo 门禁(DemoReadOnlyError)、Next 运行时错误、
+    // 部署不一致导致 action 找不到。不 catch 的话界面上什么都不会变。
+    expect(src).toContain("try {");
+    expect(src).toContain("} catch {");
+    expect(src).toMatch(/catch\s*\{[^}]*setMsg\(/);
+  });
+});
