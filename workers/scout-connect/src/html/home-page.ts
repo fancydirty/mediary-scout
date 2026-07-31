@@ -138,6 +138,23 @@ ${BRAND_CSS}
 .hero-l{min-width:0;position:relative;z-index:2}
 .hero-r{position:relative;min-width:0;align-self:stretch;overflow:hidden;
   pointer-events:none;
+  /* **关键**:用 mask 让元素自身淡出,而不是靠 ::after 盖一层渐变。
+     盖渐变解决不了硬边 —— overflow:hidden 会把超出容器的海报**直接裁掉**,
+     裁切边是一条真实的竖线,而渐变只在容器内部生效、管不到它。
+     实测:容器左边界 x=743,海报网格从 x=641 开始,中间 102px 被硬裁。
+     mask 作用在元素合成阶段,连裁切边一起淡掉。 */
+  /* 两层 mask 相乘(mask-composite:intersect):水平从左淡入 + 垂直上下淡出。
+     必须四边都淡 —— 只做水平的话,容器上边界和右边界的裁切边同样是硬线
+     (实测顶部 y=68、右侧 x=1226 各留一条)。右侧留 92% 而非 100%:
+     它贴着 section 边缘,完全不淡会切出直角。 */
+  -webkit-mask-image:
+    linear-gradient(90deg,transparent 0%,rgba(0,0,0,.35) 14%,rgba(0,0,0,.8) 40%,#000 70%,#000 92%,rgba(0,0,0,.55) 100%),
+    linear-gradient(180deg,transparent 0%,#000 12%,#000 88%,transparent 100%);
+  -webkit-mask-composite:source-in;
+          mask-image:
+    linear-gradient(90deg,transparent 0%,rgba(0,0,0,.35) 14%,rgba(0,0,0,.8) 40%,#000 70%,#000 92%,rgba(0,0,0,.55) 100%),
+    linear-gradient(180deg,transparent 0%,#000 12%,#000 88%,transparent 100%);
+          mask-composite:intersect;
   /* 向右出血到 section 边缘。**不能用 calc(50% - 50vw)** —— 那个 50% 相对
      父元素(窄网格子项)算,实测溢出到 right=1573 而视口 1280,会出横向滚动条。 */
   margin-top:calc(var(--s-8) * -1);margin-bottom:calc(var(--s-8) * -1);
@@ -146,17 +163,24 @@ ${BRAND_CSS}
   gap:6px;transform:rotate(-2deg) scale(1.14);
   animation:drift 26s ease-in-out infinite alternate}
 .pw img{width:100%;height:104px;object-fit:cover;border-radius:5px;display:block;
-  opacity:.62}   /* 压暗:海报是背景,不能抢标题 */
+  /* 压暗:海报是背景,不能抢标题。.52 是配合遮罩调出来的 —— 右端遮罩只有
+     .24,若图本身不压暗,右侧会比左侧亮太多,视觉上像两张拼起来的图。 */
+  opacity:.52}
 @keyframes drift{
   from{transform:rotate(-2deg) scale(1.14) translate3d(0,0,0)}
   to{transform:rotate(-2deg) scale(1.14) translate3d(-10px,-16px,0)}}
 @media (prefers-reduced-motion:reduce){.pw{animation:none}}
 /* 双层遮罩:左侧淡出(文字区干净)+ 上下淡出(不与 section 边界打架)。
    单层线性渐变做不到「左+上下」同时淡出。 */
+/* 遮罩:从左到右由实到虚,**必须是连续曲线**。
+   曾经写成 0%→22% 只从 1.0 降到 0.92 —— 那 22% 是一片几乎纯色的挡板,
+   它的右边缘就成了一条肉眼可见的硬直线;而右端只留 .12 遮罩又让海报
+   全亮,两侧反差过大。现在用多段缓降(1 → .97 → .82 → .55 → .34 → .24),
+   每段跨度都足够长,没有任何一段是"平的"。 */
+/* 水平淡出已由上面的 mask 负责;这里只做「整体压暗 + 上下边缘淡出」。
+   两件事分开:mask 管透明度(能吃掉裁切边),这层管色调(把海报拉回底色)。 */
 .hero-r::after{content:"";position:absolute;inset:0;pointer-events:none;
-  background:
-    linear-gradient(90deg,var(--bg-0) 0%,rgba(17,19,18,.92) 22%,rgba(17,19,18,.35) 55%,rgba(17,19,18,.12) 100%),
-    linear-gradient(180deg,var(--bg-0) 0%,transparent 18%,transparent 82%,var(--bg-0) 100%)}
+  background:linear-gradient(90deg,rgba(17,19,18,.5) 0%,rgba(17,19,18,.28) 45%,rgba(17,19,18,.18) 100%)}
 .hero-r::before{content:"";position:absolute;inset:0;z-index:1;pointer-events:none;
   background:radial-gradient(80% 60% at 85% 15%,rgba(30,215,96,.14),transparent 70%)}
 

@@ -193,6 +193,20 @@ describe("home page(apex 落地页)", () => {
 
   // 线上真 bug(测试全绿但页面坏):.apex a 是类+标签(特异性 0,1,1),
   // 压过纯类 .btn(0,1,0) —— 主 CTA 文字变绿色 = 绿底绿字,按钮看起来是空的。
+  // 用户截图发现:海报墙左边缘是一条硬直线。真因不是渐变曲线不够柔,
+  // 而是 overflow:hidden 把超出容器的海报**直接裁掉**(实测容器左边界 x=743、
+  // 网格从 x=641 开始,中间 102px 被硬裁),裁切边是真实竖线 ——
+  // ::after 盖渐变只在容器内部生效,管不到它。必须用 mask 让元素自身淡出。
+  it("海报墙用 mask-image 四边淡出(渐变盖不住 overflow 裁切边)", () => {
+    const html = homePage();
+    // 水平 + 垂直两层,相乘
+    expect(html).toContain("mask-composite:intersect");
+    expect(html).toContain("-webkit-mask-composite:source-in");
+    // 四个方向都要淡:只做水平的话上/右边界仍是硬线
+    expect(html).toMatch(/mask-image:\s*\n?\s*linear-gradient\(90deg,transparent/);
+    expect(html).toContain("linear-gradient(180deg,transparent 0%,#000 12%,#000 88%,transparent 100%)");
+  });
+
   it("按钮文字色用 .apex 前缀覆盖(否则被 .apex a 的绿色压掉)", () => {
     const html = homePage();
     // 必须带 .apex 前缀才压得住
