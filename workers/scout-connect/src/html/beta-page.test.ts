@@ -29,10 +29,13 @@ describe("betaPage", () => {
     expect(page).not.toContain("内测期免费");
     expect(page).toContain("14 天无理由退款");
     expect(page).toContain("预付时长，不自动续费");
-    // 定价与母 spec 决策 #3/#4 对齐(季 ¥45 / 年 ¥108 / 创始 ¥88,无月付)。
+    // 定价三档(季 ¥45 / 年 ¥108 / 两年 ¥188,无月付)。
+    // **创始价那档已撤**:「前 100 席 · 续期同价」代码里没有实现
+    // (无付费席位计数、entitlements 不记录用什么价买的),兑现不了就不宣传。
     expect(page).toContain("季 ¥45 / 年 ¥108");
     expect(page).toContain("两年 ¥188");
-    expect(page).toContain("创始价 ¥88/年");
+    expect(page).not.toContain("创始价");
+    expect(page).not.toContain("¥88");
     expect(page).not.toContain("¥19/月");
     expect(page).not.toContain("¥199");
     expect(page).not.toContain("¥149");
@@ -79,10 +82,10 @@ describe("betaPage", () => {
     expect(page).toContain("看情况");
     // 心理价位 — radios
     expect(page).toContain("心理价位");
-    for (const v of ["q45", "year88", "year108", "cheaper", "unsure"]) {
+    for (const v of ["q45", "year108", "cheaper", "unsure"]) {
       expect(page).toContain(`name="price_point" value="${v}"`);
     }
-    for (const label of ["季付 ¥45", "创始年付 ¥88", "年付 ¥108", "还是觉得贵", "说不好"]) {
+    for (const label of ["季付 ¥45", "年付 ¥108", "还是觉得贵", "说不好"]) {
       expect(page).toContain(label);
     }
     // 场景 — checkboxes

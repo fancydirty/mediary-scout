@@ -141,21 +141,41 @@ describe("合规页与产品现实的一致性", () => {
     }
   });
 
+  // **两种语言都要断言**:compliancePage 把一份双语 markdown 拆成 EN/zh 两页,
+  // 只测中文的话英文那侧可以静默丢内容而测试照样绿。
   it("定价页提到微信支付与 MoR 账单说明(消除 chargeback 诱因)", () => {
     const zh = compliancePage("pricing", "zh");
     expect(zh).toContain("微信支付");
     // 账单上出现 Paddle 的名字是 chargeback 的常见诱因,要提前说明
     expect(zh).toContain("记录商户");
+    const en = compliancePage("pricing", "en");
+    expect(en).toContain("WeChat Pay");
+    expect(en).toContain("Merchant of Record");
   });
 
   it("定价页补了首页没有的细节:购买顺序 / 不包含什么 / 换档调价 / 容量", () => {
     const zh = compliancePage("pricing", "zh");
-    expect(zh).toContain("先登录");
-    expect(zh).toContain("不包含什么");
-    expect(zh).toContain("换档与调价");
-    expect(zh).toContain("容量");
+    for (const k of ["先登录", "不包含什么", "换档与调价", "容量"]) expect(zh).toContain(k);
     // 涨价不影响已买时长 —— 这条能兑现(预付时长本就没有下次扣款)
     expect(zh).toContain("已经买到的时长不受影响");
+
+    const en = compliancePage("pricing", "en");
+    for (const k of ["you log in first", "does not include", "price changes", "Capacity"]) {
+      expect(en, `EN 缺 ${k}`).toContain(k);
+    }
+    expect(en).toContain("time you already bought is unaffected");
+  });
+
+  // Copilot round-1:我原本只改了 /pricing,而 /beta 还在宣传创始价 ——
+  // 「站内一致」不能只顾合规页。这条把三个面向用户的页面一起钉住。
+  it("beta 页与首页/定价页同步:不宣传创始价,问卷也不收 ¥88 的意愿", async () => {
+    const { betaPage } = await import("./beta-page.js");
+    const page = betaPage(undefined);
+    expect(page).not.toContain("创始价");
+    expect(page).not.toContain("¥88");
+    expect(page).not.toContain("year88");
+    // 三档还在
+    for (const p of ["¥45", "¥108", "¥188"]) expect(page).toContain(p);
   });
 
   it("三档价格与首页一致", () => {

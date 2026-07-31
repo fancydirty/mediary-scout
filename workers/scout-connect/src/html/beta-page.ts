@@ -181,7 +181,7 @@ input[type=radio],input[type=checkbox]{accent-color:var(--accent);margin:0}
 <div class="panel rise d6">
 <section id="step-signup">
 <p class="peyebrow">BETA WAITLIST</p>
-<p class="price">定价 季 ¥45 / 年 ¥108 / 两年 ¥188（创始价 ¥88/年，前 100 席续期同价）。预付时长，不自动续费，14 天无理由退款。先填邮箱，开通时邮件通知。</p>
+<p class="price">定价 季 ¥45 / 年 ¥108 / 两年 ¥188。预付时长，不自动续费，14 天无理由退款。先填邮箱，开通时邮件通知。</p>
 <form id="signup">
 <p class="field"><label for="email">邮箱</label>
 <input id="email" name="email" type="email" required autocomplete="email" placeholder="you@example.com"></p>
@@ -202,7 +202,6 @@ ${tsWidget}
 </fieldset>
 <fieldset><legend>心理价位</legend>
 <label><input type="radio" name="price_point" value="q45"> 季付 ¥45</label>
-<label><input type="radio" name="price_point" value="year88"> 创始年付 ¥88</label>
 <label><input type="radio" name="price_point" value="year108"> 年付 ¥108</label>
 <label><input type="radio" name="price_point" value="cheaper"> 还是觉得贵</label>
 <label><input type="radio" name="price_point" value="unsure"> 说不好</label>
