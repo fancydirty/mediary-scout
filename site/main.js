@@ -1,7 +1,7 @@
 import { detectPlatform, orderDownloads, formatStars, postersFrom, WORKER_BASE } from "./lib.mjs";
 
 const REPO = "fancydirty/mediary-scout";
-const STARS_FALLBACK = 968;
+const STARS_FALLBACK = 1176;  // 2026-07-31 实测值;API 挂了才用它,别让它长期偏低
 
 function timeoutSignal(ms) {
   if (typeof AbortSignal.timeout === "function") return AbortSignal.timeout(ms);
