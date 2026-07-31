@@ -102,9 +102,9 @@ If we raise prices, **time you already bought is unaffected**: you paid for a fi
 
 ## 容量
 
-Each instance gets its own Cloudflare Tunnel, and a Cloudflare account has a hard ceiling on how many tunnels it can hold. We keep a capacity gate in front of checkout so we never sell access we cannot deliver — if we are ever at capacity, checkout tells you so instead of taking your money.
+Each instance gets its own Cloudflare Tunnel, and a Cloudflare account has a hard ceiling on how many tunnels it can hold. A capacity check runs when you claim your hostname: if we are ever at capacity, that step fails with a clear message rather than silently half-provisioning. If this happens after you have paid, the 14-day refund applies — tell us and we will refund you in full, or hold your paid time until capacity frees up, whichever you prefer.
 
-每个实例都有自己的 Cloudflare 隧道,而一个 Cloudflare 账号能持有的隧道数有硬上限。我们在结账前设了容量闸门,绝不卖出交付不了的额度 —— 万一售罄,结账会明确告诉你,而不是先收钱。
+每个实例都有自己的 Cloudflare 隧道,而一个 Cloudflare 账号能持有的隧道数有硬上限。容量检查发生在**你选定域名那一步**:万一售罄,这一步会明确报错,而不是悄悄开通一半。如果这发生在你已付款之后,14 天退款政策适用 —— 告诉我们,可以全额退款,也可以把已付时长留着等容量释放,你选。
 
 ## An honest note
 

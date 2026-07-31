@@ -131,7 +131,10 @@ describe("合规页与产品现实的一致性", () => {
     }
   });
 
-  it("定价页不承诺创始价席位(代码里无席位计数、无续期锁价)", () => {
+  // 说明要准确:代码里**有**席位计数(WAITLIST_SEAT_CAP=100,那是内测报名的上限),
+  // 缺的是**付费档位**的席位计数与续期锁价 —— entitlements 表不记录用什么价买的,
+  // 所以「续期同价」无从判断。两者别混为一谈。
+  it("定价页不承诺创始价席位(缺的是付费席位计数与续期锁价)", () => {
     for (const lang of ["zh", "en"] as const) {
       const html = compliancePage("pricing", lang);
       expect(html).not.toContain("创始价");
@@ -181,6 +184,21 @@ describe("合规页与产品现实的一致性", () => {
   // Copilot round-2:隐私政策不该点名任何具体支付方式 —— Paddle 支持的方式
   // 按地区/时间变,写死一个就是给自己埋下一次过时(这个 PR 本身就是在修
   // 「支付宝」过时的问题)。这一段的重点是「我们碰不到」,与方式无关。
+  // Copilot round-3:我原本写「结账前有容量闸门,售罄会告诉你而不是先收钱」——
+  // 但 createCheckout **不检查容量**,闸门在 selfServeProvision(选 slug 那步)。
+  // 用户可能先付款成功、到选域名时才撞上售罄。承诺不能比代码强。
+  it("容量条款不承诺「结账会拦住」(闸门实际在选域名那步)", () => {
+    const zh = compliancePage("pricing", "zh");
+    expect(zh).not.toContain("结账前设了容量闸门");
+    expect(zh).not.toContain("而不是先收钱");
+    // 要说清真实位置,并给出已付款后撞上售罄的兜底
+    expect(zh).toContain("选定域名那一步");
+    expect(zh).toContain("14 天退款政策适用");
+    const en = compliancePage("pricing", "en");
+    expect(en).not.toContain("capacity gate in front of checkout");
+    expect(en).toContain("when you claim your hostname");
+  });
+
   it("隐私政策不点名具体支付方式(避免再次过时)", () => {
     for (const lang of ["zh", "en"] as const) {
       const html = compliancePage("privacy", lang);
