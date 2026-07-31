@@ -488,6 +488,10 @@ describe("handleRequest", () => {
       }),
       deps,
     );
+    // token 作用域的数据不能被中间层缓存。客户端带 cache:"no-store" 不够 ——
+    // 那只约束客户端自己,不约束反代/CDN。
+    expect(res.headers.get("cache-control")).toBe("no-store");
+
     const body = (await res.json()) as Record<string, unknown>;
     expect(Object.keys(body)).toEqual(["last_seen_at"]);
 

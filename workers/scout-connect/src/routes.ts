@@ -1849,5 +1849,7 @@ async function reportInstanceStatus(request: Request, deps: RouteDeps): Promise<
  */
 async function getInstanceMeta(request: Request, deps: RouteDeps): Promise<Response> {
   const endpoint = await authenticateInstanceToken(request, deps);
-  return json({ last_seen_at: endpoint.last_seen_at });
+  // noStore:token 作用域的数据,绝不能被任何中间层缓存。worker 里其它 27 处
+  // 敏感 JSON 端点都带这个,漏掉它就是在赌所有中间层配置都正确(Copilot 抓到)。
+  return json({ last_seen_at: endpoint.last_seen_at }, 200, { noStore: true });
 }
