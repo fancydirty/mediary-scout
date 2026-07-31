@@ -93,6 +93,28 @@ describe("home page(apex 落地页)", () => {
     expect(html).toContain('loading="eager"');
   });
 
+  // Copilot round-1 抓到的真 bug:源码里写 `\\n`(双反斜杠)时,模板字符串会
+  // 输出**字面的反斜杠 + n**,在页面上渲染成可见的 "\\n" 文本。
+  //
+  // 注意断言写法:JS 源码里的 "\\\\n" 表示「一个反斜杠 + 字母 n」——
+  // 这才是要查的东西。写成 "\\n" 是查真换行符,那永远查不出问题
+  // (开发时先写错过一次:注入字面 \\n 后测试照样全绿,等于没保护)。
+  it("body 里不含字面反斜杠-n(会渲染成可见文本)", () => {
+    const html = homePage();
+    // 只查 body 到 <script> 之间:脚本里的 "\\n" 是合法的 JS 转义
+    const body = html.slice(html.indexOf("<body>"), html.indexOf("<script>"));
+    expect(body.length).toBeGreaterThan(1000);   // 切片不能是空的
+    expect(body).not.toContain("\\n");
+  });
+
+  it("海报:前 8 张 eager 其余 lazy(全 eager 抢首屏带宽,全 lazy 首屏空一片)", () => {
+    const html = homePage();
+    const eager = (html.match(/loading="eager"/g) ?? []).length;
+    const lazy = (html.match(/loading="lazy"/g) ?? []).length;
+    expect(eager).toBe(8);
+    expect(lazy).toBeGreaterThan(0);
+  });
+
   it("窄屏 input 必须 flex:none —— flex:1 在 column 方向会把它压成 18px", () => {
     const html = homePage();
     expect(html).toMatch(/\.lrow input[^{]*\{[^}]*flex:none/);

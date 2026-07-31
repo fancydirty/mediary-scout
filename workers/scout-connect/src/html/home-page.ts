@@ -1,19 +1,34 @@
-import { BRAND_BAR, BRAND_CSS, FAVICON_LINK, LOGO_SVG, THEME_BASE, THEME_TOKENS } from "./theme.js";
+import { BRAND_BAR, BRAND_CSS, FAVICON_LINK, THEME_BASE, THEME_TOKENS } from "./theme.js";
 import { FALLBACK_POSTERS, POSTER_BASE } from "./home-posters.js";
 
-/** GitHub 图标(顶栏 star 数用)。inline 而非外链:一个 icon 不值一次请求。 */
+/**
+ * 顶栏 GitHub 图标。inline 而非外链:一个 icon 不值一次请求。
+ *
+ * **不显示 star 数**:worker 是服务端渲染,拿 star 要么构建期烤死(会过期)、
+ * 要么运行时打 GitHub API(给每次首页访问加一次外部依赖 + 失败要兜底)。
+ * 主站是纯前端、可以异步拉,这里不划算 —— 只放图标 + "GitHub" 字样。
+ */
 const GH_ICON =
   '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-2.91-.88-2.91-2.9 0-.58.21-1.05.55-1.42-.05-.14-.24-.71.05-1.47 0 0 .6-.19 1.96.73a5.6 5.6 0 0 1 1.5-.2c.51 0 1.02.07 1.5.2 1.36-.93 1.96-.73 1.96-.73.29.76.1 1.33.05 1.47.34.37.55.84.55 1.42 0 2.03-1.13 2.7-2.92 2.9.29.26.55.75.55 1.51 0 1.09-.01 1.98-.01 2.25 0 .21.15.46.55.38A7.99 7.99 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>';
+
+/** 首屏立刻要出现的海报数(4 列 × 2 行)。见 posterWall 的取舍说明。 */
+const EAGER_POSTERS = 8;
 
 /**
  * Hero 海报墙。
  *
- * `loading="eager"` 是刻意的:它在**首屏**,lazy 会让首屏空一片
- * (开发时实测上排全是空框)。首屏最该立刻出现的元素不该懒加载。
+ * **前 8 张 eager,其余 lazy**。两头都踩过:
+ * - 全 lazy → 首屏空一片(开发时实测上排全是空框)。海报墙是首屏视觉主体,
+ *   它不出现等于 hero 右半边是空的。
+ * - 全 eager → 28 个图片请求与关键 CSS/HTML 抢带宽,慢网下拖慢首次渲染。
+ *
+ * 折中:第一屏可见的两行(4 列 × 2)eager,下面的交给 lazy —— 它们本来就在
+ * 遮罩淡出区,晚一点出现看不出来。
  */
 function posterWall(): string {
   const imgs = FALLBACK_POSTERS.map(
-    (p) => `<img src="${POSTER_BASE}${p}" alt="" loading="eager">`,
+    (p, i) =>
+      `<img src="${POSTER_BASE}${p}" alt="" loading="${i < EAGER_POSTERS ? "eager" : "lazy"}">`,
   ).join("");
   return `<div class="hero-r" aria-hidden="true"><div class="pw">${imgs}</div></div>`;
 }
@@ -386,7 +401,11 @@ ${BRAND_CSS}
 
     <div class="drives">
       <span class="lbl">转存进你自己的</span>
-      <span class="dv">115</span>\n      <span class="dv">夸克</span>\n      <span class="dv">光鸭</span>\n      <span class="dv">123</span>\n      <span class="dv">天翼</span>
+      <span class="dv">115</span>
+      <span class="dv">夸克</span>
+      <span class="dv">光鸭</span>
+      <span class="dv">123</span>
+      <span class="dv">天翼</span>
       <span class="dv">五家网盘,任选</span>
     </div>
 
