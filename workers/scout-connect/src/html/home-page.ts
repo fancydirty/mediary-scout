@@ -669,10 +669,17 @@ ${BRAND_CSS}
     if (email.indexOf("@") < 1 || email.length > 254) { say("请输入一个有效的邮箱地址。"); return; }
     input.disabled = true; btn.disabled = true;
     say("正在发送…");
+    // Turnstile 门禁目前在生产是关的(challenges.cloudflare.com 在中国大陆
+    // 不可靠),但代码保留、随时可开。**必须带上 token** —— 与 /login 页同款
+    // 写法:门一开,不带 token 的请求会稳定 400 "turnstile required"。
+    // 页面上没有 widget 时 querySelector 返回 null,payload 就只有 email。
+    var payload = { email: email };
+    var tsEl = document.querySelector("[name=cf-turnstile-response]");
+    if (tsEl && tsEl.value) payload.turnstile_token = tsEl.value;
     fetch("/api/auth/magic", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email: email })
+      body: JSON.stringify(payload)
     }).then(function(res){
       if (res.status === 202) {
         say("已发送到 " + email + "。点邮件里的链接就登录了,链接只能用一次。没收到?检查垃圾邮件。");
@@ -680,7 +687,9 @@ ${BRAND_CSS}
       }
       // 429 是限流(发信入口的替代防线),要给可操作的话而不是「稍后重试」。
       if (res.status === 429) { say("请求太频繁了,过几分钟再试。"); }
-      else if (res.status === 400) { say("这个邮箱地址不对,检查一下?"); }
+      // 服务端 400 有多种成因(邮箱形状不对、缺 turnstile token…),
+      // 不能一律说「邮箱不对」—— 那会把用户的排查方向带偏。
+      else if (res.status === 400) { say("这个请求没被接受。检查邮箱地址,或刷新页面重试。"); }
       else { say("发送失败了,请稍后再试。"); }
       input.disabled = false; btn.disabled = false;
     }).catch(function(){

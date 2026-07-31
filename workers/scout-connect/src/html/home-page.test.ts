@@ -132,6 +132,19 @@ describe("home page(apex 落地页)", () => {
     expect(html).toContain("过几分钟再试");
   });
 
+  // Copilot round-2:Turnstile 门禁现在关着,但代码保留、随时可开。
+  // 首页脚本不带 token 的话,门一开首页登录就稳定 400 "turnstile required"。
+  it("登录脚本带上 turnstile token(与 /login 页同款,门禁重开时不会坏)", () => {
+    const html = homePage();
+    expect(html).toContain("cf-turnstile-response");
+    expect(html).toContain("turnstile_token");
+  });
+
+  it("400 文案不写死成「邮箱不对」(服务端 400 还可能是缺 token 等)", () => {
+    const html = homePage();
+    expect(html).not.toContain("这个邮箱地址不对");
+  });
+
   it("<script> 内联安全:提示词里的反引号已转义,不会截断模板字符串", () => {
     const html = homePage();
     // 提示词里有 `docker version` 这类反引号,若未转义会在构建期就炸;
