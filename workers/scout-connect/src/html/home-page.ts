@@ -162,7 +162,13 @@ ${BRAND_CSS}
 .pw{position:absolute;inset:-8%;display:grid;grid-template-columns:repeat(4,1fr);
   gap:6px;transform:rotate(-2deg) scale(1.14);
   animation:drift 26s ease-in-out infinite alternate}
-.pw img{width:100%;height:104px;object-fit:cover;border-radius:5px;display:block;
+.pw img{width:100%;
+  /* **必须用 aspect-ratio,不能写死 height。** TMDB 海报是标准 2:3 竖版
+     (实测 342x513,比例 0.67),而写死 height:104px 会让它渲染成 159x124
+     (比例 1.28)—— object-fit:cover 于是把上下裁掉约 62%,只剩中间一条,
+     海报变成认不出的色块。让高度跟着宽度按 2:3 算,内容才完整。 */
+  aspect-ratio:2 / 3;height:auto;
+  object-fit:cover;border-radius:5px;display:block;
   /* 压暗:海报是背景,不能抢标题。.52 是配合上面两层调出来的 ——
      mask 右端(92%→100%)只从 #000 淡到 .55、::after 右侧只压 .18,
      也就是右侧遮得很轻;图本身若不压暗就会比左侧亮太多,像两张拼接的图。 */
@@ -351,7 +357,8 @@ ${BRAND_CSS}
             mask-image:linear-gradient(180deg,#000 0%,#000 55%,transparent 100%);
     -webkit-mask-composite:source-over;
             mask-composite:add}
-  .pw img{height:74px}
+  /* 窄屏同理:不写死高度,让 aspect-ratio 继续生效(装饰带靠容器 height 裁) */
+  .pw img{height:auto}
   .hero-r::after{background:linear-gradient(180deg,rgba(17,19,18,.55) 0%,
     rgba(17,19,18,.2) 40%,var(--bg-0) 100%)}
   .gate,.pg,.flow{grid-template-columns:1fr}

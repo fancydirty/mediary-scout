@@ -197,6 +197,23 @@ describe("home page(apex 落地页)", () => {
   // 而是 overflow:hidden 把超出容器的海报**直接裁掉**(实测容器左边界 x=743、
   // 网格从 x=641 开始,中间 102px 被硬裁),裁切边是真实竖线 ——
   // ::after 盖渐变只在容器内部生效,管不到它。必须用 mask 让元素自身淡出。
+  // 用户发现:海报被截断成横条。TMDB 海报是标准 2:3 竖版(实测 342x513),
+  // 而写死 height:104px 会渲染成 159x124(比例 1.28)—— object-fit:cover
+  // 把上下裁掉约 62%,只剩中间一条,海报变成认不出的色块。
+  it("海报用 aspect-ratio 2/3,不写死 height(否则竖版被裁成横条)", () => {
+    const html = homePage();
+    // **断言前必须剥掉 CSS 注释** —— 注释就写在这条声明内部,
+    // 而我的说明文字里含「写死 height:104px」这几个字。开发时连踩两次:
+    // ① 宽正则命中注释;② 缩到声明内仍命中(注释在声明里)。
+    const css = html.replace(/\/\*[\s\S]*?\*\//g, "");
+    const decl = css.match(/\.pw img\{([^}]*)\}/)?.[1] ?? "";
+    expect(decl).toContain("aspect-ratio:2 / 3");
+    expect(decl).toContain("height:auto");
+    expect(decl).not.toMatch(/height:\d+px/);
+    // 窄屏那条也不能写死
+    expect(css).not.toContain(".pw img{height:74px}");
+  });
+
   it("海报墙用 mask-image 四边淡出(渐变盖不住 overflow 裁切边)", () => {
     const html = homePage();
     // 水平 + 垂直两层,相乘
