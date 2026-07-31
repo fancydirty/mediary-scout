@@ -60,7 +60,12 @@ export function ConnectLoginForm() {
       {msg ? (
         <p
           className="panel-note"
-          role="status"
+          /* 成功用 status(polite,不打断用户),失败用 alert(assertive,立即播报)。
+             失败原因(邮箱形状错、限流、连不上外网)都是用户必须马上知道、
+             而且要据此改操作的东西 —— 用 polite 的话屏幕阅读器可能等到
+             下一次停顿才读,视障用户会以为提交成功了。
+             remote-access-section 的密码警告同款用 alert。 */
+          role={msg.ok ? "status" : "alert"}
           style={{ marginTop: 10, color: msg.ok ? "var(--accent)" : "var(--negative)" }}
         >
           {msg.text}

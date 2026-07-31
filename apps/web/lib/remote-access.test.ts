@@ -391,4 +391,18 @@ describe("ConnectLoginForm 的异常处理(源码断言)", () => {
     expect(src).toContain("} catch {");
     expect(src).toMatch(/catch\s*\{[^}]*setMsg\(/);
   });
+
+  // Copilot round-3:role="status" 是 polite —— 失败时屏幕阅读器可能等到
+  // 下一次停顿才读,视障用户会以为提交成功了。失败原因(邮箱错/限流/
+  // 连不上外网)都是必须**立即**知道并据此改操作的东西,要用 assertive。
+  it("反馈按成败切换 role(成功 status / 失败 alert)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync(
+      new URL("../components/settings/connect-login-form.tsx", import.meta.url),
+      "utf8",
+    );
+    expect(src).toContain('role={msg.ok ? "status" : "alert"}');
+    // 别退回固定 status
+    expect(src).not.toContain('role="status"');
+  });
 });
