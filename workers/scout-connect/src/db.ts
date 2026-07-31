@@ -85,6 +85,8 @@ export interface InviteStatusPatch {
 }
 
 export interface ConnectDb {
+  /** 限流:记一次命中并返回**含本次**在窗口内的命中数(见 rate-limit.ts)。 */
+  hitAndCount(bucket: string, key: string, at: string, windowStart: string): Promise<number>;
   insertInvite(row: InviteRow): Promise<InviteRow>;
   getInviteById(id: string): Promise<InviteRow | null>;
   getInviteByCode(code: string): Promise<InviteRow | null>;
@@ -193,6 +195,15 @@ export interface D1PreparedStatement {
 
 export interface D1Database {
   prepare(query: string): D1PreparedStatement;
+  /**
+   * 一次往返执行多条语句(D1 原生 API)。限流用它把 DELETE+INSERT+COUNT
+   * 合成一次往返 —— 三次独立 await 会让每次发信多付三个 D1 RTT。
+   *
+   * **可选**:真实 D1 一定有,但测试里的窄 fake 只 stub `prepare`。
+   * 缺失时 hitAndCount 回退成逐条 await(行为一致,只是慢),
+   * 而不是强迫每个 fake 都实现一个它用不到的方法。
+   */
+  batch?(statements: D1PreparedStatement[]): Promise<Array<{ results?: unknown[] }>>;
 }
 
 type RawRow = Record<string, unknown>;
@@ -523,6 +534,36 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
       return row;
     },
 
+    async hitAndCount(bucket, key, at, windowStart) {
+      // 两条语句用 batch 一次往返(D1 不接受显式事务)。顺序:先写再数,
+      // 所以返回值**含本次**。
+      //
+      // 顺手删过期行:限流表只在乎窗口内的数据,不清理会无限增长。
+      // 只删**本 bucket+key** 的过期行 —— 全表清理要扫全表,而这里
+      // 每次请求都会跑,代价必须是常数级(有 idx_rate_limits_lookup 覆盖)。
+      const id = `rl_${crypto.randomUUID()}`;
+      const del = d1
+        .prepare(`DELETE FROM rate_limits WHERE bucket = ? AND key = ? AND at <= ?`)
+        .bind(bucket, key, windowStart);
+      const ins = d1
+        .prepare(`INSERT INTO rate_limits(id,bucket,key,at) VALUES(?,?,?,?)`)
+        .bind(id, bucket, key, at);
+      const cnt = d1
+        .prepare(`SELECT COUNT(*) AS cnt FROM rate_limits WHERE bucket = ? AND key = ? AND at > ?`)
+        .bind(bucket, key, windowStart);
+      if (typeof d1.batch === "function") {
+        const results = await d1.batch([del, ins, cnt]);
+        const last = results[results.length - 1];
+        const row = (last?.results?.[0] ?? null) as { cnt?: number } | null;
+        return typeof row?.cnt === "number" ? row.cnt : 0;
+      }
+      // 回退:逐条执行。顺序与 batch 一致(先删过期、再写、最后数)。
+      await del.run();
+      await ins.run();
+      const row = await cnt.first<{ cnt?: number }>();
+      return typeof row?.cnt === "number" ? row.cnt : 0;
+    },
+
     async getWaitlistByEmail(email, batch) {
       const row = await d1
         .prepare(`SELECT * FROM waitlist WHERE email = ? AND batch = ?`)
@@ -717,6 +758,8 @@ export function createMemoryConnectDb(): ConnectDb {
   const endpoints = new Map<string, EndpointRow>();
   const audits = new Map<string, AuditRow>();
   const waitlist = new Map<string, WaitlistRow>();
+  // 限流:key 是 `bucket\u0000key`,值是窗口内的时间戳列表(RFC3339)。
+  const rateLimits = new Map<string, string[]>();
   const accounts = new Map<string, AccountRow>();
   const entitlements = new Map<string, EntitlementRow>();
 
@@ -925,6 +968,14 @@ export function createMemoryConnectDb(): ConnectDb {
       }
       waitlist.set(row.id, { ...row });
       return { ...row };
+    },
+
+    async hitAndCount(bucket, key, at, windowStart) {
+      const k = `${bucket}\u0000${key}`;
+      const kept = (rateLimits.get(k) ?? []).filter((t) => t > windowStart);
+      kept.push(at);
+      rateLimits.set(k, kept);
+      return kept.length;
     },
 
     async getWaitlistByEmail(email, batch) {

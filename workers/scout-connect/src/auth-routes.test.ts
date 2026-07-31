@@ -1,11 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import { handleRequest, type RouteDeps } from "./routes.js";
-import {
-  createRateLimiter,
-  SIGNUP_IP_RATE_LIMIT,
-  SIGNUP_EMAIL_RATE_LIMIT,
-  SIGNUP_RATE_WINDOW_MS,
-} from "./rate-limit.js";
 import { createMemoryConnectDb } from "./db.js";
 import { SESSION_COOKIE, sessionCookieValue } from "./session.js";
 
@@ -31,12 +25,6 @@ function setup(overrides: Partial<RouteDeps> = {}): { deps: RouteDeps; sent: Arr
     sessionSecret: SESSION_SECRET,
     sendMagicLink: async (to: string, url: string) => {
       sent.push({ to, url });
-    },
-    // 每个 setup() 一对全新限流器。不注入就会用模块级单例 —— 同文件里
-    // 前面的测试打满配额,后面的全 429(全量跑时才暴露,单文件跑可能侥幸过)。
-    signupLimiters: {
-      ip: createRateLimiter({ limit: SIGNUP_IP_RATE_LIMIT, windowMs: SIGNUP_RATE_WINDOW_MS, now: () => Date.now() }),
-      email: createRateLimiter({ limit: SIGNUP_EMAIL_RATE_LIMIT, windowMs: SIGNUP_RATE_WINDOW_MS, now: () => Date.now() }),
     },
     ...overrides,
   };

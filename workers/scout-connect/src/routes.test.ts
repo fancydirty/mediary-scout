@@ -1,11 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { handleRequest, MAX_JSON_BODY_BYTES, type RouteDeps } from "./routes.js";
-import {
-  createRateLimiter,
-  SIGNUP_IP_RATE_LIMIT,
-  SIGNUP_EMAIL_RATE_LIMIT,
-  SIGNUP_RATE_WINDOW_MS,
-} from "./rate-limit.js";
 import { createMemoryConnectDb, type ConnectDb } from "./db.js";
 import type { CfApi } from "./cf-api.js";
 import { EMAIL_MAX_LENGTH, EMAIL_RE } from "./validation.js";
@@ -86,12 +80,6 @@ function makeDeps(db: ConnectDb, cf: CfApi): RouteDeps {
     newEntitlementId: seq("ent"),
     sessionSecret: "f".repeat(64),
     sendMagicLink: async () => {},
-    // 每个 setup() 拿一对**全新**限流器 —— 模块级单例会让测试互相污染
-    // (一个测试打满配额,后面全 429)。这也是生产代码把它做成可注入的原因。
-    signupLimiters: {
-      ip: createRateLimiter({ limit: SIGNUP_IP_RATE_LIMIT, windowMs: SIGNUP_RATE_WINDOW_MS, now: () => Date.now() }),
-      email: createRateLimiter({ limit: SIGNUP_EMAIL_RATE_LIMIT, windowMs: SIGNUP_RATE_WINDOW_MS, now: () => Date.now() }),
-    },
   };
 }
 

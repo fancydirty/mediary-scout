@@ -28,6 +28,10 @@ const MIGRATION4_SQL = readFileSync(
   new URL("../migrations/0004-self-serve-provision.sql", import.meta.url),
   "utf8",
 );
+const MIGRATION5_SQL = readFileSync(
+  new URL("../migrations/0005-rate-limits.sql", import.meta.url),
+  "utf8",
+);
 
 // The production shape BEFORE this Worker version: schema.sql as of 884f4c4.
 // `cf_access_app_id` is NOT NULL and `last_seen_at` does not exist — exactly
@@ -563,6 +567,7 @@ describe("migration 0001 — existing install against real SQLite", () => {
     sqlite.exec(MIGRATION2_SQL);
     sqlite.exec(MIGRATION3_SQL);
     sqlite.exec(MIGRATION4_SQL);
+    sqlite.exec(MIGRATION5_SQL);
 
     await expect(db.insertEndpoint(postAccessEndpoint())).resolves.toMatchObject({ id: "ep_1" });
     await db.updateEndpointLastSeen("ep_1", "2026-07-26T10:00:00.000Z");
@@ -668,6 +673,7 @@ describe("migration 0001 — existing install against real SQLite", () => {
     migrated.sqlite.exec(MIGRATION2_SQL);
     migrated.sqlite.exec(MIGRATION3_SQL);
     migrated.sqlite.exec(MIGRATION4_SQL);
+    migrated.sqlite.exec(MIGRATION5_SQL);
     const fresh = freshDb(SCHEMA_SQL);
 
     const shapeOf = (sqlite: Sqlite): unknown =>
@@ -769,6 +775,7 @@ describe("migration 0001 — legacy install that predates the waitlist table", (
     sqlite.exec(MIGRATION2_SQL);
     sqlite.exec(MIGRATION3_SQL);
     sqlite.exec(MIGRATION4_SQL);
+    sqlite.exec(MIGRATION5_SQL);
 
     // This is what step 8's failure used to take down with it.
     await expect(db.insertEndpoint(postAccessEndpoint())).resolves.toMatchObject({ id: "ep_1" });
@@ -781,6 +788,7 @@ describe("migration 0001 — legacy install that predates the waitlist table", (
     migrated.sqlite.exec(MIGRATION2_SQL);
     migrated.sqlite.exec(MIGRATION3_SQL);
     migrated.sqlite.exec(MIGRATION4_SQL);
+    migrated.sqlite.exec(MIGRATION5_SQL);
     const fresh = freshDb(SCHEMA_SQL);
 
     const shapeOf = (sqlite: Sqlite, table: string): unknown =>
@@ -842,6 +850,7 @@ describe("migration 0002 — waitlist.survey_json against real SQLite", () => {
     migrated.sqlite.exec(MIGRATION2_SQL);
     migrated.sqlite.exec(MIGRATION3_SQL);
     migrated.sqlite.exec(MIGRATION4_SQL);
+    migrated.sqlite.exec(MIGRATION5_SQL);
     const fresh = freshDb(SCHEMA_SQL);
 
     const shapeOf = (sqlite: Sqlite, table: string): unknown =>

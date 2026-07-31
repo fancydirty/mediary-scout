@@ -85,3 +85,50 @@ export const SLUG_CHECK_RATE_WINDOW_MS = 60_000;
 export const SIGNUP_IP_RATE_LIMIT = 5;
 export const SIGNUP_EMAIL_RATE_LIMIT = 2;
 export const SIGNUP_RATE_WINDOW_MS = 600_000; // 10 分钟
+
+// ─────────────────────────────────────────────────────────────────────────
+// 跨实例限流(D1)
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * 跨实例限流所需的最小 D1 能力。刻意只声明这两个方法而不复用 ConnectDb ——
+ * 限流不该能碰其它表,窄接口让这条约束由类型系统保证。
+ */
+export interface RateLimitStore {
+  /** 记一次命中,并返回**含本次**在窗口内的命中数。 */
+  hitAndCount(bucket: string, key: string, at: string, windowStart: string): Promise<number>;
+}
+
+/**
+ * 跨实例限流判定。
+ *
+ * **为什么不用内存**:Worker 每次请求可能落在不同隔离实例上,各有一份内存
+ * 计数。生产实测同一邮箱连打 5 次得到 `429 202 429 202 202` —— 代码逻辑
+ * 正确,拦不拦全看请求落到哪个实例,实际拦截率约 40%。发信入口是公开的
+ * 「触发发邮件」放大面,需要真正一致的计数。
+ *
+ * **fail open**:D1 抛错时**放行**而不是拒绝。理由:限流是防滥用的加固,
+ * 不是安全边界;D1 抖动时宁可短暂放宽,也不能让正常用户登不进来
+ * (登录进不去 = 付不了钱)。与 Turnstile 的 fail closed 相反 —— 那是
+ * 人机验证,放过等于门形同虚设;这里放过只是少了一层速率保护。
+ * 抛错必须留日志,否则 D1 挂了会静默失去全部限流而无人知情。
+ */
+export async function checkRateLimit(input: {
+  store: RateLimitStore;
+  bucket: string;
+  key: string;
+  limit: number;
+  windowMs: number;
+  now: () => number;
+}): Promise<{ allowed: boolean }> {
+  const nowMs = input.now();
+  const at = new Date(nowMs).toISOString();
+  const windowStart = new Date(nowMs - input.windowMs).toISOString();
+  try {
+    const count = await input.store.hitAndCount(input.bucket, input.key, at, windowStart);
+    return { allowed: count <= input.limit };
+  } catch (e) {
+    console.error("rate limit store failed (failing open), bucket:", input.bucket, e);
+    return { allowed: true };
+  }
+}

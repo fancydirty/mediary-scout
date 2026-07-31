@@ -5,13 +5,13 @@ import { requireAdmin } from "./auth.js";
 import { provisionEndpoint } from "./provision.js";
 import { revokeEndpoint } from "./revoke.js";
 import { revealByCode } from "./reveal.js";
-import type { RateLimiter } from "./rate-limit.js";
 import {
   SLUG_CHECK_RATE_LIMIT,
   SLUG_CHECK_RATE_WINDOW_MS,
   SIGNUP_IP_RATE_LIMIT,
   SIGNUP_EMAIL_RATE_LIMIT,
   SIGNUP_RATE_WINDOW_MS,
+  checkRateLimit,
   createRateLimiter,
 } from "./rate-limit.js";
 import { assertSlug } from "./slug.js";
@@ -44,15 +44,6 @@ const LOGO_SVG =
 export interface RouteDeps {
   db: ConnectDb;
   cf: CfApi;
-  /**
-   * 发信入口限流器(可注入)。省略时用模块级单例(生产行为)。
-   *
-   * **为什么必须可注入**:限流器是有状态的模块单例,测试之间会互相污染
-   * (一个测试打满配额,后面的测试全 429)。这不只是测试便利问题 ——
-   * 不可注入的有状态单例本身就是设计缺陷:既无法隔离验证,
-   * 也无法在同一 worker 里给不同用途配不同额度。
-   */
-  signupLimiters?: { ip: RateLimiter; email: RateLimiter } | undefined;
   adminToken: string;
   rootDomain: string;
   tokenWrapKeyHex: string;
@@ -95,18 +86,6 @@ const slugCheckLimiter = createRateLimiter({
   now: () => Date.now(),
 });
 
-// 发信入口限流(Turnstile 在生产已关 —— 见 rate-limit.ts 的说明)。
-// 两个独立限流器:IP 维度挡脚本猛刷,邮箱维度挡「换 IP 轰同一个人」。
-const signupIpLimiter = createRateLimiter({
-  limit: SIGNUP_IP_RATE_LIMIT,
-  windowMs: SIGNUP_RATE_WINDOW_MS,
-  now: () => Date.now(),
-});
-const signupEmailLimiter = createRateLimiter({
-  limit: SIGNUP_EMAIL_RATE_LIMIT,
-  windowMs: SIGNUP_RATE_WINDOW_MS,
-  now: () => Date.now(),
-});
 
 /**
  * 发信入口的限流闸(magic link / waitlist 共用)。
@@ -119,23 +98,47 @@ const signupEmailLimiter = createRateLimiter({
  *
  * 返回 429 而不是静默丢弃:让脚本作者知道撞墙了,也让正常用户看到明确原因。
  */
-/** 只判 IP 维度。给 /waitlist 用 —— 见那里的注释(邮箱维度会误杀幂等重提交)。 */
-function signupIpRateLimited(request: Request, deps: RouteDeps): boolean {
-  const ipLimiter = deps.signupLimiters?.ip ?? signupIpLimiter;
+/**
+ * 发信入口限流(**跨实例,走 D1**)。
+ *
+ * 原先用内存滑动窗口,但 Worker 每次请求可能落在不同隔离实例上、各有一份
+ * 计数 —— 生产实测同一邮箱连打 5 次得到 `429 202 429 202 202`,实际拦截率
+ * 约 40%。D1 是所有实例共享的唯一真源,计数才一致。
+ *
+ * fail open(D1 抖动时放行)的理由见 rate-limit.ts 的 checkRateLimit。
+ */
+async function signupIpRateLimited(request: Request, deps: RouteDeps): Promise<boolean> {
   const ip = request.headers.get("cf-connecting-ip")?.trim() || "";
   if (ip === "") return false;
-  return !ipLimiter.allow(`ip:${ip}`);
+  const r = await checkRateLimit({
+    store: deps.db,
+    bucket: "signup_ip",
+    key: ip,
+    limit: SIGNUP_IP_RATE_LIMIT,
+    windowMs: SIGNUP_RATE_WINDOW_MS,
+    now: () => Date.parse(deps.now()),
+  });
+  return !r.allowed;
 }
 
-function signupRateLimited(request: Request, email: string, deps: RouteDeps): boolean {
-  const ipLimiter = deps.signupLimiters?.ip ?? signupIpLimiter;
-  const emailLimiter = deps.signupLimiters?.email ?? signupEmailLimiter;
-  const ip = request.headers.get("cf-connecting-ip")?.trim() || "";
-  // 顺序重要:两个 allow() 都有副作用(消耗配额)。先判 IP —— IP 被限时
-  // 不该再消耗邮箱配额,否则攻击者能用一个 IP 把受害者邮箱的配额也耗掉。
-  if (ip !== "" && !ipLimiter.allow(`ip:${ip}`)) return true;
-  if (!emailLimiter.allow(`em:${email}`)) return true;
-  return false;
+/**
+ * IP + 邮箱双维度。给 /api/auth/magic 用 —— 邮箱维度防「换 IP 轰同一个人」
+ * 的邮件骚扰。/waitlist 只用 IP 维度(见那里的注释:邮箱维度会误杀幂等重提交)。
+ *
+ * 顺序重要:先判 IP。IP 被限时**不再写邮箱维度的计数** —— 否则攻击者能用
+ * 一个 IP 把受害者邮箱的配额也耗掉(每次 hitAndCount 都会插一行)。
+ */
+async function signupRateLimited(request: Request, email: string, deps: RouteDeps): Promise<boolean> {
+  if (await signupIpRateLimited(request, deps)) return true;
+  const r = await checkRateLimit({
+    store: deps.db,
+    bucket: "signup_email",
+    key: email,
+    limit: SIGNUP_EMAIL_RATE_LIMIT,
+    windowMs: SIGNUP_RATE_WINDOW_MS,
+    now: () => Date.parse(deps.now()),
+  });
+  return !r.allowed;
 }
 
 export async function handleRequest(request: Request, deps: RouteDeps): Promise<Response> {
@@ -610,7 +613,7 @@ async function requestMagicLink(request: Request, deps: RouteDeps): Promise<Resp
   // 顺序不能反:若限流在前,门禁将来重开时攻击者能用无效 token 反复请求,
   // 每次消耗 IP/邮箱配额,把真实用户锁死在 429 —— 那些请求本该先被
   // Turnstile 拦掉、根本不该计入配额。与 /waitlist 的顺序保持一致。
-  if (signupRateLimited(request, email, deps)) {
+  if (await signupRateLimited(request, email, deps)) {
     return json({ error: "too many requests" }, 429, { noStore: true });
   }
   // 注册即登录:不论邮箱是否已存在都发信,不泄露注册状态。账号在 callback
@@ -1605,7 +1608,7 @@ async function addToWaitlist(request: Request, deps: RouteDeps): Promise<Respons
   //
   // 发信入口(/api/auth/magic)则**两个维度都要**:那里邮箱维度是防「换 IP
   // 轰同一个人」的邮件骚扰,而报名不发信,没有这个面。
-  if (signupIpRateLimited(request, deps)) {
+  if (await signupIpRateLimited(request, deps)) {
     return json({ error: "too many requests" }, 429, { noStore: true });
   }
 

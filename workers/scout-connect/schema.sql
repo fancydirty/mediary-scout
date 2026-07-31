@@ -118,3 +118,21 @@ CREATE INDEX idx_endpoints_account ON endpoints(account_id);
 
 -- Schema changes need a matching file in ./migrations for already-deployed
 -- instances — schema.sql alone only covers fresh installs. See README → Deploy.
+
+-- ── 跨实例限流(migration 0005)──────────────────────────────────────────
+-- 一行 = 一次被计数的请求。按 (bucket, key) 分组、按 at 做滑动窗口。
+-- **刻意没有唯一约束**:同一 key 在窗口内本就该有多行(每次请求一行)。
+-- 为什么用 D1 而不是内存:Worker 多隔离实例各有一份内存计数,
+-- 生产实测同一邮箱 5 次得到 `429 202 429 202 202`(拦截率约 40%)。
+CREATE TABLE rate_limits (
+  id TEXT PRIMARY KEY,
+  bucket TEXT NOT NULL,
+  key TEXT NOT NULL,
+  at TEXT NOT NULL
+);
+
+-- 计数查询是 WHERE bucket=? AND key=? AND at>? —— at 必须在复合索引末尾
+-- (等值列在前、范围列在后)才用得上。
+CREATE INDEX idx_rate_limits_lookup ON rate_limits (bucket, key, at);
+-- 过期清理按时间扫全表,没这条会全表扫描。
+CREATE INDEX idx_rate_limits_at ON rate_limits (at);
