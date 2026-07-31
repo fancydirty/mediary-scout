@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  formatLastSeen,
   instanceTunnelToken,
   instanceConnectHostname,
   resolveRemoteAccessState,
@@ -62,7 +63,7 @@ describe("resolveRemoteAccessState", () => {
       token: "tok",
       sendHeartbeat: async () => "ok",
     });
-    expect(state).toEqual({ kind: "active", hostname: null });
+    expect(state).toEqual({ kind: "active", hostname: null, lastSeenAt: null });
   });
 
   it("调用方能提供本地已知 hostname 时透传", async () => {
@@ -71,7 +72,7 @@ describe("resolveRemoteAccessState", () => {
       hostname: "s1.mediaryconnect.app",
       sendHeartbeat: async () => "ok",
     });
-    expect(state).toEqual({ kind: "active", hostname: "s1.mediaryconnect.app" });
+    expect(state).toEqual({ kind: "active", hostname: "s1.mediaryconnect.app", lastSeenAt: null });
   });
 
   it("心跳 401（token 不是我们发的，比如作者自带的旧隧道）→ not_provisioned，露出报名入口", async () => {
@@ -127,15 +128,117 @@ describe("resolveRemoteAccessState", () => {
 
     const state = await resolveRemoteAccessState({ token: "tok-abc" });
 
-    expect(state).toEqual({ kind: "active", hostname: null });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(state).toEqual({ kind: "active", hostname: null, lastSeenAt: null });
+    // 两次请求:先 GET /meta 读旧值,再 POST /status 报到。**顺序不能反** ——
+    // 心跳会把 last_seen_at 写成"现在",读晚了就永远显示「刚刚」。
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [metaUrl] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(metaUrl).toBe("https://connect.test/api/instance/meta");
+    const [url, init] = fetchMock.mock.calls[1] as unknown as [string, RequestInit];
     expect(url).toBe("https://connect.test/api/instance/status");
     expect(init.method).toBe("POST");
     expect(init.cache).toBe("no-store");
     // 契约是 Authorization: Bearer <token> 头，不是 JSON body。
     expect(new Headers(init.headers).get("authorization")).toBe("Bearer tok-abc");
     expect(init.body).toBeUndefined();
+  });
+
+  it("先读 /meta 再报到 —— 顺序反了 last_seen_at 就永远是「刚刚」", async () => {
+    // 这是本功能最容易悄悄失效的地方:心跳会把 last_seen_at 写成"现在"。
+    // 读晚一步,显示的就永远是"刚刚",成了一个恒真的假指标 —— 用户看着绿灯
+    // 而隧道早就断了。所以顺序是契约的一部分,不是实现细节。
+    process.env.SCOUT_CONNECT_URL = "https://connect.test";
+    const order: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        order.push(url.endsWith("/api/instance/meta") ? "meta" : "status");
+        return url.endsWith("/api/instance/meta")
+          ? new Response(JSON.stringify({ last_seen_at: "2026-07-30T10:00:00.000Z" }), { status: 200 })
+          : new Response(null, { status: 204 });
+      }),
+    );
+
+    const state = await resolveRemoteAccessState({ token: "tok" });
+
+    expect(order).toEqual(["meta", "status"]);
+    expect(state).toEqual({
+      kind: "active",
+      hostname: null,
+      lastSeenAt: "2026-07-30T10:00:00.000Z",
+    });
+  });
+
+  it("旧 worker 没有 /meta（404）→ lastSeenAt 为 null，开通状态不受影响", async () => {
+    // 向后兼容的关键:容器可以先发布,worker 后发布。这个窗口期里 /meta 会 404,
+    // 但那绝不能把用户的远程访问显示成坏的 —— 只是少显示一行。
+    process.env.SCOUT_CONNECT_URL = "https://connect.test";
+    // ⚠️ body 必须是**合法 JSON**。用 "not found" 这种纯文本时 res.json() 会抛
+    // SyntaxError,被外层 catch 兜住后也返回 null —— 于是测试即便在删掉
+    // `!res.ok` 守卫的情况下依然全绿。那是个假测试(本轮反向验证抓到的)。
+    // 返回合法 JSON 才能真正把「状态码检查」这一条钉住。
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        url.endsWith("/api/instance/meta")
+          ? new Response(JSON.stringify({ last_seen_at: "2020-01-01T00:00:00.000Z" }), { status: 404 })
+          : new Response(null, { status: 204 }),
+      ),
+    );
+
+    const state = await resolveRemoteAccessState({ token: "tok" });
+    // 404 就是 404:哪怕 body 里有个看起来能用的时间戳也不能采信。
+    expect(state).toEqual({ kind: "active", hostname: null, lastSeenAt: null });
+  });
+
+  it("/meta 返回垃圾（非 JSON / 字段不是字符串）不炸渲染", async () => {
+    process.env.SCOUT_CONNECT_URL = "https://connect.test";
+    for (const body of ["not json at all", JSON.stringify({ last_seen_at: 12345 }), JSON.stringify(null)]) {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string) =>
+          url.endsWith("/api/instance/meta")
+            ? new Response(body, { status: 200 })
+            : new Response(null, { status: 204 }),
+        ),
+      );
+      const state = await resolveRemoteAccessState({ token: "tok" });
+      expect(state).toEqual({ kind: "active", hostname: null, lastSeenAt: null });
+    }
+  });
+
+  it("注入了 sendHeartbeat 但没注入 fetchLastSeenAt → 不发任何真实请求", async () => {
+    // 打桩一半是最难查的一类 bug:调用方以为网络已经被隔离,实际还有一条
+    // 跨公网请求在跑,每次卡满 5 秒超时。两者要么都真,要么都假。
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const state = await resolveRemoteAccessState({ token: "tok", sendHeartbeat: async () => "ok" });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(state).toEqual({ kind: "active", hostname: null, lastSeenAt: null });
+  });
+
+  it("/meta 带 Bearer + no-store + 超时，且是 GET（读端点不能改状态）", async () => {
+    process.env.SCOUT_CONNECT_URL = "https://connect.test";
+    const fetchMock = vi.fn(async (url: string) =>
+      url.endsWith("/api/instance/meta")
+        ? new Response(JSON.stringify({ last_seen_at: null }), { status: 200 })
+        : new Response(null, { status: 204 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await resolveRemoteAccessState({ token: "tok-xyz" });
+
+    const metaCall = fetchMock.mock.calls.find((c) =>
+      (c as unknown as [string])[0].endsWith("/api/instance/meta"),
+    ) as unknown as [string, RequestInit];
+    expect(metaCall).toBeDefined();
+    // 没写 method 就是 GET。写成 POST 会变成一个「读的时候顺手改状态」的端点。
+    expect(metaCall[1].method).toBeUndefined();
+    expect(metaCall[1].cache).toBe("no-store");
+    expect(new Headers(metaCall[1].headers).get("authorization")).toBe("Bearer tok-xyz");
+    expect(metaCall[1].signal).toBeDefined();
   });
 
   it("默认心跳 base URL 缺省为生产 worker", async () => {
@@ -145,8 +248,10 @@ describe("resolveRemoteAccessState", () => {
 
     await resolveRemoteAccessState({ token: "tok" });
 
-    const [url] = fetchMock.mock.calls[0] as unknown as [string];
-    expect(url).toBe("https://mediaryconnect.app/api/instance/status");
+    // 断言「所有请求」而不是某一次:意图是 base URL 正确,不是调用顺序。
+    const urls = fetchMock.mock.calls.map((c) => (c as unknown as [string])[0]);
+    expect(urls).toContain("https://mediaryconnect.app/api/instance/status");
+    expect(urls.every((u) => u.startsWith("https://mediaryconnect.app/"))).toBe(true);
   });
 
   it("默认心跳：401（worker 不认这个 token）→ not_provisioned，露出报名入口", async () => {
@@ -220,9 +325,10 @@ describe("scoutConnectBaseUrl（心跳与 waitlist 表单的唯一来源）", ()
     await resolveRemoteAccessState({ token: "tok" });
     // 表单拿的是同一个函数的返回值（见 remote-access-section.tsx 的透传），
     // 所以只要这里对得上，两条路径就不会分叉。
-    expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      `${scoutConnectBaseUrl()}/api/instance/status`,
-    );
+    const urls = fetchMock.mock.calls.map((c) => c[0]);
+    expect(urls).toContain(`${scoutConnectBaseUrl()}/api/instance/status`);
+    // /meta 也必须走同一个 base,否则新端点会成为分叉的第二条路径。
+    expect(urls).toContain(`${scoutConnectBaseUrl()}/api/instance/meta`);
   });
 });
 
@@ -416,5 +522,46 @@ describe("ConnectLoginForm 的异常处理(源码断言)", () => {
     );
     expect(src).toContain('name="email"');
     expect(src).toMatch(/\n\s+required\n/);
+  });
+});
+
+describe("formatLastSeen", () => {
+  const NOW = Date.parse("2026-08-01T12:00:00.000Z");
+  const ago = (ms: number) => new Date(NOW - ms).toISOString();
+
+  it("按直觉取整：59s 是秒，61s 进到分钟", () => {
+    expect(formatLastSeen(ago(59_000), NOW)).toBe("59 秒前");
+    expect(formatLastSeen(ago(61_000), NOW)).toBe("1 分钟前");
+  });
+
+  it("向下取整而非四舍五入 —— 不能把还没到的整数说成已经到了", () => {
+    // 反向验证抓到的漏洞:上面那条测试其实盖不住取整方式。59s 走的是
+    // `seconds < 60` 早退分支,把 floor 换成 round 它照样绿。
+    // 真正的边界在**分钟以上**:119s 是"1 分钟前"(floor),不是"2 分钟前"(round)。
+    expect(formatLastSeen(ago(119_000), NOW)).toBe("1 分钟前");
+    expect(formatLastSeen(ago(90 * 60_000), NOW)).toBe("1 小时前"); // 1.5h → 1,不是 2
+    expect(formatLastSeen(ago(36 * 3600_000), NOW)).toBe("1 天前"); // 1.5d → 1,不是 2
+  });
+
+  it("逐级进位", () => {
+    expect(formatLastSeen(ago(0), NOW)).toBe("0 秒前");
+    expect(formatLastSeen(ago(60_000), NOW)).toBe("1 分钟前");
+    expect(formatLastSeen(ago(59 * 60_000), NOW)).toBe("59 分钟前");
+    expect(formatLastSeen(ago(60 * 60_000), NOW)).toBe("1 小时前");
+    expect(formatLastSeen(ago(23 * 3600_000), NOW)).toBe("23 小时前");
+    expect(formatLastSeen(ago(24 * 3600_000), NOW)).toBe("1 天前");
+    expect(formatLastSeen(ago(29 * 24 * 3600_000), NOW)).toBe("29 天前");
+    expect(formatLastSeen(ago(30 * 24 * 3600_000), NOW)).toBe("很久以前");
+  });
+
+  it("未来时间显示「刚刚」，不显示负数", () => {
+    // 两端时钟差几秒很正常。显示「-3 分钟前」会让用户以为系统坏了。
+    expect(formatLastSeen(new Date(NOW + 3 * 60_000).toISOString(), NOW)).toBe("刚刚");
+  });
+
+  it("null / 垃圾串 → null（调用方据此隐掉整行）", () => {
+    expect(formatLastSeen(null, NOW)).toBeNull();
+    expect(formatLastSeen("not a date", NOW)).toBeNull();
+    expect(formatLastSeen("", NOW)).toBeNull();
   });
 });

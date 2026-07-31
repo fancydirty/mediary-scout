@@ -33,7 +33,16 @@
 
 export type RemoteAccessState =
   | { kind: "not_provisioned" }
-  | { kind: "active"; hostname: string | null }
+  /**
+   * `lastSeenAt`：本机上次成功打到控制面的时间（ISO 串），拿不到就是 null。
+   *
+   * **它证明的是「本机 → 控制面」（出站），不是「外网 → 本机」（入站）。**
+   * 两个方向的失败模式完全不重叠：容器出站正常但 cloudflared 挂了，
+   * 是最常见的故障，而这个时间戳在那种情况下依然显示「刚刚」。
+   * 所以 UI 文案主语必须是「本机到控制面」，**绝不能写成「隧道已连接」
+   * 或「远程访问正常」**。
+   */
+  | { kind: "active"; hostname: string | null; lastSeenAt: string | null }
   | { kind: "active_degraded" };
 
 /** 心跳三态。ok=worker 认这个 token(204);unauthorized=worker 明确不认(401,
@@ -98,6 +107,56 @@ async function defaultSendHeartbeat(token: string): Promise<HeartbeatResult> {
 }
 
 /**
+ * 把 ISO 时间串格成「N 分钟前」。纯函数，注入 now 便于测试。
+ *
+ * **只处理"过去"**：未来时间（两端时钟不同步）显示成「刚刚」而不是
+ * 「-3 分钟前」—— 后者会让用户以为系统坏了，而实际上时钟偏几秒很正常。
+ */
+export function formatLastSeen(iso: string | null, now: number = Date.now()): string | null {
+  if (iso === null) return null;
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return null;
+
+  const seconds = Math.floor((now - then) / 1000);
+  if (seconds < 0) return "刚刚";
+  // 取整方向要和用户直觉一致：59s 说「59 秒前」，61s 说「1 分钟前」。
+  if (seconds < 60) return `${seconds} 秒前`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} 分钟前`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} 小时前`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days} 天前`;
+  // 超过一个月就别再算了 —— 那个精度对「上次报到」这件事没有意义。
+  return "很久以前";
+}
+
+/**
+ * 读 `last_seen_at`。**只读，不写** —— worker 侧 GET /api/instance/meta 刻意
+ * 不更新它（一个既读又写的端点会让每次轮询都看起来像新活动）。
+ *
+ * 为什么不复用 POST /api/instance/status：那个端点的契约是 **204 无 body**，
+ * 而且这份严格是刻意的（放宽成 res.ok 会把反代的 200 登录页当成健康）。
+ * worker 与容器走独立发布通道，改 /status 会在滚动升级窗口里让所有存量容器
+ * 显示成降级。所以 worker 那边新开了只读端点，代价是多一次请求。
+ *
+ * 旧 worker 没有这个端点 → 404 → 返回 null（UI 隐掉这一行）。这就是向后兼容：
+ * 容器可以先发，worker 后发，中间不出错。
+ */
+async function defaultFetchLastSeenAt(token: string): Promise<string | null> {
+  const res = await fetch(`${scoutConnectBaseUrl()}/api/instance/meta`, {
+    headers: { authorization: `Bearer ${token}` },
+    cache: "no-store",
+    signal: AbortSignal.timeout(HEARTBEAT_TIMEOUT_MS),
+  });
+  if (!res.ok) return null;
+  const body: unknown = await res.json();
+  if (typeof body !== "object" || body === null) return null;
+  const value = (body as Record<string, unknown>).last_seen_at;
+  return typeof value === "string" ? value : null;
+}
+
+/**
  * `token` 有值即视为已开通（本实例被发过连接凭据）；心跳只决定 active 还是降级。
  *
  * 心跳失败**不**回落成 not_provisioned：那会把「已开通但网络抖动」显示成
@@ -108,6 +167,12 @@ export async function resolveRemoteAccessState(opts: {
   /** 本地已知的公网域名（当前无来源，见文件头注释）。 */
   hostname?: string | null;
   sendHeartbeat?: (token: string) => Promise<HeartbeatResult>;
+  /**
+   * 读 `last_seen_at`（GET /api/instance/meta）。**注意这是心跳之前的值** ——
+   * 心跳本身会把它更新成"现在"，所以必须先读再报到，否则永远显示「刚刚」，
+   * 那就成了一个恒真的假指标。
+   */
+  fetchLastSeenAt?: (token: string) => Promise<string | null>;
 }): Promise<RemoteAccessState> {
   const token = opts.token?.trim();
   if (!token) {
@@ -115,6 +180,20 @@ export async function resolveRemoteAccessState(opts: {
     return { kind: "not_provisioned" };
   }
   const sendHeartbeat = opts.sendHeartbeat ?? defaultSendHeartbeat;
+  // 注入 sendHeartbeat 但没注入 fetchLastSeenAt 时，**不要**回落到真实网络请求。
+  // 那会让「我已经把网络打桩掉了」的调用方（测试、离线渲染）意外发出跨公网
+  // 请求并各卡 5 秒超时。两者要么都是真的，要么都是假的 —— 打桩一半最难查。
+  const fetchLastSeenAt =
+    opts.fetchLastSeenAt ??
+    (opts.sendHeartbeat ? async () => null : defaultFetchLastSeenAt);
+  // 先读后报到：心跳会把 last_seen_at 写成"现在"，读晚了就永远是「刚刚」。
+  // 失败不影响主流程 —— 它只是个附加信息，不能让它决定开通状态。
+  let lastSeenAt: string | null = null;
+  try {
+    lastSeenAt = await fetchLastSeenAt(token);
+  } catch {
+    lastSeenAt = null;
+  }
   try {
     // 捕获一切：这是在渲染路径上做的一次网络调用，worker 挂了不该炸掉设置页。
     // 也刻意不把 error 放进返回值——报错串里可能带着 token（见测试）。
@@ -132,7 +211,7 @@ export async function resolveRemoteAccessState(opts: {
     // 网络炸了按不可达处理:不劝退一个已付出配置成本的用户重新排队。
     return { kind: "active_degraded" };
   }
-  return { kind: "active", hostname: opts.hostname ?? null };
+  return { kind: "active", hostname: opts.hostname ?? null, lastSeenAt };
 }
 
 /**

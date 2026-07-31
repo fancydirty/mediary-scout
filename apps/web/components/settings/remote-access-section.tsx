@@ -6,11 +6,33 @@ import {
   instanceConnectHostname,
   resolveRemoteAccessState,
   accountPasswordHref,
+  formatLastSeen,
   CONNECT_SITE_URL,
   consoleUrl,
 } from "../../lib/remote-access";
 import { PasswordChangeForm } from "../password-change-form";
 import { ConnectLoginForm } from "./connect-login-form";
+
+/**
+ * 「上次从本机报到控制面」一行。
+ *
+ * **措辞是这个组件存在的全部理由。** 它显示的是 `endpoints.last_seen_at`,
+ * 而那个值只在**本容器主动打到 worker** 时更新(出站方向)。用户真正想知道的是
+ * 「外网现在能不能打开我的域名」(入站方向) —— **两个方向的失败模式完全不重叠**:
+ * 容器出站正常但 cloudflared 容器挂了,是最常见的故障,而这个时间戳在那种情况下
+ * 依然显示「刚刚」。
+ *
+ * 所以主语必须是「本机 → 控制面」。**绝不能写成「隧道已连接」「远程访问正常」**
+ * 之类暗示入站可达的说法 —— 那就是拿一个恒真的指标冒充健康检查。
+ * 真正回答入站问题的是「测试连接」按钮(C2)。
+ */
+function LastSeenLine({ label }: { label: string }) {
+  return (
+    <p className="panel-note" style={{ margin: "6px 0 0", opacity: 0.85 }}>
+      本机上次向控制面报到：{label}
+    </p>
+  );
+}
 
 /**
  * 「远程访问」设置 section。
@@ -43,6 +65,10 @@ export async function RemoteAccessSection({
     token: instanceTunnelToken(),
     hostname: localHostname,
   });
+
+  // 「上次报到」只在 active 态有意义 —— 降级态本来就是「拿不到状态」,
+  // 那时摆一个旧时间戳出来只会让人以为它是当前状态。
+  const lastSeenLabel = state.kind === "active" ? formatLastSeen(state.lastSeenAt) : null;
 
   if (state.kind === "not_provisioned") {
     // **双入口**:登录框(主)+ apex 跳转(次)。
@@ -172,15 +198,19 @@ export async function RemoteAccessSection({
             {state.hostname}
           </a>
           <p className="panel-note" style={{ margin: "6px 0 0" }}>
-            隧道连接正常。在任何设备的浏览器打开这个地址即可（收藏它）。
+            在任何设备的浏览器打开这个地址即可（收藏它）。
           </p>
+          {lastSeenLabel ? <LastSeenLine label={lastSeenLabel} /> : null}
         </div>
       ) : state.kind === "active" ? (
         // 早期接入的实例 .env 里没有 MEDIARY_CONNECT_HOSTNAME(connect.sh 后加的)
         // —— 回落到不给链接的旧文案,绝不臆造一个点了 404 的地址。
-        <p className="panel-note" style={{ margin: "0 0 14px" }}>
-          远程访问已开启，隧道连接正常。请使用开通时收到的专属地址访问（浏览器里收藏即可）。
-        </p>
+        <div style={{ margin: "0 0 14px" }}>
+          <p className="panel-note" style={{ margin: 0 }}>
+            远程访问已开启。请使用开通时收到的专属地址访问（浏览器里收藏即可）。
+          </p>
+          {lastSeenLabel ? <LastSeenLine label={lastSeenLabel} /> : null}
+        </div>
       ) : (
         <p className="panel-note" style={{ margin: "0 0 14px" }}>
           远程访问已开启，但暂时联系不上控制面，无法确认隧道状态。

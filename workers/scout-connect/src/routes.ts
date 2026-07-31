@@ -594,6 +594,9 @@ ${hreflang}
   if (path === "/api/instance/status" && method === "POST") {
     return await reportInstanceStatus(request, deps);
   }
+  if (path === "/api/instance/meta" && method === "GET") {
+    return await getInstanceMeta(request, deps);
+  }
 
   throw new HttpError(404, "not found");
 }
@@ -1772,8 +1775,18 @@ async function saveWaitlistSurvey(request: Request, deps: RouteDeps): Promise<Re
   return new Response(null, { status: 204 });
 }
 
-async function reportInstanceStatus(request: Request, deps: RouteDeps): Promise<Response> {
-  // Extract Bearer token from Authorization header
+/**
+ * Shared Bearer-token auth for the two /api/instance/* endpoints.
+ *
+ * Extracted so the read endpoint can't drift from the write one — in
+ * particular the `status !== "active"` check: an expired or revoked endpoint
+ * must be indistinguishable from a bad token (both 401), otherwise the
+ * response tells an attacker that a given token *was* real.
+ */
+async function authenticateInstanceToken(
+  request: Request,
+  deps: RouteDeps,
+): Promise<NonNullable<Awaited<ReturnType<ConnectDb["getEndpointByTokenSha256"]>>>> {
   const authHeader = request.headers.get("authorization");
   if (!authHeader || !authHeader.toLowerCase().startsWith("bearer ")) {
     throw new HttpError(401, "unauthorized");
@@ -1783,18 +1796,58 @@ async function reportInstanceStatus(request: Request, deps: RouteDeps): Promise<
     throw new HttpError(401, "unauthorized");
   }
 
-  // Hash the token and look up the endpoint
   const tokenHash = await sha256Hex(token);
   const endpoint = await deps.db.getEndpointByTokenSha256(tokenHash);
-
-  // Endpoint must exist and be active
   if (endpoint === null || endpoint.status !== "active") {
     throw new HttpError(401, "unauthorized");
   }
+  return endpoint;
+}
+
+async function reportInstanceStatus(request: Request, deps: RouteDeps): Promise<Response> {
+  const endpoint = await authenticateInstanceToken(request, deps);
 
   // Update last_seen_at
   await deps.db.updateEndpointLastSeen(endpoint.id, deps.now());
 
   // Return 204 No Content
   return new Response(null, { status: 204 });
+}
+
+/**
+ * GET /api/instance/meta — read-only sibling of POST /api/instance/status.
+ *
+ * ## Why a new endpoint instead of widening /status to 200 + JSON
+ *
+ * The container **strictly checks 204** (`apps/web/lib/remote-access.ts`,
+ * `defaultSendHeartbeat`), and that strictness is deliberate: widening it to
+ * `res.ok` would make any reverse-proxy or access-gate login page (HTTP 200)
+ * read as "tunnel healthy" — precisely the case that must surface as degraded.
+ * There is a test pinning "200 also fails".
+ *
+ * Worker and container ship through **independent channels** (`wrangler deploy`
+ * vs. each user running `git pull` on their own box), so a contract change on
+ * /status would break every existing container during the rollout window —
+ * flipping them all to "can't reach the control plane" and hiding their
+ * hostname. Adding an endpoint costs one extra request and zero breakage.
+ *
+ * ## Why the response body is only a timestamp
+ *
+ * The 204-no-body contract on /status exists so that holding a valid token
+ * reveals no endpoint metadata — the endpoint can't be used as an oracle for
+ * "which domain does this token map to". This endpoint keeps that property:
+ * `last_seen_at` is something the token holder already knows (it's their own
+ * last visit), so returning it leaks nothing new. **Do not add hostname,
+ * slug, connection counts, or expiry here** — that would reopen the very
+ * surface Plan 3 closed on purpose.
+ *
+ * ## Why this does NOT update last_seen_at
+ *
+ * Writing here would corrupt the value's meaning: "last time the user opened
+ * their settings page" is what makes it displayable at all. A read endpoint
+ * that also writes would make every poll look like fresh activity.
+ */
+async function getInstanceMeta(request: Request, deps: RouteDeps): Promise<Response> {
+  const endpoint = await authenticateInstanceToken(request, deps);
+  return json({ last_seen_at: endpoint.last_seen_at });
 }

@@ -432,6 +432,118 @@ describe("handleRequest", () => {
     expect(after.endpoints[0]?.last_seen_at).toBe(NOW);
   });
 
+  // ---- GET /api/instance/meta ----
+  //
+  // The read-only sibling of POST /api/instance/status. It exists because the
+  // container strictly checks 204 on /status (deliberately — a proxy's 200
+  // login page must not read as "healthy"), and worker/container ship through
+  // independent channels, so widening /status would break every existing
+  // container mid-rollout.
+
+  it("GET /api/instance/meta with valid token → 200 with last_seen_at", async () => {
+    const { deps } = setup();
+    const seeded = await seedProvisioned(deps);
+
+    // Before any heartbeat it's null, not absent — the container needs to tell
+    // "never reported" apart from "field missing / old worker".
+    const fresh = await handleRequest(
+      new Request(`${BASE}/api/instance/meta`, {
+        headers: { authorization: `Bearer ${seeded.token}` },
+      }),
+      deps,
+    );
+    expect(fresh.status).toBe(200);
+    const freshBody = (await fresh.json()) as Record<string, unknown>;
+    expect("last_seen_at" in freshBody).toBe(true);
+    expect(freshBody.last_seen_at).toBeNull();
+
+    await handleRequest(
+      new Request(`${BASE}/api/instance/status`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${seeded.token}` },
+      }),
+      deps,
+    );
+
+    const after = await handleRequest(
+      new Request(`${BASE}/api/instance/meta`, {
+        headers: { authorization: `Bearer ${seeded.token}` },
+      }),
+      deps,
+    );
+    expect(((await after.json()) as Record<string, unknown>).last_seen_at).toBe(NOW);
+  });
+
+  it("GET /api/instance/meta leaks nothing but the timestamp", async () => {
+    // The 204-no-body contract on /status exists so a valid token can't be used
+    // as an oracle for "which domain does this token map to". This endpoint
+    // must preserve that: last_seen_at is the holder's own visit time, which
+    // they already know. Anything else reopens the surface Plan 3 closed.
+    const { deps } = setup();
+    const seeded = await seedProvisioned(deps);
+
+    const res = await handleRequest(
+      new Request(`${BASE}/api/instance/meta`, {
+        headers: { authorization: `Bearer ${seeded.token}` },
+      }),
+      deps,
+    );
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(Object.keys(body)).toEqual(["last_seen_at"]);
+
+    // Spelled out so a future "just add hostname, it's convenient" turns red.
+    const raw = JSON.stringify(body);
+    for (const leak of ["hostname", "slug", "cf_tunnel", "token", "account", "expires"]) {
+      expect(raw).not.toContain(leak);
+    }
+  });
+
+  it("GET /api/instance/meta does NOT update last_seen_at", async () => {
+    // A read that also writes would destroy the value's meaning ("last time the
+    // user opened their settings page") and make every poll look like activity.
+    const { deps } = setup();
+    const seeded = await seedProvisioned(deps);
+
+    await handleRequest(
+      new Request(`${BASE}/api/instance/meta`, {
+        headers: { authorization: `Bearer ${seeded.token}` },
+      }),
+      deps,
+    );
+
+    const adminRes = await handleRequest(adminGet("/api/admin/endpoints"), deps);
+    const admin = (await adminRes.json()) as { endpoints: Array<Record<string, unknown>> };
+    expect(admin.endpoints[0]?.last_seen_at).toBeNull();
+  });
+
+  it("GET /api/instance/meta rejects bad/missing token → 401", async () => {
+    const { deps } = setup();
+    await seedProvisioned(deps);
+
+    for (const headers of [{}, { authorization: "Bearer wrong-token" }, { authorization: "Basic x" }]) {
+      const res = await handleRequest(new Request(`${BASE}/api/instance/meta`, { headers }), deps);
+      expect(res.status).toBe(401);
+    }
+  });
+
+  it("POST /api/instance/status keeps its 204-no-body contract", async () => {
+    // Guard rail, not redundancy: this pins the contract so nobody "saves a
+    // request" by folding meta into /status. Doing that would flip every
+    // existing container to degraded during the rollout window.
+    const { deps } = setup();
+    const seeded = await seedProvisioned(deps);
+
+    const res = await handleRequest(
+      new Request(`${BASE}/api/instance/status`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${seeded.token}` },
+      }),
+      deps,
+    );
+    expect(res.status).toBe(204);
+    expect(await res.text()).toBe("");
+  });
+
   it("provision without any slug → 400 slug required", async () => {
     const { deps } = setup();
     const createRes = await createInviteViaApi(deps, { email: "alice@example.com" });

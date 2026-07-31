@@ -178,3 +178,40 @@ describe("console page — entitled with active endpoint (v2 prompt-primary)", (
     expect(inactive).not.toContain("navigator.clipboard");
   });
 });
+
+describe("consolePage 报到时间", () => {
+  // 用现成的 base() + 注入的 NOW —— 不猜入参形状,也不依赖真实时钟。
+  const render = (last_seen_at: string | null, now: string = NOW) =>
+    base({ endpoint: { ...endpoint, last_seen_at }, entitlements: [ent("2027-01-01T00:00:00.000Z")], now });
+  const ago = (ms: number) => new Date(Date.parse(NOW) - ms).toISOString();
+
+  it("有报到记录 → 显示相对时间", () => {
+    const html = render(ago(5 * 60_000));
+    expect(html).toContain("你的实例上次向这里报到");
+    expect(html).toContain("5 分钟前");
+  });
+
+  it("从未报到（null）→ 整行不渲染", () => {
+    // 刚开通还没接入的用户看到「从未报到」会以为出错了,而那正是此刻的正常状态。
+    expect(render(null)).not.toContain("上次向这里报到");
+  });
+
+  it("措辞不暗示入站可达 —— 这是这一行存在的全部意义", () => {
+    // last_seen_at 只证明「实例 → 控制面」(出站)。cloudflared 挂了但容器活着时,
+    // 它照样显示「刚刚」。写成「隧道正常」就是拿恒真指标冒充健康检查。
+    const html = render(ago(60_000));
+    for (const lie of ["隧道正常", "隧道已连接", "远程访问正常", "连接正常"]) {
+      expect(html).not.toContain(lie);
+    }
+  });
+
+  it("时钟不同步（未来时间）显示「刚刚」而非负数", () => {
+    const html = render(new Date(Date.parse(NOW) + 5 * 60_000).toISOString());
+    expect(html).toContain("刚刚");
+    expect(html).not.toContain("-5 分钟");
+  });
+
+  it("向下取整：119 秒是「1 分钟前」", () => {
+    expect(render(ago(119_000))).toContain("1 分钟前");
+  });
+});

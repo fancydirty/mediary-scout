@@ -130,6 +130,9 @@ function renderBody(
     account: AccountRow;
     endpoint: EndpointRow | null;
     rootDomain: string;
+    /** 渲染时刻。用它算「上次报到」的相对时间,不用 Date.now() —— 页面其余
+     *  部分(到期日、宽限期)也都走这个值,两套时基会在跨午夜时对不上。 */
+    now: string;
     /** 隧道配额已满(CF 1000 硬上限)。已开通用户不受影响,只挡新开通。 */
     atCapacity: boolean;
   },
@@ -161,6 +164,7 @@ function renderBody(
   // 提示词模板由 renderScript 在客户端脚本里生成(带占位符),点按钮时现取
   // 真码替换。这里不预生成——服务端渲染时页面里的 #prompt 是空的。
   return `<p class="sub">你的专属地址：<span class="addr">${esc(hostname)}</span>（配置好后浏览器打开它即可）</p>
+${lastSeenHtml(input.endpoint.last_seen_at, input.now)}
 <div class="panel">
 <p class="step">接入你的实例</p>
 <p class="lead">把下面这段交给你的 AI 助手</p>
@@ -179,6 +183,54 @@ function renderBody(
 <p class="expire">取件码 15 分钟后失效 · 过期回这里再点一次「获取接入命令」即可</p>
 </div>
 </div>`;
+}
+
+/**
+ * 「上次从实例报到」一行。服务端渲染，**不轮询** —— 用户来这个页面是为了拿
+ * 接入命令，拿到就走；刷新一下就是最新的。
+ *
+ * ## 措辞为什么这么绕
+ *
+ * `last_seen_at` 只在**实例主动打到本控制面**时更新(出站),而用户想知道的是
+ * 「我的域名现在能不能打开」(入站)。**两个方向的失败模式完全不重叠**:
+ * 实例出站正常但 cloudflared 挂了是最常见的故障,那时这个时间戳照样显示「刚刚」。
+ *
+ * 所以这里写「你的实例上次向这里报到」,而**不写**「隧道正常」「在线」「已连接」。
+ * 前者是事实,后者是拿一个恒真指标冒充健康检查 —— 用户照着绿灯去排查,
+ * 只会更晚发现真正的问题。
+ *
+ * null(从未报到)时**整行不渲染**:刚开通还没接入的用户看到「从未报到」
+ * 会以为出了错,而那恰恰是此刻的正常状态。
+ */
+function lastSeenHtml(lastSeenAt: string | null, now: string): string {
+  const label = relativeZh(lastSeenAt, Date.parse(now));
+  if (label === null) return "";
+  return `<p class="lead-sub" style="opacity:.8">你的实例上次向这里报到：${esc(label)}</p>`;
+}
+
+/**
+ * ISO → 「N 分钟前」。与容器侧 `formatLastSeen` 同款取整规则(向下取整:
+ * 119 秒是「1 分钟前」,不是「2 分钟前」——不把还没到的整数说成已经到了)。
+ *
+ * 两份实现是刻意的:worker 与容器是两个独立部署单元,不共享代码。
+ * 改一边时记得看另一边(`apps/web/lib/remote-access.ts`)。
+ */
+function relativeZh(iso: string | null, now: number): string | null {
+  if (iso === null) return null;
+  if (Number.isNaN(now)) return null;
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return null;
+  const seconds = Math.floor((now - then) / 1000);
+  // 时钟不同步时不显示负数 —— 「-3 分钟前」会让人以为系统坏了。
+  if (seconds < 0) return "刚刚";
+  if (seconds < 60) return `${seconds} 秒前`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} 分钟前`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} 小时前`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days} 天前`;
+  return "很久以前";
 }
 
 /** active 时才需要客户端脚本:有 endpoint → 取码/复制;无 endpoint → slug
