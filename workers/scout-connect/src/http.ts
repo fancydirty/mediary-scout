@@ -41,13 +41,23 @@ const PADDLE_CSP_SOURCES = {
   style: "https://cdn.paddle.com",
 } as const;
 
+/**
+ * 首页 hero 海报墙的图片来源(TMDB 代理,与主站同一个)。
+ * 单独成常量:CSP 里出现的每个外部来源都该有名有姓、可被搜索到。
+ */
+export const POSTER_IMG_SOURCE = "https://tmdb-proxy.mediaryscout.app";
+
 export function htmlPage(
   body: string,
-  opts: { status?: number; noStore?: boolean; paddle?: boolean } = {},
+  opts: { status?: number; noStore?: boolean; paddle?: boolean; posters?: boolean } = {},
 ): Response {
   const status = opts.status ?? 200;
   // /buy 才放行 Paddle 来源;其余页面维持最严策略。
   const p = opts.paddle === true;
+  // 首页 hero 的海报墙走 TMDB 图片代理(跨域)。**只给首页放行这一个来源** ——
+  // 默认 img-src 只有 'self' data:,加海报时漏了这条,线上 28 张图全被 CSP
+  // 挡成裂图(curl 能拿到,浏览器不行 —— 这类 bug 只有真在浏览器里看才发现)。
+  const posters = opts.posters === true;
   const csp = [
     "default-src 'none'",
     `style-src 'unsafe-inline'${p ? ` ${PADDLE_CSP_SOURCES.style}` : ""}`,
@@ -58,7 +68,7 @@ export function htmlPage(
     // (theme.ts 的 FAVICON_LINK),而 default-src 'none' 会把它挡掉。
     // 这是本次之前就存在的缺陷,先前只给 /buy 加 img-src 反而让它更显眼。
     // 'self' 供将来的同源图标;data: 不产生网络请求,不放宽攻击面。
-    `img-src 'self' data:${p ? ` ${PADDLE_CSP_SOURCES.img}` : ""}`,
+    `img-src 'self' data:${p ? ` ${PADDLE_CSP_SOURCES.img}` : ""}${posters ? ` ${POSTER_IMG_SOURCE}` : ""}`,
     "base-uri 'none'",
     "form-action 'self'",
     // 结账 iframe 由 paddle.js 在**本页**创建,不需要放宽 frame-ancestors

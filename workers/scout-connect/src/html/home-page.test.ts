@@ -191,6 +191,15 @@ describe("home page(apex 落地页)", () => {
     expect(iClose).toBeLessThan(iFoot);
   });
 
+  // 线上真 bug(测试全绿但页面坏):.apex a 是类+标签(特异性 0,1,1),
+  // 压过纯类 .btn(0,1,0) —— 主 CTA 文字变绿色 = 绿底绿字,按钮看起来是空的。
+  it("按钮文字色用 .apex 前缀覆盖(否则被 .apex a 的绿色压掉)", () => {
+    const html = homePage();
+    // 必须带 .apex 前缀才压得住
+    expect(html).toContain(".apex .btn{color:var(--brand-ink)}");
+    expect(html).toContain(".apex .btn2{color:var(--tx-1)}");
+  });
+
   it("页脚合规五链接与运营主体齐全(Paddle MoR 要求)", () => {
     const html = homePage();
     for (const p of ["/pricing", "/terms", "/privacy", "/refund", "/contact"]) {

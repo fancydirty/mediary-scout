@@ -79,6 +79,14 @@ ${BRAND_CSS}
 }
 .apex{max-width:var(--shell);margin:0 auto;line-height:1.75}
 .apex a{color:var(--brand);text-decoration:none}
+/* **必须用 .apex 前缀**:上面的「.apex a」(类+标签,特异性 0,1,1)会压过
+   纯类选择器(0,1,0)。线上实测主 CTA 的文字变成绿色 = 绿底绿字,整个按钮
+   看起来是空的。同一个特异性坑在本文件已踩过第三次(h2 reset、a、btn),
+   凡是要覆盖「.apex a」的规则都得带 .apex 前缀。 */
+.apex .btn{color:var(--brand-ink)}
+.apex .btn2{color:var(--tx-1)}
+.apex .lg{color:var(--tx-1)}
+.apex .gh{color:var(--tx-2)}
 .apex a:hover{text-decoration:underline}
 .apex .num{font-variant-numeric:tabular-nums}
 

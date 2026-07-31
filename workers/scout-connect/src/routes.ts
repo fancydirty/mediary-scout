@@ -326,7 +326,9 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
     if (url.hostname.toLowerCase() === betaHost) {
       return htmlPage(betaPage(turnstileSitekeyIfConfigured(deps)));
     }
-    return htmlPage(homePage());
+    // posters:true 放行 TMDB 图片代理(hero 海报墙)。只首页需要 ——
+    // 其余页面维持 img-src 'self' data: 的最严策略。
+    return htmlPage(homePage(), { posters: true });
   }
   if (method === "POST" && path === "/api/paddle/webhook") {
     return paddleWebhook(request, deps);

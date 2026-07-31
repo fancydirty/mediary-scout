@@ -149,6 +149,29 @@ describe("handleRequest", () => {
   // HEAD 此前没有任何处理,一路落到末尾的 404 JSON —— 线上实测
   // `HEAD /` 返回 content-type: application/json,而 `GET /` 返回 text/html。
   // 部分抓取器/链接校验器先发 HEAD,会把首页误判成非 HTML 资源。
+  // 线上真 bug:hero 海报走 TMDB 代理(跨域),而默认 CSP 是
+  // `img-src 'self' data:` —— 28 张图全被挡成裂图。curl 拿得到、浏览器不行,
+  // 这类问题只有真在浏览器里看才会发现,所以补一条头断言钉住。
+  it("GET / 的 CSP 放行 TMDB 图片代理(hero 海报墙)", async () => {
+    const { deps } = setup();
+    const res = await handleRequest(new Request(`${BASE}/`), deps);
+    const csp = res.headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("https://tmdb-proxy.mediaryscout.app");
+    const imgSrc = csp.split(";").find((d) => d.trim().startsWith("img-src")) ?? "";
+    expect(imgSrc).toContain("tmdb-proxy");
+    // 放宽只限 img-src,其余指令不受影响
+    expect(csp).toContain("default-src 'none'");
+  });
+
+  it("其它页面维持最严 img-src(不放行跨域图片)", async () => {
+    const { deps } = setup();
+    for (const path of ["/pricing", "/terms", "/login"]) {
+      const res = await handleRequest(new Request(`${BASE}${path}`), deps);
+      const csp = res.headers.get("content-security-policy") ?? "";
+      expect(csp, path).not.toContain("tmdb-proxy");
+    }
+  });
+
   it("HEAD / → 200 且 content-type 与 GET 一致(text/html),body 为空", async () => {
     const { deps } = setup();
     const res = await handleRequest(new Request(`${BASE}/`, { method: "HEAD" }), deps);
