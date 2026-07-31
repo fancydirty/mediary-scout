@@ -687,7 +687,12 @@ ${BRAND_CSS}
       body: JSON.stringify(payload)
     }).then(function(res){
       if (res.status === 202) {
-        say("已发送到 " + email + "。点邮件里的链接就登录了,链接只能用一次。没收到?检查垃圾邮件。");
+        say("已发送到 " + email + "。点邮件里的链接就登录了,链接只能用一次。没收到?检查垃圾邮件,或改一下邮箱重发。");
+        // **不 return**:成功后也要把表单交还给用户。
+        // /api/auth/magic 为了不泄露注册状态**恒返回 202**,所以「成功」不代表
+        // 邮箱写对了 —— 拼错的地址同样是 202。永久 disabled 会让用户必须
+        // 刷新页面才能更正,而他此刻正等着收信,不会想到去刷新。
+        input.disabled = false; btn.disabled = false;
         return;
       }
       // 429 是限流(发信入口的替代防线),要给可操作的话而不是「稍后重试」。

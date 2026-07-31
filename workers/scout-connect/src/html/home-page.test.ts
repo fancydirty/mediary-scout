@@ -140,6 +140,17 @@ describe("home page(apex 落地页)", () => {
     expect(html).toContain("turnstile_token");
   });
 
+  // Copilot round-4:/api/auth/magic 恒返回 202(不泄露注册状态),
+  // 所以「成功」不代表邮箱写对了。永久 disabled 会让拼错地址的用户
+  // 必须刷新页面才能更正 —— 而他此刻正等着收信,不会想到刷新。
+  it("202 之后表单要交还给用户(恒 202,拼错邮箱也要能改)", () => {
+    const html = homePage();
+    const i = html.indexOf("res.status === 202");
+    const seg = html.slice(i, i + 500);
+    expect(seg).toContain("input.disabled = false");
+    expect(seg).toContain("改一下邮箱重发");
+  });
+
   it("400 文案不写死成「邮箱不对」(服务端 400 还可能是缺 token 等)", () => {
     const html = homePage();
     expect(html).not.toContain("这个邮箱地址不对");
