@@ -104,6 +104,11 @@ ${BRAND_CSS}
   color:var(--tx-3);margin:0 0 14px}
 .apex h1{margin:0 0 20px;font-size:clamp(30px,4.4vw,52px);font-weight:600;
   line-height:1.18;letter-spacing:-.018em}  /* 中文负字距 ≤.02em,再大会粘字 */
+/* h2/h3 是**真标题标签**(语义化:屏幕阅读器与文档大纲需要),样式全由
+   .h2/.h3 显式定义 —— 它们已经覆盖了 margin/font-size/font-weight/
+   line-height,所以浏览器默认值不会露出来。
+   **不要**再加「.apex h2{...}」这种 reset:类+标签的特异性(0,1,1)高于
+   纯类(0,1,0),reset 会反过来盖掉 .h2 —— 开发时踩过,h2 变成 16px/400。 */
 .h2{margin:0 0 10px;font-size:clamp(22px,2.8vw,31px);font-weight:600;
   line-height:1.3;letter-spacing:-.01em}
 .h3{margin:0 0 6px;font-size:19px;font-weight:500;line-height:1.45}
@@ -378,7 +383,7 @@ ${BRAND_CSS}
 
   <section class="sec">
     <p class="eb">先说清楚 Scout 是什么</p>
-    <p class="h2">自建网盘的媒体获取 agent</p>
+    <h2 class="h2">自建网盘的媒体获取 agent</h2>
     <p class="lead">指定一部影视,agent 跨源检索、择优、转存进<b>你自己的网盘</b>、回读核对,并持续追踪缺集。<b>凭证据,不凭感觉。</b>AGPL 开源,桌面版双击即用,也可 docker 自部署。</p>
 
     <div class="win">
@@ -424,7 +429,7 @@ ${BRAND_CSS}
   <hr class="rf">
 
   <section class="sec">
-    <p class="h2">你是哪一种?</p>
+    <h2 class="h2">你是哪一种?</h2>
     <p class="note">Connect 是附加服务。它需要一个已经在运行的 Scout 实例才有东西可连。</p>
     <div class="gate">
       <button class="gc" type="button" aria-expanded="true" aria-controls="g1"><p>我已经在跑 Scout</p></button>
@@ -447,7 +452,7 @@ ${BRAND_CSS}
 
   <section class="band" id="boundary">
     <p class="eb">边界</p>
-    <p class="h2">它碰不到什么,又需要你有什么</p>
+    <h2 class="h2">它碰不到什么,又需要你有什么</h2>
     <div class="bd2">
       <div class="bcol">
         <h3>它碰不到什么</h3>
@@ -471,12 +476,12 @@ ${BRAND_CSS}
   </section>
 
   <section class="sec" id="connect">
-    <p class="h2">接入:三步,一行命令</p>
+    <h2 class="h2">接入:三步,一行命令</h2>
     <p class="note">从零开始的话,第 0 步不花钱、也不经过我们。</p>
     <ol class="steps">
       <li class="z">
         <div>
-          <p class="h3">先把 Scout 跑起来</p>
+          <h3 class="h3">先把 Scout 跑起来</h3>
           <p>开源免费,和付不付钱无关。不想自己读文档的话,挑一个丢给你的 AI agent(Claude Code / Codex / opencode 都行)。<b>三种情况分开写好了,选你的那个。</b></p>
       <div class="pr">
         <div class="ph"><span>① 只装 Scout(还没买 Connect)</span></div>
@@ -566,19 +571,19 @@ ${BRAND_CSS}
       </li>
       <li>
         <div>
-          <p class="h3">买时长,并用你自己的邮箱登录</p>
+          <h3 class="h3">买时长,并用你自己的邮箱登录</h3>
           <p>顺序是<b>先登录再付款</b> —— 时长要记在账号上,而不是记在你用的那张卡上(很多人用公司卡或家人的卡)。</p>
         </div>
       </li>
       <li>
         <div>
-          <p class="h3">在控制台里选一个名字</p>
+          <h3 class="h3">在控制台里选一个名字</h3>
           <p>实时查重,选定后永久属于你。付款后在控制台完成,不占用别人的名额。</p>
         </div>
       </li>
       <li>
         <div>
-          <p class="h3">在跑 Scout 的机器上跑一行</p>
+          <h3 class="h3">在跑 Scout 的机器上跑一行</h3>
           <div class="cmd">curl -fsSL https://mediaryconnect.app/connect.sh | sh -s -- &lt;取件码&gt;</div>
           <p style="margin-top:11px">部署目录不在当前路径时,末尾加 <code>--dir /path/to/deploy</code>。脚本凭取件码换隧道凭据、原子写入 .env、起 cloudflared,轮询到隧道真通才报成功。取件码 15 分钟有效、用完即弃,<b>我们不存你的 token</b>。</p>
           <p style="margin-top:8px;color:var(--tx-4);font-size:12.5px">这行要在跑 Scout 的那台机器上执行,不是在手机上。</p>
@@ -590,7 +595,7 @@ ${BRAND_CSS}
   <hr class="rf">
 
   <section class="sec" id="pricing">
-    <p class="h2">定价</p>
+    <h2 class="h2">定价</h2>
     <p class="note"><b>14 天无理由退款,用过也退,不问原因。</b>预付时长,一次付清,不自动续费。</p>
     <div class="pg">
       <div class="pc"><p class="pn">季度</p><p class="pa">¥45</p><p class="pp">3 个月</p><p class="pq">需自备一台跑着<br>Scout 的机器</p></div>
@@ -606,7 +611,7 @@ ${BRAND_CSS}
 
   <section class="sec" id="start" style="padding-top:0">
     <div class="login">
-      <p class="h2" style="font-size:1.35rem">开始</p>
+      <h2 class="h2" style="font-size:1.35rem">开始</h2>
       <p class="note" style="margin-bottom:0">输入邮箱,我们发一个登录链接给你。登录后就能在控制台里买时长、选域名。</p>
       <form class="lrow" id="magic" novalidate>
         <input type="email" name="email" placeholder="your@email.com" inputmode="email" autocomplete="email" required aria-label="邮箱">

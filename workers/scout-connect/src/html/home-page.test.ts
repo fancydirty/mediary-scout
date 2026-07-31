@@ -153,6 +153,17 @@ describe("home page(apex 落地页)", () => {
     expect(html).toContain("docker version");
   });
 
+  // Copilot round-3:用 <p class="h2"> 冒充标题会破坏文档大纲(屏幕阅读器 + SEO),
+  // 而这页刚补了 SEO —— 自相矛盾。
+  it("章节标题用真 <h2>/<h3>,不用 <p> 冒充", () => {
+    const html = homePage();
+    expect(html).not.toMatch(/<p class="h[23]"/);
+    expect(html).toMatch(/<h2 class="h2"/);
+    expect(html).toMatch(/<h3 class="h3"/);
+    // 只能有一个 h1
+    expect((html.match(/<h1/g) ?? []).length).toBe(1);
+  });
+
   it("页脚合规五链接与运营主体齐全(Paddle MoR 要求)", () => {
     const html = homePage();
     for (const p of ["/pricing", "/terms", "/privacy", "/refund", "/contact"]) {
