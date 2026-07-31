@@ -20,6 +20,15 @@ import { BRAND_BAR, BRAND_CSS, esc, FAVICON_LINK, THEME_BASE, THEME_TOKENS } fro
  * 客户端点「获取接入命令」时才 POST /api/claim-code 拿 15 分钟有效的真码,
  * 把占位符替换成真码——提示词天然是临时生成的(码短命),token 从不出现。
  */
+export interface PurchasableTier {
+  priceId: string;
+  months: number;
+  label: string;
+  price: string;
+  featured: boolean;
+  note: string;
+}
+
 export function consolePage(input: {
   account: AccountRow;
   entitlements: EntitlementRow[];
@@ -29,6 +38,8 @@ export function consolePage(input: {
    *  推:控制台可从 beta 子域访问,host 会是 beta.<root>,后缀就错了。 */
   rootDomain: string;
   now: string;
+  /** 可下单档位。空数组 = 购买通道未配置(白名单空),页面不给假按钮。 */
+  tiers?: readonly PurchasableTier[];
   /** 隧道配额是否已满(CF 1000 硬上限)。只影响「已付费未开通」态:满了就不给
    *  slug 表单,免得用户填完名字才吃 503。已开通用户完全不受影响。 */
   atCapacity?: boolean;
@@ -93,6 +104,18 @@ h1{font-size:1.5rem;font-weight:900;letter-spacing:-.5px;margin:0}
 .copy-btn{width:100%;margin-top:14px}
 .helprow{display:flex;gap:8px;align-items:center;color:#8f8f8f;font-size:12.5px;margin-top:14px}
 .helprow svg{color:var(--accent);flex:none}
+/* 档位卡片。auto-fit + minmax:窄屏自动堆成一列,不用写 @media。 */
+.tiers{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:18px}
+.tier{position:relative;display:flex;flex-direction:column;gap:4px;align-items:flex-start;text-align:left;font:inherit;cursor:pointer;padding:16px 18px;border-radius:14px;border:1px solid var(--line);background:rgba(255,255,255,.02);color:var(--text);transition:transform .15s ease,border-color .15s ease,background .15s ease}
+.tier:hover:not(:disabled){transform:translateY(-2px);border-color:rgba(30,215,96,.5)}
+.tier:disabled{opacity:.5;cursor:default;transform:none}
+/* 主推档:实心绿。用户已拍板年度 ¥108 为主推。 */
+.tier-featured{background:var(--accent);border-color:var(--accent);color:#000}
+.tier-featured:hover:not(:disabled){border-color:var(--accent)}
+.tier-tag{position:absolute;top:-9px;right:12px;font-size:.68rem;font-weight:700;letter-spacing:.04em;padding:2px 8px;border-radius:500px;background:#000;color:var(--accent)}
+.tier-name{font-size:.86rem;opacity:.75}
+.tier-price{font-size:1.5rem;font-weight:800;line-height:1.1}
+.tier-note{font-size:.76rem;opacity:.7}
 .msg{font-size:.9rem;margin-top:12px;color:var(--text-muted)}
 .msg.err{color:var(--err)}
 .msg.ok{color:var(--accent)}
@@ -117,7 +140,7 @@ details[open] summary .chev{transform:rotate(90deg)}
 ${BRAND_BAR}
 <p class="email-line">${esc(input.account.email)}</p>
 <div class="status-row"><h1>远程访问</h1>${statusBadge}</div>
-${renderBody({ ...input, atCapacity: input.atCapacity === true }, active)}
+${renderBody({ ...input, atCapacity: input.atCapacity === true, tiers: input.tiers ?? [] }, active)}
 <div class="footer"><a href="/pricing">定价</a> · <a href="/terms">服务条款</a> · <a href="/privacy">隐私政策</a> · <a href="/refund">退款政策</a> · <a href="/contact">联系我们</a></div>
 </main>
 ${renderScript({ ...input, atCapacity: input.atCapacity === true }, active)}
@@ -135,12 +158,36 @@ function renderBody(
     now: string;
     /** 隧道配额已满(CF 1000 硬上限)。已开通用户不受影响,只挡新开通。 */
     atCapacity: boolean;
+    /** 可下单档位(来自价格白名单,空数组=购买通道未配置)。 */
+    tiers: readonly PurchasableTier[];
   },
   active: boolean,
 ): string {
   if (!active) {
+    // **真按钮,不是跳 /pricing。** 原来这里是 `<a href="/pricing">开通</a>`,
+    // 而 /pricing 是纯说明页、一个结账入口都没有 —— 整条付款路径断在这里,
+    // 后端 /api/checkout 从来没有任何调用方(用户截图发现)。
+    if (input.tiers.length === 0) {
+      // 白名单未配置(如环境变量漏了):不给假按钮,老实说不可用。
+      return `<p class="sub">你还没有有效时长。</p>
+<p class="lead-sub">购买通道暂时不可用,请稍后再试或<a href="/contact">联系我们</a>。</p>`;
+    }
     return `<p class="sub">你还没有有效时长。开通后即可为自托管实例生成专属远程访问地址。</p>
-<a class="btn" href="/pricing">开通</a>`;
+<div class="tiers">
+${input.tiers
+  .map(
+    (t) => `<button class="tier${t.featured ? " tier-featured" : ""}" type="button" data-price="${esc(t.priceId)}">
+${t.featured ? `<span class="tier-tag">推荐</span>` : ""}
+<span class="tier-name">${esc(t.label)}</span>
+<span class="tier-price">${esc(t.price)}</span>
+<span class="tier-note">${esc(t.note)}</span>
+</button>`,
+  )
+  .join("\n")}
+</div>
+<p class="msg" id="buymsg" hidden></p>
+<p class="lead-sub" style="margin-top:14px">预付时长,不自动续费。买多次会叠加到同一个账号,到期日往后延。<br>
+支持 微信支付 · 银行卡 · Apple Pay · Google Pay。14 天内无条件全额退款 —— 见<a href="/refund">退款政策</a>。</p>`;
   }
   if (input.endpoint === null && input.atCapacity) {
     // 满容量:**不渲染表单**。让用户输完名字、点开通、再吃 503 是最差的体验
@@ -183,6 +230,56 @@ ${lastSeenHtml(input.endpoint.last_seen_at, input.now)}
 <p class="expire">取件码 15 分钟后失效 · 过期回这里再点一次「获取接入命令」即可</p>
 </div>
 </div>`;
+}
+
+/**
+ * 档位按钮 → 下单 → 跳 Paddle 结账。
+ *
+ * ## 为什么是整页跳转而不是内嵌 Paddle.js
+ *
+ * `/api/checkout` 返回的 `checkout_url` 已经是
+ * `mediaryconnect.app/buy?_ptxn=<txn>` —— `/buy` 那个页面本来就加载了 Paddle.js
+ * 并根据 `_ptxn` 自动弹结账窗(那是它存在的唯一理由)。在这里再引一份 Paddle.js
+ * 等于维护两处环境/token 配置,而 sandbox/production 配错的代价是结账 100% 失败
+ * (刚刚就踩过:live token 配 sandbox 环境)。**配置只在一个地方,少一处能配错。**
+ *
+ * ## 失败必须说话
+ *
+ * 三种真实失败:503(购买通道未配置)、502(Paddle 上游挂)、401(session 过期)。
+ * 每种都给不同的下一步动作 —— 「请重试」对 session 过期毫无用处。
+ * 不回显后端的原始错误(可能含内部细节)。
+ */
+function buyScript(): string {
+  return `<script type="module">
+const msg=document.getElementById("buymsg");
+const btns=[...document.querySelectorAll(".tier")];
+function fail(text){msg.textContent=text;msg.className="msg err";msg.hidden=false;btns.forEach(b=>b.disabled=false);}
+btns.forEach((btn)=>btn.addEventListener("click",async()=>{
+  msg.hidden=true;msg.className="msg";
+  // 全部禁用:防连点建出多笔 draft 交易。
+  btns.forEach(b=>b.disabled=true);
+  btn.dataset.busy="1";
+  try{
+    const res=await fetch("/api/checkout",{
+      method:"POST",
+      headers:{"content-type":"application/json"},
+      body:JSON.stringify({price_id:btn.dataset.price}),
+    });
+    if(res.status===401){fail("登录状态已过期。刷新页面重新登录后再试。");return;}
+    if(res.status===503){fail("购买通道暂时不可用。请稍后再试,或联系我们。");return;}
+    if(!res.ok){fail("发起支付失败了。稍后再试一次;若一直失败请联系我们。");return;}
+    const data=await res.json();
+    if(typeof data.checkout_url!=="string"||data.checkout_url===""){
+      fail("发起支付失败了。稍后再试一次;若一直失败请联系我们。");return;
+    }
+    // 整页跳转到 /buy?_ptxn=... —— 那边的 Paddle.js 会自动弹结账窗。
+    window.location.href=data.checkout_url;
+  }catch{
+    // 网络断了/请求被拦。不能静默 —— 用户会以为按钮坏了然后反复点。
+    fail("网络请求没成功。检查网络后再试一次。");
+  }
+}));
+</script>`;
 }
 
 /**
@@ -236,10 +333,20 @@ function relativeZh(iso: string | null, now: number): string | null {
 /** active 时才需要客户端脚本:有 endpoint → 取码/复制;无 endpoint → slug
  *  选择表单(实时查重 + 开通)。 */
 function renderScript(
-  input: { endpoint: EndpointRow | null; baseUrl: string; rootDomain: string; atCapacity?: boolean },
+  input: {
+    endpoint: EndpointRow | null;
+    baseUrl: string;
+    rootDomain: string;
+    atCapacity?: boolean;
+    tiers?: readonly PurchasableTier[];
+  },
   active: boolean,
 ): string {
-  if (!active) return "";
+  // 无有效时长 = 购买态。**原来这里直接 return ""**,于是页面上连脚本都没有 ——
+  // 因为当时那一态只有个跳 /pricing 的死链。现在要下单,必须有脚本。
+  if (!active) {
+    return (input.tiers ?? []).length === 0 ? "" : buyScript();
+  }
   // 满容量时 renderBody 不渲染 #slug/#provision,注入表单脚本会对 null 调
   // addEventListener 直接抛错、整段脚本崩掉。条件必须与 renderBody 的分支一致。
   if (input.endpoint === null && input.atCapacity === true) return "";

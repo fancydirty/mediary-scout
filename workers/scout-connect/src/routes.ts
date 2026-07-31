@@ -23,7 +23,12 @@ import { invitePage, type InvitePageState } from "./html/invite-page.js";
 
 import { CAPACITY_LIMIT, isAtCapacityError } from "./capacity.js";
 import { grantEntitlement } from "./grant.js";
-import { isPriceMapConfigured, parseTransactionCompleted, type PriceMonthsMap } from "./paddle-event.js";
+import {
+  isPriceMapConfigured,
+  parseTransactionCompleted,
+  purchasableTiers,
+  type PriceMonthsMap,
+} from "./paddle-event.js";
 import { isKnownPriceId, type PaddleApi } from "./paddle-api.js";
 import { verifyPaddleSignature } from "./paddle-signature.js";
 import { buyPage } from "./html/buy-page.js";
@@ -1176,6 +1181,9 @@ async function consoleRoute(request: Request, deps: RouteDeps): Promise<Response
       rootDomain: deps.rootDomain.trim().toLowerCase(),
       now,
       atCapacity,
+      // 档位来自价格白名单(单一来源)。白名单空 → 空数组 → 页面不给假按钮,
+      // 因为那种按钮点下去必然被 /api/checkout 的 503 拒掉。
+      tiers: purchasableTiers(deps.paddlePriceMonths),
     }),
     { noStore: true }, // 用户专属页面,不可缓存(Copilot round 3)
   );

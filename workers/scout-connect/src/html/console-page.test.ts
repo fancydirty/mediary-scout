@@ -215,3 +215,90 @@ describe("consolePage 报到时间", () => {
     expect(render(ago(119_000))).toContain("1 分钟前");
   });
 });
+
+describe("无时长态 = 购买入口(不是死链)", () => {
+  // 这一整块是补债:线上曾经是 `<a href="/pricing">开通</a>`,而 /pricing 是纯
+  // 说明页、零结账入口 —— 整条付款路径断了,后端 /api/checkout 从来没有调用方。
+  // 用户截图才发现。所有自动化测试当时都是绿的,因为没人测这一态。
+  const TIERS = [
+    { priceId: "pri_q", months: 3, label: "季度", price: "¥45", featured: false, note: "3 个月" },
+    { priceId: "pri_y", months: 12, label: "年度", price: "¥108", featured: true, note: "12 个月 · 折月付 ¥9" },
+    { priceId: "pri_2y", months: 24, label: "两年", price: "¥188", featured: false, note: "24 个月" },
+  ];
+  const noTime = (tiers = TIERS) => base({ entitlements: [], endpoint: null, tiers });
+
+  it("三档都渲染成带 price_id 的按钮", () => {
+    const html = noTime();
+    for (const t of TIERS) {
+      expect(html).toContain(`data-price="${t.priceId}"`);
+      expect(html).toContain(t.price);
+    }
+  });
+
+  it("绝不再出现「跳 /pricing 就算完事」的死链按钮", () => {
+    // 这是本次 bug 的精确复现条件:一个 class="btn" 的链接指向 /pricing。
+    // 页脚那个「定价」文字链是正常的,所以只禁按钮形态。
+    const html = noTime();
+    expect(html).not.toMatch(/class="btn"[^>]*href="\/pricing"/);
+    expect(html).not.toMatch(/href="\/pricing"[^>]*class="btn"/);
+  });
+
+  it("有下单脚本,且真的打 /api/checkout", () => {
+    const html = noTime();
+    expect(html).toContain("/api/checkout");
+    expect(html).toContain("price_id");
+    // 拿到 checkout_url 后必须真跳过去,否则等于建了交易却不结账。
+    expect(html).toContain("checkout_url");
+    expect(html).toContain("window.location.href");
+  });
+
+  it("年度是主推档(用户拍板),且只有一个主推", () => {
+    const html = noTime();
+    // 只数**按钮上**的,不数 CSS 规则里的 —— 样式表里也有 .tier-featured,
+    // 直接数字符串会把它算进去(第一版就踩了)。
+    expect(html).toContain("tier-featured");
+    expect(html.match(/class="tier tier-featured"/g)?.length).toBe(1);
+    // 主推标记必须落在年度那颗按钮上,不能飘到别档。
+    const yearBtn = html.slice(html.indexOf('data-price="pri_y"'));
+    expect(yearBtn.slice(0, 400)).toContain("¥108");
+  });
+
+  it("白名单为空 → 不给假按钮,老实说不可用", () => {
+    // 假按钮点下去必然吃 /api/checkout 的 503。让用户点一下才发现,是最差体验。
+    const html = base({ entitlements: [], endpoint: null, tiers: [] });
+    expect(html).not.toContain("data-price");
+    expect(html).toContain("购买通道暂时不可用");
+    // 也不该注入脚本 —— 那会对不存在的 .tier 做 querySelectorAll(空数组,不崩,
+    // 但白挂一段死代码)。
+    expect(html).not.toContain("/api/checkout");
+  });
+
+  it("三种失败各有不同的下一步动作", () => {
+    const html = noTime();
+    // 「请重试」对 session 过期毫无用处 —— 必须让他重新登录。
+    expect(html).toContain("401");
+    expect(html).toContain("重新登录");
+    expect(html).toContain("503");
+  });
+
+  it("防连点:点击后禁用所有按钮", () => {
+    // 不禁的话用户连点三下就在 Paddle 建三笔 draft 交易。
+    expect(noTime()).toContain("disabled=true");
+  });
+
+  it("已有有效时长时不显示购买按钮", () => {
+    const html = base({
+      entitlements: [ent("2027-01-01T00:00:00.000Z")],
+      endpoint: null,
+      tiers: TIERS,
+    });
+    expect(html).not.toContain("data-price");
+  });
+
+  it("标明预付/不自动续费与退款政策", () => {
+    // 合规与预期管理:这是一次性付款,不是订阅。必须在下单按钮旁边就说清。
+    const html = noTime();
+    expect(html).toContain("不自动续费");
+    expect(html).toContain("/refund");
+  });
+});

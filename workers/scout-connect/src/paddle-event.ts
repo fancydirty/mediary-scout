@@ -29,22 +29,27 @@ export interface PriceMonthsMap {
 }
 
 /**
- * live 的四个 one-time price。**上线前必须填**。
+ * live 的三个 one-time price(季/年/两年)。
  *
- * 空表意味着 live 环境没有任何合法 price_id —— 这是刻意的:见
+ * 空表意味着本环境没有任何合法 price_id —— 这是刻意的:见
  * `priceMonthsFor()`,非 sandbox 环境拿到空表会让调用方 fail-closed(503,
  * 可重试),而不是把真实付款判成 unknown_price 后返回不可重试的 200。
  *
  * sandbox 与 live 的 price_id 完全不同(两套独立环境),所以不能复用。
  */
 export const LIVE_PRICE_MONTHS: PriceMonthsMap = {
-  // 用户在 live 后台所建(2026-07-30),price_id 由用户截图提供。
-  // **必须经过一次真实 live webhook 端到端验证**才视为生效 —— 这些 id 没经过
-  // live API 直接核对(我们的 paddle 工具只能访问 sandbox)。见 PR #202 的部署注记。
-  pri_01kyrvxr4kwqq8sz1bnkbwge7r: 3, // 季度 ¥45
-  pri_01kyrvywnxzj5se3vevghz3sym: 12, // 年度 ¥108
-  pri_01kyrvzv3ya0dgg30r8ngcm3tc: 24, // 两年 ¥188
-  pri_01kyrw1773tc65xxdtgqcqyfpk: 12, // 创始价 ¥88(前 100 席)
+  // 已用 live API 直接核对(2026-08-01,GET https://api.paddle.com/prices):
+  // 三个 id 存在、status=active、金额与档位一一对上。
+  pri_01kyrvxr4kwqq8sz1bnkbwge7r: 3, // 季度 ¥45  (live: 4500 CNY, 45cny-3months)
+  pri_01kyrvywnxzj5se3vevghz3sym: 12, // 年度 ¥108 (live: 10800 CNY, 108cny-1year)
+  pri_01kyrvzv3ya0dgg30r8ngcm3tc: 24, // 两年 ¥188 (live: 18800 CNY, 188cny-2years)
+  // **创始价 ¥88 已从白名单移除**(pri_01kyrw1773tc65xxdtgqcqyfpk)。
+  // 它在 Paddle 侧仍是 active(88cny-launch100),但产品侧从未真正实现 ——
+  // 没有已售席位计数,entitlements 也不记录成交价,所以「前 100 席」根本无法执行,
+  // PR #209 已把它从所有页面撤下。留在白名单里的后果是:任何人拿到这个 price_id
+  // 仍能以 ¥88 买到 12 个月(比年度档便宜 ¥20),而我们既不知情也拦不住。
+  // 白名单是最后一道闸 —— 页面撤了但闸没关,等于没撤。
+  // 若将来要恢复,先实现席位计数,再同时改这里和页面。
 };
 
 /**
@@ -64,6 +69,48 @@ export function isPriceMapConfigured(
   return map !== undefined && Object.keys(map).length > 0;
 }
 
+/**
+ * 售卖档位的**展示顺序与文案**。价格 ID 从白名单取(单一来源),这里只管
+ * 「哪一档主推」「显示什么字」。
+ *
+ * 顺序 = 页面上的顺序。年度放中间且 `featured`,因为它折月付 ¥9,比季付便宜
+ * 33% —— 用户已拍板以它为主推档。
+ *
+ * **月数不写死在这里**:从传入的白名单查,避免两处漂移。
+ */
+export const TIER_DISPLAY: ReadonlyArray<{
+  months: number;
+  label: string;
+  price: string;
+  featured: boolean;
+  note: string;
+}> = [
+  { months: 3, label: "季度", price: "¥45", featured: false, note: "3 个月" },
+  { months: 12, label: "年度", price: "¥108", featured: true, note: "12 个月 · 折月付 ¥9" },
+  { months: 24, label: "两年", price: "¥188", featured: false, note: "24 个月 · 折月付 ¥7.8" },
+];
+
+/**
+ * 把白名单翻成「可下单的档位列表」。
+ *
+ * 只输出**白名单里真有**的档位 —— 白名单是最后一道闸,页面不能显示一个下单会
+ * 被 400 拒掉的按钮。所以创始价撤掉后,这里自动就不再有它。
+ */
+export function purchasableTiers(
+  map: PriceMonthsMap | undefined,
+): ReadonlyArray<{ priceId: string; months: number; label: string; price: string; featured: boolean; note: string }> {
+  if (!isPriceMapConfigured(map)) return [];
+  const byMonths = new Map<number, string>();
+  for (const [priceId, months] of Object.entries(map)) {
+    // 同月数出现多次时保留第一个(理论上不该发生;真发生了也不能崩)。
+    if (!byMonths.has(months)) byMonths.set(months, priceId);
+  }
+  return TIER_DISPLAY.flatMap((tier) => {
+    const priceId = byMonths.get(tier.months);
+    return priceId === undefined ? [] : [{ priceId, ...tier }];
+  });
+}
+
 export function priceMonthsFor(environment: string | undefined): PriceMonthsMap | null {
   const env = environment?.trim().toLowerCase();
   if (env === "sandbox") return SANDBOX_PRICE_MONTHS;
@@ -71,12 +118,13 @@ export function priceMonthsFor(environment: string | undefined): PriceMonthsMap 
   return Object.keys(LIVE_PRICE_MONTHS).length > 0 ? LIVE_PRICE_MONTHS : null;
 }
 
-/** sandbox 的四个 one-time price(2026-07-29 建)。 */
+/** sandbox 的三个 one-time price(2026-07-29 建,档位与 live 对齐)。 */
 export const SANDBOX_PRICE_MONTHS: PriceMonthsMap = {
   pri_01kypfzv2jqg2qv0g25bn05v28: 3, // 季度 ¥45
   pri_01kypfzvbkhp0a7npjg87ptxpb: 12, // 年度 ¥108
   pri_01kypfzvpf02z5731sbnva3n82: 24, // 两年 ¥188
-  pri_01kypfzvyvgmytaefznh4npsz7: 12, // 创始价 ¥88
+  // sandbox 也不留创始价:两边档位必须一致,否则 sandbox 能测通的路径
+  // 到 live 就 400,而那种差异最难查。
 };
 
 export type ParseFailure =

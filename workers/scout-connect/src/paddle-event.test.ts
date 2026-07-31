@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  LIVE_PRICE_MONTHS,
+  MAX_WEBHOOK_MONTHS,
   parseTransactionCompleted,
   SANDBOX_PRICE_MONTHS,
   type PriceMonthsMap,
@@ -255,8 +257,10 @@ describe("parseTransactionCompleted", () => {
 });
 
 describe("SANDBOX_PRICE_MONTHS", () => {
-  it("四个档位与定价页一致(季3/年12/两年24/创始12)", () => {
-    expect(Object.values(SANDBOX_PRICE_MONTHS).sort((a, b) => a - b)).toEqual([3, 12, 12, 24]);
+  it("三个档位与定价页一致(季3/年12/两年24)", () => {
+    // 原来是四档(含创始价 ¥88 → 12 个月)。创始价从未真正实现(无席位计数、
+    // entitlements 不记录成交价),PR #209 已从所有页面撤下,现在白名单也关闭。
+    expect(Object.values(SANDBOX_PRICE_MONTHS).sort((a, b) => a - b)).toEqual([3, 12, 24]);
   });
 });
 
@@ -304,4 +308,35 @@ describe("items 元素为 null 不得抛错(500 → 无限重投)", () => {
       expect(r.ok).toBe(false);
     },
   );
+});
+
+describe("价格白名单 = 最后一道闸", () => {
+  const FOUNDING_LIVE = "pri_01kyrw1773tc65xxdtgqcqyfpk";
+  const FOUNDING_SANDBOX = "pri_01kypfzvyvgmytaefznh4npsz7";
+
+  it("创始价 ¥88 不在任何白名单里", () => {
+    // 它在 Paddle 侧仍是 active,所以只要白名单放它进来就真能被买 ——
+    // ¥88 买 12 个月,比年度档便宜 ¥20,而我们既不知情也拦不住。
+    // 产品侧从未实现席位计数,entitlements 也不记录成交价,「前 100 席」无法执行。
+    expect(LIVE_PRICE_MONTHS).not.toHaveProperty(FOUNDING_LIVE);
+    expect(SANDBOX_PRICE_MONTHS).not.toHaveProperty(FOUNDING_SANDBOX);
+  });
+
+  it("live 与 sandbox 档位一一对应", () => {
+    // 两边月数集合必须相同。不一致会让 sandbox 测通的路径到 live 变成 400,
+    // 那类差异最难查 —— 因为所有自动化测试都是绿的。
+    expect(Object.values(SANDBOX_PRICE_MONTHS).sort()).toEqual(
+      Object.values(LIVE_PRICE_MONTHS).sort(),
+    );
+  });
+
+  it("只有三档,且是 3 / 12 / 24 个月", () => {
+    expect(Object.values(LIVE_PRICE_MONTHS).sort((a, b) => a - b)).toEqual([3, 12, 24]);
+  });
+
+  it("每档月数都在 webhook 上限内", () => {
+    for (const months of Object.values(LIVE_PRICE_MONTHS)) {
+      expect(months).toBeLessThanOrEqual(MAX_WEBHOOK_MONTHS);
+    }
+  });
 });

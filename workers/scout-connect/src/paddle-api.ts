@@ -9,7 +9,13 @@
  * customer 对象**,只有 `customer_id`。所以「从 payload 直接拿邮箱」这条路不存在;
  * 而 `custom_data` 确实会原样透传到 webhook。
  *
- * 另一件实测确认的事:**显式传 `checkout.url` 会覆盖账号级的 default payment
+ * 另一件实测确认的事(2026-08-01 在 **live** 复验):**显式传 `checkout.url` 会
+ * 覆盖账号级的 default payment link**,这行不能删 —— 本 Paddle 账号的 default
+ * 指向另一个产品(agentmentor.dev),不传就会把用户送去那边一个不认识本交易的页面。
+ * live 只接受**已审批**域名(sandbox 自动批准,所以这条只能在 live 验证);
+ * mediaryconnect.app 已批准,实测返回 mediaryconnect.app/buy?_ptxn=...。
+ *
+ * 原注释:显式传 `checkout.url` 会覆盖账号级的 default payment
  * link**。这让同一个 Paddle 账号能承载多个产品 —— 各自传自己的域名,default
  * 填谁都不生效。
  */
