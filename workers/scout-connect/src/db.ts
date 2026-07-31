@@ -197,7 +197,7 @@ export interface D1Database {
   prepare(query: string): D1PreparedStatement;
   /**
    * 一次往返执行多条语句(D1 原生 API)。限流用它把 DELETE+INSERT+COUNT
-   * 合成一次往返 —— 三次独立 await 会让每次发信多付三个 D1 RTT。
+   * 合成 1 次往返;逐条 await 要 3 次,即每次发信多付 2 次 D1 RTT。
    *
    * **可选**:真实 D1 一定有,但测试里的窄 fake 只 stub `prepare`。
    * 缺失时 hitAndCount 回退成逐条 await(行为一致,只是慢),
@@ -535,8 +535,8 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
     },
 
     async hitAndCount(bucket, key, at, windowStart) {
-      // 两条语句用 batch 一次往返(D1 不接受显式事务)。顺序:先写再数,
-      // 所以返回值**含本次**。
+      // 三条语句(DELETE 过期 → INSERT 本次 → COUNT)用 batch 合成一次往返
+      // (D1 不接受显式事务)。COUNT 在 INSERT 之后,所以返回值**含本次**。
       //
       // 顺手删过期行:限流表只在乎窗口内的数据,不清理会无限增长。
       // 只删**本 bucket+key** 的过期行 —— 全表清理要扫全表,而这里

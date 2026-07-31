@@ -88,23 +88,19 @@ const slugCheckLimiter = createRateLimiter({
 
 
 /**
- * 发信入口的限流闸(magic link / waitlist 共用)。
- *
- * **调用位置必须在邮箱形状校验之后**:否则一串 `not-an-email` 就能把正常用户
- * 的配额耗光(拒绝服务),而那些请求本来就注定 400。
- *
- * 两个维度都要过。IP 缺失时(理论上 CF 总会给 cf-connecting-ip)只走邮箱维度 ——
- * 不因为拿不到 IP 就放弃全部防护,也不因此误伤(邮箱维度仍在)。
- *
- * 返回 429 而不是静默丢弃:让脚本作者知道撞墙了,也让正常用户看到明确原因。
- */
-/**
- * 发信入口限流(**跨实例,走 D1**)。
+ * 发信入口限流 —— **只判 IP 维度**(**跨实例,走 D1**)。
  *
  * 原先用内存滑动窗口,但 Worker 每次请求可能落在不同隔离实例上、各有一份
  * 计数 —— 生产实测同一邮箱连打 5 次得到 `429 202 429 202 202`,实际拦截率
  * 约 40%。D1 是所有实例共享的唯一真源,计数才一致。
  *
+ * **调用位置必须在邮箱形状校验之后**:否则一串 `not-an-email` 就能把正常用户
+ * 的配额耗光(拒绝服务),而那些请求本来就注定 400。
+ *
+ * 拿不到 cf-connecting-ip 时放行(理论上 CF 总会给)—— 调用方 /waitlist 只有
+ * 这一道,/api/auth/magic 还有邮箱维度兜底。
+ *
+ * 调用方返回 429 而不是静默丢弃:让脚本作者知道撞墙了,也让正常用户看到原因。
  * fail open(D1 抖动时放行)的理由见 rate-limit.ts 的 checkRateLimit。
  */
 async function signupIpRateLimited(request: Request, deps: RouteDeps): Promise<boolean> {
