@@ -340,6 +340,37 @@ describe("TianyiStorageExecutor write-scope guard (derived scope)", () => {
     await executor.listSubdirectories({ directoryId: "elsewhere" });
     await expect(executor.removeDirectory("stranger")).rejects.toThrow(/WRITE_SCOPE_VIOLATION/);
   });
+
+  it("authorizes createDirectory under a show folder REUSED via listChildDirectories (#210 / pan123 #168)", async () => {
+    // Same production shape as pan123 莉可丽丝: ensureMediaLibraryDirectory finds an
+    // existing show folder via listChildDirectories and returns its id — without
+    // derived-scope registration the follow-up createDirectory(Season NN) dies with
+    // WRITE_SCOPE_VIOLATION.
+    const fs = new Map<string, TianyiItem[]>();
+    fs.set(SCOPE, [folder("existing-show", "凡人修仙传 (2020)")]);
+    fs.set("existing-show", []);
+    const listFiles = vi.fn<TianyiClient["listFiles"]>(async (dirId) => fs.get(dirId ?? "") ?? []);
+    const executor = makeExecutor(fakeClient({ listFiles }));
+
+    const children = await executor.listChildDirectories(SCOPE);
+    expect(children).toEqual([{ id: "existing-show", name: "凡人修仙传 (2020)" }]);
+
+    await expect(
+      executor.createDirectory({ name: "Season 01", parentId: "existing-show" }),
+    ).resolves.toBe("newdir123");
+  });
+
+  it("does NOT widen scope via listChildDirectories on an OUT-of-scope dir (read ≠ write)", async () => {
+    const fs = new Map<string, TianyiItem[]>();
+    fs.set("elsewhere", [folder("stranger", "x")]);
+    const listFiles = vi.fn<TianyiClient["listFiles"]>(async (dirId) => fs.get(dirId ?? "") ?? []);
+    const executor = makeExecutor(fakeClient({ listFiles }));
+
+    await executor.listChildDirectories("elsewhere");
+    await expect(
+      executor.createDirectory({ name: "Season 01", parentId: "stranger" }),
+    ).rejects.toThrow(/WRITE_SCOPE_VIOLATION/);
+  });
 });
 
 describe("TianyiStorageExecutor.removeDirectory / recursive-list safety", () => {

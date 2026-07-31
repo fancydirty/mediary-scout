@@ -241,6 +241,47 @@ describe("GuangYaStorageExecutor write-scope guard", () => {
     await expect(executor.removeDirectory("stranger")).rejects.toThrow(/WRITE_SCOPE_VIOLATION/);
   });
 
+  it("authorizes createDirectory under a show folder REUSED via listChildDirectories (#210 / pan123 #168)", async () => {
+    // Same production shape as pan123 莉可丽丝 / issue #210: ensureMediaLibraryDirectory
+    // reuses an existing show folder from listChildDirectories; without derived-scope
+    // registration createDirectory(Season NN) dies with WRITE_SCOPE_VIOLATION.
+    const fs = new Map<string, GuangYaStorageItem[]>();
+    fs.set(SCOPE, [
+      { fileId: "existing-show", parentId: SCOPE, fileName: "凡人修仙传 (2020)", fileSize: 0, resType: 2 },
+    ]);
+    fs.set("existing-show", []);
+    const listFiles = vi.fn<GuangYaStorageClient["listFiles"]>(async (p: string) => fs.get(p) ?? []);
+    const createDir = vi.fn<GuangYaStorageClient["createDir"]>(async () => "newdir123");
+    const executor = new GuangYaStorageExecutor({
+      client: fakeClient({ listFiles, createDir }),
+      writeScopeDirectoryIds: [SCOPE],
+    });
+
+    const children = await executor.listChildDirectories(SCOPE);
+    expect(children).toEqual([{ id: "existing-show", name: "凡人修仙传 (2020)" }]);
+
+    await expect(
+      executor.createDirectory({ name: "Season 01", parentId: "existing-show" }),
+    ).resolves.toBe("newdir123");
+  });
+
+  it("does NOT widen scope via listChildDirectories on an OUT-of-scope dir (read ≠ write)", async () => {
+    const fs = new Map<string, GuangYaStorageItem[]>();
+    fs.set("elsewhere", [
+      { fileId: "stranger", parentId: "elsewhere", fileName: "x", fileSize: 0, resType: 2 },
+    ]);
+    const listFiles = vi.fn<GuangYaStorageClient["listFiles"]>(async (p: string) => fs.get(p) ?? []);
+    const executor = new GuangYaStorageExecutor({
+      client: fakeClient({ listFiles }),
+      writeScopeDirectoryIds: [SCOPE],
+    });
+
+    await executor.listChildDirectories("elsewhere");
+    await expect(
+      executor.createDirectory({ name: "Season 01", parentId: "stranger" }),
+    ).rejects.toThrow(/WRITE_SCOPE_VIOLATION/);
+  });
+
   it("authorizes writes into runtime-created NESTED dirs (derived scope), still refuses unknown ids", async () => {
     // The real workflow provisions the dir chain TOP-DOWN from a scope root via
     // createDirectory before any write, then transfers/moves into the NESTED leaf —

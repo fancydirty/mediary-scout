@@ -74,9 +74,10 @@ export class TianyiStorageExecutor implements StorageExecutor {
   private readonly client: TianyiClient;
   private readonly writeScopeDirectoryIds: Set<string>;
   /** Ids of nested dirs find-or-created (createDirectory) or discovered under an
-   *  already-in-scope parent (listSubdirectories, PR#58) during this run. They
-   *  become authorized write targets — 天翼 has no parent-walk API to verify them
-   *  otherwise. Consulted by assertWithinWriteScope / isWithinWriteScope. */
+   *  already-in-scope parent (listChildDirectories, listSubdirectories / PR#58)
+   *  during this run. They become authorized write targets — 天翼 has no parent-walk
+   *  API to verify them otherwise. Consulted by assertWithinWriteScope /
+   *  isWithinWriteScope. */
   private readonly derivedScopeIds = new Set<string>();
   private readonly protectedDirectoryIds: Set<string>;
   private readonly minVideoSizeBytes: number;
@@ -319,6 +320,13 @@ export class TianyiStorageExecutor implements StorageExecutor {
   }
 
   async listChildDirectories(directoryId: string): Promise<Array<{ id: string; name: string }>> {
+    // Derived-scope registration (same rule as the recursive lister above / pan123 #168):
+    // a subdir DISCOVERED under an in-scope parent is itself in scope. Without
+    // this, ensureMediaLibraryDirectory reusing an EXISTING show folder returns
+    // an unregistered id and the follow-up createDirectory(Season NN) dies with
+    // WRITE_SCOPE_VIOLATION (issue #210). Listing an OUT-of-scope dir must NOT
+    // widen scope (read ≠ write) — gate on the parent, computed BEFORE listing.
+    const parentInScope = this.isWithinWriteScope(directoryId);
     const items = await this.client.listFiles(directoryId);
     const dirs: Array<{ id: string; name: string }> = [];
     for (const item of items) {
@@ -327,6 +335,9 @@ export class TianyiStorageExecutor implements StorageExecutor {
       }
       const id = idOf(item);
       if (id) {
+        if (parentInScope) {
+          this.derivedScopeIds.add(normalizeId(id));
+        }
         dirs.push({ id, name: nameOf(item) });
       }
     }
