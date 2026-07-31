@@ -134,5 +134,7 @@ CREATE TABLE rate_limits (
 -- 计数查询是 WHERE bucket=? AND key=? AND at>? —— at 必须在复合索引末尾
 -- (等值列在前、范围列在后)才用得上。
 CREATE INDEX idx_rate_limits_lookup ON rate_limits (bucket, key, at);
--- 过期清理按时间扫全表,没这条会全表扫描。
-CREATE INDEX idx_rate_limits_at ON rate_limits (at);
+-- 刻意**不**建 (at) 单列索引:每次请求的清理是
+-- `DELETE ... WHERE bucket=? AND key=? AND at<=?`,已被上面的复合索引覆盖。
+-- 多一条索引只会让每次 INSERT 多付一次索引维护(写放大),没有读收益。
+-- 将来若真要做「全表扫过期行」的周期性 sweep,再加。

@@ -118,6 +118,25 @@ describe("checkRateLimit(跨实例 / D1)", () => {
     }
   });
 
+  // Copilot round-1:at/windowStart 在 try 之外算,now() 返回非有限值时
+  // toISOString() 抛 RangeError,函数会 500 而不是 fail open —— 违反本函数
+  // 自己声明的失败契约。
+  it("now() 返回非有限值 → 仍 fail OPEN(不抛出)", async () => {
+    const store = fakeStore();
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      for (const bad of [NaN, Infinity, -Infinity]) {
+        const r = await checkRateLimit({
+          store, bucket: "b", key: "k", limit: 1, windowMs: 60_000, now: () => bad,
+        });
+        expect(r.allowed).toBe(true);
+      }
+      expect(spy).toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   // 这条是本次改造的**理由**:内存限流器在多实例下各算各的。
   it("跨「实例」共享同一 store 时计数一致(内存限流器做不到的事)", async () => {
     const store = fakeStore();

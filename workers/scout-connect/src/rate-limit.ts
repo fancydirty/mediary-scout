@@ -121,10 +121,13 @@ export async function checkRateLimit(input: {
   windowMs: number;
   now: () => number;
 }): Promise<{ allowed: boolean }> {
-  const nowMs = input.now();
-  const at = new Date(nowMs).toISOString();
-  const windowStart = new Date(nowMs - input.windowMs).toISOString();
+  // 时间计算也放进 try:now() 返回非有限值时 toISOString() 抛 RangeError,
+  // 若在 try 之外就会 500 —— 那正是本函数声明要避免的失败模式。
+  // fail open 的边界必须覆盖**整个函数**,而不只是 store 调用。
   try {
+    const nowMs = input.now();
+    const at = new Date(nowMs).toISOString();
+    const windowStart = new Date(nowMs - input.windowMs).toISOString();
     const count = await input.store.hitAndCount(input.bucket, input.key, at, windowStart);
     return { allowed: count <= input.limit };
   } catch (e) {

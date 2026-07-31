@@ -692,3 +692,82 @@ describe("endpoint cf_access_app_id 可空", () => {
     expect(ep.cf_access_policy_id).toBeNull();
   });
 });
+
+// Copilot round-1:hitAndCount 是发信限流的关键路径,却没有单测覆盖
+// (batch 与回退两条路径、语句顺序、COUNT 结果解析)。
+describe("hitAndCount(限流计数)", () => {
+  it("d1.batch 存在时:按 [DELETE, INSERT, COUNT] 一次往返,从最后一条读 cnt", async () => {
+    const seen: Array<{ query: string; binds: unknown[] }> = [];
+    const mkStmt = (query: string): D1PreparedStatement => {
+      const binds: unknown[] = [];
+      const stmt: D1PreparedStatement = {
+        bind(...v: unknown[]) { binds.push(...v); seen.push({ query, binds }); return stmt; },
+        async first<T>() { return null as T | null; },
+        async all<T>() { return { results: [] as T[] }; },
+        async run() { return undefined; },
+      };
+      return stmt;
+    };
+    let batched: D1PreparedStatement[] | null = null;
+    const d1: D1Database = {
+      prepare: mkStmt,
+      async batch(stmts) {
+        batched = stmts;
+        // 只有最后一条(COUNT)有 results
+        return [{}, {}, { results: [{ cnt: 4 }] }];
+      },
+    };
+    const db = createD1ConnectDb(d1);
+    const n = await db.hitAndCount("signup_ip", "1.2.3.4", "2026-08-01T00:00:10Z", "2026-08-01T00:00:00Z");
+    expect(n).toBe(4);
+    expect(batched).not.toBeNull();
+    expect(batched!.length).toBe(3);
+    // 语句顺序:先删过期、再写本次、最后数(所以返回值含本次)
+    const qs = seen.map((c) => c.query);
+    expect(qs[0]).toContain("DELETE FROM rate_limits");
+    expect(qs[1]).toContain("INSERT INTO rate_limits");
+    expect(qs[2]).toContain("SELECT COUNT(*)");
+    // DELETE 用 <= windowStart(含边界),COUNT 用 > windowStart —— 两者互补,
+    // 不会把恰好落在边界上的行既删掉又数进去。
+    expect(qs[0]).toContain("at <= ?");
+    expect(qs[2]).toContain("at > ?");
+  });
+
+  it("d1.batch 缺失时:回退成 run/run/first,顺序与 binds 不变", async () => {
+    const order: string[] = [];
+    const mkStmt = (query: string): D1PreparedStatement => {
+      const binds: unknown[] = [];
+      const stmt: D1PreparedStatement = {
+        bind(...v: unknown[]) { binds.push(...v); return stmt; },
+        async first<T>() { order.push(`first:${query.slice(0, 12)}`); return { cnt: 2 } as unknown as T; },
+        async all<T>() { return { results: [] as T[] }; },
+        async run() { order.push(`run:${query.trim().slice(0, 6)}`); return undefined; },
+      };
+      return stmt;
+    };
+    // 刻意不给 batch —— 走回退路径
+    const d1: D1Database = { prepare: mkStmt };
+    const db = createD1ConnectDb(d1);
+    const n = await db.hitAndCount("signup_email", "a@b.c", "2026-08-01T00:00:10Z", "2026-08-01T00:00:00Z");
+    expect(n).toBe(2);
+    expect(order[0]).toContain("run:DELETE");
+    expect(order[1]).toContain("run:INSERT");
+    expect(order[2]).toContain("first:SELECT COUNT");
+  });
+
+  it("COUNT 返回非数字(异常响应)时算 0,不抛", async () => {
+    const d1: D1Database = {
+      prepare: () => {
+        const stmt: D1PreparedStatement = {
+          bind() { return stmt; },
+          async first<T>() { return { cnt: "oops" } as unknown as T; },
+          async all<T>() { return { results: [] as T[] }; },
+          async run() { return undefined; },
+        };
+        return stmt;
+      },
+    };
+    const db = createD1ConnectDb(d1);
+    expect(await db.hitAndCount("b", "k", "2026-08-01T00:00:10Z", "2026-08-01T00:00:00Z")).toBe(0);
+  });
+});
