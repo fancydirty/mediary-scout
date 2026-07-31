@@ -170,6 +170,27 @@ describe("handleRequest", () => {
     expect(res.headers.get("location")).toBe("https://mediaryconnect.app/");
   });
 
+  // Copilot round-1:301 丢 query。主站那条 beta 链接若带 UTM 就被吃掉,
+  // 而同文件的 www.* → apex 早就写明「preserving path (and query)」——
+  // 有正确写法在眼前却硬编码了。
+  it("beta 301 保留 query(UTM 不能丢)", async () => {
+    const { deps } = setup();
+    const res = await handleRequest(
+      new Request("https://beta.mediaryconnect.app/?utm_source=x&a=1", { redirect: "manual" }),
+      deps,
+    );
+    expect(res.headers.get("location")).toBe("https://mediaryconnect.app/?utm_source=x&a=1");
+  });
+
+  it("GET /beta 的 301 也保留 query", async () => {
+    const { deps } = setup();
+    const res = await handleRequest(
+      new Request(`${BASE}/beta?utm_campaign=y`, { redirect: "manual" }),
+      deps,
+    );
+    expect(res.headers.get("location")).toBe("https://mediaryconnect.app/?utm_campaign=y");
+  });
+
   it("/waitlist 报名接口保留(已有报名者的数据还在,别把接口也拆了)", async () => {
     const { deps } = setup();
     const res = await handleRequest(

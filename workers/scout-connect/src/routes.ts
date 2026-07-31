@@ -316,21 +316,23 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
   }
 
   if (method === "GET" && path === "/") {
-    // The beta subdomain's root IS the signup page: "beta.mediaryconnect.app"
-    // is the canonical marketing URL, so "beta.…/beta" would stutter. Apex
-    // keeps the Mediary Connect home page; the check is host-exact so no other
-    // subdomain (or the apex) accidentally gets the signup page.
+    // beta 子域根路径 **301 到 apex** —— 内测报名页已退役。
+    // apex 现在有完整的登录+购买路径,用户不需要先「报名内测」再等邀请;
+    // 留着它还多一个要同步一致性的地方(创始价撤掉时就在那里多活了一轮)。
+    // 301 而非 404:主站还有一条指向它的链接,404 会丢权重,也可能有人存了书签。
+    // /waitlist 接口**保留**(已有报名者的数据还在)。
+    //
     // Normalize BOTH sides: url.hostname is already lowercase, but
     // deps.rootDomain comes from env (CONNECT_ROOT_DOMAIN) untrimmed — a
     // mixed-case or space-padded value would silently break this routing.
     const betaHost = `beta.${deps.rootDomain.trim().toLowerCase()}`;
     if (url.hostname.toLowerCase() === betaHost) {
-      // 内测报名页已退役:apex 现在有完整的登录+购买路径,用户不需要先
-      // 「报名内测」再等邀请。留着它还多一个要同步一致性的地方 ——
-      // 创始价撤掉时就在那里多活了一轮(Copilot 抓到的)。
-      // **301 而非 404**:主站还有一条指向它的链接,404 会丢掉那点权重,
-      // 也可能有人存了书签。/waitlist 接口**保留**(已有报名者的数据还在)。
-      return Response.redirect(`https://${deps.rootDomain.trim().toLowerCase()}/`, 301);
+      // 与上面 www.* → apex 同款写法:用 URL 改 host,**保留 query**
+      // (主站那条链接若带 UTM 不能丢)并沿用当前 scheme(本地/预发一致)。
+      const target = new URL(url.toString());
+      target.hostname = deps.rootDomain.trim().toLowerCase();
+      target.pathname = "/";
+      return Response.redirect(target.toString(), 301);
     }
     // posters:true 放行 TMDB 图片代理(hero 海报墙)。只首页需要 ——
     // 其余页面维持 img-src 'self' data: 的最严策略。
@@ -489,8 +491,12 @@ ${hreflang}
     return htmlPage(adminPage());
   }
   if (method === "GET" && path === "/beta") {
-    // 同上:内测页退役,301 到 apex(理由见 beta 子域那处的注释)。
-    return Response.redirect(`https://${deps.rootDomain.trim().toLowerCase()}/`, 301);
+    // 内测页退役,301 到 apex(理由见 beta 子域那处的注释)。
+    // 同样保留 query、沿用 scheme。
+    const target = new URL(url.toString());
+    target.hostname = deps.rootDomain.trim().toLowerCase();
+    target.pathname = "/";
+    return Response.redirect(target.toString(), 301);
   }
 
   // ---- admin api (bearer required) ----
