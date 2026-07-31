@@ -202,8 +202,12 @@ describe("home page(apex 落地页)", () => {
     // 水平 + 垂直两层,相乘
     expect(html).toContain("mask-composite:intersect");
     expect(html).toContain("-webkit-mask-composite:source-in");
-    // 四个方向都要淡:只做水平的话上/右边界仍是硬线
-    expect(html).toMatch(/mask-image:\s*\n?\s*linear-gradient\(90deg,transparent/);
+    // 四个方向都要淡:只做水平的话上/右边界仍是硬线。
+    // **正则要排除 -webkit- 前缀**:直接写 /mask-image:/ 会匹配到
+    // `-webkit-mask-image:`(子串包含),那样即便标准属性被删掉测试照样绿,
+    // Firefox 上的退化就测不出来。用负向后顾锁住无前缀那条。
+    expect(html).toMatch(/(?<!-webkit-)mask-image:\s*\n?\s*linear-gradient\(90deg,transparent/);
+    expect(html).toMatch(/-webkit-mask-image:\s*\n?\s*linear-gradient\(90deg,transparent/);
     expect(html).toContain("linear-gradient(180deg,transparent 0%,#000 12%,#000 88%,transparent 100%)");
   });
 

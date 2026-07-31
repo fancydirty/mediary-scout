@@ -163,9 +163,9 @@ ${BRAND_CSS}
   gap:6px;transform:rotate(-2deg) scale(1.14);
   animation:drift 26s ease-in-out infinite alternate}
 .pw img{width:100%;height:104px;object-fit:cover;border-radius:5px;display:block;
-  /* 压暗:海报是背景,不能抢标题。.52 是配合上面两层(mask 的右端保持不透明
-     + ::after 右侧只压 .18)调出来的 —— 右侧遮得轻,图本身若不压暗就会比
-     左侧亮太多,看起来像两张拼接的图。 */
+  /* 压暗:海报是背景,不能抢标题。.52 是配合上面两层调出来的 ——
+     mask 右端(92%→100%)只从 #000 淡到 .55、::after 右侧只压 .18,
+     也就是右侧遮得很轻;图本身若不压暗就会比左侧亮太多,像两张拼接的图。 */
   opacity:.52}
 @keyframes drift{
   from{transform:rotate(-2deg) scale(1.14) translate3d(0,0,0)}
