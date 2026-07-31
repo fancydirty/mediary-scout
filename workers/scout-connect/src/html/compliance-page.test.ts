@@ -178,6 +178,28 @@ describe("合规页与产品现实的一致性", () => {
     for (const p of ["¥45", "¥108", "¥188"]) expect(page).toContain(p);
   });
 
+  // Copilot round-2:隐私政策不该点名任何具体支付方式 —— Paddle 支持的方式
+  // 按地区/时间变,写死一个就是给自己埋下一次过时(这个 PR 本身就是在修
+  // 「支付宝」过时的问题)。这一段的重点是「我们碰不到」,与方式无关。
+  it("隐私政策不点名具体支付方式(避免再次过时)", () => {
+    for (const lang of ["zh", "en"] as const) {
+      const html = compliancePage("privacy", lang);
+      for (const m of ["支付宝", "Alipay", "微信支付", "WeChat Pay"]) {
+        expect(html, `${lang} 不该出现 ${m}`).not.toContain(m);
+      }
+    }
+    // 但「我们碰不到付款凭据」这个承诺必须还在
+    expect(compliancePage("privacy", "zh")).toContain("不接触");
+    expect(compliancePage("privacy", "en")).toContain("never touch");
+  });
+
+  it("改了内容就要动 Last updated(否则这个字段是骗人的)", () => {
+    for (const key of ["pricing", "privacy"] as const) {
+      expect(compliancePage(key, "en")).toContain("Last updated: 2026-07-31");
+      expect(compliancePage(key, "zh")).toContain("最后更新:2026-07-31");
+    }
+  });
+
   it("三档价格与首页一致", () => {
     const zh = compliancePage("pricing", "zh");
     for (const p of ["¥45", "¥108", "¥188"]) expect(zh).toContain(p);

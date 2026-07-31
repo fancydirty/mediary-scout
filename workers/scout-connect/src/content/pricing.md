@@ -2,9 +2,9 @@
 
 ## 定价
 
-Last updated: 2026-07-28
+Last updated: 2026-07-31
 
-最后更新:2026-07-28
+最后更新:2026-07-31
 
 ## Prepaid time, never auto-charged
 
