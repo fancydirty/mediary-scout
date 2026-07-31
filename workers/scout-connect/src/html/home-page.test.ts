@@ -206,9 +206,30 @@ describe("home page(apex 落地页)", () => {
     // **正则要排除 -webkit- 前缀**:直接写 /mask-image:/ 会匹配到
     // `-webkit-mask-image:`(子串包含),那样即便标准属性被删掉测试照样绿,
     // Firefox 上的退化就测不出来。用负向后顾锁住无前缀那条。
-    expect(html).toMatch(/(?<!-webkit-)mask-image:\s*\n?\s*linear-gradient\(90deg,transparent/);
-    expect(html).toMatch(/-webkit-mask-image:\s*\n?\s*linear-gradient\(90deg,transparent/);
-    expect(html).toContain("linear-gradient(180deg,transparent 0%,#000 12%,#000 88%,transparent 100%)");
+    // 断言要落在**同一条声明**内(分号前):否则 toContain 只要文件里任何地方
+    // 出现 180deg 就过,而无前缀的 mask-image 可能只剩水平那层(Firefox 退化)。
+    const decl = (prefix: string) => {
+      const re = new RegExp(`${prefix}mask-image:([^;]*);`);
+      return html.match(re)?.[1] ?? "";
+    };
+    for (const p of ["(?<!-webkit-)", "-webkit-"]) {
+      const d = decl(p);
+      expect(d, `${p}mask-image 缺水平层`).toContain("linear-gradient(90deg,transparent");
+      expect(d, `${p}mask-image 缺垂直层`).toContain("linear-gradient(180deg,transparent");
+    }
+  });
+
+  // Copilot round-3:桌面 mask 是「从左淡入」(让左侧文字区干净),
+  // 但窄屏是单列、海报在文字上方的横条 —— 水平淡入会吃掉横条左半边。
+  // 实测 392px 下若不在 @container 里覆盖,mask 仍带 90deg。
+  it("窄屏覆盖 mask 为纵向淡出(桌面的水平淡入在横条上是错的)", () => {
+    const html = homePage();
+    const i = html.indexOf("@container (max-width:760px)");
+    expect(i).toBeGreaterThan(0);
+    const seg = html.slice(i, i + 2600);
+    expect(seg).toContain("linear-gradient(180deg,#000 0%,#000 55%,transparent 100%)");
+    // 覆盖必须同时给两个前缀,否则 Firefox 仍吃桌面那套
+    expect(seg).toContain("-webkit-mask-image:linear-gradient(180deg");
   });
 
   it("按钮文字色用 .apex 前缀覆盖(否则被 .apex a 的绿色压掉)", () => {

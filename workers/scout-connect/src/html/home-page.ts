@@ -341,9 +341,16 @@ ${BRAND_CSS}
 }
 @container (max-width:760px){
   .hero{grid-template-columns:1fr;padding:var(--s-5) var(--gutter) var(--s-6);gap:var(--s-4)}
-  /* 窄屏海报墙压成顶部装饰带,遮罩改成从上到下淡出 */
+  /* 窄屏:海报墙压成顶部装饰带,遮罩改成**纵向**淡出。
+     必须显式覆盖 mask —— 桌面那套是「从左淡入」(为了让左侧文字区干净),
+     但窄屏是单列、海报在文字**上方**的横条,水平淡入会把横条左半边吃掉。
+     实测 392px 下若不覆盖,mask 仍带 90deg。 */
   .hero-r{order:-1;margin:calc(var(--s-5) * -1) calc(var(--gutter) * -1) var(--s-2);
-    height:150px;align-self:auto}
+    height:150px;align-self:auto;
+    -webkit-mask-image:linear-gradient(180deg,#000 0%,#000 55%,transparent 100%);
+            mask-image:linear-gradient(180deg,#000 0%,#000 55%,transparent 100%);
+    -webkit-mask-composite:source-over;
+            mask-composite:add}
   .pw img{height:74px}
   .hero-r::after{background:linear-gradient(180deg,rgba(17,19,18,.55) 0%,
     rgba(17,19,18,.2) 40%,var(--bg-0) 100%)}
