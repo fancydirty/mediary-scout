@@ -82,10 +82,13 @@ describe("compliance pages", () => {
     }
   });
 
-  it("pricing page lists the four tiers with exact CNY amounts (两种语言都要有)", () => {
+  // 创始价那档已撤(代码里无席位计数、无续期锁价,「前 100 席 · 续期同价」
+  // 兑现不了)。所以是**三**档,不是四档 —— 这条测试原本钉着 ¥88,
+  // 撤档后它就成了「钉住一个不该存在的承诺」。
+  it("pricing page lists the three tiers with exact CNY amounts (两种语言都要有)", () => {
     for (const lang of ["en", "zh"] as const) {
       const html = compliancePage("pricing", lang);
-      for (const amount of ["¥45", "¥108", "¥188", "¥88"]) {
+      for (const amount of ["¥45", "¥108", "¥188"]) {
         expect(html, `${lang} 缺 ${amount}`).toContain(amount);
       }
     }
@@ -109,5 +112,55 @@ describe("compliance pages", () => {
       expect(html, `${key}/${lang} 含未渲染的粗体语法`).not.toContain("**");
       }
     }
+  });
+});
+
+// 合规页与首页/代码现实必须一致 —— 不一致就是虚假宣传,退款争议里站不住。
+describe("合规页与产品现实的一致性", () => {
+  const ALL = ["pricing", "terms", "privacy", "refund", "contact"] as const;
+
+  it("五页都不提「支付宝」(live API 实测中国区不支持)", () => {
+    // Paddle live API 实测可用:card / wechat_pay / apple_pay / google_pay。
+    // 写支付宝既是事实错误,也是 MoR 的支付方式表述合规风险。
+    for (const key of ALL) {
+      for (const lang of ["zh", "en"] as const) {
+        const html = compliancePage(key, lang);
+        expect(html, `${key}/${lang}`).not.toContain("支付宝");
+        expect(html, `${key}/${lang}`).not.toContain("Alipay");
+      }
+    }
+  });
+
+  it("定价页不承诺创始价席位(代码里无席位计数、无续期锁价)", () => {
+    for (const lang of ["zh", "en"] as const) {
+      const html = compliancePage("pricing", lang);
+      expect(html).not.toContain("创始价");
+      expect(html).not.toContain("Founding");
+      expect(html).not.toContain("100 席");
+      expect(html).not.toContain("100 seats");
+    }
+  });
+
+  it("定价页提到微信支付与 MoR 账单说明(消除 chargeback 诱因)", () => {
+    const zh = compliancePage("pricing", "zh");
+    expect(zh).toContain("微信支付");
+    // 账单上出现 Paddle 的名字是 chargeback 的常见诱因,要提前说明
+    expect(zh).toContain("记录商户");
+  });
+
+  it("定价页补了首页没有的细节:购买顺序 / 不包含什么 / 换档调价 / 容量", () => {
+    const zh = compliancePage("pricing", "zh");
+    expect(zh).toContain("先登录");
+    expect(zh).toContain("不包含什么");
+    expect(zh).toContain("换档与调价");
+    expect(zh).toContain("容量");
+    // 涨价不影响已买时长 —— 这条能兑现(预付时长本就没有下次扣款)
+    expect(zh).toContain("已经买到的时长不受影响");
+  });
+
+  it("三档价格与首页一致", () => {
+    const zh = compliancePage("pricing", "zh");
+    for (const p of ["¥45", "¥108", "¥188"]) expect(zh).toContain(p);
+    expect(zh).not.toContain("¥88");
   });
 });

@@ -19,12 +19,12 @@ Mediary Connect 只经手「让你从外网打开自己实例」所必需的最�
 ## 我们收集什么
 
 - **Email address** — your sole account identifier, used for login (magic link), payment receipts, and expiry reminders.
-- **Payment info** — handled by Paddle (Merchant of Record). We **never touch** your card number or Alipay account; we only receive a transaction ID and payment email from Paddle.
+- **Payment info** — handled by Paddle (Merchant of Record). We **never touch** your card number or WeChat Pay account; we only receive a transaction ID and payment email from Paddle.
 - **Service config** — the slug you chose, tunnel identifier, and provisioning/suspension times.
 - **Runtime metadata** — tunnel connection status (online/offline) and basic HTTP metadata in access logs (produced at the Cloudflare edge).
 
 - **邮箱地址**:你的唯一账号标识,用于登录(魔法链接)、付款收据与到期提醒。
-- **付款信息**:由 Paddle(Merchant of Record)处理。我们**不接触**你的卡号或支付宝账号,只从 Paddle 收到交易号与付款邮箱。
+- **付款信息**:由 Paddle(Merchant of Record)处理。我们**不接触**你的卡号或微信支付账号,只从 Paddle 收到交易号与付款邮箱。
 - **服务配置**:你选择的域名前缀(slug)、隧道标识、开通/停用时间。
 - **运行元数据**:隧道连接状态(在线/离线)、访问日志中的基础 HTTP 元数据(由 Cloudflare 边缘产生)。
 
