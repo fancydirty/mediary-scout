@@ -44,6 +44,11 @@ export function ConnectLoginForm() {
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <input
           type="email"
+          /* name + required 不只是语义:required 让浏览器在空提交时**本地**
+             拦住(不白跑一次 server action 才提示),name 让自动填充与密码
+             管理器认得出这是邮箱字段。 */
+          name="email"
+          required
           inputMode="email"
           autoComplete="email"
           placeholder="your@email.com"

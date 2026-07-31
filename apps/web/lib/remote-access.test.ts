@@ -405,4 +405,16 @@ describe("ConnectLoginForm 的异常处理(源码断言)", () => {
     // 别退回固定 status
     expect(src).not.toContain('role="status"');
   });
+
+  // Copilot round-4:required 让浏览器在空提交时**本地**拦住,
+  // 不白跑一次 server action 才提示;name 让自动填充认得出邮箱字段。
+  it("邮箱输入框有 name 与 required", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync(
+      new URL("../components/settings/connect-login-form.tsx", import.meta.url),
+      "utf8",
+    );
+    expect(src).toContain('name="email"');
+    expect(src).toMatch(/\n\s+required\n/);
+  });
 });

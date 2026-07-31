@@ -1,5 +1,11 @@
-import { normalizeTurnstileSitekey } from "./theme.js";
-import { BRAND_BAR, BRAND_CSS, FAVICON_LINK, THEME_BASE, THEME_TOKENS } from "./theme.js";
+import {
+  BRAND_BAR,
+  BRAND_CSS,
+  FAVICON_LINK,
+  normalizeTurnstileSitekey,
+  THEME_BASE,
+  THEME_TOKENS,
+} from "./theme.js";
 
 /** 极简登录页:输邮箱 → POST /api/auth/magic → 收魔法链接邮件。无密码。
  *  Turnstile 成对配置时渲染 widget 并把 token 一起提交——否则 magic 端点
