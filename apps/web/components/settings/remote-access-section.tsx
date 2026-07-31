@@ -6,10 +6,11 @@ import {
   instanceConnectHostname,
   resolveRemoteAccessState,
   accountPasswordHref,
-  BETA_SITE_URL,
+  CONNECT_SITE_URL,
   consoleUrl,
 } from "../../lib/remote-access";
 import { PasswordChangeForm } from "../password-change-form";
+import { ConnectLoginForm } from "./connect-login-form";
 
 /**
  * 「远程访问」设置 section。
@@ -44,35 +45,57 @@ export async function RemoteAccessSection({
   });
 
   if (state.kind === "not_provisioned") {
-    // 内嵌报名表单已随设计改为**跳转链接**（beta.mediaryconnect.app 已上线，
-    // 报名与问卷都在站上完成）。链接是唯一入口。
-    // 没有「链接是否还活着」的自动检查：若 beta 站未来下线/迁移，把此分支
-    // 改回 return null 即可让整个 tab 自动隐藏（settings-tabs.tsx 的机制）。
+    // **双入口**:登录框(主)+ apex 跳转(次)。
+    // 登录框占主位是刻意的 —— 能在这个页面操作的人已经有实例(他正在用这个
+    // 容器),转化路径最短,不该把他踢去外站读一遍宣传再回来。
+    // 跳转仍然保留给「想先了解」的人。
     return (
       <section className="panel" style={{ maxWidth: 720, marginTop: 24 }}>
         <div className="panel-header">
           <div>
             <h2 className="panel-title">
               <Globe size={16} aria-hidden style={{ verticalAlign: "-2px", marginRight: 8 }} />
-              远程访问
+              远程访问服务已上线
             </h2>
             <p className="panel-note">
-              从任何设备经加密隧道访问你的实例：不开端口、不需公网 IP、不需域名。
-              内容与凭据始终只在你自己的机器上。
+              给这台实例一个专属域名，在外面也能打开 —— 不用给路由器开端口、不用 DDNS、不用公网 IP。
+              媒体内容与网盘凭据始终留在这台机器上。
             </p>
           </div>
+          <span className="hub-badge tone-green">NEW</span>
         </div>
-        <a
-          className="primary-button"
-          href={BETA_SITE_URL}
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{ textDecoration: "none" }}
+
+        <ConnectLoginForm />
+
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            flexWrap: "wrap",
+            marginTop: 14,
+            paddingTop: 14,
+            borderTop: "1px solid var(--border)",
+          }}
         >
-          了解详情并申请内测 →
-        </a>
-        <p className="panel-note" style={{ marginTop: 10 }}>
-          内测期免费，创始批 100 席。开通后回到这里会看到远程访问状态。
+          <span className="panel-note" style={{ margin: 0 }}>
+            想先了解？
+          </span>
+          <a
+            className="secondary-button"
+            href={CONNECT_SITE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ textDecoration: "none" }}
+          >
+            打开 mediaryconnect.app ↗
+          </a>
+        </div>
+
+        <p className="panel-note" style={{ marginTop: 14 }}>
+          <strong>它做什么：</strong>用一条 Cloudflare 加密隧道把这台实例发布到{" "}
+          <code>你选的名字.mediaryconnect.app</code>。<strong>它不做什么：</strong>
+          不托管实例、不代你搜索下载、不持有这台机器的访问密码。预付时长，不自动续费，14 天无理由退款。
         </p>
       </section>
     );

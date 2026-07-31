@@ -398,7 +398,7 @@ ${BRAND_CSS}
       <a href="#boundary" class="hm">边界</a>
       <a href="#pricing" class="hm">定价</a>
       <a href="https://github.com/fancydirty/mediary-scout" class="gh" target="_blank" rel="noopener">${GH_ICON}<span class="st num">GitHub</span></a>
-      <a href="#start" class="lg">登录</a>
+      <a href="/login" class="lg">登录</a>
     </div>
   </nav>
 

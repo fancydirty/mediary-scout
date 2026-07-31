@@ -17,9 +17,10 @@ import {
 import { assertSlug } from "./slug.js";
 import { checkSlug, type IsTaken } from "./slug-availability.js";
 import { homePage } from "./html/home-page.js";
+import { normalizeTurnstileSitekey } from "./html/theme.js";
 import { adminPage } from "./html/admin-page.js";
 import { invitePage, type InvitePageState } from "./html/invite-page.js";
-import { betaPage, normalizeTurnstileSitekey } from "./html/beta-page.js";
+
 import { CAPACITY_LIMIT, isAtCapacityError } from "./capacity.js";
 import { grantEntitlement } from "./grant.js";
 import { isPriceMapConfigured, parseTransactionCompleted, type PriceMonthsMap } from "./paddle-event.js";
@@ -324,7 +325,12 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
     // mixed-case or space-padded value would silently break this routing.
     const betaHost = `beta.${deps.rootDomain.trim().toLowerCase()}`;
     if (url.hostname.toLowerCase() === betaHost) {
-      return htmlPage(betaPage(turnstileSitekeyIfConfigured(deps)));
+      // 内测报名页已退役:apex 现在有完整的登录+购买路径,用户不需要先
+      // 「报名内测」再等邀请。留着它还多一个要同步一致性的地方 ——
+      // 创始价撤掉时就在那里多活了一轮(Copilot 抓到的)。
+      // **301 而非 404**:主站还有一条指向它的链接,404 会丢掉那点权重,
+      // 也可能有人存了书签。/waitlist 接口**保留**(已有报名者的数据还在)。
+      return Response.redirect(`https://${deps.rootDomain.trim().toLowerCase()}/`, 301);
     }
     // posters:true 放行 TMDB 图片代理(hero 海报墙)。只首页需要 ——
     // 其余页面维持 img-src 'self' data: 的最严策略。
@@ -483,7 +489,8 @@ ${hreflang}
     return htmlPage(adminPage());
   }
   if (method === "GET" && path === "/beta") {
-    return htmlPage(betaPage(turnstileSitekeyIfConfigured(deps)));
+    // 同上:内测页退役,301 到 apex(理由见 beta 子域那处的注释)。
+    return Response.redirect(`https://${deps.rootDomain.trim().toLowerCase()}/`, 301);
   }
 
   // ---- admin api (bearer required) ----

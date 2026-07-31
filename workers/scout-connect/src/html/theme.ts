@@ -38,3 +38,16 @@ export const BRAND_BAR = `<header class="brand">${LOGO_SVG}<span class="wordmark
 /** 品牌条 + 页脚链接的共享 CSS(令牌之外,零件级复用)。 */
 export const BRAND_CSS =
   '.brand{display:flex;align-items:center;gap:10px;padding:0 0 4px}.brand svg{display:block;flex:none}.wordmark{font-weight:700;font-size:15px;letter-spacing:.01em}.connect-tag{font-family:var(--mono);font-size:10.5px;letter-spacing:1px;color:var(--accent);border:1px solid rgba(30,215,96,.35);border-radius:999px;padding:3px 9px}';
+
+/**
+ * env 进来的 sitekey 会被插进 HTML 属性：只接受 Turnstile key 的真实字符集
+ * （0x4AAAAAAD-… 这类 [0-9A-Za-z_-]）。恶意/畸形值归一为空串（=无 widget），
+ * 绝不靠转义硬插（esc 挡得住引号，挡不住"为什么把怪东西放进页面"）。
+ *
+ * routes.ts 的门**必须**用同一个归一化：否则 env 配了畸形 sitekey 时，
+ * 页面不渲染 widget 而门却开着，所有报名 400 且用户拿不到 token。
+ */
+export function normalizeTurnstileSitekey(raw?: string): string {
+  const key = (raw ?? "").trim();
+  return /^[0-9A-Za-z_-]+$/.test(key) ? key : "";
+}

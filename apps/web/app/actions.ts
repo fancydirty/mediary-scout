@@ -746,3 +746,22 @@ export async function resetUserPasswordAction(
   const { getCurrentAccountId, resetUserPassword } = await import("../lib/workflow-runtime");
   return resetUserPassword(await getCurrentAccountId(), targetAccountId, newPassword);
 }
+
+export interface ConnectLoginActionResult {
+  ok: boolean;
+  message: string;
+}
+
+/**
+ * 在设置页内发起 Mediary Connect 登录(发一封魔法链接邮件)。
+ *
+ * 走 server action 而不是浏览器直接 fetch:worker 不发 CORS 头,
+ * 跨域 POST 会被预检拦掉。理由详见 lib/remote-access.ts 的 requestConnectLogin。
+ *
+ * demo 站禁用 —— 只读演示没有自己的实例,开通远程访问没有意义。
+ */
+export async function requestConnectLoginAction(email: string): Promise<ConnectLoginActionResult> {
+  assertNotDemo();
+  const { requestConnectLogin } = await import("../lib/remote-access");
+  return await requestConnectLogin(email);
+}

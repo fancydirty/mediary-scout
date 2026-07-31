@@ -149,6 +149,40 @@ describe("handleRequest", () => {
   // HEAD 此前没有任何处理,一路落到末尾的 404 JSON —— 线上实测
   // `HEAD /` 返回 content-type: application/json,而 `GET /` 返回 text/html。
   // 部分抓取器/链接校验器先发 HEAD,会把首页误判成非 HTML 资源。
+  // beta 内测页退役:apex 已有完整的登录+购买路径,用户不需要「报名内测」
+  // 再等邀请。它还多了一个要维护一致性的地方(创始价就在那里多活了一轮)。
+  // **301 而不是 404**:主站还有一条指向它的链接,直接 404 会丢掉那点权重,
+  // 而且有人可能存了书签。
+  it("beta 子域根路径 301 到 apex(内测页退役)", async () => {
+    const { deps } = setup();
+    const res = await handleRequest(
+      new Request("https://beta.mediaryconnect.app/", { redirect: "manual" }),
+      deps,
+    );
+    expect(res.status).toBe(301);
+    expect(res.headers.get("location")).toBe("https://mediaryconnect.app/");
+  });
+
+  it("GET /beta 也 301 到 apex", async () => {
+    const { deps } = setup();
+    const res = await handleRequest(new Request(`${BASE}/beta`, { redirect: "manual" }), deps);
+    expect(res.status).toBe(301);
+    expect(res.headers.get("location")).toBe("https://mediaryconnect.app/");
+  });
+
+  it("/waitlist 报名接口保留(已有报名者的数据还在,别把接口也拆了)", async () => {
+    const { deps } = setup();
+    const res = await handleRequest(
+      new Request(`${BASE}/waitlist`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "cf-connecting-ip": "3.3.3.3" },
+        body: JSON.stringify({ email: "keep@example.com" }),
+      }),
+      deps,
+    );
+    expect([200, 201]).toContain(res.status);
+  });
+
   // 线上真 bug:hero 海报走 TMDB 代理(跨域),而默认 CSP 是
   // `img-src 'self' data:` —— 28 张图全被挡成裂图。curl 拿得到、浏览器不行,
   // 这类问题只有真在浏览器里看才会发现,所以补一条头断言钉住。
@@ -221,41 +255,6 @@ describe("handleRequest", () => {
     expect(body).not.toContain("/terms");
   });
 
-  it("beta 页带 noindex(报名表单不该被索引:内测结束即失效 + 与 apex 语义重复)", async () => {
-    const { deps } = setup();
-    const res = await handleRequest(
-      new Request("https://beta.mediaryconnect.app/", {
-        headers: { host: "beta.mediaryconnect.app" },
-      }),
-      deps,
-    );
-    expect(res.status).toBe(200);
-    const body = await res.text();
-    expect(body).toContain('name="robots"');
-    expect(body).toContain("noindex");
-  });
-
-  it("GET / on the beta subdomain serves the signup page (canonical URL is the bare host)", async () => {
-    const { deps } = setup();
-    // beta.mediaryconnect.app 就是规范地址——"beta.…/beta" 是结巴。
-    // 该子域名的根路径必须直接给报名表单，而不是 Mediary Connect 说明页。
-    const res = await handleRequest(new Request("https://beta.mediaryconnect.app/"), deps);
-    expect(res.status).toBe(200);
-    const html = await res.text();
-    expect(html).toContain("申请内测席位");
-    expect(html).not.toContain("Mediary Connect 说明");
-  });
-
-  it("beta root routing survives an un-normalized rootDomain env value", async () => {
-    // CONNECT_ROOT_DOMAIN 从 env 原样进来，不 trim 不小写。带大小写/空格的
-    // 配置不该让 beta 根路径静默退回说明页（Copilot PR #183）。
-    const { deps } = setup();
-    const messyDeps = { ...deps, rootDomain: "  MediaryConnect.APP  " };
-    const res = await handleRequest(new Request("https://beta.mediaryconnect.app/"), messyDeps);
-    expect(res.status).toBe(200);
-    expect(await res.text()).toContain("申请内测席位");
-  });
-
   it("GET / on apex still serves the home page (host routing must not leak)", async () => {
     const { deps } = setup();
     const res = await handleRequest(new Request(`${BASE}/`), deps);
@@ -293,15 +292,6 @@ describe("handleRequest", () => {
     const html = await handleRequest(new Request(`${BASE}/`), deps).then((r) => r.text());
     for (const path of ["/terms", "/privacy", "/refund", "/pricing", "/contact"]) {
       expect(html).toContain(`href="${path}"`);
-    }
-  });
-
-  it("GET /beta keeps working on both hosts (no regression)", async () => {
-    const { deps } = setup();
-    for (const host of [BASE, "https://beta.mediaryconnect.app"]) {
-      const res = await handleRequest(new Request(`${host}/beta`), deps);
-      expect(res.status).toBe(200);
-      expect(await res.text()).toContain("申请内测席位");
     }
   });
 
@@ -528,30 +518,12 @@ describe("handleRequest", () => {
     expect(await res.text()).toContain("链接无效");
   });
 
-  it("GET /beta → 200 signup page, CSP permits its same-origin fetch", async () => {
-    const { deps } = setup();
-    const res = await handleRequest(new Request(`${BASE}/beta`), deps);
-    expect(res.status).toBe(200);
-    expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8");
-    const body = await res.text();
-    expect(body).toContain("Mediary Connect 远程访问 · 内测");
-    expect(body).toContain('<form id="signup"');
-    // The page's inline script POSTs fetch("/waitlist") same-origin. Under the
-    // old CSP (default-src 'none', no connect-src) a real browser REFUSES that
-    // fetch (connect-src falls back to default-src) — verified empirically:
-    // "FETCH_BLOCKED Failed to fetch" without the directive, "FETCH_OK" with
-    // it. The invite page's reveal and the admin console needed it too.
-    const csp = res.headers.get("content-security-policy") ?? "";
-    expect(csp).toContain("connect-src 'self'");
-    expect(csp).toContain("default-src 'none'");
-  });
-
   it("GET pages carry a CSP that allows the Cloudflare Turnstile assets", async () => {
-    // The beta signup page's bot gate (Turnstile) loads api.js, renders an
-    // iframe, and beacons to challenges.cloudflare.com. htmlPage()'s CSP is
-    // shared by home/invite/admin/beta, so the allowlist lives there for all.
+    // Turnstile 门禁(api.js + iframe + beacon 到 challenges.cloudflare.com)
+    // 现在只可能出现在 /login —— beta 报名页已退役 301 到 apex。
+    // htmlPage() 的 CSP 是所有页面共享的,allowlist 放在那里。
     const { deps } = setup();
-    const res = await handleRequest(new Request(`${BASE}/beta`), deps);
+    const res = await handleRequest(new Request(`${BASE}/login`), deps);
     const csp = res.headers.get("content-security-policy") ?? "";
     // New Turnstile sources (exact directive bodies — a dropped source here
     // silently breaks the widget in production while tests stay green):
@@ -2240,27 +2212,6 @@ describe("POST /waitlist Turnstile gate", () => {
     expect(res.status).toBe(201);
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(await db.countWaitlist(1)).toBe(1);
-  });
-
-  it("GET /beta renders the widget only when BOTH halves are configured", async () => {
-    const { deps } = setup();
-    const both = await handleRequest(new Request(`${BASE}/beta`), tsDeps(deps));
-    expect(await both.text()).toContain(`data-sitekey="${TS_SITEKEY}"`);
-
-    const sitekeyOnly = await handleRequest(new Request(`${BASE}/beta`), {
-      ...deps,
-      turnstileSitekey: TS_SITEKEY,
-    });
-    expect(await sitekeyOnly.text()).not.toContain("cf-turnstile");
-
-    const secretOnly = await handleRequest(new Request(`${BASE}/beta`), {
-      ...deps,
-      turnstileSecret: TS_SECRET,
-    });
-    expect(await secretOnly.text()).not.toContain("cf-turnstile");
-
-    const neither = await handleRequest(new Request(`${BASE}/beta`), deps);
-    expect(await neither.text()).not.toContain("cf-turnstile");
   });
 });
 

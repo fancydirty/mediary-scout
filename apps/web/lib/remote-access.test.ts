@@ -5,9 +5,10 @@ import {
   resolveRemoteAccessState,
   scoutConnectBaseUrl,
   accountPasswordHref,
-  BETA_SITE_URL,
+  CONNECT_SITE_URL,
   consoleUrl,
   type RemoteAccessState,
+  requestConnectLogin,
 } from "./remote-access";
 
 // 只按 key 保存/还原本套件真正会改的两个变量。**不能**整体替换
@@ -241,12 +242,13 @@ describe("accountPasswordHref（保留 ?w 工作区上下文）", () => {
   });
 });
 
-describe("BETA_SITE_URL（设置页跳转链接的唯一来源）", () => {
-  it("是 https 绝对地址、无尾斜杠、无路径——根即表单（worker Host 分流）", () => {
-    // 规范地址就是裸子域名：worker 对 beta.* 的根路径直接 serving 报名页，
-    // "beta.…/beta" 是结巴。若有人把路径改回 /beta 或别处，这条测试先红。
-    expect(BETA_SITE_URL).toMatch(/^https:\/\/beta\.[a-z0-9.-]+$/);
-    expect(BETA_SITE_URL.endsWith("/")).toBe(false);
+describe("CONNECT_SITE_URL（设置页跳转链接的唯一来源）", () => {
+  it("指向 apex 而非已退役的 beta 子域", () => {
+    // 内测报名页已退役(301 到 apex):apex 现在有完整的登录+购买路径,
+    // 用户不需要先「报名内测」再等邀请。这条钉住别再指回 beta.*。
+    expect(CONNECT_SITE_URL).toBe("https://mediaryconnect.app");
+    expect(CONNECT_SITE_URL).not.toContain("beta.");
+    expect(CONNECT_SITE_URL.endsWith("/")).toBe(false);
   });
 });
 
@@ -322,5 +324,52 @@ describe("consoleUrl", () => {
     expect(consoleUrl()).toBe("https://mediaryconnect.app/login");
     process.env.SCOUT_CONNECT_URL = "///";
     expect(consoleUrl()).toBe("https://mediaryconnect.app/login");
+  });
+});
+
+describe("requestConnectLogin(设置页内发起 Connect 登录)", () => {
+  const ok202 = () => new Response(null, { status: 202 });
+
+  it("202 → ok,提示里带上邮箱", async () => {
+    const r = await requestConnectLogin("a@b.com", (async () => ok202()) as typeof fetch);
+    expect(r.ok).toBe(true);
+    expect(r.message).toContain("a@b.com");
+  });
+
+  it("邮箱形状不对时不发请求(省一次跨网往返)", async () => {
+    let called = 0;
+    const spy = (async () => { called += 1; return ok202(); }) as typeof fetch;
+    for (const bad of ["", "  ", "nope", "x".repeat(300)]) {
+      const r = await requestConnectLogin(bad, spy);
+      expect(r.ok).toBe(false);
+    }
+    expect(called).toBe(0);
+  });
+
+  it("429 给可操作的话,不说「稍后重试」", async () => {
+    const r = await requestConnectLogin("a@b.com", (async () =>
+      new Response("{}", { status: 429 })) as typeof fetch);
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain("过几分钟");
+  });
+
+  // 实例可能装在没有外网的内网里 —— 这个失败要说清是「连不上外网」,
+  // 而不是含糊的「失败了」,否则用户会去查邮箱地址。
+  it("网络异常 → 提示检查外网连通性", async () => {
+    const r = await requestConnectLogin("a@b.com", (async () => {
+      throw new Error("ECONNREFUSED");
+    }) as typeof fetch);
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain("外网");
+  });
+
+  it("打的是 worker 的 /api/auth/magic,body 只有 email", async () => {
+    let seen: { url: string; body: unknown } | null = null;
+    await requestConnectLogin("a@b.com", (async (url: string | URL | Request, init?: RequestInit) => {
+      seen = { url: String(url), body: JSON.parse(String(init?.body)) };
+      return ok202();
+    }) as unknown as typeof fetch);
+    expect(seen!.url).toContain("/api/auth/magic");
+    expect(seen!.body).toEqual({ email: "a@b.com" });
   });
 });

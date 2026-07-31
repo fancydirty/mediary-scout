@@ -136,7 +136,7 @@ export async function resolveRemoteAccessState(opts: {
 }
 
 /**
- * 内测报名站的对外地址（唯一来源）。
+ * Mediary Connect 官网地址（唯一来源）。
  *
  * 指向 worker 承载的报名页——与 /waitlist API 同部署，只换了更好记的域名。
  * 根路径即是表单（worker 对 beta 子域名的 GET / 按 Host 直接 serving 同一
@@ -147,7 +147,7 @@ export async function resolveRemoteAccessState(opts: {
  * 需要的动作是改代码——把 tab 的 not_provisioned 分支改回 return null
  * （触发 settings-tabs 的自动隐藏），而不是指望某个开关。
  */
-export const BETA_SITE_URL = "https://beta.mediaryconnect.app";
+export const CONNECT_SITE_URL = "https://mediaryconnect.app";
 
 /** 服务端读实例隧道 token（docker-compose 需把 `TUNNEL_TOKEN` 也传给 web 服务）。 */
 export function instanceTunnelToken(): string | undefined {
@@ -203,3 +203,57 @@ export function accountPasswordHref(w?: string): string {
   return `/settings?${params.toString()}#password`;
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// 在设置页内发起 Mediary Connect 登录
+// ─────────────────────────────────────────────────────────────────────────
+
+export interface ConnectLoginResult {
+  ok: boolean;
+  /** 面向用户的中文提示。ok 时是「已发送」,否则是可操作的失败原因。 */
+  message: string;
+}
+
+/**
+ * 代实例向 worker 请求一封魔法链接邮件。
+ *
+ * **为什么走服务端而不是浏览器直接 fetch**:worker 不发 CORS 头,
+ * 浏览器跨域 POST 会被拦(实测 OPTIONS 预检 404)。而给 worker 加 CORS
+ * 等于为了一个入口放宽整站跨域策略 —— 不值得。现有心跳
+ * (defaultSendHeartbeat)本来也是服务端 fetch,这里沿用同一条路子。
+ *
+ * **不判断邮箱是否已注册**:worker 恒返回 202(不泄露注册状态),
+ * 所以这里也只能说「已发送」。
+ */
+export async function requestConnectLogin(
+  email: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<ConnectLoginResult> {
+  const trimmed = email.trim();
+  // 只做最粗的形状检查:真正的校验在 worker(EMAIL_RE)。这里拦一下是为了
+  // 省一次跨网请求,不是安全边界。
+  if (trimmed.length < 3 || trimmed.length > 254 || !trimmed.includes("@")) {
+    return { ok: false, message: "请输入一个有效的邮箱地址。" };
+  }
+  try {
+    const res = await fetchImpl(`${scoutConnectBaseUrl()}/api/auth/magic`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: trimmed }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (res.status === 202) {
+      return { ok: true, message: `已发送到 ${trimmed}。点邮件里的链接就能登录并开通。` };
+    }
+    // 429 是发信入口的限流,要给可操作的话而不是「稍后重试」。
+    if (res.status === 429) {
+      return { ok: false, message: "请求太频繁了,过几分钟再试。" };
+    }
+    if (res.status === 400) {
+      return { ok: false, message: "这个请求没被接受。检查邮箱地址后再试。" };
+    }
+    return { ok: false, message: "发送失败了,请稍后再试。" };
+  } catch {
+    // 超时/DNS/网络不通都落这里。实例可能在没有外网的内网里 —— 这句要说清。
+    return { ok: false, message: "连不上 Mediary Connect。检查这台机器能不能访问外网。" };
+  }
+}

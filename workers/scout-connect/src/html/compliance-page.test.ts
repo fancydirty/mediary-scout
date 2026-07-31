@@ -169,18 +169,6 @@ describe("合规页与产品现实的一致性", () => {
     expect(en).toContain("time you already bought is unaffected");
   });
 
-  // Copilot round-1:我原本只改了 /pricing,而 /beta 还在宣传创始价 ——
-  // 「站内一致」不能只顾合规页。这条把三个面向用户的页面一起钉住。
-  it("beta 页与首页/定价页同步:不宣传创始价,问卷也不收 ¥88 的意愿", async () => {
-    const { betaPage } = await import("./beta-page.js");
-    const page = betaPage(undefined);
-    expect(page).not.toContain("创始价");
-    expect(page).not.toContain("¥88");
-    expect(page).not.toContain("year88");
-    // 三档还在
-    for (const p of ["¥45", "¥108", "¥188"]) expect(page).toContain(p);
-  });
-
   // Copilot round-2:隐私政策不该点名任何具体支付方式 —— Paddle 支持的方式
   // 按地区/时间变,写死一个就是给自己埋下一次过时(这个 PR 本身就是在修
   // 「支付宝」过时的问题)。这一段的重点是「我们碰不到」,与方式无关。
