@@ -175,6 +175,22 @@ describe("home page(apex 落地页)", () => {
     expect((html.match(/<h1/g) ?? []).length).toBe(1);
   });
 
+  // Copilot round-5:本目录其它五个页面(login/buy/console/compliance/beta)
+  // 都用 <main> 作主体容器,只有这页用 <div> —— 缺 landmark,屏幕阅读器
+  // 少一个跳转锚点。注意 .apex 必须保持 div:它是主题作用域 + 容器查询根,
+  // nav/footer 也要吃它的 token,把它改成 main 会让 nav/footer 落进 main 里。
+  it("有 <main> landmark,且 nav/footer 在它之外", () => {
+    const html = homePage();
+    expect((html.match(/<main[ >]/g) ?? []).length).toBe(1);
+    expect(html).toContain("</main>");
+    const iNav = html.indexOf("<nav");
+    const iMain = html.indexOf("<main");
+    const iClose = html.indexOf("</main>");
+    const iFoot = html.indexOf("<footer");
+    expect(iNav).toBeLessThan(iMain);
+    expect(iClose).toBeLessThan(iFoot);
+  });
+
   it("页脚合规五链接与运营主体齐全(Paddle MoR 要求)", () => {
     const html = homePage();
     for (const p of ["/pricing", "/terms", "/privacy", "/refund", "/contact"]) {

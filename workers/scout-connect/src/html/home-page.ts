@@ -351,6 +351,9 @@ ${BRAND_CSS}
 </style>
 </head>
 <body>
+<!-- .apex 是主题作用域 + 容器查询根(container-type),nav/footer 也要吃它的
+     token 与响应式断点,所以它包住三者;main 只包主内容 —— 与本目录其它
+     页面(login/buy/console/compliance/beta)一致的 landmark 结构。 -->
 <div class="apex">
 
   <nav class="nav">
@@ -363,6 +366,7 @@ ${BRAND_CSS}
     </div>
   </nav>
 
+  <main>
   <section class="sec hero">
     <div class="hero-l">
       <p class="eb">Mediary Scout 远程访问附加服务</p>
@@ -634,6 +638,8 @@ ${BRAND_CSS}
     <p>剩下的人 —— 不想再多养一个要操心的东西的人 —— 这 ¥45 一季买的就是「这件事从此不用你想」。</p>
     <p class="sign">Mediary Scout 与 Connect 由我一个人开发维护,Connect 的收入用来养 Scout 的持续开发。代码在 <a href="https://github.com/fancydirty/mediary-scout">GitHub</a> 上,你可以自己看它是不是真的只把数据留在本地。</p>
   </section>
+
+  </main>
 
   <footer class="ft">
     Mediary Connect · 自托管 <a href="https://mediaryscout.app">Mediary Scout</a> 的远程访问服务<br>
