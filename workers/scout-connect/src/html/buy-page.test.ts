@@ -166,4 +166,24 @@ describe("付款完成后必须有出路(真实事故的回归防线)", () => {
     expect(h).not.toContain("eventCallback");
     expect(h).toContain("结账功能尚未开放");
   });
+
+  it("checkout.completed 必须先关 overlay 再跳转(两次真实 bug)", () => {
+    // 第一次事故:没有 eventCallback,用户付完款 overlay 停在原地不动。
+    // 第二次事故:加了 eventCallback 但没关 overlay,setTimeout 里的跳转
+    // 在 iframe 里执行 —— 被沙箱阻止或被 overlay 挡住,用户仍看到二维码不动。
+    //
+    // 正确顺序:close() → setTimeout → location.href。这样用户看到 overlay 关闭,
+    // 然后看到页面上的「正在开通」提示,1.8 秒后跳回控制台。
+    const html = buyPage(CONFIGURED);
+    
+    // 必须有 close() 调用
+    expect(html).toContain("window.Paddle.Checkout.close()");
+    
+    // 且 close() 必须在 location.href 之前(否则跳转发生时 overlay 还开着)
+    const closeIdx = html.indexOf("window.Paddle.Checkout.close()");
+    const hrefIdx = html.indexOf('window.location.href = "/console?paid=1"');
+    expect(closeIdx).toBeGreaterThan(0);
+    expect(hrefIdx).toBeGreaterThan(0);
+    expect(closeIdx).toBeLessThan(hrefIdx);
+  });
 });

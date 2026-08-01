@@ -112,6 +112,18 @@ ${configured ? '<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></scrip
           hint.textContent = "支付成功,正在开通…";
           // 微信支付是延迟捕获,到账可能要几分钟。说清楚,别让人干等。
           status.textContent = "正在确认到账(微信支付最多需要 10 分钟)。即将回到控制台。";
+          
+          // ---- 必须先关 overlay,否则跳转会被卡住(真实 bug)----
+          //
+          // 第二次真实事故:用户微信扫码付款后,Paddle overlay 还停在二维码页,
+          // 「像是我没扫过码付过款一样」。checkout.completed **确实触发了**,
+          // 但 window.location.href 在 overlay 的 iframe 里执行 ——
+          // 跳转被 iframe 沙箱阻止,或者只是 overlay 挡住了整个页面。
+          //
+          // Paddle.Checkout.close() 必须在跳转前调 —— 否则用户看到二维码停着不动,
+          // 会以为失败了,重复付款,或者来投诉「钱扣了但没开通」。
+          try { window.Paddle.Checkout.close(); } catch (e) { /* 已经关了也无妨 */ }
+          
           // 留 1.8 秒让用户看到这句话再跳。跳过去后控制台会显示「已付款,正在开通」
           // 那一态(见 console-page 的 pendingPaid),不会再显示「尚未开通」。
           setTimeout(function () { window.location.href = "/console?paid=1"; }, 1800);
