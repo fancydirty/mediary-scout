@@ -873,7 +873,8 @@ async function getTransactionStatusHandler(
       });
     }
     // 入账给了别人 → 不是自己的交易,不泄露存在性。
-    throw new HttpError(404, "not found");
+    // 显式 json + noStore:轮询端点任何错误路径都不能被缓存(见上方说明)。
+    return json({ error: "not found" }, 404, { noStore: true });
   }
 
   // ---- 兜底:查 Paddle API ----

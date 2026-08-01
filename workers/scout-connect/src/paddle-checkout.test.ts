@@ -542,3 +542,29 @@ describe("GET /api/transaction/:id/status —— 错误路径必须 noStore(Copi
     expect(res.headers.get("cache-control")).toBe("no-store");
   });
 });
+
+describe("GET /api/transaction/:id/status —— D1 命中但归属失败(Copilot round 4)", () => {
+  async function seedMe(db: ConnectDb): Promise<string> {
+    await db.insertAccount({
+      id: "act_me4", email: "me@example.com", paddle_customer_id: null,
+      created_at: NOW, last_login_at: null,
+    });
+    return buildSessionCookie("act_me4", { secret: SECRET, ttlMs: 3600_000, now: Date.parse(NOW) });
+  }
+
+  it("D1 命中但入账给了别人 → 404 且带 no-store", async () => {
+    const { deps } = setup();
+    const cookie = await seedMe(deps.db);
+    const { grantEntitlement } = await import("./grant.js");
+    await grantEntitlement(
+      { email: "other@example.com", months: 3, source: "paddle", paddleTransactionId: "txn_zzzzzzzzzzzzzzzzzzzzzzzzzz" },
+      { db: deps.db, now: () => NOW, newAccountId: () => "act_new", newEntitlementId: () => "ent_4" },
+    );
+    const res = await handleRequest(
+      new Request(`${BASE}/api/transaction/txn_zzzzzzzzzzzzzzzzzzzzzzzzzz/status`, { headers: { cookie } }),
+      deps,
+    );
+    expect(res.status).toBe(404);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+  });
+});
