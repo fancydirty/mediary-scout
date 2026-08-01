@@ -4,7 +4,11 @@ import { probeRemoteAccess } from "./remote-access-probe";
 describe("probeRemoteAccess", () => {
   const H = "dirtyfancy.mediaryconnect.app";
   const probe = (status: number, body: unknown = { status: "ok" }) => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify(body), { status }));
+    // 非 JSON 场景(反代回 HTML 登录页)要**原样**传,不能 JSON.stringify ——
+    // 否则 body 变成合法 JSON 字符串,res.json() 不抛错,测不到 catch 分支
+    // (Copilot round 2 抓到的假覆盖)。
+    const raw = typeof body === "string" ? body : JSON.stringify(body);
+    const fetchMock = vi.fn(async () => new Response(raw, { status }));
     return { fetchMock, result: probeRemoteAccess(H, fetchMock) };
   };
 
