@@ -777,11 +777,13 @@ export interface DismissConnectNoticeResult {
  */
 export async function dismissConnectNoticeAction(): Promise<DismissConnectNoticeResult> {
   assertNotDemo();
-  const { getWorkflowRepository, getCurrentAccountId } = await import("../lib/workflow-runtime");
+  const { getWorkflowRepository, requireAuthenticatedAccountId } = await import("../lib/workflow-runtime");
   const { CONNECT_NOTICE_DISMISSED_KEY } = await import("../lib/connect-notice");
   
   const repository = getWorkflowRepository();
-  const accountId = await getCurrentAccountId();
+  // Copilot 指出:未登录时 getCurrentAccountId() 返回 acct_unauthenticated,
+  // 而不是 null。若继续用它写设置,会污染哨兵账号的 account_settings。
+  const accountId = await requireAuthenticatedAccountId();
   const now = new Date().toISOString();
   
   await repository.setAccountSetting(accountId, CONNECT_NOTICE_DISMISSED_KEY, now);
