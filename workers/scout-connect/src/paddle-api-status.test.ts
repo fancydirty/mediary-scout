@@ -55,9 +55,14 @@ describe("getTransactionStatus 错误分类", () => {
     });
   });
 
-  it("200 但 body 畸形(无 data.id)→ null", async () => {
+  it("200 但缺 data.id → throw(上游异常,不能当交易不存在)", async () => {
     const a = api(200, { data: {} });
-    await expect(a.getTransactionStatus(T)).resolves.toBeNull();
+    await expect(a.getTransactionStatus(T)).rejects.toThrow("missing data.id");
+  });
+
+  it("200 但缺 status → throw(上游异常,不能当交易不存在)", async () => {
+    const a = api(200, { data: { id: T } });
+    await expect(a.getTransactionStatus(T)).rejects.toThrow("missing status");
   });
 
   it("返回的交易 ID 与请求不符 → throw(上游异常,不能带回别人的交易)", async () => {

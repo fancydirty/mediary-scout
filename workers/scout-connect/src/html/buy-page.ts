@@ -202,7 +202,12 @@ ${configured ? '<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></scrip
             status.textContent = "如果已经付款,请稍后刷新此页面查看开通状态。你的付款不会丢失 —— 超过 15 分钟仍未开通请联系我们。";
             return;
           }
-          var res = await fetch("/api/transaction/" + encodeURIComponent(txn) + "/status");
+          // AbortSignal.timeout:fetch 挂起不返回时(某些网络条件下不 reject),
+          // inFlight 锁会永久占住、轮询永久停住且页面无提示(Copilot round 7)。
+          // 5 秒超时,保证锁一定释放。超时走 catch → 下次 tick 重试。
+          var res = await fetch("/api/transaction/" + encodeURIComponent(txn) + "/status", {
+            signal: AbortSignal.timeout(5000),
+          });
           if (res.status === 401) {
             // 登录过期:继续轮询也没用,明确告诉用户重新登录。
             clearInterval(timer);

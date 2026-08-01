@@ -169,7 +169,12 @@ export function createPaddleApi(input: {
           custom_data?: { account_email?: unknown } | null;
         };
       };
-      if (typeof body.data?.id !== "string") return null;
+      if (typeof body.data?.id !== "string") {
+        // 200 但缺 data.id = 上游/代理异常或协议变更,throw 让上层 503 可重试
+        // (Copilot round 7)。返回 null 会被误判成"交易不存在"→ 404 → 前端
+        // 停止轮询,用户卡死。
+        throw new Error("paddle getTransactionStatus: missing data.id");
+      }
       // **必须校验返回的交易 ID == 请求的 ID**(Copilot round 6)。
       // 上游/缓存/代理异常时若返回了别的交易,会把它的状态/归属邮箱带回,
       // 后续归属校验也会被误导。不匹配 = 上游异常,throw 而非静默返回。
@@ -177,7 +182,10 @@ export function createPaddleApi(input: {
         throw new Error(`paddle getTransactionStatus id mismatch: asked=${transactionId} got=${body.data.id}`);
       }
       const status = typeof body.data.status === "string" ? body.data.status : "";
-      if (status === "") return null;
+      if (status === "") {
+        // 200 但缺 status = 上游异常,同上 throw 而非 null(Copilot round 7)。
+        throw new Error("paddle getTransactionStatus: missing status");
+      }
       const paidAt = typeof body.data.billed_at === "string" ? body.data.billed_at : null;
       const custom = body.data.custom_data;
       const accountEmail =
