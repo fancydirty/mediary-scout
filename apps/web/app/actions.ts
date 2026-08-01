@@ -822,6 +822,9 @@ export type TestRemoteAccessResult =
  * - no_hostname:老实例 .env 没有 MEDIARY_CONNECT_HOSTNAME,没法探测
  */
 export async function testRemoteAccessConnectionAction(): Promise<TestRemoteAccessResult> {
+  // demo gate:与其它 settings action 一致(Copilot round 1)。
+  // demo 站没有真实隧道,探测只会做无意义的跨网请求。
+  assertNotDemo();
   const { instanceConnectHostname } = await import("../lib/remote-access");
   const hostname = instanceConnectHostname();
   if (hostname === null) {
