@@ -801,3 +801,30 @@ export async function dismissConnectNoticeAction(): Promise<DismissConnectNotice
     throw e;
   }
 }
+
+export interface TestRemoteAccessResult {
+  ok: boolean;
+  detail: "reachable" | "instance_problem" | "unreachable" | "no_hostname";
+}
+
+/**
+ * 远程访问「测试连接」。
+ *
+ * 探测 https://<hostname>/api/health(实例自己的健康端点,匿名可达)。
+ * 走服务端:浏览器直连会撞 CORS,且 hostname 在 .env 里只有服务端读得到。
+ *
+ * 语义:
+ * - reachable:隧道通、实例健康
+ * - instance_problem:503 —— 隧道通但实例内部有问题(该查实例不是隧道)
+ * - unreachable:超时/网络错/其它状态码
+ * - no_hostname:老实例 .env 没有 MEDIARY_CONNECT_HOSTNAME,没法探测
+ */
+export async function testRemoteAccessConnectionAction(): Promise<TestRemoteAccessResult> {
+  const { instanceConnectHostname } = await import("../lib/remote-access");
+  const hostname = instanceConnectHostname();
+  if (hostname === null) {
+    return { ok: false, detail: "no_hostname" };
+  }
+  const { probeRemoteAccess } = await import("../lib/remote-access-probe");
+  return await probeRemoteAccess(hostname);
+}

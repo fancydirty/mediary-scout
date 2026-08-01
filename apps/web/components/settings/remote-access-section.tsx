@@ -12,6 +12,7 @@ import {
 } from "../../lib/remote-access";
 import { PasswordChangeForm } from "../password-change-form";
 import { ConnectLoginForm } from "./connect-login-form";
+import { RemoteAccessTestButton } from "./remote-access-test-button";
 
 /**
  * 「上次从本机报到控制面」一行。
@@ -201,6 +202,9 @@ export async function RemoteAccessSection({
             在任何设备的浏览器打开这个地址即可（收藏它）。
           </p>
           {lastSeenLabel ? <LastSeenLine label={lastSeenLabel} /> : null}
+          <div style={{ marginTop: 8 }}>
+            <RemoteAccessTestButton />
+          </div>
         </div>
       ) : state.kind === "active" ? (
         // 早期接入的实例 .env 里没有 MEDIARY_CONNECT_HOSTNAME(connect.sh 后加的)
