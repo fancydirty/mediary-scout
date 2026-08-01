@@ -185,17 +185,23 @@ ${configured ? '<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></scrip
     // 刷新查看"—— 避免无限请求。交易 ID 来自 URL,归属校验在服务端做。
     (function pollTransaction() {
       var attempts = 0;
+      // **inFlight 锁**(Copilot round 2):setInterval + async 下,某次请求/
+      // 解析超过 3 秒时下一次 tick 仍会触发 → 并发重叠请求,放大上游抖动与
+      // API 调用。上一轮未结束就跳过本轮;结束后释放锁(含异常路径)。
+      var inFlight = false;
       var timer = setInterval(async function () {
-        attempts++;
-        // 3s × 200 = 10 分钟(Paddle 官方延迟捕获上限)。
-        // 超时后停轮询并明确告诉用户下一步,不能无声无息地停。
-        if (attempts > 200) {
-          clearInterval(timer);
-          hint.textContent = "支付已提交,正在确认到账…";
-          status.textContent = "如果已经付款,请稍后刷新此页面查看开通状态。你的付款不会丢失 —— 超过 15 分钟仍未开通请联系我们。";
-          return;
-        }
+        if (inFlight) return;
+        inFlight = true;
         try {
+          attempts++;
+          // 3s × 200 = 10 分钟(Paddle 官方延迟捕获上限)。
+          // 超时后停轮询并明确告诉用户下一步,不能无声无息地停。
+          if (attempts > 200) {
+            clearInterval(timer);
+            hint.textContent = "支付已提交,正在确认到账…";
+            status.textContent = "如果已经付款,请稍后刷新此页面查看开通状态。你的付款不会丢失 —— 超过 15 分钟仍未开通请联系我们。";
+            return;
+          }
           var res = await fetch("/api/transaction/" + encodeURIComponent(txn) + "/status");
           if (res.status === 401) {
             // 登录过期:继续轮询也没用,明确告诉用户重新登录。
@@ -211,7 +217,19 @@ ${configured ? '<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></scrip
             status.textContent = "请回到控制台重新发起购买;若已付款,请联系我们核对。";
             return;
           }
-          if (res.status === 503) return;  // Paddle 上游抖动,下次再试
+          if (res.status === 503) {
+            // 503 分两种(见端点):checkout not configured = 配置缺失,重试
+            // 也没用,立即停并提示;temporarily unavailable = 上游抖动,重试。
+            var body503 = null;
+            try { body503 = await res.json(); } catch (e) { /* 读不到就当抖动 */ }
+            if (body503 && body503.error === "checkout not configured") {
+              clearInterval(timer);
+              hint.textContent = "支付通道暂时不可用。";
+              status.textContent = "请稍后刷新页面重试;持续不可用请联系我们。你的付款不会丢失。";
+              return;
+            }
+            return;
+          }
           var data = await res.json();
           if (data && (data.status === "paid" || data.status === "completed")) {
             clearInterval(timer);
@@ -220,7 +238,10 @@ ${configured ? '<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></scrip
             try { window.Paddle.Checkout.close(); } catch (e) { /* 已经关了也无妨 */ }
             setTimeout(function () { window.location.href = "/payment-success"; }, 1800);
           }
-        } catch (e) { /* 网络抖动,下次再试 */ }
+        } catch (e) { /* 网络抖动,下次再试 */ } finally {
+          // 释放锁:clearInterval 后 finally 仍会跑,但 timer 已停,无副作用。
+          inFlight = false;
+        }
       }, 3000);
     })();
   } catch (e) {

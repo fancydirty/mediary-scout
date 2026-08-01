@@ -356,9 +356,9 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
   // 我们自己轮询这个端点,paid/completed 一到就关 overlay 跳 /payment-success。
   const txnStatusMatch = path.match(/^\/api\/transaction\/([^/]+)\/status$/);
   if (method === "GET" && txnStatusMatch !== null) {
-    // decodeURIComponent 对畸形百分号编码会抛 URIError → 500。
-    // 交易 ID 是固定格式 txn_<26 位小写字母数字>,先按格式校验,
-    // 不合法直接 404(客户端错误不该变 500)。
+    // pathname 保留百分号编码,不做 decode —— 交易 ID 是固定格式
+    // txn_<26 位小写字母数字>,按形状校验即可,不合法直接 404
+    // (客户端错误不该变 500;decodeURIComponent 反而可能对畸形编码抛错)。
     const raw = txnStatusMatch[1] ?? "";
     if (!/^txn_[a-z0-9]{26}$/.test(raw)) throw new HttpError(404, "not found");
     return getTransactionStatusHandler(request, deps, raw);
@@ -853,8 +853,9 @@ async function getTransactionStatusHandler(
   // 归属校验:这笔交易入的必须是当前登录账号的账。
   const entitlement = await deps.db.getEntitlementByTransactionId(transactionId);
   if (entitlement !== null) {
-    const holder = await deps.db.getAccountById(entitlement.account_id);
-    if (holder !== null && holder.email === account.email) {
+    // 归属校验直接比 account_id(权威归属),不查 accounts 表绕一圈比 email ——
+    // 少一次 DB 往返,语义也更直接(Copilot round 2)。
+    if (entitlement.account_id === session.accountId) {
       return json({ status: "completed", paid_at: entitlement.created_at }, 200, {
         noStore: true,
       });
