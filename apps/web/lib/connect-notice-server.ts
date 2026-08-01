@@ -1,4 +1,4 @@
-import { getWorkflowRepository, getCurrentAccountId } from "./workflow-runtime";
+import { getWorkflowRepository, getCurrentAccountId, UNAUTHENTICATED_ACCOUNT_ID } from "./workflow-runtime";
 import { instanceTunnelToken } from "./remote-access";
 import { isDemoMode } from "./demo-mode";
 import { CONNECT_NOTICE_DISMISSED_KEY, shouldShowConnectNotice } from "./connect-notice";
@@ -13,9 +13,9 @@ export async function resolveConnectNoticeConditions(): Promise<ConnectNoticeCon
   const repository = getWorkflowRepository();
   const accountId = await getCurrentAccountId();
 
-  // 未登录 → 哨兵不读 settings
+  // 未登录（acct_unauthenticated）→ 不读 settings
   let dismissedAt: string | null = null;
-  if (accountId) {
+  if (accountId !== UNAUTHENTICATED_ACCOUNT_ID) {
     dismissedAt = await repository.getAccountSetting(accountId, CONNECT_NOTICE_DISMISSED_KEY);
   }
 
@@ -23,7 +23,9 @@ export async function resolveConnectNoticeConditions(): Promise<ConnectNoticeCon
 
   return {
     isDemo: isDemoMode(),
-    accountId,
+    // 未登录时 accountId 应为 null，而不是哨兵值 —— shouldShowConnectNotice 期望
+    // 已登录用户返回 true，null 返回 false。
+    accountId: accountId === UNAUTHENTICATED_ACCOUNT_ID ? null : accountId,
     dismissedAt,
     hasTunnelToken,
   };
