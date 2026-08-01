@@ -13,6 +13,9 @@ export function ConnectNoticeBanner() {
   if (dismissed) return null;
 
   function handleDismiss() {
+    // 重试前复位 failed,否则上次的「关闭失败」提示会残留到本次尝试
+    // (Copilot round 4)。
+    setFailed(false);
     startTransition(async () => {
       // 必须 catch(见 runAction 注释)。
       // 失败时**不关闭**:让用户看到 banner 还在 = 关闭没生效,会再点一次。
