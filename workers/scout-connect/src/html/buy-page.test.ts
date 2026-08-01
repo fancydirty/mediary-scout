@@ -174,15 +174,15 @@ describe("付款完成后必须有出路(真实事故的回归防线)", () => {
     //
     // 正确顺序:close() → setTimeout → location.href。这样用户看到 overlay 关闭,
     // 然后看到页面上的「正在开通」提示,1.8 秒后跳回控制台。
-    const html = buyPage(CONFIGURED);
+    const output = buyPage(CONFIGURED);
     
     // 必须有 close() 调用
-    expect(html).toContain("window.Paddle.Checkout.close()");
+    expect(output).toContain("window.Paddle.Checkout.close()");
     
     // 且 close() 必须在 location.href 之前(否则跳转发生时 overlay 还开着)
-    const closeIdx = html.indexOf("window.Paddle.Checkout.close()");
-    const timeoutIdx = html.indexOf("setTimeout(");
-    const hrefIdx = html.indexOf('window.location.href = "/console?paid=1"');
+    const closeIdx = output.indexOf("window.Paddle.Checkout.close()");
+    const timeoutIdx = output.indexOf("setTimeout(");
+    const hrefIdx = output.indexOf('window.location.href = "/console?paid=1"');
     expect(closeIdx).toBeGreaterThan(-1);
     expect(timeoutIdx).toBeGreaterThan(-1);
     expect(hrefIdx).toBeGreaterThan(-1);
