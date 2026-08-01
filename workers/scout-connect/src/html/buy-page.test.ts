@@ -182,8 +182,8 @@ describe("付款完成后必须有出路(真实事故的回归防线)", () => {
     // 且 close() 必须在 location.href 之前(否则跳转发生时 overlay 还开着)
     const closeIdx = html.indexOf("window.Paddle.Checkout.close()");
     const hrefIdx = html.indexOf('window.location.href = "/console?paid=1"');
-    expect(closeIdx).toBeGreaterThan(0);
-    expect(hrefIdx).toBeGreaterThan(0);
+    expect(closeIdx).toBeGreaterThan(-1);
+    expect(hrefIdx).toBeGreaterThan(-1);
     expect(closeIdx).toBeLessThan(hrefIdx);
   });
 });
