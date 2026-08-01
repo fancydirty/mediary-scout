@@ -777,20 +777,27 @@ export interface DismissConnectNoticeResult {
  */
 export async function dismissConnectNoticeAction(): Promise<DismissConnectNoticeResult> {
   assertNotDemo();
-  const { getWorkflowRepository, requireAuthenticatedAccountId } = await import("../lib/workflow-runtime");
+  const { getWorkflowRepository, requireAuthenticatedAccountId, UnauthenticatedAccountError } = await import("../lib/workflow-runtime");
   const { CONNECT_NOTICE_DISMISSED_KEY } = await import("../lib/connect-notice");
   
   const repository = getWorkflowRepository();
-  // Copilot 指出:未登录时 getCurrentAccountId() 返回 acct_unauthenticated,
-  // 而不是 null。若继续用它写设置,会污染哨兵账号的 account_settings。
   try {
+    // Copilot 指出:未登录时 getCurrentAccountId() 返回 acct_unauthenticated,
+    // 而不是 null。若继续用它写设置,会污染哨兵账号的 account_settings。
     const accountId = await requireAuthenticatedAccountId();
     const now = new Date().toISOString();
     await repository.setAccountSetting(accountId, CONNECT_NOTICE_DISMISSED_KEY, now);
     return { ok: true };
-  } catch {
-    // 未登录会抛 UnauthenticatedAccountError。返回 { ok: false } 而不是抛错,
-    // 否则客户端看到的是"点了关闭没反应/500"（Copilot PR #221 suppressed #3）。
-    return { ok: false };
+  } catch (e) {
+    // **只捕获 UnauthenticatedAccountError**(Copilot PR #221 suppressed #5)。
+    // catch {} 会吞掉所有异常(包括 DB 写入失败、仓库实现异常等),
+    // 把真实故障伪装成"未登录",并导致问题难以排查。
+    if (e instanceof UnauthenticatedAccountError) {
+      // 未登录 → 返回 { ok: false } 而不是抛错,
+      // 否则客户端看到的是"点了关闭没反应/500"。
+      return { ok: false };
+    }
+    // DB 写入失败、仓库实现异常等 → 继续抛出,让错误可见。
+    throw e;
   }
 }
