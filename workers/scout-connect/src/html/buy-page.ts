@@ -144,7 +144,29 @@ ${configured ? '<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></scrip
     return;
   }
   try {
-    window.Paddle.Checkout.open({ transactionId: txn });
+    // **settings.successUrl 是微信支付唯一的救命参数。**
+    //
+    // 三次真实事故都栽在这:微信支付付完款,Paddle 把用户带到它自己的处理域名
+    // (redirect-euw1.ppro.com),本页的 eventCallback **完全失效** ——
+    // 它只在 overlay 内有效。用户看到一个不动的二维码,不知道是否付款成功。
+    //
+    // 第一次修:加 eventCallback(只覆盖 overlay 内的路径,微信仍然断)。
+    // 第二次修:加 Checkout.close()(同样只在 overlay 内)。
+    // 第三次修:把 success_url 加到 API 的 transaction.checkout —— **那个字段
+    //          不存在**,Paddle 静默忽略(实测:响应里没有 settings)。
+    //
+    // 正解在这里:Paddle.Checkout.open 的 settings.successUrl。
+    // 官方文档 paddle-js/methods/paddle-checkout-open 明确列了这个参数。
+    // (注意:这段在模板字符串里,注释**不能写反引号** —— 会提前终止模板。
+    //  这个坑本项目已踩过两次。)
+    //
+    // 指向 /payment-success 而非 /console:微信支付是**延迟捕获**(官方:通常
+    // 立刻,但可能长达 10 分钟)。直接跳控制台会看到「尚未开通」—— 那是最伤人
+    // 的一幕:刚付完钱,页面告诉你什么都没发生。
+    window.Paddle.Checkout.open({
+      transactionId: txn,
+      settings: { successUrl: location.origin + "/payment-success" },
+    });
     hint.textContent = "支付窗口已打开。";
     status.textContent = "";
   } catch (e) {

@@ -190,4 +190,33 @@ describe("付款完成后必须有出路(真实事故的回归防线)", () => {
     expect(closeIdx).toBeLessThan(timeoutIdx);
     expect(timeoutIdx).toBeLessThan(hrefIdx);
   });
+
+  it("Checkout.open 必须带 settings.successUrl(微信支付唯一救命参数)", () => {
+    // **三次真实事故都栽在这一条。** 微信支付付完款,Paddle 把用户带到它自己的
+    // 处理域名(redirect-euw1.ppro.com),本页的 eventCallback 完全失效 ——
+    // 它只在 overlay 内有效。用户看到一个不动的二维码,不知道是否付款成功。
+    //
+    // 前两次修的都是 overlay 内的路径(eventCallback、Checkout.close),
+    // 第三次把 success_url 加到了 API 的 transaction.checkout —— **那个字段
+    // 不存在**,Paddle 静默忽略(实测:创建交易的响应里没有 settings)。
+    //
+    // 只有 Paddle.Checkout.open 的 settings.successUrl 才真正生效。
+    const output = buyPage(CONFIGURED);
+    expect(output).toContain("successUrl");
+    expect(output).toContain("/payment-success");
+
+    // successUrl 必须在 Checkout.open 的**参数**里,不是只在注释里提一句。
+    // 注意:不能用 indexOf("successUrl") 定位 —— 注释里也写了这个词
+    // (注释会进产物),会命中注释而不是代码。查带冒号的实际赋值。
+    expect(output).toMatch(/Paddle\.Checkout\.open\(\{[\s\S]{0,200}successUrl:/);
+  });
+
+  it("指向 /payment-success 而非直接跳 /console", () => {
+    // 微信支付是延迟捕获(官方:通常立刻,但可能长达 10 分钟)。
+    // 直接跳控制台会看到「尚未开通」—— 刚付完钱,页面告诉你什么都没发生。
+    const output = buyPage(CONFIGURED);
+    // 只查实际赋值,不查注释(注释里也提到了 /console,会误命中)。
+    expect(output).toMatch(/successUrl:[^,}]*payment-success/);
+    expect(output).not.toMatch(/successUrl:[^,}]*\/console/);
+  });
 });
