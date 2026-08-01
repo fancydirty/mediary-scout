@@ -181,9 +181,13 @@ describe("付款完成后必须有出路(真实事故的回归防线)", () => {
     
     // 且 close() 必须在 location.href 之前(否则跳转发生时 overlay 还开着)
     const closeIdx = html.indexOf("window.Paddle.Checkout.close()");
+    const timeoutIdx = html.indexOf("setTimeout(");
     const hrefIdx = html.indexOf('window.location.href = "/console?paid=1"');
     expect(closeIdx).toBeGreaterThan(-1);
+    expect(timeoutIdx).toBeGreaterThan(-1);
     expect(hrefIdx).toBeGreaterThan(-1);
-    expect(closeIdx).toBeLessThan(hrefIdx);
+    // close() 必须在 setTimeout 外面（立即执行），href 在 setTimeout 里面
+    expect(closeIdx).toBeLessThan(timeoutIdx);
+    expect(timeoutIdx).toBeLessThan(hrefIdx);
   });
 });
