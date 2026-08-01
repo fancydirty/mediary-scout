@@ -174,7 +174,7 @@ if [ "${UP_FAILED:-}" = "1" ]; then
   # 完全不提示解决方向,用户只会以为是我们的脚本坏了。
   if printf '%s' "$UP_LOG" | grep -qiE "failed to (fetch anonymous token|resolve reference)|connection reset by peer|auth\.docker\.io|registry-1\.docker\.io"; then
     echo "" >&2
-    echo "❌ 拉取容器镜像失败 —— 这不是你的配置错了,是 Docker Hub 在中国大陆不可达。" >&2
+    echo "❌ 拉取容器镜像失败 —— 这不是你的配置错了,是 Docker Hub 在中国大陆常年不稳定。" >&2
     echo "" >&2
     echo "   在当前目录的 .env 里加一行镜像源,然后重跑本命令:" >&2
     echo "     echo 'DOCKER_MIRROR=docker.1ms.run' >> .env" >&2

@@ -765,3 +765,26 @@ export async function requestConnectLoginAction(email: string): Promise<ConnectL
   const { requestConnectLogin } = await import("../lib/remote-access");
   return await requestConnectLogin(email);
 }
+
+export interface DismissConnectNoticeResult {
+  ok: boolean;
+}
+
+/**
+ * 关闭 Connect 通知横幅 —— 写 settings 表记录关闭时间。
+ * 
+ * demo 站禁用。
+ */
+export async function dismissConnectNoticeAction(): Promise<DismissConnectNoticeResult> {
+  assertNotDemo();
+  const { getWorkflowRepository, getCurrentAccountId } = await import("../lib/workflow-runtime");
+  const { CONNECT_NOTICE_DISMISSED_KEY } = await import("../lib/connect-notice");
+  
+  const repository = getWorkflowRepository();
+  const accountId = await getCurrentAccountId();
+  const now = new Date().toISOString();
+  
+  await repository.setAccountSetting(accountId, CONNECT_NOTICE_DISMISSED_KEY, now);
+  
+  return { ok: true };
+}

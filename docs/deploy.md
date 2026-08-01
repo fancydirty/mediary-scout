@@ -53,7 +53,7 @@ docker compose up -d        # 首次会构建 web 镜像,几分钟
 > ### ⚠️ 墙内先看这个:Docker Hub 大概率拉不动
 >
 > 本项目有三个镜像来自 Docker Hub(`postgres`、构建 web 用的 `node`、`cloudflared`),
-> 而 **Docker Hub 在中国大陆经常不可达**。典型报错:
+> 而 **Docker Hub 在中国大陆常年不稳定**。典型报错:
 >
 > ```
 > failed to fetch anonymous token: Get "https://auth.docker.io/token...": EOF
@@ -290,7 +290,7 @@ c. 进这条隧道的 Public Hostname → Add a public hostname:
 - 在部署目录执行 `docker compose --profile tunnel up -d`
 - 首次会拉取 cloudflared 镜像(慢网络几分钟,正常)。
   **墙内若报 `failed to fetch anonymous token` / `connection reset by peer`,重试没用** ——
-  那是 Docker Hub 不可达,在 `.env` 里加 `DOCKER_MIRROR=docker.1ms.run` 再重跑
+  那是 Docker Hub 常年不稳定,在 `.env` 里加 `DOCKER_MIRROR=docker.1ms.run` 再重跑
   (见上方「Compose 快速开始」里的镜像源小节)。`connect.sh` 遇到这个错会直接把解法打出来。
 
 第 4 步·确认连通:
@@ -354,9 +354,9 @@ Public Hostname 与 Access 已由 Connect 控制面配好，服务目标固定�
 
 即便开了多用户,也仍建议放在 Tailscale / Cloudflare Access 之后——登录只为隔离用户数据,不是给公网当门禁。
 
-## 国内构建加速(连不上 Docker Hub)
+## 国内构建加速(Docker Hub 常年不稳定)
 
-Docker Hub 和 ghcr 在国内常连不上,首次 `docker compose up` 构建 / 拉取会卡住。下面的镜像加速**只解决 Docker Hub**(占绝大多数镜像);来自 ghcr 的 `pansou` 是例外,见本节末尾。典型报错(任一即是此问题):
+Docker Hub 和 ghcr 在国内常年不稳定,首次 `docker compose up` 构建 / 拉取会卡住。下面的镜像加速**只解决 Docker Hub**(占绝大多数镜像);来自 ghcr 的 `pansou` 是例外,见本节末尾。典型报错(任一即是此问题):
 
 ```
 failed to fetch oauth token: Post "https://auth.docker.io/token": ... i/o timeout
