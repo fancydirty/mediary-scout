@@ -32,6 +32,7 @@ import {
 import { isKnownPriceId, type PaddleApi } from "./paddle-api.js";
 import { verifyPaddleSignature } from "./paddle-signature.js";
 import { buyPage } from "./html/buy-page.js";
+import { paymentSuccessPage } from "./html/payment-success-page.js";
 import { compliancePage, COMPLIANCE_PAGES, type CompliancePageKey } from "./html/compliance-page.js";
 import { RAW_ASSETS } from "./html/assets.gen.js";
 import { consolePage } from "./html/console-page.js";
@@ -361,6 +362,16 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
       // 也避免「未配置 token → 已配置」后旧的「结账未开放」页面被缓存住。
       { paddle: true, noStore: true },
     );
+  }
+  // /payment-success —— Paddle checkout.settings.success_url 的落点。
+  //
+  // **微信支付这类外部跳转支付方式的唯一救命页面。** 用户付完款会被 Paddle
+  // 带到它自己的处理域名,`/buy` 上的 eventCallback 完全失效 ——
+  // 没有这个页面,用户看到的是一个不动的二维码,完全不知道是否付款成功。
+  //
+  // noStore:这是一次性的支付确认页,不该被缓存复用。
+  if (method === "GET" && path === "/payment-success") {
+    return htmlPage(paymentSuccessPage(), { noStore: true });
   }
   // 合规五页（条款/隐私/退款/定价/联系）——Paddle 域名审核硬性要求。
   // 两个 host 都放行：审核看的是 mediaryconnect.app，但 beta 页脚也要能链到。

@@ -73,7 +73,20 @@ export function createPaddleApi(input: {
           // webhook 靠这个把付款关联到登录账号 —— 见本文件头部注释。
           custom_data: { account_email: accountEmail },
           // 显式指定,不依赖账号级 default(那个可能指向别的产品)。
-          checkout: { url: checkoutUrl },
+          checkout: {
+            url: checkoutUrl,
+            // **微信支付等外部跳转支付方式必须有 success_url**,否则付完款后
+            // 用户停在 Paddle 的支付页(redirect-euw1.ppro.com)回不来,
+            // 看到的是一个不动的二维码 —— 完全不知道是否付款成功。
+            //
+            // 指向 /payment-success 而非 /console:微信支付是延迟捕获
+            // (Paddle 官方:通常立刻,但可能长达 10 分钟)。直接跳控制台会
+            // 看到「尚未开通」—— 那是最伤人的一幕。中间页明确说「支付成功,
+            // 正在开通」再给链接,用户才知道钱没白花。
+            settings: {
+              success_url: `${new URL(checkoutUrl).origin}/payment-success`,
+            },
+          },
         }),
       });
       if (!res.ok) {
