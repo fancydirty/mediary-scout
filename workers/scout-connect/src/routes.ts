@@ -368,10 +368,6 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
   // 它自己的处理域名,/buy 上的 eventCallback 完全失效 —— 没有这个页面,
   // 用户看到的是一个不动的二维码,完全不知道是否付款成功。
   //
-  // **微信支付这类外部跳转支付方式的唯一救命页面。** 用户付完款会被 Paddle
-  // 带到它自己的处理域名,`/buy` 上的 eventCallback 完全失效 ——
-  // 没有这个页面,用户看到的是一个不动的二维码,完全不知道是否付款成功。
-  //
   // noStore:这是一次性的支付确认页,不该被缓存复用。
   if (method === "GET" && path === "/payment-success") {
     return htmlPage(paymentSuccessPage(), { noStore: true });

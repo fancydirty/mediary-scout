@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { paymentSuccessPage } from "./payment-success-page";
+import { paymentSuccessPage } from "./payment-success-page.js";
 
 describe("payment-success-page", () => {
   it("包含 noindex meta 标签", () => {
