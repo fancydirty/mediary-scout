@@ -88,7 +88,6 @@ ${configured ? '<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></scrip
   // (注意:此处注释不能出现回调字样 —— 未配置分支的产物会被测试断言
   //  not.toContain,注释会误命中,本项目已多次栽在这。)
   var redirectScheduled = false;
-  var redirectScheduled = false;
   function fail(msg) {
     hint.textContent = "无法打开支付窗口。";
     status.textContent = msg;
