@@ -298,10 +298,13 @@ ${configured ? '<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></scrip
           inFlight = false;
         }
       };
+      // 先建 interval 再立即跑一次(Copilot round 3):若先 poll(),首轮命中
+      // 401/404/completed 时 clearInterval(timer) 清不掉 null,interval 仍会
+      // 创建继续请求,覆盖已写入的提示。
+      timer = setInterval(poll, intervalMs);
       // 页面加载立即查一次:付款发生在轮询启动前的场景(如刷新后交易已完成)
       // 也能马上抓住,不用等第一个 3 秒 tick。
       poll();
-      timer = setInterval(poll, intervalMs);
     })();
   } catch (e) {
     fail("打开支付窗口失败：" + (e && e.message ? e.message : String(e)));

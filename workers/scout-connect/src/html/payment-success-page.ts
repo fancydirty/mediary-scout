@@ -137,8 +137,10 @@ ${BRAND_BAR}
       inFlight = false;
     }
   };
-  poll();
+  // 先建 interval 再立即跑一次(Copilot round 3):首轮 401/404/completed 时
+  // clearInterval 才能清掉真实 timer,否则 interval 仍会创建继续请求。
   timer = setInterval(poll, intervalMs);
+  poll();
 })();
 </script>
 </body>
