@@ -349,7 +349,7 @@ describe("GET /api/transaction/:id/status(结账轮询)", () => {
 
   it("未登录 → 401", async () => {
     const { deps } = setup();
-    const res = await handleRequest(new Request(`${BASE}/api/transaction/txn_1/status`), deps);
+    const res = await handleRequest(new Request(`${BASE}/api/transaction/txn_aaaaaaaaaaaaaaaaaaaaaaaaaa/status`), deps);
     expect(res.status).toBe(401);
   });
 
@@ -359,7 +359,7 @@ describe("GET /api/transaction/:id/status(结账轮询)", () => {
     const fake = deps.paddleApi as unknown as { getTransactionStatus: () => unknown };
     fake.getTransactionStatus = async () => ({ status: "completed", paidAt: NOW, accountEmail: "other@example.com" });
     const res = await handleRequest(
-      new Request(`${BASE}/api/transaction/txn_other/status`, { headers: { cookie } }),
+      new Request(`${BASE}/api/transaction/txn_bbbbbbbbbbbbbbbbbbbbbbbbbb/status`, { headers: { cookie } }),
       deps,
     );
     expect(res.status).toBe(404);
@@ -371,7 +371,7 @@ describe("GET /api/transaction/:id/status(结账轮询)", () => {
     const fake = deps.paddleApi as unknown as { getTransactionStatus: () => unknown };
     fake.getTransactionStatus = async () => ({ status: "completed", paidAt: NOW, accountEmail: "me@example.com" });
     const res = await handleRequest(
-      new Request(`${BASE}/api/transaction/txn_mine/status`, { headers: { cookie } }),
+      new Request(`${BASE}/api/transaction/txn_cccccccccccccccccccccccccc/status`, { headers: { cookie } }),
       deps,
     );
     expect(res.status).toBe(200);
@@ -386,7 +386,7 @@ describe("GET /api/transaction/:id/status(结账轮询)", () => {
     const fake = deps.paddleApi as unknown as { getTransactionStatus: () => unknown };
     fake.getTransactionStatus = async () => ({ status: "ready", paidAt: null, accountEmail: "me@example.com" });
     const res = await handleRequest(
-      new Request(`${BASE}/api/transaction/txn_mine/status`, { headers: { cookie } }),
+      new Request(`${BASE}/api/transaction/txn_cccccccccccccccccccccccccc/status`, { headers: { cookie } }),
       deps,
     );
     expect(res.status).toBe(200);
@@ -399,7 +399,7 @@ describe("GET /api/transaction/:id/status(结账轮询)", () => {
     const fake = deps.paddleApi as unknown as { getTransactionStatus: () => unknown };
     fake.getTransactionStatus = async () => { throw new Error("upstream boom"); };
     const res = await handleRequest(
-      new Request(`${BASE}/api/transaction/txn_mine/status`, { headers: { cookie } }),
+      new Request(`${BASE}/api/transaction/txn_cccccccccccccccccccccccccc/status`, { headers: { cookie } }),
       deps,
     );
     expect(res.status).toBe(503);
@@ -411,7 +411,7 @@ describe("GET /api/transaction/:id/status(结账轮询)", () => {
     const fake = deps.paddleApi as unknown as { getTransactionStatus: () => unknown };
     fake.getTransactionStatus = async () => null;
     const res = await handleRequest(
-      new Request(`${BASE}/api/transaction/txn_ghost/status`, { headers: { cookie } }),
+      new Request(`${BASE}/api/transaction/txn_dddddddddddddddddddddddddd/status`, { headers: { cookie } }),
       deps,
     );
     expect(res.status).toBe(404);
@@ -425,11 +425,11 @@ describe("GET /api/transaction/:id/status(结账轮询)", () => {
     fake.getTransactionStatus = async () => { paddleCalled = true; return null; };
     const { grantEntitlement } = await import("./grant.js");
     await grantEntitlement(
-      { email: "me@example.com", months: 3, source: "paddle", paddleTransactionId: "txn_paid" },
+      { email: "me@example.com", months: 3, source: "paddle", paddleTransactionId: "txn_eeeeeeeeeeeeeeeeeeeeeeeeee" },
       { db: deps.db, now: () => NOW, newAccountId: () => "act_new", newEntitlementId: () => "ent_1" },
     );
     const res = await handleRequest(
-      new Request(`${BASE}/api/transaction/txn_paid/status`, { headers: { cookie } }),
+      new Request(`${BASE}/api/transaction/txn_eeeeeeeeeeeeeeeeeeeeeeeeee/status`, { headers: { cookie } }),
       deps,
     );
     expect(res.status).toBe(200);
@@ -442,13 +442,61 @@ describe("GET /api/transaction/:id/status(结账轮询)", () => {
     const cookie = await seedMe(deps.db);
     const { grantEntitlement } = await import("./grant.js");
     await grantEntitlement(
-      { email: "other@example.com", months: 3, source: "paddle", paddleTransactionId: "txn_other" },
+      { email: "other@example.com", months: 3, source: "paddle", paddleTransactionId: "txn_bbbbbbbbbbbbbbbbbbbbbbbbbb" },
       { db: deps.db, now: () => NOW, newAccountId: () => "act_new", newEntitlementId: () => "ent_2" },
     );
     const res = await handleRequest(
-      new Request(`${BASE}/api/transaction/txn_other/status`, { headers: { cookie } }),
+      new Request(`${BASE}/api/transaction/txn_bbbbbbbbbbbbbbbbbbbbbbbbbb/status`, { headers: { cookie } }),
       deps,
     );
     expect(res.status).toBe(404);
+  });
+});
+
+describe("GET /api/transaction/:id/status —— 边界(Copilot round 1)", () => {
+  async function seedMe(db: ConnectDb): Promise<string> {
+    await db.insertAccount({
+      id: "act_me2", email: "me@example.com", paddle_customer_id: null,
+      created_at: NOW, last_login_at: null,
+    });
+    return buildSessionCookie("act_me2", { secret: SECRET, ttlMs: 3600_000, now: Date.parse(NOW) });
+  }
+  const T26 = "txn_aaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+  it("畸形交易 ID(非 txn_ 格式)→ 404 而非 500", async () => {
+    // decodeURIComponent 对畸形百分号编码会抛 URIError。格式校验在前,
+    // 客户端错误不该变 500。
+    const { deps } = setup();
+    const cookie = await seedMe(deps.db);
+    const res = await handleRequest(
+      new Request(`${BASE}/api/transaction/%E0%A4%A/status`, { headers: { cookie } }),
+      deps,
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("accountEmail 为 null(异常/伪造)→ 404,不让猜 ID 的人查", async () => {
+    // 创建交易必写 custom_data.account_email。null 只可能是异常,拒绝。
+    const { deps } = setup();
+    const cookie = await seedMe(deps.db);
+    const fake = deps.paddleApi as unknown as { getTransactionStatus: () => unknown };
+    fake.getTransactionStatus = async () => ({ status: "paid", paidAt: NOW, accountEmail: null });
+    const res = await handleRequest(
+      new Request(`${BASE}/api/transaction/${T26}/status`, { headers: { cookie } }),
+      deps,
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("Paddle 5xx → 503 而非 404(上游故障要可重试)", async () => {
+    const { deps } = setup();
+    const cookie = await seedMe(deps.db);
+    const fake = deps.paddleApi as unknown as { getTransactionStatus: () => unknown };
+    fake.getTransactionStatus = async () => { throw new Error("paddle getTransactionStatus failed: 500"); };
+    const res = await handleRequest(
+      new Request(`${BASE}/api/transaction/${T26}/status`, { headers: { cookie } }),
+      deps,
+    );
+    expect(res.status).toBe(503);
   });
 });

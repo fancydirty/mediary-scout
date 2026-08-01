@@ -356,7 +356,12 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
   // 我们自己轮询这个端点,paid/completed 一到就关 overlay 跳 /payment-success。
   const txnStatusMatch = path.match(/^\/api\/transaction\/([^/]+)\/status$/);
   if (method === "GET" && txnStatusMatch !== null) {
-    return getTransactionStatusHandler(request, deps, decodeURIComponent(txnStatusMatch[1] ?? ""));
+    // decodeURIComponent 对畸形百分号编码会抛 URIError → 500。
+    // 交易 ID 是固定格式 txn_<26 位小写字母数字>,先按格式校验,
+    // 不合法直接 404(客户端错误不该变 500)。
+    const raw = txnStatusMatch[1] ?? "";
+    if (!/^txn_[a-z0-9]{26}$/.test(raw)) throw new HttpError(404, "not found");
+    return getTransactionStatusHandler(request, deps, raw);
   }
   // /buy —— Paddle 的 default payment link 落地页(拼 ?_ptxn= 打开结账窗)。
   if (method === "GET" && path === "/buy") {
@@ -877,7 +882,9 @@ async function getTransactionStatusHandler(
   if (txn === null) throw new HttpError(404, "not found");
 
   // 归属校验:交易必须属于当前登录账号。
-  if (txn.accountEmail !== null && txn.accountEmail !== account.email) {
+  // 创建交易时必写 custom_data.account_email(见 paddle-api.ts),所以 null
+  // 只可能是异常/伪造 —— 同样拒绝,不能让任何登录用户猜 ID 查别人的交易。
+  if (txn.accountEmail !== account.email) {
     throw new HttpError(404, "not found");
   }
 

@@ -187,10 +187,30 @@ ${configured ? '<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></scrip
       var attempts = 0;
       var timer = setInterval(async function () {
         attempts++;
-        if (attempts > 200) { clearInterval(timer); return; }  // 3s × 200 = 10 分钟
+        // 3s × 200 = 10 分钟(Paddle 官方延迟捕获上限)。
+        // 超时后停轮询并明确告诉用户下一步,不能无声无息地停。
+        if (attempts > 200) {
+          clearInterval(timer);
+          hint.textContent = "支付已提交,正在确认到账…";
+          status.textContent = "如果已经付款,请稍后刷新此页面查看开通状态。你的付款不会丢失 —— 超过 15 分钟仍未开通请联系我们。";
+          return;
+        }
         try {
           var res = await fetch("/api/transaction/" + encodeURIComponent(txn) + "/status");
-          if (res.status === 401 || res.status === 404) { clearInterval(timer); return; }
+          if (res.status === 401) {
+            // 登录过期:继续轮询也没用,明确告诉用户重新登录。
+            clearInterval(timer);
+            hint.textContent = "登录状态已过期。";
+            status.textContent = "请刷新页面重新登录后,在控制台查看开通状态。你的付款不会丢失。";
+            return;
+          }
+          if (res.status === 404) {
+            // 交易不存在/不属于当前账号:继续轮询没意义。多半是会话换人了。
+            clearInterval(timer);
+            hint.textContent = "这笔交易无法确认。";
+            status.textContent = "请回到控制台重新发起购买;若已付款,请联系我们核对。";
+            return;
+          }
           if (res.status === 503) return;  // Paddle 上游抖动,下次再试
           var data = await res.json();
           if (data && (data.status === "paid" || data.status === "completed")) {

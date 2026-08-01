@@ -156,7 +156,11 @@ export function createPaddleApi(input: {
         headers: { authorization: `Bearer ${input.apiKey}` },
         signal: AbortSignal.timeout(10_000),
       });
-      if (!res.ok) return null;
+      // 区分错误类型:404 = 交易不存在(合法 null);其它非 2xx(5xx/429)是
+      // 上游故障,必须 throw —— 否则轮询端点会把 Paddle 抖动当成"交易不存在"
+      // 返回 404,前端停止轮询,用户卡死。
+      if (res.status === 404) return null;
+      if (!res.ok) throw new Error(`paddle getTransactionStatus failed: ${res.status}`);
       const body = (await res.json()) as {
         data?: {
           id?: unknown;
