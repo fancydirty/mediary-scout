@@ -1,5 +1,6 @@
 import { getWorkflowRepository, getCurrentAccountId } from "./workflow-runtime";
 import { instanceTunnelToken } from "./remote-access";
+import { isDemoMode } from "./demo-mode";
 import { CONNECT_NOTICE_DISMISSED_KEY, shouldShowConnectNotice } from "./connect-notice";
 import type { ConnectNoticeConditions } from "./connect-notice";
 
@@ -21,7 +22,7 @@ export async function resolveConnectNoticeConditions(): Promise<ConnectNoticeCon
   const hasTunnelToken = instanceTunnelToken() !== undefined;
 
   return {
-    isDemo: process.env.DEMO === "true",
+    isDemo: isDemoMode(),
     accountId,
     dismissedAt,
     hasTunnelToken,
