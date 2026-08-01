@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { Check, ExternalLink, LoaderCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { connectPan123TokenAction } from "../app/actions";
+import { runAction } from "../lib/run-action";
 
 /**
  * 123网盘手动粘 token —— 扫码登录(Pan123QrConnect)的折叠回退。123 的登录凭证是
@@ -18,7 +19,14 @@ export function Pan123TokenConnect() {
 
   const handleConnect = () => {
     startTransition(async () => {
-      const res = await connectPan123TokenAction(token);
+      // 必须 catch:server action 会 throw(demo 门禁、运行时错误、网络中断),
+      // 不 catch 就是未处理 rejection,界面上什么都不变(见 runAction 注释)。
+      const r = await runAction(
+        () => connectPan123TokenAction(token),
+        (msg) => setResult(`❌ ${msg}`),
+      );
+      if (!r.ok) return;
+      const res = r.value;
       setResult(res.ok ? `✅ ${res.message}` : `❌ ${res.message}`);
       if (res.ok) {
         setToken("");

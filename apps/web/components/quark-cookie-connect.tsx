@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { Check, ExternalLink, LoaderCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { connectQuarkAction } from "../app/actions";
+import { runAction } from "../lib/run-action";
 
 /**
  * 夸克手动 cookie 连接 —— 扫码登录(QuarkQrConnect)的折叠回退。用户从夸克 web 请求头
@@ -17,7 +18,14 @@ export function QuarkCookieConnect() {
 
   const handleConnect = () => {
     startTransition(async () => {
-      const res = await connectQuarkAction(cookie);
+      // 必须 catch:server action 会 throw(demo 门禁、运行时错误、网络中断),
+      // 不 catch 就是未处理 rejection,界面上什么都不变(见 runAction 注释)。
+      const r = await runAction(
+        () => connectQuarkAction(cookie),
+        (msg) => setResult(`❌ ${msg}`),
+      );
+      if (!r.ok) return;
+      const res = r.value;
       setResult(res.ok ? `✅ ${res.message}` : `❌ ${res.message}`);
       if (res.ok) {
         setCookie("");

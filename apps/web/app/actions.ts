@@ -801,32 +801,3 @@ export async function dismissConnectNoticeAction(): Promise<DismissConnectNotice
     throw e;
   }
 }
-
-// tagged union 而非 { ok: boolean; detail: ... }(Copilot 意见):
-// 后者允许 { ok: true, detail: "unreachable" } 这种不可能组合编译通过。
-// 判别字段 detail 与 ok 一一对应,不可能状态在类型层面就不存在。
-export type TestRemoteAccessResult =
-  | { ok: true; detail: "reachable" }
-  | { ok: false; detail: "instance_problem" | "unreachable" | "no_hostname" };
-
-/**
- * 远程访问「测试连接」。
- *
- * 探测 https://<hostname>/api/health(实例自己的健康端点,匿名可达)。
- * 走服务端:浏览器直连会撞 CORS,且 hostname 在 .env 里只有服务端读得到。
- *
- * 语义:
- * - reachable:隧道通、实例健康
- * - instance_problem:503 —— 隧道通但实例内部有问题(该查实例不是隧道)
- * - unreachable:超时/网络错/其它状态码
- * - no_hostname:老实例 .env 没有 MEDIARY_CONNECT_HOSTNAME,没法探测
- */
-export async function testRemoteAccessConnectionAction(): Promise<TestRemoteAccessResult> {
-  const { instanceConnectHostname } = await import("../lib/remote-access");
-  const hostname = instanceConnectHostname();
-  if (hostname === null) {
-    return { ok: false, detail: "no_hostname" };
-  }
-  const { probeRemoteAccess } = await import("../lib/remote-access-probe");
-  return await probeRemoteAccess(hostname);
-}
