@@ -23,6 +23,9 @@ export function DailySweepForm({ initial, max }: { initial: string[]; max: numbe
       const r = await runAction(
         () => saveDailySweepTimesAction(next),
         (msg) => {
+          // 组件注释承诺「失败回滚」:异常时也要 setTimes(previous),
+          // 否则 UI 显示未持久化的最新值(Copilot round 3)。
+          setTimes(previous);
           setNote(`❌ ${msg}`);
           setTimeout(() => setNote(null), 3000);
         },
