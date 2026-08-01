@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { Check, ExternalLink, LoaderCircle } from "lucide-react";
 import { savePanSouBaseUrlAction } from "../app/actions";
+import { runAction } from "../lib/run-action";
 
 const PANSOU_SELF_HOST_TUTORIAL_URL =
   "https://github.com/fancydirty/mediary-scout/blob/main/docs/pansou-self-host.md";
@@ -20,7 +21,18 @@ export function PanSouConfigForm({
 
   const handleSave = () => {
     startTransition(async () => {
-      const res = await savePanSouBaseUrlAction(baseURL);
+      // 必须 catch:server action 会 throw(demo 门禁、运行时错误、网络中断),
+      // 不 catch 就是未处理 rejection,界面上什么都不变(见 runAction 注释)。
+      // 业务错误(success:false)仍走下方原逻辑;这里只拦异常。
+      const r = await runAction(
+        () => savePanSouBaseUrlAction(baseURL),
+        (msg) => {
+          setResult(`❌ ${msg}`);
+          setTimeout(() => setResult(null), 3000);
+        },
+      );
+      if (!r.ok) return;
+      const res = r.value;
       setResult(res.success ? "✅ 保存成功" : `❌ ${res.message ?? "保存失败"}`);
       setTimeout(() => setResult(null), 3000);
     });

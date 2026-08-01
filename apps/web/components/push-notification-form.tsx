@@ -7,6 +7,7 @@ import {
   savePushSettingsAction,
   testPushNotificationAction,
 } from "../app/actions";
+import { runAction } from "../lib/run-action";
 
 const CHANNELS = [
   {
@@ -49,7 +50,15 @@ export function PushNotificationForm({ configured }: { configured: Record<string
 
   const handleSave = () => {
     startTransition(async () => {
-      const result = await savePushSettingsAction(values);
+      const r = await runAction(
+        () => savePushSettingsAction(values),
+        (msg) => {
+          setTestResult(`❌ ${msg}`);
+          setTimeout(() => setTestResult(null), 3000);
+        },
+      );
+      if (!r.ok) return;
+      const result = r.value;
       if (result.success) {
         const next = { ...savedChannels };
         for (const [key, value] of Object.entries(values)) {
@@ -65,7 +74,15 @@ export function PushNotificationForm({ configured }: { configured: Record<string
 
   const handleClear = (key: string) => {
     startTransition(async () => {
-      const result = await clearPushChannelAction(key);
+      const r = await runAction(
+        () => clearPushChannelAction(key),
+        (msg) => {
+          setTestResult(`❌ ${msg}`);
+          setTimeout(() => setTestResult(null), 3000);
+        },
+      );
+      if (!r.ok) return;
+      const result = r.value;
       if (result.success) {
         setSavedChannels((prev) => ({ ...prev, [key]: false }));
         setValues((prev) => {
@@ -83,7 +100,15 @@ export function PushNotificationForm({ configured }: { configured: Record<string
 
   const handleTest = () => {
     startTransition(async () => {
-      const result = await testPushNotificationAction(values);
+      const r = await runAction(
+        () => testPushNotificationAction(values),
+        (msg) => {
+          setTestResult(`❌ ${msg}`);
+          setTimeout(() => setTestResult(null), 5000);
+        },
+      );
+      if (!r.ok) return;
+      const result = r.value;
       setTestResult(
         result.success
           ? `✅ 测试通知已发送到 ${result.sentTo?.join("、") ?? "已配置渠道"}`

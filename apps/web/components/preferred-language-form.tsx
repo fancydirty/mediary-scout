@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { Check, LoaderCircle } from "lucide-react";
 import { savePreferredLanguageAction } from "../app/actions";
+import { runAction } from "../lib/run-action";
 
 const LANGUAGES = [
   { key: "中文", label: "中文（默认）" },
@@ -18,7 +19,18 @@ export function PreferredLanguageForm({ initial }: { initial: string }) {
 
   const handleSave = () => {
     startTransition(async () => {
-      const res = await savePreferredLanguageAction(value);
+      // 必须 catch:server action 会 throw(demo 门禁、运行时错误、网络中断),
+      // 不 catch 就是未处理 rejection,界面上什么都不变(见 runAction 注释)。
+      // 业务错误(success:false)仍走下方原逻辑;这里只拦异常。
+      const r = await runAction(
+        () => savePreferredLanguageAction(value),
+        (msg) => {
+          setResult(`❌ ${msg}`);
+          setTimeout(() => setResult(null), 3000);
+        },
+      );
+      if (!r.ok) return;
+      const res = r.value;
       setResult(res.success ? "✅ 保存成功" : `❌ ${res.message}`);
       setTimeout(() => setResult(null), 3000);
     });

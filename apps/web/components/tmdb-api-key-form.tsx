@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { Check, ExternalLink, LoaderCircle, Trash2 } from "lucide-react";
 import { saveTmdbApiKeyAction, clearTmdbApiKeyAction } from "../app/actions";
+import { runAction } from "../lib/run-action";
 
 export function TmdbApiKeyForm({ apiKeySet }: { apiKeySet: boolean }) {
   const [isPending, startTransition] = useTransition();
@@ -12,7 +13,18 @@ export function TmdbApiKeyForm({ apiKeySet }: { apiKeySet: boolean }) {
 
   const handleSave = () => {
     startTransition(async () => {
-      const res = await saveTmdbApiKeyAction(apiKey);
+      // 必须 catch:server action 会 throw(demo 门禁、运行时错误、网络中断),
+      // 不 catch 就是未处理 rejection,界面上什么都不变(见 runAction 注释)。
+      // 业务错误(success:false)仍走下方原逻辑;这里只拦异常。
+      const r = await runAction(
+        () => saveTmdbApiKeyAction(apiKey),
+        (msg) => {
+          setResult(`❌ ${msg}`);
+          setTimeout(() => setResult(null), 3000);
+        },
+      );
+      if (!r.ok) return;
+      const res = r.value;
       setResult(res.success ? "✅ 保存成功" : `❌ ${res.message ?? "保存失败"}`);
       if (res.success && apiKey.trim()) {
         setApiKey("");
@@ -24,7 +36,18 @@ export function TmdbApiKeyForm({ apiKeySet }: { apiKeySet: boolean }) {
 
   const handleClear = () => {
     startTransition(async () => {
-      const res = await clearTmdbApiKeyAction();
+      // 必须 catch:server action 会 throw(demo 门禁、运行时错误、网络中断),
+      // 不 catch 就是未处理 rejection,界面上什么都不变(见 runAction 注释)。
+      // 业务错误(success:false)仍走下方原逻辑;这里只拦异常。
+      const r = await runAction(
+        () => clearTmdbApiKeyAction(),
+        (msg) => {
+          setResult(`❌ ${msg}`);
+          setTimeout(() => setResult(null), 3000);
+        },
+      );
+      if (!r.ok) return;
+      const res = r.value;
       setResult(res.success ? "✅ 已清除，改用代理兜底" : `❌ ${res.message ?? "清除失败"}`);
       if (res.success) setHasKey(false);
       setTimeout(() => setResult(null), 3000);

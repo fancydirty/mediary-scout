@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { Check, LoaderCircle } from "lucide-react";
 import { saveQualityPreferenceAction } from "../app/actions";
+import { runAction } from "../lib/run-action";
 
 const QUALITIES = [
   { key: "any", label: "不限（默认）" },
@@ -17,7 +18,18 @@ export function QualityPreferenceForm({ initial }: { initial: string }) {
 
   const handleSave = () => {
     startTransition(async () => {
-      const res = await saveQualityPreferenceAction(value);
+      // 必须 catch:server action 会 throw(demo 门禁、运行时错误、网络中断),
+      // 不 catch 就是未处理 rejection,界面上什么都不变(见 runAction 注释)。
+      // 业务错误(success:false)仍走下方原逻辑;这里只拦异常。
+      const r = await runAction(
+        () => saveQualityPreferenceAction(value),
+        (msg) => {
+          setResult(`❌ ${msg}`);
+          setTimeout(() => setResult(null), 3000);
+        },
+      );
+      if (!r.ok) return;
+      const res = r.value;
       setResult(res.success ? "✅ 保存成功" : `❌ ${res.message ?? "保存失败"}`);
       setTimeout(() => setResult(null), 3000);
     });
