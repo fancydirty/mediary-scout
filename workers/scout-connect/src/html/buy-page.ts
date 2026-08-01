@@ -196,7 +196,12 @@ ${configured ? '<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></scrip
         settings: { successUrl: location.origin + "/payment-success?txn=" + encodeURIComponent(txn) },
       });
       hint.textContent = "支付窗口已打开。";
-      status.textContent = "";
+      // 微信支付会弹出独立小窗口(Paddle overlay 用 window.open 打开第三方
+      // 支付页)。**这是 Paddle 的已知缺陷**:付款完成后小窗口可能不自动关闭
+      // (checkout.completed 未触发时 Paddle 不会关它),Paddle 未文档化。
+      // 我们无法从父页面关闭跨源小窗口,但轮询会保证本页跳转 —— 用户只需
+      // 手动关掉小窗口。提前说清楚,别让用户以为出事了。
+      status.textContent = "选择微信支付后会弹出小窗口;付款完成后若它未自动关闭,请手动关闭 —— 页面会自动继续。";
     }
 
     // ---- 自建轮询:微信支付的唯一可靠出路 ----
