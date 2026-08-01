@@ -183,7 +183,7 @@ describe("付款完成后必须有出路(真实事故的回归防线)", () => {
     // 且 close() 必须在 location.href 之前(否则跳转发生时 overlay 还开着)
     const closeIdx = output.indexOf("window.Paddle.Checkout.close()");
     const timeoutIdx = output.indexOf("setTimeout(");
-    const hrefIdx = output.indexOf('window.location.href = "/payment-success"');
+    const hrefIdx = output.indexOf('window.location.href = "/payment-success?txn=');
     expect(closeIdx).toBeGreaterThan(-1);
     expect(timeoutIdx).toBeGreaterThan(-1);
     expect(hrefIdx).toBeGreaterThan(-1);
@@ -195,6 +195,17 @@ describe("付款完成后必须有出路(真实事故的回归防线)", () => {
   it("successUrl 必须带交易 ID(确认页靠它轮询到账后自动跳控制台)", () => {
     const output = buyPage(CONFIGURED);
     expect(output).toMatch(/successUrl:[^,}]*\/payment-success\?txn=/);
+  });
+
+  it("**每一处**跳转都必须带 txn(不带则确认页无法自动跳控制台)", () => {
+    // 用 indexOf 只能找到第一处,漏掉其它跳转路径(Copilot round 1 抓到的
+    // 假覆盖)。改为统计:所有 /payment-success 跳转都必须带 ?txn=。
+    const output = buyPage(CONFIGURED);
+    const bare = (output.match(/window\.location\.href = "\/payment-success"/g) || []).length;
+    const withTxn = (output.match(/window\.location\.href = "\/payment-success\?txn=/g) || []).length;
+    // 轮询 + eventCallback + 预检查,三处跳转都必须带 txn;bare 应为 0。
+    expect(bare).toBe(0);
+    expect(withTxn).toBeGreaterThanOrEqual(3);
   });
 
   it("Checkout.open 必须带 settings.successUrl(微信支付唯一救命参数)", () => {

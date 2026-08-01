@@ -95,20 +95,44 @@ ${BRAND_BAR}
 (function () {
   var txn = new URLSearchParams(location.search).get("txn");
   if (!txn) return;  // 直接访问本页(无交易上下文)不轮询
+  // inFlight 锁 + 超时(Copilot round 1):慢网/挂起时避免并发重叠请求或
+  // fetch 永久挂起让轮询静默停住。5 秒超时保证锁一定释放。
+  function timeoutSignal(ms) {
+    if (typeof AbortSignal.timeout === "function") return AbortSignal.timeout(ms);
+    var c = new AbortController();
+    setTimeout(function () { c.abort(); }, ms);
+    return c.signal;
+  }
   var attempts = 0;
-  var timer = setInterval(async function () {
-    attempts++;
-    if (attempts > 60) { clearInterval(timer); return; }  // 3s × 60 = 3 分钟
+  var inFlight = false;
+  var timer = null;
+  var intervalMs = 3000;
+  var poll = async function () {
+    if (inFlight) return;
+    inFlight = true;
     try {
-      var res = await fetch("/api/transaction/" + encodeURIComponent(txn) + "/status");
+      attempts++;
+      // 微信延迟捕获可到 ~10 分钟:3 分钟后降频继续,不早停(Copilot round 1)。
+      if (attempts === 61) {
+        clearInterval(timer);
+        intervalMs = 15000;
+        timer = setInterval(poll, intervalMs);
+      }
+      var res = await fetch("/api/transaction/" + encodeURIComponent(txn) + "/status", {
+        signal: timeoutSignal(5000),
+      });
       if (res.status !== 200) return;  // 未登录/未到账等,继续等
       var data = await res.json();
       if (data && data.status === "completed") {
         clearInterval(timer);
         window.location.href = "/console";
       }
-    } catch (e) { /* 网络抖动,下次再试 */ }
-  }, 3000);
+    } catch (e) { /* 网络抖动,下次再试 */ } finally {
+      inFlight = false;
+    }
+  };
+  poll();
+  timer = setInterval(poll, intervalMs);
 })();
 </script>
 </body>

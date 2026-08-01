@@ -134,7 +134,7 @@ ${configured ? '<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></scrip
           try { window.Paddle.Checkout.close(); } catch (e) { /* 已经关了也无妨 */ }
           
           // 留 1.8 秒让用户看到这句话再跳。跳过去后确认页显示「正在开通」。
-          setTimeout(function () { window.location.href = "/payment-success"; }, 1800);
+          setTimeout(function () { window.location.href = "/payment-success?txn=" + encodeURIComponent(txn); }, 1800);
         } else if (event.name === "checkout.payment.failed") {
           // 付款失败也必须说话。之前这里同样是静默的。
           hint.textContent = "这笔支付没有成功。";
@@ -182,7 +182,7 @@ ${configured ? '<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></scrip
         if (pre.status === 200) {
           var preData = await pre.json();
           if (preData && (preData.status === "paid" || preData.status === "completed")) {
-            window.location.href = "/payment-success";
+            window.location.href = "/payment-success?txn=" + encodeURIComponent(txn);
             return;
           }
         }
@@ -291,7 +291,7 @@ ${configured ? '<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></scrip
             hint.textContent = "支付成功,正在开通…";
             status.textContent = "正在确认到账(微信支付最多需要 10 分钟)。即将前往确认页。";
             try { window.Paddle.Checkout.close(); } catch (e) { /* 已经关了也无妨 */ }
-            setTimeout(function () { window.location.href = "/payment-success"; }, 1800);
+            setTimeout(function () { window.location.href = "/payment-success?txn=" + encodeURIComponent(txn); }, 1800);
           }
         } catch (e) { /* 网络抖动,下次再试 */ } finally {
           // 释放锁:clearInterval 后 finally 仍会跑,但 timer 已停,无副作用。
