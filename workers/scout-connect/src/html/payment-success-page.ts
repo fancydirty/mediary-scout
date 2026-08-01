@@ -121,7 +121,13 @@ ${BRAND_BAR}
       var res = await fetch("/api/transaction/" + encodeURIComponent(txn) + "/status", {
         signal: timeoutSignal(5000),
       });
-      if (res.status !== 200) return;  // 未登录/未到账等,继续等
+      if (res.status === 401 || res.status === 404) {
+        // 未登录/交易不存在:继续轮询没意义,与 /buy 轮询一致 fail-fast
+        // (Copilot round 2)。否则无意义请求直到页面关闭。
+        clearInterval(timer);
+        return;
+      }
+      if (res.status !== 200) return;  // 503 等可重试状态,继续等
       var data = await res.json();
       if (data && data.status === "completed") {
         clearInterval(timer);
