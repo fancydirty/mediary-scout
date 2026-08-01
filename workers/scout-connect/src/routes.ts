@@ -363,7 +363,14 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
       { paddle: true, noStore: true },
     );
   }
-  // /payment-success —— Paddle checkout.settings.success_url 的落点。
+  // /payment-success —— Paddle Checkout.open 传 settings.successUrl 的落点。
+  // 这是微信支付等外部跳转支付方式的唯一回跳点:用户付完款会被 Paddle 带到
+  // 它自己的处理域名,/buy 上的 eventCallback 完全失效 —— 没有这个页面,
+  // 用户看到的是一个不动的二维码,完全不知道是否付款成功。
+  //
+  // 注意:这是前端 settings.successUrl(camelCase),**不是**
+  // API 创建交易时的 checkout.settings.success_url(snake_case)——
+  // 后者字段不存在,API 会静默忽略(本 PR 第一次修错就是栽在这里)。
   //
   // **微信支付这类外部跳转支付方式的唯一救命页面。** 用户付完款会被 Paddle
   // 带到它自己的处理域名,`/buy` 上的 eventCallback 完全失效 ——

@@ -783,10 +783,14 @@ export async function dismissConnectNoticeAction(): Promise<DismissConnectNotice
   const repository = getWorkflowRepository();
   // Copilot 指出:未登录时 getCurrentAccountId() 返回 acct_unauthenticated,
   // 而不是 null。若继续用它写设置,会污染哨兵账号的 account_settings。
-  const accountId = await requireAuthenticatedAccountId();
-  const now = new Date().toISOString();
-  
-  await repository.setAccountSetting(accountId, CONNECT_NOTICE_DISMISSED_KEY, now);
-  
-  return { ok: true };
+  try {
+    const accountId = await requireAuthenticatedAccountId();
+    const now = new Date().toISOString();
+    await repository.setAccountSetting(accountId, CONNECT_NOTICE_DISMISSED_KEY, now);
+    return { ok: true };
+  } catch {
+    // 未登录会抛 UnauthenticatedAccountError。返回 { ok: false } 而不是抛错,
+    // 否则客户端看到的是"点了关闭没反应/500"（Copilot PR #221 suppressed #3）。
+    return { ok: false };
+  }
 }

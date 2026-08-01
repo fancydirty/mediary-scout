@@ -10,7 +10,7 @@ import { BRAND_BAR, BRAND_CSS, FAVICON_LINK, THEME_BASE, THEME_TOKENS } from "./
  * `eventCallback` 完全失效 —— 用户看到的是一个不动的二维码页,
  * 完全不知道支付是否成功。
  *
- * 这个页面由 Paddle 的 `checkout.settings.success_url` 指向,
+ * 这个页面由 `/buy` 页里 `Paddle.Checkout.open({ settings: { successUrl } })` 指向,
  * 是**唯一能保证用户看到"支付成功"的地方**。
  *
  * **为什么不直接跳控制台:**
