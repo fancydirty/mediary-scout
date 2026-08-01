@@ -42,6 +42,20 @@ export interface PaddleApi {
    * 交易状态白拿时长。
    */
   listPaidTransactionIds(accountEmail: string, ourPriceIds: readonly string[]): Promise<string[]>;
+
+  /**
+   * 查单笔交易的状态。供 /buy 页面的轮询用 —— 微信支付是延迟捕获,授权与
+   * Paddle 确认之间可能有几分钟窗口,期间 Paddle 前端不跳转。我们自己轮询
+   * 这个端点,一旦 paid/completed 就关 overlay 跳转。
+   *
+   * 返回 null = 交易不存在(或已取消)。**只返回状态与归属邮箱,不返回任何
+   * 敏感字段。** 归属邮箱(创建交易时写入的 custom_data.account_email)
+   * 用于校验"这笔交易确实属于这个登录用户"—— 防止任何人拿别人的交易 ID
+   * 探测状态。
+   */
+  getTransactionStatus(
+    transactionId: string,
+  ): Promise<{ status: string; paidAt: string | null; accountEmail: string | null } | null>;
 }
 
 /** 真实 Paddle API 客户端。sandbox 与 live 的 base URL 不同。 */
@@ -135,6 +149,32 @@ export function createPaddleApi(input: {
         )
         .map((t) => t.id)
         .filter((id): id is string => typeof id === "string" && id !== "");
+    },
+
+    async getTransactionStatus(transactionId) {
+      const res = await fetch(`${base}/transactions/${encodeURIComponent(transactionId)}`, {
+        headers: { authorization: `Bearer ${input.apiKey}` },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) return null;
+      const body = (await res.json()) as {
+        data?: {
+          id?: unknown;
+          status?: unknown;
+          billed_at?: unknown;
+          custom_data?: { account_email?: unknown } | null;
+        };
+      };
+      if (typeof body.data?.id !== "string") return null;
+      const status = typeof body.data.status === "string" ? body.data.status : "";
+      if (status === "") return null;
+      const paidAt = typeof body.data.billed_at === "string" ? body.data.billed_at : null;
+      const custom = body.data.custom_data;
+      const accountEmail =
+        typeof custom?.account_email === "string" && custom.account_email !== ""
+          ? custom.account_email
+          : null;
+      return { status, paidAt, accountEmail };
     },
   };
 }

@@ -350,6 +350,14 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
   if (method === "POST" && path === "/api/checkout") {
     return createCheckout(request, deps);
   }
+  // GET /api/transaction/:id/status —— /buy 页面的轮询端点。
+  // 微信支付是延迟捕获,授权与 Paddle 确认之间有几分钟窗口,期间 Paddle 前端
+  // 不跳转、checkout.completed 不发 —— 用户看到的就是"付了钱但页面没反应"。
+  // 我们自己轮询这个端点,paid/completed 一到就关 overlay 跳 /payment-success。
+  const txnStatusMatch = path.match(/^\/api\/transaction\/([^/]+)\/status$/);
+  if (method === "GET" && txnStatusMatch !== null) {
+    return getTransactionStatusHandler(request, deps, decodeURIComponent(txnStatusMatch[1] ?? ""));
+  }
   // /buy —— Paddle 的 default payment link 落地页(拼 ?_ptxn= 打开结账窗)。
   if (method === "GET" && path === "/buy") {
     return htmlPage(
@@ -804,6 +812,76 @@ async function createCheckout(request: Request, deps: RouteDeps): Promise<Respon
     // 不回显 Paddle 的响应内容。502:上游失败,可重试。
     return json({ error: "checkout unavailable" }, 502, { noStore: true });
   }
+}
+
+/**
+ * `GET /api/transaction/:id/status` —— 结账轮询。
+ *
+ * 为什么需要它:微信支付是延迟捕获(官方:授权后通常立刻、最长 10 分钟才确认)。
+ * 在确认前,交易停在 ready/action_required,Paddle 前端不跳转、checkout.completed
+ * 不发 —— 用户看到"付了钱但页面没反应",感觉被骗。我们不能控制 Paddle 前端,
+ * 但可以自己轮询它的服务端,一旦 paid/completed 就跳转。
+ *
+ * 安全:
+ * - 必须登录(session),否则任何未登录请求都能探测交易状态。
+ * - **归属校验**:交易创建时写入了 custom_data.account_email。只有交易归属邮箱
+ *   与当前登录账号一致才返回状态 —— 否则 404(不泄露交易是否存在)。
+ * - 只返回 status 与 paid_at,不返回金额/发票等敏感字段。
+ */
+async function getTransactionStatusHandler(
+  request: Request,
+  deps: RouteDeps,
+  transactionId: string,
+): Promise<Response> {
+  const session = await parseSessionWithValidatedNow(request.headers.get("cookie"), deps);
+  if (!session.ok) throw new HttpError(401, "unauthorized");
+  const account = await deps.db.getAccountById(session.accountId);
+  if (account === null) throw new HttpError(401, "unauthorized");
+
+  // ---- 第一优先:D1 里的入账记录(webhook 的观测结果)----
+  //
+  // 微信扣款成功 → Paddle 收到款 → 发 transaction.completed webhook 推给我们
+  // → grantEntitlement 写入 entitlements(paddle_transaction_id)。所以
+  // **entitlements 里有这笔交易 = 付款成功的权威信号** —— 这比查 Paddle API
+  // 更快(本地 D1)、更准(已经入账)、零 API 成本。
+  //
+  // 归属校验:这笔交易入的必须是当前登录账号的账。
+  const entitlement = await deps.db.getEntitlementByTransactionId(transactionId);
+  if (entitlement !== null) {
+    const holder = await deps.db.getAccountById(entitlement.account_id);
+    if (holder !== null && holder.email === account.email) {
+      return json({ status: "completed", paid_at: entitlement.created_at }, 200, {
+        noStore: true,
+      });
+    }
+    // 入账给了别人 → 不是自己的交易,不泄露存在性。
+    throw new HttpError(404, "not found");
+  }
+
+  // ---- 兜底:查 Paddle API ----
+  // webhook 可能还没到(延迟捕获窗口内)或入账失败。查 Paddle 侧实际状态,
+  // paid/completed 就让前端跳 /payment-success(用户能看到"正在开通")。
+  const api = deps.paddleApi;
+  if (api === undefined) {
+    // 未配置 Paddle API key:没法查。503 让前端停轮询、显示"稍后刷新"。
+    return json({ error: "checkout not configured" }, 503, { noStore: true });
+  }
+
+  let txn: Awaited<ReturnType<PaddleApi["getTransactionStatus"]>>;
+  try {
+    txn = await api.getTransactionStatus(transactionId);
+  } catch {
+    // Paddle 上游抖动:503 让前端稍后重试,不要把它当成"交易不存在"。
+    return json({ error: "temporarily unavailable" }, 503, { noStore: true });
+  }
+  if (txn === null) throw new HttpError(404, "not found");
+
+  // 归属校验:交易必须属于当前登录账号。
+  if (txn.accountEmail !== null && txn.accountEmail !== account.email) {
+    throw new HttpError(404, "not found");
+  }
+
+  return json({ status: txn.status, paid_at: txn.paidAt }, 200, { noStore: true });
 }
 
 /**

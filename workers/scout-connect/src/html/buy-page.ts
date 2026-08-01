@@ -169,6 +169,40 @@ ${configured ? '<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></scrip
     });
     hint.textContent = "支付窗口已打开。";
     status.textContent = "";
+
+    // ---- 自建轮询:微信支付的唯一可靠出路 ----
+    //
+    // 第四次真实事故:微信支付是延迟捕获,授权与 Paddle 确认之间有几分钟窗口。
+    // 窗口内 Paddle 前端不跳转、checkout.completed 不发、successUrl 不触发 ——
+    // 用户看到"付了钱但页面没反应",感觉被骗。上述三条路(Paddle 的 successUrl、
+    // eventCallback、服务端捕获)全都在 Paddle 手里,我们控制不了它的前端轮询。
+    //
+    // 所以**自己轮询**:每 3 秒查一次 /api/transaction/<id>/status,一旦
+    // paid/completed 就关 overlay、跳 /payment-success。这不再依赖 Paddle 前端
+    // 是否跳转 —— 只要 Paddle 服务端确认了钱,我们就能把用户接走。
+    //
+    // 轮询上限 10 分钟(Paddle 官方延迟捕获上限),之后停轮询,页面显示"稍后
+    // 刷新查看"—— 避免无限请求。交易 ID 来自 URL,归属校验在服务端做。
+    (function pollTransaction() {
+      var attempts = 0;
+      var timer = setInterval(async function () {
+        attempts++;
+        if (attempts > 200) { clearInterval(timer); return; }  // 3s × 200 = 10 分钟
+        try {
+          var res = await fetch("/api/transaction/" + encodeURIComponent(txn) + "/status");
+          if (res.status === 401 || res.status === 404) { clearInterval(timer); return; }
+          if (res.status === 503) return;  // Paddle 上游抖动,下次再试
+          var data = await res.json();
+          if (data && (data.status === "paid" || data.status === "completed")) {
+            clearInterval(timer);
+            hint.textContent = "支付成功,正在开通…";
+            status.textContent = "正在确认到账(微信支付最多需要 10 分钟)。即将回到控制台。";
+            try { window.Paddle.Checkout.close(); } catch (e) { /* 已经关了也无妨 */ }
+            setTimeout(function () { window.location.href = "/payment-success"; }, 1800);
+          }
+        } catch (e) { /* 网络抖动,下次再试 */ }
+      }, 3000);
+    })();
   } catch (e) {
     fail("打开支付窗口失败：" + (e && e.message ? e.message : String(e)));
   }`
