@@ -572,3 +572,20 @@ describe("GET /api/transaction/:id/status —— D1 命中但归属失败(Copilo
     expect(res.headers.get("cache-control")).toBe("no-store");
   });
 });
+
+describe("GET /api/transaction/:id/status —— handler 抛错兜底(Copilot round 6)", () => {
+  it("服务器时钟畸形(session 解析 throw)→ 500 且带 no-store", async () => {
+    // parseSessionWithValidatedNow 在 now 坏值时 throw 500(HttpError)。
+    // 路由分支的兜底必须把它转成带 noStore 的 JSON,不能落外层 handleError。
+    const { deps } = setup();
+    // exactOptionalPropertyTypes:不能把 undefined 赋回必填属性。
+    // 直接替换整个 deps.now(测试私有),不还原 —— 本测试是最后一个用例。
+    (deps as { now: () => string }).now = () => "not-a-date";
+    const res = await handleRequest(
+      new Request(`${BASE}/api/transaction/txn_aaaaaaaaaaaaaaaaaaaaaaaaaa/status`),
+      deps,
+    );
+    expect(res.status).toBe(500);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+  });
+});

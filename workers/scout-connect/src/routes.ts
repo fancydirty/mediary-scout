@@ -365,7 +365,17 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
       // 缓存任何一个 404 都会提前停掉轮询(见 handler 里的同类说明)。
       return json({ error: "not found" }, 404, { noStore: true });
     }
-    return getTransactionStatusHandler(request, deps, raw);
+    try {
+      return await getTransactionStatusHandler(request, deps, raw);
+    } catch (e) {
+      // **兜底强制 noStore**(Copilot round 6):handler 内部可能抛 HttpError
+      // (如服务器时钟畸形时 parseSessionWithValidatedNow throw 500),落到
+      // 外层 handleError() 的响应不带 cache-control: no-store —— 轮询端点
+      // 任何错误响应都不能被缓存,否则轮询提前停住。HttpError 转成对应
+      // 状态码,未知异常一律 500。
+      const status = e instanceof HttpError ? e.status : 500;
+      return json({ error: "unavailable" }, status, { noStore: true });
+    }
   }
   // /buy —— Paddle 的 default payment link 落地页(拼 ?_ptxn= 打开结账窗)。
   if (method === "GET" && path === "/buy") {

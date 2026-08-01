@@ -59,4 +59,11 @@ describe("getTransactionStatus 错误分类", () => {
     const a = api(200, { data: {} });
     await expect(a.getTransactionStatus(T)).resolves.toBeNull();
   });
+
+  it("返回的交易 ID 与请求不符 → throw(上游异常,不能带回别人的交易)", async () => {
+    const a = api(200, { data: { id: "txn_ffffffffffffffffffffffffff", status: "completed" } });
+    await expect(a.getTransactionStatus("txn_aaaaaaaaaaaaaaaaaaaaaaaaaa")).rejects.toThrow(
+      "id mismatch",
+    );
+  });
 });

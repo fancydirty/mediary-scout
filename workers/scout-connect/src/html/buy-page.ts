@@ -234,7 +234,7 @@ ${configured ? '<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></scrip
           if (data && (data.status === "paid" || data.status === "completed")) {
             clearInterval(timer);
             hint.textContent = "支付成功,正在开通…";
-            status.textContent = "正在确认到账(微信支付最多需要 10 分钟)。即将回到控制台。";
+            status.textContent = "正在确认到账(微信支付最多需要 10 分钟)。即将前往确认页。";
             try { window.Paddle.Checkout.close(); } catch (e) { /* 已经关了也无妨 */ }
             setTimeout(function () { window.location.href = "/payment-success"; }, 1800);
           }
