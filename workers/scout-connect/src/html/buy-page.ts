@@ -171,12 +171,33 @@ ${configured ? '<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></scrip
     // 指向 /payment-success 而非 /console:微信支付是**延迟捕获**(官方:通常
     // 立刻,但可能长达 10 分钟)。直接跳控制台会看到「尚未开通」—— 那是最伤人
     // 的一幕:刚付完钱,页面告诉你什么都没发生。
-    window.Paddle.Checkout.open({
-      transactionId: txn,
-      settings: { successUrl: location.origin + "/payment-success" },
-    });
-    hint.textContent = "支付窗口已打开。";
-    status.textContent = "";
+    // ---- 打开结账前先查一次状态 ----
+    // 真实事故:刷新 /buy 带 ?_ptxn= 会重新弹结账窗,而交易可能已完成 ——
+    // 用户看到"又回到付款页面"。已完成的交易应直接跳 /payment-success。
+    (async function () {
+      try {
+        var pre = await fetch("/api/transaction/" + encodeURIComponent(txn) + "/status", {
+          signal: timeoutSignal(3000),
+        });
+        if (pre.status === 200) {
+          var preData = await pre.json();
+          if (preData && (preData.status === "paid" || preData.status === "completed")) {
+            window.location.href = "/payment-success";
+            return;
+          }
+        }
+      } catch (e) { /* 查询失败就正常弹结账窗,轮询兜底 */ }
+      openCheckout();
+    })();
+    function openCheckout() {
+      window.Paddle.Checkout.open({
+        transactionId: txn,
+        // 带交易 ID:/payment-success 需要它来轮询确认到账后自动跳 /console。
+        settings: { successUrl: location.origin + "/payment-success?txn=" + encodeURIComponent(txn) },
+      });
+      hint.textContent = "支付窗口已打开。";
+      status.textContent = "";
+    }
 
     // ---- 自建轮询:微信支付的唯一可靠出路 ----
     //
@@ -189,8 +210,10 @@ ${configured ? '<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></scrip
     // paid/completed 就关 overlay、跳 /payment-success。这不再依赖 Paddle 前端
     // 是否跳转 —— 只要 Paddle 服务端确认了钱,我们就能把用户接走。
     //
-    // 轮询上限 10 分钟(Paddle 官方延迟捕获上限),之后停轮询,页面显示"稍后
-    // 刷新查看"—— 避免无限请求。交易 ID 来自 URL,归属校验在服务端做。
+    // 轮询不硬超时:微信支付授权可能发生在任意时间(实测:页面 10:44 打开,
+    // 用户 12:13 才付款,12:18 捕获 —— 若 10 分钟就停,付款时轮询早死了)。
+    // 10 分钟后降频到 15 秒继续监听,直到页面关闭或交易完成。
+    // 交易 ID 来自 URL,归属校验在服务端做。
     //
     // AbortSignal.timeout 降级(与 site/main.js 同款):旧浏览器不支持
     // AbortSignal.timeout,直接调用会抛 TypeError → 轮询永远发不出去且被
@@ -208,18 +231,23 @@ ${configured ? '<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></scrip
       // 解析超过 3 秒时下一次 tick 仍会触发 → 并发重叠请求,放大上游抖动与
       // API 调用。上一轮未结束就跳过本轮;结束后释放锁(含异常路径)。
       var inFlight = false;
-      var timer = setInterval(async function () {
+      var timer = null;
+      var intervalMs = 3000;
+      // **不硬超时**(真实事故修复):轮询窗口按页面打开起算,而微信支付授权
+      // 可能发生在任意时间(实测:页面 10:44 打开,用户 12:13 才付款,12:18
+      // 捕获 —— 若 10 分钟就停,付款时轮询早死了)。10 分钟后降频到 15 秒
+      // 继续监听,直到页面关闭。
+      var poll = async function () {
         if (inFlight) return;
         inFlight = true;
         try {
           attempts++;
-          // 3s × 200 = 10 分钟(Paddle 官方延迟捕获上限)。
-          // 超时后停轮询并明确告诉用户下一步,不能无声无息地停。
-          if (attempts > 200) {
+          if (attempts === 201) {
             clearInterval(timer);
+            intervalMs = 15000;
+            timer = setInterval(poll, intervalMs);
             hint.textContent = "支付已提交,正在确认到账…";
-            status.textContent = "如果已经付款,请稍后刷新此页面查看开通状态。你的付款不会丢失 —— 超过 15 分钟仍未开通请联系我们。";
-            return;
+            status.textContent = "付款后页面会自动确认并跳转。如果已经付款,请稍候 —— 你的付款不会丢失;超过 15 分钟仍未开通请联系我们。";
           }
           // AbortSignal.timeout:fetch 挂起不返回时(某些网络条件下不 reject),
           // inFlight 锁会永久占住、轮询永久停住且页面无提示(Copilot round 7)。
@@ -269,7 +297,11 @@ ${configured ? '<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></scrip
           // 释放锁:clearInterval 后 finally 仍会跑,但 timer 已停,无副作用。
           inFlight = false;
         }
-      }, 3000);
+      };
+      // 页面加载立即查一次:付款发生在轮询启动前的场景(如刷新后交易已完成)
+      // 也能马上抓住,不用等第一个 3 秒 tick。
+      poll();
+      timer = setInterval(poll, intervalMs);
     })();
   } catch (e) {
     fail("打开支付窗口失败：" + (e && e.message ? e.message : String(e)));

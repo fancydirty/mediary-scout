@@ -192,6 +192,11 @@ describe("付款完成后必须有出路(真实事故的回归防线)", () => {
     expect(timeoutIdx).toBeLessThan(hrefIdx);
   });
 
+  it("successUrl 必须带交易 ID(确认页靠它轮询到账后自动跳控制台)", () => {
+    const output = buyPage(CONFIGURED);
+    expect(output).toMatch(/successUrl:[^,}]*\/payment-success\?txn=/);
+  });
+
   it("Checkout.open 必须带 settings.successUrl(微信支付唯一救命参数)", () => {
     // **三次真实事故都栽在这一条。** 微信支付付完款,Paddle 把用户带到它自己的
     // 处理域名(redirect-euw1.ppro.com),本页的 eventCallback 完全失效 ——

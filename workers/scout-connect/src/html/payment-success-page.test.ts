@@ -34,3 +34,9 @@ describe("payment-success-page", () => {
     expect(html).toContain('aria-hidden="true"');
   });
 });
+  it("付款成功后自动轮询交易状态,completed 后跳 /console", () => {
+    const html = paymentSuccessPage();
+    expect(html).toContain("URLSearchParams(location.search).get(\"txn\")");
+    expect(html).toContain("/api/transaction/");
+    expect(html).toContain('window.location.href = "/console"');
+  });

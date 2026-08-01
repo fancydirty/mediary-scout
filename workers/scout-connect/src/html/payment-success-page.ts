@@ -86,6 +86,31 @@ ${BRAND_BAR}
 14 天内无条件全额退款 —— 见<a href="/refund">退款政策</a>。
 </p>
 </main>
+<script>
+// ---- 到账后自动进入控制台 ----
+// 用户付款后停在这个确认页。时长在 Paddle 捕获完成(webhook 入账)后到账,
+// 这里轮询交易状态,completed 一到就自动跳 /console —— 用户不用手动点。
+// 到达 /console 时若 webhook 尚未入账,控制台会显示「已付款 · 正在开通」
+// 的兜底态,不会出现"尚未开通"。
+(function () {
+  var txn = new URLSearchParams(location.search).get("txn");
+  if (!txn) return;  // 直接访问本页(无交易上下文)不轮询
+  var attempts = 0;
+  var timer = setInterval(async function () {
+    attempts++;
+    if (attempts > 60) { clearInterval(timer); return; }  // 3s × 60 = 3 分钟
+    try {
+      var res = await fetch("/api/transaction/" + encodeURIComponent(txn) + "/status");
+      if (res.status !== 200) return;  // 未登录/未到账等,继续等
+      var data = await res.json();
+      if (data && data.status === "completed") {
+        clearInterval(timer);
+        window.location.href = "/console";
+      }
+    } catch (e) { /* 网络抖动,下次再试 */ }
+  }, 3000);
+})();
+</script>
 </body>
 </html>`;
 }
