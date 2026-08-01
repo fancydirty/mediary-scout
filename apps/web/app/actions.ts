@@ -802,10 +802,12 @@ export async function dismissConnectNoticeAction(): Promise<DismissConnectNotice
   }
 }
 
-export interface TestRemoteAccessResult {
-  ok: boolean;
-  detail: "reachable" | "instance_problem" | "unreachable" | "no_hostname";
-}
+// tagged union 而非 { ok: boolean; detail: ... }(Copilot 意见):
+// 后者允许 { ok: true, detail: "unreachable" } 这种不可能组合编译通过。
+// 判别字段 detail 与 ok 一一对应,不可能状态在类型层面就不存在。
+export type TestRemoteAccessResult =
+  | { ok: true; detail: "reachable" }
+  | { ok: false; detail: "instance_problem" | "unreachable" | "no_hostname" };
 
 /**
  * 远程访问「测试连接」。
