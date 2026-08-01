@@ -30,7 +30,7 @@ export function paymentSuccessPage(): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>支付成功 · Mediary Connect</title>
+<title>付款确认中 · Mediary Connect</title>
 ${FAVICON_LINK}
 <meta name="robots" content="noindex">
 <style>
@@ -58,13 +58,13 @@ ${BRAND_BAR}
 
 <div class="card">
 <div class="ok">
-<div class="ok-icon">
+<div class="ok-icon" aria-hidden="true">
 <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
 </div>
-<div class="ok-text">支付成功</div>
+<h1 class="ok-text">付款已完成</h1>
 </div>
 
-<p><strong>Paddle 已收到你的付款。</strong>发票与收据会发到你的邮箱。</p>
+<p><strong>Paddle 已收到你的付款请求。</strong>发票与收据会发到你的邮箱（若成功完成）。</p>
 
 <div class="note">
 <strong>时长正在开通中。</strong><br>
