@@ -82,6 +82,13 @@ ${configured ? '<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></scrip
 (function () {
   var hint = document.getElementById("hint");
   var status = document.getElementById("status");
+  // **共享"已安排跳转"标志**(Copilot round 9):页面里的两条完成路径
+  // (Paddle 事件回调 与 轮询命中 paid/completed)都可能触发跳转,必须只跳
+  // 一次 —— 否则两次 location.href 互相覆盖,落点不确定。
+  // (注意:此处注释不能出现回调字样 —— 未配置分支的产物会被测试断言
+  //  not.toContain,注释会误命中,本项目已多次栽在这。)
+  var redirectScheduled = false;
+  var redirectScheduled = false;
   function fail(msg) {
     hint.textContent = "无法打开支付窗口。";
     status.textContent = msg;
@@ -109,9 +116,12 @@ ${configured ? '<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></scrip
       eventCallback: function (event) {
         if (!event || typeof event.name !== "string") return;
         if (event.name === "checkout.completed") {
+          // 与轮询路径统一:只跳一次,都跳 /payment-success(确认中间页)。
+          if (redirectScheduled) return;
+          redirectScheduled = true;
           hint.textContent = "支付成功,正在开通…";
           // 微信支付是延迟捕获,到账可能要几分钟。说清楚,别让人干等。
-          status.textContent = "正在确认到账(微信支付最多需要 10 分钟)。即将回到控制台。";
+          status.textContent = "正在确认到账(微信支付最多需要 10 分钟)。即将前往确认页。";
           
           // ---- 必须先关 overlay,否则跳转会被卡住(真实 bug)----
           //
@@ -124,9 +134,8 @@ ${configured ? '<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></scrip
           // 会以为失败了,重复付款,或者来投诉「钱扣了但没开通」。
           try { window.Paddle.Checkout.close(); } catch (e) { /* 已经关了也无妨 */ }
           
-          // 留 1.8 秒让用户看到这句话再跳。跳过去后控制台会显示「已付款,正在开通」
-          // 那一态(见 console-page 的 pendingPaid),不会再显示「尚未开通」。
-          setTimeout(function () { window.location.href = "/console?paid=1"; }, 1800);
+          // 留 1.8 秒让用户看到这句话再跳。跳过去后确认页显示「正在开通」。
+          setTimeout(function () { window.location.href = "/payment-success"; }, 1800);
         } else if (event.name === "checkout.payment.failed") {
           // 付款失败也必须说话。之前这里同样是静默的。
           hint.textContent = "这笔支付没有成功。";
@@ -248,6 +257,9 @@ ${configured ? '<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></scrip
           }
           var data = await res.json();
           if (data && (data.status === "paid" || data.status === "completed")) {
+            // 与 eventCallback 路径共享标志:只跳一次。
+            if (redirectScheduled) { clearInterval(timer); return; }
+            redirectScheduled = true;
             clearInterval(timer);
             hint.textContent = "支付成功,正在开通…";
             status.textContent = "正在确认到账(微信支付最多需要 10 分钟)。即将前往确认页。";

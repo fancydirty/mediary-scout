@@ -858,8 +858,6 @@ async function getTransactionStatusHandler(
   // 轮询,用户卡死。成功/503 路径本就带 noStore,错误路径必须一致。
   const session = await parseSessionWithValidatedNow(request.headers.get("cookie"), deps);
   if (!session.ok) return json({ error: "unauthorized" }, 401, { noStore: true });
-  const account = await deps.db.getAccountById(session.accountId);
-  if (account === null) return json({ error: "unauthorized" }, 401, { noStore: true });
 
   // ---- 第一优先:D1 里的入账记录(webhook 的观测结果)----
   //
@@ -871,8 +869,7 @@ async function getTransactionStatusHandler(
   // 归属校验:这笔交易入的必须是当前登录账号的账。
   const entitlement = await deps.db.getEntitlementByTransactionId(transactionId);
   if (entitlement !== null) {
-    // 归属校验直接比 account_id(权威归属),不查 accounts 表绕一圈比 email ——
-    // 少一次 DB 往返,语义也更直接(Copilot round 2)。
+    // 归属校验直接比 account_id(权威归属),不必再查 accounts 表比 email。
     if (entitlement.account_id === session.accountId) {
       // paid_at 传 null 而非 entitlement.created_at:那是 webhook 入账时间,
       // 不是 Paddle 的真实捕获时间(billed_at)—— 语义不能骗人(Copilot round 5)。
@@ -889,6 +886,10 @@ async function getTransactionStatusHandler(
   // ---- 兜底:查 Paddle API ----
   // webhook 可能还没到(延迟捕获窗口内)或入账失败。查 Paddle 侧实际状态,
   // paid/completed 就让前端跳 /payment-success(用户能看到"正在开通")。
+  // 到这一步才需要账号邮箱做归属比对,所以 getAccountById 挪到这里 ——
+  // 高频轮询场景下 D1 命中路径不为此多付一次 DB 往返(Copilot round 9)。
+  const account = await deps.db.getAccountById(session.accountId);
+  if (account === null) return json({ error: "unauthorized" }, 401, { noStore: true });
   const api = deps.paddleApi;
   if (api === undefined) {
     // 未配置 Paddle API key:没法查。503 让前端停轮询、显示"稍后刷新"。

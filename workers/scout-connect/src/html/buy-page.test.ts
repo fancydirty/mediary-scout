@@ -135,10 +135,11 @@ describe("付款完成后必须有出路(真实事故的回归防线)", () => {
     expect(html()).toContain("eventCallback");
   });
 
-  it("监听 checkout.completed 并跳回控制台", () => {
+  it("监听 checkout.completed 并跳 /payment-success", () => {
+    // 与轮询路径统一跳转目标(确认中间页),不再跳 /console?paid=1(Copilot round 9)。
     const h = html();
     expect(h).toContain("checkout.completed");
-    expect(h).toContain("/console?paid=1");
+    expect(h).toContain("/payment-success");
   });
 
   it("付款失败也说话,并明确「没有扣款」", () => {
@@ -173,7 +174,7 @@ describe("付款完成后必须有出路(真实事故的回归防线)", () => {
     // 在 iframe 里执行 —— 被沙箱阻止或被 overlay 挡住,用户仍看到二维码不动。
     //
     // 正确顺序:close() → setTimeout → location.href。这样用户看到 overlay 关闭,
-    // 然后看到页面上的「正在开通」提示,1.8 秒后跳回控制台。
+    // 然后看到页面上的「正在开通」提示,1.8 秒后跳 /payment-success。
     const output = buyPage(CONFIGURED);
     
     // 必须有 close() 调用
@@ -182,7 +183,7 @@ describe("付款完成后必须有出路(真实事故的回归防线)", () => {
     // 且 close() 必须在 location.href 之前(否则跳转发生时 overlay 还开着)
     const closeIdx = output.indexOf("window.Paddle.Checkout.close()");
     const timeoutIdx = output.indexOf("setTimeout(");
-    const hrefIdx = output.indexOf('window.location.href = "/console?paid=1"');
+    const hrefIdx = output.indexOf('window.location.href = "/payment-success"');
     expect(closeIdx).toBeGreaterThan(-1);
     expect(timeoutIdx).toBeGreaterThan(-1);
     expect(hrefIdx).toBeGreaterThan(-1);
