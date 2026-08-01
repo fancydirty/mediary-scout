@@ -500,3 +500,45 @@ describe("GET /api/transaction/:id/status —— 边界(Copilot round 1)", () =>
     expect(res.status).toBe(503);
   });
 });
+
+describe("GET /api/transaction/:id/status —— 错误路径必须 noStore(Copilot round 3)", () => {
+  async function seedMe(db: ConnectDb): Promise<string> {
+    await db.insertAccount({
+      id: "act_me3", email: "me@example.com", paddle_customer_id: null,
+      created_at: NOW, last_login_at: null,
+    });
+    return buildSessionCookie("act_me3", { secret: SECRET, ttlMs: 3600_000, now: Date.parse(NOW) });
+  }
+  const T26 = "txn_aaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+  it("401 带 cache-control: no-store(轮询端点不能被缓存卡死)", async () => {
+    const { deps } = setup();
+    const res = await handleRequest(new Request(`${BASE}/api/transaction/${T26}/status`), deps);
+    expect(res.status).toBe(401);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("畸形 ID 的 404 带 cache-control: no-store", async () => {
+    const { deps } = setup();
+    const cookie = await seedMe(deps.db);
+    const res = await handleRequest(
+      new Request(`${BASE}/api/transaction/not-a-txn/status`, { headers: { cookie } }),
+      deps,
+    );
+    expect(res.status).toBe(404);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("归属失败的 404 带 cache-control: no-store", async () => {
+    const { deps } = setup();
+    const cookie = await seedMe(deps.db);
+    const fake = deps.paddleApi as unknown as { getTransactionStatus: () => unknown };
+    fake.getTransactionStatus = async () => ({ status: "paid", paidAt: NOW, accountEmail: "other@example.com" });
+    const res = await handleRequest(
+      new Request(`${BASE}/api/transaction/${T26}/status`, { headers: { cookie } }),
+      deps,
+    );
+    expect(res.status).toBe(404);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+  });
+});

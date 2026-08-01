@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createPaddleApi } from "./paddle-api.js";
 
 /**
@@ -10,6 +10,11 @@ import { createPaddleApi } from "./paddle-api.js";
  *   其它非 2xx → throw(上游故障,端点返回 503 可重试)
  */
 describe("getTransactionStatus 错误分类", () => {
+  afterEach(() => {
+    // stubGlobal 会泄漏到其它测试文件,必须恢复(Copilot round 3)。
+    vi.unstubAllGlobals();
+  });
+
   const T = "txn_aaaaaaaaaaaaaaaaaaaaaaaaaa";
   const api = (status: number, body: unknown) => {
     vi.stubGlobal(

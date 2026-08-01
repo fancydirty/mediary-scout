@@ -360,7 +360,11 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
     // txn_<26 位小写字母数字>,按形状校验即可,不合法直接 404
     // (客户端错误不该变 500;decodeURIComponent 反而可能对畸形编码抛错)。
     const raw = txnStatusMatch[1] ?? "";
-    if (!/^txn_[a-z0-9]{26}$/.test(raw)) throw new HttpError(404, "not found");
+    if (!/^txn_[a-z0-9]{26}$/.test(raw)) {
+      // 显式 JSON + noStore:这个端点被高频轮询,状态会变化 ——
+      // 缓存任何一个 404 都会提前停掉轮询(见 handler 里的同类说明)。
+      return json({ error: "not found" }, 404, { noStore: true });
+    }
     return getTransactionStatusHandler(request, deps, raw);
   }
   // /buy —— Paddle 的 default payment link 落地页(拼 ?_ptxn= 打开结账窗)。
@@ -773,10 +777,14 @@ async function selfServeProvision(request: Request, deps: RouteDeps): Promise<Re
  * 返回结账 URL,前端跳过去即可(Paddle 会拼上 ?_ptxn=)。
  */
 async function createCheckout(request: Request, deps: RouteDeps): Promise<Response> {
+  // **错误路径全部显式 JSON + noStore,不走 HttpError**(Copilot round 3)。
+  // 这个端点被高频轮询且状态随时间变化:HttpError 经 handleError() 的响应
+  // 不带 cache-control: no-store,中间层/浏览器缓存住 401/404 会提前停掉
+  // 轮询,用户卡死。成功/503 路径本就带 noStore,错误路径必须一致。
   const session = await parseSessionWithValidatedNow(request.headers.get("cookie"), deps);
-  if (!session.ok) throw new HttpError(401, "unauthorized");
+  if (!session.ok) return json({ error: "unauthorized" }, 401, { noStore: true });
   const account = await deps.db.getAccountById(session.accountId);
-  if (account === null) throw new HttpError(401, "unauthorized");
+  if (account === null) return json({ error: "unauthorized" }, 401, { noStore: true });
 
   const api = deps.paddleApi;
   if (api === undefined) {
@@ -838,10 +846,14 @@ async function getTransactionStatusHandler(
   deps: RouteDeps,
   transactionId: string,
 ): Promise<Response> {
+  // **错误路径全部显式 JSON + noStore,不走 HttpError**(Copilot round 3)。
+  // 这个端点被高频轮询且状态随时间变化:HttpError 经 handleError() 的响应
+  // 不带 cache-control: no-store,中间层/浏览器缓存住 401/404 会提前停掉
+  // 轮询,用户卡死。成功/503 路径本就带 noStore,错误路径必须一致。
   const session = await parseSessionWithValidatedNow(request.headers.get("cookie"), deps);
-  if (!session.ok) throw new HttpError(401, "unauthorized");
+  if (!session.ok) return json({ error: "unauthorized" }, 401, { noStore: true });
   const account = await deps.db.getAccountById(session.accountId);
-  if (account === null) throw new HttpError(401, "unauthorized");
+  if (account === null) return json({ error: "unauthorized" }, 401, { noStore: true });
 
   // ---- 第一优先:D1 里的入账记录(webhook 的观测结果)----
   //
@@ -880,13 +892,13 @@ async function getTransactionStatusHandler(
     // Paddle 上游抖动:503 让前端稍后重试,不要把它当成"交易不存在"。
     return json({ error: "temporarily unavailable" }, 503, { noStore: true });
   }
-  if (txn === null) throw new HttpError(404, "not found");
+  if (txn === null) return json({ error: "not found" }, 404, { noStore: true });
 
   // 归属校验:交易必须属于当前登录账号。
   // 创建交易时必写 custom_data.account_email(见 paddle-api.ts),所以 null
   // 只可能是异常/伪造 —— 同样拒绝,不能让任何登录用户猜 ID 查别人的交易。
   if (txn.accountEmail !== account.email) {
-    throw new HttpError(404, "not found");
+    return json({ error: "not found" }, 404, { noStore: true });
   }
 
   return json({ status: txn.status, paid_at: txn.paidAt }, 200, { noStore: true });
