@@ -433,7 +433,11 @@ describe("GET /api/transaction/:id/status(结账轮询)", () => {
       deps,
     );
     expect(res.status).toBe(200);
-    expect(((await res.json()) as Record<string, unknown>).status).toBe("completed");
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.status).toBe("completed");
+    // paid_at 必须为 null:entitlement.created_at 是 webhook 入账时间,不是
+    // Paddle 的真实捕获时间(billed_at),语义不能骗人(Copilot round 5)。
+    expect(body.paid_at).toBeNull();
     expect(paddleCalled).toBe(false);
   });
 

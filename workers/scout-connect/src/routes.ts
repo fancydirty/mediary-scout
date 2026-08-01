@@ -777,10 +777,6 @@ async function selfServeProvision(request: Request, deps: RouteDeps): Promise<Re
  * 返回结账 URL,前端跳过去即可(Paddle 会拼上 ?_ptxn=)。
  */
 async function createCheckout(request: Request, deps: RouteDeps): Promise<Response> {
-  // **错误路径全部显式 JSON + noStore,不走 HttpError**(Copilot round 3)。
-  // 这个端点被高频轮询且状态随时间变化:HttpError 经 handleError() 的响应
-  // 不带 cache-control: no-store,中间层/浏览器缓存住 401/404 会提前停掉
-  // 轮询,用户卡死。成功/503 路径本就带 noStore,错误路径必须一致。
   const session = await parseSessionWithValidatedNow(request.headers.get("cookie"), deps);
   if (!session.ok) return json({ error: "unauthorized" }, 401, { noStore: true });
   const account = await deps.db.getAccountById(session.accountId);
@@ -868,7 +864,10 @@ async function getTransactionStatusHandler(
     // 归属校验直接比 account_id(权威归属),不查 accounts 表绕一圈比 email ——
     // 少一次 DB 往返,语义也更直接(Copilot round 2)。
     if (entitlement.account_id === session.accountId) {
-      return json({ status: "completed", paid_at: entitlement.created_at }, 200, {
+      // paid_at 传 null 而非 entitlement.created_at:那是 webhook 入账时间,
+      // 不是 Paddle 的真实捕获时间(billed_at)—— 语义不能骗人(Copilot round 5)。
+      // 前端只读 status 判断跳转,不依赖 paid_at。
+      return json({ status: "completed", paid_at: null }, 200, {
         noStore: true,
       });
     }
