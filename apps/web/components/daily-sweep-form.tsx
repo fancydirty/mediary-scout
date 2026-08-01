@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { LoaderCircle, Plus, X } from "lucide-react";
 import { saveDailySweepTimesAction } from "../app/actions";
+import { runAction } from "../lib/run-action";
 
 /**
  * 巡检时间点 chips（1~6 个，北京时间）。即改即存：添加/删除立即持久化整个列表，
@@ -18,7 +19,16 @@ export function DailySweepForm({ initial, max }: { initial: string[]; max: numbe
 
   const persist = (next: string[], previous: string[]) => {
     startTransition(async () => {
-      const res = await saveDailySweepTimesAction(next);
+      // 必须 catch(见 runAction 注释)。B2 漏网的调用点,此处补上。
+      const r = await runAction(
+        () => saveDailySweepTimesAction(next),
+        (msg) => {
+          setNote(`❌ ${msg}`);
+          setTimeout(() => setNote(null), 3000);
+        },
+      );
+      if (!r.ok) return;
+      const res = r.value;
       if (!res.success) {
         setTimes(previous);
         setNote(`❌ ${res.message}`);

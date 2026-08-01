@@ -3,6 +3,7 @@
 import { X } from "lucide-react";
 import { useState, useTransition } from "react";
 import { dismissConnectNoticeAction } from "../app/actions";
+import { runAction } from "../lib/run-action";
 
 export function ConnectNoticeBanner() {
   const [dismissed, setDismissed] = useState(false);
@@ -12,10 +13,14 @@ export function ConnectNoticeBanner() {
 
   function handleDismiss() {
     startTransition(async () => {
-      const result = await dismissConnectNoticeAction();
-      if (result.ok) {
-        setDismissed(true);
-      }
+      // 必须 catch(见 runAction 注释):dismiss 失败不能静默 ——
+      // 否则用户以为关了,下次刷新又出现。
+      const r = await runAction(
+        () => dismissConnectNoticeAction(),
+        () => setDismissed(true),  // 乐观关闭:写 DB 失败本次会话也隐藏
+      );
+      if (!r.ok) return;
+      setDismissed(true);
     });
   }
 

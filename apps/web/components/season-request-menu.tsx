@@ -133,7 +133,17 @@ export function SeasonRequestMenu({
             }
             setRequestedSeason(onlySeason);
             startTransition(async () => {
-              setResult(await requestSeasonAction({ tmdbId, seasonNumber: onlySeason, storageId }));
+              // 与多季路径保持一致:必须 catch,失败也 refresh 清锁
+              // (Copilot round 2 抓到的漏网调用点)。
+              const r = await runAction(
+                () => requestSeasonAction({ tmdbId, seasonNumber: onlySeason, storageId }),
+                (msg) => {
+                  setResult({ status: "unsupported", message: msg });
+                  router.refresh();
+                },
+              );
+              if (!r.ok) return;
+              setResult(r.value);
               router.refresh();
             });
           }}
