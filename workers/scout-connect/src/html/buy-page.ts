@@ -183,6 +183,17 @@ ${configured ? '<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></scrip
     //
     // 轮询上限 10 分钟(Paddle 官方延迟捕获上限),之后停轮询,页面显示"稍后
     // 刷新查看"—— 避免无限请求。交易 ID 来自 URL,归属校验在服务端做。
+    //
+    // AbortSignal.timeout 降级(与 site/main.js 同款):旧浏览器不支持
+    // AbortSignal.timeout,直接调用会抛 TypeError → 轮询永远发不出去且被
+    // catch 吞掉,用户又回到"付了钱但页面没反应"。优先用原生,否则
+    // AbortController + setTimeout。
+    function timeoutSignal(ms) {
+      if (typeof AbortSignal.timeout === "function") return AbortSignal.timeout(ms);
+      var controller = new AbortController();
+      setTimeout(function () { controller.abort(); }, ms);
+      return controller.signal;
+    }
     (function pollTransaction() {
       var attempts = 0;
       // **inFlight 锁**(Copilot round 2):setInterval + async 下,某次请求/
@@ -206,7 +217,7 @@ ${configured ? '<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></scrip
           // inFlight 锁会永久占住、轮询永久停住且页面无提示(Copilot round 7)。
           // 5 秒超时,保证锁一定释放。超时走 catch → 下次 tick 重试。
           var res = await fetch("/api/transaction/" + encodeURIComponent(txn) + "/status", {
-            signal: AbortSignal.timeout(5000),
+            signal: timeoutSignal(5000),
           });
           if (res.status === 401) {
             // 登录过期:继续轮询也没用,明确告诉用户重新登录。
