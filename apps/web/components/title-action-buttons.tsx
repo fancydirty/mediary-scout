@@ -77,7 +77,12 @@ export function RequestSeasonButton({
           startTransition(async () => {
             const r = await runAction(
               () => requestSeasonAction({ tmdbId, seasonNumber, storageId }),
-              (msg) => setResult({ status: "unsupported", message: msg }),
+              (msg) => {
+                setResult({ status: "unsupported", message: msg });
+                // 必须 refresh:lock.acquiring 是前端 state,靠重挂载重置。
+                // 失败不刷新,锁永远卡住,兄弟按钮全禁用(Copilot round 1)。
+                router.refresh();
+              },
             );
             if (!r.ok) return;
             setResult(r.value);
@@ -158,7 +163,11 @@ export function RequestRemainingButton({
           startTransition(async () => {
             const r = await runAction(
               () => requestRemainingAction({ tmdbId, storageId }),
-              (msg) => setResult({ status: "unsupported", message: msg }),
+              (msg) => {
+                setResult({ status: "unsupported", message: msg });
+                // 同上一处:失败必须 refresh 清锁,否则 sibling 全禁用。
+                router.refresh();
+              },
             );
             if (!r.ok) return;
             setResult(r.value);
