@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { LoaderCircle } from "lucide-react";
 import { resetUserPasswordAction } from "../app/actions";
+import { runAction } from "../lib/run-action";
 
 interface ManagedAccount {
   id: string;
@@ -34,7 +35,12 @@ function AccountAdminRow({ account }: { account: ManagedAccount }) {
   const submit = () => {
     setMsg(null);
     startTransition(async () => {
-      const res = await resetUserPasswordAction(account.id, pw);
+      const r = await runAction(
+        () => resetUserPasswordAction(account.id, pw),
+        (msg) => setMsg({ ok: false, text: msg }),
+      );
+      if (!r.ok) return;
+      const res = r.value;
       if (res.ok) {
         setMsg({ ok: true, text: `已重置「${account.username}」的密码，请把新密码交给 TA。` });
         setOpen(false);

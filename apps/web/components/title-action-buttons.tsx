@@ -8,6 +8,7 @@ import {
   requestSeasonAction,
   type RequestTrackingActionResult,
 } from "../app/actions";
+import { runAction } from "../lib/run-action";
 import { useAcquisitionLock } from "./acquisition-lock";
 import { AcquireResultNotice, isLockedResult } from "./request-state";
 import { isDemoModeClient } from "../lib/demo-mode";
@@ -74,7 +75,12 @@ export function RequestSeasonButton({
           }
           lock?.lock(scope);
           startTransition(async () => {
-            setResult(await requestSeasonAction({ tmdbId, seasonNumber, storageId }));
+            const r = await runAction(
+              () => requestSeasonAction({ tmdbId, seasonNumber, storageId }),
+              (msg) => setResult({ status: "unsupported", message: msg }),
+            );
+            if (!r.ok) return;
+            setResult(r.value);
             router.refresh();
           });
         }}
@@ -150,7 +156,12 @@ export function RequestRemainingButton({
           }
           lock?.lock(scope);
           startTransition(async () => {
-            setResult(await requestRemainingAction({ tmdbId, storageId }));
+            const r = await runAction(
+              () => requestRemainingAction({ tmdbId, storageId }),
+              (msg) => setResult({ status: "unsupported", message: msg }),
+            );
+            if (!r.ok) return;
+            setResult(r.value);
             router.refresh();
           });
         }}

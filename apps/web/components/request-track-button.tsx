@@ -4,6 +4,7 @@ import { CalendarClock, Check, LoaderCircle, Plus } from "lucide-react";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { requestTrackingAction, type RequestTrackingActionResult } from "../app/actions";
+import { runAction } from "../lib/run-action";
 // Import the type from the narrow subpath, NOT the root barrel: the barrel
 // `export *`s ./postgres.js (pg), and Turbopack intermittently fails to erase a
 // type-only barrel import, dragging pg into THIS client bundle → "pg in Client
@@ -133,13 +134,16 @@ export function RequestTrackButton({
             return;
           }
           startTransition(async () => {
-            setResult(
-              await requestTrackingAction({
-                ...(candidateId ? { candidateId } : {}),
-                currentState: actionState,
-                ...(storageId ? { storageId } : {}),
-              }),
+            const r = await runAction(
+              () => requestTrackingAction({
+                  ...(candidateId ? { candidateId } : {}),
+                  currentState: actionState,
+                  ...(storageId ? { storageId } : {}),
+                }),
+              (msg) => setResult({ status: "unsupported", message: msg }),
             );
+            if (!r.ok) return;
+            setResult(r.value);
             // Re-fetch so the now-queued run mounts the AcquiringPoller, which
             // then flips this card to 已获取 when the run finishes.
             router.refresh();

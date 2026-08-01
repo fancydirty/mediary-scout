@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { testStorageConnectionAction } from "../app/actions";
+import { runAction } from "../lib/run-action";
 
 /** Per-drive "测试连接" button (settings). Probes the cookie; a dead one freezes
  *  the drive server-side, and the result message tells the user to re-bind. */
@@ -17,8 +18,12 @@ export function TestConnectionButton({ storageId }: { storageId: string }) {
         disabled={pending}
         onClick={() =>
           startTransition(async () => {
-            const r = await testStorageConnectionAction(storageId);
-            setResult({ ok: r.ok, message: r.message });
+            const r = await runAction(
+              () => testStorageConnectionAction(storageId),
+              (msg) => setResult({ ok: false, message: msg }),
+            );
+            if (!r.ok) return;
+            setResult({ ok: r.value.ok, message: r.value.message });
           })
         }
       >

@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { Film } from "lucide-react";
 import { importForeignWorkAction, type ForeignWorkImportActionResult } from "../app/actions";
+import { runAction } from "../lib/run-action";
 
 export function ForeignWorkImportForm({
   providerFileIds,
@@ -26,13 +27,16 @@ export function ForeignWorkImportForm({
       onSubmit={(event) => {
         event.preventDefault();
         startTransition(async () => {
-          setResult(
-            await importForeignWorkAction({
+          const r = await runAction(
+            () => importForeignWorkAction({
               providerFileIds,
               movieTitle,
               year: Number(year),
             }),
+            (msg) => setResult({ status: "failed", message: msg }),
           );
+          if (!r.ok) return;
+          setResult(r.value);
         });
       }}
     >

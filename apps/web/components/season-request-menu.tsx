@@ -8,6 +8,7 @@ import {
   requestSeasonAction,
   type RequestTrackingActionResult,
 } from "../app/actions";
+import { runAction } from "../lib/run-action";
 import { AcquireResultNotice, isLockedResult } from "./request-state";
 import { AcquireProgressBadge } from "./acquire-progress-badge";
 import { isDemoModeClient } from "../lib/demo-mode";
@@ -95,12 +96,18 @@ export function SeasonRequestMenu({
     }
     setRequestedSeason(selected);
     startTransition(async () => {
+      // setOpen(false) 必须先关菜单(状态机);失败也要关,否则菜单卡住。
       setOpen(false);
-      setResult(
-        selected === "all"
-          ? await requestRemainingAction({ tmdbId, storageId })
-          : await requestSeasonAction({ tmdbId, seasonNumber: selected, storageId }),
+      // 必须 catch(见 runAction 注释)。失败走 onError 显示固定文案。
+      const r = await runAction(
+        () =>
+          selected === "all"
+            ? requestRemainingAction({ tmdbId, storageId })
+            : requestSeasonAction({ tmdbId, seasonNumber: selected, storageId }),
+        (msg) => setResult({ status: "unsupported", message: msg }),
       );
+      if (!r.ok) return;
+      setResult(r.value);
       // Re-fetch so the queued run mounts the AcquiringPoller; once it finishes,
       // the acquired season leaves untrackedSeasons and this menu unmounts.
       router.refresh();

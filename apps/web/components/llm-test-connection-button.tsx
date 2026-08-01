@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { testLlmConnectionAction } from "../app/actions";
+import { runAction } from "../lib/run-action";
 
 /**
  * Settings → AI 模型 的「测试连接」:对**已保存**的 LLM 配置真发一发最小请求,通/
@@ -20,7 +21,12 @@ export function LlmTestConnectionButton() {
         disabled={pending}
         onClick={() =>
           startTransition(async () => {
-            setResult(await testLlmConnectionAction());
+            const r = await runAction(
+              () => testLlmConnectionAction(),
+              (msg) => setResult({ ok: false, message: msg }),
+            );
+            if (!r.ok) return;
+            setResult(r.value);
           })
         }
       >

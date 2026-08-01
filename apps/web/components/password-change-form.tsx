@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { LoaderCircle } from "lucide-react";
 import { changePasswordAction } from "../app/actions";
+import { runAction } from "../lib/run-action";
 
 /** Self-service password change. On success all sessions are revoked server-side,
  *  so we send the user back to /login to sign in with the new password. */
@@ -16,7 +17,12 @@ export function PasswordChangeForm() {
   const submit = () => {
     setError(null);
     startTransition(async () => {
-      const res = await changePasswordAction(current, next);
+      const r = await runAction(
+        () => changePasswordAction(current, next),
+        (msg) => setError(msg),
+      );
+      if (!r.ok) return;
+      const res = r.value;
       if (res.ok) {
         setDone(true);
         setTimeout(() => {

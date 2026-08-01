@@ -3,6 +3,7 @@
 import { Check, Layers, LoaderCircle } from "lucide-react";
 import { useState, useTransition } from "react";
 import { requestSeriesAction, type RequestTrackingActionResult } from "../app/actions";
+import { runAction } from "../lib/run-action";
 import { AcquireResultNotice, isLockedResult } from "./request-state";
 import { isDemoModeClient } from "../lib/demo-mode";
 import { DemoAcquirePlayback } from "./demo-acquire-playback";
@@ -55,7 +56,12 @@ export function RequestSeriesButton({
             return;
           }
           startTransition(async () => {
-            setResult(await requestSeriesAction({ candidateId, storageId }));
+            const r = await runAction(
+              () => requestSeriesAction({ candidateId, storageId }),
+              (msg) => setResult({ status: "unsupported", message: msg }),
+            );
+            if (!r.ok) return;
+            setResult(r.value);
           });
         }}
       >
