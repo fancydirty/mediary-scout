@@ -89,8 +89,11 @@ describe("home page(apex 落地页)", () => {
    *  TypeError,错误信息完全遮蔽测试意图(Copilot #231 抑制评论)。 */
   function extractJsonLd(html: string): string {
     const m = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(html);
-    expect(m, "首页缺少 JSON-LD <script>").not.toBeNull();
-    return m![1];
+    // 断言 + 取值都要过 strict:m![1] 的类型是 string | undefined
+    // (noUncheckedIndexedAccess),CI 的 worker tsc 会拦。
+    const raw = m?.[1];
+    expect(raw, "首页缺少 JSON-LD <script>").toBeDefined();
+    return raw as string;
   }
 
   // ---- 结构化数据(SEO 基线审计:此前无 JSON-LD,搜索引擎无法把

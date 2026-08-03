@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { COMPLIANCE_MARKDOWN } from "./compliance-content.gen.js";
-import { compliancePage, COMPLIANCE_PAGES } from "./compliance-page.js";
+import { compliancePage, COMPLIANCE_PAGES, type CompliancePageKey } from "./compliance-page.js";
 
 describe("generated content freshness", () => {
   it("compliance-content.gen.ts matches src/content/*.md byte-for-byte", () => {
