@@ -20,6 +20,82 @@
   <link rel="icon" type="image/png" sizes="32x32" href="assets/icon-32.png">
   <link rel="stylesheet" href="style.css">
   <script type="module" src="main.js"></script>
+
+  <!-- 规范 URL：参数/大小写/多入口不再被当重复内容 -->
+  <link rel="canonical" href="https://mediaryscout.app/">
+
+  <!-- 结构化数据：品牌实体（对抗同名抢注域）+ FAQ（内容与页面可见 FAQ 完全一致）-->
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://mediaryscout.app/#software",
+      "name": "Mediary Scout",
+      "url": "https://mediaryscout.app/",
+      "description": "指定一部影视，agent 跨源检索、择优转存进你自己的 夸克/115/光鸭/123/天翼 网盘、回读核对，并持续追踪缺集。自部署，AGPL 开源。",
+      "applicationCategory": "MultimediaApplication",
+      "operatingSystem": "macOS, Windows, Docker (Linux)",
+      "license": "https://www.gnu.org/licenses/agpl-3.0.html",
+      "isAccessibleForFree": true,
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "CNY"
+      },
+      "codeRepository": "https://github.com/fancydirty/mediary-scout",
+      "inLanguage": "zh-CN"
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://mediaryscout.app/#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "它会乱动我的网盘吗？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "只做你手动也能做的转存和整理，全程每一步可见，凭证只在你自己的实例里。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "账号密码存在哪？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "你自己电脑（桌面版）或你自己的服务器，作者碰不到。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "要花钱吗？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "软件免费开源；你需要自己的网盘账号和一个 AI 服务的 key（任意 OpenAI 兼容接口）。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "支持哪些网盘？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "夸克、115、光鸭、123、天翼；网盘层是插件化接口，欢迎 PR 加新品牌。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Windows 提示「已保护你的电脑」？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "未签名所致（个人开发者证书太贵），点「更多信息 → 仍要运行」即可；每个安装包发布前都经过 CI 真机安装验证。"
+          }
+        }
+      ]
+    }
+  ]
+}
+  </script>
 </head>
 <body>
   <a href="#main" class="skip-link">跳转到主内容</a>

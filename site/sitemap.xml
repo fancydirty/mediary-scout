@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  单页站点：只有一个规范 URL。锚点（#features / #faq …）不是独立页面，
+  刻意不列 —— sitemap 只放希望被索引的规范页面。
+  付费服务站（mediaryconnect.app）有自己的 sitemap，两站互不混淆。
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://mediaryscout.app/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>

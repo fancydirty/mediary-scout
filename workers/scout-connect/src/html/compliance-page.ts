@@ -16,6 +16,32 @@ export const COMPLIANCE_PAGES = {
 
 export type CompliancePageKey = keyof typeof COMPLIANCE_PAGES;
 
+/** 每页的 SERP 摘要。取自各页真实主旨(不编造、不堆词):没有 description 时
+ *  Google 会自行截取正文首段,法律页的首段往往是「Last updated」这类无信息量
+ *  的行,白白浪费 SERP 那两行。 */
+const COMPLIANCE_DESCRIPTIONS: Record<CompliancePageKey, { en: string; zh: string }> = {
+  terms: {
+    en: "Terms for Mediary Connect: what the remote-access tunnel does, your responsibilities (access password, lawful use), prepaid duration with no auto-charge, and the operating entity.",
+    zh: "Mediary Connect 服务条款:远程访问隧道提供什么、你的责任(访问密码、合法使用)、预付时长与不自动扣款、运营主体与适用法律。",
+  },
+  privacy: {
+    en: "What Mediary Connect collects (email, payment ID, service config) and what it cannot reach: your media, drive credentials and LLM keys never leave your own machine.",
+    zh: "Mediary Connect 收集什么(邮箱、交易号、服务配置),以及技术上接触不到什么:媒体内容、网盘凭据与 LLM 密钥始终只在你自己的机器上。",
+  },
+  refund: {
+    en: "14-day, no-questions-asked full refund for Mediary Connect — whether or not you have used the service. How to request, and what happens to your slug afterwards.",
+    zh: "Mediary Connect 14 天无理由全额退款(无论是否使用过),如何申请、退款后专属地址与账号如何保留。",
+  },
+  pricing: {
+    en: "Mediary Connect pricing: prepaid access for your self-hosted Mediary Scout instance, from ¥45 per quarter. Stackable, never auto-charged, 14-day refund.",
+    zh: "Mediary Connect 定价:为自托管的 Mediary Scout 实例提供远程访问,季度 ¥45 起。时长可叠加、不自动续费、14 天无理由退款。",
+  },
+  contact: {
+    en: "How to reach Mediary Connect support: refunds, data deletion, product bugs and deployment questions, plus the operating entity behind the service.",
+    zh: "联系 Mediary Connect:退款、数据删除、产品缺陷与部署问题的联系方式,以及本服务的运营主体信息。",
+  },
+};
+
 /** 页脚互链必须带上当前语言:否则在中文页点「隐私政策」会跳回英文页,
  *  用户得每页重新切一次语言。中文是默认值,故 zh 不带 query。 */
 function footerLinks(lang: Lang): string {
@@ -56,6 +82,15 @@ export function compliancePage(key: CompliancePageKey, lang: Lang = "zh"): strin
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${pageTitle} · Mediary Connect</title>
+<meta name="description" content="${lang === "en" ? COMPLIANCE_DESCRIPTIONS[key].en : COMPLIANCE_DESCRIPTIONS[key].zh}">
+<!-- 规范化信号:中英两版内容同源(由 extractLang 从同一份 .md 拆出),若不声明
+     canonical/alternate,Google 会把它们判成重复内容且无从选择规范页。
+     alternate 集合必须自含(含自己)——缺了会被判「无返回标记」错误。
+     x-default 指中文:主受众是中文用户。 -->
+<link rel="canonical" href="https://mediaryconnect.app/${key}${lang === "en" ? "?lang=en" : ""}">
+<link rel="alternate" hreflang="zh-Hans" href="https://mediaryconnect.app/${key}">
+<link rel="alternate" hreflang="en" href="https://mediaryconnect.app/${key}?lang=en">
+<link rel="alternate" hreflang="x-default" href="https://mediaryconnect.app/${key}">
 ${FAVICON_LINK}
 <style>
 ${THEME_TOKENS}

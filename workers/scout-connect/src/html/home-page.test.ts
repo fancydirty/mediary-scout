@@ -85,6 +85,34 @@ describe("home page(apex 落地页)", () => {
     expect(html).toContain('lang="zh-Hans"');
   });
 
+  // ---- 结构化数据(SEO 基线审计:此前无 JSON-LD,搜索引擎无法把
+  // Scout ↔ Connect 识别成同一品牌下的产品与增值服务)----
+  it("JSON-LD 存在且可解析,声明 Product/Service + Offer", () => {
+    const html = homePage();
+    const m = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(html);
+    expect(m, "首页缺少 JSON-LD").not.toBeNull();
+    const data = JSON.parse(m![1]) as { "@graph": Array<Record<string, unknown>> };
+    const types = data["@graph"].map((n) => n["@type"]);
+    expect(types).toContain("Product");
+  });
+
+  it("JSON-LD 的价格与页面可见价格一致(结构化数据不得与可见内容不符)", () => {
+    const html = homePage();
+    const m = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(html);
+    const raw = m![1];
+    // 页面上写的是 季 ¥45 / 年 ¥108 —— JSON-LD 必须是同样的数字与币种
+    expect(html).toContain("¥45");
+    expect(raw).toContain('"price":"45"');
+    expect(raw).toContain('"price":"108"');
+    expect(raw).toContain('"priceCurrency":"CNY"');
+  });
+
+  it("JSON-LD 用 isRelatedTo 把 Connect 指回 Mediary Scout 主站(品牌实体串联)", () => {
+    const html = homePage();
+    const m = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(html);
+    expect(m![1]).toContain("https://mediaryscout.app/");
+  });
+
   it("海报墙有兜底 —— TMDB 代理挂了首屏不能空一片", () => {
     const html = homePage();
     // 内联的兜底海报路径(worker 无静态目录,路径只是字符串,烤进 HTML)
