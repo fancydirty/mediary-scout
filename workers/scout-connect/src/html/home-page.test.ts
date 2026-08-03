@@ -85,23 +85,29 @@ describe("home page(apex 落地页)", () => {
     expect(html).toContain('lang="zh-Hans"');
   });
 
+  /** 取首页的 JSON-LD 原文。缺失时给出清晰断言失败 —— 裸用 m![1] 会抛
+   *  TypeError,错误信息完全遮蔽测试意图(Copilot #231 抑制评论)。 */
+  function extractJsonLd(html: string): string {
+    const m = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(html);
+    expect(m, "首页缺少 JSON-LD <script>").not.toBeNull();
+    return m![1];
+  }
+
   // ---- 结构化数据(SEO 基线审计:此前无 JSON-LD,搜索引擎无法把
   // Scout ↔ Connect 识别成同一品牌下的产品与增值服务)----
-  it("JSON-LD 存在且可解析,声明 Product/Service + Offer", () => {
-    const html = homePage();
-    const m = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(html);
-    expect(m, "首页缺少 JSON-LD").not.toBeNull();
-    const data = JSON.parse(m![1]) as { "@graph": Array<Record<string, unknown>> };
+  it("JSON-LD 存在且可解析,声明 Product(含 Offer) 与 Organization", () => {
+    const raw = extractJsonLd(homePage());
+    const data = JSON.parse(raw) as { "@graph": Array<Record<string, unknown>> };
     const types = data["@graph"].map((n) => n["@type"]);
     expect(types).toContain("Product");
+    expect(types).toContain("Organization");
   });
 
   it("JSON-LD 覆盖页面可见的**全部三档**价格(Copilot #231:漏了两年档 ¥188)", () => {
     // 定价区可见三档:季 ¥45 / 年 ¥108 / 两年 ¥188。JSON-LD 少一档会让富结果
     // 呈现不完整的价格区间(最低价误导),且结构化数据与可见内容不符。
     const html = homePage();
-    const m = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(html);
-    const raw = m![1];
+    const raw = extractJsonLd(html);
     for (const price of ["45", "108", "188"]) {
       expect(html, `页面应可见 ¥${price}`).toContain(`¥${price}`);
       expect(raw, `JSON-LD 应含 price ${price}`).toContain(`"price":"${price}"`);
@@ -114,9 +120,7 @@ describe("home page(apex 落地页)", () => {
   });
 
   it("JSON-LD 用 isRelatedTo 把 Connect 指回 Mediary Scout 主站(品牌实体串联)", () => {
-    const html = homePage();
-    const m = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(html);
-    expect(m![1]).toContain("https://mediaryscout.app/");
+    expect(extractJsonLd(homePage())).toContain("https://mediaryscout.app/");
   });
 
   it("海报墙有兜底 —— TMDB 代理挂了首屏不能空一片", () => {

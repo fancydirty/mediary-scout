@@ -33,7 +33,7 @@
 ### 本轮已实施
 
 - **主站**：`site/robots.txt`（Allow + Sitemap 声明）、`site/sitemap.xml`（单规范 URL，锚点刻意不列）、`<link rel=canonical>`、JSON-LD `SoftwareApplication` + `FAQPage`（5 条，逐条与页面可见 FAQ 一致，有校验）
-- **付费站**：合规页 5 页 × 中英 = 10 个 URL 全部补 `canonical` + 自含 `hreflang`（zh-Hans / en / x-default）+ 真实 `description`；首页补 JSON-LD `Product`(两档真实价格 Offer) + `Organization`，用 `isRelatedTo` 指回主站
+- **付费站**：合规页 5 页 × 中英 = 10 个 URL 全部补 `canonical` + 自含 `hreflang`（zh-Hans / en / x-default）+ 真实 `description`；首页补 JSON-LD `Product`(**三档**真实价格 Offer:季 ¥45 / 年 ¥108 / 两年 ¥188,与定价区可见档位逐一对应) + `Organization`，用 `isRelatedTo` 指回主站
 - 保留原设计：法务页不进 sitemap（既有测试明确的有意决定，本轮不推翻）
 
 ### 验证证据
