@@ -18,6 +18,20 @@
 export const LLM_AUTH_GUIDANCE =
   "AI 模型鉴权失败(401):请到 设置 → AI 模型 检查 API Key 是否有效、模型是否有权限(任意 OpenAI 兼容服务,自带 key)。";
 
+/**
+ * Shown when the agent's LLM calls exhaust the AI SDK's retries on 429.
+ *
+ * issue #229 的真实现场:用户看到「Failed after 3 attempts. Last error: Too Many
+ * Requests」,而且**多个网盘任务同时报同一句** —— 因为 429 不是网盘返回的,是它们
+ * 共同上游(agent 调用的 LLM)返回的。AI SDK 把 429 当可重试错误(默认 maxRetries:
+ * 2 → 共 3 次尝试),全失败后抛 RetryError,那句英文就是它的 message。
+ *
+ * 原样透传的代价:用户以为网盘坏了或本程序坏了(他因此提了 issue),而真正该做的是
+ * 换一个额度充足的模型渠道或稍后重试。所以这条指引必须明确「与网盘和本程序无关」。
+ */
+export const LLM_RATE_LIMIT_GUIDANCE =
+  "AI 模型被限流(429):你配置的模型渠道正在限流或额度已用尽 —— 与网盘和本程序无关。请稍后重试,或到 设置 → AI 模型 换一个额度充足的渠道(免费额度的模型很容易触发)。";
+
 // LLM-SPECIFIC auth markers (case-insensitive). Deliberately NOT the bare numeric
 // "401"/"403" substrings — those over-match netdisk (brand) auth errors whose
 // messages carry the status number (e.g. "GUANGYA_AUTH_FAILED: 401 after refresh")
@@ -32,12 +46,44 @@ const LLM_AUTH_PATTERNS = [
   "authentication",
 ];
 
+// LLM rate-limit markers (case-insensitive). Same discipline as LLM_AUTH_PATTERNS:
+// no bare "429" substring — a netdisk message can carry that number and would be
+// misreported as an AI-模型 problem. These are what OpenAI-compatible endpoints
+// (and the AI SDK's RetryError wrapper) actually say when throttled.
+const LLM_RATE_LIMIT_PATTERNS = [
+  "too many requests",
+  "rate limit",
+  "rate_limit",
+  "quota exceeded",
+  "resource_exhausted",
+  "requests per minute",
+  "insufficient_quota",
+];
+
 // Netdisk (storage brand) auth errors are a TOKEN problem with the user's drive,
 // not the AI model. They are thrown as Pan115AuthError / QuarkAuthError /
 // GuangYaAuthError / TianyiAuthError / Pan123AuthError with these message prefixes
 // (and class names). If any of these markers is present anywhere in the error (or
 // its cause chain), it is NEVER an LLM-auth error — even if it carries a 401/403
 // statusCode or the word in its text.
+// Netdisk-side markers that must SHORT-CIRCUIT the LLM rate-limit mapping.
+//
+// 两类:
+//  1. 中文限流提示(115「请求过于频繁」/夸克「访问频繁」)——网盘侧限流;
+//  2. **转存/网盘动作前缀**——探针实测:网盘网关也会返回英文「Too Many Requests」
+//     (例如 "转存失败: Too Many Requests"),只匹配英文 429 文案会把它误判成
+//     「换 LLM 渠道」,把用户引向完全错误的方向(与 BRAND_AUTH_MARKERS 同款教训)。
+const BRAND_RATE_LIMIT_MARKERS = [
+  "频繁",
+  "访问过快",
+  "操作过于频繁",
+  "转存",
+  "transfer_failed",
+  "transfer failed",
+  "分享",
+  "share link",
+];
+
 const BRAND_AUTH_MARKERS = [
   "guangya",
   "quark",
@@ -105,14 +151,55 @@ export function isLlmAuthError(error: unknown, depth = 0): boolean {
   return cause === undefined ? false : isLlmAuthError(cause, depth + 1);
 }
 
+/** True if this error is a netdisk brand error (auth OR rate limit) — those must
+ *  never be reported as an AI-模型 problem. */
+function isBrandError(error: unknown): boolean {
+  const msg = messageOf(error);
+  return (
+    BRAND_AUTH_MARKERS.some((marker) => msg.includes(marker)) ||
+    BRAND_RATE_LIMIT_MARKERS.some((marker) => msg.includes(marker))
+  );
+}
+
 /**
- * Map a captured agent-run error to a USER-FACING message. LLM auth/401 failures
- * become actionable, provider-agnostic guidance; every other error keeps its
- * original message. Does NOT touch the original error — logs keep the raw detail.
+ * True if `error` (or anything in its `cause` chain — the AI SDK wraps the real
+ * error) is an LLM rate-limit failure: a 429 statusCode, or a message matching a
+ * throttling marker (including the AI SDK's own "Failed after N attempts. Last
+ * error: Too Many Requests"). A netdisk (brand) error short-circuits to false —
+ * even with a 429 statusCode — so a drive throttle is never mislabeled an
+ * AI-模型 problem. Recursion-bounded.
+ */
+export function isLlmRateLimitError(error: unknown, depth = 0): boolean {
+  if (error === null || error === undefined || depth > 5) {
+    return false;
+  }
+  // A netdisk error anywhere short-circuits: NOT an LLM rate-limit error.
+  if (isBrandError(error)) {
+    return false;
+  }
+  if (statusCodeOf(error) === 429) {
+    return true;
+  }
+  const msg = messageOf(error);
+  if (LLM_RATE_LIMIT_PATTERNS.some((pattern) => msg.includes(pattern))) {
+    return true;
+  }
+  const cause = (error as { cause?: unknown }).cause;
+  return cause === undefined ? false : isLlmRateLimitError(cause, depth + 1);
+}
+
+/**
+ * Map a captured agent-run error to a USER-FACING message. LLM auth/401 and
+ * rate-limit/429 failures become actionable, provider-agnostic guidance; every
+ * other error keeps its original message. Does NOT touch the original error —
+ * logs keep the raw detail.
  */
 export function describeAgentRunError(error: unknown): string {
   if (isLlmAuthError(error)) {
     return LLM_AUTH_GUIDANCE;
+  }
+  if (isLlmRateLimitError(error)) {
+    return LLM_RATE_LIMIT_GUIDANCE;
   }
   if (error instanceof Error) {
     return error.message;
