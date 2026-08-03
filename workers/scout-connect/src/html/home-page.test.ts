@@ -96,15 +96,21 @@ describe("home page(apex 落地页)", () => {
     expect(types).toContain("Product");
   });
 
-  it("JSON-LD 的价格与页面可见价格一致(结构化数据不得与可见内容不符)", () => {
+  it("JSON-LD 覆盖页面可见的**全部三档**价格(Copilot #231:漏了两年档 ¥188)", () => {
+    // 定价区可见三档:季 ¥45 / 年 ¥108 / 两年 ¥188。JSON-LD 少一档会让富结果
+    // 呈现不完整的价格区间(最低价误导),且结构化数据与可见内容不符。
     const html = homePage();
     const m = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(html);
     const raw = m![1];
-    // 页面上写的是 季 ¥45 / 年 ¥108 —— JSON-LD 必须是同样的数字与币种
-    expect(html).toContain("¥45");
-    expect(raw).toContain('"price":"45"');
-    expect(raw).toContain('"price":"108"');
+    for (const price of ["45", "108", "188"]) {
+      expect(html, `页面应可见 ¥${price}`).toContain(`¥${price}`);
+      expect(raw, `JSON-LD 应含 price ${price}`).toContain(`"price":"${price}"`);
+    }
     expect(raw).toContain('"priceCurrency":"CNY"');
+    // offers 条数必须与可见档位数一致 —— 多一条或少一条都算不一致
+    const offers = JSON.parse(raw) as { "@graph": Array<{ offers?: unknown[] }> };
+    const product = offers["@graph"].find((n) => Array.isArray(n.offers));
+    expect(product?.offers).toHaveLength(3);
   });
 
   it("JSON-LD 用 isRelatedTo 把 Connect 指回 Mediary Scout 主站(品牌实体串联)", () => {
