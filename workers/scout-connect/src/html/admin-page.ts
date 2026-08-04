@@ -8,6 +8,10 @@ export function adminPage(): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mediary Connect Admin</title>
+<!-- SEO 审计 P0:未登录也会返回这整页 HTML(数据靠 API 鉴权,页面本身是公开的)。
+     页面进索引等于对外公布管理入口 —— 搜一下就能找到。noindex 挡索引,
+     nofollow 挡顺着链接爬内部路径,noarchive 挡历史快照留存。 -->
+<meta name="robots" content="noindex, nofollow, noarchive">
 <style>
 body{font-family:system-ui,sans-serif;max-width:1000px;margin:2rem auto;padding:0 1rem;color:#222;font-size:14px}
 input,button{font:inherit;padding:.35rem .5rem}

@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 import { loginPage } from "./login-page.js";
 
 describe("login page", () => {
+  // SEO 审计 P1:登录页此前无 noindex —— 它进索引后,用户从 SERP 落到
+  // 一个要登录的页面而不是首页,而且登录页对搜索引擎毫无内容价值。
+  it("有 noindex —— 登录页绝不该进搜索索引", () => {
+    expect(loginPage()).toContain('name="robots" content="noindex"');
+  });
+
   it("is a full dark-themed document with brand bar and favicon", () => {
     const html = loginPage();
     expect(html).toContain("<!doctype html>");

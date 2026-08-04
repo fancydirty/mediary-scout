@@ -98,6 +98,13 @@ export function htmlPage(
       // is the legacy header that actually blocks framing in older browsers.
       "x-frame-options": "DENY",
       "referrer-policy": "no-referrer",
+      // HSTS(SEO/安全审计 P0):真实公网复验发现 http://mediaryconnect.app/
+      // 直接 200 明文响应 —— Google 会把 http:// 与 https:// 当两套地址
+      // (重复内容 + 规范分裂),用户也会明文打开登录页。这个头让浏览器此后
+      // 只走 HTTPS。两年 max-age + 子域覆盖是 hstspreload.org 的门槛值;
+      // 刻意不加 preload —— 那是不可逆的(进了预加载列表就无法快速退出),
+      // 等站点稳定运营一段时间再单独决定。
+      "strict-transport-security": "max-age=63072000; includeSubDomains",
   };
   if (opts.noStore) headers["cache-control"] = "no-store";
   return new Response(body, { status, headers });

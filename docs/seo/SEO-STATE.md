@@ -56,3 +56,42 @@
 2. 在 GSC 注册两站并提交 sitemap（**需要用户账号操作**）
 3. 主站英文版（`/en/`）—— README 已双语，内容成本低；先验证中文版基线数据再做
 4. 机会地图：从「自建/NAS + 网盘自动化 + 追剧」聚类，考虑用例页（如「NAS 自动追剧」「115 自动转存」）——**先等第 1 轮数据，不预先批量造页**
+
+
+## 第 2 轮（2026-08-04）：私有页面索引防护 + HSTS
+
+参照一份外部「技术 SEO 全站审计」清单做交叉检查，只吸收我们真正缺的项（其余
+如 canonical/sitemap/hreflang/结构化数据第 1 轮已完成；转化归因我们有
+Paddle webhook + D1 entitlements，比 GA4 更硬）。
+
+### 审计发现（真实公网复验，绕开本机代理 fake-ip）
+
+| 级别 | 问题 | 证据 |
+|---|---|---|
+| **P0** | `/admin` 未登录返回完整管理页 HTML 且无 noindex | `<title>Mediary Connect Admin</title>`，含「邀请/token」字样 |
+| **P0** | 付费站 `http://` 明文 200，无跳转、无 HSTS | `--resolve mediaryconnect.app:80:104.21.73.181` → `HTTP/1.1 200 OK`，无 Location |
+| **P1** | `/login` 无 noindex | 200 + 无 robots meta |
+| ✅ | `/buy`、`/payment-success` 已有 noindex | 当初想到了，漏了 admin/login |
+| ✅ | `/console` 302 跳转 | 无索引风险 |
+| ✅ | www 子域无解析、主站 http→308+HSTS、图片 alt 齐全、TTFB ~0.44s | 无需处理 |
+
+### 本轮已实施
+
+- `/admin`：`noindex, nofollow, noarchive`（不索引 + 不顺链爬内部路径 + 不留快照）
+- `/login`：`noindex`
+- worker 全站 HTML 响应加 HSTS：`max-age=63072000; includeSubDomains`
+  —— **刻意不加 `preload`**（进预加载列表不可逆，等站点稳定运营后再单独决定）
+
+### 验证证据
+
+- 新增 4 条测试（admin ×2、login ×1、HSTS ×1），逐项反向验证真红：
+  移除 HSTS → 1 红；移除 admin noindex → 2 红；移除 login noindex → 1 红
+- 全量 **2836 passed / 15 skipped**；**四处 tsc**（根 / apps-web / worker / desktop）全干净
+  （第 1 轮教训：只跑两处就下结论，被 CI 抓到两个真实类型错误）
+
+### 待观察
+
+1. GSC「网页索引」里确认 `/admin`、`/login` 不出现在已收录清单（若此前已被收录，noindex 生效需等重新抓取）
+2. 付费站 HTTP 明文：HSTS 只对**回访过 HTTPS 的浏览器**生效；首次 http 访问仍会明文命中。
+   **仍需在 Cloudflare 侧开 “Always Use HTTPS”**（Rules → Settings，一键，零风险）—— 需要账号操作
+3. 主站英文版仍未做（第 1 轮起就在待办，等中文基线数据）

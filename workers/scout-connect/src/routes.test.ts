@@ -250,6 +250,18 @@ describe("handleRequest", () => {
 
   // robots.txt 此前由 Cloudflare 给一份纯注释样板(去注释后零有效指令),
   // 且没有 Sitemap 声明。worker 接管,给出真指令。
+  // SEO/安全审计 P0(真实公网复验,绕开本机代理):http://mediaryconnect.app/
+  // 直接 200 明文响应,无 301/308 跳转、无 HSTS —— Google 会把 http:// 与
+  // https:// 视为两套地址(重复内容 + 规范分裂),用户也会明文访问登录页。
+  // 主站(Vercel)本来就有 308 + HSTS,只有 worker 这边缺。
+  it("HTML 响应带 HSTS(强制后续走 HTTPS)", async () => {
+    const { deps } = setup();
+    const res = await handleRequest(new Request(`${BASE}/`), deps);
+    const hsts = res.headers.get("strict-transport-security") ?? "";
+    expect(hsts).toMatch(/max-age=\d{7,}/); // 至少 ~4 个月,别设个几十秒的假 HSTS
+    expect(hsts).toContain("includeSubDomains");
+  });
+
   it("GET /robots.txt → 200 纯文本,含 Allow 与 Sitemap 声明", async () => {
     const { deps } = setup();
     const res = await handleRequest(new Request(`${BASE}/robots.txt`), deps);

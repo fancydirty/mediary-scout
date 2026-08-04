@@ -26,6 +26,9 @@ export function loginPage(sitekeyRaw?: string): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>登录 · Mediary Connect</title>
+<!-- SEO 审计 P1:登录页进索引 = 用户从 SERP 落到一个要登录的页面而不是首页,
+     且登录页对搜索引擎无内容价值。 -->
+<meta name="robots" content="noindex">
 ${FAVICON_LINK}${tsScript}
 <style>
 ${THEME_TOKENS}
