@@ -5,7 +5,10 @@ describe("login page", () => {
   // SEO 审计 P1:登录页此前无 noindex —— 它进索引后,用户从 SERP 落到
   // 一个要登录的页面而不是首页,而且登录页对搜索引擎毫无内容价值。
   it("有 noindex —— 登录页绝不该进搜索索引", () => {
-    expect(loginPage()).toContain('name="robots" content="noindex"');
+    // 正则而非精确字符串(Copilot #232 抑制评论):将来给登录页加更严格的
+    // 指令(nofollow/noarchive)时,精确匹配会误红 —— 而那是变严格、不是变宽松。
+    // admin-page.test 已用同一手法,这里同步。
+    expect(loginPage()).toMatch(/name="robots" content="noindex\b/);
   });
 
   it("is a full dark-themed document with brand bar and favicon", () => {
