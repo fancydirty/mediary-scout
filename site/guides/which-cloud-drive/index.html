@@ -18,13 +18,16 @@
   <link rel="icon" href="/favicon.ico">
   <link rel="stylesheet" href="/style.css">
   <style>
-    /* 文章版式：正文宽度收窄到易读区间，其余全部复用站点设计变量 */
+    /* 文章版式：只定义版式（宽度/间距/字号），颜色一律用站点设计变量
+       （--text / --text-muted / --accent / --bg-card / --border-subtle /
+       --dot-orange）。唯一的硬编码色是导航里 SVG logo 的内联填充，那是
+       从首页原样复制的，保持与首页逐字一致比抽变量更重要（Copilot #233）。*/
     .article{max-width:720px;margin:0 auto;padding:0 24px 96px}
     .article h1{font-size:2rem;line-height:1.3;margin:36px 0 12px}
-    .article .meta{color:#a7a7a7;font-size:.85rem;margin-bottom:32px}
+    .article .meta{color:var(--text-muted);font-size:.85rem;margin-bottom:32px}
     .article h2{font-size:1.35rem;margin:44px 0 12px;padding-top:8px}
     .article h3{font-size:1.05rem;margin:28px 0 8px}
-    .article p,.article li{line-height:1.85;color:#d6d6d6}
+    .article p,.article li{line-height:1.85}
     .article li{margin:6px 0}
     .article strong{color:var(--text)}
     .article a{color:var(--accent)}
@@ -34,11 +37,11 @@
     .article td.num{text-align:right;font-variant-numeric:tabular-nums}
     .article .win{color:var(--accent);font-weight:600}
     .callout{background:var(--bg-card);border-left:3px solid var(--accent);border-radius:6px;padding:16px 18px;margin:24px 0}
-    .callout.warn{border-left-color:#ffa42b}
+    .callout.warn{border-left-color:var(--dot-orange)}
     .callout p{margin:0}
     .callout p+p{margin-top:10px}
-    .crumb{font-size:.85rem;color:#a7a7a7;padding-top:28px}
-    .crumb a{color:#a7a7a7}
+    .crumb{font-size:.85rem;color:var(--text-muted);padding-top:28px}
+    .crumb a{color:var(--text-muted)}
     .next{margin-top:56px;padding-top:24px;border-top:1px solid var(--border-subtle)}
   </style>
 
@@ -177,7 +180,7 @@
     </ul>
 
     <div class="next">
-      <p style="color:#a7a7a7;font-size:.9rem">数据会过时：PanSou 的频道配置一变，各家资源量就会变。这篇的采样时间是 2026-07，之后我们再测会更新这一页。</p>
+      <p style="color:var(--text-muted);font-size:.9rem">数据会过时：PanSou 的频道配置一变，各家资源量就会变。这篇的采样时间是 2026-07，之后我们再测会更新这一页。</p>
     </div>
   </main>
 
