@@ -100,10 +100,16 @@ export function htmlPage(
       "referrer-policy": "no-referrer",
       // HSTS(SEO/安全审计 P0):真实公网复验发现 http://mediaryconnect.app/
       // 直接 200 明文响应 —— Google 会把 http:// 与 https:// 当两套地址
-      // (重复内容 + 规范分裂),用户也会明文打开登录页。这个头让浏览器此后
-      // 只走 HTTPS。两年 max-age + 子域覆盖是 hstspreload.org 的门槛值;
-      // 刻意不加 preload —— 那是不可逆的(进了预加载列表就无法快速退出),
-      // 等站点稳定运营一段时间再单独决定。
+      // (重复内容 + 规范分裂),用户也会明文打开登录页。
+      //
+      // 生效边界(别高估它):浏览器**必须先通过 HTTPS 收到过这个头**才会缓存
+      // 并强制后续请求走 HTTPS —— 首次就用 http:// 访问的请求依然是明文命中。
+      // 要挡住首次明文,还需在 Cloudflare 开 Always Use HTTPS(见 SEO 台账待办)。
+      //
+      // 参数选择:max-age 两年是我们自己的保守选择,不是任何规范的门槛。
+      // (hstspreload.org 的预加载门槛是 max-age ≥ 31536000 即 1 年 +
+      //  includeSubDomains + preload 三者齐备。)
+      // 刻意不加 preload —— 进预加载列表**不可逆**,等站点稳定运营后再单独决定。
       "strict-transport-security": "max-age=63072000; includeSubDomains",
   };
   if (opts.noStore) headers["cache-control"] = "no-store";

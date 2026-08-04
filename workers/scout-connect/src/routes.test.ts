@@ -258,7 +258,11 @@ describe("handleRequest", () => {
     const { deps } = setup();
     const res = await handleRequest(new Request(`${BASE}/`), deps);
     const hsts = res.headers.get("strict-transport-security") ?? "";
-    expect(hsts).toMatch(/max-age=\d{7,}/); // 至少 ~4 个月,别设个几十秒的假 HSTS
+    // 解析出秒数做**数值**下限校验(Copilot #232):正则 \d{7,} 的最小值是
+    // 1000000 秒 ≈ 11.6 天,远低于注释声称的下限 —— 那样「把 HSTS 改成
+    // 11 天」的回归也能蒙过测试。这里按 1 年(31536000 秒)卡死。
+    const maxAge = Number(/max-age=(\d+)/.exec(hsts)?.[1] ?? 0);
+    expect(maxAge).toBeGreaterThanOrEqual(31_536_000);
     expect(hsts).toContain("includeSubDomains");
   });
 
