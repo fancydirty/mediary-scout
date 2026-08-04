@@ -42,6 +42,22 @@
 - 全量 **2832 passed / 15 skipped**；根 typecheck + apps/web tsc 干净
 - 主站 JSON-LD 本地结构校验：SoftwareApplication 必填齐全、FAQPage 5 条 Q/A 完整、**与页面可见 FAQ 逐条一致**
 
+### 3. 我自己犯的错：脚本重排 bullet 时误删了 README 表格
+
+Copilot 第 2 轮的 **suppressed** 评论抓到的（inline 是 0、"generated no new comments"，
+只有折叠区里这一条）—— **再次印证「suppressed 必须读」这条铁律。**
+
+**原因**：重排 bullet 的脚本用 `re.findall` 提取 5 个 bullet 后，只把
+`intro + bullets` 拼回原段落 —— 而表格和 "New brands plug into…" 段位于
+bullet **之后**、下个 `##` **之前**，被整段丢弃。
+
+**我为什么没发现**：验收时只查了 bullet 顺序（`grep -oE '^\- \*\*'`），
+没查表格是否还在。**验收范围窄于改动范围 = 没验收。**
+
+→ **教训**：用脚本做「段落级重写」时，验收必须查 `git diff --numstat`
+（本轮修完是 3+/3-，与预期一致）而不只看自己关心的那几行。
+段落重排优先用「只交换 bullet」的窄操作，不要重建整段。
+
 ### 待观察（发布后）
 
 1. 生产 `https://mediaryscout.app/robots.txt` 与 `/sitemap.xml` 返回 200（Vercel 静态目录是否直出）
@@ -88,6 +104,22 @@ Paddle webhook + D1 entitlements，比 GA4 更硬）。
   移除 HSTS → 1 红；移除 admin noindex → 2 红；移除 login noindex → 1 红
 - 全量 **2836 passed / 15 skipped**；**四处 tsc**（根 / apps-web / worker / desktop）全干净
   （第 1 轮教训：只跑两处就下结论，被 CI 抓到两个真实类型错误）
+
+### 3. 我自己犯的错：脚本重排 bullet 时误删了 README 表格
+
+Copilot 第 2 轮的 **suppressed** 评论抓到的（inline 是 0、"generated no new comments"，
+只有折叠区里这一条）—— **再次印证「suppressed 必须读」这条铁律。**
+
+**原因**：重排 bullet 的脚本用 `re.findall` 提取 5 个 bullet 后，只把
+`intro + bullets` 拼回原段落 —— 而表格和 "New brands plug into…" 段位于
+bullet **之后**、下个 `##` **之前**，被整段丢弃。
+
+**我为什么没发现**：验收时只查了 bullet 顺序（`grep -oE '^\- \*\*'`），
+没查表格是否还在。**验收范围窄于改动范围 = 没验收。**
+
+→ **教训**：用脚本做「段落级重写」时，验收必须查 `git diff --numstat`
+（本轮修完是 3+/3-，与预期一致）而不只看自己关心的那几行。
+段落重排优先用「只交换 bullet」的窄操作，不要重建整段。
 
 ### 待观察
 
@@ -140,6 +172,22 @@ CSS 相对路径写成 `../style.css`，但文章在 `guides/which-cloud-drive/`
 - 浏览器真实渲染核对：背景 `rgb(18,18,18)`、文字白、表格边框走站点变量、3 个 callout、导航/面包屑/页脚齐全、移动端 viewport 正确
 - 数据一致性脚本：5 个数字与 README 逐一对齐
 
+### 3. 我自己犯的错：脚本重排 bullet 时误删了 README 表格
+
+Copilot 第 2 轮的 **suppressed** 评论抓到的（inline 是 0、"generated no new comments"，
+只有折叠区里这一条）—— **再次印证「suppressed 必须读」这条铁律。**
+
+**原因**：重排 bullet 的脚本用 `re.findall` 提取 5 个 bullet 后，只把
+`intro + bullets` 拼回原段落 —— 而表格和 "New brands plug into…" 段位于
+bullet **之后**、下个 `##` **之前**，被整段丢弃。
+
+**我为什么没发现**：验收时只查了 bullet 顺序（`grep -oE '^\- \*\*'`），
+没查表格是否还在。**验收范围窄于改动范围 = 没验收。**
+
+→ **教训**：用脚本做「段落级重写」时，验收必须查 `git diff --numstat`
+（本轮修完是 3+/3-，与预期一致）而不只看自己关心的那几行。
+段落重排优先用「只交换 bullet」的窄操作，不要重建整段。
+
 ### 待观察（下一轮的决策依据）
 
 1. GSC：这一页多久被发现/收录，出什么词的曝光
@@ -183,6 +231,22 @@ CSS 相对路径写成 `../style.css`，但文章在 `guides/which-cloud-drive/`
 **过程中踩的坑**：新加了第二条 `.connect-text p`，但它在原规则**之前** —— 同优先级
 后者胜，改动看似无效。**必须浏览器实测才发现**（computed style 值没变）。
 已去重、直接改原规则，注释写明防再犯。
+
+### 3. 我自己犯的错：脚本重排 bullet 时误删了 README 表格
+
+Copilot 第 2 轮的 **suppressed** 评论抓到的（inline 是 0、"generated no new comments"，
+只有折叠区里这一条）—— **再次印证「suppressed 必须读」这条铁律。**
+
+**原因**：重排 bullet 的脚本用 `re.findall` 提取 5 个 bullet 后，只把
+`intro + bullets` 拼回原段落 —— 而表格和 "New brands plug into…" 段位于
+bullet **之后**、下个 `##` **之前**，被整段丢弃。
+
+**我为什么没发现**：验收时只查了 bullet 顺序（`grep -oE '^\- \*\*'`），
+没查表格是否还在。**验收范围窄于改动范围 = 没验收。**
+
+→ **教训**：用脚本做「段落级重写」时，验收必须查 `git diff --numstat`
+（本轮修完是 3+/3-，与预期一致）而不只看自己关心的那几行。
+段落重排优先用「只交换 bullet」的窄操作，不要重建整段。
 
 ### 待观察
 

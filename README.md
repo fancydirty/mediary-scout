@@ -105,6 +105,17 @@ Five Chinese cloud drives, each a first-class workspace — ordered by how many 
 - **GuangYaPan / 光鸭云盘** (`guangya`) — Xunlei-family drive; **magnet / offline-download only** (transfers magnet/ed2k/BT via its offline-task API — it does **not** transfer share links in v1). Token auth. Pairs well with Prowlarr. **[Setup guide](docs/deploy.md#光鸭云盘guangyapan连接)**
 - **Tianyi / 天翼云盘** (`tianyi`) — share-link transfer (`cloud.189.cn/t/…`); QR login or paste an SSON cookie. Smallest share pool on PanSou today (weak for movies, workable for shows/anime). **[Setup guide](docs/deploy.md#天翼云盘连接)**
 
+Measured share volume per drive (2026-07 point-in-time sample: six popular titles across movie / drama / anime, one PanSou instance with curated channels — your channels will vary):
+
+| Drive | Own share links | Magnets it can also eat | Usable pool |
+| --- | ---: | ---: | ---: |
+| Quark | 523 | — | **523** |
+| 123 | 120 | 361 | **481** |
+| 115 | 100 | 361 | **461** |
+| 光鸭 | — | 361 | **361** |
+| 天翼 | 63 | — | **63** |
+
+New brands plug into a storage-brand registry; the bulk of adding one is a drive client + a storage executor for that drive's transfer API.
 
 ## Agent API (agent-first control)
 
