@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>夸克/115/光鸭/123/天翼，自动追剧该选哪个网盘？（附实测资源量）— Mediary Scout</title>
-  <meta name="description" content="用同一个 PanSou 实例、同样 6 部片实测五大网盘的可用资源量：夸克 523、115 461、光鸭 361、123 120、天翼 63。附各家转存能力边界（谁只吃分享链接、谁只吃磁力）与登录方式，帮你决定自动追剧用哪个网盘。">
+  <meta name="description" content="用同一个 PanSou 实例、同样 6 部片实测五大网盘的可用资源量：夸克 523、123 481、115 461、光鸭 361、天翼 63。附各家转存能力边界（谁能同时吃分享链接和磁力）与登录方式，帮你决定自动追剧用哪个网盘。">
 
   <link rel="canonical" href="https://mediaryscout.app/guides/which-cloud-drive/">
 
   <meta property="og:title" content="自动追剧该选哪个网盘？五大网盘实测资源量对比">
-  <meta property="og:description" content="夸克 523 / 115 461 / 光鸭 361 / 123 120 / 天翼 63 —— 同一实例、同样片单的实测可用资源量，附各家转存能力边界。">
+  <meta property="og:description" content="夸克 523 / 123 481 / 115 461 / 光鸭 361 / 天翼 63 —— 同一实例、同样片单的实测可用资源量，附各家转存能力边界。">
   <meta property="og:url" content="https://mediaryscout.app/guides/which-cloud-drive/">
   <meta property="og:type" content="article">
   <meta property="og:image" content="https://mediaryscout.app/assets/og.png">
@@ -97,7 +97,7 @@
     <p class="crumb"><a href="/">首页</a> › 指南</p>
 
     <h1>夸克 / 115 / 光鸭 / 123 / 天翼，自动追剧该选哪个网盘？</h1>
-    <p class="meta">2026-08-04 · 附实测资源量数据</p>
+    <p class="meta">2026-08-04 · 附实测资源量数据 <span style="color:var(--dot-orange)">（已更新：123网盘现已支持磁力离线下载）</span></p>
 
     <p>做<a href="/">自动追剧</a>这件事，网盘选错会直接决定成败：不是「哪个网盘容量大、速度快」，而是<strong>你要追的片子，在这个网盘的生态里有没有人分享</strong>。资源池空，再好的自动化也只能空转。</p>
 
@@ -116,22 +116,22 @@
       </thead>
       <tbody>
         <tr><td><strong>夸克</strong></td><td class="num">523</td><td class="num">—</td><td class="num win">523</td></tr>
+        <tr><td><strong>123网盘</strong></td><td class="num">120</td><td class="num">361</td><td class="num win">481</td></tr>
         <tr><td><strong>115</strong></td><td class="num">100</td><td class="num">361</td><td class="num win">461</td></tr>
         <tr><td><strong>光鸭云盘</strong></td><td class="num">—</td><td class="num">361</td><td class="num">361</td></tr>
-        <tr><td><strong>123网盘</strong></td><td class="num">120</td><td class="num">—</td><td class="num">120</td></tr>
         <tr><td><strong>天翼云盘</strong></td><td class="num">63</td><td class="num">—</td><td class="num">63</td></tr>
       </tbody>
     </table>
 
     <p>两个直接结论：</p>
     <ul>
-      <li><strong>夸克的分享池最大</strong>，而且是断层领先 —— 只看「有没有资源」，夸克赢。</li>
-      <li><strong>115 的总可用量靠磁力补上来</strong>：它自家分享链接只有 100，但因为能吃磁力（内置离线下载，还能接 Prowlarr），总池冲到 461。</li>
+      <li><strong>夸克的分享池最大</strong>，而且是断层领先 —— 只看单一来源的「有没有资源」，夸克赢。</li>
+      <li><strong>能吃磁力的网盘，总可用量会反超</strong>：123 和 115 自家分享链接分别只有 120 和 100，但它们都能走离线下载吃磁力，总池冲到 481 和 461 —— 双通道是决定性的。</li>
     </ul>
 
     <h2>为什么「能吃磁力」这么关键</h2>
 
-    <p>PanSou 搜出来的资源分两类：<strong>网盘分享链接</strong>（转存到自己网盘）和<strong>磁力 / BT</strong>（要网盘支持离线下载）。各家能吃哪种，差别很大：</p>
+    <p>PanSou 搜出来的资源分两类：<strong>网盘分享链接</strong>（转存到自己网盘）和<strong>磁力 / BT</strong>（要网盘支持离线下载）。各家能吃哪种，差别很大 —— 而<strong>磁力就是磁力</strong>，不管它是 PanSou 搜出来的还是 Prowlarr 索引器给的，只要网盘支持离线下载就都能接：</p>
 
     <table>
       <thead>
@@ -139,9 +139,9 @@
       </thead>
       <tbody>
         <tr><td>夸克</td><td>✅</td><td>❌ 无磁力网页 API</td></tr>
-        <tr><td>115</td><td>✅</td><td>✅ 内置离线 + 可接 Prowlarr</td></tr>
+        <tr><td>115</td><td>✅</td><td>✅ 内置离线下载</td></tr>
+        <tr><td>123网盘</td><td>✅</td><td>✅ 内置离线下载</td></tr>
         <tr><td>光鸭云盘</td><td>❌ v1 不支持</td><td>✅ 仅磁力 / ed2k / BT</td></tr>
-        <tr><td>123网盘</td><td>✅</td><td>❌</td></tr>
         <tr><td>天翼云盘</td><td>✅</td><td>❌</td></tr>
       </tbody>
     </table>
@@ -166,10 +166,11 @@
     <table>
       <thead><tr><th>你的情况</th><th>建议</th></tr></thead>
       <tbody>
-        <tr><td>只想一个网盘、要资源最多</td><td><strong>夸克</strong>（分享池断层第一）</td></tr>
-        <tr><td>想要资源多 + 磁力兜底</td><td><strong>115</strong>（分享 + 磁力双通道，总量最高）</td></tr>
-        <tr><td>手上主要是磁力 / 已在用 Prowlarr</td><td><strong>115</strong> 或 <strong>光鸭</strong></td></tr>
-        <tr><td>不想花钱开会员</td><td><strong>123</strong> 或 <strong>天翼</strong>（免费账号可转存，但资源池小）</td></tr>
+        <tr><td>要总可用量最大</td><td><strong>123</strong>（481，分享 + 磁力双通道）</td></tr>
+        <tr><td>只看单一分享池、不想碰磁力</td><td><strong>夸克</strong>（523，分享池断层第一）</td></tr>
+        <tr><td>想要双通道，且已有 115 会员</td><td><strong>115</strong>（461，能力与 123 同构）</td></tr>
+        <tr><td>手上主要是磁力 / 已在用 Prowlarr</td><td><strong>123</strong>、<strong>115</strong> 或 <strong>光鸭</strong></td></tr>
+        <tr><td>不想花钱开会员</td><td><strong>123</strong>（免费账号可转存，且能吃磁力 —— 免费档里最优）</td></tr>
         <tr><td>主要追剧集 / 动画，不太看电影</td><td>天翼可用 —— 它电影弱，剧集动画还行</td></tr>
       </tbody>
     </table>

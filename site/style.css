@@ -920,10 +920,28 @@ section {
   margin-bottom: 8px;
 }
 
+/* 对比度修复（用户实拍反馈「字都看不清」，浏览器实测确认）：
+   1. 这里的 <a> 此前没有任何规则，于是拿到浏览器默认的 rgb(0,0,238) 纯蓝
+      （访问过变紫），压在深绿渐变底上几乎不可读；
+   2. 正文继承来的 #b3b3b3 配 14px 小字在这块深底上偏灰。
+   链接改品牌绿 + 常显下划线（不靠颜色单独承载「这是链接」这一信息，
+   对色觉障碍用户同样可辨）；正文由 --text-muted(#b3b3b3) 提到 #cbcbcb、
+   字号 14→14.5px。注意：正文规则只有下面那一条（曾误加成两条同优先级
+   规则，后者胜，导致改动看似无效）。 */
+.connect-text a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.connect-text a:hover {
+  color: var(--accent-press);
+}
+
 .connect-text p {
-  color: var(--text-muted);
-  font-size: 14px;
-  line-height: 1.65;
+  color: #cbcbcb;
+  font-size: 14.5px;
+  line-height: 1.75;
   margin: 0;
 }
 
