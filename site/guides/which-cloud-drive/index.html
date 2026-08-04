@@ -85,6 +85,14 @@
     </div>
   </nav>
 
+  <!-- 外链的 rel 策略（Copilot #233 两次提到，这里记录决策）：
+       统一用 rel="noopener" 而**不加** noreferrer。
+       本页所有 target="_blank" 外链都指向自家资产（demo 站、本项目 GitHub、
+       部署文档），noopener 挡住 window.opener 劫持是必要的；但 noreferrer 会
+       让自家 demo 站与 GitHub 收不到来源信息，而那正是我们判断「这篇指南导流
+       多少人」的唯一依据。
+       注：仓库里两种约定并存 —— apps/web 用 noopener noreferrer（那些是第三方
+       外链，该挡 referrer），worker HTML 用 noopener。本页属于后者。 -->
   <main id="main" class="article">
     <p class="crumb"><a href="/">首页</a> › 指南</p>
 
