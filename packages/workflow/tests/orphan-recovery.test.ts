@@ -30,11 +30,16 @@ describe("isQueueClaimableKind", () => {
     expect(isQueueClaimableKind("type3_monitor")).toBe(false);
   });
 
-  it("covers every WorkflowKind explicitly (guard against a new kind being forgotten)", () => {
-    const all: WorkflowKind[] = ["type1_package_init", "type2_init", "type3_monitor", "movie_init"];
-    for (const kind of all) {
-      expect(typeof isQueueClaimableKind(kind)).toBe("boolean");
-    }
+  // NOTE: exhaustiveness is enforced by `Record<WorkflowKind, boolean>` in
+  // repository.ts — omitting a kind is a tsc error (TS2741), which no runtime
+  // assertion here could replace (a missing key just reads back as false).
+  // What this test CAN pin down is the claimable/unclaimable split itself, so a
+  // future edit that silently flips a kind is caught.
+  it("pins the exact claimable/unclaimable split", () => {
+    const claimable: WorkflowKind[] = ["type1_package_init", "type2_init", "movie_init"];
+    const unclaimable: WorkflowKind[] = ["type3_monitor"];
+    expect(claimable.filter(isQueueClaimableKind)).toEqual(claimable);
+    expect(unclaimable.filter(isQueueClaimableKind)).toEqual([]);
   });
 });
 
