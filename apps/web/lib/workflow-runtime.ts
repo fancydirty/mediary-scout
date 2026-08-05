@@ -827,7 +827,10 @@ export async function queueCandidateTracking(
 /**
  * Crash recovery for the single-instance in-process worker: any run still
  * "running" when the server (re)starts is orphaned by a dead worker (only this
- * process executes runs), so requeue it to be claimed again. Returns the count.
+ * process executes runs), so requeue it to be claimed again — EXCEPT kinds with
+ * no queue claimer (see `isQueueClaimableKind`), which are terminal-failed
+ * instead: parking those in `queued` strands them and blocks the season.
+ * Returns the requeued count (terminal-failed runs are not counted).
  */
 export async function recoverOrphanedRuns(): Promise<number> {
   return getWorkflowRepository().requeueRunningWorkflowRuns();

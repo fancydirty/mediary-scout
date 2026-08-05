@@ -74,6 +74,20 @@ describe("recoverOrphanRunningRun", () => {
     expect(result.run.orphanRequeueCount).toBe(2);
   });
 
+  // The unclaimable branch deliberately sits BEFORE the cap check: unclaimability
+  // is a structural property of the kind, while the cap is a history property of
+  // one run. orphan_requeue_capped says "crash-looped 5 times, investigate the
+  // payload" — actively misleading for a kind no worker ever claimed. Without this
+  // test the ordering can be swapped with every other test still green.
+  it("prefers orphan_unclaimable over the cap for an unclaimable kind", () => {
+    const result = recoverOrphanRunningRun(
+      runningRun("type3_monitor", { orphanRequeueCount: ORPHAN_REQUEUE_MAX }),
+      "2026-08-05T01:00:00.000Z",
+    );
+    expect(result.action).toBe("fail");
+    expect(result.run.auditEvents.at(-1)?.type).toBe("orphan_unclaimable");
+  });
+
   it("still caps a claimable poison run", () => {
     const result = recoverOrphanRunningRun(
       runningRun("type2_init", { orphanRequeueCount: ORPHAN_REQUEUE_MAX }),
