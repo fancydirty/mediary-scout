@@ -54,8 +54,8 @@ export async function probePanSou(
       ok: false,
       reason: "unreachable",
       message: aborted
-        ? `搜索源 ${PROBE_TIMEOUT_MS / 1000} 秒内无响应，未保存。`
-        : "连不上该搜索源，未保存。请检查地址、端口与容器是否在运行。",
+        ? `搜索源 ${PROBE_TIMEOUT_MS / 1000} 秒内无响应，未保存；若想先跑起来，清空本项即可回落官方源。`
+        : "连不上该搜索源，未保存。请检查地址、端口与容器是否在运行；若想先跑起来，清空本项即可回落官方源。",
     };
   } finally {
     clearTimeout(timer);
