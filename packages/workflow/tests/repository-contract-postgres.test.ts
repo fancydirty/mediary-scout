@@ -18,6 +18,14 @@ const ADMIN_URL =
   process.env.MEDIA_TRACK_TEST_POSTGRES_ADMIN_URL ??
   "postgresql://mediatrack:mediatrack@localhost:5432/postgres";
 
+// The reachability probe's budget. 1500ms is plenty for a local socket but not for
+// a tunnelled DB: measured 1687-2240ms over an SSH-through-Cloudflare hop, so every
+// probe timed out and the suite reported "no DB reachable" for a perfectly healthy
+// Postgres — which under MEDIA_TRACK_CI_REQUIRE_POSTGRES=1 turns into a red build
+// that looks like a logic failure. Overridable so a remote/tunnelled run can raise
+// it without touching the file.
+const PROBE_TIMEOUT_MS = Number(process.env.MEDIA_TRACK_TEST_POSTGRES_PROBE_TIMEOUT_MS ?? 1500);
+
 // Every table the workflow schema owns — TRUNCATE between make()s for a fresh repo.
 const TABLES = [
   "media_titles",
@@ -38,7 +46,10 @@ const TABLES = [
 ];
 
 async function postgresReachable(): Promise<boolean> {
-  const client = new pg.Client({ connectionString: ADMIN_URL, connectionTimeoutMillis: 1500 });
+  const client = new pg.Client({
+    connectionString: ADMIN_URL,
+    connectionTimeoutMillis: PROBE_TIMEOUT_MS,
+  });
   try {
     await client.connect();
     return true;
