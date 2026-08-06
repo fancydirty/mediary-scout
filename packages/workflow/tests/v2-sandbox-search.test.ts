@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { TaskSandbox } from "../src/acquisition-v2/sandbox.js";
 import { FakeResourceProviderV2 } from "../src/acquisition-v2/fake-provider.js";
+import { RealResourceProviderV2 } from "../src/acquisition-v2/real-provider-adapter.js";
+import { CandidateRegistry } from "../src/acquisition-v2/candidate-registry.js";
+import type { ResourceProvider } from "../src/ports.js";
 
 describe("TaskSandbox — searchResources (system-budgeted, dedup, snapshot-bound)", () => {
   it("returns the full candidate snapshot for a fresh keyword", async () => {
@@ -360,5 +363,169 @@ describe("sandbox 审计事件收集（病4）", () => {
     await sandbox.primeRawSnapshot("攻壳机动队");
     await sandbox.searchResources("攻壳机动队"); // dedup 命中，seenKeywords 不变
     await expect(sandbox.reportNoCoverage("确无资源")).resolves.toMatchObject({ searchesPerformed: 1 });
+  });
+});
+
+describe("sandbox 搜索源健康态 → agent 可见警告（Task 9）", () => {
+  /** 一个只按健康态作答的 provider：候选恒为空，用来把「源挂了」与「确实没有」
+   *  这两个在候选层面完全同形的情形对照起来。 */
+  function healthProvider(sourceHealth?: {
+    status: "healthy" | "degraded" | "unreachable" | "protocol_error";
+    unhealthySources: string[];
+  }, candidates: Array<{ id: string; title: string }> = []) {
+    return {
+      async search(keyword: string) {
+        return { id: `s_${keyword}`, keyword, candidates, ...(sourceHealth ? { sourceHealth } : {}) };
+      },
+    };
+  }
+
+  it("unreachable：警告点名搜索源失败，并明确「没有资源」不成立", async () => {
+    const sandbox = new TaskSandbox({
+      provider: healthProvider({ status: "unreachable", unhealthySources: ["pansou"] }),
+      titleTerms: ["攻壳机动队"],
+    });
+
+    const result = await sandbox.searchResources("攻壳机动队");
+
+    const warning = (result.warnings ?? []).find((w) => w.includes("搜索源"));
+    expect(warning).toBeDefined();
+    expect(warning).toContain("pansou");
+    expect(warning).toContain("没有资源");
+    expect(warning).toContain("reportNoCoverage");
+  });
+
+  it("protocol_error：警告与单纯挂掉相区分（地址可能不是 PanSou）", async () => {
+    const sandbox = new TaskSandbox({
+      provider: healthProvider({ status: "protocol_error", unhealthySources: ["pansou"] }),
+      titleTerms: ["攻壳机动队"],
+    });
+
+    const result = await sandbox.searchResources("攻壳机动队");
+
+    const warning = (result.warnings ?? []).find((w) => w.includes("搜索源"));
+    expect(warning).toBeDefined();
+    expect(warning).toContain("PanSou");
+    // 两种故障的处置动作不同，文案必须可分辨。
+    const unreachableSandbox = new TaskSandbox({
+      provider: healthProvider({ status: "unreachable", unhealthySources: ["pansou"] }),
+      titleTerms: ["攻壳机动队"],
+    });
+    const unreachable = await unreachableSandbox.searchResources("攻壳机动队");
+    expect(warning).not.toBe((unreachable.warnings ?? []).find((w) => w.includes("搜索源")));
+  });
+
+  it("degraded：告知证据不完整，但已拿到的候选仍可用", async () => {
+    const sandbox = new TaskSandbox({
+      provider: healthProvider({ status: "degraded", unhealthySources: ["prowlarr"] }, [{ id: "c1", title: "攻壳机动队 1080p" }]),
+      titleTerms: ["攻壳机动队"],
+    });
+
+    const result = await sandbox.searchResources("攻壳机动队");
+
+    const warning = (result.warnings ?? []).find((w) => w.includes("搜索源"));
+    expect(warning).toBeDefined();
+    expect(warning).toContain("prowlarr");
+    expect(warning).toContain("可用");
+    // 候选照常返回，degraded 不是阻断。
+    expect(result.snapshot?.candidates).toHaveLength(1);
+  });
+
+  it("healthy 且零候选：不产生源故障警告——这才是权威的「确实没有」（对照组）", async () => {
+    const healthy = new TaskSandbox({
+      provider: healthProvider({ status: "healthy", unhealthySources: [] }),
+      titleTerms: ["攻壳机动队"],
+    });
+    const noHealthField = new TaskSandbox({
+      provider: healthProvider(undefined),
+      titleTerms: ["攻壳机动队"],
+    });
+
+    const a = await healthy.searchResources("攻壳机动队");
+    const b = await noHealthField.searchResources("攻壳机动队");
+
+    expect(a.snapshot?.candidates).toHaveLength(0);
+    expect((a.warnings ?? []).some((w) => w.includes("搜索源"))).toBe(false);
+    expect((b.warnings ?? []).some((w) => w.includes("搜索源"))).toBe(false);
+    // 审计里也不该有源故障事件——否则运维会被健康的空搜索淹没。
+    expect(healthy.auditTrail().some((e) => e.type === "search_source_unhealthy")).toBe(false);
+    expect(noHealthField.auditTrail().some((e) => e.type === "search_source_unhealthy")).toBe(false);
+  });
+
+  it("源不健康时记审计事件（对齐 search_taboo_warning 形制）", async () => {
+    const sandbox = new TaskSandbox({
+      provider: healthProvider({ status: "unreachable", unhealthySources: ["pansou"] }),
+      titleTerms: ["攻壳机动队"],
+    });
+
+    await sandbox.searchResources("攻壳机动队");
+
+    const event = sandbox.auditTrail().find((e) => e.type === "search_source_unhealthy");
+    expect(event).toBeDefined();
+    expect(typeof event!.message).toBe("string");
+    expect(event!.message.length).toBeGreaterThan(0);
+    expect(event!.data?.status).toBe("unreachable");
+    expect(event!.data?.unhealthySources).toEqual(["pansou"]);
+    expect(event!.data?.keyword).toBe("攻壳机动队");
+  });
+});
+
+describe("真适配器 → 沙箱 端到端：健康态不能在接缝处掉（Task 9）", () => {
+  it("域快照的 unreachable 经 RealResourceProviderV2 一路到 agent 可见的 warnings", async () => {
+    // 这条用真适配器而不是内联 fake，专为守住那道接缝：适配器一旦重新丢掉
+    // sourceHealth（就是造成 6 天静默的那一手），这里必须红。
+    const domainProvider: ResourceProvider = {
+      search: async ({ keyword }) => ({
+        id: "snap_unreachable",
+        provider: "pansou",
+        keyword,
+        createdAt: "2026-06-14T00:00:00.000Z",
+        candidates: [],
+        sourceHealth: { status: "unreachable", unhealthySources: ["pansou"] },
+      }),
+    };
+    const adapter = new RealResourceProviderV2({
+      provider: domainProvider,
+      registry: new CandidateRegistry(),
+      workflowRunId: "run-1",
+    });
+    const sandbox = new TaskSandbox({ provider: adapter, titleTerms: ["攻壳机动队"] });
+
+    const result = await sandbox.searchResources("攻壳机动队");
+
+    expect(result.snapshot?.candidates).toHaveLength(0);
+    const warning = (result.warnings ?? []).find((w) => w.includes("搜索源"));
+    expect(warning).toBeDefined();
+    expect(warning).toContain("pansou");
+    expect(sandbox.auditTrail().some((e) => e.type === "search_source_unhealthy")).toBe(true);
+  });
+});
+
+describe("预搜(prime)路径也必须带上健康态警告（Task 9 生产主路径）", () => {
+  it("prime 时源就挂了：agent 复搜该词命中 dedup，警告仍随返回给它", async () => {
+    // 生产里系统会先 primeRawSnapshot，agent 被提示词引导去 viewResourceSnapshot。
+    // 当 prime 拿到 0 候选时，agent 通常会再 searchResources 同一个词 → 命中 dedup。
+    // 那条路径若不带警告，agent 看到的依旧是一个「干净的空结果」。
+    const sandbox = new TaskSandbox({
+      provider: {
+        async search(keyword: string) {
+          return {
+            id: `s_${keyword}`,
+            keyword,
+            candidates: [],
+            sourceHealth: { status: "unreachable" as const, unhealthySources: ["pansou"] },
+          };
+        },
+      },
+      titleTerms: ["攻壳机动队"],
+    });
+
+    await sandbox.primeRawSnapshot("攻壳机动队");
+    const result = await sandbox.searchResources("攻壳机动队");
+
+    expect(result.deduped).toBe(true);
+    const warning = (result.warnings ?? []).find((w) => w.includes("搜索源"));
+    expect(warning).toBeDefined();
+    expect(warning).toContain("pansou");
   });
 });

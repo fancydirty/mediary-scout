@@ -10,6 +10,8 @@
  * on the id rather than assume one snapshot per search.
  */
 
+import type { MergedSourceHealth } from "../resource-source-health.js";
+
 export interface SimResourceCandidate {
   id: string;
   title: string;
@@ -19,6 +21,12 @@ export interface ResourceSnapshotV2 {
   id: string;
   keyword: string;
   candidates: SimResourceCandidate[];
+  /** 本次搜索各源的健康态，原样自域快照透传（domain.ts ResourceSnapshot.sourceHealth）。
+   *  可选：fake provider 与老 fixture 不带此字段，缺失按 healthy 处理。
+   *  存在的唯一理由是让沙箱能把「源挂了」与「确实没有这个资源」区分开——两者
+   *  在 candidates 层面完全同形（都是空数组）。丢掉它，agent 就只能上报
+   *  reportNoCoverage，用户看到「暂未找到可用资源」，系统故障被甩锅给资源。 */
+  sourceHealth?: MergedSourceHealth;
 }
 
 /** The provider surface the sandbox depends on — the fake and the real PanSou

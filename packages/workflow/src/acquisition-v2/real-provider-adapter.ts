@@ -70,6 +70,9 @@ export class RealResourceProviderV2 implements ResourceProviderV2 {
         id: candidate.id,
         title: candidate.title,
       })),
+      // 源健康态必须穿过这个边界。它在这里被丢掉过一次,后果是 6 天里源挂着,
+      // agent 只看到空候选、照常 reportNoCoverage,用户看到「暂未找到可用资源」。
+      ...(snapshot.sourceHealth ? { sourceHealth: snapshot.sourceHealth } : {}),
     };
   }
 }

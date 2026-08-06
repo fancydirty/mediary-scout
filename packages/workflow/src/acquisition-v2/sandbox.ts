@@ -12,6 +12,7 @@ import type { SimTreeFile, StorageV2, TransferAttemptResult } from "./storage-11
 import { isSystemicTransferBlockMessage } from "./transfer-block.js";
 import { animeSearchTabooWarnings, type SearchProfile } from "./search-profile.js";
 import type { AuditEvent } from "../domain.js";
+import type { MergedSourceHealth } from "../resource-source-health.js";
 
 /** Quality / subtitle / source tokens that PanSou share titles almost never carry,
  *  so appending them collapses recall (实测归零). Case-insensitive; word-ish so
@@ -27,6 +28,28 @@ const STRIP_NOTICE =
 
 /** Threshold for large snapshot digestion hint (病3). */
 const LARGE_SNAPSHOT_DIGEST_THRESHOLD = 10;
+
+/**
+ * 把快照的源健康态翻成给 agent 的祈使句警告。返回 undefined 表示证据完整
+ * （healthy 或老快照无此字段）——那种情形下的空候选才是权威的「确实没有」，
+ * 必须保持可区分，所以这里绝不能对每个空快照都告警。
+ *
+ * 同一条教义见 transfer-block.ts：把系统故障报成「暂未找到资源」是拿资源
+ * 给系统问题背锅（别甩锅）。unreachable 与 protocol_error 分开措辞，因为用户的
+ * 处置动作不同（源挂了/网络不通 vs 地址填错了、那头根本不是 PanSou）。
+ */
+function sourceHealthWarning(health: MergedSourceHealth | undefined): string | undefined {
+  if (!health || health.status === "healthy") return undefined;
+  const sources = health.unhealthySources.length > 0 ? health.unhealthySources.join("、") : "未知";
+  switch (health.status) {
+    case "degraded":
+      return `搜索源「${sources}」本次未响应,只有部分源答复:本次结果是不完整证据。已返回的候选照常可用,可以正常筛选转存;但不要因为没搜到就下「没有资源」的结论,更不要据此 reportNoCoverage——缺的那部分源可能正好有。`;
+    case "protocol_error":
+      return `搜索源「${sources}」返回了无法解析的响应:配置的地址可能指向的根本不是 PanSou(填错地址/被网关或登录页拦截)。本次等于没搜,「没有资源」这个结论不被这份证据支持,不要 reportNoCoverage;请如实说明是搜索源配置有问题。`;
+    case "unreachable":
+      return `搜索源「${sources}」本次连不上,一个候选都没能取回。这是搜索源故障,不是这部片子没有资源:「没有资源」这个结论不被这份证据支持,不要 reportNoCoverage;请如实说明是搜索源不可用。`;
+  }
+}
 
 /** Strip quality/subtitle tokens from a search keyword and fold the resulting
  *  whitespace. `stripped` is true ONLY when an actual QUALITY_SUBTITLE_TOKEN was
@@ -273,12 +296,17 @@ export class TaskSandbox {
         message: `重复搜索「${effectiveKeyword}」第 ${count} 次`,
         data: { keyword: effectiveKeyword, count },
       });
+      // 复搜命中的是同一份不健康快照,警告必须跟着一起回——否则 agent 第二次
+      // 看到的还是一个「干净的空结果」,照样会去 reportNoCoverage。审计不重复
+      // 记（search_dedup 已记录这次复搜）。
+      const cachedHealthWarning = sourceHealthWarning(cachedSnapshot.sourceHealth);
+      const dedupWarnings = cachedHealthWarning ? [...tabooWarnings, cachedHealthWarning] : tabooWarnings;
       return {
         snapshot: cachedSnapshot,
         deduped: true,
         repeatNotice: this.repeatNotice(effectiveKeyword, count, cachedSnapshot.candidates.length),
         ...(notice ? { notice } : {}),
-        ...(tabooWarnings.length > 0 ? { warnings: tabooWarnings } : {}),
+        ...(dedupWarnings.length > 0 ? { warnings: dedupWarnings } : {}),
         ...(digestHint ? { digestHint } : {}),
       };
     }
@@ -313,11 +341,27 @@ export class TaskSandbox {
       this.pendingDigest = { keyword: effectiveKeyword, count: snapshot.candidates.length };
     }
 
+    // Task 9: 源不健康 → 明确告诉 agent 证据不完整。没有这一步,源挂掉与「确实
+    // 没有」在 agent 眼里同形(都是空候选),它只会 reportNoCoverage。
+    const healthWarning = sourceHealthWarning(snapshot.sourceHealth);
+    if (healthWarning) {
+      this.auditEvents.push({
+        type: "search_source_unhealthy",
+        message: `搜索「${effectiveKeyword}」时搜索源不健康(${snapshot.sourceHealth!.status}): ${snapshot.sourceHealth!.unhealthySources.join("、") || "未知"}`,
+        data: {
+          keyword: effectiveKeyword,
+          status: snapshot.sourceHealth!.status,
+          unhealthySources: snapshot.sourceHealth!.unhealthySources,
+        },
+      });
+    }
+    const searchWarnings = healthWarning ? [...tabooWarnings, healthWarning] : tabooWarnings;
+
     return {
       snapshot,
       ...(decision === "reserve" ? { note: this.reserveNote() } : {}),
       ...(notice ? { notice } : {}),
-      ...(tabooWarnings.length > 0 ? { warnings: tabooWarnings } : {}),
+      ...(searchWarnings.length > 0 ? { warnings: searchWarnings } : {}),
       ...(digestHint ? { digestHint } : {}),
     };
   }
