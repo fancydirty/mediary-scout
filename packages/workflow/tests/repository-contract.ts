@@ -1002,6 +1002,35 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
         expect(claimed?.workflowRun.id).toBe("failed_r");
       });
 
+      it("retryFailedWorkflowRun refuses a failed run whose kind no worker claims", async () => {
+        const repo = await fresh();
+        const snap = queuedRun({ id: "failed_r3", status: "failed", connectedStorageId: "cs_r3" });
+        await repo.saveWorkflowRunSnapshot({
+          ...snap,
+          workflowRun: {
+            ...snap.workflowRun,
+            kind: "type3_monitor",
+            status: "failed",
+            finishedAt: "2026-06-11T02:00:00.000Z",
+          },
+        });
+        const scope = { accountId: "acct_default", connectedStorageId: "cs_r3" };
+        // No claimNextQueuedWorkflowRun call site asks for type3_monitor, so a run
+        // pushed back to `queued` can never leave it — and since `queued` counts as
+        // active, reserveWorkflowRun returns already_active for that season FOREVER
+        // (the user-visible "巡检永久卡在排队中"). Task 1 terminates such orphans as
+        // `failed`; letting the activity page's retry button flip them back to
+        // `queued` would re-strand the run and re-block the season — exactly the bug
+        // isQueueClaimableKind exists to prevent.
+        expect(await repo.retryFailedWorkflowRun("failed_r3", scope)).toEqual({
+          status: "not_retriable",
+        });
+        const after = await repo.getWorkflowRunSnapshot("failed_r3", scope);
+        expect(after?.workflowRun.status).toBe("failed");
+        // retriedWorkflowRun clears finishedAt — it must not have run at all.
+        expect(after?.workflowRun.finishedAt).toBe("2026-06-11T02:00:00.000Z");
+      });
+
       it("retryFailedWorkflowRun refuses a non-failed (queued) run", async () => {
         const repo = await fresh();
         await repo.saveWorkflowRunSnapshot(queuedRun({ id: "queued_r", connectedStorageId: "cs_rq" }));

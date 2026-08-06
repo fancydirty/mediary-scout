@@ -32,6 +32,7 @@ import {
   expireWorkflowRun,
   isActiveWorkflowStatus,
   isPrunableFinishedRun,
+  isQueueClaimableKind,
   isStaleActiveWorkflowRun,
   recoverOrphanRunningRun,
   retriedWorkflowRun,
@@ -889,7 +890,14 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
       const owner = row?.account_id ?? DEFAULT_ACCOUNT_ID;
       const rawStorage = row?.connected_storage_id ?? null;
       const ownerStorage = rawStorage === UNSCOPED_STORAGE ? null : rawStorage;
-      if (!run || !scopeMatches(scope, owner, ownerStorage) || run.status !== "failed") {
+      // A kind with no queue claimer can never leave `queued` — retrying it would
+      // strand the run and re-block the season (see isQueueClaimableKind).
+      if (
+        !run ||
+        !scopeMatches(scope, owner, ownerStorage) ||
+        run.status !== "failed" ||
+        !isQueueClaimableKind(run.kind)
+      ) {
         return { status: "not_retriable" as const };
       }
       // upsertWorkflowRun preserves account_id / connected_storage_id on conflict.

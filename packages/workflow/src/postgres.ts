@@ -23,6 +23,7 @@ import {
   recoverOrphanRunningRun,
   retriedWorkflowRun,
   isActiveWorkflowStatus,
+  isQueueClaimableKind,
   isStaleActiveWorkflowRun,
   type PersistedWorkflowRunSnapshot,
   type PersistWorkflowRunSnapshotInput,
@@ -770,11 +771,14 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
       const run = (row.rows[0]?.payload as WorkflowRun | undefined) ?? null;
       const owner = (row.rows[0]?.account_id as string | undefined) ?? DEFAULT_ACCOUNT_ID;
       const ownerStorage = (row.rows[0]?.connected_storage_id as string | null | undefined) ?? null;
+      // A kind with no queue claimer can never leave `queued` — retrying it would
+      // strand the run and re-block the season (see isQueueClaimableKind).
       if (
         !run ||
         owner !== scope.accountId ||
         (scope.connectedStorageId != null && ownerStorage !== scope.connectedStorageId) ||
-        run.status !== "failed"
+        run.status !== "failed" ||
+        !isQueueClaimableKind(run.kind)
       ) {
         return { status: "not_retriable" as const };
       }
