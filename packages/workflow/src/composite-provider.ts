@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
 import type { ResourceCandidate, ResourceSnapshot } from "./domain.js";
 import type { ResourceProvider } from "./ports.js";
-import { mergeSourceHealth, type SourceHealth, type SourceStatus } from "./resource-source-health.js";
+import {
+  classifySourceFailure,
+  mergeSourceHealth,
+  type SourceHealth,
+  type SourceStatus,
+} from "./resource-source-health.js";
 
 export interface CompositeResourceProviderOptions {
   providers: Array<{ name: string; provider: ResourceProvider }>;
@@ -32,7 +37,10 @@ export class CompositeResourceProvider implements ResourceProvider {
       const name = this.providers[index]!.name;
       if (result.status !== "fulfilled") {
         // 以前这里直接 continue,失败就此消失 —— 部分搜索看起来和完整搜索一样。
-        healths.push({ status: "unreachable", source: name });
+        // 用 classifySourceFailure 而非硬编码 unreachable:成员抛的可能是
+        // PanSouProtocolError(地址指向了别的服务),那与「源挂了」要给用户不同
+        // 的处置建议,不能在这一层就压平。
+        healths.push({ status: classifySourceFailure(result.reason), source: name });
         continue;
       }
       // 成员可能不抛错而是自报不健康(PanSou 就是这样),所以要读字段而不是
@@ -67,8 +75,12 @@ export class CompositeResourceProvider implements ResourceProvider {
   }
 }
 
-/** 把成员自报的合并态折回单源状态。degraded 只可能出现在多源成员上,对本层
- *  而言它意味着「那个成员的证据不完整」,按不可用处理更保守。 */
+/** 把成员自报的合并态折回单源状态。
+ *
+ *  ⚠️ degraded **按可用处理**(不是不可用)。这是刻意的,别按「保守」的直觉改回去:
+ *  degraded 意味着那个成员内部有子源挂了,但它确实答了话、确实返回了候选。若按
+ *  不可用处理,一个「有候选」的成员会让整体合并出 unreachable,于是快照自相矛盾
+ *  ——agent 会读到「一个候选都没能取回」而它手上明明有候选。 */
 function memberStatus(status: string | undefined): SourceStatus {
   // degraded 也算「答过话」:那个成员内部有子源挂了,但它确实返回了候选。
   // 压成 unreachable 会让整体合并出 unreachable,于是产生一个「有候选却说

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { CompositeResourceProvider } from "../src/composite-provider.js";
 import type { ResourceProvider } from "../src/ports.js";
 import type { ResourceSnapshot } from "../src/domain.js";
+import { PanSouProtocolError } from "../src/resource-source-health.js";
 
 function stubProvider(over: Partial<ResourceSnapshot> = {}): ResourceProvider {
   return {
@@ -128,6 +129,23 @@ describe("CompositeResourceProvider source health", () => {
       ],
     });
     const snapshot = await composite.search({ keyword: "k" });
+    expect(snapshot.sourceHealth?.status).toBe("protocol_error");
+  });
+
+  it("preserves protocol_error when a member THROWS PanSouProtocolError", async () => {
+    // 硬编码 unreachable 会把「地址指向了别的服务」压成「源挂了」,用户拿到
+    // 错误的处置建议(Copilot 评审的 suppressed 意见)。
+    const throwingProtocol: ResourceProvider = {
+      search: async () => {
+        throw new PanSouProtocolError("not a PanSou payload");
+      },
+    };
+    const composite = new CompositeResourceProvider({
+      providers: [{ name: "pansou", provider: throwingProtocol }],
+    });
+
+    const snapshot = await composite.search({ keyword: "k" });
+
     expect(snapshot.sourceHealth?.status).toBe("protocol_error");
   });
 

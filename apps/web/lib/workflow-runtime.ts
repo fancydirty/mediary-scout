@@ -912,17 +912,21 @@ function buildAccountContextResolver(): ResolveAccountWorkerContext {
 
 /** 记录自建搜索源的最新健康结论,供设置页徽章读取(它每 8s 轮询,不能自己打网络)。
  *  幂等:值未变化就不写,避免每次搜索都产生一次 DB 写。 */
-let lastRecordedPanSouHealth: string | null = null;
+//  ⚠️ 必须按账号分键:多用户模式下一个进程服务多个账号,不分键会让账号 B 的
+//  结论因为账号 A 刚写过同一个值而被跳过 —— 于是 B 的源挂了却永远不告警,
+//  正是本 PR 要消灭的那种静默。
+const lastRecordedPanSouHealth = new Map<string, string>();
 async function recordPanSouHealth(healthy: boolean): Promise<void> {
   const value = healthy ? "ok" : "unhealthy";
-  if (lastRecordedPanSouHealth === value) return;
   try {
+    const accountId = await getCurrentAccountId();
+    if (lastRecordedPanSouHealth.get(accountId) === value) return;
     await getWorkflowRepository().setAccountSetting(
-      await getCurrentAccountId(),
+      accountId,
       PANSOU_HEALTH_SETTING_KEY,
       value,
     );
-    lastRecordedPanSouHealth = value;
+    lastRecordedPanSouHealth.set(accountId, value);
   } catch (error) {
     // 搜索不能因为一次设置写失败而失败。但不静默:打出来,否则就是本 PR 要修的病。
     console.warn(
@@ -933,7 +937,7 @@ async function recordPanSouHealth(healthy: boolean): Promise<void> {
 
 /** Test-only: 清掉幂等缓存,免得跨用例串味。 */
 export function __resetPanSouHealthCacheForTests(): void {
-  lastRecordedPanSouHealth = null;
+  lastRecordedPanSouHealth.clear();
 }
 
 export async function runNextQueuedWorkflow() {
