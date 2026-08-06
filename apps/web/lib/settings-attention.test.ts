@@ -68,8 +68,57 @@ describe("buildSettingsAttentionItems", () => {
     expect(items[0]?.href).toBe("/settings?tab=services");
   });
 
-  it("adds container update as info severity with version-scoped id + origin-threaded prompt", () => {
-    const container = buildSettingsAttentionItems({
+  /** 事故复盘:自建源挂了 6 天,产品从头到尾只说「暂未找到可用资源」。
+   *  Task 5 让检索退到官方源续命,但那恰恰让故障更隐蔽 —— 必须在设置页说出来。 */
+  it("warns when the custom search source is unreachable", () => {
+    const items = buildSettingsAttentionItems({
+      demo: false,
+      isOwner: true,
+      drives: [],
+      brandLabel, origin: ORIGIN,
+      llmConfigured: true,
+      update: null,
+      searchSource: { custom: true, reachable: false },
+    });
+    expect(items.map((i) => i.kind)).toEqual(["search_source_unreachable"]);
+    expect(items[0]?.severity).toBe("warning");
+    expect(items[0]?.href).toBe("/settings?tab=services");
+    // 正文必须交代「还在靠官方源撑着」,否则用户无从判断这条有多急。
+    expect(items[0]?.body).toContain("官方");
+  });
+
+  it("stays quiet when the custom search source is reachable", () => {
+    const items = buildSettingsAttentionItems({
+      demo: false,
+      isOwner: true,
+      drives: [],
+      brandLabel, origin: ORIGIN,
+      llmConfigured: true,
+      update: null,
+      searchSource: { custom: true, reachable: true },
+    });
+    expect(items).toEqual([]);
+  });
+
+  it("stays quiet when there is no custom search source (nothing for the user to fix)", () => {
+    const items = buildSettingsAttentionItems({
+      demo: false,
+      isOwner: true,
+      drives: [],
+      brandLabel, origin: ORIGIN,
+      llmConfigured: true,
+      update: null,
+      searchSource: { custom: false, reachable: false },
+    });
+    expect(items).toEqual([]);
+  });
+
+  it("accepts search_source_unreachable as a dismissible id", () => {
+    // 不加进白名单的话,用户点「不再提示」会被存储层静默丢弃。
+    expect(isAttentionItemId("search_source_unreachable")).toBe(true);
+  });
+
+  it("adds container update as info severity with version-scoped id + origin-threaded prompt", () => {    const container = buildSettingsAttentionItems({
       demo: false,
       isOwner: true,
       drives: [],

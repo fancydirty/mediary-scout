@@ -3,7 +3,11 @@ import { buildContainerUpgradePrompt } from "./deployment-update";
 import { DEFAULT_SETTINGS_TAB, type SettingsTabId } from "./settings-tabs-model";
 
 export type AttentionSeverity = "info" | "warning" | "blocker";
-export type AttentionKind = "frozen_drive" | "update_available" | "missing_llm";
+export type AttentionKind =
+  | "frozen_drive"
+  | "update_available"
+  | "missing_llm"
+  | "search_source_unreachable";
 export type SettingsAttentionTab = SettingsTabId;
 
 export interface SettingsAttentionItem {
@@ -54,6 +58,10 @@ export function buildSettingsAttentionItems(input: {
   }>;
   brandLabel: (provider: string) => string;
   llmConfigured: boolean;
+  /** 自建搜索源状态。`custom` = 用户在设置页填了自己的地址;`reachable` = 上次
+   *  保存时探活的结论(存在 DB 里)。**刻意不在这里探活** —— 这个函数在徽章
+   *  轮询路径上,每 8s 一次,真打网络等于每 8s 捶一遍用户的 PanSou。 */
+  searchSource?: { custom: boolean; reachable: boolean };
   update: Pick<DeploymentUpdateState, "kind" | "behind" | "currentShort" | "latestShort"> | null;
   /** Public request origin — baked into the update prompt's SSH/health-check steps. */
   origin: string;
@@ -90,6 +98,22 @@ export function buildSettingsAttentionItems(input: {
       title: "还没配置 AI 模型",
       body: "填写 Base URL 和模型名后才能自动搜索与获取。",
       actionLabel: "去填写",
+      href: href("services"),
+    });
+  }
+
+  if (input.searchSource?.custom && !input.searchSource.reachable) {
+    // 只有用户自己配了源才提:没配的人无事可修,提了也只是噪音。
+    // 事故原型:自建源挂了 6 天,产品全程只说「暂未找到可用资源」。现在检索会
+    // 退到官方源续命 —— 这让功能不至于全断,但也让故障更隐蔽,所以必须在这里
+    // 明说,并给出可执行的排查方向(容器/地址/端口)。
+    items.push({
+      id: "search_source_unreachable",
+      kind: "search_source_unreachable",
+      severity: "warning",
+      title: "自建搜索源连不上",
+      body: "已自动改用官方搜索源继续工作，但官方源资源较少，命中率会下降。请检查 PanSou 容器是否在运行、地址与端口是否填对。",
+      actionLabel: "去检查",
       href: href("services"),
     });
   }
@@ -155,9 +179,10 @@ export const ATTENTION_SEEN_AT_KEY = "attention_seen_at";
 export const ATTENTION_DISMISSED_KEY = "attention_dismissed";
 export const ATTENTION_STATE_SINCE_KEY = "attention_state_since";
 
-const ATTENTION_ID_RE = /^(missing_llm|frozen:[A-Za-z0-9_-]{1,64}|update:[0-9a-f]{7,40})$/;
+const ATTENTION_ID_RE =
+  /^(missing_llm|search_source_unreachable|frozen:[A-Za-z0-9_-]{1,64}|update:[0-9a-f]{7,40})$/;
 
-/** Dismiss endpoint allow-list: only the three id shapes the builder can emit. */
+/** Dismiss endpoint allow-list: only the id shapes the builder can emit. */
 export function isAttentionItemId(id: string): boolean {
   return ATTENTION_ID_RE.test(id);
 }

@@ -8,6 +8,8 @@ vi.mock("./workflow-runtime", () => ({
   getLlmConfig: vi.fn(async () => ({ baseURL: "https://llm.example", modelId: "m" })),
   getWorkflowRepository: vi.fn(),
   isMultiUserEnabled: vi.fn(() => false),
+  PANSOU_BASE_URL_SETTING_KEY: "pansou_base_url",
+  PANSOU_HEALTH_SETTING_KEY: "pansou_last_probe",
   UNAUTHENTICATED_ACCOUNT_ID: "acct_unauthenticated",
 }));
 
@@ -19,6 +21,7 @@ import {
   markSettingsAttentionSeen,
 } from "./settings-attention-server";
 import {
+  getAccountScopedSettings,
   getCurrentAccountId,
   getLlmConfig,
   getWorkflowRepository,
@@ -67,6 +70,10 @@ beforeEach(() => {
   });
   (loadDeploymentUpdateState as ReturnType<typeof vi.fn>).mockResolvedValue(null);
   (isMultiUserEnabled as ReturnType<typeof vi.fn>).mockReturnValue(false);
+  // clearAllMocks 会连声明处的实现一起清掉,这里补回默认值:没配自建搜索源。
+  (getAccountScopedSettings as ReturnType<typeof vi.fn>).mockReturnValue({
+    getSetting: async () => null,
+  });
 });
 
 describe("loadSettingsAttentionSummary — per-account state", () => {
@@ -195,8 +202,50 @@ describe("loadSettingsAttentionSummary — per-account state", () => {
     expect(repository.setAccountSetting).not.toHaveBeenCalled();
   });
 
-  it("demo mode returns empty without touching the repository", async () => {
-    (isDemoMode as ReturnType<typeof vi.fn>).mockReturnValue(true);
+  /** 自建搜索源告警的数据来源必须是**存下来的**探活结论,不能现打网络:
+   *  这个函数在徽章轮询路径上,每 8s 跑一次。 */
+  it("warns from the STORED probe verdict, without probing the network", async () => {
+    const settings = new Map<string, string>([
+      ["pansou_base_url", "http://192.168.1.10:8899"],
+      ["pansou_last_probe", "unreachable"],
+    ]);
+    (getAccountScopedSettings as ReturnType<typeof vi.fn>).mockReturnValue({
+      getSetting: async (key: string) => settings.get(key) ?? null,
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    makeRepository([]);
+
+    const summary = await loadSettingsAttentionSummary({ origin: "https://o.example" });
+
+    expect(summary.items.map((i) => i.kind)).toContain("search_source_unreachable");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
+  it("stays quiet when the stored verdict is ok", async () => {
+    const settings = new Map<string, string>([
+      ["pansou_base_url", "http://192.168.1.10:8899"],
+      ["pansou_last_probe", "ok"],
+    ]);
+    (getAccountScopedSettings as ReturnType<typeof vi.fn>).mockReturnValue({
+      getSetting: async (key: string) => settings.get(key) ?? null,
+    });
+    makeRepository([]);
+    const summary = await loadSettingsAttentionSummary({ origin: "https://o.example" });
+    expect(summary.items.map((i) => i.kind)).not.toContain("search_source_unreachable");
+  });
+
+  it("stays quiet for a custom source that has never been probed (老用户不该被假警报打扰)", async () => {
+    const settings = new Map<string, string>([["pansou_base_url", "http://192.168.1.10:8899"]]);
+    (getAccountScopedSettings as ReturnType<typeof vi.fn>).mockReturnValue({
+      getSetting: async (key: string) => settings.get(key) ?? null,
+    });
+    makeRepository([]);
+    const summary = await loadSettingsAttentionSummary({ origin: "https://o.example" });
+    expect(summary.items.map((i) => i.kind)).not.toContain("search_source_unreachable");
+  });
+
+  it("demo mode returns empty without touching the repository", async () => {    (isDemoMode as ReturnType<typeof vi.fn>).mockReturnValue(true);
     const { repository } = makeRepository([{ id: "cs1", provider: "quark", label: null, status: "frozen" }]);
     const summary = await loadSettingsAttentionSummary({ origin: "https://o.example" });
     expect(summary).toEqual({ count: 0, severity: null, items: [] });

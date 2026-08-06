@@ -23,6 +23,8 @@ import {
   getLlmConfig,
   getWorkflowRepository,
   isMultiUserEnabled,
+  PANSOU_BASE_URL_SETTING_KEY,
+  PANSOU_HEALTH_SETTING_KEY,
   UNAUTHENTICATED_ACCOUNT_ID,
 } from "./workflow-runtime";
 
@@ -89,6 +91,22 @@ export async function loadSettingsAttentionSummary(options?: {
     getLlmConfig(getAccountScopedSettings(accountId)),
     resolveIsOwner(repository, accountId),
   ]);
+
+  // 自建搜索源:**只读 DB,绝不探活**。这个函数在徽章轮询路径上(每 8s 一次),
+  // 在这里打网络等于每 8s 捶一遍用户的 PanSou。探活只在保存时做一次,结论存在
+  // PANSOU_HEALTH_SETTING_KEY 里,这里读它。
+  //
+  // custom 只认 DB 设置(不含 env PANSOU_BASE_URL):env 配的源从不经过保存探活,
+  // reachable 对它没有意义,拿一个从没被探过的源告警只会是假警报。
+  const scopedSettings = getAccountScopedSettings(accountId);
+  const [pansouBaseUrl, pansouHealth] = await Promise.all([
+    scopedSettings.getSetting(PANSOU_BASE_URL_SETTING_KEY),
+    scopedSettings.getSetting(PANSOU_HEALTH_SETTING_KEY),
+  ]);
+  const customSearchSource = Boolean(pansouBaseUrl?.trim());
+  // 没有结论时按「可达」处理:这条提醒只在有确凿失败证据时才响。宁可漏报也不
+  // 能对着一个从没探过的源(老用户在本次改动之前保存的)天天报假警。
+  const searchSourceReachable = (pansouHealth?.trim() ?? "") !== "" ? pansouHealth!.trim() === "ok" : true;
   // update_available 只对站主存在（见 buildSettingsAttentionItems 的 isOwner
   // 门控），所以非站主不该付这份代价：两次文件读 + 可能的 GitHub 探测，冷
   // 缓存时最多要等满 5s 超时——而徽章每 8s 轮询一次。
@@ -105,6 +123,7 @@ export async function loadSettingsAttentionSummary(options?: {
     })),
     brandLabel,
     llmConfigured: Boolean(llm.baseURL && llm.modelId),
+    searchSource: { custom: customSearchSource, reachable: searchSourceReachable },
     update,
     origin: options?.origin ?? DEFAULT_LOCAL_ORIGIN,
     ...(workspace.activeStorageId ? { activeStorageId: workspace.activeStorageId } : {}),

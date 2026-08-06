@@ -15,12 +15,14 @@ const KIND_ICON: Record<AttentionKind, typeof Rocket> = {
   update_available: Rocket,
   frozen_drive: AlertTriangle,
   missing_llm: CircleAlert,
+  search_source_unreachable: CircleAlert,
 };
 
 const KIND_CLASS: Record<AttentionKind, string> = {
   update_available: "kind-info",
   frozen_drive: "kind-blocker",
   missing_llm: "kind-warning",
+  search_source_unreachable: "kind-warning",
 };
 
 export function SettingsActionInbox({ items }: { items: SettingsAttentionItem[] }) {
