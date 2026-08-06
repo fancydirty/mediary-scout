@@ -204,6 +204,23 @@ describe("loadSettingsAttentionSummary — per-account state", () => {
 
   /** 自建搜索源告警的数据来源必须是**存下来的**探活结论,不能现打网络:
    *  这个函数在徽章轮询路径上,每 8s 跑一次。 */
+  it("warns for an env-injected source even when the DB setting is empty", async () => {
+    // compose 用 PANSOU_BASE_URL 注入自带容器,DB 是空的。只看 DB 会把 env-only
+    // 场景误判成未配置,于是 recordPanSouHealth 写了 unhealthy、徽章却不亮。
+    const settings = new Map<string, string>([
+      // 注意:pansou_base_url 留空(env 注入场景),只有健康结论被写下。
+      ["pansou_last_probe", "unhealthy"],
+    ]);
+    (getAccountScopedSettings as ReturnType<typeof vi.fn>).mockReturnValue({
+      getSetting: async (key: string) => settings.get(key) ?? null,
+    });
+
+    const summary = await loadSettingsAttentionSummary();
+
+    const item = summary.items.find((i) => i.kind === "search_source_unreachable");
+    expect(item).toBeDefined();
+  });
+
   it("warns from the STORED probe verdict, without probing the network", async () => {
     const settings = new Map<string, string>([
       ["pansou_base_url", "http://192.168.1.10:8899"],
