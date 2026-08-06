@@ -82,10 +82,13 @@ export class CompositeResourceProvider implements ResourceProvider {
  *  不可用处理,一个「有候选」的成员会让整体合并出 unreachable,于是快照自相矛盾
  *  ——agent 会读到「一个候选都没能取回」而它手上明明有候选。 */
 function memberStatus(status: string | undefined): SourceStatus {
-  // degraded 也算「答过话」:那个成员内部有子源挂了,但它确实返回了候选。
-  // 压成 unreachable 会让整体合并出 unreachable,于是产生一个「有候选却说
-  // 一个都没取回」的自相矛盾快照(Copilot 评审指出)。
-  if (status === undefined || status === "healthy" || status === "degraded") return "healthy";
+  // degraded 必须**透传**而不是折向任何一端(两次 Copilot 评审的合流结论):
+  //  - 折成 unreachable →「有候选却说一个都没取回」的自相矛盾快照。
+  //  - 折成 healthy → 不完整证据看起来像完整证据,把「静默误导」从另一端放回来。
+  // degraded 意味着那个成员(比如回落官方源后的 FallbackResourceProvider)答了话、
+  // 给了候选,但证据不完整 —— 这个信号对上层判断「能不能下『没找到』结论」至关重要。
+  if (status === undefined || status === "healthy") return "healthy";
+  if (status === "degraded") return "degraded";
   return status === "protocol_error" ? "protocol_error" : "unreachable";
 }
 

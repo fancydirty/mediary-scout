@@ -132,6 +132,29 @@ describe("CompositeResourceProvider source health", () => {
     expect(snapshot.sourceHealth?.status).toBe("protocol_error");
   });
 
+  it("preserves a member's degraded signal (not folded to healthy)", async () => {
+    // 两次 Copilot 评审的合流结论:degraded 折成 healthy 会让「部分证据」看起来
+    // 像「完整证据」,把本 PR 要消灭的静默误导从另一端放回来。这个信号对上层
+    // 判断「能不能下『没找到』结论」至关重要。
+    const degradedProvider: ResourceProvider = {
+      search: async () => ({
+        id: "s1",
+        provider: "stub",
+        keyword: "k",
+        createdAt: "2026-08-06T00:00:00.000Z",
+        sourceHealth: { status: "degraded", unhealthySources: ["官方搜索源"] },
+        candidates: [],
+      }),
+    };
+    const composite = new CompositeResourceProvider({
+      providers: [{ name: "pansou", provider: degradedProvider }],
+    });
+
+    const snapshot = await composite.search({ keyword: "k" });
+
+    expect(snapshot.sourceHealth?.status).toBe("degraded");
+  });
+
   it("preserves protocol_error when a member THROWS PanSouProtocolError", async () => {
     // 硬编码 unreachable 会把「地址指向了别的服务」压成「源挂了」,用户拿到
     // 错误的处置建议(Copilot 评审的 suppressed 意见)。

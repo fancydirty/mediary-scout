@@ -1723,6 +1723,11 @@ async function getWorkerResourceProvider(
   provider: string = "pan115",
   accountId?: string,
 ): Promise<ResourceProvider> {
+  // accountId 仅用于健康结论回写(recordPanSouHealth)。多账户场景下,worker 在
+  // claim 后按 run 所属账号重建 provider(resolveWorkerDeps: ctx.resourceProvider
+  // ?? base),走的是 buildAccountContextResolver 那条带 accountId 的路径;这里的
+  // base provider 只在无 resolver(单用户/兜底)时被实际使用,此时 getCurrentAccountId()
+  // 正确地返回 default 账号,所以两处都不丢账号作用域。
   if (process.env.MEDIA_TRACK_WORKFLOW_ADAPTER === "pansou") {
     // Per-brand assembly: a quark drive gets PanSou restricted to quark links and
     // NO Prowlarr (磁力 115-only); a 115 drive gets PanSou(115/magnet) + Prowlarr.

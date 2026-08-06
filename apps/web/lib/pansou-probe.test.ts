@@ -106,3 +106,27 @@ describe("validatePanSouBaseUrlFormat", () => {
     expect(validatePanSouBaseUrlFormat("  http://pansou:8899  ").ok).toBe(true);
   });
 });
+
+describe("probePanSou timeout classification", () => {
+  it("把 TimeoutError 归成超时而非泛泛的连不上", async () => {
+    // AbortSignal.timeout 到期时 fetch 抛 TimeoutError(见 remote-access.test.ts)。
+    // 若只认 AbortError,用户会拿到「请检查地址端口」而非「超时了」。
+    const r = await probePanSou("http://slow.test", {
+      fetchImpl: async () => {
+        throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+      },
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toContain("无响应");
+  });
+
+  it("仍认 AbortError(手动 abort 的旧路径)", async () => {
+    const r = await probePanSou("http://slow.test", {
+      fetchImpl: async () => {
+        throw new DOMException("aborted", "AbortError");
+      },
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toContain("无响应");
+  });
+});

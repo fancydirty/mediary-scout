@@ -6,8 +6,14 @@
  */
 
 /** 单个源的状态。protocol_error 与 unreachable 分开，是因为它们的用户动作不同：
- *  前者「地址填错了/那不是 PanSou」，后者「源挂了/网络不通」。 */
-export type SourceStatus = "healthy" | "unreachable" | "protocol_error";
+ *  前者「地址填错了/那不是 PanSou」，后者「源挂了/网络不通」。
+ *
+ *  degraded 的存在是为了让「部分证据」的信号能穿过复合层:一个成员(比如
+ *  FallbackResourceProvider 回落官方源后)自报 degraded,意味着它**答了话、给了
+ *  候选**、但证据不完整。折成 healthy 会让不完整证据看起来像完整证据(把本 PR
+ *  要消灭的「静默误导」从另一端放回来);折成 unreachable 又会与「它确实给了
+ *  候选」自相矛盾。所以合并层必须**透传** degraded,而不是折向任何一端。 */
+export type SourceStatus = "healthy" | "degraded" | "unreachable" | "protocol_error";
 
 export interface SourceHealth {
   status: SourceStatus;
@@ -101,7 +107,7 @@ export function hasRecognisedUnreachableCode(error: unknown): boolean {
 }
 
 export function isSourceUsable(health: SourceHealth): boolean {
-  return health.status === "healthy";
+  return health.status === "healthy" || health.status === "degraded";
 }
 
 /**
@@ -125,10 +131,16 @@ export function mergeSourceHealth(healths: readonly SourceHealth[]): MergedSourc
     return { status: "healthy", unhealthySources: [] };
   }
   const unhealthy = healths.filter((h) => !isSourceUsable(h));
-  if (unhealthy.length === 0) {
-    return { status: "healthy", unhealthySources: [] };
-  }
   const unhealthySources = unhealthy.map((h) => h.source);
+  // 任何源自报 degraded(比如回落官方源后)都说明整体证据不完整 —— 即使没有源
+  // 完全挂掉。此时必须带 degraded 信号,否则「部分证据」看起来像「完整证据」。
+  const anyDegraded = healths.some((h) => h.status === "degraded");
+  if (unhealthy.length === 0 && anyDegraded) {
+    return { status: "degraded", unhealthySources };
+  }
+  if (unhealthy.length === 0) {
+    return { status: "healthy", unhealthySources };
+  }
   if (unhealthy.length !== healths.length) {
     // 还有源在答:候选可用,但「没找到」不成立。此时具体是哪种失败不重要 ——
     // 用户的当务之急是知道证据不完整,而不是去修某一个源。
