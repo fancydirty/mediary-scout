@@ -247,7 +247,8 @@ describe("loadSettingsAttentionSummary — per-account state", () => {
     expect(summary.items.map((i) => i.kind)).not.toContain("search_source_unreachable");
   });
 
-  it("demo mode returns empty without touching the repository", async () => {    (isDemoMode as ReturnType<typeof vi.fn>).mockReturnValue(true);
+  it("demo mode returns empty without touching the repository", async () => {
+    (isDemoMode as ReturnType<typeof vi.fn>).mockReturnValue(true);
     const { repository } = makeRepository([{ id: "cs1", provider: "quark", label: null, status: "frozen" }]);
     const summary = await loadSettingsAttentionSummary({ origin: "https://o.example" });
     expect(summary).toEqual({ count: 0, severity: null, items: [] });

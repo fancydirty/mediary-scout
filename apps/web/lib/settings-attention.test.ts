@@ -118,7 +118,8 @@ describe("buildSettingsAttentionItems", () => {
     expect(isAttentionItemId("search_source_unreachable")).toBe(true);
   });
 
-  it("adds container update as info severity with version-scoped id + origin-threaded prompt", () => {    const container = buildSettingsAttentionItems({
+  it("adds container update as info severity with version-scoped id + origin-threaded prompt", () => {
+    const container = buildSettingsAttentionItems({
       demo: false,
       isOwner: true,
       drives: [],
