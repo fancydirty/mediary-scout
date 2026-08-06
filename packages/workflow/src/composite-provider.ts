@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { ResourceCandidate, ResourceSnapshot } from "./domain.js";
 import type { ResourceProvider } from "./ports.js";
+import { mergeSourceHealth, type SourceHealth, type SourceStatus } from "./resource-source-health.js";
 
 export interface CompositeResourceProviderOptions {
   providers: Array<{ name: string; provider: ResourceProvider }>;
@@ -26,8 +27,18 @@ export class CompositeResourceProvider implements ResourceProvider {
     const merged: ResourceCandidate[] = [];
     const seen = new Set<string>();
     const sourceSnapshotIds: string[] = [];
-    for (const result of settled) {
-      if (result.status !== "fulfilled") continue; // a down source contributes nothing
+    const healths: SourceHealth[] = [];
+    for (const [index, result] of settled.entries()) {
+      const name = this.providers[index]!.name;
+      if (result.status !== "fulfilled") {
+        // 以前这里直接 continue,失败就此消失 —— 部分搜索看起来和完整搜索一样。
+        healths.push({ status: "unreachable", source: name });
+        continue;
+      }
+      // 成员可能不抛错而是自报不健康(PanSou 就是这样),所以要读字段而不是
+      // 只看 Promise 状态。缺字段的老 provider 视为 healthy(向后兼容)。
+      const own = result.value.sourceHealth;
+      healths.push({ status: memberStatus(own?.status), source: name });
       sourceSnapshotIds.push(result.value.id);
       for (const candidate of result.value.candidates) {
         const key = dedupeKey(candidate);
@@ -45,8 +56,22 @@ export class CompositeResourceProvider implements ResourceProvider {
       index,
     }));
 
-    return { id: snapshotId, provider: "composite", keyword: input.keyword, candidates, createdAt: this.now() };
+    return {
+      id: snapshotId,
+      provider: "composite",
+      keyword: input.keyword,
+      candidates,
+      createdAt: this.now(),
+      sourceHealth: mergeSourceHealth(healths),
+    };
   }
+}
+
+/** 把成员自报的合并态折回单源状态。degraded 只可能出现在多源成员上,对本层
+ *  而言它意味着「那个成员的证据不完整」,按不可用处理更保守。 */
+function memberStatus(status: string | undefined): SourceStatus {
+  if (status === undefined || status === "healthy") return "healthy";
+  return status === "protocol_error" ? "protocol_error" : "unreachable";
 }
 
 function dedupeKey(candidate: ResourceCandidate): string {
