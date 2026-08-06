@@ -196,13 +196,16 @@ export async function writeAgentConfig(
 
   if (input.pansouBaseUrl !== undefined) {
     const trimmed = input.pansouBaseUrl.trim();
-    if (trimmed && !/^https?:\/\//.test(trimmed)) {
-      return { ok: false, field: "pansouBaseUrl", message: "baseURL 需以 http(s):// 开头" };
-    }
     if (trimmed) {
+      // 格式校验与设置页共用同一 helper(validatePanSouBaseUrlFormat),免得两条
+      // 入口的校验与文案再次漂移(Copilot 评审)。
+      const { probePanSou, validatePanSouBaseUrlFormat } = await import("../pansou-probe");
+      const format = validatePanSouBaseUrlFormat(trimmed);
+      if (!format.ok) {
+        return { ok: false, field: "pansouBaseUrl", message: format.message };
+      }
       // 与设置页同一条规矩:存之前真打一次,打不通/不是 PanSou 就不存。
       // agent 走这条路径改配置时同样不能把一个坏地址写进去。
-      const { probePanSou } = await import("../pansou-probe");
       const probe = await probePanSou(trimmed);
       if (!probe.ok) {
         return { ok: false, field: "pansouBaseUrl", message: probe.message };
