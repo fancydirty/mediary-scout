@@ -46,6 +46,9 @@ export function classifySourceFailure(error: unknown): Exclude<SourceStatus, "he
   if (message.startsWith(PROTOCOL_ERROR_PREFIX)) {
     return "protocol_error";
   }
+  // 下面两个分支当前同值(都 unreachable),保留不是冗余而是分类学:它们记录了
+  // 已经考虑过的失败条件。后续若要按错误类型分化重试/退避策略(ETIMEDOUT 值得
+  // 重试、ECONNREFUSED 基本不值得),分叉点就在这里 —— 届时不必重新调研这份清单。
   const code = (error as { code?: unknown } | null)?.code;
   if (typeof code === "string" && UNREACHABLE_CODES.has(code)) {
     return "unreachable";
