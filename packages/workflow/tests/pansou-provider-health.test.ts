@@ -106,6 +106,22 @@ describe("PanSouResourceProvider source health", () => {
     expect(snapshot.sourceHealth?.status).toBe("healthy");
   });
 
+  it("classifies a PanSou error response (code!=0) as unreachable, NOT protocol_error", async () => {
+    // code:400 的响应**是 PanSou**(按它的协议应答),只是报了错 —— 限流/参数错。
+    // 归 protocol_error 会让用户以为「地址填错了」,而实际上是源侧临时故障。
+    const provider = new PanSouResourceProvider({
+      baseURL: "http://pansou.test",
+      fetchJson: async () => ({ code: 400, message: "bad request" }),
+      wait: async () => {},
+    });
+
+    const snapshot = await provider.search({ keyword: "示例" });
+
+    expect(snapshot.candidates).toEqual([]);
+    expect(snapshot.sourceHealth?.status).toBe("unreachable");
+    expect(snapshot.sourceHealth?.status).not.toBe("protocol_error");
+  });
+
   it("keeps polling across attempts (the streaming behaviour must not regress)", async () => {
     // PanSou returns more results on later calls; the provider must not stop at
     // the first non-growing response before attempt 1.

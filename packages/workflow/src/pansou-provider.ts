@@ -9,6 +9,7 @@ import {
   classifySourceFailure,
   mergeSourceHealth,
   PanSouProtocolError,
+  PanSouRequestError,
   type SourceHealth,
 } from "./resource-source-health.js";
 
@@ -86,9 +87,15 @@ export class PanSouResourceProvider implements ResourceProvider {
       body: JSON.stringify({ kw: keyword, res: "all" }),
       timeoutMs: this.requestTimeoutMs,
     });
+    // 两种「不是成功响应」必须区分,否则用户拿到错误的处置建议(Copilot 评审):
+    //  1. 响应带 code 字段 → 它**是** PanSou,只是报了错(限流/参数错)。
+    //     那是源侧的临时故障,不是「地址填错了」,不归 PanSouProtocolError。
+    //  2. 完全不是 PanSou 的形状(静态文件服务器 / 反代错误页 / 换了协议)
+    //     → 地址指错了地方,这才是 PanSouProtocolError。
+    if (isPanSouErrorResponse(response)) {
+      throw new PanSouRequestError(`PanSou 返回错误: ${JSON.stringify(response).slice(0, 200)}`);
+    }
     if (!isPanSouSuccessResponse(response)) {
-      // 连上了,但对方不是 PanSou(静态文件服务器 / 反代错误页 / 换了协议)。
-      // 以前这里静默返回 [],于是「地址填错了」看起来和「没有这个资源」一样。
       throw new PanSouProtocolError(`not a PanSou payload from ${this.baseURL}`);
     }
     const facts = collectLinkFacts(response.data.results);
@@ -176,6 +183,13 @@ async function defaultFetchJson(url: string, init: PanSouFetchInit): Promise<unk
     throw new Error(`PanSou search failed with HTTP ${response.status}`);
   }
   return response.json();
+}
+
+/** 响应带 code 字段 = 它按 PanSou 协议应答了,只是没成功(限流/参数错/服务端错)。
+ *  与「根本不是 PanSou」的关键区别:后者没有 code 字段。 */
+function isPanSouErrorResponse(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return typeof value["code"] === "number" && value["code"] !== 0;
 }
 
 function isPanSouSuccessResponse(value: unknown): value is {

@@ -41,6 +41,18 @@ export class PanSouProtocolError extends Error {
   }
 }
 
+/** 「按 PanSou 协议应答了,但报了错」—— 比如限流/参数错(code != 0)。这与
+ *  `PanSouProtocolError` 相反:后者表示「地址指向的东西不是 PanSou」,前者表示
+ *  「源是 PanSou,只是此刻临时出错」。分类上归 unreachable(临时故障,等恢复/重试),
+ *  绝不能归 protocol_error —— 否则会告诉一个源其实没配错的用户「地址填错了」,
+ *  把他引向错误的排查方向。 */
+export class PanSouRequestError extends Error {
+  constructor(detail: string) {
+    super(`PANSOU_REQUEST_ERROR: ${detail}`);
+    this.name = "PanSouRequestError";
+  }
+}
+
 const UNREACHABLE_CODES = new Set([
   "ECONNREFUSED",
   "ENOTFOUND",

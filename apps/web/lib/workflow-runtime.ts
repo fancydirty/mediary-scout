@@ -897,7 +897,7 @@ function buildAccountContextResolver(): ResolveAccountWorkerContext {
     const assrtToken = await getAssrtToken(scoped);
     return {
       storage: await getWorkerStorageExecutor(accountId, connectedStorageId),
-      resourceProvider: await getWorkerResourceProvider(scoped, driveProvider),
+      resourceProvider: await getWorkerResourceProvider(scoped, driveProvider, accountId),
       storageProvider: driveProvider,
       model,
       ...(assrtToken === undefined ? {} : { assrtToken }),
@@ -916,17 +916,20 @@ function buildAccountContextResolver(): ResolveAccountWorkerContext {
 //  结论因为账号 A 刚写过同一个值而被跳过 —— 于是 B 的源挂了却永远不告警,
 //  正是本 PR 要消灭的那种静默。
 const lastRecordedPanSouHealth = new Map<string, string>();
-async function recordPanSouHealth(healthy: boolean): Promise<void> {
+async function recordPanSouHealth(healthy: boolean, accountId?: string): Promise<void> {
   const value = healthy ? "ok" : "unhealthy";
   try {
-    const accountId = await getCurrentAccountId();
-    if (lastRecordedPanSouHealth.get(accountId) === value) return;
+    // 有 request scope(设置页/HTTP)时用请求账号;worker 路径没有 request scope,
+    // 必须用调用方传入的 run 所属账号 —— 否则多用户模式下所有健康结论都记到
+    // acct_default 名下,B 用户永远看不到「自建源连不上」的告警。
+    const resolved = accountId ?? (await getCurrentAccountId());
+    if (lastRecordedPanSouHealth.get(resolved) === value) return;
     await getWorkflowRepository().setAccountSetting(
-      accountId,
+      resolved,
       PANSOU_HEALTH_SETTING_KEY,
       value,
     );
-    lastRecordedPanSouHealth.set(accountId, value);
+    lastRecordedPanSouHealth.set(resolved, value);
   } catch (error) {
     // 搜索不能因为一次设置写失败而失败。但不静默:打出来,否则就是本 PR 要修的病。
     console.warn(
@@ -1718,6 +1721,7 @@ function parseTvCandidateId(candidateId: string): { tmdbId: number; seasonNumber
 async function getWorkerResourceProvider(
   settings: { getSetting(key: string): Promise<string | null> } = getWorkflowRepository(),
   provider: string = "pan115",
+  accountId?: string,
 ): Promise<ResourceProvider> {
   if (process.env.MEDIA_TRACK_WORKFLOW_ADAPTER === "pansou") {
     // Per-brand assembly: a quark drive gets PanSou restricted to quark links and
@@ -1742,7 +1746,7 @@ async function getWorkerResourceProvider(
           // 「保存时好的、之后才挂」。写失败不能影响搜索本身,所以 catch 后
           // 只记日志——但**不静默**,否则又是本 PR 要消灭的那个毛病。
           onSourceHealth: (healthy) => {
-            void recordPanSouHealth(healthy);
+            void recordPanSouHealth(healthy, accountId);
           },
         }),
       },
