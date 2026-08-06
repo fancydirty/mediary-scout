@@ -15,6 +15,7 @@ import {
 } from "./domain.js";
 import { buildMovieReport, emptyRunOutcome, formatReportPushText } from "./notification-report.js";
 import { classifyTransferBlock } from "./acquisition-v2/transfer-block.js";
+import { classifySearchSourceFault } from "./acquisition-v2/search-source-fault.js";
 import type { ResourceProvider, StorageExecutor } from "./ports.js";
 import type { DeadLinkStore } from "./acquisition-v2/dead-links.js";
 import { readLandedSize, type LandedSize } from "./acquisition-v2/landed-size.js";
@@ -163,11 +164,19 @@ function buildResult(input: {
     input.landed,
     input.subtitleFallback ?? false,
   );
-  // 别甩锅: nothing landed could mean truly no resource (no_coverage) OR the
-  // account was systemically blocked (115 云下载配额不足/登录过期) — say which.
+  // 别甩锅: nothing landed could mean truly no resource (no_coverage), the account
+  // was systemically blocked (115 云下载配额不足/登录过期), OR the search source
+  // itself was down all run (源挂了 6 天却报「暂未找到资源」的那个真实案例) — say which.
+  // 电影与剧集共用 emptyRunOutcome,所以这两条必须同时接,否则电影仍在撒谎。
   const report = input.obtained
     ? baseReport
-    : { ...baseReport, ...emptyRunOutcome(classifyTransferBlock(input.attempts)?.reason ?? null) };
+    : {
+        ...baseReport,
+        ...emptyRunOutcome(
+          classifyTransferBlock(input.attempts)?.reason ?? null,
+          classifySearchSourceFault(input.auditEvents)?.reason ?? null,
+        ),
+      };
   const notification: NotificationEvent = {
     id: `notification_${input.request.workflowRunId}`,
     workflowRunId: input.request.workflowRunId,

@@ -16,6 +16,7 @@ import {
 } from "../domain.js";
 import { buildSeasonReport, buildSeriesReport, formatReportPushText } from "../notification-report.js";
 import { classifyTransferBlock } from "./transfer-block.js";
+import { classifySearchSourceFault } from "./search-source-fault.js";
 import type { RunAcquisitionV2WorkflowResult } from "./workflow-v2.js";
 
 /**
@@ -94,6 +95,11 @@ export function bridgeV2WorkflowToResult(input: {
   // "暂未找到资源" — the resource exists, the account is blocked.
   const transferBlock = classifyTransferBlock(v2.outcome.transferAttempts);
   const transferBlockReason = status === "no_coverage" && transferBlock ? transferBlock.reason : null;
+  // 同一条教义在更早一层:搜索源本轮全程故障时,一个候选都取不回来,集数算术
+  // 于是判 no_coverage、用户读到「暂未找到可用资源」—— 真实案例里这样持续了
+  // 6 天。判定读 sandbox 写下的结构化审计事件,不猜(见 classifySearchSourceFault)。
+  const sourceFault = classifySearchSourceFault(v2.auditEvents);
+  const searchSourceFaultReason = status === "no_coverage" && sourceFault ? sourceFault.reason : null;
 
   const notification = buildNotification({
     title,
@@ -101,6 +107,7 @@ export function bridgeV2WorkflowToResult(input: {
     seasons,
     status,
     transferBlockReason,
+    searchSourceFaultReason,
     newlyObtainedCodes,
     workflowRunId,
     now: input.now,
@@ -218,6 +225,7 @@ function buildNotification(input: {
   status: WorkflowStatus;
   /** Honest 转存失败 reason when transfers were systemically blocked (else null). */
   transferBlockReason?: string | null;
+  searchSourceFaultReason?: string | null;
   newlyObtainedCodes: string[];
   workflowRunId: string;
   now: () => string;
@@ -234,6 +242,7 @@ function buildNotification(input: {
       seasons: seasons.map((entry) => ({ season: entry.season, episodes: entry.episodes })),
       noCoverage,
       transferBlockReason: input.transferBlockReason ?? null,
+      searchSourceFaultReason: input.searchSourceFaultReason ?? null,
       meta: titleMeta,
       ...sizeInput(input),
     });
@@ -264,6 +273,7 @@ function buildNotification(input: {
     newlyObtained,
     noCoverage,
     transferBlockReason: input.transferBlockReason ?? null,
+    searchSourceFaultReason: input.searchSourceFaultReason ?? null,
     meta: titleMeta,
     ...sizeInput(input),
   });

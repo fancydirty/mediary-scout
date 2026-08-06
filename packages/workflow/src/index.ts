@@ -65,6 +65,7 @@ export * from "./acquisition-v2/orchestrator.js";
 export * from "./acquisition-v2/directory-lifecycle.js";
 export * from "./acquisition-v2/sync-need.js";
 export * from "./acquisition-v2/workflow-v2.js";
+export * from "./acquisition-v2/search-source-fault.js";
 export * from "./acquisition-v2/workflow-v2-bridge.js";
 export * from "./acquisition-v2/run-tv-v2.js";
 export * from "./acquisition-v2/stub-model.js";

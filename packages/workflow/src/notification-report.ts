@@ -78,6 +78,10 @@ export interface SeasonReportInput {
    *  status `failed` — NOT "暂未找到资源" (the resource exists; the account is
    *  blocked). Only meaningful together with noCoverage. See classifyTransferBlock. */
   transferBlockReason?: string | null;
+  /** 搜索源本轮全程故障时的原因(见 classifySearchSourceFault)。与
+   *  transferBlockReason 同一形制:只在 noCoverage 时有意义,存在则覆盖
+   *  「暂未找到可用资源」——源连不上不等于这部片子没有资源(别甩锅)。 */
+  searchSourceFaultReason?: string | null;
   /** Real landed video files: count + summed bytes. The card/push show the true
    *  per-episode size from these (总字节 / 文件数), not a claimed quality tag. */
   fileCount?: number;
@@ -103,9 +107,19 @@ function sizeFields(input: { fileCount?: number; totalBytes?: number }): {
  *  Shared by the TV bridge and the movie workflow so both report identically. */
 export function emptyRunOutcome(
   transferBlockReason?: string | null,
+  searchSourceFaultReason?: string | null,
 ): { status: NotificationReportStatus; lines: string[] } {
   if (transferBlockReason && transferBlockReason.trim()) {
+    // 转存受阻优先于搜索源故障:能走到转存说明资源已经找到了,用户手上的问题是
+    // 「配额/登录/VIP」这种立刻可动手的事;而搜索源故障那句只会让他去查一个其实
+    // 已经工作过的源。给最靠近用户下一步动作的那条。
     return { status: "failed", lines: [`转存失败:${transferBlockReason.trim()}`] };
+  }
+  if (searchSourceFaultReason && searchSourceFaultReason.trim()) {
+    // 别甩锅:源连不上不等于这部片子没有资源。报 failed 而非 no_coverage ——
+    // no_coverage 会把它归进「确实没有、继续等」那一桶,而这是系统故障,用户
+    // 看一眼就该知道去修配置/等源恢复,而不是以为片源不存在。
+    return { status: "failed", lines: [searchSourceFaultReason.trim()] };
   }
   return { status: "no_coverage", lines: ["暂未找到可用资源 · 将持续尝试"] };
 }
@@ -127,7 +141,7 @@ export function buildSeasonReport(input: SeasonReportInput): NotificationReport 
     return {
       titleName: input.titleName,
       seasonLabel: label,
-      ...emptyRunOutcome(input.transferBlockReason),
+      ...emptyRunOutcome(input.transferBlockReason, input.searchSourceFaultReason),
       newlyObtained: [],
       realMissing,
       ...(input.meta ?? {}),
@@ -183,6 +197,8 @@ export function buildSeriesReport(input: {
   noCoverage?: boolean;
   /** See SeasonReportInput.transferBlockReason — honest 转存失败 when blocked. */
   transferBlockReason?: string | null;
+  /** See SeasonReportInput.searchSourceFaultReason — honest 搜索源故障. */
+  searchSourceFaultReason?: string | null;
   meta?: NotificationTitleMeta;
   fileCount?: number;
   totalBytes?: number;
@@ -191,7 +207,7 @@ export function buildSeriesReport(input: {
     return {
       titleName: input.titleName,
       seasonLabel: null,
-      ...emptyRunOutcome(input.transferBlockReason),
+      ...emptyRunOutcome(input.transferBlockReason, input.searchSourceFaultReason),
       newlyObtained: [],
       realMissing: [],
       ...(input.meta ?? {}),
