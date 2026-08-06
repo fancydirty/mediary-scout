@@ -4,7 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { CheckCircle2, ChevronDown, ChevronRight, Clock3, Loader2, RotateCcw, TriangleAlert, X } from "lucide-react";
 import { showHref } from "@media-track/workflow/scope";
-import type { ActivityActiveRun, ActivityCompletedItem, ActivityView } from "../lib/activity-view";
+import type {
+  ActivityActiveRun,
+  ActivityCompletedItem,
+  ActivityView,
+  RetryRefusalReason,
+} from "../lib/activity-view";
 import { seasonLabelText } from "../lib/activity-season-label";
 import { isDemoModeClient } from "../lib/demo-mode";
 import { demoCompletedItems, demoInProgressActivityItems } from "../lib/demo-session";
@@ -261,7 +266,10 @@ function RetryButton({ runId, title }: { runId: string; title: string }) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ runId }),
       });
-      const result = (await res.json()) as { status?: string; reason?: string };
+      const result = (await res.json()) as {
+        status?: string;
+        reason?: RetryRefusalReason;
+      };
       if (result.status !== "retried") {
         // Distinguish the two refusal causes. "可能已在处理" is wrong — and
         // misleading — for a patrol run: patrols are not queue-claimable, so they

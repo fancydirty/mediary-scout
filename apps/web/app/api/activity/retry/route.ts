@@ -2,6 +2,8 @@ import { isDemoMode } from "../../../../lib/demo-mode";
 import { NextResponse, type NextRequest } from "next/server";
 import { getCurrentAccountId, getWorkflowRepository } from "../../../../lib/workflow-runtime";
 import { isQueueClaimableKind } from "@media-track/workflow";
+import type { RetryRefusalReason } from "../../../../lib/activity-view";
+
 
 /**
  * Manually retry a terminally FAILED acquisition (user action from the activity
@@ -29,8 +31,15 @@ export async function POST(request: NextRequest) {
   // Read the run back only on the refusal path (keeps the happy path a single
   // query) to tell the two causes apart for the UI message.
   const snapshot = await repository.getWorkflowRunSnapshot(runId, accountId);
-  const reason =
-    snapshot && !isQueueClaimableKind(snapshot.workflowRun.kind)
+  // Status is checked FIRST: a patrol that is currently running was refused for
+  // its status, not its kind, so claiming "巡检任务不能重试" would be the wrong
+  // explanation. Only a run that IS failed and whose kind has no claimer gets the
+  // kind-specific message. Unreadable run (cross-account / pruned) → the vague
+  // one, which is also the right direction for not leaking existence.
+  const reason: RetryRefusalReason =
+    snapshot &&
+    snapshot.workflowRun.status === "failed" &&
+    !isQueueClaimableKind(snapshot.workflowRun.kind)
       ? "kind_not_retriable"
       : "not_failed";
   return NextResponse.json({ ...result, reason });

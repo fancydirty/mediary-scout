@@ -158,3 +158,8 @@ export async function getActivityView(input: {
 
   return { active, recentCompleted };
 }
+
+/** Why `POST /api/activity/retry` refused. Shared by the route and the activity
+ *  feed so both sides compare against the same literals — a hand-written string
+ *  on either side would fall silently into the generic message. */
+export type RetryRefusalReason = "kind_not_retriable" | "not_failed";

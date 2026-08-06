@@ -59,6 +59,20 @@ describe("POST /api/activity/retry", () => {
     expect(body).toEqual({ status: "not_retriable", reason: "kind_not_retriable" });
   });
 
+  it("reports not_failed for a RUNNING patrol — refused for status, not kind", async () => {
+    // Status is checked before kind: a running patrol was refused because it is
+    // not failed, so telling the user "巡检任务不能重试" would explain the wrong
+    // thing. Without the status-first ordering this returns kind_not_retriable.
+    retryFailedWorkflowRun.mockResolvedValue({ status: "not_retriable" });
+    getWorkflowRunSnapshot.mockResolvedValue({
+      workflowRun: { id: "r4", kind: "type3_monitor", status: "running" },
+    });
+
+    const body = (await (await post({ runId: "r4" })).json()) as Record<string, unknown>;
+
+    expect(body).toEqual({ status: "not_retriable", reason: "not_failed" });
+  });
+
   it("reports not_failed when a claimable run is refused for its status", async () => {
     retryFailedWorkflowRun.mockResolvedValue({ status: "not_retriable" });
     getWorkflowRunSnapshot.mockResolvedValue({
