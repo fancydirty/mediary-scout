@@ -70,7 +70,10 @@ export class CompositeResourceProvider implements ResourceProvider {
 /** 把成员自报的合并态折回单源状态。degraded 只可能出现在多源成员上,对本层
  *  而言它意味着「那个成员的证据不完整」,按不可用处理更保守。 */
 function memberStatus(status: string | undefined): SourceStatus {
-  if (status === undefined || status === "healthy") return "healthy";
+  // degraded 也算「答过话」:那个成员内部有子源挂了,但它确实返回了候选。
+  // 压成 unreachable 会让整体合并出 unreachable,于是产生一个「有候选却说
+  // 一个都没取回」的自相矛盾快照(Copilot 评审指出)。
+  if (status === undefined || status === "healthy" || status === "degraded") return "healthy";
   return status === "protocol_error" ? "protocol_error" : "unreachable";
 }
 

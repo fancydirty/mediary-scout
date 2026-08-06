@@ -1,6 +1,25 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { FallbackResourceProvider, PanSouResourceProvider } from "@media-track/workflow";
-import { buildPanSouProviderChain, DEFAULT_PANSOU_BASE_URL, resolveUserPanSouBaseUrl } from "./pansou-chain";
+import {
+  buildPanSouProviderChain,
+  observeHealth,
+  DEFAULT_PANSOU_BASE_URL,
+  resolveUserPanSouBaseUrl,
+} from "./pansou-chain";
+
+const healthySnapshot = {
+  id: "s1",
+  provider: "pansou",
+  keyword: "k",
+  candidates: [],
+  createdAt: "2026-08-06T00:00:00.000Z",
+  sourceHealth: { status: "healthy" as const, unhealthySources: [] },
+};
+
+let seen: boolean[] = [];
+beforeEach(() => {
+  seen = [];
+});
 
 describe("buildPanSouProviderChain", () => {
   it("returns a bare PanSou provider when the user configured no custom source", () => {
@@ -48,5 +67,68 @@ describe("resolveUserPanSouBaseUrl", () => {
 
   it("returns empty when neither tier is configured", () => {
     expect(resolveUserPanSouBaseUrl(null, {})).toBe("");
+  });
+});
+
+describe("observeHealth（告警能否在生产触发的唯一信号来源）", () => {
+  it("答话且健康 → 报 healthy=true，快照原样返回", async () => {
+    const wrapped = observeHealth(
+      { search: async () => healthySnapshot },
+      (healthy) => seen.push(healthy),
+    );
+
+    const out = await wrapped.search({ keyword: "k" });
+
+    expect(seen).toEqual([true]);
+    expect(out).toBe(healthySnapshot);
+  });
+
+  it("自报 unreachable → 报 healthy=false", async () => {
+    // 保存时探活只会写 "ok"，而事故正是「保存时好的、之后才挂」——
+    // 没有这条回写，设置页告警在生产中永远不会亮（Copilot 评审指出）。
+    const wrapped = observeHealth(
+      {
+        search: async () => ({
+          ...healthySnapshot,
+          sourceHealth: { status: "unreachable" as const, unhealthySources: ["自建搜索源"] },
+        }),
+      },
+      (healthy) => seen.push(healthy),
+    );
+
+    await wrapped.search({ keyword: "k" });
+
+    expect(seen).toEqual([false]);
+  });
+
+  it("degraded 仍算可用（确实答了话）", async () => {
+    const wrapped = observeHealth(
+      {
+        search: async () => ({
+          ...healthySnapshot,
+          sourceHealth: { status: "degraded" as const, unhealthySources: ["prowlarr"] },
+        }),
+      },
+      (healthy) => seen.push(healthy),
+    );
+
+    await wrapped.search({ keyword: "k" });
+
+    expect(seen).toEqual([true]);
+  });
+
+  it("抛错 → 报 false，且异常原样重抛（fallback 层要靠它分类病因）", async () => {
+    const boom = new Error("connect ECONNREFUSED");
+    const wrapped = observeHealth(
+      {
+        search: async () => {
+          throw boom;
+        },
+      },
+      (healthy) => seen.push(healthy),
+    );
+
+    await expect(wrapped.search({ keyword: "k" })).rejects.toBe(boom);
+    expect(seen).toEqual([false]);
   });
 });

@@ -910,6 +910,32 @@ function buildAccountContextResolver(): ResolveAccountWorkerContext {
   };
 }
 
+/** 记录自建搜索源的最新健康结论,供设置页徽章读取(它每 8s 轮询,不能自己打网络)。
+ *  幂等:值未变化就不写,避免每次搜索都产生一次 DB 写。 */
+let lastRecordedPanSouHealth: string | null = null;
+async function recordPanSouHealth(healthy: boolean): Promise<void> {
+  const value = healthy ? "ok" : "unhealthy";
+  if (lastRecordedPanSouHealth === value) return;
+  try {
+    await getWorkflowRepository().setAccountSetting(
+      await getCurrentAccountId(),
+      PANSOU_HEALTH_SETTING_KEY,
+      value,
+    );
+    lastRecordedPanSouHealth = value;
+  } catch (error) {
+    // 搜索不能因为一次设置写失败而失败。但不静默:打出来,否则就是本 PR 要修的病。
+    console.warn(
+      `[pansou-health] 记录健康态失败(不影响本次搜索): ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+/** Test-only: 清掉幂等缓存,免得跨用例串味。 */
+export function __resetPanSouHealthCacheForTests(): void {
+  lastRecordedPanSouHealth = null;
+}
+
 export async function runNextQueuedWorkflow() {
   const repository = getWorkflowRepository();
   // §7 form B: the worker resolves each CLAIMED run's account credentials via
@@ -1704,6 +1730,13 @@ async function getWorkerResourceProvider(
             await settings.getSetting(PANSOU_BASE_URL_SETTING_KEY),
           ),
           allowedTypes,
+          // 把每次真实搜索观察到的结论回写,设置页徽章才有东西可读。缺了这条,
+          // 告警在生产中永远不触发:保存时探活只写 "ok",而本次事故恰恰是
+          // 「保存时好的、之后才挂」。写失败不能影响搜索本身,所以 catch 后
+          // 只记日志——但**不静默**,否则又是本 PR 要消灭的那个毛病。
+          onSourceHealth: (healthy) => {
+            void recordPanSouHealth(healthy);
+          },
         }),
       },
     ];

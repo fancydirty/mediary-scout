@@ -68,3 +68,12 @@ function isPanSouShaped(payload: unknown): boolean {
   if (typeof data !== "object" || data === null) return false;
   return Array.isArray((data as { results?: unknown }).results);
 }
+
+/** 保存前的便宜格式校验。抽出来是为了两个保存入口(设置页 action / agent API)共用
+ *  同一条规则并能被直接单测 —— 少了它,一个漏写 scheme 的地址会花 8s 探活然后
+ *  拿到「连不上」这种含糊回复,而真正的问题是格式(Copilot 评审指出两侧不一致)。 */
+export function validatePanSouBaseUrlFormat(baseURL: string): { ok: true } | { ok: false; message: string } {
+  return /^https?:\/\//.test(baseURL.trim())
+    ? { ok: true }
+    : { ok: false, message: "地址需以 http:// 或 https:// 开头，未保存。" };
+}

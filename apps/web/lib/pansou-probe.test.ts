@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { probePanSou } from "./pansou-probe";
+import { probePanSou, validatePanSouBaseUrlFormat } from "./pansou-probe";
 
 /** PanSou 正常响应的最小形状:data.results 是数组。探活只看形状,不看命中。 */
 function pansouResponse(body: unknown = { data: { results: [] } }, status = 200): typeof fetch {
@@ -87,5 +87,22 @@ describe("probePanSou", () => {
         expect(failure.message).toContain("未保存");
       }
     }
+  });
+});
+
+describe("validatePanSouBaseUrlFormat", () => {
+  it("拒绝漏写 scheme 的地址（否则要白等 8s 探活才拿到含糊回复）", () => {
+    const r = validatePanSouBaseUrlFormat("localhost:8899");
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toContain("http://");
+  });
+
+  it("接受 http 与 https", () => {
+    expect(validatePanSouBaseUrlFormat("http://pansou:8899").ok).toBe(true);
+    expect(validatePanSouBaseUrlFormat("https://so.example.com").ok).toBe(true);
+  });
+
+  it("容忍首尾空白", () => {
+    expect(validatePanSouBaseUrlFormat("  http://pansou:8899  ").ok).toBe(true);
   });
 });

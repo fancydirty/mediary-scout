@@ -80,6 +80,40 @@ describe("CompositeResourceProvider source health", () => {
     expect(snapshot.sourceHealth?.unhealthySources).toEqual(["pansou"]);
   });
 
+  it("never reports unreachable while candidates were actually returned", async () => {
+    // 自相矛盾的快照:成员自报 degraded(内部有子源挂了)但确实给了候选。若把
+    // degraded 压成 unreachable,整体会变成「有候选却说一个都没取回」,agent
+    // 会读到一句假话。Copilot 评审指出的这一点。
+    const degradedWithCandidate: ResourceProvider = {
+      search: async () => ({
+        id: "s1",
+        provider: "stub",
+        keyword: "k",
+        createdAt: "2026-08-06T00:00:00.000Z",
+        sourceHealth: { status: "degraded", unhealthySources: ["prowlarr"] },
+        candidates: [
+          {
+            id: "c1",
+            snapshotId: "s1",
+            index: 0,
+            title: "命中",
+            type: "quark",
+            source: "pansou",
+            providerPayload: { url: "https://pan.quark.cn/s/abc" },
+          },
+        ],
+      }),
+    };
+    const composite = new CompositeResourceProvider({
+      providers: [{ name: "pansou", provider: degradedWithCandidate }],
+    });
+
+    const snapshot = await composite.search({ keyword: "k" });
+
+    expect(snapshot.candidates.length).toBe(1);
+    expect(snapshot.sourceHealth?.status).not.toBe("unreachable");
+  });
+
   it("preserves protocol_error when it is the single cause of total failure", async () => {
     // 「地址填错了」and「源挂了」need different user action, so the distinction
     // must survive the merge (see mergeSourceHealth).

@@ -35,6 +35,13 @@ export function resolveUserPanSouBaseUrl(
 export function buildPanSouProviderChain(input: {
   userBaseURL: string;
   allowedTypes: ResourceType[];
+  /** 每次搜索后把「自建源这次行不行」记下来。设置页徽章每 8s 轮询,绝不能在那条
+   *  路径上真打网络,所以只能由真实搜索顺手回写。
+   *
+   *  没有这个回调,告警在生产中永远不会触发 —— 保存时探活只会写 "ok",而
+   *  **本次事故正是「保存时是好的、之后才挂」**:源工作了一段时间、然后死了
+   *  6 天,而没有任何一条路径会把那个失败记下来。Copilot 评审指出了这一点。 */
+  onSourceHealth?: (healthy: boolean) => void;
 }): ResourceProvider {
   const user = input.userBaseURL.trim();
   const hasCustom = user !== "" && user !== DEFAULT_PANSOU_BASE_URL;
@@ -44,10 +51,13 @@ export function buildPanSouProviderChain(input: {
       allowedTypes: input.allowedTypes,
     });
   }
+  const primary = new PanSouResourceProvider({ baseURL: user, allowedTypes: input.allowedTypes });
   return new FallbackResourceProvider({
     primary: {
       name: "自建搜索源",
-      provider: new PanSouResourceProvider({ baseURL: user, allowedTypes: input.allowedTypes }),
+      provider: input.onSourceHealth
+        ? observeHealth(primary, input.onSourceHealth)
+        : primary,
     },
     secondary: {
       name: "官方搜索源",
@@ -57,4 +67,28 @@ export function buildPanSouProviderChain(input: {
       }),
     },
   });
+}
+
+/**
+ * 包一层只做一件事:把主源这次搜索的健康结论回报出去,不改变任何行为。
+ * 导出仅为可测:这是「告警能否在生产触发」的唯一信号来源,必须被直接钉住。
+ * 抛出的异常原样重抛(fallback 层需要看到它来分类病因),绝不吞。
+ */
+export function observeHealth(
+  provider: ResourceProvider,
+  report: (healthy: boolean) => void,
+): ResourceProvider {
+  return {
+    search: async (searchInput) => {
+      try {
+        const snapshot = await provider.search(searchInput);
+        const status = snapshot.sourceHealth?.status ?? "healthy";
+        report(status === "healthy" || status === "degraded");
+        return snapshot;
+      } catch (error) {
+        report(false);
+        throw error; // 原样重抛:上层 fallback 要靠它分类 unreachable / protocol_error
+      }
+    },
+  };
 }
