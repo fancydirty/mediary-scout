@@ -641,9 +641,27 @@ export async function clearAssrtTokenAction(): Promise<PushSettingsActionResult>
 export async function savePanSouBaseUrlAction(baseURL: string): Promise<PushSettingsActionResult> {
   assertNotDemo();
   try {
-    const { getWorkflowRepository, getCurrentAccountId, PANSOU_BASE_URL_SETTING_KEY } = await import("../lib/workflow-runtime");
+    const { getWorkflowRepository, getCurrentAccountId, PANSOU_BASE_URL_SETTING_KEY, PANSOU_HEALTH_SETTING_KEY } = await import("../lib/workflow-runtime");
+    const repository = getWorkflowRepository();
+    const accountId = await getCurrentAccountId();
+    const trimmed = baseURL.trim();
     // Empty = clear the override → falls back to env / public default.
-    await getWorkflowRepository().setAccountSetting(await getCurrentAccountId(), PANSOU_BASE_URL_SETTING_KEY, baseURL.trim());
+    // 清空是正当操作,不必探活;顺手把上次的探活结论也清掉,否则设置页会对着一个
+    // 已经不存在的自建源继续告警。
+    if (!trimmed) {
+      await repository.setAccountSetting(accountId, PANSOU_BASE_URL_SETTING_KEY, "");
+      await repository.setAccountSetting(accountId, PANSOU_HEALTH_SETTING_KEY, "");
+      return { success: true };
+    }
+    // 存之前先真打一次。以前只校验 ^https?:// ,于是一个打不通的地址会被欣然
+    // 保存,之后每次获取都静默失败并报成「未找到资源」——事故里这样活了 6 天。
+    const { probePanSou } = await import("../lib/pansou-probe");
+    const probe = await probePanSou(trimmed);
+    if (!probe.ok) {
+      return { success: false, message: probe.message };
+    }
+    await repository.setAccountSetting(accountId, PANSOU_BASE_URL_SETTING_KEY, trimmed);
+    await repository.setAccountSetting(accountId, PANSOU_HEALTH_SETTING_KEY, "ok");
     return { success: true };
   } catch (error) {
     return { success: false, message: `保存失败：${String(error)}` };

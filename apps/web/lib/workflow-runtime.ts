@@ -1082,6 +1082,10 @@ export function resolveIsDesktop(env: Record<string, string | undefined> = proce
 
 export const PANSOU_BASE_URL_SETTING_KEY = "pansou_base_url";
 
+/** 上次探活结论（"ok" | 失败 reason）。设置页徽章每 8s 轮询一次，绝不能在
+ *  那条路径上真打网络，所以这里存保存时的结论供它读取。 */
+export const PANSOU_HEALTH_SETTING_KEY = "pansou_last_probe";
+
 /** Default public PanSou instance (author-hosted), used when neither the DB
  *  setting nor env overrides it. The compose stack injects PANSOU_BASE_URL to
  *  point at the bundled `pansou` service instead.
