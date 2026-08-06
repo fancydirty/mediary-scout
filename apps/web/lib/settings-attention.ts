@@ -58,9 +58,10 @@ export function buildSettingsAttentionItems(input: {
   }>;
   brandLabel: (provider: string) => string;
   llmConfigured: boolean;
-  /** 自建搜索源状态。`custom` = 用户在设置页填了自己的地址;`reachable` = 上次
-   *  保存时探活的结论(存在 DB 里)。**刻意不在这里探活** —— 这个函数在徽章
-   *  轮询路径上,每 8s 一次,真打网络等于每 8s 捶一遍用户的 PanSou。 */
+  /** 自建搜索源状态。`custom` = 用户在设置页填了自己的地址;`reachable` =
+   *  最新健康态(两个来源:保存时探活 + 每次真实搜索后的运行时回写,见
+   *  recordPanSouHealth)。**刻意不在这里探活** —— 这个函数在徽章轮询路径上,
+   *  每 8s 一次,真打网络等于每 8s 捶一遍用户的 PanSou。 */
   searchSource?: { custom: boolean; reachable: boolean };
   update: Pick<DeploymentUpdateState, "kind" | "behind" | "currentShort" | "latestShort"> | null;
   /** Public request origin — baked into the update prompt's SSH/health-check steps. */

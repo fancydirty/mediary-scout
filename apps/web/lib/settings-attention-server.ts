@@ -93,8 +93,8 @@ export async function loadSettingsAttentionSummary(options?: {
   ]);
 
   // 自建搜索源:**只读 DB,绝不探活**。这个函数在徽章轮询路径上(每 8s 一次),
-  // 在这里打网络等于每 8s 捶一遍用户的 PanSou。探活只在保存时做一次,结论存在
-  // PANSOU_HEALTH_SETTING_KEY 里,这里读它。
+  // 在这里打网络等于每 8s 捶一遍用户的 PanSou。健康态有两个写入方:保存时探活
+  // 与每次真实搜索后的运行时回写(recordPanSouHealth)。这里只读结论。
   //
   // custom 只认 DB 设置(不含 env PANSOU_BASE_URL):env 配的源从不经过保存探活,
   // reachable 对它没有意义,拿一个从没被探过的源告警只会是假警报。

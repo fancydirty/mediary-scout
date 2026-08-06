@@ -207,7 +207,9 @@ describe("loadSettingsAttentionSummary — per-account state", () => {
   it("warns from the STORED probe verdict, without probing the network", async () => {
     const settings = new Map<string, string>([
       ["pansou_base_url", "http://192.168.1.10:8899"],
-      ["pansou_last_probe", "unreachable"],
+      // 真实合约只有 "ok" | "unhealthy" | ""(workflow-runtime.ts);"unreachable"
+      // 不是写入方会存的值。用真值让测试与生产行为对齐,免得将来收紧校验时碎掉。
+      ["pansou_last_probe", "unhealthy"],
     ]);
     (getAccountScopedSettings as ReturnType<typeof vi.fn>).mockReturnValue({
       getSetting: async (key: string) => settings.get(key) ?? null,
