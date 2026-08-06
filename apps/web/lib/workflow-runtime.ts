@@ -83,6 +83,11 @@ import {
   type VerifiedFile,
   type WorkflowRepository,
 } from "@media-track/workflow";
+import {
+  buildPanSouProviderChain,
+  resolveUserPanSouBaseUrl,
+  DEFAULT_PANSOU_BASE_URL as PUBLIC_PANSOU_BASE_URL,
+} from "./pansou-chain";
 import { findDemoCandidateById, findDemoCandidateByTmdbId } from "./demo-candidates";
 import { seedDemoWorkflowRepository } from "./demo-workflow";
 import { resolveRegistration, deriveBootstrapState, canManageAccounts } from "./account-bootstrap";
@@ -1079,21 +1084,25 @@ export const PANSOU_BASE_URL_SETTING_KEY = "pansou_base_url";
 
 /** Default public PanSou instance (author-hosted), used when neither the DB
  *  setting nor env overrides it. The compose stack injects PANSOU_BASE_URL to
- *  point at the bundled `pansou` service instead. */
-export const DEFAULT_PANSOU_BASE_URL = "https://so.252035.xyz";
+ *  point at the bundled `pansou` service instead.
+ *  从 ./pansou-chain 再导出:装配链要用同一个常量判「用户配的是不是官方源」,
+ *  两份字面量一旦漂移,fallback 就会把官方源包成自己的备源、每次失败白跑两遍。 */
+export { DEFAULT_PANSOU_BASE_URL } from "./pansou-chain";
 
 /** The PanSou search aggregator base URL: DB setting > env PANSOU_BASE_URL >
  *  public default. No runtime container auto-detection — compose wires the
- *  service name and this lets a self-hoster override it by hand. */
+ *  service name and this lets a self-hoster override it by hand.
+ *  前两层复用 resolveUserPanSouBaseUrl:它和装配链共用一份优先级,免得这里改了
+ *  而检索路径没改(或反过来)。 */
 export async function getPanSouBaseUrl(
   repository: { getSetting(key: string): Promise<string | null> },
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<string> {
-  const dbValue = (await repository.getSetting(PANSOU_BASE_URL_SETTING_KEY))?.trim();
-  if (dbValue) return dbValue;
-  const envValue = env.PANSOU_BASE_URL?.trim();
-  if (envValue) return envValue;
-  return DEFAULT_PANSOU_BASE_URL;
+  const configured = resolveUserPanSouBaseUrl(
+    await repository.getSetting(PANSOU_BASE_URL_SETTING_KEY),
+    env,
+  );
+  return configured || PUBLIC_PANSOU_BASE_URL;
 }
 
 export const PROWLARR_BASE_URL_SETTING_KEY = "prowlarr_base_url";
@@ -1684,7 +1693,14 @@ async function getWorkerResourceProvider(
     const providers: Array<{ name: string; provider: ResourceProvider }> = [
       {
         name: "pansou",
-        provider: new PanSouResourceProvider({ baseURL: await getPanSouBaseUrl(settings), allowedTypes }),
+        // 用户配了自建源(DB 或 compose 注入的 env)就包一层 fallback:自建源挂掉时
+        // 退到官方源续命,并把结果标 degraded —— 而不是像事故里那样静默报「没找到」。
+        provider: buildPanSouProviderChain({
+          userBaseURL: resolveUserPanSouBaseUrl(
+            await settings.getSetting(PANSOU_BASE_URL_SETTING_KEY),
+          ),
+          allowedTypes,
+        }),
       },
     ];
     if (kinds.includes("prowlarr")) {
