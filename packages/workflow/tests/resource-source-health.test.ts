@@ -99,6 +99,31 @@ describe("mergeSourceHealth", () => {
     expect(merged.unhealthySources).toEqual(["pansou", "prowlarr"]);
   });
 
+  it("preserves protocol_error when it is the single cause of a total failure", () => {
+    // 「地址填错了」与「源挂了」的处置动作不同,压平成 unreachable 会把用户
+    // 引向错误的排查方向 —— 这两个状态存在的全部理由就是区分它们。
+    const merged = mergeSourceHealth([{ status: "protocol_error", source: "pansou" }]);
+    expect(merged.status).toBe("protocol_error");
+    expect(merged.unhealthySources).toEqual(["pansou"]);
+  });
+
+  it("falls back to unreachable when a total failure has mixed causes", () => {
+    // No single actionable remedy to offer, so do not imply one.
+    const merged = mergeSourceHealth([
+      { status: "protocol_error", source: "pansou" },
+      { status: "unreachable", source: "prowlarr" },
+    ]);
+    expect(merged.status).toBe("unreachable");
+  });
+
+  it("is degraded (not protocol_error) when another source still answers", () => {
+    const merged = mergeSourceHealth([
+      { status: "healthy", source: "prowlarr" },
+      { status: "protocol_error", source: "pansou" },
+    ]);
+    expect(merged.status).toBe("degraded");
+  });
+
   it("is healthy for an empty list (no sources configured is not a failure)", () => {
     const merged = mergeSourceHealth([]);
     expect(merged.status).toBe("healthy");

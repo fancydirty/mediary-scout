@@ -5,6 +5,12 @@ import type {
   ResourceType,
 } from "./domain.js";
 import type { ResourceProvider } from "./ports.js";
+import {
+  classifySourceFailure,
+  mergeSourceHealth,
+  PanSouProtocolError,
+  type SourceHealth,
+} from "./resource-source-health.js";
 
 export interface PanSouFetchInit {
   method: "POST";
@@ -80,7 +86,12 @@ export class PanSouResourceProvider implements ResourceProvider {
       body: JSON.stringify({ kw: keyword, res: "all" }),
       timeoutMs: this.requestTimeoutMs,
     });
-    const facts = isPanSouSuccessResponse(response) ? collectLinkFacts(response.data.results) : [];
+    if (!isPanSouSuccessResponse(response)) {
+      // 连上了,但对方不是 PanSou(静态文件服务器 / 反代错误页 / 换了协议)。
+      // 以前这里静默返回 [],于是「地址填错了」看起来和「没有这个资源」一样。
+      throw new PanSouProtocolError(`not a PanSou payload from ${this.baseURL}`);
+    }
+    const facts = collectLinkFacts(response.data.results);
     // Per-brand filter: a quark drive only sees quark links; a 115 drive only
     // sees 115/magnet. Keeps a candidate set that its executor can actually transfer.
     return this.allowedTypes ? facts.filter((fact) => this.allowedTypes!.has(fact.type)) : facts;
@@ -93,12 +104,16 @@ export class PanSouResourceProvider implements ResourceProvider {
     // judges the COMPLETE evidence — never a partial slice (no 抢跑). Speed comes
     // from the agent issuing FEWER searches, not from cutting this short.
     let facts: PanSouLinkFact[] = [];
+    let failure: unknown = null;
     for (let attempt = 0; attempt < this.maxSearchAttempts; attempt += 1) {
       let next: PanSouLinkFact[];
       try {
         next = await this.fetchFacts(input.keyword);
-      } catch {
-        break; // network/parse error mid-poll — keep the most complete set so far
+      } catch (error) {
+        // 只有「一条证据都没拿到」才算源不可用。中途失败但先前已有结果时,
+        // 保留旧行为(保住已拿到的最完整集合)——那不是源挂了,是轮询被打断。
+        failure = error;
+        break;
       }
       if (next.length > facts.length) {
         facts = next;
@@ -109,6 +124,10 @@ export class PanSouResourceProvider implements ResourceProvider {
         await this.wait(this.searchPollMs);
       }
     }
+    const health: SourceHealth =
+      failure !== null && facts.length === 0
+        ? { status: classifySourceFailure(failure), source: "pansou" }
+        : { status: "healthy", source: "pansou" };
     const snapshotId = createSnapshotId(input.keyword, facts, input.workflowRunId);
     const candidates: ResourceCandidate[] = facts.map((fact, index) => ({
       id: `${snapshotId}_candidate_${index + 1}`,
@@ -131,6 +150,7 @@ export class PanSouResourceProvider implements ResourceProvider {
       keyword: input.keyword,
       candidates,
       createdAt: this.now(),
+      sourceHealth: mergeSourceHealth([health]),
     };
   }
 }

@@ -16,9 +16,14 @@ export interface SourceHealth {
 }
 
 /** 多源合并后的整体健康态。degraded = 部分源答了：拿到的候选可用，但
- *  「没找到」这个结论不成立（证据不完整）。 */
+ *  「没找到」这个结论不成立（证据不完整）。
+ *
+ *  `protocol_error` 必须能穿透合并层而不被压成 `unreachable`：这两者存在的
+ *  全部理由就是用户的处置动作不同（「地址填错了/那不是 PanSou」 vs
+ *  「源挂了/网络不通」）。压平之后会告诉一个填错地址的用户「你的源挂了」，
+ *  把他引向错误的排查方向 —— 那正是本次要消灭的那类误导。 */
 export interface MergedSourceHealth {
-  status: "healthy" | "degraded" | "unreachable";
+  status: "healthy" | "degraded" | "unreachable" | "protocol_error";
   unhealthySources: string[];
 }
 
@@ -96,8 +101,16 @@ export function mergeSourceHealth(healths: readonly SourceHealth[]): MergedSourc
     return { status: "healthy", unhealthySources: [] };
   }
   const unhealthySources = unhealthy.map((h) => h.source);
+  if (unhealthy.length !== healths.length) {
+    // 还有源在答:候选可用,但「没找到」不成立。此时具体是哪种失败不重要 ——
+    // 用户的当务之急是知道证据不完整,而不是去修某一个源。
+    return { status: "degraded", unhealthySources };
+  }
+  // 全挂。若所有失败同因,把这个因保留下来,好给出对症的处置建议;
+  // 混合失败则退回 unreachable(没有单一的建议可给)。
+  const everyStatus = new Set(unhealthy.map((h) => h.status));
   return {
-    status: unhealthy.length === healths.length ? "unreachable" : "degraded",
+    status: everyStatus.size === 1 && everyStatus.has("protocol_error") ? "protocol_error" : "unreachable",
     unhealthySources,
   };
 }

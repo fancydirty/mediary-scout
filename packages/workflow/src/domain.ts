@@ -1,3 +1,5 @@
+import type { MergedSourceHealth } from "./resource-source-health.js";
+
 /**
  * The implicit account that owns all data in a single-user (multi-user disabled)
  * deployment, and the fail-closed default everywhere an account is not explicitly
@@ -132,6 +134,9 @@ export interface ResourceSnapshot {
   keyword: string;
   candidates: ResourceCandidate[];
   createdAt: string;
+  /** 本次搜索各源的健康态。可选：老快照与不关心健康态的 provider 不带此字段。
+   *  缺失时按 healthy 处理（向后兼容），因此新增判定必须显式检查而非假设存在。 */
+  sourceHealth?: MergedSourceHealth;
 }
 
 export interface AgentDecision {
