@@ -92,6 +92,22 @@ export function isSourceUsable(health: SourceHealth): boolean {
   return health.status === "healthy";
 }
 
+/**
+ * 合并态是否算「可用证据」——即基于它下「没有资源」的结论是否站得住。
+ *
+ * degraded 算可用：至少一个源答了，拿到的候选是真的。有意不把 degraded 归为
+ * 不可用 —— 否则任何一个次要索引挂掉就再也报不出真实的「没有资源」，过于激进。
+ * healthy 走 isSourceUsable，不在这里重述分类学。
+ *
+ * 调用方需要「缺字段=healthy」的向后兼容时，自己传 undefined 进来即可。
+ * fallback-provider.ts 有一个同口径的本地谓词（它吃的是域快照，不是 V2 快照）。
+ */
+export function isMergedSourceEvidenceUsable(health: MergedSourceHealth | undefined): boolean {
+  if (!health) return true;
+  if (health.status === "degraded") return true;
+  return isSourceUsable({ status: health.status, source: health.unhealthySources.join("、") });
+}
+
 export function mergeSourceHealth(healths: readonly SourceHealth[]): MergedSourceHealth {
   if (healths.length === 0) {
     return { status: "healthy", unhealthySources: [] };

@@ -529,3 +529,122 @@ describe("预搜(prime)路径也必须带上健康态警告（Task 9 生产主�
     expect(warning).toContain("pansou");
   });
 });
+
+describe("证据全不健康时禁止上报「没有资源」（Task 10：从劝告变强制）", () => {
+  type Health = { status: "healthy" | "degraded" | "unreachable" | "protocol_error"; unhealthySources: string[] };
+
+  /** 按关键词分派健康态的 provider——这样一个证据基里可以同时存在健康与不健康
+   *  的快照，用来分辨「全不健康」与「部分不健康」这两种必须区别对待的情形。 */
+  function perKeywordProvider(plan: Record<string, { health?: Health; candidates?: Array<{ id: string; title: string }> }>) {
+    return {
+      async search(keyword: string) {
+        const entry = plan[keyword.trim()] ?? {};
+        return {
+          id: `s_${keyword}`,
+          keyword,
+          candidates: entry.candidates ?? [],
+          ...(entry.health ? { sourceHealth: entry.health } : {}),
+        };
+      },
+    };
+  }
+
+  it("证据基里每一份快照都不健康 → 拒绝上报,并点名是搜索源故障", async () => {
+    // Task 9 只给了 agent 一句警告。LLM 会无视警告——所以这里必须是机械的。
+    const sandbox = new TaskSandbox({
+      provider: perKeywordProvider({
+        攻壳机动队: { health: { status: "unreachable", unhealthySources: ["pansou"] } },
+        "攻殻機動隊": { health: { status: "protocol_error", unhealthySources: ["pansou"] } },
+      }),
+      titleTerms: ["攻壳机动队", "攻殻機動隊"],
+    });
+    await sandbox.searchResources("攻壳机动队");
+    await sandbox.searchResources("攻殻機動隊");
+
+    await expect(sandbox.reportNoCoverage("没搜到")).rejects.toThrow(/SANDBOX_SOURCE_UNHEALTHY/);
+    // 拒绝语必须点名源故障、否掉「没有资源」这个结论,并告诉 agent 改做什么。
+    await expect(sandbox.reportNoCoverage("没搜到")).rejects.toThrow(/搜索源/);
+    await expect(sandbox.reportNoCoverage("没搜到")).rejects.toThrow(/没有资源/);
+    await expect(sandbox.reportNoCoverage("没搜到")).rejects.toThrow(/pansou/);
+  });
+
+  it("只要有一份健康快照 → 放行（部分证据仍是证据）", async () => {
+    // agent 搜了、有源答了、确实没找到——这是合法的 no_coverage,不能拦。
+    const sandbox = new TaskSandbox({
+      provider: perKeywordProvider({
+        攻壳机动队: { health: { status: "unreachable", unhealthySources: ["pansou"] } },
+        "攻殻機動隊": { health: { status: "healthy", unhealthySources: [] } },
+      }),
+      titleTerms: ["攻壳机动队", "攻殻機動隊"],
+    });
+    await sandbox.searchResources("攻壳机动队");
+    await sandbox.searchResources("攻殻機動隊");
+
+    await expect(sandbox.reportNoCoverage("确无资源")).resolves.toMatchObject({ reason: "确无资源" });
+  });
+
+  it("全部健康且零候选 → 放行（权威的「确实没有」,最关键的对照组）", async () => {
+    // 这条断言守的是「产品还能不能报告真实的缺失」。它一红,修的这个 bug 就
+    // 被换成了一个更坏的 bug:任何真实的「没有资源」都再也报不出来。
+    const sandbox = new TaskSandbox({
+      provider: perKeywordProvider({
+        攻壳机动队: { health: { status: "healthy", unhealthySources: [] } },
+      }),
+      titleTerms: ["攻壳机动队"],
+    });
+    await sandbox.searchResources("攻壳机动队");
+
+    const report = await sandbox.reportNoCoverage("资源市场确无该作品");
+    expect(report.searchesPerformed).toBe(1);
+    expect(sandbox.auditTrail().some((e) => e.type === "no_coverage_reported")).toBe(true);
+  });
+
+  it("唯一证据是不健康的【预搜】快照、agent 一次都没搜 → 拒绝（就是那次 6 天静默的原形）", async () => {
+    // 生产主路径:系统 primeRawSnapshot,提示词明令 agent 别重搜该词。源当时挂着,
+    // 预搜拿回空快照,agent 直接 reportNoCoverage —— 用户读到「暂未找到可用资源」。
+    const sandbox = new TaskSandbox({
+      provider: perKeywordProvider({
+        攻壳机动队: { health: { status: "unreachable", unhealthySources: ["pansou"] } },
+      }),
+      titleTerms: ["攻壳机动队"],
+    });
+    await sandbox.primeRawSnapshot("攻壳机动队");
+
+    await expect(sandbox.reportNoCoverage("raw 快照无覆盖")).rejects.toThrow(/SANDBOX_SOURCE_UNHEALTHY/);
+  });
+
+  it("degraded 算可用证据 → 放行", async () => {
+    // 有意的选择:degraded = 至少一个源答了。若连 degraded 都拦,那么任何一个
+    // 次要索引挂掉就再也报不出「没有资源」——过于激进,会把这道闸变成噪音。
+    const sandbox = new TaskSandbox({
+      provider: perKeywordProvider({
+        攻壳机动队: { health: { status: "degraded", unhealthySources: ["prowlarr"] } },
+      }),
+      titleTerms: ["攻壳机动队"],
+    });
+    await sandbox.searchResources("攻壳机动队");
+
+    await expect(sandbox.reportNoCoverage("主源答了,确无")).resolves.toMatchObject({ searchesPerformed: 1 });
+  });
+
+  it("拒绝会记审计事件（对齐 no_coverage_reported / search_taboo_warning 形制）,且不记成功上报", async () => {
+    const sandbox = new TaskSandbox({
+      provider: perKeywordProvider({
+        攻壳机动队: { health: { status: "unreachable", unhealthySources: ["pansou"] } },
+      }),
+      titleTerms: ["攻壳机动队"],
+    });
+    await sandbox.searchResources("攻壳机动队");
+
+    await expect(sandbox.reportNoCoverage("没搜到")).rejects.toThrow(/SANDBOX_SOURCE_UNHEALTHY/);
+
+    const event = sandbox.auditTrail().find((e) => e.type === "no_coverage_refused_source_unhealthy");
+    expect(event).toBeDefined();
+    expect(typeof event!.message).toBe("string");
+    expect(event!.message.length).toBeGreaterThan(0);
+    expect(event!.data?.reason).toBe("没搜到");
+    expect(event!.data?.unhealthySources).toEqual(["pansou"]);
+    // 被拒的上报绝不能同时留下一条「已上报无覆盖」——否则审计自相矛盾。
+    expect(sandbox.auditTrail().some((e) => e.type === "no_coverage_reported")).toBe(false);
+  });
+});

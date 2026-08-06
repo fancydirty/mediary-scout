@@ -12,7 +12,7 @@ import type { SimTreeFile, StorageV2, TransferAttemptResult } from "./storage-11
 import { isSystemicTransferBlockMessage } from "./transfer-block.js";
 import { animeSearchTabooWarnings, type SearchProfile } from "./search-profile.js";
 import type { AuditEvent } from "../domain.js";
-import type { MergedSourceHealth } from "../resource-source-health.js";
+import { isMergedSourceEvidenceUsable, type MergedSourceHealth } from "../resource-source-health.js";
 
 /** Quality / subtitle / source tokens that PanSou share titles almost never carry,
  *  so appending them collapses recall (实测归零). Case-insensitive; word-ish so
@@ -753,12 +753,40 @@ export class TaskSandbox {
    *  tells the agent NOT to re-search the raw keyword (viewResourceSnapshot is
    *  free), and even a re-search hits dedup without touching seenKeywords — so
    *  counting only seenKeywords refused a well-behaved agent's honest report on
-   *  a truly-uncovered title and forced wasted turns (the 病1-style dead tail). */
+   *  a truly-uncovered title and forced wasted turns (the 病1-style dead tail).
+   *
+   *  Task 10: 光有搜索还不够——那些搜索还得是有效证据。证据基整体不健康时上报
+   *  被机械拒绝(SANDBOX_SOURCE_UNHEALTHY),因为「没有资源」这个结论不被一份
+   *  全是故障源的证据支持。只拦「全不健康」,不拦「部分不健康」。 */
   async reportNoCoverage(reason: string): Promise<{ reason: string; searchesPerformed: number }> {
     const evidenceKeywords = new Set([...this.seenKeywords, ...this.snapshotByKeyword.keys()]);
     if (evidenceKeywords.size === 0) {
       throw new Error(
         "SANDBOX_NO_PROVIDER_EVIDENCE: cannot report no-coverage before any real search ran (§9 infrastructure failure)",
+      );
+    }
+    // Task 10: 整个证据基都不健康 → 「没有资源」不是这份证据支持得起的结论。
+    // Task 9 已经把这件事告诉 agent 了,但那只是劝告;LLM 有时就是会无视警告,
+    // 于是源挂了 6 天、用户一直读到「暂未找到可用资源」。所以这里必须是机械的。
+    //
+    // 别甩锅(同 transfer-block.ts 的 systemicBlock):把系统故障报成「暂未找到
+    // 资源」是拿资源给系统问题背锅。这里只拦「全不健康」——只要有一份快照可用
+    // (healthy 或 degraded),就说明确实有源答过话,那是合法的「确实没有」,放行。
+    const snapshots = [...this.snapshotByKeyword.values()];
+    const unusable = snapshots.filter((snapshot) => !isMergedSourceEvidenceUsable(snapshot.sourceHealth));
+    if (snapshots.length > 0 && unusable.length === snapshots.length) {
+      const unhealthySources = [
+        ...new Set(unusable.flatMap((snapshot) => snapshot.sourceHealth?.unhealthySources ?? [])),
+      ];
+      const sources = unhealthySources.length > 0 ? unhealthySources.join("、") : "未知";
+      const statuses = [...new Set(unusable.map((snapshot) => snapshot.sourceHealth!.status))].join("/");
+      this.auditEvents.push({
+        type: "no_coverage_refused_source_unhealthy",
+        message: `拒绝无覆盖上报:证据基 ${snapshots.length} 份快照全部来自不健康的搜索源(${statuses}): ${sources}`,
+        data: { reason, status: statuses, unhealthySources, snapshotCount: snapshots.length },
+      });
+      throw new Error(
+        `SANDBOX_SOURCE_UNHEALTHY: 搜索源「${sources}」本次全程故障(${statuses}),你手上这 ${snapshots.length} 份快照没有一份是有效证据。「没有资源」这个结论不被这份证据支持,已拒绝上报——不要再改措辞重试。请直接结束本次任务并如实说明是搜索源故障(不是这部片子没有资源):本轮按「搜索源不可用」收尾,资源留待源恢复后重试。`,
       );
     }
     this.auditEvents.push({
