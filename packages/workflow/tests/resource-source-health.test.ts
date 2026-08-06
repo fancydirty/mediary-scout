@@ -3,6 +3,8 @@ import {
   classifySourceFailure,
   mergeSourceHealth,
   isSourceUsable,
+  PanSouProtocolError,
+  hasRecognisedUnreachableCode,
 } from "../src/resource-source-health.js";
 
 describe("classifySourceFailure", () => {
@@ -28,6 +30,29 @@ describe("classifySourceFailure", () => {
     expect(classifySourceFailure(new Error("PANSOU_BAD_RESPONSE: not a PanSou payload"))).toBe(
       "protocol_error",
     );
+  });
+
+  it("classifies PanSouProtocolError by instanceof, not by message text", () => {
+    // instanceof is the type-safe path; the string prefix is only a cross-process
+    // fallback. Renaming the message must not downgrade protocol_error.
+    expect(classifySourceFailure(new PanSouProtocolError("whatever wording"))).toBe(
+      "protocol_error",
+    );
+  });
+
+  it("unwraps error.cause to find the socket code (undici wraps it)", () => {
+    // Node fetch surfaces a flat "fetch failed" and hides ECONNREFUSED on .cause.
+    // Without unwrapping, UNREACHABLE_CODES would never match in production.
+    const wrapped = Object.assign(new Error("fetch failed"), {
+      cause: Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:8899"), {
+        code: "ECONNREFUSED",
+      }),
+    });
+    expect(classifySourceFailure(wrapped)).toBe("unreachable");
+    // Assert the MECHANISM, not just the outcome: the fallback also returns
+    // "unreachable", so without this the cause-unwrap could be deleted and the
+    // test would stay green (verified by mutation).
+    expect(hasRecognisedUnreachableCode(wrapped)).toBe(true);
   });
 
   it("falls back to unreachable for an unrecognised error rather than pretending success", () => {

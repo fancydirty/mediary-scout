@@ -22,8 +22,19 @@ export interface MergedSourceHealth {
   unhealthySources: string[];
 }
 
-/** 协议层失败的哨兵前缀。provider 用它标记「连上了但对方不是 PanSou」。 */
+/** 协议层失败的哨兵前缀。仅作为跨进程/跨包的兜底识别手段——同进程内请抛
+ *  `PanSouProtocolError`，靠 instanceof 判定，避免改一句错误文案就把
+ *  protocol_error 静默降级成 unreachable（用户会因此拿到错误的排查建议）。 */
 export const PROTOCOL_ERROR_PREFIX = "PANSOU_BAD_RESPONSE";
+
+/** 「连上了，但对方不是 PanSou」。与仓库既有的 Pan115AuthError / QuarkAuthError
+ *  等同一形制。消息仍带 PROTOCOL_ERROR_PREFIX，使字符串兜底路径继续成立。 */
+export class PanSouProtocolError extends Error {
+  constructor(detail: string) {
+    super(`${PROTOCOL_ERROR_PREFIX}: ${detail}`);
+    this.name = "PanSouProtocolError";
+  }
+}
 
 const UNREACHABLE_CODES = new Set([
   "ECONNREFUSED",
@@ -42,6 +53,11 @@ const UNREACHABLE_CODES = new Set([
  * 停止排查，正是本次要修的病。
  */
 export function classifySourceFailure(error: unknown): Exclude<SourceStatus, "healthy"> {
+  // instanceof 优先:同进程内这是类型安全的判定。字符串前缀留作兜底,
+  // 覆盖跨包/跨进程(错误经序列化后 instanceof 失效)的情形。
+  if (error instanceof PanSouProtocolError) {
+    return "protocol_error";
+  }
   const message = error instanceof Error ? error.message : String(error);
   if (message.startsWith(PROTOCOL_ERROR_PREFIX)) {
     return "protocol_error";
@@ -49,14 +65,22 @@ export function classifySourceFailure(error: unknown): Exclude<SourceStatus, "he
   // 下面两个分支当前同值(都 unreachable),保留不是冗余而是分类学:它们记录了
   // 已经考虑过的失败条件。后续若要按错误类型分化重试/退避策略(ETIMEDOUT 值得
   // 重试、ECONNREFUSED 基本不值得),分叉点就在这里 —— 届时不必重新调研这份清单。
-  const code = (error as { code?: unknown } | null)?.code;
-  if (typeof code === "string" && UNREACHABLE_CODES.has(code)) {
-    return "unreachable";
-  }
-  if (/timed out|timeout|aborted/i.test(message)) {
+  // undici/Node fetch 把真实 socket 错误包在 cause 里:外层只是扁平的
+  // "fetch failed",code 在 cause 上。不解包的话 UNREACHABLE_CODES 在生产里
+  // 几乎永远匹配不上(结论仍对,但这份清单就成了摆设)。
+  if (hasRecognisedUnreachableCode(error)) {
     return "unreachable";
   }
   return "unreachable";
+}
+
+/** 该错误是否被 UNREACHABLE_CODES 清单**识别**（而非只是落到兜底分支）。
+ *  导出它的理由：`classifySourceFailure` 的兜底也返回 unreachable，因此仅断言
+ *  返回值无法区分「清单命中」与「兜底」——一个去掉 cause 解包的改动会让清单在
+ *  生产中形同虚设，而测试照样绿。这个谓词让那件事变得可断言。 */
+export function hasRecognisedUnreachableCode(error: unknown): boolean {
+  const code = errorCode(error) ?? errorCode((error as { cause?: unknown } | null)?.cause);
+  return code !== undefined && UNREACHABLE_CODES.has(code);
 }
 
 export function isSourceUsable(health: SourceHealth): boolean {
@@ -76,4 +100,9 @@ export function mergeSourceHealth(healths: readonly SourceHealth[]): MergedSourc
     status: unhealthy.length === healths.length ? "unreachable" : "degraded",
     unhealthySources,
   };
+}
+
+function errorCode(error: unknown): string | undefined {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === "string" ? code : undefined;
 }
