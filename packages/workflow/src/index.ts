@@ -22,6 +22,7 @@ export * from "./commands.js";
 export * from "./pansou-provider.js";
 export * from "./prowlarr-provider.js";
 export * from "./composite-provider.js";
+export * from "./fallback-provider.js";
 export * from "./tmdb-provider.js";
 export * from "./subtitle-provider.js";
 export * from "./storage-115-executor.js";
