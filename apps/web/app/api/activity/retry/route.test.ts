@@ -1,11 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
-vi.mock("next/server", async () => {
-  const actual = await vi.importActual<typeof import("next/server")>("next/server");
-  return { ...actual, connection: vi.fn().mockResolvedValue(undefined) };
-});
-
 vi.mock("../../../../lib/demo-mode", () => ({ isDemoMode: vi.fn(() => false) }));
 
 const retryFailedWorkflowRun = vi.fn();

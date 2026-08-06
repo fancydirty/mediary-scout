@@ -57,3 +57,6 @@ docs/promo/
 docs/images/devto-cover.*
 .opencode/
 .opencode/ralph-loop.local.md
+
+# 根目录截图残留（agent 浏览器会话产物，不该入库）
+/*.png

@@ -4,7 +4,6 @@ import { getCurrentAccountId, getWorkflowRepository } from "../../../../lib/work
 import { isQueueClaimableKind } from "@media-track/workflow";
 import type { RetryRefusalReason } from "../../../../lib/activity-view";
 
-
 /**
  * Manually retry a terminally FAILED acquisition (user action from the activity
  * page). Resets the run to immediately-claimable queued so the worker re-runs it.
