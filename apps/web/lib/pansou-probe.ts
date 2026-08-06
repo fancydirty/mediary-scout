@@ -18,16 +18,17 @@ export async function probePanSou(
   options: { fetchImpl?: typeof fetch } = {},
 ): Promise<PanSouProbeResult> {
   const fetchImpl = options.fetchImpl ?? fetch;
-  const url = `${baseURL.replace(/\/+$/, "")}/api/search`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
+  // trim 后再拼:首尾空白会拼出非法请求地址。
+  const url = `${baseURL.trim().replace(/\/+$/, "")}/api/search`;
   try {
     const response = await fetchImpl(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       // 探活用一个无意义关键词：命中与否不重要，响应形状才重要。
       body: JSON.stringify({ kw: "__probe__", res: "all" }),
-      signal: controller.signal,
+      // 与仓库其余处一致(fetch-with-timeout.ts / remote-access-probe.ts):
+      // 用 AbortSignal.timeout 而不是手搓 controller + setTimeout。
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
     });
     if (!response.ok) {
       return {
@@ -57,8 +58,6 @@ export async function probePanSou(
         ? `搜索源 ${PROBE_TIMEOUT_MS / 1000} 秒内无响应，未保存；若想先跑起来，清空本项即可回落官方源。`
         : "连不上该搜索源，未保存。请检查地址、端口与容器是否在运行；若想先跑起来，清空本项即可回落官方源。",
     };
-  } finally {
-    clearTimeout(timer);
   }
 }
 

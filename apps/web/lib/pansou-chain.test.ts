@@ -3,6 +3,7 @@ import { FallbackResourceProvider, PanSouResourceProvider } from "@media-track/w
 import {
   buildPanSouProviderChain,
   observeHealth,
+  normalizePanSouBaseUrl,
   DEFAULT_PANSOU_BASE_URL,
   resolveUserPanSouBaseUrl,
 } from "./pansou-chain";
@@ -38,6 +39,17 @@ describe("buildPanSouProviderChain", () => {
   it("ignores surrounding whitespace when comparing against the official source", () => {
     expect(
       buildPanSouProviderChain({ userBaseURL: `  ${DEFAULT_PANSOU_BASE_URL}  `, allowedTypes: [] }),
+    ).toBeInstanceOf(PanSouResourceProvider);
+  });
+
+  it("treats the official URL WITH a trailing slash as official, not custom", () => {
+    // 尾随斜杠很常见。字符串直比会误判成自建源,于是白包一层 fallback:失败时
+    // 跑两遍、还把结果标 degraded(Copilot suppressed 意见)。
+    expect(
+      buildPanSouProviderChain({ userBaseURL: `${DEFAULT_PANSOU_BASE_URL}/`, allowedTypes: [] }),
+    ).toBeInstanceOf(PanSouResourceProvider);
+    expect(
+      buildPanSouProviderChain({ userBaseURL: `${DEFAULT_PANSOU_BASE_URL}//`, allowedTypes: [] }),
     ).toBeInstanceOf(PanSouResourceProvider);
   });
 
@@ -130,5 +142,19 @@ describe("observeHealth（告警能否在生产触发的唯一信号来源）", 
 
     await expect(wrapped.search({ keyword: "k" })).rejects.toBe(boom);
     expect(seen).toEqual([false]);
+  });
+});
+
+describe("normalizePanSouBaseUrl", () => {
+  it("使带/不带尾随斜杠的同一地址判为同一个源", () => {
+    expect(normalizePanSouBaseUrl("https://x/")).toBe("https://x");
+    expect(normalizePanSouBaseUrl("  https://x//  ")).toBe("https://x");
+    expect(normalizePanSouBaseUrl("https://x")).toBe("https://x");
+  });
+
+  it("空/未配返回空串（hasCustom 要靠它区分）", () => {
+    expect(normalizePanSouBaseUrl("")).toBe("");
+    expect(normalizePanSouBaseUrl(null)).toBe("");
+    expect(normalizePanSouBaseUrl(undefined)).toBe("");
   });
 });

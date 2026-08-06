@@ -5,6 +5,11 @@ import {
   type ResourceType,
 } from "@media-track/workflow";
 
+/** 去掉首尾空白与尾随斜杠,使 `https://x` 与 `https://x/` 判为同一个源。 */
+export function normalizePanSouBaseUrl(baseURL: string | null | undefined): string {
+  return (baseURL ?? "").trim().replace(/\/+$/, "");
+}
+
 /** 官方公共 PanSou。用户留空时的默认，也是自建源挂掉时的退路。 */
 export const DEFAULT_PANSOU_BASE_URL = "https://so.252035.xyz";
 
@@ -43,7 +48,9 @@ export function buildPanSouProviderChain(input: {
    *  6 天,而没有任何一条路径会把那个失败记下来。Copilot 评审指出了这一点。 */
   onSourceHealth?: (healthy: boolean) => void;
 }): ResourceProvider {
-  const user = input.userBaseURL.trim();
+  // 归一化后再比:用户把官方地址填成带尾斜杠的 `.../`(很常见)时,字符串直比会
+  // 误判成「自建源」,于是白包一层 fallback —— 失败时跑两遍、还把结果标 degraded。
+  const user = normalizePanSouBaseUrl(input.userBaseURL);
   const hasCustom = user !== "" && user !== DEFAULT_PANSOU_BASE_URL;
   if (!hasCustom) {
     return new PanSouResourceProvider({

@@ -1112,8 +1112,11 @@ export function resolveIsDesktop(env: Record<string, string | undefined> = proce
 
 export const PANSOU_BASE_URL_SETTING_KEY = "pansou_base_url";
 
-/** 上次探活结论（"ok" | 失败 reason）。设置页徽章每 8s 轮询一次，绝不能在
- *  那条路径上真打网络，所以这里存保存时的结论供它读取。 */
+/** 自建搜索源的最新健康结论。取值只有三种:`"ok"` / `"unhealthy"` / `""`(未配或
+ *  已清空)—— **不是**结构化 reason,别按 reason 去解析。
+ *  两个写入方:保存时探活(actions / config-io)与每次真实搜索后的回写
+ *  (recordPanSouHealth)。设置页徽章每 8s 轮询,绝不能在那条路径上打网络,
+ *  所以它只读这里。 */
 export const PANSOU_HEALTH_SETTING_KEY = "pansou_last_probe";
 
 /** Default public PanSou instance (author-hosted), used when neither the DB
