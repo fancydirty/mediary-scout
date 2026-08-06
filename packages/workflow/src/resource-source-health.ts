@@ -75,7 +75,7 @@ const UNREACHABLE_CODES = new Set([
  * 「源可能有问题」，也不能把未知失败当成「确认没有资源」——后者会让用户
  * 停止排查，正是本次要修的病。
  */
-export function classifySourceFailure(error: unknown): Exclude<SourceStatus, "healthy"> {
+export function classifySourceFailure(error: unknown): "unreachable" | "protocol_error" {
   // instanceof 优先:同进程内这是类型安全的判定。字符串前缀留作兜底,
   // 覆盖跨包/跨进程(错误经序列化后 instanceof 失效)的情形。
   if (error instanceof PanSouProtocolError) {
@@ -130,25 +130,30 @@ export function mergeSourceHealth(healths: readonly SourceHealth[]): MergedSourc
   if (healths.length === 0) {
     return { status: "healthy", unhealthySources: [] };
   }
-  const unhealthy = healths.filter((h) => !isSourceUsable(h));
-  const unhealthySources = unhealthy.map((h) => h.source);
+  // 两个集合要分开:
+  //  - `unusable` = 完全不可用的源(unreachable/protocol_error),决定「是否全挂」。
+  //  - `unhealthySources` = 所有「不是完全健康」的源,决定「点名谁」。degraded 的
+  //    源(比如回落官方源后)必须也能被点名,否则全 degraded 时报 [] → 上层只能
+  //    显示「未知」。
+  const unusable = healths.filter((h) => !isSourceUsable(h));
+  const unhealthySources = healths.filter((h) => h.status !== "healthy").map((h) => h.source);
   // 任何源自报 degraded(比如回落官方源后)都说明整体证据不完整 —— 即使没有源
   // 完全挂掉。此时必须带 degraded 信号,否则「部分证据」看起来像「完整证据」。
   const anyDegraded = healths.some((h) => h.status === "degraded");
-  if (unhealthy.length === 0 && anyDegraded) {
+  if (unusable.length === 0 && anyDegraded) {
     return { status: "degraded", unhealthySources };
   }
-  if (unhealthy.length === 0) {
+  if (unusable.length === 0) {
     return { status: "healthy", unhealthySources };
   }
-  if (unhealthy.length !== healths.length) {
+  if (unusable.length !== healths.length) {
     // 还有源在答:候选可用,但「没找到」不成立。此时具体是哪种失败不重要 ——
     // 用户的当务之急是知道证据不完整,而不是去修某一个源。
     return { status: "degraded", unhealthySources };
   }
   // 全挂。若所有失败同因,把这个因保留下来,好给出对症的处置建议;
   // 混合失败则退回 unreachable(没有单一的建议可给)。
-  const everyStatus = new Set(unhealthy.map((h) => h.status));
+  const everyStatus = new Set(unusable.map((h) => h.status));
   return {
     status: everyStatus.size === 1 && everyStatus.has("protocol_error") ? "protocol_error" : "unreachable",
     unhealthySources,

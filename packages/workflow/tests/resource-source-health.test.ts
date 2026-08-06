@@ -116,6 +116,15 @@ describe("mergeSourceHealth", () => {
     expect(merged.status).toBe("unreachable");
   });
 
+  it("names a degraded source in unhealthySources so the UI can say WHO", () => {
+    // 全 degraded(没有任何源完全挂掉)时必须仍能点名是哪个源证据不完整,
+    // 否则 unhealthySources: [] → 上层告警只能显示「未知」(Copilot 评审)。
+    const merged = mergeSourceHealth([{ status: "degraded", source: "自建搜索源" }]);
+
+    expect(merged.status).toBe("degraded");
+    expect(merged.unhealthySources).toEqual(["自建搜索源"]);
+  });
+
   it("is degraded (not protocol_error) when another source still answers", () => {
     const merged = mergeSourceHealth([
       { status: "healthy", source: "prowlarr" },

@@ -42,7 +42,7 @@ export class FallbackResourceProvider implements ResourceProvider {
     }
     // 主源的真实病因:抛错时来自 classifySourceFailure,自报不健康时来自它
     // 自己的 status。带着它走,fallback 之后 UI 仍能给出对症的建议。
-    const primaryStatus: Exclude<SourceStatus, "healthy"> = primary.ok
+    const primaryStatus: "unreachable" | "protocol_error" = primary.ok
       ? primary.snapshot.sourceHealth?.status === "protocol_error"
         ? "protocol_error"
         : "unreachable"
@@ -85,7 +85,9 @@ export class FallbackResourceProvider implements ResourceProvider {
 
 type Attempt =
   | { ok: true; snapshot: ResourceSnapshot }
-  | { ok: false; status: Exclude<SourceStatus, "healthy"> };
+  // attempt() 的 catch 只可能从 classifySourceFailure 得到这两种,不会出现
+  // degraded —— 类型收紧以免后续误把 degraded 当「异常原因」用。
+  | { ok: false; status: "unreachable" | "protocol_error" };
 
 /** 保留失败原因而不是 `catch { return null }`。丢掉它会把主源的
  *  protocol_error 压成 unreachable —— 而这两者存在的全部理由就是给用户
