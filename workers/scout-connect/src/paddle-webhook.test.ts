@@ -388,6 +388,9 @@ describe("时间基准:用事件的 occurred_at 而非投递到达时刻", () =>
       expires_at: "2026-08-01T00:00:00.000Z",
       source: "manual",
       paddle_transaction_id: null,
+      payment_provider: null,
+      payment_transaction_id: null,
+      refunded_at: null,
       months: 1,
       created_at: "2026-07-01T00:00:00.000Z",
     });

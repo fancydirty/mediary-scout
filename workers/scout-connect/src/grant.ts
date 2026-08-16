@@ -1,4 +1,4 @@
-import { computeExpiry, latestExpiry, recomputeExpiry } from "./entitlement.js";
+import { computeExpiry, latestExpiry, reconcileEntitlementLedger } from "./entitlement.js";
 import type { AccountRow, ConnectDb, EntitlementRow } from "./db.js";
 
 /**
@@ -18,15 +18,19 @@ export interface GrantDeps {
 }
 
 export interface GrantInput {
+  /** Existing payment account. When supplied, email must match it exactly after normalization. */
+  accountId?: string;
   /** 未归一的邮箱(本函数负责 trim + lowercase)。 */
   email: string;
   months: number;
   /** 复用 EntitlementRow 的联合类型,而不是宽泛 string:发放来源是有限集合,
    *  写错值会让账本对不上(也无法按来源统计)。 */
   source: EntitlementRow["source"];
-  /** Paddle 交易 ID。幂等键 —— 同一交易重投不会重复入账。
-   *  手工授予传 null(schema 的偏唯一索引只覆盖非 null,故多次手工授予都入账)。 */
-  paddleTransactionId: string | null;
+  /** Payment-scoped idempotency pair. Manual grants use two nulls. */
+  paymentProvider?: EntitlementRow["payment_provider"];
+  paymentTransactionId?: string | null;
+  /** Transitional input for the Paddle runtime removed later in this migration. */
+  paddleTransactionId?: string | null;
 }
 
 export interface GrantResult {
@@ -58,6 +62,16 @@ async function upsertAccount(email: string, deps: GrantDeps): Promise<AccountRow
   }
 }
 
+async function resolveAccount(input: GrantInput, email: string, deps: GrantDeps): Promise<AccountRow> {
+  if (input.accountId === undefined) return upsertAccount(email, deps);
+  const account = await deps.db.getAccountById(input.accountId);
+  if (account === null) throw new Error("payment account not found");
+  if (account.email.trim().toLowerCase() !== email) {
+    throw new Error("payment account email mismatch");
+  }
+  return account;
+}
+
 export async function grantEntitlement(
   input: GrantInput,
   deps: GrantDeps,
@@ -66,7 +80,17 @@ export async function grantEntitlement(
   // 账号(付了钱却在另一个账号下)。
   const email = input.email.trim().toLowerCase();
   const now = deps.now();
-  const account = await upsertAccount(email, deps);
+  const account = await resolveAccount(input, email, deps);
+  const legacyPaddleTransactionId = input.paddleTransactionId ?? null;
+  const paymentProvider =
+    input.paymentProvider ?? (legacyPaddleTransactionId === null ? null : "paddle");
+  const paymentTransactionId =
+    input.paymentTransactionId === undefined
+      ? legacyPaddleTransactionId
+      : input.paymentTransactionId;
+  if ((paymentProvider === null) !== (paymentTransactionId === null)) {
+    throw new Error("payment provider and transaction id must be supplied together");
+  }
 
   const ents = await deps.db.listEntitlements(account.id);
   const expiresAt = computeExpiry({
@@ -81,7 +105,10 @@ export async function grantEntitlement(
     account_id: account.id,
     expires_at: expiresAt,
     source: input.source,
-    paddle_transaction_id: input.paddleTransactionId,
+    paddle_transaction_id: paymentProvider === "paddle" ? paymentTransactionId : null,
+    payment_provider: paymentProvider,
+    payment_transaction_id: paymentTransactionId,
+    refunded_at: null,
     months: input.months,
     created_at: now,
   });
@@ -90,22 +117,12 @@ export async function grantEntitlement(
     // 幂等命中(同一 paddle_transaction_id 已入过账)。**必须回读**而不是返回
     // 上面算出的 expiresAt —— 那个值是「假设本次入账」算出来的,比真实到期多
     // 一个周期。Paddle 重投很常见,回错值会让控制台显示比实际更长的有效期。
-    const after = await deps.db.listEntitlements(account.id);
-    // **重投要有自愈能力。** 上一次的并发收敛(下面那段)可能在 insert 之后、
-    // update 之前失败(D1 抖动 → webhook 503 → Paddle 重投)。若幂等分支只回读,
-    // 那个基于陈旧快照的错值会**永久留下** —— 用户永久少拿一个周期(实测复现)。
-    // 所以这里也重算,并在必要时修正本笔交易对应的那行。
-    const truth = recomputeExpiry(after);
-    if (truth !== null && input.paddleTransactionId !== null) {
-      const existing = await deps.db.getEntitlementByTransactionId(input.paddleTransactionId);
-      if (existing !== null && existing.expires_at !== truth) {
-        await deps.db.updateEntitlementExpiry(existing.id, truth);
-        return { accountId: account.id, expiresAt: truth, applied: false };
-      }
-    }
+    // **重投要有自愈能力。** 上一次的并发收敛可能在 insert 之后、update
+    // 之前失败。统一重建每个有效缓存，既修复旧错误，也正确排除退款行。
+    const truth = await reconcileEntitlementLedger(account.id, deps.db);
     return {
       accountId: account.id,
-      expiresAt: truth ?? latestExpiry(after) ?? expiresAt,
+      expiresAt: truth ?? expiresAt,
       applied: false,
     };
   }
@@ -115,12 +132,6 @@ export async function grantEntitlement(
   // 进来会读到同一个 currentExpiry,各自算出同一个 expires_at,结果用户付了
   // 24 个月只拿到 12 个月(已用确定性交错实测复现)。D1 没有跨请求事务,加不了锁。
   // 重算的结果与写入顺序无关,所以两个并发请求最终都会收敛到正确值。
-  const all = await deps.db.listEntitlements(account.id);
-  const truth = recomputeExpiry(all);
-  if (truth !== null && truth !== expiresAt) {
-    // 本行的 expires_at 是基于陈旧快照算的,按账本真值修正。
-    await deps.db.updateEntitlementExpiry(entitlementId, truth);
-    return { accountId: account.id, expiresAt: truth, applied: true };
-  }
-  return { accountId: account.id, expiresAt, applied: true };
+  const truth = await reconcileEntitlementLedger(account.id, deps.db);
+  return { accountId: account.id, expiresAt: truth ?? expiresAt, applied: true };
 }

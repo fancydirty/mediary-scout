@@ -76,6 +76,9 @@ async function seed(
       expires_at: expiresAt,
       source: "manual",
       paddle_transaction_id: null,
+      payment_provider: null,
+      payment_transaction_id: null,
+      refunded_at: null,
       months: 12,
       created_at: NOW,
     });

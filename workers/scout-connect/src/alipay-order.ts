@@ -50,6 +50,7 @@ export function normalizeAlipayAmount(value: unknown): string | null {
 export type PaymentOrderStatus =
   | "created"
   | "form_issued"
+  | "pending"
   | "paid"
   | "fulfilled"
   | "closed"
@@ -59,7 +60,8 @@ const PAYMENT_ORDER_TRANSITIONS: Readonly<
   Record<PaymentOrderStatus, ReadonlySet<PaymentOrderStatus>>
 > = Object.freeze({
   created: new Set<PaymentOrderStatus>(["form_issued", "paid", "closed"]),
-  form_issued: new Set<PaymentOrderStatus>(["paid", "closed"]),
+  form_issued: new Set<PaymentOrderStatus>(["pending", "paid", "closed"]),
+  pending: new Set<PaymentOrderStatus>(["paid", "closed"]),
   paid: new Set<PaymentOrderStatus>(["fulfilled"]),
   fulfilled: new Set<PaymentOrderStatus>(["refunded"]),
   closed: new Set<PaymentOrderStatus>(),

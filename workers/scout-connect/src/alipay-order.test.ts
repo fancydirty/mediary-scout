@@ -49,6 +49,8 @@ describe("normalizeAlipayAmount", () => {
 describe("payment-order transitions", () => {
   it.each([
     ["created", "form_issued"],
+    ["form_issued", "pending"],
+    ["pending", "paid"],
     ["created", "paid"],
     ["created", "closed"],
     ["form_issued", "paid"],
@@ -62,6 +64,7 @@ describe("payment-order transitions", () => {
 
   it.each([
     ["closed", "paid"],
+    ["pending", "refunded"],
     ["refunded", "fulfilled"],
     ["fulfilled", "closed"],
     ["created", "refunded"],

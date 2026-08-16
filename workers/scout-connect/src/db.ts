@@ -1,3 +1,5 @@
+import type { PaymentOrderStatus } from "./alipay-order.js";
+
 export interface InviteRow {
   id: string;
   code: string;
@@ -51,11 +53,50 @@ export interface EntitlementRow {
   id: string;
   account_id: string;
   expires_at: string;
-  source: "paddle" | "founding" | "manual" | "beta";
+  source: "alipay" | "paddle" | "founding" | "manual" | "beta";
+  /** Historical Paddle-only field. New grants write null and use the pair below. */
   paddle_transaction_id: string | null;
+  payment_provider: "alipay" | "paddle" | null;
+  payment_transaction_id: string | null;
+  /** Non-null rows remain auditable but no longer contribute usable time. */
+  refunded_at: string | null;
   months: number;
   created_at: string;
 }
+
+export interface PaymentOrderRow {
+  id: string;
+  checkout_token_sha256: string;
+  account_id: string;
+  provider: "alipay";
+  out_trade_no: string;
+  trade_no: string | null;
+  months: 3 | 12 | 24;
+  total_amount: string;
+  status: PaymentOrderStatus;
+  created_at: string;
+  expires_at: string;
+  paid_at: string | null;
+  fulfilled_at: string | null;
+  closed_at: string | null;
+  refunded_at: string | null;
+  refund_request_no: string | null;
+  last_notify_id: string | null;
+}
+
+export type PaymentOrderPatch = Partial<
+  Pick<
+    PaymentOrderRow,
+    | "trade_no"
+    | "status"
+    | "paid_at"
+    | "fulfilled_at"
+    | "closed_at"
+    | "refunded_at"
+    | "refund_request_no"
+    | "last_notify_id"
+  >
+>;
 
 export interface AuditRow {
   id: string;
@@ -171,6 +212,13 @@ export interface ConnectDb {
   getAccountById(id: string): Promise<AccountRow | null>;
   getAccountByEmail(email: string): Promise<AccountRow | null>;
   updateAccountLastLogin(id: string, at: string): Promise<void>;
+  // Durable Alipay checkout/payment state.
+  insertPaymentOrder(row: PaymentOrderRow): Promise<PaymentOrderRow>;
+  getPaymentOrderById(id: string): Promise<PaymentOrderRow | null>;
+  getPaymentOrderByCheckoutHash(sha256: string): Promise<PaymentOrderRow | null>;
+  getPaymentOrderByOutTradeNo(outTradeNo: string): Promise<PaymentOrderRow | null>;
+  getPaymentOrderByRefundRequestNo(requestNo: string): Promise<PaymentOrderRow | null>;
+  updatePaymentOrder(id: string, patch: PaymentOrderPatch): Promise<void>;
   /** 幂等插入时长记录。paddle_transaction_id 已存在时返回 false(不重复加时长)。 */
   insertEntitlement(row: EntitlementRow): Promise<boolean>;
   /** 修正某笔时长的 expires_at。
@@ -182,6 +230,17 @@ export interface ConnectDb {
   /** 按 paddle_transaction_id 查那笔时长。幂等重投时用来定位「上次收敛失败
    *  留下的错值行」并自愈,见 grant.ts。 */
   getEntitlementByTransactionId(txnId: string): Promise<EntitlementRow | null>;
+  /** Provider-scoped payment idempotency lookup. */
+  getEntitlementByPayment(
+    provider: NonNullable<EntitlementRow["payment_provider"]>,
+    transactionId: string,
+  ): Promise<EntitlementRow | null>;
+  /** Tombstones one paid grant exactly once; false means absent/already refunded. */
+  markEntitlementRefunded(
+    provider: NonNullable<EntitlementRow["payment_provider"]>,
+    transactionId: string,
+    refundedAt: string,
+  ): Promise<boolean>;
   listEntitlements(accountId: string): Promise<EntitlementRow[]>;
 }
 
@@ -271,6 +330,47 @@ function mapWaitlist(row: RawRow): WaitlistRow {
     // SELECT * returns no survey_json column at all → `undefined`, which would
     // break the `string | null` contract and silently vanish from JSON responses.
     survey_json: (row.survey_json as string | null | undefined) ?? null,
+  };
+}
+
+function mapEntitlement(row: RawRow): EntitlementRow {
+  const paddleTransactionId = (row.paddle_transaction_id as string | null | undefined) ?? null;
+  return {
+    id: row.id as string,
+    account_id: row.account_id as string,
+    expires_at: row.expires_at as string,
+    source: row.source as EntitlementRow["source"],
+    paddle_transaction_id: paddleTransactionId,
+    payment_provider:
+      (row.payment_provider as EntitlementRow["payment_provider"] | undefined) ??
+      (paddleTransactionId === null ? null : "paddle"),
+    payment_transaction_id:
+      (row.payment_transaction_id as string | null | undefined) ?? paddleTransactionId,
+    refunded_at: (row.refunded_at as string | null | undefined) ?? null,
+    months: row.months as number,
+    created_at: row.created_at as string,
+  };
+}
+
+function mapPaymentOrder(row: RawRow): PaymentOrderRow {
+  return {
+    id: row.id as string,
+    checkout_token_sha256: row.checkout_token_sha256 as string,
+    account_id: row.account_id as string,
+    provider: "alipay",
+    out_trade_no: row.out_trade_no as string,
+    trade_no: row.trade_no as string | null,
+    months: row.months as PaymentOrderRow["months"],
+    total_amount: row.total_amount as string,
+    status: row.status as PaymentOrderStatus,
+    created_at: row.created_at as string,
+    expires_at: row.expires_at as string,
+    paid_at: row.paid_at as string | null,
+    fulfilled_at: row.fulfilled_at as string | null,
+    closed_at: row.closed_at as string | null,
+    refunded_at: row.refunded_at as string | null,
+    refund_request_no: row.refund_request_no as string | null,
+    last_notify_id: row.last_notify_id as string | null,
   };
 }
 
@@ -429,7 +529,7 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
                   e.hostname AS hostname, e.cf_tunnel_id AS cfTunnelId,
                   e.cf_dns_record_id AS cfDnsRecordId,
                   (SELECT MAX(en.expires_at) FROM entitlements en
-                    WHERE en.account_id = e.account_id) AS latestExpiry
+                    WHERE en.account_id = e.account_id AND en.refunded_at IS NULL) AS latestExpiry
              FROM endpoints e
              JOIN accounts a ON a.id = e.account_id
             WHERE e.status = 'active' AND e.account_id IS NOT NULL`,
@@ -670,16 +770,111 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
       await d1.prepare(`UPDATE accounts SET last_login_at = ? WHERE id = ?`).bind(at, id).run();
     },
 
+    async insertPaymentOrder(row) {
+      await d1
+        .prepare(
+          `INSERT INTO payment_orders
+             (id, checkout_token_sha256, account_id, provider, out_trade_no, trade_no,
+              months, total_amount, status, created_at, expires_at, paid_at, fulfilled_at,
+              closed_at, refunded_at, refund_request_no, last_notify_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          row.id,
+          row.checkout_token_sha256,
+          row.account_id,
+          row.provider,
+          row.out_trade_no,
+          row.trade_no,
+          row.months,
+          row.total_amount,
+          row.status,
+          row.created_at,
+          row.expires_at,
+          row.paid_at,
+          row.fulfilled_at,
+          row.closed_at,
+          row.refunded_at,
+          row.refund_request_no,
+          row.last_notify_id,
+        )
+        .run();
+      return { ...row };
+    },
+
+    async getPaymentOrderById(id) {
+      const row = await d1.prepare(`SELECT * FROM payment_orders WHERE id = ?`).bind(id).first<RawRow>();
+      return row === null ? null : mapPaymentOrder(row);
+    },
+
+    async getPaymentOrderByCheckoutHash(sha256) {
+      const row = await d1
+        .prepare(`SELECT * FROM payment_orders WHERE checkout_token_sha256 = ?`)
+        .bind(sha256)
+        .first<RawRow>();
+      return row === null ? null : mapPaymentOrder(row);
+    },
+
+    async getPaymentOrderByOutTradeNo(outTradeNo) {
+      const row = await d1
+        .prepare(`SELECT * FROM payment_orders WHERE out_trade_no = ?`)
+        .bind(outTradeNo)
+        .first<RawRow>();
+      return row === null ? null : mapPaymentOrder(row);
+    },
+
+    async getPaymentOrderByRefundRequestNo(requestNo) {
+      const row = await d1
+        .prepare(`SELECT * FROM payment_orders WHERE refund_request_no = ?`)
+        .bind(requestNo)
+        .first<RawRow>();
+      return row === null ? null : mapPaymentOrder(row);
+    },
+
+    async updatePaymentOrder(id, patch) {
+      const columns = [
+        "trade_no",
+        "status",
+        "paid_at",
+        "fulfilled_at",
+        "closed_at",
+        "refunded_at",
+        "refund_request_no",
+        "last_notify_id",
+      ] as const;
+      const sets: string[] = [];
+      const values: unknown[] = [];
+      for (const column of columns) {
+        if (patch[column] === undefined) continue;
+        sets.push(`${column} = ?`);
+        values.push(patch[column]);
+      }
+      if (sets.length === 0) return;
+      values.push(id);
+      const result = (await d1
+        .prepare(`UPDATE payment_orders SET ${sets.join(", ")} WHERE id = ?`)
+        .bind(...values)
+        .run()) as { meta?: { changes?: number } };
+      if (result.meta?.changes === 0) throw new Error(`payment order not found: ${id}`);
+    },
+
     async insertEntitlement(row) {
-      // 幂等只针对 paddle_transaction_id 重投:用普通 INSERT,仅当报错确实是
-      // paddle_transaction_id 的唯一冲突时才当幂等返回 false。INSERT OR IGNORE
+      // 幂等只针对 provider + payment_transaction_id 重投:用普通 INSERT,
+      // 仅当报错确实是支付交易唯一冲突时才返回 false。INSERT OR IGNORE
       // 会连 id 主键冲突也一起吞掉,把真事故误判成"重复交易"(Copilot round 4)。
+      const paymentProvider =
+        row.payment_provider ?? (row.paddle_transaction_id === null ? null : "paddle");
+      const paymentTransactionId = row.payment_transaction_id ?? row.paddle_transaction_id;
+      if ((paymentProvider === null) !== (paymentTransactionId === null)) {
+        throw new Error("payment provider and transaction id must be supplied together");
+      }
       try {
         await d1
           .prepare(
             `INSERT INTO entitlements
-               (id, account_id, expires_at, source, paddle_transaction_id, months, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+               (id, account_id, expires_at, source, paddle_transaction_id, months, created_at,
+                payment_provider, payment_transaction_id, refunded_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .bind(
             row.id,
@@ -689,13 +884,21 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
             row.paddle_transaction_id,
             row.months,
             row.created_at,
+            paymentProvider,
+            paymentTransactionId,
+            row.refunded_at ?? null,
           )
           .run();
         return true;
       } catch (e) {
-        // 只把 idx_ent_txn(paddle_transaction_id 部分唯一索引)的冲突当幂等。
+        // 只把支付交易部分唯一索引的冲突当幂等。
         const msg = e instanceof Error ? e.message : String(e);
-        if (/UNIQUE constraint failed/i.test(msg) && /paddle_transaction_id|idx_ent_txn/i.test(msg)) {
+        if (
+          /UNIQUE constraint failed/i.test(msg) &&
+          /payment_provider|payment_transaction_id|idx_ent_payment|paddle_transaction_id|idx_ent_txn/i.test(
+            msg,
+          )
+        ) {
           return false;
         }
         throw e; // id 主键冲突等其它唯一冲突是真事故,原样抛。
@@ -720,20 +923,41 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
     },
 
     async getEntitlementByTransactionId(txnId) {
-      // 与 listEntitlements 同款:entitlements 的列与 EntitlementRow 一一对应,
-      // 不需要 mapper(其它表有 nullable 归一才需要)。
-      return await d1
+      const row = await d1
         .prepare(`SELECT * FROM entitlements WHERE paddle_transaction_id = ? LIMIT 1`)
         .bind(txnId)
-        .first<EntitlementRow>();
+        .first<RawRow>();
+      return row === null ? null : mapEntitlement(row);
+    },
+
+    async getEntitlementByPayment(provider, transactionId) {
+      const row = await d1
+        .prepare(
+          `SELECT * FROM entitlements
+            WHERE payment_provider = ? AND payment_transaction_id = ? LIMIT 1`,
+        )
+        .bind(provider, transactionId)
+        .first<RawRow>();
+      return row === null ? null : mapEntitlement(row);
+    },
+
+    async markEntitlementRefunded(provider, transactionId, refundedAt) {
+      const result = (await d1
+        .prepare(
+          `UPDATE entitlements SET refunded_at = ?
+            WHERE payment_provider = ? AND payment_transaction_id = ? AND refunded_at IS NULL`,
+        )
+        .bind(refundedAt, provider, transactionId)
+        .run()) as { meta?: { changes?: number } };
+      return result.meta?.changes === undefined ? true : result.meta.changes > 0;
     },
 
     async listEntitlements(accountId) {
       const rows = await d1
         .prepare(`SELECT * FROM entitlements WHERE account_id = ? ORDER BY created_at ASC, id ASC`)
         .bind(accountId)
-        .all<EntitlementRow>();
-      return rows.results;
+        .all<RawRow>();
+      return rows.results.map(mapEntitlement);
     },
   };
 }
@@ -762,6 +986,7 @@ export function createMemoryConnectDb(): ConnectDb {
   const rateLimits = new Map<string, string[]>();
   const accounts = new Map<string, AccountRow>();
   const entitlements = new Map<string, EntitlementRow>();
+  const paymentOrders = new Map<string, PaymentOrderRow>();
 
   return {
     async insertInvite(row) {
@@ -901,6 +1126,7 @@ export function createMemoryConnectDb(): ConnectDb {
         let latest: string | null = null;
         for (const en of entitlements.values()) {
           if (en.account_id !== ep.account_id) continue;
+          if (en.refunded_at != null) continue;
           if (latest === null || en.expires_at > latest) latest = en.expires_at;
         }
         out.push({
@@ -1084,19 +1310,105 @@ export function createMemoryConnectDb(): ConnectDb {
       if (row !== undefined) row.last_login_at = at;
     },
 
+    async insertPaymentOrder(row) {
+      if (paymentOrders.has(row.id)) {
+        throw new Error(`UNIQUE constraint failed: payment_orders.id (${row.id})`);
+      }
+      for (const existing of paymentOrders.values()) {
+        if (existing.checkout_token_sha256 === row.checkout_token_sha256) {
+          throw new Error("UNIQUE constraint failed: payment_orders.checkout_token_sha256");
+        }
+        if (existing.out_trade_no === row.out_trade_no) {
+          throw new Error("UNIQUE constraint failed: payment_orders.out_trade_no");
+        }
+        if (row.trade_no !== null && existing.trade_no === row.trade_no) {
+          throw new Error("UNIQUE constraint failed: payment_orders.trade_no");
+        }
+        if (
+          row.refund_request_no !== null &&
+          existing.refund_request_no === row.refund_request_no
+        ) {
+          throw new Error("UNIQUE constraint failed: payment_orders.refund_request_no");
+        }
+      }
+      paymentOrders.set(row.id, { ...row });
+      return { ...row };
+    },
+
+    async getPaymentOrderById(id) {
+      const row = paymentOrders.get(id);
+      return row === undefined ? null : { ...row };
+    },
+
+    async getPaymentOrderByCheckoutHash(sha256) {
+      for (const row of paymentOrders.values()) {
+        if (row.checkout_token_sha256 === sha256) return { ...row };
+      }
+      return null;
+    },
+
+    async getPaymentOrderByOutTradeNo(outTradeNo) {
+      for (const row of paymentOrders.values()) {
+        if (row.out_trade_no === outTradeNo) return { ...row };
+      }
+      return null;
+    },
+
+    async getPaymentOrderByRefundRequestNo(requestNo) {
+      for (const row of paymentOrders.values()) {
+        if (row.refund_request_no === requestNo) return { ...row };
+      }
+      return null;
+    },
+
+    async updatePaymentOrder(id, patch) {
+      const row = paymentOrders.get(id);
+      if (row === undefined) throw new Error(`payment order not found: ${id}`);
+      const updated = { ...row, ...patch };
+      for (const existing of paymentOrders.values()) {
+        if (existing.id === id) continue;
+        if (updated.trade_no !== null && existing.trade_no === updated.trade_no) {
+          throw new Error("UNIQUE constraint failed: payment_orders.trade_no");
+        }
+        if (
+          updated.refund_request_no !== null &&
+          existing.refund_request_no === updated.refund_request_no
+        ) {
+          throw new Error("UNIQUE constraint failed: payment_orders.refund_request_no");
+        }
+      }
+      paymentOrders.set(id, updated);
+    },
+
     async insertEntitlement(row) {
       if (entitlements.has(row.id)) {
         throw new Error(`UNIQUE constraint failed: entitlements.id (${row.id})`);
       }
-      // 幂等:paddle_transaction_id 重复 → 不插入,返回 false(镜像部分唯一索引)。
-      if (row.paddle_transaction_id !== null) {
+      const stored: EntitlementRow = {
+        ...row,
+        payment_provider:
+          row.payment_provider ?? (row.paddle_transaction_id === null ? null : "paddle"),
+        payment_transaction_id: row.payment_transaction_id ?? row.paddle_transaction_id,
+        refunded_at: row.refunded_at ?? null,
+      };
+      if (
+        (stored.payment_provider === null) !== (stored.payment_transaction_id === null)
+      ) {
+        throw new Error("payment provider and transaction id must be supplied together");
+      }
+      // Provider-scoped payment idempotency mirrors idx_ent_payment. Manual
+      // grants keep both fields null and may be repeated.
+      if (stored.payment_provider !== null && stored.payment_transaction_id !== null) {
         for (const existing of entitlements.values()) {
-          if (existing.paddle_transaction_id === row.paddle_transaction_id) {
+          if (
+            existing.payment_provider === stored.payment_provider &&
+            existing.payment_transaction_id === stored.payment_transaction_id
+          ) {
             return false;
           }
         }
       }
-      entitlements.set(row.id, { ...row });
+      entitlements.set(row.id, stored);
       return true;
     },
 
@@ -1124,6 +1436,32 @@ export function createMemoryConnectDb(): ConnectDb {
         if (row.paddle_transaction_id === txnId) return { ...row };
       }
       return null;
+    },
+
+    async getEntitlementByPayment(provider, transactionId) {
+      for (const row of entitlements.values()) {
+        if (
+          row.payment_provider === provider &&
+          row.payment_transaction_id === transactionId
+        ) {
+          return { ...row };
+        }
+      }
+      return null;
+    },
+
+    async markEntitlementRefunded(provider, transactionId, refundedAt) {
+      for (const [id, row] of entitlements) {
+        if (
+          row.payment_provider === provider &&
+          row.payment_transaction_id === transactionId
+        ) {
+          if (row.refunded_at !== null) return false;
+          entitlements.set(id, { ...row, refunded_at: refundedAt });
+          return true;
+        }
+      }
+      return false;
     },
   };
 }

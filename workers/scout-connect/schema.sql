@@ -109,12 +109,47 @@ CREATE TABLE entitlements (
   source TEXT NOT NULL,
   paddle_transaction_id TEXT,
   months INTEGER NOT NULL,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  -- Provider-neutral payment identity. Historical Paddle rows are backfilled
+  -- by migration 0006; paddle_transaction_id remains read-only history.
+  payment_provider TEXT,
+  payment_transaction_id TEXT,
+  -- Full refund tombstone: rows stay in the audit ledger but no longer grant time.
+  refunded_at TEXT
 );
 CREATE INDEX idx_entitlements_account ON entitlements(account_id);
 CREATE UNIQUE INDEX idx_ent_txn ON entitlements(paddle_transaction_id)
   WHERE paddle_transaction_id IS NOT NULL;
+CREATE UNIQUE INDEX idx_ent_payment ON entitlements(payment_provider, payment_transaction_id)
+  WHERE payment_provider IS NOT NULL AND payment_transaction_id IS NOT NULL;
 CREATE INDEX idx_endpoints_account ON endpoints(account_id);
+
+-- Durable checkout and payment state. Browser-visible ids are high entropy;
+-- only the server-owned tier determines months and total_amount.
+CREATE TABLE payment_orders (
+  id TEXT PRIMARY KEY,
+  checkout_token_sha256 TEXT NOT NULL UNIQUE,
+  account_id TEXT NOT NULL REFERENCES accounts(id),
+  provider TEXT NOT NULL CHECK(provider = 'alipay'),
+  out_trade_no TEXT NOT NULL UNIQUE,
+  trade_no TEXT UNIQUE,
+  months INTEGER NOT NULL CHECK(months IN (3, 12, 24)),
+  total_amount TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN (
+    'created', 'form_issued', 'pending', 'paid', 'fulfilled', 'closed', 'refunded'
+  )),
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  paid_at TEXT,
+  fulfilled_at TEXT,
+  closed_at TEXT,
+  refunded_at TEXT,
+  refund_request_no TEXT UNIQUE,
+  last_notify_id TEXT
+);
+CREATE INDEX idx_payment_orders_account_created
+  ON payment_orders(account_id, created_at DESC, id DESC);
+CREATE INDEX idx_payment_orders_status ON payment_orders(status);
 
 -- Schema changes need a matching file in ./migrations for already-deployed
 -- instances — schema.sql alone only covers fresh installs. See README → Deploy.

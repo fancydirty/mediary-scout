@@ -20,6 +20,9 @@ function ent(expires_at: string): EntitlementRow {
     expires_at,
     source: "manual",
     paddle_transaction_id: null,
+    payment_provider: null,
+    payment_transaction_id: null,
+    refunded_at: null,
     months: 3,
     created_at: NOW,
   };

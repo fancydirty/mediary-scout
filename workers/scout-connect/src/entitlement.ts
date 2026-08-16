@@ -1,3 +1,5 @@
+import type { ConnectDb } from "./db.js";
+
 /**
  * 预付时长计算(纯函数,决策 #2 预付时长制)。
  *
@@ -48,9 +50,12 @@ export function isEntitlementActive(latestExpiry: string | null, now: string): b
 
 /** 最新到期时刻 = entitlements 里 expires_at 最大者(账本式,每次充值一行)。
  *  原先是 console-page 的私有函数;自助 provision 的门禁也要用,提为共享。 */
-export function latestExpiry(entitlements: { expires_at: string }[]): string | null {
+export function latestExpiry(
+  entitlements: { expires_at: string; refunded_at?: string | null }[],
+): string | null {
   let latest: string | null = null;
   for (const e of entitlements) {
+    if (e.refunded_at != null) continue;
     if (latest === null || Date.parse(e.expires_at) > Date.parse(latest)) {
       latest = e.expires_at;
     }
@@ -75,9 +80,15 @@ export function latestExpiry(entitlements: { expires_at: string }[]): string | n
  */
 export function recomputeExpiry(
   // 刻意不要 expires_at:它是本函数改写的派生缓存,不该参与计算或排序。
-  entitlements: { id: string; months: number; created_at: string }[],
+  entitlements: {
+    id: string;
+    months: number;
+    created_at: string;
+    refunded_at?: string | null;
+  }[],
 ): string | null {
-  if (entitlements.length === 0) return null;
+  const effective = effectiveEntitlements(entitlements);
+  if (effective.length === 0) return null;
   // 按创建时间排序。
   //
   // **用 localeCompare 而非 Date.parse 相减**:坏值会让 Date.parse 得 NaN,
@@ -98,11 +109,8 @@ export function recomputeExpiry(
   // 所以顺序不同真会算出差一天的到期。而 SQLite 的 ORDER BY 对相等键不保证
   // 稳定(EXPLAIN 显示走 TEMP B-TREE),memory 实现的顺序又与 D1 不同 ——
   // 排序不能指望 DB。
-  const sorted = [...entitlements].sort(
-    (a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id),
-  );
   let acc: string | null = null;
-  for (const e of sorted) {
+  for (const e of effective) {
     // **跳过 created_at 坏值的行。** 不只是排序问题:坏值会让 addMonths 里的
     // `new Date("BAD")` 变成 Invalid Date,`toISOString()` 抛 RangeError,
     // 冒到 webhook 就是 500 → Paddle 无限重投(测试抓到过)。
@@ -114,4 +122,33 @@ export function recomputeExpiry(
     acc = computeExpiry({ currentExpiry: acc, months: e.months, now: e.created_at });
   }
   return acc;
+}
+
+/** Keep refunded purchases as history while excluding them from usable time. */
+export function effectiveEntitlements<
+  T extends { id: string; created_at: string; refunded_at?: string | null },
+>(rows: readonly T[]): T[] {
+  return rows
+    .filter((row) => row.refunded_at == null)
+    .sort(
+      (a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id),
+    );
+}
+
+/**
+ * Rebuild every non-refunded expiry cache from the immutable ledger inputs.
+ * This is shared by grants and refunds so both operations converge under retry.
+ */
+export async function reconcileEntitlementLedger(
+  accountId: string,
+  db: ConnectDb,
+): Promise<string | null> {
+  let expiry: string | null = null;
+  for (const row of effectiveEntitlements(await db.listEntitlements(accountId))) {
+    if (!Number.isFinite(Date.parse(row.created_at))) continue;
+    if (!Number.isInteger(row.months) || row.months < 1) continue;
+    expiry = computeExpiry({ currentExpiry: expiry, months: row.months, now: row.created_at });
+    if (row.expires_at !== expiry) await db.updateEntitlementExpiry(row.id, expiry);
+  }
+  return expiry;
 }

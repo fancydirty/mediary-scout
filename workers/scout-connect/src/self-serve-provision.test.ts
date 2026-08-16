@@ -70,6 +70,9 @@ async function seedAccount(db: ConnectDb, id: string, expiresAt: string | null):
       expires_at: expiresAt,
       source: "manual",
       paddle_transaction_id: null,
+      payment_provider: null,
+      payment_transaction_id: null,
+      refunded_at: null,
       months: 12,
       created_at: NOW,
     });

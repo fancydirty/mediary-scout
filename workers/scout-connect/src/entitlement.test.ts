@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { addMonths, computeExpiry, isEntitlementActive, recomputeExpiry } from "./entitlement.js";
+import {
+  addMonths,
+  computeExpiry,
+  effectiveEntitlements,
+  isEntitlementActive,
+  reconcileEntitlementLedger,
+  recomputeExpiry,
+} from "./entitlement.js";
+import { createMemoryConnectDb, type EntitlementRow } from "./db.js";
 
 describe("entitlement 时长计算", () => {
   describe("addMonths", () => {
@@ -142,5 +150,61 @@ describe("recomputeExpiry 的排序稳健性", () => {
 
   it("空账本返回 null", () => {
     expect(recomputeExpiry([])).toBeNull();
+  });
+});
+
+describe("refunded entitlement reconciliation", () => {
+  const row = (
+    id: string,
+    createdAt: string,
+    months: number,
+    transactionId: string,
+  ): EntitlementRow => ({
+    id,
+    account_id: "act_ledger",
+    expires_at: "2099-01-01T00:00:00.000Z",
+    source: "alipay",
+    paddle_transaction_id: null,
+    payment_provider: "alipay",
+    payment_transaction_id: transactionId,
+    refunded_at: null,
+    months,
+    created_at: createdAt,
+  });
+
+  it("excludes refunded rows without deleting their audit history", () => {
+    const active = row("a", "2026-01-31T00:00:00.000Z", 1, "MC1");
+    const refunded = {
+      ...row("b", "2026-02-01T00:00:00.000Z", 2, "MC2"),
+      refunded_at: "2026-02-03T00:00:00.000Z",
+    };
+    expect(effectiveEntitlements([refunded, active]).map((item) => item.id)).toEqual(["a"]);
+  });
+
+  it("recomputes every remaining cache after a middle purchase is refunded", async () => {
+    const db = createMemoryConnectDb();
+    await db.insertAccount({
+      id: "act_ledger",
+      email: "ledger@example.com",
+      paddle_customer_id: null,
+      created_at: "2026-01-01T00:00:00.000Z",
+      last_login_at: null,
+    });
+    await db.insertEntitlement(row("a", "2026-01-31T00:00:00.000Z", 1, "MC1"));
+    await db.insertEntitlement(row("b", "2026-02-01T00:00:00.000Z", 2, "MC2"));
+    await db.insertEntitlement(row("c", "2026-02-02T00:00:00.000Z", 1, "MC3"));
+    await db.markEntitlementRefunded("alipay", "MC2", "2026-02-03T00:00:00.000Z");
+
+    expect(await reconcileEntitlementLedger("act_ledger", db)).toBe(
+      "2026-03-28T00:00:00.000Z",
+    );
+    const rows = await db.listEntitlements("act_ledger");
+    expect(rows.find((item) => item.id === "a")?.expires_at).toBe(
+      "2026-02-28T00:00:00.000Z",
+    );
+    expect(rows.find((item) => item.id === "c")?.expires_at).toBe(
+      "2026-03-28T00:00:00.000Z",
+    );
+    expect(rows.find((item) => item.id === "b")?.refunded_at).not.toBeNull();
   });
 });

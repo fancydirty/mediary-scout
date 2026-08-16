@@ -19,6 +19,64 @@ function deps(db: ConnectDb, over: Partial<GrantDeps> = {}): GrantDeps {
 }
 
 describe("grantEntitlement", () => {
+  it("persists an Alipay grant under provider-neutral idempotency fields", async () => {
+    const db = createMemoryConnectDb();
+    const result = await grantEntitlement(
+      {
+        email: "alipay@example.com",
+        months: 3,
+        source: "alipay",
+        paymentProvider: "alipay",
+        paymentTransactionId: "MC202608160001",
+      },
+      deps(db),
+    );
+
+    expect(await db.getEntitlementByPayment("alipay", "MC202608160001")).toMatchObject({
+      account_id: result.accountId,
+      source: "alipay",
+      months: 3,
+      paddle_transaction_id: null,
+    });
+  });
+
+  it("binds a paid grant to the existing account and rejects an email mismatch", async () => {
+    const db = createMemoryConnectDb();
+    await db.insertAccount({
+      id: "act_paid",
+      email: "paid@example.com",
+      paddle_customer_id: null,
+      created_at: NOW,
+      last_login_at: null,
+    });
+    const d = deps(db);
+    await expect(
+      grantEntitlement(
+        {
+          accountId: "act_paid",
+          email: "attacker@example.com",
+          months: 3,
+          source: "alipay",
+          paymentProvider: "alipay",
+          paymentTransactionId: "MC-mismatch",
+        },
+        d,
+      ),
+    ).rejects.toThrow(/email mismatch/i);
+    const applied = await grantEntitlement(
+      {
+        accountId: "act_paid",
+        email: "PAID@example.com",
+        months: 3,
+        source: "alipay",
+        paymentProvider: "alipay",
+        paymentTransactionId: "MC-bound",
+      },
+      d,
+    );
+    expect(applied.accountId).toBe("act_paid");
+  });
+
   it("首次充值:建账号 + 从当下起算", async () => {
     const db = createMemoryConnectDb();
     const r = await grantEntitlement(
@@ -62,6 +120,9 @@ describe("grantEntitlement", () => {
       expires_at: "2026-01-01T00:00:00.000Z", // 已过期
       source: "manual",
       paddle_transaction_id: null,
+      payment_provider: null,
+      payment_transaction_id: null,
+      refunded_at: null,
       months: 12,
       created_at: "2025-01-01T00:00:00.000Z",
     });
@@ -245,6 +306,9 @@ describe("重投自愈:上次并发收敛失败留下的错值要能修正", () 
       expires_at: "2027-07-29T12:00:00.000Z",
       source: "paddle",
       paddle_transaction_id: "t2",
+      payment_provider: "paddle",
+      payment_transaction_id: "t2",
+      refunded_at: null,
       months: 12,
       created_at: NOW,
     });

@@ -1,7 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import Database from "better-sqlite3";
-import { createD1ConnectDb, type D1Database, type EndpointRow } from "./db.js";
+import {
+  createD1ConnectDb,
+  type D1Database,
+  type EndpointRow,
+  type PaymentOrderRow,
+} from "./db.js";
 
 // Why this file exists (CRITICAL-2 / HIGH-3):
 // The rest of the suite exercises `createMemoryConnectDb`, a plain Map with no
@@ -30,6 +35,10 @@ const MIGRATION4_SQL = readFileSync(
 );
 const MIGRATION5_SQL = readFileSync(
   new URL("../migrations/0005-rate-limits.sql", import.meta.url),
+  "utf8",
+);
+const MIGRATION6_SQL = readFileSync(
+  new URL("../migrations/0006-alipay-payment-orders.sql", import.meta.url),
   "utf8",
 );
 
@@ -674,6 +683,7 @@ describe("migration 0001 — existing install against real SQLite", () => {
     migrated.sqlite.exec(MIGRATION3_SQL);
     migrated.sqlite.exec(MIGRATION4_SQL);
     migrated.sqlite.exec(MIGRATION5_SQL);
+    migrated.sqlite.exec(MIGRATION6_SQL);
     const fresh = freshDb(SCHEMA_SQL);
 
     const shapeOf = (sqlite: Sqlite): unknown =>
@@ -789,6 +799,7 @@ describe("migration 0001 — legacy install that predates the waitlist table", (
     migrated.sqlite.exec(MIGRATION3_SQL);
     migrated.sqlite.exec(MIGRATION4_SQL);
     migrated.sqlite.exec(MIGRATION5_SQL);
+    migrated.sqlite.exec(MIGRATION6_SQL);
     const fresh = freshDb(SCHEMA_SQL);
 
     const shapeOf = (sqlite: Sqlite, table: string): unknown =>
@@ -851,6 +862,7 @@ describe("migration 0002 — waitlist.survey_json against real SQLite", () => {
     migrated.sqlite.exec(MIGRATION3_SQL);
     migrated.sqlite.exec(MIGRATION4_SQL);
     migrated.sqlite.exec(MIGRATION5_SQL);
+    migrated.sqlite.exec(MIGRATION6_SQL);
     const fresh = freshDb(SCHEMA_SQL);
 
     const shapeOf = (sqlite: Sqlite, table: string): unknown =>
@@ -1027,5 +1039,210 @@ describe("migration 0004 — self-serve rows against real SQLite", () => {
     const row = sql.prepare("SELECT * FROM endpoints WHERE id='ep_keep'").get() as Record<string, unknown>;
     expect(row.slug).toBe("keeper");
     expect(row.account_id).toBe("act_k");
+  });
+});
+
+describe("migration 0006 — provider-neutral entitlements and Alipay orders", () => {
+  function preAlipayDb(): Sqlite {
+    const sqlite = new Database(":memory:");
+    sqlite.exec(LEGACY_SCHEMA_SQL);
+    sqlite.exec(MIGRATION_SQL);
+    sqlite.exec(MIGRATION2_SQL);
+    sqlite.exec(MIGRATION3_SQL);
+    sqlite.exec(MIGRATION4_SQL);
+    sqlite.exec(MIGRATION5_SQL);
+    return sqlite;
+  }
+
+  it("backfills historical Paddle transactions without deleting their rows", () => {
+    const sqlite = preAlipayDb();
+    sqlite
+      .prepare("INSERT INTO accounts(id,email,created_at) VALUES(?,?,?)")
+      .run("act_old", "old@example.com", "2026-08-01T00:00:00.000Z");
+    sqlite
+      .prepare(
+        `INSERT INTO entitlements
+           (id,account_id,expires_at,source,paddle_transaction_id,months,created_at)
+         VALUES(?,?,?,?,?,?,?)`,
+      )
+      .run(
+        "ent_old",
+        "act_old",
+        "2027-08-01T00:00:00.000Z",
+        "paddle",
+        "txn_old",
+        12,
+        "2026-08-01T00:00:00.000Z",
+      );
+
+    sqlite.exec(MIGRATION6_SQL);
+
+    expect(sqlite.prepare("SELECT COUNT(*) AS count FROM entitlements").get()).toEqual({ count: 1 });
+    expect(
+      sqlite
+        .prepare(
+          `SELECT source,paddle_transaction_id,payment_provider,payment_transaction_id,refunded_at
+             FROM entitlements WHERE id='ent_old'`,
+        )
+        .get(),
+    ).toEqual({
+      source: "paddle",
+      paddle_transaction_id: "txn_old",
+      payment_provider: "paddle",
+      payment_transaction_id: "txn_old",
+      refunded_at: null,
+    });
+  });
+
+  it("enforces provider-scoped payment idempotency without colliding with manual grants", () => {
+    const sqlite = preAlipayDb();
+    sqlite.exec(MIGRATION6_SQL);
+    sqlite
+      .prepare("INSERT INTO accounts(id,email,created_at) VALUES(?,?,?)")
+      .run("act_1", "one@example.com", "2026-08-16T00:00:00.000Z");
+    const insert = sqlite.prepare(
+      `INSERT INTO entitlements
+        (id,account_id,expires_at,source,paddle_transaction_id,payment_provider,payment_transaction_id,refunded_at,months,created_at)
+       VALUES(?,?,?,?,?,?,?,?,?,?)`,
+    );
+    insert.run(
+      "ent_a",
+      "act_1",
+      "2026-11-16T00:00:00.000Z",
+      "alipay",
+      null,
+      "alipay",
+      "MC1",
+      null,
+      3,
+      "2026-08-16T00:00:00.000Z",
+    );
+    expect(() =>
+      insert.run(
+        "ent_b",
+        "act_1",
+        "2026-11-16T00:00:00.000Z",
+        "alipay",
+        null,
+        "alipay",
+        "MC1",
+        null,
+        3,
+        "2026-08-16T00:00:01.000Z",
+      ),
+    ).toThrow(/UNIQUE/i);
+    expect(() =>
+      insert.run(
+        "ent_manual",
+        "act_1",
+        "2026-12-16T00:00:00.000Z",
+        "manual",
+        null,
+        null,
+        null,
+        null,
+        1,
+        "2026-08-16T00:00:02.000Z",
+      ),
+    ).not.toThrow();
+  });
+
+  it("converges with the fresh schema and creates the order indexes", () => {
+    const migrated = preAlipayDb();
+    migrated.exec(MIGRATION6_SQL);
+    const fresh = freshDb(SCHEMA_SQL).sqlite;
+    const columns = (sqlite: Sqlite, table: string): string[] =>
+      (sqlite.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((row) => row.name);
+
+    expect(columns(migrated, "entitlements")).toEqual(columns(fresh, "entitlements"));
+    expect(columns(migrated, "payment_orders")).toEqual(columns(fresh, "payment_orders"));
+    expect(indexNames(migrated).sort()).toEqual(indexNames(fresh).sort());
+  });
+
+  it("runs the real D1 order and entitlement methods against the migrated shape", async () => {
+    const sqlite = preAlipayDb();
+    sqlite.exec(MIGRATION6_SQL);
+    const db = createD1ConnectDb(d1Over(sqlite));
+    await db.insertAccount({
+      id: "act_rt",
+      email: "rt@example.com",
+      paddle_customer_id: null,
+      created_at: "2026-08-16T00:00:00.000Z",
+      last_login_at: null,
+    });
+    const order: PaymentOrderRow = {
+      id: "ord_rt",
+      checkout_token_sha256: "sha_rt",
+      account_id: "act_rt",
+      provider: "alipay",
+      out_trade_no: "MCRT",
+      trade_no: null,
+      months: 3,
+      total_amount: "45.00",
+      status: "created",
+      created_at: "2026-08-16T00:00:00.000Z",
+      expires_at: "2026-08-16T00:20:00.000Z",
+      paid_at: null,
+      fulfilled_at: null,
+      closed_at: null,
+      refunded_at: null,
+      refund_request_no: null,
+      last_notify_id: null,
+    };
+    await db.insertPaymentOrder(order);
+    await db.updatePaymentOrder(order.id, {
+      status: "paid",
+      trade_no: "trade_rt",
+      paid_at: "2026-08-16T00:03:00.000Z",
+    });
+    expect(await db.getPaymentOrderByCheckoutHash("sha_rt")).toMatchObject({
+      id: "ord_rt",
+      status: "paid",
+      trade_no: "trade_rt",
+    });
+
+    const entitlement = {
+      id: "ent_rt",
+      account_id: "act_rt",
+      expires_at: "2026-11-16T00:03:00.000Z",
+      source: "alipay" as const,
+      paddle_transaction_id: null,
+      payment_provider: "alipay" as const,
+      payment_transaction_id: "MCRT",
+      refunded_at: null,
+      months: 3,
+      created_at: "2026-08-16T00:03:00.000Z",
+    };
+    expect(await db.insertEntitlement(entitlement)).toBe(true);
+    expect(await db.insertEntitlement({ ...entitlement, id: "ent_rt_2" })).toBe(false);
+    expect(await db.getEntitlementByPayment("alipay", "MCRT")).toMatchObject({ id: "ent_rt" });
+    expect(
+      await db.markEntitlementRefunded(
+        "alipay",
+        "MCRT",
+        "2026-08-17T00:00:00.000Z",
+      ),
+    ).toBe(true);
+    expect((await db.listEntitlements("act_rt"))[0]?.refunded_at).toBe(
+      "2026-08-17T00:00:00.000Z",
+    );
+    await db.insertEndpoint(
+      postAccessEndpoint({
+        id: "ep_rt",
+        invite_id: null,
+        account_id: "act_rt",
+        slug: "rt",
+        hostname: "rt.mediaryconnect.app",
+      }),
+    );
+    expect(await db.listActiveEndpointsForSweep()).toMatchObject([{ latestExpiry: null }]);
+  });
+
+  it("is D1-safe and documents migrate-before-deploy", () => {
+    expect(MIGRATION6_SQL).not.toMatch(/^\s*BEGIN\b/im);
+    expect(MIGRATION6_SQL).not.toMatch(/^\s*COMMIT\b/im);
+    expect(MIGRATION6_SQL).not.toMatch(/BEGIN\s+TRANSACTION/i);
+    expect(MIGRATION6_SQL).toContain("wrangler d1 execute");
+    expect(MIGRATION6_SQL).toMatch(/BEFORE/i);
   });
 });

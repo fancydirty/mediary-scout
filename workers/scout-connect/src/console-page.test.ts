@@ -65,6 +65,9 @@ describe("GET /console (登录后控制台)", () => {
       expires_at: "2027-07-28T00:00:00.000Z",
       source: "founding",
       paddle_transaction_id: null,
+      payment_provider: null,
+      payment_transaction_id: null,
+      refunded_at: null,
       months: 12,
       created_at: "2026-07-28T00:00:00.000Z",
     });

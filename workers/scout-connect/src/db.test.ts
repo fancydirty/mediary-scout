@@ -7,6 +7,8 @@ import {
   type InviteRow,
   type EndpointRow,
   type AuditRow,
+  type EntitlementRow,
+  type PaymentOrderRow,
 } from "./db.js";
 
 function makeInvite(overrides: Partial<InviteRow> = {}): InviteRow {
@@ -769,5 +771,190 @@ describe("hitAndCount(限流计数)", () => {
     };
     const db = createD1ConnectDb(d1);
     expect(await db.hitAndCount("b", "k", "2026-08-01T00:00:10Z", "2026-08-01T00:00:00Z")).toBe(0);
+  });
+});
+
+function paymentOrder(overrides: Partial<PaymentOrderRow> = {}): PaymentOrderRow {
+  return {
+    id: "ord_1",
+    checkout_token_sha256: "sha_checkout_1",
+    account_id: "act_1",
+    provider: "alipay",
+    out_trade_no: "MC202608160001",
+    trade_no: null,
+    months: 3,
+    total_amount: "45.00",
+    status: "created",
+    created_at: "2026-08-16T00:00:00.000Z",
+    expires_at: "2026-08-16T00:20:00.000Z",
+    paid_at: null,
+    fulfilled_at: null,
+    closed_at: null,
+    refunded_at: null,
+    refund_request_no: null,
+    last_notify_id: null,
+    ...overrides,
+  };
+}
+
+function entitlement(overrides: Partial<EntitlementRow> = {}): EntitlementRow {
+  return {
+    id: "ent_1",
+    account_id: "act_1",
+    expires_at: "2026-11-16T00:00:00.000Z",
+    source: "alipay",
+    paddle_transaction_id: null,
+    payment_provider: "alipay",
+    payment_transaction_id: "MC202608160001",
+    refunded_at: null,
+    months: 3,
+    created_at: "2026-08-16T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+describe("payment-order and provider-neutral entitlement persistence", () => {
+  it("round-trips and updates an Alipay order by every server-owned key", async () => {
+    const db = createMemoryConnectDb();
+    const row = paymentOrder();
+    expect(await db.insertPaymentOrder(row)).toEqual(row);
+    expect(await db.getPaymentOrderById(row.id)).toEqual(row);
+    expect(await db.getPaymentOrderByCheckoutHash(row.checkout_token_sha256)).toEqual(row);
+    expect(await db.getPaymentOrderByOutTradeNo(row.out_trade_no)).toEqual(row);
+
+    await db.updatePaymentOrder(row.id, {
+      status: "paid",
+      trade_no: "2026081622000000000001",
+      paid_at: "2026-08-16T00:03:00.000Z",
+      last_notify_id: "notify_1",
+    });
+    expect(await db.getPaymentOrderById(row.id)).toMatchObject({
+      status: "paid",
+      trade_no: "2026081622000000000001",
+      paid_at: "2026-08-16T00:03:00.000Z",
+      last_notify_id: "notify_1",
+    });
+  });
+
+  it("rejects duplicate order capability, merchant order, trade, and refund request ids", async () => {
+    const db = createMemoryConnectDb();
+    await db.insertPaymentOrder(paymentOrder());
+    for (const duplicate of [
+      paymentOrder({ id: "ord_2", out_trade_no: "MC2" }),
+      paymentOrder({ id: "ord_2", checkout_token_sha256: "sha_2" }),
+    ]) {
+      await expect(db.insertPaymentOrder(duplicate)).rejects.toThrow(/UNIQUE/i);
+    }
+    await db.updatePaymentOrder("ord_1", {
+      trade_no: "trade_1",
+      refund_request_no: "refund_1",
+    });
+    await db.insertPaymentOrder(
+      paymentOrder({ id: "ord_2", checkout_token_sha256: "sha_2", out_trade_no: "MC2" }),
+    );
+    await expect(db.updatePaymentOrder("ord_2", { trade_no: "trade_1" })).rejects.toThrow(/UNIQUE/i);
+    await expect(
+      db.updatePaymentOrder("ord_2", { refund_request_no: "refund_1" }),
+    ).rejects.toThrow(/UNIQUE/i);
+  });
+
+  it("deduplicates a provider transaction but permits repeated manual grants", async () => {
+    const db = createMemoryConnectDb();
+    expect(await db.insertEntitlement(entitlement())).toBe(true);
+    expect(await db.insertEntitlement(entitlement({ id: "ent_2" }))).toBe(false);
+    expect(
+      await db.insertEntitlement(
+        entitlement({
+          id: "ent_manual_1",
+          source: "manual",
+          payment_provider: null,
+          payment_transaction_id: null,
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      await db.insertEntitlement(
+        entitlement({
+          id: "ent_manual_2",
+          source: "manual",
+          payment_provider: null,
+          payment_transaction_id: null,
+        }),
+      ),
+    ).toBe(true);
+    expect(await db.getEntitlementByPayment("alipay", "MC202608160001")).toMatchObject({
+      id: "ent_1",
+    });
+  });
+
+  it("rejects a half-populated provider idempotency pair", async () => {
+    const db = createMemoryConnectDb();
+    await expect(
+      db.insertEntitlement(
+        entitlement({ payment_provider: "alipay", payment_transaction_id: null }),
+      ),
+    ).rejects.toThrow(/supplied together/i);
+    await expect(
+      db.insertEntitlement(
+        entitlement({ payment_provider: null, payment_transaction_id: "MC-orphan" }),
+      ),
+    ).rejects.toThrow(/supplied together/i);
+  });
+
+  it("marks only the selected provider transaction refunded", async () => {
+    const db = createMemoryConnectDb();
+    await db.insertEntitlement(entitlement());
+    await db.insertEntitlement(
+      entitlement({
+        id: "ent_2",
+        payment_transaction_id: "MC202608160002",
+        created_at: "2026-08-16T00:01:00.000Z",
+      }),
+    );
+
+    expect(
+      await db.markEntitlementRefunded(
+        "alipay",
+        "MC202608160001",
+        "2026-08-17T00:00:00.000Z",
+      ),
+    ).toBe(true);
+    expect(
+      await db.markEntitlementRefunded(
+        "alipay",
+        "MC202608160001",
+        "2026-08-18T00:00:00.000Z",
+      ),
+    ).toBe(false);
+    const rows = await db.listEntitlements("act_1");
+    expect(rows.find((row) => row.id === "ent_1")?.refunded_at).toBe(
+      "2026-08-17T00:00:00.000Z",
+    );
+    expect(rows.find((row) => row.id === "ent_2")?.refunded_at).toBeNull();
+  });
+
+  it("does not expose refunded time to the endpoint expiry sweep", async () => {
+    const db = createMemoryConnectDb();
+    await db.insertAccount({
+      id: "act_1",
+      email: "sweep@example.com",
+      paddle_customer_id: null,
+      created_at: "2026-08-16T00:00:00.000Z",
+      last_login_at: null,
+    });
+    await db.insertEndpoint(
+      makeEndpoint({
+        id: "ep_paid",
+        invite_id: null,
+        account_id: "act_1",
+        slug: "paid",
+        hostname: "paid.connect.example.com",
+      }),
+    );
+    await db.insertEntitlement(
+      entitlement({ refunded_at: "2026-08-17T00:00:00.000Z" }),
+    );
+
+    expect(await db.listActiveEndpointsForSweep()).toMatchObject([{ latestExpiry: null }]);
   });
 });
