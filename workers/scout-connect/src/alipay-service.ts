@@ -6,6 +6,8 @@ import type { CfApi } from "./cf-api.js";
 import { isEntitlementActive, reconcileEntitlementLedger } from "./entitlement.js";
 import { revokeEndpoint } from "./revoke.js";
 
+const ALIPAY_QUERY_COALESCE_MS = 2_500;
+
 export interface AlipayServiceDeps {
   db: ConnectDb;
   alipayApi: AlipayApi;
@@ -41,6 +43,14 @@ export class AlipayOperationError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "AlipayOperationError";
+  }
+}
+
+/** A verified, merchant-owned notification that is not a buyer-payment event. */
+export class IgnoredAlipayNotificationError extends Error {
+  constructor() {
+    super("Alipay notification is not a buyer-payment event");
+    this.name = "IgnoredAlipayNotificationError";
   }
 }
 
@@ -85,6 +95,7 @@ export async function fulfillAlipayOrder(
   if (order === null) throw new Error("payment order disappeared");
   if (order.status === "fulfilled") return order;
   if (order.status !== "paid") throw new Error("Alipay order has no verified paid state");
+  if (order.refund_request_no !== null) return order;
 
   const account = await deps.db.getAccountById(order.account_id);
   if (account === null) throw new Error("payment account missing");
@@ -99,13 +110,24 @@ export async function fulfillAlipayOrder(
     },
     deps,
   );
-  await deps.db.updatePaymentOrder(order.id, {
-    status: "fulfilled",
-    fulfilled_at: deps.now(),
-  });
-  const fulfilled = await deps.db.getPaymentOrderById(order.id);
-  if (fulfilled === null) throw new Error("fulfilled payment order disappeared");
-  return fulfilled;
+  const committed = await deps.db.compareAndSetPaymentOrder(
+    order.id,
+    { statuses: ["paid"], refundRequestNo: null },
+    {
+      status: "fulfilled",
+      fulfilled_at: deps.now(),
+    },
+  );
+  const latest = await deps.db.getPaymentOrderById(order.id);
+  if (latest === null) throw new Error("fulfilled payment order disappeared");
+  if (committed || latest.status === "fulfilled") return latest;
+  // A confirmed refund may have won after the grant insert. Tombstone the exact grant before
+  // returning so a stale fulfillment can never resurrect time after money has moved back.
+  if (latest.status === "refunded") {
+    await deps.db.markEntitlementRefunded("alipay", order.out_trade_no, deps.now());
+    await reconcileEntitlementLedger(order.account_id, deps.db);
+  }
+  return (await deps.db.getPaymentOrderById(order.id)) ?? latest;
 }
 
 /** Persist exact paid evidence before attempting fulfillment. */
@@ -131,14 +153,28 @@ export async function acceptAlipayPayment(
     if (!canTransitionPaymentOrder(order.status, "paid")) {
       throw new InvalidAlipayEvidenceError("Alipay paid state transition is invalid");
     }
-    await deps.db.updatePaymentOrder(order.id, {
-      status: "paid",
-      trade_no: tradeNo,
-      paid_at: deps.now(),
-      ...(evidence.notifyId === undefined
-        ? {}
-        : { last_notify_id: evidence.notifyId?.trim() || null }),
-    });
+    const changed = await deps.db.compareAndSetPaymentOrder(
+      order.id,
+      { statuses: [order.status] },
+      {
+        status: "paid",
+        trade_no: tradeNo,
+        paid_at: deps.now(),
+        ...(evidence.notifyId === undefined
+          ? {}
+          : { last_notify_id: evidence.notifyId?.trim() || null }),
+      },
+    );
+    if (!changed) {
+      order = await requireOrder(deps.db, outTradeNo);
+      if (order.trade_no !== null && order.trade_no !== tradeNo) {
+        throw new InvalidAlipayEvidenceError("Alipay provider trade number mismatch");
+      }
+      if (order.status === "fulfilled") return order;
+      if (order.status !== "paid") {
+        throw new InvalidAlipayEvidenceError("Alipay paid state lost a terminal-state race");
+      }
+    }
   } else if (order.trade_no === null || evidence.notifyId !== undefined) {
     await deps.db.updatePaymentOrder(order.id, {
       ...(order.trade_no === null ? { trade_no: tradeNo } : {}),
@@ -170,6 +206,14 @@ export async function acceptAlipayNotification(
   const seller = params.get("seller_id") ?? params.get("pid");
   if (seller !== deps.alipaySellerId) {
     throw new InvalidAlipayEvidenceError("Alipay notification seller mismatch");
+  }
+  if (["out_biz_no", "gmt_refund", "refund_fee"].some((key) => params.get(key)?.trim())) {
+    const order = await requireOrder(
+      deps.db,
+      requireNonEmpty(params.get("out_trade_no"), "out_trade_no"),
+    );
+    assertAmount(order.total_amount, requireNonEmpty(params.get("total_amount"), "total_amount"));
+    throw new IgnoredAlipayNotificationError();
   }
   if (!isAlipayPaidStatus(params.get("trade_status"))) {
     throw new InvalidAlipayEvidenceError("Alipay notification is not a paid state");
@@ -208,6 +252,14 @@ export async function compensateAlipayOrder(
     }
   }
 
+  const queriedAtMs = Date.parse(deps.now());
+  if (!Number.isFinite(queriedAtMs)) throw new AlipayOperationError("server time is invalid");
+  const queriedAt = new Date(queriedAtMs).toISOString();
+  const cutoff = new Date(queriedAtMs - ALIPAY_QUERY_COALESCE_MS).toISOString();
+  if (!(await deps.db.claimPaymentOrderQuery(order.id, queriedAt, cutoff))) {
+    return (await deps.db.getPaymentOrderById(order.id)) ?? order;
+  }
+
   const result = await deps.alipayApi.queryTrade(order.out_trade_no);
   if (result === null) return order;
   if (isAlipayPaidStatus(result.trade_status)) {
@@ -233,13 +285,21 @@ export async function compensateAlipayOrder(
     if (order.status === "paid") return fulfillAlipayOrder(order, deps);
     if (order.status === "fulfilled") return order;
     if (canTransitionPaymentOrder(order.status, "closed")) {
-      await deps.db.updatePaymentOrder(order.id, { status: "closed", closed_at: deps.now() });
+      await deps.db.compareAndSetPaymentOrder(
+        order.id,
+        { statuses: [order.status] },
+        { status: "closed", closed_at: deps.now() },
+      );
       return (await deps.db.getPaymentOrderById(order.id)) ?? order;
     }
     return order;
   }
   if (result.trade_status === "WAIT_BUYER_PAY" && order.status === "form_issued") {
-    await deps.db.updatePaymentOrder(order.id, { status: "pending" });
+    await deps.db.compareAndSetPaymentOrder(
+      order.id,
+      { statuses: ["form_issued"] },
+      { status: "pending" },
+    );
     return (await deps.db.getPaymentOrderById(order.id)) ?? order;
   }
   return order;
@@ -284,11 +344,18 @@ async function applyConfirmedAlipayRefund(
     }
     // Persist external money truth first. Any later local failure is repaired through the same
     // request number without calling the refund API twice.
-    await deps.db.updatePaymentOrder(order.id, {
-      status: "refunded",
-      refunded_at: deps.now(),
-    });
+    const marked = await deps.db.compareAndSetPaymentOrder(
+      order.id,
+      {
+        statuses: ["paid", "fulfilled"],
+        refundRequestNo: order.refund_request_no,
+      },
+      { status: "refunded", refunded_at: deps.now() },
+    );
     order = (await deps.db.getPaymentOrderById(order.id)) ?? order;
+    if (!marked && order.status !== "refunded") {
+      throw new AlipayOperationError("refund state changed before confirmation was persisted");
+    }
   }
   await deps.db.markEntitlementRefunded("alipay", order.out_trade_no, deps.now());
   await revokeRefundedAccountIfNeeded(order, deps);
@@ -344,8 +411,15 @@ export async function requestFullAlipayRefund(
   }
   if (order.refund_request_no === null) {
     const requestNo = requireNonEmpty(deps.newRefundRequestNo(), "refund request number");
-    await deps.db.updatePaymentOrder(order.id, { refund_request_no: requestNo });
+    await deps.db.compareAndSetPaymentOrder(
+      order.id,
+      { statuses: ["paid", "fulfilled"], refundRequestNo: null },
+      { refund_request_no: requestNo },
+    );
     order = (await deps.db.getPaymentOrderById(order.id)) ?? order;
+    if (order.refund_request_no === null) {
+      throw new AlipayOperationError("refund request could not be claimed");
+    }
   }
   const result = await deps.alipayApi.refundTrade({
     outTradeNo: order.out_trade_no,
@@ -402,7 +476,11 @@ export async function closeAlipayOrder(
     if (order.status === "paid") return compensateAlipayOrder(order.id, deps);
     if (order.status === "fulfilled") return order;
     if (canTransitionPaymentOrder(order.status, "closed")) {
-      await deps.db.updatePaymentOrder(order.id, { status: "closed", closed_at: deps.now() });
+      await deps.db.compareAndSetPaymentOrder(
+        order.id,
+        { statuses: [order.status] },
+        { status: "closed", closed_at: deps.now() },
+      );
       return (await deps.db.getPaymentOrderById(order.id)) ?? order;
     }
     return order;

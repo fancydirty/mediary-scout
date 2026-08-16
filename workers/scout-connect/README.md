@@ -119,6 +119,14 @@ sha256. After `token_shown_at` is set, the plaintext is unrecoverable.
 
 Vars (wrangler.jsonc, non-secret): `CONNECT_ROOT_DOMAIN=mediaryconnect.app`.
 
+For a browser sandbox checkout, put the sandbox credentials in the ignored local
+`.dev.vars` and set `ALIPAY_ENVIRONMENT=sandbox`, then run `wrangler dev`. The
+Worker honors sandbox only when the request hostname is `localhost`, `127.0.0.1`,
+or `::1`; a deployed custom domain with that value fails closed. Its signed form
+and CSP are both pinned to the official
+`openapi-sandbox.dl.alipaydev.com` gateway. Production omits the variable (or
+sets `production`) and remains pinned to `openapi.alipay.com`.
+
 ## Deploy
 
 ```bash
@@ -152,7 +160,7 @@ npx wrangler d1 execute scout-connect --remote \
 | --- | --- |
 | `0001-drop-access-notnull-add-last-seen.sql` | Drops the `cf_access_app_id NOT NULL` (post-Access `provision.ts` writes `NULL`; the old table rejected it, so **every provision 500'd** after creating and then rolling back the tunnel/DNS). Adds `last_seen_at` for `POST /api/instance/status`. Adds `idx_endpoints_token_sha256` + `idx_waitlist_batch_created` (both paths were full table scans). Realigns `waitlist.status` default `'waiting'` → `'pending'`. |
 | `0002-waitlist-survey.sql` | Adds nullable `waitlist.survey_json TEXT` for `POST /waitlist/survey`. Single additive `ALTER` (no rebuild; pre-existing rows read back NULL). Migrate before deploying. Wrong order no longer takes the funnel down — `insertWaitlist` falls back to the legacy column list and the survey route answers 503 — but degraded means exactly that: signups land without the column and their survey submits fail until this runs. |
-| `0006-alipay-payment-orders.sql` | Adds durable Alipay orders, provider-neutral payment identity, refund tombstones, and backfills historical payment rows without changing their existing access time. Required before the Alipay-only Worker deploy. |
+| `0006-alipay-payment-orders.sql` | Adds durable Alipay orders, provider-neutral payment identity, refund tombstones, a durable short-TTL query-coalescing timestamp, and backfills historical payment rows without changing their existing access time. Required before the Alipay-only Worker deploy. |
 
 Notes on writing migrations here:
 
@@ -184,7 +192,8 @@ submit the server-signed form to Alipay. A browser return never proves payment.
 Entitlements are granted only after a verified async notification or signed
 `alipay.trade.query` result matches app ID, seller ID, owned order, amount, and
 paid status. Notification and query races converge through the same durable
-idempotency key. Refunds are full amount only and revoke access only when no
+idempotency key. Repeated status requests share a durable 2.5-second query slot;
+`WAIT_BUYER_PAY` is never terminal-cached. Refunds are full amount only and revoke access only when no
 other unrefunded entitlement remains.
 
 After deploying, the script performs no-charge production checks. Final launch

@@ -7,8 +7,8 @@ import {
 } from "./alipay-crypto.js";
 import { normalizeAlipayAmount } from "./alipay-order.js";
 
-const PRODUCTION_GATEWAY = "https://openapi.alipay.com/gateway.do";
-const SANDBOX_GATEWAY = "https://openapi-sandbox.dl.alipaydev.com/gateway.do";
+export const ALIPAY_PRODUCTION_GATEWAY = "https://openapi.alipay.com/gateway.do";
+export const ALIPAY_SANDBOX_GATEWAY = "https://openapi-sandbox.dl.alipaydev.com/gateway.do";
 const DEFAULT_TIMEOUT_MS = 10_000;
 
 export interface PagePayInput {
@@ -82,7 +82,7 @@ export interface AlipayApiOptions {
 }
 
 function assertGateway(value: string): string {
-  if (value !== PRODUCTION_GATEWAY && value !== SANDBOX_GATEWAY) {
+  if (value !== ALIPAY_PRODUCTION_GATEWAY && value !== ALIPAY_SANDBOX_GATEWAY) {
     throw new Error("Alipay gateway must be an official HTTPS gateway");
   }
   return value;
@@ -158,16 +158,20 @@ function assertMatchingAmount(expected: string, actual: string, label: string): 
   }
 }
 
-export function createAlipayApi(options: AlipayApiOptions): AlipayApi {
+export async function createAlipayApi(options: AlipayApiOptions): Promise<AlipayApi> {
   const appId = options.appId.trim();
   if (appId === "") throw new Error("Alipay app id is not configured");
-  const gateway = assertGateway(options.gatewayUrl?.trim() || PRODUCTION_GATEWAY);
+  const gateway = assertGateway(options.gatewayUrl?.trim() || ALIPAY_PRODUCTION_GATEWAY);
   const fetchImpl = options.fetchImpl ?? ((input, init) => globalThis.fetch(input, init));
   const now = options.now ?? (() => new Date());
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error("invalid Alipay timeout");
-  const privateKey = importAlipayPrivateKey(options.privateKeyPem);
-  const publicKey = importAlipayPublicKey(options.alipayPublicKeyPem);
+  // Import eagerly so malformed bindings keep checkout disabled instead of failing only after
+  // a durable order has been created and the browser opens the one-time form hop.
+  const [privateKey, publicKey] = await Promise.all([
+    importAlipayPrivateKey(options.privateKeyPem),
+    importAlipayPublicKey(options.alipayPublicKeyPem),
+  ]);
 
   const commonParams = (method: string, bizContent: Record<string, string>): Record<string, string> => ({
     app_id: appId,
@@ -183,7 +187,7 @@ export function createAlipayApi(options: AlipayApiOptions): AlipayApi {
     method: string,
     bizContent: Record<string, string>,
   ): Promise<T> => {
-    const signed = await signAlipayParams(commonParams(method, bizContent), await privateKey);
+    const signed = await signAlipayParams(commonParams(method, bizContent), privateKey);
     const response = await fetchImpl(gateway, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded; charset=utf-8" },
@@ -210,7 +214,7 @@ export function createAlipayApi(options: AlipayApiOptions): AlipayApi {
     ) {
       throw new Error("Alipay gateway response is incomplete");
     }
-    if (!(await verifyAlipayContent(signedContent, signature, await publicKey))) {
+    if (!(await verifyAlipayContent(signedContent, signature, publicKey))) {
       throw new Error("Alipay gateway response signature is invalid");
     }
     const typed = result as T;
@@ -231,7 +235,7 @@ export function createAlipayApi(options: AlipayApiOptions): AlipayApi {
       });
       if (input.notifyUrl?.trim()) params.notify_url = input.notifyUrl.trim();
       params.return_url = input.returnUrl;
-      const signed = await signAlipayParams(params, await privateKey);
+      const signed = await signAlipayParams(params, privateKey);
       const inputs = Object.entries(signed.params)
         .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
         .map(
@@ -298,7 +302,7 @@ export function createAlipayApi(options: AlipayApiOptions): AlipayApi {
     },
 
     async verifyNotification(params) {
-      return verifyAlipayParams(params, await publicKey);
+      return verifyAlipayParams(params, publicKey);
     },
   };
 }

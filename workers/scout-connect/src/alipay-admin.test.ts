@@ -145,6 +145,7 @@ function paymentOrder(overrides: Partial<PaymentOrderRow> = {}): PaymentOrderRow
     refunded_at: null,
     refund_request_no: null,
     last_notify_id: "notify_1",
+    last_queried_at: null,
     ...overrides,
   };
 }

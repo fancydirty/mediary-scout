@@ -5,6 +5,8 @@ import {
   acceptAlipayPayment,
   compensateAlipayOrder,
   fulfillAlipayOrder,
+  requestFullAlipayRefund,
+  type AlipayRefundDeps,
   type AlipayServiceDeps,
 } from "./alipay-service.js";
 import { createMemoryConnectDb, type ConnectDb, type PaymentOrderRow } from "./db.js";
@@ -53,6 +55,20 @@ function serviceDeps(
   };
 }
 
+function refundDeps(
+  db: ConnectDb,
+  overrides: Partial<AlipayRefundDeps> = {},
+): AlipayRefundDeps {
+  let refundId = 0;
+  return {
+    ...serviceDeps(db),
+    cf: {} as AlipayRefundDeps["cf"],
+    newAuditId: () => "aud_refund",
+    newRefundRequestNo: () => `RF_RACE_${++refundId}`,
+    ...overrides,
+  };
+}
+
 function order(overrides: Partial<PaymentOrderRow> = {}): PaymentOrderRow {
   return {
     id: "ord_1",
@@ -72,6 +88,7 @@ function order(overrides: Partial<PaymentOrderRow> = {}): PaymentOrderRow {
     refunded_at: null,
     refund_request_no: null,
     last_notify_id: null,
+    last_queried_at: null,
     ...overrides,
   };
 }
@@ -234,6 +251,103 @@ describe("Alipay evidence and fulfillment", () => {
     await expect(fulfillAlipayOrder(row, serviceDeps(db))).rejects.toThrow(/paid/i);
     expect(await db.listEntitlements(row.account_id)).toEqual([]);
   });
+
+  it("never resurrects entitlement when a confirmed refund wins during fulfillment", async () => {
+    const base = createMemoryConnectDb();
+    const row = await seed(
+      base,
+      order({ status: "paid", trade_no: "trade_race", paid_at: NOW }),
+    );
+    let releaseInsert!: () => void;
+    let insertionStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      insertionStarted = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releaseInsert = resolve;
+    });
+    const racingDb: ConnectDb = {
+      ...base,
+      async insertEntitlement(entitlement) {
+        insertionStarted();
+        await release;
+        return base.insertEntitlement(entitlement);
+      },
+    };
+    const deps = refundDeps(racingDb, {
+      alipayApi: api({
+        async refundTrade(input) {
+          return {
+            code: "10000",
+            out_trade_no: input.outTradeNo,
+            fund_change: "Y",
+            refund_fee: input.refundAmount,
+          };
+        },
+      }),
+    });
+
+    const fulfillment = fulfillAlipayOrder(row, deps);
+    await started;
+    const refund = await requestFullAlipayRefund(row.id, deps);
+    releaseInsert();
+    const fulfillmentResult = await fulfillment;
+
+    expect(refund.status).toBe("refunded");
+    expect(fulfillmentResult.status).toBe("refunded");
+    expect((await base.getPaymentOrderById(row.id))?.status).toBe("refunded");
+    expect(await base.listEntitlements(row.account_id)).toMatchObject([
+      { payment_transaction_id: row.out_trade_no, refunded_at: NOW },
+    ]);
+  });
+
+  it("uses one persisted refund request identity across concurrent admin retries", async () => {
+    const db = createMemoryConnectDb();
+    const row = await seed(
+      db,
+      order({ status: "paid", trade_no: "trade_refund", paid_at: NOW }),
+    );
+    const calls: string[] = [];
+    let firstCallStarted!: () => void;
+    let releaseFirst!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      firstCallStarted = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const deps = refundDeps(db, {
+      alipayApi: api({
+        async refundTrade(input) {
+          calls.push(input.outRequestNo);
+          if (calls.length === 1) {
+            firstCallStarted();
+            await release;
+          }
+          return {
+            code: "10000",
+            out_trade_no: input.outTradeNo,
+            fund_change: "N",
+          };
+        },
+        async queryRefund() {
+          return null;
+        },
+      }),
+    });
+
+    const first = requestFullAlipayRefund(row.id, deps);
+    await firstStarted;
+    const second = await requestFullAlipayRefund(row.id, deps);
+    releaseFirst();
+    const firstResult = await first;
+
+    expect(firstResult.status).toBe("pending");
+    expect(second.status).toBe("pending");
+    expect(calls).toHaveLength(2);
+    expect(new Set(calls).size).toBe(1);
+    expect((await db.getPaymentOrderById(row.id))?.refund_request_no).toBe(calls[0]);
+  });
 });
 
 describe("signed query compensation", () => {
@@ -247,11 +361,13 @@ describe("signed query compensation", () => {
     expect(result.status).toBe("fulfilled");
   });
 
-  it("does not terminal-cache WAIT_BUYER_PAY and sees success on the next call", async () => {
+  it("coalesces immediate WAIT_BUYER_PAY polls but sees success after the short TTL", async () => {
     const db = createMemoryConnectDb();
     const row = await seed(db);
     let calls = 0;
+    let nowMs = Date.parse(NOW);
     const deps = serviceDeps(db, {
+      now: () => new Date(nowMs).toISOString(),
       alipayApi: api({
         async queryTrade() {
           calls += 1;
@@ -263,8 +379,66 @@ describe("signed query compensation", () => {
     });
 
     expect((await compensateAlipayOrder(row.id, deps)).status).toBe("pending");
+    expect((await compensateAlipayOrder(row.id, deps)).status).toBe("pending");
+    expect(calls).toBe(1);
+    nowMs += 3_000;
     expect((await compensateAlipayOrder(row.id, deps)).status).toBe("fulfilled");
     expect(calls).toBe(2);
+  });
+
+  it("coalesces concurrent compensation requests for the same unpaid order", async () => {
+    const db = createMemoryConnectDb();
+    const row = await seed(db);
+    let calls = 0;
+    const deps = serviceDeps(db, {
+      alipayApi: api({
+        async queryTrade() {
+          calls += 1;
+          return paidQuery(row, { trade_status: "WAIT_BUYER_PAY" });
+        },
+      }),
+    });
+
+    await Promise.all([
+      compensateAlipayOrder(row.id, deps),
+      compensateAlipayOrder(row.id, deps),
+      compensateAlipayOrder(row.id, deps),
+    ]);
+    expect(calls).toBe(1);
+  });
+
+  it("never lets a stale WAIT_BUYER_PAY query regress a concurrently fulfilled order", async () => {
+    const db = createMemoryConnectDb();
+    const row = await seed(db);
+    let queryStarted!: () => void;
+    let releaseQuery!: () => void;
+    const started = new Promise<void>((resolve) => {
+      queryStarted = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releaseQuery = resolve;
+    });
+    const deps = serviceDeps(db, {
+      alipayApi: api({
+        async queryTrade() {
+          queryStarted();
+          await release;
+          return paidQuery(row, { trade_status: "WAIT_BUYER_PAY" });
+        },
+      }),
+    });
+
+    const staleQuery = compensateAlipayOrder(row.id, deps);
+    await started;
+    await acceptAlipayPayment(
+      { outTradeNo: row.out_trade_no, tradeNo: "trade_winner", totalAmount: row.total_amount },
+      deps,
+    );
+    releaseQuery();
+    await staleQuery;
+
+    expect((await db.getPaymentOrderById(row.id))?.status).toBe("fulfilled");
+    expect(await db.listEntitlements(row.account_id)).toHaveLength(1);
   });
 
   it("maps a verified closed result without granting", async () => {

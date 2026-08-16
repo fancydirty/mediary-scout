@@ -42,6 +42,7 @@ import {
   closeAlipayOrder,
   compensateAlipayOrder,
   InvalidAlipayEvidenceError,
+  IgnoredAlipayNotificationError,
   AlipayOperationError,
   queryAlipayRefund,
   requestFullAlipayRefund,
@@ -73,6 +74,8 @@ export interface RouteDeps {
   alipayApi?: AlipayApi | undefined;
   alipayAppId?: string | undefined;
   alipaySellerId?: string | undefined;
+  /** Sandbox is accepted only by local Worker wiring; production stays pinned to production. */
+  alipayEnvironment?: "production" | "sandbox" | undefined;
   /** Deterministic injection points for checkout tests; production uses crypto randomness. */
   newPaymentOrderId?: (() => string) | undefined;
   newAlipayOutTradeNo?: (() => string) | undefined;
@@ -669,7 +672,9 @@ async function requestMagicLink(request: Request, deps: RouteDeps): Promise<Resp
   // rootDomain 需 normalize:CONNECT_ROOT_DOMAIN 可能带空白/大小写,直拼到邮件
   // 链接里会坏掉——与路由期待的规范 host 不符(Copilot round 3)。
   const domain = deps.rootDomain.trim().toLowerCase();
-  const url = `https://${domain}/auth/callback?t=${encodeURIComponent(token)}`;
+  const origin =
+    deps.alipayEnvironment === "sandbox" ? new URL(request.url).origin : `https://${domain}`;
+  const url = `${origin}/auth/callback?t=${encodeURIComponent(token)}`;
   // 发信失败不改变对外结果(固定 202):既不泄露邮箱是否存在,也不让
   // Resend 的抖动变成用户可见的 500。失败在 sender 内部已 console.error。
   try {
@@ -820,6 +825,11 @@ async function alipayNotify(request: Request, deps: RouteDeps): Promise<Response
     if (order.status !== "fulfilled") return alipayNotifyResponse("retry", 503);
     return alipayNotifyResponse("success", 200);
   } catch (error) {
+    if (error instanceof IgnoredAlipayNotificationError) {
+      // A verified merchant-owned refund/close/split event is safe to acknowledge, but it must
+      // never flow through the buyer-payment fulfillment path.
+      return alipayNotifyResponse("success", 200);
+    }
     if (error instanceof InvalidAlipayEvidenceError) {
       return alipayNotifyResponse("rejected", 400);
     }
@@ -964,6 +974,7 @@ async function createAlipayCheckout(request: Request, deps: RouteDeps): Promise<
     refunded_at: null,
     refund_request_no: null,
     last_notify_id: null,
+    last_queried_at: null,
   });
   return json(
     {
@@ -1005,19 +1016,29 @@ async function openAlipayCheckout(url: URL, deps: RouteDeps): Promise<Response> 
     return json({ error: "order unavailable" }, 500, { noStore: true });
   }
   const root = deps.rootDomain.trim().toLowerCase();
-  const origin = `https://${root}`;
+  const sandbox = deps.alipayEnvironment === "sandbox";
+  const origin = sandbox ? url.origin : `https://${root}`;
   try {
     const form = await api.pagePayForm({
       outTradeNo: order.out_trade_no,
       totalAmount: order.total_amount,
       subject: `Mediary Connect ${tier.label}`,
-      notifyUrl: `${origin}/api/alipay/notify`,
+      // A localhost callback is not reachable by Alipay. Omit notify_url in sandbox-local mode
+      // and use the owned status page's signed trade.query compensation instead.
+      ...(sandbox ? {} : { notifyUrl: `${origin}/api/alipay/notify` }),
       returnUrl: `${origin}/payment-success?order=${encodeURIComponent(order.id)}`,
     });
     if (order.status === "created") {
-      await deps.db.updatePaymentOrder(order.id, { status: "form_issued" });
+      await deps.db.compareAndSetPaymentOrder(
+        order.id,
+        { statuses: ["created"] },
+        { status: "form_issued" },
+      );
     }
-    return htmlPage(form, { noStore: true, alipayForm: true });
+    return htmlPage(form, {
+      noStore: true,
+      alipayForm: deps.alipayEnvironment === "sandbox" ? "sandbox" : true,
+    });
   } catch {
     return json({ error: "checkout unavailable" }, 502, { noStore: true });
   }

@@ -27,6 +27,8 @@ export interface Env {
   ALIPAY_PRIVATE_KEY?: string;
   ALIPAY_ALIPAY_PUBLIC_KEY?: string;
   ALIPAY_SELLER_ID?: string;
+  /** "sandbox" is honored only for localhost requests; omit or use "production" in deploys. */
+  ALIPAY_ENVIRONMENT?: string;
   // 到期巡检是否真删。"true" 才开;任何其它值/未设 = dry-run 只记审计。
   // 四个 PR 里唯一会真删生产资源的路径,先在实例验证时间边界再放开。
   EXPIRY_SWEEP_LIVE?: string;

@@ -4,7 +4,11 @@ import { newId, newInviteCode } from "./ids.js";
 import { handleRequest } from "./routes.js";
 import { createMagicLinkSender } from "./magic-link-sender.js";
 import type { Env } from "./env.js";
-import { createAlipayApi } from "./alipay-api.js";
+import {
+  ALIPAY_PRODUCTION_GATEWAY,
+  ALIPAY_SANDBOX_GATEWAY,
+  createAlipayApi,
+} from "./alipay-api.js";
 
 /** 取值或显式抛错。某些 env(如 RESEND_API_KEY)对**部分**路径可选(到期提醒),
  *  但对其它路径(登录)是必需的 —— 在必需处显式断言,比让 undefined 流到下游
@@ -27,6 +31,17 @@ interface CronScheduledEvent {
 }
 interface WorkersExecutionContext {
   waitUntil(promise: Promise<unknown>): void;
+}
+
+export function resolveAlipayEnvironment(
+  requestUrl: string,
+  configured: string | undefined,
+): "production" | "sandbox" | undefined {
+  const requested = configured?.trim() || "production";
+  if (requested === "production") return "production";
+  const hostname = new URL(requestUrl).hostname;
+  const local = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+  return requested === "sandbox" && local ? "sandbox" : undefined;
 }
 
 export default {
@@ -62,14 +77,31 @@ export default {
     const alipayPrivateKey = env.ALIPAY_PRIVATE_KEY?.trim();
     const alipayPublicKey = env.ALIPAY_ALIPAY_PUBLIC_KEY?.trim();
     const alipaySellerId = env.ALIPAY_SELLER_ID?.trim();
-    const alipayApi =
-      alipayAppId && alipayPrivateKey && alipayPublicKey && alipaySellerId
-        ? createAlipayApi({
-            appId: alipayAppId,
-            privateKeyPem: alipayPrivateKey,
-            alipayPublicKeyPem: alipayPublicKey,
-          })
-        : undefined;
+    const alipayEnvironment = resolveAlipayEnvironment(request.url, env.ALIPAY_ENVIRONMENT);
+    let alipayApi;
+    if (
+      alipayEnvironment &&
+      alipayAppId &&
+      alipayPrivateKey &&
+      alipayPublicKey &&
+      alipaySellerId
+    ) {
+      try {
+        alipayApi = await createAlipayApi({
+          appId: alipayAppId,
+          privateKeyPem: alipayPrivateKey,
+          alipayPublicKeyPem: alipayPublicKey,
+          gatewayUrl:
+            alipayEnvironment === "sandbox"
+              ? ALIPAY_SANDBOX_GATEWAY
+              : ALIPAY_PRODUCTION_GATEWAY,
+        });
+      } catch {
+        // Never log key material or parser details. Invalid bindings make every payment route
+        // fail closed and keep the buy page disabled.
+        console.error("Alipay payment configuration is invalid");
+      }
+    }
     return handleRequest(request, {
       db: createD1ConnectDb(env.DB),
       cf: createCfApi({
@@ -89,6 +121,7 @@ export default {
       alipayApi,
       alipayAppId,
       alipaySellerId,
+      alipayEnvironment,
       turnstileSecret: env.TURNSTILE_SECRET,
       newAccountId: () => newId("act"),
       newEntitlementId: () => newId("ent"),

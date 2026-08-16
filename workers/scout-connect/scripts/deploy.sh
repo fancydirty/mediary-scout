@@ -31,7 +31,32 @@ if [ "$LOCAL" != "$REMOTE" ]; then
   echo "   ⚠️ DEPLOY_ALLOW_DIVERGED=1，继续。" >&2
 fi
 
-# 3) 本地门禁。
+# 3) 生产前置条件。必须在 wrangler deploy 前失败，不能先切代码再发现缺配置。
+echo "→ 生产支付宝 secrets 预检（只读名称，不读取值）"
+SECRET_LIST=$(mktemp)
+trap 'rm -f "$SECRET_LIST"' EXIT HUP INT TERM
+env -u CF_API_TOKEN npx wrangler secret list >"$SECRET_LIST"
+for SECRET_NAME in \
+  ALIPAY_APP_ID \
+  ALIPAY_PRIVATE_KEY \
+  ALIPAY_ALIPAY_PUBLIC_KEY \
+  ALIPAY_SELLER_ID
+do
+  if ! grep -Eq "\"name\"[[:space:]]*:[[:space:]]*\"$SECRET_NAME\"" "$SECRET_LIST"; then
+    echo "❌ 缺少 Worker secret: $SECRET_NAME；尚未部署。" >&2
+    exit 1
+  fi
+done
+
+echo "→ 生产 D1 支付 schema 预检（只读）"
+if ! env -u CF_API_TOKEN npx wrangler d1 execute scout-connect --remote \
+  --command "SELECT refund_request_no, last_queried_at FROM payment_orders LIMIT 0; SELECT payment_provider, payment_transaction_id, refunded_at FROM entitlements LIMIT 0;" \
+  >/dev/null; then
+  echo "❌ 生产 D1 尚未完整应用 0006-alipay-payment-orders.sql；尚未部署。" >&2
+  exit 1
+fi
+
+# 4) 本地门禁。
 echo "→ typecheck"
 npx tsc -p tsconfig.json --noEmit
 echo "→ tests"
@@ -40,7 +65,7 @@ echo "→ tests"
 echo "→ wrangler deploy"
 env -u CF_API_TOKEN npx wrangler deploy "$@"
 
-# 4) 不发起交易的生产自检。
+# 5) 不发起交易的生产自检。
 echo "→ 部署后支付宝自检（不创建订单、不扣款）"
 sleep 3
 BUY=$(curl -fsS https://mediaryconnect.app/buy 2>/dev/null || echo "")

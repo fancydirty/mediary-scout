@@ -82,6 +82,7 @@ export interface PaymentOrderRow {
   refunded_at: string | null;
   refund_request_no: string | null;
   last_notify_id: string | null;
+  last_queried_at: string | null;
 }
 
 export type PaymentOrderPatch = Partial<
@@ -97,6 +98,13 @@ export type PaymentOrderPatch = Partial<
     | "last_notify_id"
   >
 >;
+
+export interface PaymentOrderCondition {
+  /** At least one current status accepted by this compare-and-set. */
+  statuses?: readonly PaymentOrderStatus[];
+  /** undefined = do not compare; null = require no refund claim; string = require exact claim. */
+  refundRequestNo?: string | null;
+}
 
 export interface AuditRow {
   id: string;
@@ -219,6 +227,14 @@ export interface ConnectDb {
   getPaymentOrderByOutTradeNo(outTradeNo: string): Promise<PaymentOrderRow | null>;
   getPaymentOrderByRefundRequestNo(requestNo: string): Promise<PaymentOrderRow | null>;
   updatePaymentOrder(id: string, patch: PaymentOrderPatch): Promise<void>;
+  /** Atomic conditional update used where fulfillment and refunds can race. */
+  compareAndSetPaymentOrder(
+    id: string,
+    expected: PaymentOrderCondition,
+    patch: PaymentOrderPatch,
+  ): Promise<boolean>;
+  /** Claims one short trade-query slot across Worker instances/tabs. */
+  claimPaymentOrderQuery(id: string, queriedAt: string, cutoff: string): Promise<boolean>;
   /** 幂等插入时长记录。paddle_transaction_id 已存在时返回 false(不重复加时长)。 */
   insertEntitlement(row: EntitlementRow): Promise<boolean>;
   /** 修正某笔时长的 expires_at。
@@ -363,6 +379,7 @@ function mapPaymentOrder(row: RawRow): PaymentOrderRow {
     refunded_at: row.refunded_at as string | null,
     refund_request_no: row.refund_request_no as string | null,
     last_notify_id: row.last_notify_id as string | null,
+    last_queried_at: row.last_queried_at as string | null,
   };
 }
 
@@ -768,8 +785,8 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
           `INSERT INTO payment_orders
              (id, checkout_token_sha256, account_id, provider, out_trade_no, trade_no,
               months, total_amount, status, created_at, expires_at, paid_at, fulfilled_at,
-              closed_at, refunded_at, refund_request_no, last_notify_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              closed_at, refunded_at, refund_request_no, last_notify_id, last_queried_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
           row.id,
@@ -789,6 +806,7 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
           row.refunded_at,
           row.refund_request_no,
           row.last_notify_id,
+          row.last_queried_at,
         )
         .run();
       return { ...row };
@@ -848,6 +866,65 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
         .bind(...values)
         .run()) as { meta?: { changes?: number } };
       if (result.meta?.changes === 0) throw new Error(`payment order not found: ${id}`);
+    },
+
+    async compareAndSetPaymentOrder(id, expected, patch) {
+      const columns = [
+        "trade_no",
+        "status",
+        "paid_at",
+        "fulfilled_at",
+        "closed_at",
+        "refunded_at",
+        "refund_request_no",
+        "last_notify_id",
+      ] as const;
+      const sets: string[] = [];
+      const values: unknown[] = [];
+      for (const column of columns) {
+        if (patch[column] === undefined) continue;
+        sets.push(`${column} = ?`);
+        values.push(patch[column]);
+      }
+      if (sets.length === 0) throw new Error("payment order compare-and-set patch is empty");
+
+      const where = ["id = ?"];
+      values.push(id);
+      if (expected.statuses !== undefined) {
+        if (expected.statuses.length === 0) {
+          throw new Error("payment order compare-and-set statuses are empty");
+        }
+        where.push(`status IN (${expected.statuses.map(() => "?").join(", ")})`);
+        values.push(...expected.statuses);
+      }
+      if (expected.refundRequestNo === null) {
+        where.push("refund_request_no IS NULL");
+      } else if (expected.refundRequestNo !== undefined) {
+        where.push("refund_request_no = ?");
+        values.push(expected.refundRequestNo);
+      }
+      if (where.length === 1) {
+        throw new Error("payment order compare-and-set condition is empty");
+      }
+      const result = (await d1
+        .prepare(`UPDATE payment_orders SET ${sets.join(", ")} WHERE ${where.join(" AND ")}`)
+        .bind(...values)
+        .run()) as { meta?: { changes?: number } };
+      return (result.meta?.changes ?? 0) > 0;
+    },
+
+    async claimPaymentOrderQuery(id, queriedAt, cutoff) {
+      const result = (await d1
+        .prepare(
+          `UPDATE payment_orders
+              SET last_queried_at = ?
+            WHERE id = ?
+              AND status IN ('created', 'form_issued', 'pending')
+              AND (last_queried_at IS NULL OR last_queried_at <= ?)`,
+        )
+        .bind(queriedAt, id, cutoff)
+        .run()) as { meta?: { changes?: number } };
+      return (result.meta?.changes ?? 0) > 0;
     },
 
     async insertEntitlement(row) {
@@ -1351,6 +1428,59 @@ export function createMemoryConnectDb(): ConnectDb {
         }
       }
       paymentOrders.set(id, updated);
+    },
+
+    async compareAndSetPaymentOrder(id, expected, patch) {
+      const row = paymentOrders.get(id);
+      if (row === undefined) return false;
+      if (expected.statuses !== undefined) {
+        if (expected.statuses.length === 0) {
+          throw new Error("payment order compare-and-set statuses are empty");
+        }
+        if (!expected.statuses.includes(row.status)) return false;
+      }
+      if (
+        expected.refundRequestNo !== undefined &&
+        row.refund_request_no !== expected.refundRequestNo
+      ) {
+        return false;
+      }
+      if (expected.statuses === undefined && expected.refundRequestNo === undefined) {
+        throw new Error("payment order compare-and-set condition is empty");
+      }
+      if (Object.values(patch).every((value) => value === undefined)) {
+        throw new Error("payment order compare-and-set patch is empty");
+      }
+      const updated = { ...row, ...patch };
+      for (const existing of paymentOrders.values()) {
+        if (existing.id === id) continue;
+        if (updated.trade_no !== null && existing.trade_no === updated.trade_no) {
+          throw new Error("UNIQUE constraint failed: payment_orders.trade_no");
+        }
+        if (
+          updated.refund_request_no !== null &&
+          existing.refund_request_no === updated.refund_request_no
+        ) {
+          throw new Error("UNIQUE constraint failed: payment_orders.refund_request_no");
+        }
+      }
+      paymentOrders.set(id, updated);
+      return true;
+    },
+
+    async claimPaymentOrderQuery(id, queriedAt, cutoff) {
+      const row = paymentOrders.get(id);
+      const queryable =
+        row?.status === "created" || row?.status === "form_issued" || row?.status === "pending";
+      if (
+        row === undefined ||
+        !queryable ||
+        (row.last_queried_at !== null && row.last_queried_at > cutoff)
+      ) {
+        return false;
+      }
+      row.last_queried_at = queriedAt;
+      return true;
     },
 
     async insertEntitlement(row) {

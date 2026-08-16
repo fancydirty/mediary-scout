@@ -52,4 +52,24 @@ describe("Alipay-only active checkout tree", () => {
     expect(COMPLIANCE_MARKDOWN.terms).not.toContain("Merchant of Record");
     expect(COMPLIANCE_MARKDOWN.refund).toContain("原支付宝订单号或交易号");
   });
+
+  it("preflights remote Alipay secrets and D1 schema before changing production traffic", () => {
+    const deploy = readFileSync(resolve(workerRoot, "scripts/deploy.sh"), "utf8");
+    const deployAt = deploy.indexOf("npx wrangler deploy");
+    expect(deployAt).toBeGreaterThan(0);
+    for (const marker of [
+      "wrangler secret list",
+      "ALIPAY_APP_ID",
+      "ALIPAY_PRIVATE_KEY",
+      "ALIPAY_ALIPAY_PUBLIC_KEY",
+      "ALIPAY_SELLER_ID",
+      "payment_orders",
+      "payment_provider",
+      "refund_request_no",
+    ]) {
+      const markerAt = deploy.indexOf(marker);
+      expect(markerAt, marker).toBeGreaterThan(0);
+      expect(markerAt, marker).toBeLessThan(deployAt);
+    }
+  });
 });

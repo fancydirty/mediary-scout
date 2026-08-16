@@ -27,6 +27,7 @@ function order(overrides: Partial<PaymentOrderRow> = {}): PaymentOrderRow {
     refunded_at: null,
     refund_request_no: null,
     last_notify_id: null,
+    last_queried_at: null,
     ...overrides,
   };
 }
@@ -171,6 +172,23 @@ describe("POST /api/alipay/notify", () => {
     }
   });
 
+  it("acknowledges signed refund or other business events without granting payment rights", async () => {
+    const eventShapes = [
+      { out_biz_no: "refund_business_1" },
+      { gmt_refund: "2026-08-16 16:10:00" },
+      { refund_fee: "108.00" },
+    ];
+    for (const eventShape of eventShapes) {
+      const { db, deps } = setup();
+      const row = await seed(db);
+      const response = await postNotify(deps, notifyParams(row, eventShape));
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe("success");
+      expect((await db.getPaymentOrderById(row.id))?.status).toBe("form_issued");
+      expect(await db.listEntitlements(row.account_id)).toEqual([]);
+    }
+  });
+
   it("returns retryable failure when config or fulfillment storage is unavailable", async () => {
     const missing = setup({ alipayAppId: undefined });
     const missingRow = await seed(missing.db);
@@ -240,6 +258,7 @@ describe("owned order status query compensation", () => {
         deps,
       );
     expect(await (await request()).json()).toEqual({ status: "pending" });
+    deps.now = () => "2026-08-16T08:00:03.000Z";
     expect(await (await request()).json()).toEqual({ status: "fulfilled" });
     expect(calls).toBe(2);
   });

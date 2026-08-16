@@ -52,13 +52,13 @@ async function signedGatewayResponse(
 async function setup(
   handler: (request: Request) => Promise<Response>,
   overrides: Partial<AlipayApiOptions> = {},
-): Promise<{ api: ReturnType<typeof createAlipayApi>; keys: KeyFixture }> {
+): Promise<{ api: Awaited<ReturnType<typeof createAlipayApi>>; keys: KeyFixture }> {
   const keys = await keyFixture();
   const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const request = new Request(input, init);
     return handler(request);
   }) as typeof fetch;
-  const api = createAlipayApi({
+  const api = await createAlipayApi({
     appId: "2026000000000000",
     privateKeyPem: keys.privateKeyText,
     alipayPublicKeyPem: keys.publicKeyText,
@@ -70,6 +70,16 @@ async function setup(
 }
 
 describe("Alipay page-pay form", () => {
+  it("rejects malformed RSA bindings while payment configuration is initialized", async () => {
+    await expect(
+      createAlipayApi({
+        appId: "2026000000000000",
+        privateKeyPem: "not-a-private-key",
+        alipayPublicKeyPem: "not-an-alipay-public-key",
+      }),
+    ).rejects.toThrow();
+  });
+
   it("creates a signed POST form with fixed URLs, timestamp, and escaped values", async () => {
     const { api, keys } = await setup(async () => new Response("unused"));
     const html = await api.pagePayForm({
@@ -112,6 +122,19 @@ describe("Alipay page-pay form", () => {
     await expect(
       setup(async () => new Response("unused"), { gatewayUrl: "https://evil.example/gateway.do" }),
     ).rejects.toThrow(/gateway/i);
+  });
+
+  it("supports only the official Alipay sandbox gateway when explicitly selected", async () => {
+    const { api } = await setup(async () => new Response("unused"), {
+      gatewayUrl: "https://openapi-sandbox.dl.alipaydev.com/gateway.do",
+    });
+    const html = await api.pagePayForm({
+      outTradeNo: "MC_SANDBOX",
+      totalAmount: "45.00",
+      subject: "Mediary Connect 季度",
+      returnUrl: "http://localhost:8787/payment-success?order=ord_sandbox",
+    });
+    expect(html).toContain('action="https://openapi-sandbox.dl.alipaydev.com/gateway.do"');
   });
 });
 
@@ -257,7 +280,7 @@ describe("signed Alipay OpenAPI calls", () => {
           init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
         }),
     ) as typeof fetch;
-    const api = createAlipayApi({
+    const api = await createAlipayApi({
       appId: "2026000000000000",
       privateKeyPem: keys.privateKeyText,
       alipayPublicKeyPem: keys.publicKeyText,

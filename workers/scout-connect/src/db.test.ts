@@ -793,6 +793,7 @@ function paymentOrder(overrides: Partial<PaymentOrderRow> = {}): PaymentOrderRow
     refunded_at: null,
     refund_request_no: null,
     last_notify_id: null,
+    last_queried_at: null,
     ...overrides,
   };
 }
@@ -856,6 +857,35 @@ describe("payment-order and provider-neutral entitlement persistence", () => {
     await expect(
       db.updatePaymentOrder("ord_2", { refund_request_no: "refund_1" }),
     ).rejects.toThrow(/UNIQUE/i);
+  });
+
+  it("atomically compares payment state and preserves one refund request identity", async () => {
+    const db = createMemoryConnectDb();
+    const row = paymentOrder({ status: "paid", paid_at: "2026-08-16T00:03:00.000Z" });
+    await db.insertPaymentOrder(row);
+
+    const winners = await Promise.all([
+      db.compareAndSetPaymentOrder(
+        row.id,
+        { statuses: ["paid", "fulfilled"], refundRequestNo: null },
+        { refund_request_no: "RF_A" },
+      ),
+      db.compareAndSetPaymentOrder(
+        row.id,
+        { statuses: ["paid", "fulfilled"], refundRequestNo: null },
+        { refund_request_no: "RF_B" },
+      ),
+    ]);
+
+    expect(winners.filter(Boolean)).toHaveLength(1);
+    expect((await db.getPaymentOrderById(row.id))?.refund_request_no).toMatch(/^RF_[AB]$/);
+    expect(
+      await db.compareAndSetPaymentOrder(
+        row.id,
+        { statuses: ["paid"], refundRequestNo: null },
+        { status: "fulfilled", fulfilled_at: "2026-08-16T00:04:00.000Z" },
+      ),
+    ).toBe(false);
   });
 
   it("deduplicates a provider transaction but permits repeated manual grants", async () => {

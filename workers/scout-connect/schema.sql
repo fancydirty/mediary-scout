@@ -145,7 +145,8 @@ CREATE TABLE payment_orders (
   closed_at TEXT,
   refunded_at TEXT,
   refund_request_no TEXT UNIQUE,
-  last_notify_id TEXT
+  last_notify_id TEXT,
+  last_queried_at TEXT
 );
 CREATE INDEX idx_payment_orders_account_created
   ON payment_orders(account_id, created_at DESC, id DESC);

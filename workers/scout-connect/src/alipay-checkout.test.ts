@@ -226,6 +226,38 @@ describe("GET /alipay/checkout", () => {
     await db.updatePaymentOrder(closed.order.id, { status: "closed", closed_at: NOW });
     expect((await handleRequest(new Request(`${BASE}${closed.checkoutUrl}`), deps)).status).toBe(409);
   });
+
+  it("allows only the official sandbox form target in explicit local sandbox mode", async () => {
+    const sandboxCalls: PagePayInput[] = [];
+    const sandboxApi: AlipayApi = {
+      ...fakeAlipayApi(sandboxCalls),
+      async pagePayForm(input) {
+        sandboxCalls.push(input);
+        return '<form method="post" action="https://openapi-sandbox.dl.alipaydev.com/gateway.do"></form>';
+      },
+    };
+    const { db, deps } = setup({ alipayApi: sandboxApi, alipayEnvironment: "sandbox" });
+    await seedAccount(db, "act_buyer");
+    const created = await createdOrder(
+      db,
+      await createCheckout(deps, { tier: "quarter" }, await cookieFor("act_buyer")),
+    );
+
+    const response = await handleRequest(
+      new Request(`http://localhost:8787${created.checkoutUrl}`),
+      deps,
+    );
+    const csp = response.headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("form-action https://openapi-sandbox.dl.alipaydev.com");
+    expect(csp).not.toContain("form-action https://openapi.alipay.com");
+    expect(await response.text()).toContain("https://openapi-sandbox.dl.alipaydev.com/gateway.do");
+    expect(sandboxCalls[0]).toEqual({
+      outTradeNo: created.order.out_trade_no,
+      totalAmount: "45.00",
+      subject: "Mediary Connect 季度",
+      returnUrl: `http://localhost:8787/payment-success?order=${created.order.id}`,
+    });
+  });
 });
 
 describe("GET /api/alipay/orders/:id/status", () => {

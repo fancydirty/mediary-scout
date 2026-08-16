@@ -1188,6 +1188,7 @@ describe("migration 0006 — provider-neutral entitlements and Alipay orders", (
       refunded_at: null,
       refund_request_no: null,
       last_notify_id: null,
+      last_queried_at: null,
     };
     await db.insertPaymentOrder(order);
     await db.updatePaymentOrder(order.id, {
@@ -1200,6 +1201,51 @@ describe("migration 0006 — provider-neutral entitlements and Alipay orders", (
       status: "paid",
       trade_no: "trade_rt",
     });
+    expect(
+      await db.compareAndSetPaymentOrder(
+        order.id,
+        { statuses: ["paid", "fulfilled"], refundRequestNo: null },
+        { refund_request_no: "RF_RT" },
+      ),
+    ).toBe(true);
+    expect(
+      await db.compareAndSetPaymentOrder(
+        order.id,
+        { statuses: ["paid"], refundRequestNo: null },
+        { status: "fulfilled", fulfilled_at: "2026-08-16T00:04:00.000Z" },
+      ),
+    ).toBe(false);
+    await db.insertPaymentOrder({
+      ...order,
+      id: "ord_query_rt",
+      checkout_token_sha256: "sha_query_rt",
+      out_trade_no: "MCQUERYRT",
+      trade_no: null,
+      status: "pending",
+      paid_at: null,
+      refund_request_no: null,
+    });
+    expect(
+      await db.claimPaymentOrderQuery(
+        "ord_query_rt",
+        "2026-08-16T00:04:00.000Z",
+        "2026-08-16T00:03:57.500Z",
+      ),
+    ).toBe(true);
+    expect(
+      await db.claimPaymentOrderQuery(
+        "ord_query_rt",
+        "2026-08-16T00:04:01.000Z",
+        "2026-08-16T00:03:58.500Z",
+      ),
+    ).toBe(false);
+    expect(
+      await db.claimPaymentOrderQuery(
+        "ord_query_rt",
+        "2026-08-16T00:04:03.000Z",
+        "2026-08-16T00:04:00.500Z",
+      ),
+    ).toBe(true);
 
     const entitlement = {
       id: "ent_rt",
