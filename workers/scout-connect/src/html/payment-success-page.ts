@@ -1,29 +1,6 @@
 import { BRAND_BAR, BRAND_CSS, FAVICON_LINK, THEME_BASE, THEME_TOKENS } from "./theme.js";
 
-/**
- * `/payment-success` —— 支付成功后的中间页。
- *
- * **为什么必须有这个页面:**
- *
- * 微信支付这类**外部跳转**支付方式,用户付完款会被 Paddle 带到它自己的
- * 支付处理域名(redirect-euw1.ppro.com),我们的 `/buy` 页面上的
- * `eventCallback` 完全失效 —— 用户看到的是一个不动的二维码页,
- * 完全不知道支付是否成功。
- *
- * 这个页面由 `/buy` 页里 `Paddle.Checkout.open({ settings: { successUrl } })` 指向,
- * 是**唯一能保证用户看到"支付成功"的地方**。
- *
- * **为什么不直接跳控制台:**
- *
- * 微信支付是**延迟捕获**(Paddle 官方文档:通常立刻,但可能长达 10 分钟)。
- * 直接跳控制台会看到「尚未开通」—— 那正是最伤人的一幕:
- * 刚付完钱,页面告诉你什么都没发生。
- *
- * 所以这个页面明确说:
- * 1. 支付成功了(用户最需要的确认)
- * 2. Paddle 正在处理(解释为什么控制台还没显示)
- * 3. 给一个链接让他自己去看(而不是自动跳转到一个可能显示"未开通"的页面)
- */
+/** Alipay browser return shell. It only renders state obtained from our authenticated API. */
 export function paymentSuccessPage(): string {
   return `<!doctype html>
 <html lang="zh-Hans">
@@ -37,137 +14,98 @@ ${FAVICON_LINK}
 ${THEME_TOKENS}
 ${THEME_BASE}
 ${BRAND_CSS}
-main{max-width:560px;margin:0 auto;padding:48px 24px 96px}
-h1{font-size:1.75rem;font-weight:900;letter-spacing:-.5px;margin:24px 0 12px}
-p{color:var(--text-muted);font-size:15px;margin:12px 0 0;line-height:1.7}
-.card{margin-top:28px;padding:24px;border:1px solid var(--border);border-radius:12px;background:var(--bg-surface)}
-.ok{display:flex;align-items:center;gap:12px;margin-bottom:16px}
-.ok-icon{width:44px;height:44px;border-radius:50%;background:rgba(34,197,94,.15);display:flex;align-items:center;justify-content:center;flex-shrink:0}
-.ok-icon svg{width:24px;height:24px;stroke:#22c55e;stroke-width:2.5;fill:none}
-.ok-text{font-size:1.1rem;font-weight:800;color:var(--text)}
-.btn{display:inline-block;margin-top:20px;padding:12px 24px;border-radius:999px;background:var(--accent);color:#000;font-weight:700;text-decoration:none;font-size:14.5px}
-.btn:hover{background:var(--accent-press)}
-.note{margin-top:20px;padding:14px 16px;border-radius:10px;background:rgba(255,255,255,.03);border:1px solid var(--border);font-size:13.5px;color:var(--text-muted);line-height:1.65}
-a{color:var(--accent)}
-.muted{color:var(--text-muted);font-size:13px;margin-top:24px}
+main{max-width:590px;margin:0 auto;padding:48px 24px 96px}.card{margin-top:34px;padding:28px;border:1px solid var(--border);border-radius:16px;background:var(--bg-surface)}
+.state{display:flex;align-items:center;gap:14px}.pulse{width:46px;height:46px;border-radius:50%;background:rgba(30,215,96,.12);border:1px solid rgba(30,215,96,.35);display:grid;place-items:center;color:var(--accent);font-weight:900}.pulse::after{content:"…";transform:translateY(-3px)}
+h1{font-size:1.45rem;line-height:1.2;margin:0;font-weight:900}#detail{color:var(--text-muted);font-size:14.5px;line-height:1.75;margin:20px 0 0}.notice{margin-top:20px;padding:14px 16px;border:1px solid var(--border);border-radius:11px;background:rgba(255,255,255,.025);color:var(--text-muted);font-size:13.5px;line-height:1.7}.notice strong{color:var(--text)}
+.actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:24px}.btn{display:inline-block;padding:11px 18px;border-radius:999px;background:var(--accent);color:#06150a;font-weight:800;text-decoration:none;font-size:14px}.btn.secondary{background:transparent;color:var(--text);border:1px solid var(--border)}.links{color:var(--text-muted);font-size:13px;margin-top:24px}.links a{color:var(--accent)}
 </style>
 </head>
 <body>
 <main>
 ${BRAND_BAR}
-
-<div class="card">
-<div class="ok">
-<div class="ok-icon" aria-hidden="true">
-<svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-</div>
-<h1 class="ok-text" id="h1">付款确认中</h1>
-</div>
-
-<p id="sub"><strong>已收到你的付款请求。</strong>发票与收据会发到你的邮箱（若成功完成）。</p>
-
-<div class="note" id="note">
-<strong id="note-strong">正在确认到账。</strong><br>
-<span id="note-text">微信支付需要 Paddle 完成资金确认,通常几秒内完成,<strong>最多约 10 分钟</strong>。开通后你的账号会自动获得时长 —— 不需要再做任何操作。</span>
-</div>
-<p class="muted" style="margin-top:14px;padding:12px 14px;border:1px solid #f59e0b;border-radius:10px;background:rgba(245,158,11,.08);color:var(--text);font-size:13.5px;line-height:1.7">
-<strong style="color:#f59e0b">已付款请勿重复购买：</strong>如果这笔付款已经成功（微信已扣款），<strong>不要再次扫码或再次购买</strong> —— 每一笔支付都会真实扣款。等待到账即可，到账后会自动进入控制台。
-</p>
-
-<p id="repay" style="display:none">
-<strong>如果还没有付款：</strong><a href="/buy">返回重新支付 →</a>
-</p>
-
-<a class="btn" href="/console">进入控制台查看 →</a>
-
-<p class="muted">
-如果控制台暂时显示「尚未开通」,那是 Paddle 还在处理,<strong>你的付款不会丢失</strong>。
-等几分钟刷新一下即可。<br>
-超过 15 分钟仍未开通?请<a href="/contact">联系我们</a>,附上付款邮箱,我们会手工补发并核查原因。
-</p>
-</div>
-
-<p class="muted" style="margin-top:28px">
-付款由 Paddle 作为记录商户(Merchant of Record)处理。运营主体 DF Digital。<br>
-14 天内无条件全额退款 —— 见<a href="/refund">退款政策</a>。
-</p>
+<section class="card">
+<div class="state"><span class="pulse" aria-hidden="true"></span><h1 id="title">付款确认中</h1></div>
+<p id="detail" role="status">正在向服务端查询订单状态，请不要重复付款。</p>
+<div class="notice"><strong>支付宝页面返回不等于到账。</strong>只有服务端确认后才会开通权益；如果支付宝已扣款，请留在此页等待自动更新。</div>
+<div class="actions"><a class="btn" href="/console">进入控制台</a><a class="btn secondary" href="/buy">返回购买页</a></div>
+<p class="links"><a href="/refund">退款政策</a> · <a href="/contact">联系我们</a></p>
+</section>
 </main>
 <script>
-// ---- 到账后自动进入控制台 ----
-// 用户付款后停在这个确认页。时长在 Paddle 捕获完成(webhook 入账)后到账,
-// 这里轮询交易状态,completed 一到就自动跳 /console —— 用户不用手动点。
-// 到达 /console 时若 webhook 尚未入账,控制台会显示「已付款 · 正在开通」
-// 的兜底态,不会出现"尚未开通"。
 (function () {
-  var txn = new URLSearchParams(location.search).get("txn");
-  if (!txn) return;  // 直接访问本页(无交易上下文)不轮询
-  // ---- 双态首查:已捕获 = "付款已完成";未捕获 = "已收到支付请求" ----
-  // 本页可能由 checkout.closed/visibilitychange 在**捕获完成前**跳来
-  // (扣费后立即有反应,不等 Paddle 确认)。此时必须明确告诉用户:
-  // 钱收到了,正在确认到账;没付款的也能看到"返回重新支付"。
-  (function () {
-    fetch("/api/transaction/" + encodeURIComponent(txn) + "/status", { signal: timeoutSignal(5000) })
-      .then(function (res) { return res.status === 200 ? res.json() : null; })
-      .then(function (data) {
-        var paid = data && (data.status === "paid" || data.status === "completed");
-        if (paid) {
-          document.getElementById("h1").textContent = "付款已完成";
-          document.getElementById("note-strong").textContent = "时长正在开通中。";
-        } else {
-          // 双态:付款了 = "确认到账中";没付款 = "可返回重新支付"。绝不谎称成功。
-          document.getElementById("h1").textContent = "付款确认中";
-          document.getElementById("sub").innerHTML = "<strong>如果你已经完成付款：</strong>微信支付正在确认到账，页面会自动更新，无需任何操作。<br><br><strong>如果还没有付款：</strong>请<a href=\"/buy?_ptxn=" + encodeURIComponent(txn) + "\">返回重新支付 →</a>";
-          document.getElementById("note-text").textContent = "微信支付到账最多约 10 分钟。到账后会自动进入控制台。";
-          document.getElementById("repay").style.display = "none";
-        }
-      }).catch(function () { /* 首查失败保持默认文案,轮询兜底 */ });
-      .catch(function () { /* 首查失败保持默认文案,轮询兜底 */ });
-  })();
-  // inFlight 锁 + 超时(Copilot round 1):慢网/挂起时避免并发重叠请求或
-  // fetch 永久挂起让轮询静默停住。5 秒超时保证锁一定释放。
-  function timeoutSignal(ms) {
-    if (typeof AbortSignal.timeout === "function") return AbortSignal.timeout(ms);
-    var c = new AbortController();
-    setTimeout(function () { c.abort(); }, ms);
-    return c.signal;
-  }
-  var attempts = 0;
-  var inFlight = false;
+  var order = new URLSearchParams(location.search).get("order");
+  var title = document.getElementById("title");
+  var detail = document.getElementById("detail");
   var timer = null;
-  var intervalMs = 3000;
-  var poll = async function () {
-    if (inFlight) return;
+  var inFlight = false;
+
+  function stop() {
+    if (timer !== null) clearInterval(timer);
+  }
+  function render(status) {
+    if (status === "pending") {
+      title.textContent = "付款确认中";
+      detail.textContent = "正在等待支付宝服务端确认。请勿重复付款，本页会自动更新。";
+      return;
+    }
+    if (status === "paid_unfulfilled") {
+      title.textContent = "付款已确认，正在开通权益";
+      detail.textContent = "款项已经确认，系统正在把使用时长写入你的账号。";
+      return;
+    }
+    if (status === "fulfilled") {
+      stop();
+      title.textContent = "权益已开通";
+      detail.textContent = "使用时长已经到账，即将进入控制台。";
+      setTimeout(function () { window.location.href = "/console"; }, 700);
+      return;
+    }
+    if (status === "closed") {
+      stop();
+      title.textContent = "订单已关闭";
+      detail.textContent = "这笔订单没有完成付款。你可以返回购买页重新发起。";
+      return;
+    }
+    if (status === "expired") {
+      stop();
+      title.textContent = "订单已过期";
+      detail.textContent = "付款窗口已经过期。如果尚未扣款，请返回购买页重新发起。";
+    }
+  }
+  async function poll() {
+    if (!order || inFlight) return;
     inFlight = true;
     try {
-      attempts++;
-      // 微信延迟捕获可到 ~10 分钟:3 分钟后降频继续,不早停(Copilot round 1)。
-      if (attempts === 61) {
-        clearInterval(timer);
-        intervalMs = 15000;
-        timer = setInterval(poll, intervalMs);
-      }
-      var res = await fetch("/api/transaction/" + encodeURIComponent(txn) + "/status", {
-        signal: timeoutSignal(5000),
+      var response = await fetch("/api/alipay/orders/" + encodeURIComponent(order) + "/status", {
+        signal: typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(8000) : undefined,
       });
-      if (res.status === 401 || res.status === 404) {
-        // 未登录/交易不存在:继续轮询没意义,与 /buy 轮询一致 fail-fast
-        // (Copilot round 2)。否则无意义请求直到页面关闭。
-        clearInterval(timer);
+      if (response.status === 401) {
+        stop();
+        title.textContent = "请先登录";
+        detail.innerHTML = "登录后才能查看这笔订单。<a href=\"/login?next=%2Fpayment-success%3Forder%3D" + encodeURIComponent(order) + "\">前往登录</a>";
         return;
       }
-      if (res.status !== 200) return;  // 503 等可重试状态,继续等
-      var data = await res.json();
-      if (data && data.status === "completed") {
-        clearInterval(timer);
-        window.location.href = "/console";
+      if (response.status === 404) {
+        stop();
+        title.textContent = "无法查看订单";
+        detail.textContent = "没有找到属于当前账号的订单，请检查登录账号或联系我们。";
+        return;
       }
-    } catch (e) { /* 网络抖动,下次再试 */ } finally {
+      if (!response.ok) return;
+      var data = await response.json();
+      if (data && typeof data.status === "string") render(data.status);
+    } catch (_) {
+      detail.textContent = "网络暂时不可用，系统会继续重试。请勿重复付款。";
+    } finally {
       inFlight = false;
     }
-  };
-  // 先建 interval 再立即跑一次(Copilot round 3):首轮 401/404/completed 时
-  // clearInterval 才能清掉真实 timer,否则 interval 仍会创建继续请求。
-  timer = setInterval(poll, intervalMs);
+  }
+  if (!order) {
+    title.textContent = "缺少订单信息";
+    detail.textContent = "请从购买页重新发起，或前往控制台查看现有权益。";
+    return;
+  }
+  timer = setInterval(poll, 3000);
   poll();
 })();
 </script>

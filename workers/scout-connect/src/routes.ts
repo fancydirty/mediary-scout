@@ -1,5 +1,5 @@
 import type { CfApi } from "./cf-api.js";
-import type { AccountRow, ConnectDb } from "./db.js";
+import type { AccountRow, ConnectDb, PaymentOrderRow } from "./db.js";
 import { HttpError, handleError, htmlPage, json } from "./http.js";
 import { requireAdmin } from "./auth.js";
 import { provisionEndpoint } from "./provision.js";
@@ -43,6 +43,8 @@ import { sha256Hex } from "./crypto-token.js";
 import { signToken, verifyToken } from "./signed-token.js";
 import { buildSessionCookie, parseSessionCookie } from "./session.js";
 import { computeExpiry, isEntitlementActive, latestExpiry } from "./entitlement.js";
+import type { AlipayApi } from "./alipay-api.js";
+import { ALIPAY_TIERS, resolveAlipayTier } from "./alipay-order.js";
 
 // Same aperture mark as apps/web/app/icon.svg — the product brand.
 const LOGO_SVG =
@@ -76,6 +78,12 @@ export interface RouteDeps {
   paddlePriceMonths?: PriceMonthsMap | undefined;
   /** Paddle 服务端 API(创建交易)。未配置时 /api/checkout 返回 503。 */
   paddleApi?: PaddleApi | undefined;
+  /** Alipay server API. Missing configuration keeps new checkout fail-closed. */
+  alipayApi?: AlipayApi | undefined;
+  /** Deterministic injection points for checkout tests; production uses crypto randomness. */
+  newPaymentOrderId?: (() => string) | undefined;
+  newAlipayOutTradeNo?: (() => string) | undefined;
+  newCheckoutToken?: (() => string) | undefined;
   turnstileSecret?: string | undefined;
   // P3: 魔法链接登录
   newAccountId: () => string;
@@ -347,6 +355,20 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
   if (method === "POST" && path === "/api/paddle/webhook") {
     return paddleWebhook(request, deps);
   }
+  if (method === "POST" && path === "/api/alipay/checkout") {
+    return createAlipayCheckout(request, deps);
+  }
+  if (method === "GET" && path === "/alipay/checkout") {
+    return openAlipayCheckout(url, deps);
+  }
+  const alipayStatusMatch = path.match(/^\/api\/alipay\/orders\/([^/]+)\/status$/);
+  if (method === "GET" && alipayStatusMatch !== null) {
+    const rawOrderId = alipayStatusMatch[1] ?? "";
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(rawOrderId)) {
+      return json({ error: "not found" }, 404, { noStore: true });
+    }
+    return getAlipayOrderStatus(request, deps, rawOrderId);
+  }
   if (method === "POST" && path === "/api/checkout") {
     return createCheckout(request, deps);
   }
@@ -379,16 +401,7 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
   }
   // /buy —— Paddle 的 default payment link 落地页(拼 ?_ptxn= 打开结账窗)。
   if (method === "GET" && path === "/buy") {
-    return htmlPage(
-      buyPage({
-        paddleClientToken: deps.paddleClientToken,
-        paddleEnvironment: deps.paddleEnvironment,
-      }),
-      // 唯一放行 Paddle 第三方来源的页面(见 http.ts 的 PADDLE_CSP_SOURCES)。
-      // noStore:URL 带交易 ID(?_ptxn=),不该被浏览器/中间缓存落盘或复用;
-      // 也避免「未配置 token → 已配置」后旧的「结账未开放」页面被缓存住。
-      { paddle: true, noStore: true },
-    );
+    return htmlPage(buyPage({ alipayConfigured: deps.alipayApi !== undefined }), { noStore: true });
   }
   // /payment-success —— Paddle Checkout.open 传 settings.successUrl 的落点。
   // 这是微信支付等外部跳转支付方式的唯一回跳点:用户付完款会被 Paddle 带到
@@ -774,6 +787,148 @@ async function selfServeProvision(request: Request, deps: RouteDeps): Promise<Re
     }
     throw e;
   }
+}
+
+const ALIPAY_CHECKOUT_TTL_MS = 20 * 60_000;
+
+function randomHex(bytes: number): string {
+  const buffer = crypto.getRandomValues(new Uint8Array(bytes));
+  return Array.from(buffer, (value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+function newPaymentOrderId(deps: RouteDeps): string {
+  return deps.newPaymentOrderId?.() ?? `ord_${randomHex(16)}`;
+}
+
+function newAlipayOutTradeNo(deps: RouteDeps): string {
+  return deps.newAlipayOutTradeNo?.() ?? `MC${randomHex(16).toUpperCase()}`;
+}
+
+function newCheckoutToken(deps: RouteDeps): string {
+  return deps.newCheckoutToken?.() ?? `chk_${randomHex(24)}`;
+}
+
+/** Create an account-bound order from a server-owned tier and amount. */
+async function createAlipayCheckout(request: Request, deps: RouteDeps): Promise<Response> {
+  const session = await parseSessionWithValidatedNow(request.headers.get("cookie"), deps);
+  if (!session.ok) return json({ error: "unauthorized" }, 401, { noStore: true });
+  const account = await deps.db.getAccountById(session.accountId);
+  if (account === null) return json({ error: "unauthorized" }, 401, { noStore: true });
+  if (deps.alipayApi === undefined) {
+    return json({ error: "checkout not configured" }, 503, { noStore: true });
+  }
+
+  const body = await readJsonBody(request);
+  const tier = resolveAlipayTier(body.tier);
+  if (tier === null) throw new HttpError(400, "unknown tier");
+
+  const now = deps.now();
+  const nowMs = Date.parse(now);
+  if (!Number.isFinite(nowMs)) throw new HttpError(500, "server time unavailable");
+  const checkoutToken = newCheckoutToken(deps);
+  const order = await deps.db.insertPaymentOrder({
+    id: newPaymentOrderId(deps),
+    checkout_token_sha256: await sha256Hex(checkoutToken),
+    account_id: account.id,
+    provider: "alipay",
+    out_trade_no: newAlipayOutTradeNo(deps),
+    trade_no: null,
+    months: tier.months,
+    total_amount: tier.totalAmount,
+    status: "created",
+    created_at: now,
+    expires_at: new Date(nowMs + ALIPAY_CHECKOUT_TTL_MS).toISOString(),
+    paid_at: null,
+    fulfilled_at: null,
+    closed_at: null,
+    refunded_at: null,
+    refund_request_no: null,
+    last_notify_id: null,
+  });
+  return json(
+    {
+      order_id: order.id,
+      checkout_url: `/alipay/checkout?checkout=${encodeURIComponent(checkoutToken)}`,
+    },
+    200,
+    { noStore: true },
+  );
+}
+
+/** Resolve the bearer checkout capability and emit a signed Alipay page-pay form. */
+async function openAlipayCheckout(url: URL, deps: RouteDeps): Promise<Response> {
+  const checkoutToken = url.searchParams.get("checkout") ?? "";
+  if (checkoutToken === "" || checkoutToken.length > 256) {
+    return json({ error: "not found" }, 404, { noStore: true });
+  }
+  const order = await deps.db.getPaymentOrderByCheckoutHash(await sha256Hex(checkoutToken));
+  if (order === null) return json({ error: "not found" }, 404, { noStore: true });
+
+  const nowMs = Date.parse(deps.now());
+  const expiresMs = Date.parse(order.expires_at);
+  if (!Number.isFinite(nowMs) || !Number.isFinite(expiresMs)) {
+    return json({ error: "unavailable" }, 500, { noStore: true });
+  }
+  if (nowMs >= expiresMs) return json({ error: "checkout expired" }, 410, { noStore: true });
+  if (
+    order.status !== "created" &&
+    order.status !== "form_issued" &&
+    order.status !== "pending"
+  ) {
+    return json({ error: "order is not payable" }, 409, { noStore: true });
+  }
+  const api = deps.alipayApi;
+  if (api === undefined) return json({ error: "checkout not configured" }, 503, { noStore: true });
+
+  const tier = Object.values(ALIPAY_TIERS).find((candidate) => candidate.months === order.months);
+  if (tier === undefined || tier.totalAmount !== order.total_amount) {
+    return json({ error: "order unavailable" }, 500, { noStore: true });
+  }
+  const root = deps.rootDomain.trim().toLowerCase();
+  const origin = `https://${root}`;
+  try {
+    const form = await api.pagePayForm({
+      outTradeNo: order.out_trade_no,
+      totalAmount: order.total_amount,
+      subject: `Mediary Connect ${tier.label}`,
+      notifyUrl: `${origin}/api/alipay/notify`,
+      returnUrl: `${origin}/payment-success?order=${encodeURIComponent(order.id)}`,
+    });
+    if (order.status === "created") {
+      await deps.db.updatePaymentOrder(order.id, { status: "form_issued" });
+    }
+    return htmlPage(form, { noStore: true, alipayForm: true });
+  } catch {
+    return json({ error: "checkout unavailable" }, 502, { noStore: true });
+  }
+}
+
+type BrowserPaymentStatus = "pending" | "paid_unfulfilled" | "fulfilled" | "closed" | "expired";
+
+function browserPaymentStatus(order: PaymentOrderRow, nowMs: number): BrowserPaymentStatus {
+  if (order.status === "fulfilled") return "fulfilled";
+  if (order.status === "paid") return "paid_unfulfilled";
+  if (order.status === "closed" || order.status === "refunded") return "closed";
+  const expiresMs = Date.parse(order.expires_at);
+  if (Number.isFinite(expiresMs) && nowMs >= expiresMs) return "expired";
+  return "pending";
+}
+
+/** Task 4 exposes local state only; Task 5 adds signed trade-query compensation here. */
+async function getAlipayOrderStatus(
+  request: Request,
+  deps: RouteDeps,
+  orderId: string,
+): Promise<Response> {
+  const session = await parseSessionWithValidatedNow(request.headers.get("cookie"), deps);
+  if (!session.ok) return json({ error: "unauthorized" }, 401, { noStore: true });
+  const order = await deps.db.getPaymentOrderById(orderId);
+  if (order === null || order.account_id !== session.accountId) {
+    return json({ error: "not found" }, 404, { noStore: true });
+  }
+  const nowMs = Date.parse(deps.now());
+  if (!Number.isFinite(nowMs)) return json({ error: "unavailable" }, 500, { noStore: true });
+  return json({ status: browserPaymentStatus(order, nowMs) }, 200, { noStore: true });
 }
 
 /**

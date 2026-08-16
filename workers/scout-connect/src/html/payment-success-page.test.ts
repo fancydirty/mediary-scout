@@ -1,42 +1,38 @@
 import { describe, expect, it } from "vitest";
 import { paymentSuccessPage } from "./payment-success-page.js";
 
-describe("payment-success-page", () => {
-  it("包含 noindex meta 标签", () => {
+describe("paymentSuccessPage (server-confirmed Alipay state)", () => {
+  it("starts in a neutral confirmation state and is never indexable", () => {
     const html = paymentSuccessPage();
-    expect(html).toContain('name="robots"');
-    expect(html).toContain('content="noindex"');
+    expect(html).toContain("付款确认中");
+    expect(html).toContain('name="robots" content="noindex"');
+    expect(html).not.toContain("付款成功");
   });
 
-  it("标题是「付款确认中」而非「支付成功」", () => {
+  it("reads only our opaque order id and polls our session-bound status API", () => {
     const html = paymentSuccessPage();
-    expect(html).toContain("<title>付款确认中 · Mediary Connect</title>");
+    expect(html).toContain('URLSearchParams(location.search).get("order")');
+    expect(html).toContain("/api/alipay/orders/");
+    expect(html).toContain("/status");
+    for (const untrusted of ["trade_status", "total_amount", "out_trade_no", "seller_id", "sign"]) {
+      expect(html, `must not read ${untrusted}`).not.toContain(`.get("${untrusted}")`);
+    }
   });
 
-  it("包含延迟捕获提示「最多约 10 分钟」", () => {
+  it("renders the complete local state vocabulary and redirects only after fulfillment", () => {
     const html = paymentSuccessPage();
-    expect(html).toContain("最多约 10 分钟");
+    for (const status of ["pending", "paid_unfulfilled", "fulfilled", "closed", "expired"]) {
+      expect(html).toContain(status);
+    }
+    expect(html).toContain('window.location.href = "/console"');
+    expect(html).toContain("付款已确认，正在开通权益");
   });
 
-  it("包含进入控制台的 CTA 链接", () => {
+  it("provides manual console, retry, refund-policy, and support exits", () => {
     const html = paymentSuccessPage();
     expect(html).toContain('href="/console"');
-  });
-
-  it("正文断言使用「付款已完成」而非「支付成功」", () => {
-    const html = paymentSuccessPage();
-    expect(html).toContain("付款已完成");
-    expect(html).not.toContain("支付成功");
-  });
-
-  it("SVG 图标带 aria-hidden 提升无障碍语义", () => {
-    const html = paymentSuccessPage();
-    expect(html).toContain('aria-hidden="true"');
-  });
-  it("付款成功后自动轮询交易状态,completed 后跳 /console", () => {
-    const html = paymentSuccessPage();
-    expect(html).toContain("URLSearchParams(location.search).get(\"txn\")");
-    expect(html).toContain("/api/transaction/");
-    expect(html).toContain('window.location.href = "/console"');
+    expect(html).toContain('href="/buy"');
+    expect(html).toContain('href="/refund"');
+    expect(html).toContain('href="/contact"');
   });
 });

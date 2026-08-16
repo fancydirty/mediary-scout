@@ -2368,31 +2368,40 @@ describe("POST /waitlist Turnstile gate", () => {
   });
 });
 
-describe("GET /buy — Paddle default payment link", () => {
-  it("serves the checkout landing page", async () => {
-    const res = await handleRequest(new Request(`${BASE}/buy`), setup().deps);
+describe("GET /buy — Alipay-only tier selector", () => {
+  it("serves the three unchanged Alipay tiers", async () => {
+    const res = await handleRequest(new Request(`${BASE}/buy`), {
+      ...setup().deps,
+      alipayApi: { pagePayForm: async () => "" } as never,
+    });
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/html");
     const body = await res.text();
-    expect(body).toContain("结账");
-    expect(body).toContain("_ptxn");
+    expect(body).toContain("支付宝支付");
+    expect(body).toContain("¥45");
+    expect(body).toContain("¥108");
+    expect(body).toContain("¥188");
   });
 
-  it("未配置 Paddle token 时仍 200 且明确说明(不是白页/不是 500)", async () => {
-    const res = await handleRequest(new Request(`${BASE}/buy?_ptxn=txn_abc`), setup().deps);
+  it("未配置支付宝服务端时仍 200 且明确禁用(不是白页/不是 500)", async () => {
+    const res = await handleRequest(new Request(`${BASE}/buy`), setup().deps);
     expect(res.status).toBe(200);
-    expect(await res.text()).toContain("结账功能尚未开放");
+    const body = await res.text();
+    expect(body).toContain("支付宝结账暂未开放");
+    expect(body).toContain("disabled");
   });
 
-  it("配置后把 client token 与环境透传给页面", async () => {
+  it("旧 Paddle 浏览器配置不会再进入页面", async () => {
     const res = await handleRequest(new Request(`${BASE}/buy`), {
       ...setup().deps,
       paddleClientToken: "test_tok_xyz",
       paddleEnvironment: "sandbox",
+      alipayApi: { pagePayForm: async () => "" } as never,
     });
     const body = await res.text();
-    expect(body).toContain("test_tok_xyz");
-    expect(body).toContain('Paddle.Environment.set("sandbox")');
+    expect(body).not.toContain("test_tok_xyz");
+    expect(body).not.toContain("Paddle");
+    expect(body).not.toContain("paddle.com");
   });
 });
 

@@ -49,7 +49,13 @@ export const POSTER_IMG_SOURCE = "https://tmdb-proxy.mediaryscout.app";
 
 export function htmlPage(
   body: string,
-  opts: { status?: number; noStore?: boolean; paddle?: boolean; posters?: boolean } = {},
+  opts: {
+    status?: number;
+    noStore?: boolean;
+    paddle?: boolean;
+    posters?: boolean;
+    alipayForm?: boolean;
+  } = {},
 ): Response {
   const status = opts.status ?? 200;
   // /buy 才放行 Paddle 来源;其余页面维持最严策略。
@@ -58,6 +64,9 @@ export function htmlPage(
   // 默认 img-src 只有 'self' data:,加海报时漏了这条,线上 28 张图全被 CSP
   // 挡成裂图(curl 能拿到,浏览器不行 —— 这类 bug 只有真在浏览器里看才发现)。
   const posters = opts.posters === true;
+  // Only the one-time same-origin checkout hop may submit a form to Alipay.
+  // The tier-selection and return pages use same-origin fetch only.
+  const alipayForm = opts.alipayForm === true;
   const csp = [
     "default-src 'none'",
     `style-src 'unsafe-inline'${p ? ` ${PADDLE_CSP_SOURCES.style}` : ""}`,
@@ -70,7 +79,7 @@ export function htmlPage(
     // 'self' 供将来的同源图标;data: 不产生网络请求,不放宽攻击面。
     `img-src 'self' data:${p ? ` ${PADDLE_CSP_SOURCES.img}` : ""}${posters ? ` ${POSTER_IMG_SOURCE}` : ""}`,
     "base-uri 'none'",
-    "form-action 'self'",
+    alipayForm ? "form-action https://openapi.alipay.com" : "form-action 'self'",
     // 结账 iframe 由 paddle.js 在**本页**创建,不需要放宽 frame-ancestors
     // (那是"谁能嵌入本页"),保持 'none'。
     "frame-ancestors 'none'",

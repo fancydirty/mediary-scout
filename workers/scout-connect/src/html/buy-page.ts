@@ -1,447 +1,98 @@
+import { ALIPAY_TIERS } from "../alipay-order.js";
 import { BRAND_BAR, BRAND_CSS, FAVICON_LINK, THEME_BASE, THEME_TOKENS } from "./theme.js";
 
-/**
- * `/buy` —— Paddle 的 **default payment link** 落地页。
- *
- * 这个页面存在的唯一理由是 Paddle 的机制:每笔交易的支付链接由
- * 「default payment link + `?_ptxn=<交易ID>`」拼成。Paddle 后台必须填一个
- * default payment link 才能创建任何交易(错误码
- * `transaction_default_checkout_url_not_set`),而那个页面必须加载 Paddle.js
- * 并根据 `_ptxn` 打开结账窗。
- *
- * 注意它**不是**营销页:定价说明在 /pricing。这里只负责把交易 ID 交给
- * Paddle.js。用户正常路径是从控制台点购买 → Paddle 生成带 `_ptxn` 的链接
- * → 落到这里 → 结账窗自动弹出。
- *
- * 环境切换:Paddle 官方定义该方法「仅用于切到 sandbox」,不调用时 Paddle.js
- * 默认生产,且 go-live checklist 要求上线前移除。显式传 production 不是受支持
- * 的用法(可能抛错 → 结账 100% 失败),故本页仅在 sandbox 时注入该调用。
- *
- * 无 token / 无 `_ptxn` 时**不留白页**:给出明确指引并链回 /pricing 与控制台,
- * 否则用户(和 Paddle 审核员)看到的是一个空页面,像是坏了。
- */
-export function buyPage(input: {
-  paddleClientToken?: string | undefined;
-  /** "sandbox" | "production"。sandbox 时 Paddle.js 需显式设置环境。 */
-  paddleEnvironment?: string | undefined;
-}): string {
-  const token = input.paddleClientToken?.trim();
-  // 大小写/空白不敏感(与 routes.ts 处理 ?lang= 一致):配成 "SANDBOX" 不该
-  // 静默变成生产——那会让沙箱测试打到生产账号。
-  const isSandbox = input.paddleEnvironment?.trim().toLowerCase() === "sandbox";
-  // token 是公开的 client-side token(设计上就要下发到浏览器),但仍需安全内联。
-  // **JSON.stringify 不够**:它不转义 `/`,所以 token 里的 `</script>` 会原样
-  // 输出,提前闭合 <script> 并把后续内容当 HTML 解析(实测可注入 <img onerror>)。
-  // 追加把 `<` 转成 \u003c —— JS 字符串字面量里等价,但 HTML 解析器再也看不到
-  // `</script`。可利用性低(token 来自 wrangler vars,能改它的人已有更强手段),
-  // 但这是真实的转义缺陷,而非理论风险。
-  const tokenLiteral = JSON.stringify(token ?? "").replace(/</g, "\\u003c");
-  const configured = token !== undefined && token !== "";
+export function buyPage(input: { alipayConfigured: boolean }): string {
+  const tiers = Object.values(ALIPAY_TIERS)
+    .map(
+      (tier) => `<article class="tier${tier.featured ? " featured" : ""}">
+${tier.featured ? '<span class="badge">最划算</span>' : ""}
+<h2>${tier.label}</h2>
+<div class="price">${tier.price}</div>
+<p>${tier.months} 个月 Mediary Connect 使用时长</p>
+<button type="button" data-tier="${tier.id}"${input.alipayConfigured ? "" : " disabled"}>支付宝支付</button>
+</article>`,
+    )
+    .join("\n");
+
+  const checkoutScript = input.alipayConfigured
+    ? `<script>
+(function () {
+  var status = document.getElementById("status");
+  var buttons = Array.prototype.slice.call(document.querySelectorAll("button[data-tier]"));
+  function setBusy(busy) {
+    buttons.forEach(function (button) { button.disabled = busy; });
+  }
+  buttons.forEach(function (button) {
+    button.addEventListener("click", async function () {
+      var tier = button.getAttribute("data-tier");
+      if (!tier) return;
+      setBusy(true);
+      status.textContent = "正在创建支付宝订单…";
+      try {
+        var response = await fetch("/api/alipay/checkout", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ tier: tier }),
+        });
+        if (response.status === 401) {
+          location.href = "/login?next=%2Fbuy";
+          return;
+        }
+        var data = await response.json();
+        if (!response.ok || !data || typeof data.checkout_url !== "string" ||
+            !data.checkout_url.startsWith("/alipay/checkout?checkout=")) {
+          throw new Error("checkout unavailable");
+        }
+        location.href = data.checkout_url;
+      } catch (_) {
+        status.textContent = "暂时无法打开支付宝，请稍后重试或联系我们。";
+        setBusy(false);
+      }
+    });
+  });
+})();
+</script>`
+    : "";
 
   return `<!doctype html>
 <html lang="zh-Hans">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>结账 · Mediary Connect</title>
+<title>支付宝结账 · Mediary Connect</title>
 ${FAVICON_LINK}
-<!-- 结账中转页不该被搜索引擎收录:它只在带 _ptxn 时有意义 -->
 <meta name="robots" content="noindex">
 <style>
 ${THEME_TOKENS}
 ${THEME_BASE}
 ${BRAND_CSS}
-main{max-width:560px;margin:0 auto;padding:48px 24px 96px}
-h1{font-size:1.5rem;font-weight:900;letter-spacing:-.5px;margin:24px 0 8px}
-p{color:var(--text-muted);font-size:14.5px;margin:10px 0 0;line-height:1.65}
-.card{margin-top:24px;padding:20px;border:1px solid var(--border);border-radius:12px;background:var(--bg-surface)}
-.btn{display:inline-block;margin-top:18px;padding:11px 20px;border-radius:999px;background:var(--accent);color:#000;font-weight:700;text-decoration:none;font-size:14px}
-.btn:hover{background:var(--accent-press)}
-a{color:var(--accent)}
-.muted{color:var(--text-muted);font-size:13px}
-#status{font-family:var(--mono);font-size:12px;color:var(--text-muted);margin-top:16px}
-#pay-notice{margin-top:20px;padding:16px 18px;border:1px solid #f59e0b;border-radius:12px;background:rgba(245,158,11,.08)}
-#pay-notice .notice-head{font-weight:800;font-size:14.5px;color:#f59e0b;margin-bottom:10px}
-#pay-notice ol{margin:0;padding-left:20px;font-size:13.5px;line-height:1.9;color:var(--text)}
-#pay-notice li strong{color:#f59e0b}
-#ack-btn{margin-top:14px;padding:11px 22px;border-radius:999px;border:0;background:var(--accent);color:#000;font-weight:800;font-size:14px;cursor:pointer}
-#ack-btn:hover{background:var(--accent-press)}
+main{max-width:940px;margin:0 auto;padding:48px 24px 96px}
+.intro{max-width:650px;margin:34px auto 0;text-align:center}.intro h1{font-size:clamp(2rem,5vw,3.25rem);line-height:1.08;margin:0;font-weight:900;letter-spacing:-1.5px}.intro p{color:var(--text-muted);font-size:15px;margin:14px 0 0}
+.tiers{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-top:38px;align-items:stretch}
+.tier{position:relative;padding:25px 22px 22px;border:1px solid var(--border);border-radius:16px;background:var(--bg-surface);display:flex;flex-direction:column}.tier.featured{border-color:var(--accent);box-shadow:0 0 0 1px rgba(30,215,96,.15),0 16px 42px rgba(0,0,0,.25)}
+.badge{position:absolute;top:-12px;right:18px;padding:4px 11px;border-radius:999px;background:var(--accent);color:#071b0d;font-size:12px;font-weight:900}.tier h2{font-size:17px;margin:0}.price{font-size:2.2rem;font-weight:900;letter-spacing:-1px;margin-top:12px}.tier p{color:var(--text-muted);font-size:13.5px;line-height:1.6;min-height:44px}
+button{width:100%;margin-top:auto;padding:12px 18px;border:0;border-radius:999px;background:var(--accent);color:#06150a;font:inherit;font-size:14px;font-weight:850;cursor:pointer}button:hover:not(:disabled){background:var(--accent-press)}button:disabled{cursor:not-allowed;opacity:.45}
+#status{min-height:24px;margin:22px 0 0;text-align:center;color:var(--text-muted);font-size:13.5px}.notice{max-width:680px;margin:28px auto 0;padding:17px 19px;border:1px solid var(--border);border-radius:12px;background:rgba(255,255,255,.025);color:var(--text-muted);font-size:13.5px;line-height:1.7}.notice strong{color:var(--text)}
+.links{text-align:center;color:var(--text-muted);font-size:13px;margin-top:25px}.links a{color:var(--accent)}
+@media(max-width:700px){.tiers{grid-template-columns:1fr}.tier p{min-height:auto}.intro{margin-top:28px}}
 </style>
 </head>
 <body>
 <main>
 ${BRAND_BAR}
-<h1>结账</h1>
-<div class="card">
-<p id="hint">正在打开支付窗口…</p>
-<p id="status" role="status"></p>
-
-<!-- 微信支付说明:付款前必须让用户知道会发生什么,防止恐慌和重复付款。
-     放在 overlay 打开前 —— overlay 一打开就挡住本页,用户看不到这里的字。 -->
-<div id="pay-notice">
-<div class="notice-head">使用微信扫码付款前，请先读这四条：</div>
-<ol>
-<li><strong>付款后微信小窗不会自动关闭，也不会有任何反应</strong> —— 这是微信支付的正常行为，不是故障。</li>
-<li>付款成功后请按两步操作：<strong>① 关闭微信小窗 → ② 关闭支付窗口</strong>。关闭支付窗口后，页面会自动跳转到「付款确认中」页 —— 那里会告诉你到账进度，无需任何其他操作。</li>
-<li>到账通常需要几分钟，<strong>最长约 10 分钟</strong>。期间请勿刷新或重复操作。</li>
-<li><strong>不要重复扫码，不要重复购买</strong> —— 每次扫码付款都会真实扣款。请先确认上一笔是否已付款。</li>
-<li><strong>使用信用卡支付</strong>：付款后权益<strong>立即到账</strong>，无需等待。每次支付都是<strong>单次扣款</strong>，不是订阅，不会自动续费。</li>
-</ol>
-<button id="ack-btn" type="button">我已了解，去支付</button>
-</div>
-<noscript><p>支付需要 JavaScript。请开启后刷新本页。</p></noscript>
-</div>
-<p class="muted" style="margin-top:22px">
-价格与档位见 <a href="/pricing">定价</a> · 退款政策见 <a href="/refund">退款政策</a>（14 天无理由）<br>
-付款由 Paddle 作为记录商户（Merchant of Record）处理，发票与收据由 Paddle 出具。运营主体 DF Digital。
-</p>
-<p class="muted">遇到问题？<a href="/contact">联系我们</a>，或回到 <a href="/login">控制台</a>。</p>
+<section class="intro">
+<h1>选择使用时长</h1>
+<p>价格保持不变，一次付款，不自动续费。付款完成后，原有账号权益与开通流程保持不变。</p>
+</section>
+<section class="tiers" aria-label="Mediary Connect 支付宝价格档位">
+${tiers}
+</section>
+<p id="status" role="status">${input.alipayConfigured ? "付款将跳转至支付宝安全页面。" : "支付宝结账暂未开放，请稍后再试。"}</p>
+<div class="notice"><strong>付款后请回到本页等待确认。</strong>支付宝回跳只代表浏览器已返回，系统会通过支付宝服务端结果核实到账并自动开通权益。请勿重复付款。</div>
+<p class="links"><a href="/refund">退款政策</a> · <a href="/contact">联系我们</a> · <a href="/console">返回控制台</a></p>
+<noscript><p id="status">支付需要 JavaScript，请开启后刷新本页。</p></noscript>
 </main>
-${configured ? '<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></script>' : ""}
-<script>
-(function () {
-  var hint = document.getElementById("hint");
-  var status = document.getElementById("status");
-  // **共享"已安排跳转"标志**(Copilot round 9):页面里的两条完成路径
-  // (Paddle 事件回调 与 轮询命中 paid/completed)都可能触发跳转,必须只跳
-  // 一次 —— 否则两次 location.href 互相覆盖,落点不确定。
-  // (注意:此处注释不能出现回调字样 —— 未配置分支的产物会被测试断言
-  //  not.toContain,注释会误命中,本项目已多次栽在这。)
-  var redirectScheduled = false;
-  function fail(msg) {
-    hint.textContent = "无法打开支付窗口。";
-    status.textContent = msg;
-  }
-  // _ptxn 由 Paddle 在生成支付链接时附加。没有它说明用户直接访问了本页,
-  // 而不是从购买流程过来的——给指引,不要留白页。
-  var txn = new URLSearchParams(location.search).get("_ptxn");
-  // 支付流程是否已开始(弹过结账窗)。只有开始后,用户切回页面才跳确认页;
-  // 没开始就只是普通页面,切 tab 不应跳转。
-  var checkoutOpened = false;
-  // 最近一次 Paddle 事件的支付方式(pmt):"none" = 信息收集/步骤切换,
-  // 真实支付方式(wechat_pay/card/...) = 用户选择了支付方式。
-  // 实测:填邮箱步骤 checkout.closed 的 pmt 是 none —— 不能当"用户关窗"。
-  var lastPmtType = null;
-  ${
-    configured
-      ? `if (!window.Paddle) { fail("支付组件加载失败，请检查网络或稍后重试。"); return; }
-  try {
-    ${isSandbox ? 'window.Paddle.Environment.set("sandbox");' : "// production: 环境默认即生产,刻意不做任何环境切换调用"}
-    window.Paddle.Initialize({
-      token: ${tokenLiteral},
-      // **必须有 eventCallback 或 successUrl,否则付完款界面一动不动。**
-      // 这是一次真实事故的修复:用户微信扫码付了 ¥45,Paddle 结账窗停在原地,
-      // 界面「像是我没扫过码付过款一样」。Paddle 的行为是对的 —— 我们从没告诉过
-      // 它付完要去哪(既没传 successUrl 也没传 eventCallback),它只能停着。
-      //
-      // 用 eventCallback 而不是 successUrl,因为微信支付是**延迟捕获**:
-      // checkout.completed 触发时钱可能还没真正到账(官方文档:通常立刻,
-      // 但**可能长达 10 分钟**)。我们要在跳转前先给一句「正在开通」,
-      // 而不是把用户丢到一个显示「尚未开通」的控制台 —— 那正是这次事故里
-      // 最伤人的一幕:付完钱,回到控制台,看到「尚未开通」。
-      eventCallback: function (event) {
-        // ---- 全事件埋点(诊断用,常驻)----
-        // checkout.completed 在 6 次真实微信付款里零触发,原因不明。把到达的
-        // 每一个事件(含支付方式与交易状态)记到 window.__paddleEvents,
-        // 用户付款后看这份清单就知道事件走到哪一步断了。
-        // **关键字段 data.payment.method_details.type:填邮箱步骤的 closed
-        // 事件是 "none",微信授权如果是 "wechat_pay" 就能精准区分。**
-        try {
-          if (!window.__paddleEvents) window.__paddleEvents = [];
-          var evtName = (event && event.name) || "unknown";
-          var evtData = (event && event.data) || {};
-          var pmtType = ((evtData.payment || {}).method_details || {}).type || null;
-          var evtStatus = evtData.status || null;
-          window.__paddleEvents.push(evtName + "|pmt=" + pmtType + "|tx=" + evtStatus);
-          console.log("[paddle]", evtName, "pmt=", pmtType, "tx=", evtStatus);
-          lastPmtType = pmtType;
-        } catch (e) { /* 埋点失败不影响主流程 */ }
-        if (!event || typeof event.name !== "string") return;
-        if (event.name === "checkout.completed") {
-          // 与轮询路径统一:只跳一次,都跳 /payment-success(确认中间页)。
-          if (redirectScheduled) return;
-          redirectScheduled = true;
-          hint.textContent = "支付成功,正在开通…";
-          // 微信支付是延迟捕获,到账可能要几分钟。说清楚,别让人干等。
-          status.textContent = "正在确认到账(微信支付最多需要 10 分钟)。即将前往确认页。";
-          
-          // ---- 必须先关 overlay,否则跳转会被卡住(真实 bug)----
-          //
-          // 第二次真实事故:用户微信扫码付款后,Paddle overlay 还停在二维码页,
-          // 「像是我没扫过码付过款一样」。checkout.completed **确实触发了**,
-          // 但 window.location.href 在 overlay 的 iframe 里执行 ——
-          // 跳转被 iframe 沙箱阻止,或者只是 overlay 挡住了整个页面。
-          //
-          // Paddle.Checkout.close() 必须在跳转前调 —— 否则用户看到二维码停着不动,
-          // 会以为失败了,重复付款,或者来投诉「钱扣了但没开通」。
-          try { window.Paddle.Checkout.close(); } catch (e) { /* 已经关了也无妨 */ }
-          
-          // 留 1.8 秒让用户看到这句话再跳。跳过去后确认页显示「正在开通」。
-          setTimeout(function () { window.location.href = "/payment-success?txn=" + encodeURIComponent(txn); }, 1800);
-        } else if (event.name === "checkout.closed") {
-          // **语义陷阱(实测):Paddle 在"填邮箱/步骤切换"时也发 checkout.closed
-          // (pmt=none),不能无条件当"用户关窗/付款完成"。**
-          // 用 data.payment.method_details.type 区分:真实支付方式
-          // (wechat_pay/card/...)才代表"支付授权流程结束"→ 立即带去确认页
-          // (已捕获显示"已开通",未捕获显示"确认到账中"+ 自动轮询)。
-          // 这覆盖微信支付的授权时刻:授权成功 → Paddle 显示 capturing 屏幕
-          // 并关闭当前 checkout 会话 → closed(pmt=wechat_pay)→ 立即跳转!
-          if (lastPmtType && lastPmtType !== "none") {
-            if (redirectScheduled) return;
-            redirectScheduled = true;
-            try { window.Paddle.Checkout.close(); } catch (e) { /* 已经关了也无妨 */ }
-            window.location.href = "/payment-success?txn=" + encodeURIComponent(txn);
-          }
-          // pmt=none(步骤切换/用户取消):什么都不做,轮询兜底。
-        } else if (event.name === "checkout.payment.failed") {
-          // 付款失败也必须说话。之前这里同样是静默的。
-          hint.textContent = "这笔支付没有成功。";
-          status.textContent = "没有扣款。可以换一种支付方式再试,或联系我们。";
-        }
-      },
-    });
-  } catch (e) {
-    fail("支付组件初始化失败：" + (e && e.message ? e.message : String(e)));
-    return;
-  }
-  if (!txn) {
-    hint.textContent = "这个页面用于完成付款。";
-    status.textContent = "请从定价页或控制台发起购买。";
-    return;
-  }
-  try {
-    // **settings.successUrl 是微信支付唯一的救命参数。**
-    //
-    // 三次真实事故都栽在这:微信支付付完款,Paddle 把用户带到它自己的处理域名
-    // (redirect-euw1.ppro.com),本页的 eventCallback **完全失效** ——
-    // 它只在 overlay 内有效。用户看到一个不动的二维码,不知道是否付款成功。
-    //
-    // 第一次修:加 eventCallback(只覆盖 overlay 内的路径,微信仍然断)。
-    // 第二次修:加 Checkout.close()(同样只在 overlay 内)。
-    // 第三次修:把 success_url 加到 API 的 transaction.checkout —— **那个字段
-    //          不存在**,Paddle 静默忽略(实测:响应里没有 settings)。
-    //
-    // 正解在这里:Paddle.Checkout.open 的 settings.successUrl。
-    // 官方文档 paddle-js/methods/paddle-checkout-open 明确列了这个参数。
-    // (注意:这段在模板字符串里,注释**不能写反引号** —— 会提前终止模板。
-    //  这个坑本项目已踩过两次。)
-    //
-    // 指向 /payment-success 而非 /console:微信支付是**延迟捕获**(官方:通常
-    // 立刻,但可能长达 10 分钟)。直接跳控制台会看到「尚未开通」—— 那是最伤人
-    // 的一幕:刚付完钱,页面告诉你什么都没发生。
-    // ---- 打开结账前先查一次状态 ----
-    // 真实事故:刷新 /buy 带 ?_ptxn= 会重新弹结账窗,而交易可能已完成 ——
-    // 用户看到"又回到付款页面"。已完成的交易应直接跳 /payment-success。
-    (async function () {
-      try {
-        var pre = await fetch("/api/transaction/" + encodeURIComponent(txn) + "/status", {
-          signal: timeoutSignal(3000),
-        });
-        if (pre.status === 200) {
-          var preData = await pre.json();
-          if (preData && (preData.status === "paid" || preData.status === "completed" || isAuthorizedSignal(preData))) {
-            window.location.href = "/payment-success?txn=" + encodeURIComponent(txn);
-            return;
-          }
-        }
-      } catch (e) { /* 查询失败就正常弹结账窗,轮询兜底 */ }
-      // 微信支付说明:必须先让用户读到再进支付窗。overlay 会挡住本页,
-      // 所以说明只能在打开 overlay 前展示 —— 用户点「我已了解，去支付」才开。
-      showNotice();
-    })();
-    function showNotice() {
-      // **Paddle.js 会自动恢复上次未完成的结账**(存储里的 PADDLE_TRANSACTION,
-      // 实测:全新浏览器打开 /buy,overlay 也会自己弹出来) —— 会挡住支付说明。
-      // 主动 close,让用户先读说明,点「我已了解,去支付」才重新打开。
-      try { window.Paddle.Checkout.close(); } catch (e) { /* 尚未初始化也无妨 */ }
-      var notice = document.getElementById("pay-notice");
-      var ack = document.getElementById("ack-btn");
-      if (notice) notice.style.display = "block";
-      hint.textContent = "请先阅读支付说明，再开始付款。";
-      status.textContent = "";
-      if (ack) ack.onclick = function () {
-        if (notice) notice.style.display = "none";
-        openCheckout();
-      };
-    }
-    function openCheckout() {
-      checkoutOpened = true;
-      // 用户真正开始支付流程才启动轮询(付款后靠它确认到账)。
-      startPolling();
-      window.Paddle.Checkout.open({
-        transactionId: txn,
-        // 带交易 ID:/payment-success 需要它来轮询确认到账后自动跳 /console。
-        settings: { successUrl: location.origin + "/payment-success?txn=" + encodeURIComponent(txn) },
-      });
-      hint.textContent = "支付窗口已打开。";
-      // 微信支付会弹出独立小窗口(Paddle overlay 用 window.open 打开第三方
-      // 支付页)。**这是 Paddle 的已知缺陷**:付款完成后小窗口可能不自动关闭
-      // (checkout.completed 未触发时 Paddle 不会关它),Paddle 未文档化。
-      // 我们无法从父页面关闭跨源小窗口,但轮询会保证本页跳转 —— 用户只需
-      // 手动关掉小窗口。提前说清楚,别让用户以为出事了。
-      status.textContent = "选择微信支付后会弹出小窗口;付款完成后若它未自动关闭,请手动关闭 —— 页面会自动继续。";
-    }
-
-    // ---- 扣费后立即有反应:不依赖 Paddle 的任何事件 ----
-    //
-    // 微信支付在 Paddle 独立窗口(redirect-euw1.ppro.com)里完成。扣费成功后
-    // Paddle 窗口显示"验证中"(用户亲见),但**从不通知父页面** ——
-    // checkout.completed 在 6 次真实付款里零触发,successUrl 也从未跳转。
-    // Paddle 的前端事件不可信,唯一可靠的信号是:用户扣费后必然回到本页
-    // (关小窗口/切回标签页)。页面重新可见的瞬间,立即带去确认页 ——
-    // 确认页区分"已开通"与"确认到账中",并自动轮询,到账后自动进控制台。
-    var onReturnToPage = function () {
-      // 用户从支付窗口切回页面 = "付款后"的可靠信号。但同样受 pmt 约束:
-      // 没选过真实支付方式(填邮箱/纯浏览)就切 tab,不能把人送去确认页。
-      if (!checkoutOpened || redirectScheduled) return;
-      if (!lastPmtType || lastPmtType === "none") return;
-      redirectScheduled = true;
-      try { window.Paddle.Checkout.close(); } catch (e) { /* 已经关了也无妨 */ }
-      window.location.href = "/payment-success?txn=" + encodeURIComponent(txn);
-    };
-    document.addEventListener("visibilitychange", function () {
-      if (document.visibilityState === "visible") onReturnToPage();
-    });
-    window.addEventListener("focus", function () {
-      if (document.visibilityState === "visible") onReturnToPage();
-    });
-
-    // ---- 自建轮询:微信支付的唯一可靠出路 ----
-    //
-    // 第四次真实事故:微信支付是延迟捕获,授权与 Paddle 确认之间有几分钟窗口。
-    // 窗口内 Paddle 前端不跳转、checkout.completed 不发、successUrl 不触发 ——
-    // 用户看到"付了钱但页面没反应",感觉被骗。上述三条路(Paddle 的 successUrl、
-    // eventCallback、服务端捕获)全都在 Paddle 手里,我们控制不了它的前端轮询。
-    //
-    // 所以**自己轮询**:每 3 秒查一次 /api/transaction/<id>/status,一旦
-    // paid/completed 就关 overlay、跳 /payment-success。这不再依赖 Paddle 前端
-    // 是否跳转 —— 只要 Paddle 服务端确认了钱,我们就能把用户接走。
-    //
-    // 轮询不硬超时:微信支付授权可能发生在任意时间(实测:页面 10:44 打开,
-    // 用户 12:13 才付款,12:18 捕获 —— 若 10 分钟就停,付款时轮询早死了)。
-    // 10 分钟后降频到 15 秒继续监听,直到页面关闭或交易完成。
-    // 交易 ID 来自 URL,归属校验在服务端做。
-    //
-    // AbortSignal.timeout 降级(与 site/main.js 同款):旧浏览器不支持
-    // AbortSignal.timeout,直接调用会抛 TypeError → 轮询永远发不出去且被
-    // catch 吞掉,用户又回到"付了钱但页面没反应"。优先用原生,否则
-    // AbortController + setTimeout。
-    // 授权信号:扣款成功后 Paddle 服务端立刻把支付尝试从 action_required
-    // 更新为 pending_no_action_required/authorized/capturing/captured
-    // (sandbox 实测:授权后 ~10 秒内变化,不用等捕获)。
-    // 只有这些状态代表"钱已被授权扣走"—— failed/canceled 绝不能跳。
-    function isAuthorizedSignal(data) {
-      var a = data && data.attempt_status;
-      return a === "authorized" || a === "capturing" || a === "captured" ||
-        a === "pending_no_action_required";
-    }
-    function timeoutSignal(ms) {
-      if (typeof AbortSignal.timeout === "function") return AbortSignal.timeout(ms);
-      var controller = new AbortController();
-      setTimeout(function () { controller.abort(); }, ms);
-      return controller.signal;
-    }
-    // 轮询改为**用户点「我已了解，去支付」后才启动**(openCheckout 里调用)。
-    // 之前页面加载就启动:用户啥都没做,3 秒一次跑满 10 分钟后显示
-    // 「支付已提交,正在确认到账…」—— 误导(实测事故)。
-    var pollStarted = false;
-    function pollTransaction() {
-      var attempts = 0;
-      // **inFlight 锁**(Copilot round 2):setInterval + async 下,某次请求/
-      // 解析超过 3 秒时下一次 tick 仍会触发 → 并发重叠请求,放大上游抖动与
-      // API 调用。上一轮未结束就跳过本轮;结束后释放锁(含异常路径)。
-      var inFlight = false;
-      var timer = null;
-      var intervalMs = 3000;
-      // **不硬超时**(真实事故修复):轮询窗口按页面打开起算,而微信支付授权
-      // 可能发生在任意时间(实测:页面 10:44 打开,用户 12:13 才付款,12:18
-      // 捕获 —— 若 10 分钟就停,付款时轮询早死了)。10 分钟后降频到 15 秒
-      // 继续监听,直到页面关闭。
-      var poll = async function () {
-        if (inFlight) return;
-        inFlight = true;
-        try {
-          attempts++;
-          if (attempts === 201) {
-            clearInterval(timer);
-            intervalMs = 15000;
-            timer = setInterval(poll, intervalMs);
-            hint.textContent = "支付已提交,正在确认到账…";
-            status.textContent = "付款后页面会自动确认并跳转。如果已经付款,请稍候 —— 你的付款不会丢失;超过 15 分钟仍未开通请联系我们。";
-          }
-          // AbortSignal.timeout:fetch 挂起不返回时(某些网络条件下不 reject),
-          // inFlight 锁会永久占住、轮询永久停住且页面无提示(Copilot round 7)。
-          // 5 秒超时,保证锁一定释放。超时走 catch → 下次 tick 重试。
-          var res = await fetch("/api/transaction/" + encodeURIComponent(txn) + "/status", {
-            signal: timeoutSignal(5000),
-          });
-          if (res.status === 401) {
-            // 登录过期:继续轮询也没用,明确告诉用户重新登录。
-            clearInterval(timer);
-            hint.textContent = "登录状态已过期。";
-            status.textContent = "请刷新页面重新登录后,在控制台查看开通状态。你的付款不会丢失。";
-            return;
-          }
-          if (res.status === 404) {
-            // 交易不存在/不属于当前账号:继续轮询没意义。多半是会话换人了。
-            clearInterval(timer);
-            hint.textContent = "这笔交易无法确认。";
-            status.textContent = "请回到控制台重新发起购买;若已付款,请联系我们核对。";
-            return;
-          }
-          if (res.status === 503) {
-            // 503 分两种(见端点):checkout not configured = 配置缺失,重试
-            // 也没用,立即停并提示;temporarily unavailable = 上游抖动,重试。
-            var body503 = null;
-            try { body503 = await res.json(); } catch (e) { /* 读不到就当抖动 */ }
-            if (body503 && body503.error === "checkout not configured") {
-              clearInterval(timer);
-              hint.textContent = "支付通道暂时不可用。";
-              status.textContent = "请稍后刷新页面重试;持续不可用请联系我们。你的付款不会丢失。";
-              return;
-            }
-            return;
-          }
-          var data = await res.json();
-          if (data && (data.status === "paid" || data.status === "completed" || isAuthorizedSignal(data))) {
-            // 授权信号 = 用户已经扣款成功(Paddle 服务端确认),立即带去确认页。
-            // 确认页区分:已捕获显示「付款已完成」,未捕获显示「已收到支付请求,
-            // 正在确认到账」并自动轮询 —— 用户不再面对 5 分钟死寂。
-            if (redirectScheduled) { clearInterval(timer); return; }
-            redirectScheduled = true;
-            clearInterval(timer);
-            hint.textContent = "已收到支付,正在确认…";
-            status.textContent = "正在确认到账(微信支付最多需要 10 分钟)。即将前往确认页。";
-            try { window.Paddle.Checkout.close(); } catch (e) { /* 已经关了也无妨 */ }
-            setTimeout(function () { window.location.href = "/payment-success?txn=" + encodeURIComponent(txn); }, 1800);
-          }
-        } catch (e) { /* 网络抖动,下次再试 */ } finally {
-          // 释放锁:clearInterval 后 finally 仍会跑,但 timer 已停,无副作用。
-          inFlight = false;
-        }
-      };
-      // 先建 interval 再立即跑一次(Copilot round 3):若先 poll(),首轮命中
-      // 401/404/completed 时 clearInterval(timer) 清不掉 null,interval 仍会
-      // 创建继续请求,覆盖已写入的提示。
-      timer = setInterval(poll, intervalMs);
-      // 启动时立即查一次:付款发生在轮询启动前的场景(如用户先付了款再点
-      // 「去支付」)也能马上抓住,不用等第一个 3 秒 tick。
-      poll();
-    }
-    function startPolling() {
-      if (pollStarted) return;
-      pollStarted = true;
-      pollTransaction();
-    }
-  } catch (e) {
-    fail("打开支付窗口失败：" + (e && e.message ? e.message : String(e)));
-  }`
-      : `// 未配置 PADDLE_CLIENT_TOKEN:结账尚未启用。明确说明而不是假装在加载。
-  hint.textContent = "结账功能尚未开放。";
-  status.textContent = txn ? "支付通道配置中，请稍后重试。" : "请先在定价页了解档位。";`
-  }
-})();
-</script>
+${checkoutScript}
 </body>
 </html>`;
 }
