@@ -205,3 +205,22 @@ export async function verifyAlipayParams(
     return false;
   }
 }
+
+/** Verify the exact raw JSON member Alipay signs in OpenAPI responses. */
+export async function verifyAlipayContent(
+  content: string,
+  signatureBase64: string,
+  publicKey: AlipayCryptoKey,
+): Promise<boolean> {
+  if (content === "" || signatureBase64 === "") return false;
+  try {
+    return await crypto.subtle.verify(
+      "RSASSA-PKCS1-v1_5",
+      publicKey,
+      bytesFromBase64(signatureBase64),
+      new TextEncoder().encode(content),
+    );
+  } catch {
+    return false;
+  }
+}
