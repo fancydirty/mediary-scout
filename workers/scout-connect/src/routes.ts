@@ -45,6 +45,12 @@ import { buildSessionCookie, parseSessionCookie } from "./session.js";
 import { computeExpiry, isEntitlementActive, latestExpiry } from "./entitlement.js";
 import type { AlipayApi } from "./alipay-api.js";
 import { ALIPAY_TIERS, resolveAlipayTier } from "./alipay-order.js";
+import {
+  acceptAlipayNotification,
+  compensateAlipayOrder,
+  InvalidAlipayEvidenceError,
+  type AlipayServiceDeps,
+} from "./alipay-service.js";
 
 // Same aperture mark as apps/web/app/icon.svg — the product brand.
 const LOGO_SVG =
@@ -80,6 +86,8 @@ export interface RouteDeps {
   paddleApi?: PaddleApi | undefined;
   /** Alipay server API. Missing configuration keeps new checkout fail-closed. */
   alipayApi?: AlipayApi | undefined;
+  alipayAppId?: string | undefined;
+  alipaySellerId?: string | undefined;
   /** Deterministic injection points for checkout tests; production uses crypto randomness. */
   newPaymentOrderId?: (() => string) | undefined;
   newAlipayOutTradeNo?: (() => string) | undefined;
@@ -354,6 +362,9 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
   }
   if (method === "POST" && path === "/api/paddle/webhook") {
     return paddleWebhook(request, deps);
+  }
+  if (method === "POST" && path === "/api/alipay/notify") {
+    return alipayNotify(request, deps);
   }
   if (method === "POST" && path === "/api/alipay/checkout") {
     return createAlipayCheckout(request, deps);
@@ -789,6 +800,59 @@ async function selfServeProvision(request: Request, deps: RouteDeps): Promise<Re
   }
 }
 
+function alipayServiceDeps(deps: RouteDeps): AlipayServiceDeps | null {
+  if (deps.alipayApi === undefined) return null;
+  return {
+    db: deps.db,
+    alipayApi: deps.alipayApi,
+    alipayAppId: deps.alipayAppId?.trim() ?? "",
+    alipaySellerId: deps.alipaySellerId?.trim() ?? "",
+    now: deps.now,
+    newAccountId: deps.newAccountId,
+    newEntitlementId: deps.newEntitlementId,
+  };
+}
+
+function alipayNotifyResponse(body: "success" | "rejected" | "retry", status: number): Response {
+  return new Response(body, {
+    status,
+    headers: {
+      "content-type": "text/plain; charset=utf-8",
+      "cache-control": "no-store",
+    },
+  });
+}
+
+/** Async notifications are acknowledged only after durable entitlement fulfillment. */
+async function alipayNotify(request: Request, deps: RouteDeps): Promise<Response> {
+  const service = alipayServiceDeps(deps);
+  if (
+    service === null ||
+    service.alipayAppId === "" ||
+    service.alipaySellerId === ""
+  ) {
+    return alipayNotifyResponse("retry", 503);
+  }
+  const contentType = request.headers.get("content-type")?.toLowerCase() ?? "";
+  if (!contentType.startsWith("application/x-www-form-urlencoded")) {
+    return alipayNotifyResponse("rejected", 400);
+  }
+  const raw = await readBodyTextCapped(request, MAX_WEBHOOK_BODY_BYTES);
+  if (raw.trim() === "") return alipayNotifyResponse("rejected", 400);
+  try {
+    const order = await acceptAlipayNotification(new URLSearchParams(raw), service);
+    if (order.status !== "fulfilled") return alipayNotifyResponse("retry", 503);
+    return alipayNotifyResponse("success", 200);
+  } catch (error) {
+    if (error instanceof InvalidAlipayEvidenceError) {
+      return alipayNotifyResponse("rejected", 400);
+    }
+    // Never include raw notification fields, signatures, or internal storage errors in the reply.
+    console.error("Alipay notification fulfillment failed");
+    return alipayNotifyResponse("retry", 503);
+  }
+}
+
 const ALIPAY_CHECKOUT_TTL_MS = 20 * 60_000;
 
 function randomHex(bytes: number): string {
@@ -922,12 +986,23 @@ async function getAlipayOrderStatus(
 ): Promise<Response> {
   const session = await parseSessionWithValidatedNow(request.headers.get("cookie"), deps);
   if (!session.ok) return json({ error: "unauthorized" }, 401, { noStore: true });
-  const order = await deps.db.getPaymentOrderById(orderId);
+  let order = await deps.db.getPaymentOrderById(orderId);
   if (order === null || order.account_id !== session.accountId) {
     return json({ error: "not found" }, 404, { noStore: true });
   }
   const nowMs = Date.parse(deps.now());
   if (!Number.isFinite(nowMs)) return json({ error: "unavailable" }, 500, { noStore: true });
+  if (order.status !== "fulfilled" && order.status !== "closed" && order.status !== "refunded") {
+    const service = alipayServiceDeps(deps);
+    if (service === null) {
+      return json({ error: "checkout not configured" }, 503, { noStore: true });
+    }
+    try {
+      order = await compensateAlipayOrder(order.id, service);
+    } catch {
+      return json({ error: "temporarily unavailable" }, 503, { noStore: true });
+    }
+  }
   return json({ status: browserPaymentStatus(order, nowMs) }, 200, { noStore: true });
 }
 

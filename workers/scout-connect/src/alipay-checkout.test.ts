@@ -14,8 +14,12 @@ function fakeAlipayApi(pagePayCalls: PagePayInput[]): AlipayApi {
       pagePayCalls.push(input);
       return `<!doctype html><form method="post" action="https://openapi.alipay.com/gateway.do"><input name="out_trade_no" value="${input.outTradeNo}"></form>`;
     },
-    async queryTrade() {
-      throw new Error("query is not part of the checkout-shell test");
+    async queryTrade(outTradeNo) {
+      return {
+        code: "10000",
+        out_trade_no: outTradeNo,
+        trade_status: "WAIT_BUYER_PAY",
+      };
     },
     async closeTrade() {
       throw new Error("close is not part of the checkout-shell test");
@@ -258,9 +262,8 @@ describe("GET /api/alipay/orders/:id/status", () => {
 
     expect(await owned()).toEqual({ status: "pending" });
     await db.updatePaymentOrder(created.order.id, { status: "paid", paid_at: NOW });
-    expect(await owned()).toEqual({ status: "paid_unfulfilled" });
-    await db.updatePaymentOrder(created.order.id, { status: "fulfilled", fulfilled_at: NOW });
     expect(await owned()).toEqual({ status: "fulfilled" });
+    expect(await db.listEntitlements("act_owner")).toHaveLength(1);
   });
 
   it("reports closed and expired without trusting browser fields", async () => {
