@@ -35,4 +35,12 @@ describe("paymentSuccessPage (server-confirmed Alipay state)", () => {
     expect(html).toContain('href="/refund"');
     expect(html).toContain('href="/contact"');
   });
+
+  it("aborts hung polling even when AbortSignal.timeout is unavailable", () => {
+    const html = paymentSuccessPage();
+    expect(html).toContain("new AbortController()");
+    expect(html).toContain("controller.abort()");
+    expect(html).toContain("clearTimeout(requestTimeout)");
+    expect(html).not.toContain("? AbortSignal.timeout(8000) : undefined");
+  });
 });

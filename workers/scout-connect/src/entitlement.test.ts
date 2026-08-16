@@ -4,6 +4,7 @@ import {
   computeExpiry,
   effectiveEntitlements,
   isEntitlementActive,
+  latestExpiry,
   reconcileEntitlementLedger,
   recomputeExpiry,
 } from "./entitlement.js";
@@ -62,6 +63,15 @@ describe("entitlement 时长计算", () => {
     });
     it("unparseable expiry is inactive (fail closed, never grant on garbage)", () => {
       expect(isEntitlementActive("not-a-date", "2026-07-28T00:00:00.000Z")).toBe(false);
+    });
+  });
+
+  describe("latestExpiry", () => {
+    it("skips malformed caches so one bad row cannot hide valid paid time", () => {
+      const valid = "2027-01-01T00:00:00.000Z";
+      expect(latestExpiry([{ expires_at: "BAD" }, { expires_at: valid }])).toBe(valid);
+      expect(latestExpiry([{ expires_at: valid }, { expires_at: "BAD" }])).toBe(valid);
+      expect(latestExpiry([{ expires_at: "BAD" }, { expires_at: "" }])).toBeNull();
     });
   });
 });

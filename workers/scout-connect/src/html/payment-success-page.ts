@@ -75,9 +75,11 @@ ${BRAND_BAR}
   async function poll() {
     if (!order || inFlight) return;
     inFlight = true;
+    var controller = new AbortController();
+    var requestTimeout = setTimeout(function () { controller.abort(); }, 8000);
     try {
       var response = await fetch("/api/alipay/orders/" + encodeURIComponent(order) + "/status", {
-        signal: typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(8000) : undefined,
+        signal: controller.signal,
       });
       if (response.status === 401) {
         stop();
@@ -97,6 +99,7 @@ ${BRAND_BAR}
     } catch (_) {
       detail.textContent = "网络暂时不可用，系统会继续重试。请勿重复付款。";
     } finally {
+      clearTimeout(requestTimeout);
       inFlight = false;
     }
   }

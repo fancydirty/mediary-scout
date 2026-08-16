@@ -54,10 +54,14 @@ export function latestExpiry(
   entitlements: { expires_at: string; refunded_at?: string | null }[],
 ): string | null {
   let latest: string | null = null;
+  let latestMs = Number.NEGATIVE_INFINITY;
   for (const e of entitlements) {
     if (e.refunded_at != null) continue;
-    if (latest === null || Date.parse(e.expires_at) > Date.parse(latest)) {
+    const expiresMs = Date.parse(e.expires_at);
+    if (!Number.isFinite(expiresMs)) continue;
+    if (expiresMs > latestMs) {
       latest = e.expires_at;
+      latestMs = expiresMs;
     }
   }
   return latest;
