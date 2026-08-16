@@ -165,6 +165,26 @@ describe("grantEntitlement", () => {
     expect(replay.expiresAt).toBe(first.expiresAt);
   });
 
+  it("已退款交易重投不返回假设再次入账的未来到期时刻", async () => {
+    const db = createMemoryConnectDb();
+    const d = deps(db);
+    const input = {
+      email: "refunded-replay@example.com",
+      months: 3,
+      source: "alipay" as const,
+      paymentProvider: "alipay" as const,
+      paymentTransactionId: "MC_REFUNDED_REPLAY",
+    };
+    const first = await grantEntitlement(input, d);
+    expect(first.expiresAt).not.toBe(NOW);
+    expect(await db.markEntitlementRefunded("alipay", input.paymentTransactionId, NOW)).toBe(true);
+
+    const replay = await grantEntitlement(input, d);
+
+    expect(replay.applied).toBe(false);
+    expect(replay.expiresAt).toBe(NOW);
+  });
+
   it("邮箱大小写与空白归一(同一人不该建两个账号)", async () => {
     const db = createMemoryConnectDb();
     const d = deps(db);

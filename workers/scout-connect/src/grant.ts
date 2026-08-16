@@ -114,7 +114,9 @@ export async function grantEntitlement(
     const truth = await reconcileEntitlementLedger(account.id, deps.db);
     return {
       accountId: account.id,
-      expiresAt: truth ?? expiresAt,
+      // 若这笔幂等交易已经退款,有效账本会为空。此时不能回退到上面
+      // 「假设本次重新入账」算出的未来日期,应返回当前时刻表示无有效时长。
+      expiresAt: truth ?? now,
       applied: false,
     };
   }
