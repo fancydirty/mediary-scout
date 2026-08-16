@@ -57,6 +57,7 @@ describe("Alipay-only active checkout tree", () => {
     const deploy = readFileSync(resolve(workerRoot, "scripts/deploy.sh"), "utf8");
     const deployAt = deploy.indexOf("npx wrangler deploy");
     expect(deployAt).toBeGreaterThan(0);
+    expect(deploy).toContain("wrangler secret list --format json");
     for (const marker of [
       "wrangler secret list",
       "ALIPAY_APP_ID",

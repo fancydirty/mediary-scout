@@ -35,7 +35,7 @@ fi
 echo "→ 生产支付宝 secrets 预检（只读名称，不读取值）"
 SECRET_LIST=$(mktemp)
 trap 'rm -f "$SECRET_LIST"' EXIT HUP INT TERM
-env -u CF_API_TOKEN npx wrangler secret list >"$SECRET_LIST"
+env -u CF_API_TOKEN npx wrangler secret list --format json >"$SECRET_LIST"
 for SECRET_NAME in \
   ALIPAY_APP_ID \
   ALIPAY_PRIVATE_KEY \
