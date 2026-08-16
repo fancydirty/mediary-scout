@@ -43,4 +43,11 @@ describe("paymentSuccessPage (server-confirmed Alipay state)", () => {
     expect(html).toContain("clearTimeout(requestTimeout)");
     expect(html).not.toContain("? AbortSignal.timeout(8000) : undefined");
   });
+
+  it("emits syntactically valid browser JavaScript", () => {
+    const html = paymentSuccessPage();
+    const script = /<script>\s*([\s\S]*?)<\/script>/.exec(html)?.[1];
+    expect(script).toBeDefined();
+    expect(() => new Function(script!)).not.toThrow();
+  });
 });

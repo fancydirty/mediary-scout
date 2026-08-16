@@ -84,7 +84,7 @@ ${BRAND_BAR}
       if (response.status === 401) {
         stop();
         title.textContent = "请先登录";
-        detail.innerHTML = "登录后才能查看这笔订单。<a href=\"/login?next=%2Fpayment-success%3Forder%3D" + encodeURIComponent(order) + "\">前往登录</a>";
+        detail.innerHTML = "登录后才能查看这笔订单。<a href='/login?next=%2Fpayment-success%3Forder%3D" + encodeURIComponent(order) + "'>前往登录</a>";
         return;
       }
       if (response.status === 404) {

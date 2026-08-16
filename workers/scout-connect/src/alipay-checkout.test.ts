@@ -186,7 +186,7 @@ describe("GET /alipay/checkout", () => {
       expect(response.status).toBe(200);
       expect(response.headers.get("cache-control")).toBe("no-store");
       expect(response.headers.get("content-security-policy")).toContain(
-        "form-action https://openapi.alipay.com",
+        "form-action https://openapi.alipay.com https://unitradeprod.alipay.com https://excashier.alipay.com",
       );
       expect(await response.text()).toContain("https://openapi.alipay.com/gateway.do");
     }
@@ -248,8 +248,11 @@ describe("GET /alipay/checkout", () => {
       deps,
     );
     const csp = response.headers.get("content-security-policy") ?? "";
-    expect(csp).toContain("form-action https://openapi-sandbox.dl.alipaydev.com");
+    expect(csp).toContain(
+      "form-action https://openapi-sandbox.dl.alipaydev.com https://unitradeprod-sandbox.dl.alipaydev.com https://excashier-sandbox.dl.alipaydev.com",
+    );
     expect(csp).not.toContain("form-action https://openapi.alipay.com");
+    expect(csp).not.toContain("https://unitradeprod.alipay.com");
     expect(await response.text()).toContain("https://openapi-sandbox.dl.alipaydev.com/gateway.do");
     expect(sandboxCalls[0]).toEqual({
       outTradeNo: created.order.out_trade_no,
