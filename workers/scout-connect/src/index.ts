@@ -40,7 +40,8 @@ export function resolveAlipayEnvironment(
   const requested = configured?.trim() || "production";
   if (requested === "production") return "production";
   const hostname = new URL(requestUrl).hostname;
-  const local = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+  const local =
+    hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
   return requested === "sandbox" && local ? "sandbox" : undefined;
 }
 

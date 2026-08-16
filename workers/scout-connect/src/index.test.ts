@@ -8,6 +8,7 @@ describe("Alipay runtime environment guard", () => {
     );
     expect(resolveAlipayEnvironment("http://localhost:8787/buy", "sandbox")).toBe("sandbox");
     expect(resolveAlipayEnvironment("http://127.0.0.1:8787/buy", "sandbox")).toBe("sandbox");
+    expect(resolveAlipayEnvironment("http://[::1]:8787/buy", "sandbox")).toBe("sandbox");
     expect(resolveAlipayEnvironment("https://mediaryconnect.app/buy", "sandbox")).toBeUndefined();
     expect(resolveAlipayEnvironment("https://mediaryconnect.app/buy", "typo")).toBeUndefined();
   });
