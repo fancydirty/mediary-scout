@@ -3,9 +3,8 @@ import { extractLang, type Lang } from "./lang-split.js";
 import { renderMarkdown } from "./markdown.js";
 import { BRAND_BAR, BRAND_CSS, FAVICON_LINK, THEME_BASE, THEME_TOKENS } from "./theme.js";
 
-/** 五个合规页。key 即 URL 路径(/terms 等),Paddle 域名审核的硬性要求:
- *  条款/隐私/退款(≥14 天,与 Buyer Terms 一致)/定价/联系,缺一被拒
- *  (拒信原文点过名)。中英双语:英文主、中文次(照顾 Paddle 审核员)。 */
+/** 五个合规页。key 即 URL 路径(/terms 等)。中英内容来自同一份 Markdown,
+ *  避免条款、隐私、退款、定价与联系页在不同语言之间漂移。 */
 export const COMPLIANCE_PAGES = {
   terms: { en: "Terms of Service", zh: "服务条款" },
   privacy: { en: "Privacy Policy", zh: "隐私政策" },
@@ -58,8 +57,8 @@ function footerLinks(lang: Lang): string {
 }
 
 /** 中英各自成页(用户反馈:中英交叉排在同一页读起来很累)。
- *  中文是默认语言(受众是中文用户);英文页走 ?lang=en,给 Paddle 审核员和
- *  海外用户。两页内容同源,由 extractLang 从同一份 .md 拆出,不存在
+ *  中文是默认语言(受众是中文用户);英文页走 ?lang=en,供海外用户阅读。
+ *  两页内容同源,由 extractLang 从同一份 .md 拆出,不存在
  *  「改了中文忘改英文」的漂移。 */
 export function compliancePage(key: CompliancePageKey, lang: Lang = "zh"): string {
   const title = COMPLIANCE_PAGES[key];
@@ -147,7 +146,7 @@ ${body}
     : "自托管 Mediary Scout 的远程访问服务"
 }</p>
 <p>${lang === "en" ? "Operated by" : "运营主体"} DF Digital · ${
-  lang === "en" ? "Payments by Paddle (Merchant of Record)" : "付款由 Paddle 作为记录商户处理"
+  lang === "en" ? "Payments via Alipay" : "付款使用支付宝"
 }</p>
 </div>
 </body>

@@ -1215,7 +1215,7 @@ describe("migration 0006 — provider-neutral entitlements and Alipay orders", (
     };
     expect(await db.insertEntitlement(entitlement)).toBe(true);
     expect(await db.insertEntitlement({ ...entitlement, id: "ent_rt_2" })).toBe(false);
-    expect(await db.getEntitlementByPayment("alipay", "MCRT")).toMatchObject({ id: "ent_rt" });
+    expect((await db.listEntitlements("act_rt"))[0]).toMatchObject({ id: "ent_rt" });
     expect(
       await db.markEntitlementRefunded(
         "alipay",

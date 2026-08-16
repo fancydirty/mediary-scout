@@ -133,8 +133,9 @@ describe("Alipay evidence and fulfillment", () => {
       paid_at: NOW,
       fulfilled_at: NOW,
     });
-    expect(await db.listEntitlements(row.account_id)).toHaveLength(1);
-    expect(await db.getEntitlementByPayment("alipay", row.out_trade_no)).toMatchObject({
+    const entitlements = await db.listEntitlements(row.account_id);
+    expect(entitlements).toHaveLength(1);
+    expect(entitlements[0]).toMatchObject({
       account_id: row.account_id,
       months: 3,
       source: "alipay",

@@ -21,18 +21,12 @@ export interface Env {
   // 没配时 login 路径本就失败(那是核心功能),而 expiry sweep 只是不发提醒邮件,
   // 回收照走。让类型反映"某些路径可无"这个事实,而不是假设处处必填。
   RESEND_API_KEY?: string;
-  // Paddle 结账。client token 是**公开**值(设计上就要下发浏览器),放
-  // wrangler.jsonc vars;未配置时 /buy 明确显示「结账未开放」而不是白页。
-  // PADDLE_ENVIRONMENT: "sandbox" | "production"(缺省视为 production)。
-  PADDLE_CLIENT_TOKEN?: string;
-  PADDLE_ENVIRONMENT?: string;
-  // notification destination 的 endpoint secret(pdl_ntfset_ 前缀)。
-  // **wrangler secret,不是 vars** —— 它是验签密钥,泄露等于任何人都能凭空
-  // 发时长。未配置时 /api/paddle/webhook 一律 503(fail closed)。
-  PADDLE_WEBHOOK_SECRET?: string;
-  // Paddle 服务端 API key(创建交易用)。**wrangler secret**,不是 vars。
-  // 未配置时 /api/checkout 返回 503(结账未开放),不影响其它路径。
-  PADDLE_API_KEY?: string;
+  // 支付宝网页支付。四项都作为 Worker secrets 配置,源码和 wrangler vars
+  // 均不保存凭证。缺少任一项时购买入口明确显示不可用,所有支付接口 fail closed。
+  ALIPAY_APP_ID?: string;
+  ALIPAY_PRIVATE_KEY?: string;
+  ALIPAY_ALIPAY_PUBLIC_KEY?: string;
+  ALIPAY_SELLER_ID?: string;
   // 到期巡检是否真删。"true" 才开;任何其它值/未设 = dry-run 只记审计。
   // 四个 PR 里唯一会真删生产资源的路径,先在实例验证时间边界再放开。
   EXPIRY_SWEEP_LIVE?: string;

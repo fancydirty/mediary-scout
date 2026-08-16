@@ -52,7 +52,7 @@ export function expiryReminderText(input: {
     `你的 slug 永久保留——随时回来续期,地址原样恢复(需重跑一次一行接入命令)。\n\n` +
     `续期:https://mediaryconnect.app/pricing\n` +
     `控制台:https://mediaryconnect.app/login\n\n` +
-    `—— Mediary Connect(由 DF Digital 运营,付款由 Paddle 处理)\n` +
+    `—— Mediary Connect(由 DF Digital 运营,付款使用支付宝)\n` +
     `如非你本人,忽略此邮件即可。`
   );
 }

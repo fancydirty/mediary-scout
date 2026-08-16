@@ -227,14 +227,6 @@ export interface ConnectDb {
    *  (两笔都基于同一快照,用户付 24 个月只拿到 12)。写入后从整本账重算,
    *  与快照不符就用这个方法修正。见 grant.ts 与 entitlement.ts:recomputeExpiry。 */
   updateEntitlementExpiry(entitlementId: string, expiresAt: string): Promise<void>;
-  /** 按 paddle_transaction_id 查那笔时长。幂等重投时用来定位「上次收敛失败
-   *  留下的错值行」并自愈,见 grant.ts。 */
-  getEntitlementByTransactionId(txnId: string): Promise<EntitlementRow | null>;
-  /** Provider-scoped payment idempotency lookup. */
-  getEntitlementByPayment(
-    provider: NonNullable<EntitlementRow["payment_provider"]>,
-    transactionId: string,
-  ): Promise<EntitlementRow | null>;
   /** Tombstones one paid grant exactly once; false means absent/already refunded. */
   markEntitlementRefunded(
     provider: NonNullable<EntitlementRow["payment_provider"]>,
@@ -922,25 +914,6 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
       }
     },
 
-    async getEntitlementByTransactionId(txnId) {
-      const row = await d1
-        .prepare(`SELECT * FROM entitlements WHERE paddle_transaction_id = ? LIMIT 1`)
-        .bind(txnId)
-        .first<RawRow>();
-      return row === null ? null : mapEntitlement(row);
-    },
-
-    async getEntitlementByPayment(provider, transactionId) {
-      const row = await d1
-        .prepare(
-          `SELECT * FROM entitlements
-            WHERE payment_provider = ? AND payment_transaction_id = ? LIMIT 1`,
-        )
-        .bind(provider, transactionId)
-        .first<RawRow>();
-      return row === null ? null : mapEntitlement(row);
-    },
-
     async markEntitlementRefunded(provider, transactionId, refundedAt) {
       const result = (await d1
         .prepare(
@@ -1429,25 +1402,6 @@ export function createMemoryConnectDb(): ConnectDb {
         throw new Error(`updateEntitlementExpiry affected 0 rows: ${entitlementId}`);
       }
       entitlements.set(entitlementId, { ...row, expires_at: expiresAt });
-    },
-
-    async getEntitlementByTransactionId(txnId) {
-      for (const row of entitlements.values()) {
-        if (row.paddle_transaction_id === txnId) return { ...row };
-      }
-      return null;
-    },
-
-    async getEntitlementByPayment(provider, transactionId) {
-      for (const row of entitlements.values()) {
-        if (
-          row.payment_provider === provider &&
-          row.payment_transaction_id === transactionId
-        ) {
-          return { ...row };
-        }
-      }
-      return null;
     },
 
     async markEntitlementRefunded(provider, transactionId, refundedAt) {

@@ -2,9 +2,9 @@
 
 ## 服务条款
 
-Last updated: 2026-07-28
+Last updated: 2026-08-16
 
-最后更新:2026-07-28
+最后更新:2026-08-16
 
 ## What the service is
 
@@ -39,12 +39,12 @@ Mediary Connect 为自托管的 Mediary Scout 实例提供远程访问通道:一
 - The service is billed as **prepaid time**: you buy several months of access, get an email reminder before expiry, and are **never auto-charged**.
 - After expiry there is a 7-day grace period (service continues); when grace ends, the hostname stops resolving and the tunnel is reclaimed immediately to free capacity. Renewing later restores the same slug — you re-run the one-line setup command once to bring the tunnel back up.
 - Your slug is kept permanently and is never released to others; on renewal you re-run the one-line setup command to bring the tunnel back up with the same address.
-- See the [Refund Policy](https://mediaryconnect.app/refund). Payment is handled by Paddle as Merchant of Record, whose [Buyer Terms](https://www.paddle.com/legal/checkout-buyer-terms) also apply.
+- See the [Refund Policy](https://mediaryconnect.app/refund). Payments are one-time Alipay transactions; no automatic renewal is created.
 
 - 服务按**预付时长**计费:付费购买若干个月的访问权,到期前会邮件提醒续期,**不会自动扣款**。
 - 到期后有 7 天宽限期(服务照常);宽限期满域名停止解析,并**立即回收隧道**以释放配额。之后续期,slug 原样恢复,需重跑一次一行接入命令让隧道重新上线。
 - 你的 slug 永久保留,永不释放给他人;续期后重跑一次一行接入命令,即可以同一地址恢复。
-- 退款见[退款政策](https://mediaryconnect.app/refund)。付款由 Paddle 作为记录商户(Merchant of Record)处理,其 [Buyer Terms](https://www.paddle.com/legal/checkout-buyer-terms) 同时适用。
+- 退款见[退款政策](https://mediaryconnect.app/refund)。付款通过支付宝一次性完成,不会开通自动续费。
 
 ## Service level
 
@@ -78,14 +78,14 @@ Term updates are dated on this page; material changes are emailed. Continued use
 
 ## 运营主体
 
-This service is operated by **DF Digital**, a sole proprietorship. Payment is handled by Paddle as Merchant of Record: Paddle is the seller of record for your transaction, and issues all invoices and receipts.
+This service is operated and sold by **DF Digital**, a sole proprietorship. Alipay provides the payment channel.
 
-本服务由 **DF Digital**(个体工商户)运营。付款由 Paddle 作为记录商户(Merchant of Record)处理:Paddle 是你这笔交易的销售方,并负责出具所有发票与收据。
+本服务由 **DF Digital**(个体工商户)运营并销售,支付宝提供支付通道。
 
 ## Governing law
 
 ## 适用法律
 
-These terms are governed by the laws of the People's Republic of China. Payment-related disputes are also subject to the Paddle Buyer Terms.
+These terms are governed by the laws of the People's Republic of China.
 
-本条款受中华人民共和国法律管辖。付款相关争议同时适用 Paddle Buyer Terms。
+本条款受中华人民共和国法律管辖。

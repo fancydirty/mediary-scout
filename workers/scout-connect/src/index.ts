@@ -4,6 +4,7 @@ import { newId, newInviteCode } from "./ids.js";
 import { handleRequest } from "./routes.js";
 import { createMagicLinkSender } from "./magic-link-sender.js";
 import type { Env } from "./env.js";
+import { createAlipayApi } from "./alipay-api.js";
 
 /** 取值或显式抛错。某些 env(如 RESEND_API_KEY)对**部分**路径可选(到期提醒),
  *  但对其它路径(登录)是必需的 —— 在必需处显式断言,比让 undefined 流到下游
@@ -14,8 +15,6 @@ function requireEnv(value: string | undefined, name: string): string {
   }
   return value;
 }
-import { createPaddleApi } from "./paddle-api.js";
-import { priceMonthsFor } from "./paddle-event.js";
 import { sweepExpiredEndpoints } from "./expiry-sweep.js";
 import { createEmailSender } from "./email-sender.js";
 
@@ -59,6 +58,18 @@ export default {
     );
   },
   async fetch(request: Request, env: Env): Promise<Response> {
+    const alipayAppId = env.ALIPAY_APP_ID?.trim();
+    const alipayPrivateKey = env.ALIPAY_PRIVATE_KEY?.trim();
+    const alipayPublicKey = env.ALIPAY_ALIPAY_PUBLIC_KEY?.trim();
+    const alipaySellerId = env.ALIPAY_SELLER_ID?.trim();
+    const alipayApi =
+      alipayAppId && alipayPrivateKey && alipayPublicKey && alipaySellerId
+        ? createAlipayApi({
+            appId: alipayAppId,
+            privateKeyPem: alipayPrivateKey,
+            alipayPublicKeyPem: alipayPublicKey,
+          })
+        : undefined;
     return handleRequest(request, {
       db: createD1ConnectDb(env.DB),
       cf: createCfApi({
@@ -75,19 +86,9 @@ export default {
       newAuditId: () => newId("aud"),
       newInviteCode,
       turnstileSitekey: env.TURNSTILE_SITEKEY,
-      paddleClientToken: env.PADDLE_CLIENT_TOKEN,
-      paddleEnvironment: env.PADDLE_ENVIRONMENT,
-      paddleWebhookSecret: env.PADDLE_WEBHOOK_SECRET,
-      // 按环境选白名单。**未配置时是 undefined 而非回落 sandbox** ——
-      // 路由层据此 fail-closed(503),见 routes.ts 的注释。
-      paddlePriceMonths: priceMonthsFor(env.PADDLE_ENVIRONMENT) ?? undefined,
-      paddleApi:
-        env.PADDLE_API_KEY === undefined || env.PADDLE_API_KEY.trim() === ""
-          ? undefined
-          : createPaddleApi({
-              apiKey: env.PADDLE_API_KEY,
-              environment: env.PADDLE_ENVIRONMENT ?? "production",
-            }),
+      alipayApi,
+      alipayAppId,
+      alipaySellerId,
       turnstileSecret: env.TURNSTILE_SECRET,
       newAccountId: () => newId("act"),
       newEntitlementId: () => newId("ent"),

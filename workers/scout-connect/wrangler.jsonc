@@ -34,28 +34,11 @@
     //
     // 替代防线:发信入口(/api/auth/magic、/waitlist)已加限流,
     // 见 src/rate-limit.ts 的 SIGNUP_* 参数与那里对取舍的说明。
-    // "TURNSTILE_SITEKEY": "0x4AAAAAAD-wkGraJigl3YK0",
-    // Paddle 环境(sandbox|production)。决定 priceMonthsFor 选哪份白名单:
-    // 不设 = undefined = priceMonthsFor 返回 null → webhook 一律 503。
-    //
-    // **2026-08-01 切 production。** 之前留在 sandbox 是个真实故障:
-    // PADDLE_CLIENT_TOKEN 早已是 live token(live_f688...),而 /buy 页面按这个
-    // 变量给 Paddle.js 注入 `Environment.set("sandbox")` —— live 凭据打沙箱环境,
-    // 结账窗必然失败。**站已上线,任何人点购买都付不了款**,而且不会有任何
-    // 服务端错误日志(失败发生在浏览器里的 Paddle.js)。
-    //
-    // 切换的前提都已满足:
-    //  - LIVE_PRICE_MONTHS 三档已用 live API 直接核对(见 paddle-event.ts)
-    //  - live webhook 已配置且 active,指向 /api/paddle/webhook
-    //  - PADDLE_API_KEY 已设为 pdl_live_*(secret,不在本文件)。没它 /api/checkout
-    //    恒 503;换环境时**必须同时换 key**,sandbox key 配 production 会 401。
-    //  - mediaryconnect.app 已通过 live 的 checkout domain 审批 —— 实测传
-    //    checkout.url 建交易成功,返回 mediaryconnect.app/buy?_ptxn=...。
-    //    (live 只接受已审批域名;sandbox 是自动批准的,所以这条只能在 live 验。
-    //     账号级 default payment link 指向另一个产品 agentmentor.dev,
-    //     靠 paddle-api.ts 每次显式传 checkout.url 覆盖 —— 那行不能删。)
-    "PADDLE_ENVIRONMENT": "production"
+    // "TURNSTILE_SITEKEY": "0x4AAAAAAD-wkGraJigl3YK0"
   }
+  // 支付宝凭证全部使用 `wrangler secret put` 配置，不进入源码或 vars：
+  // ALIPAY_APP_ID / ALIPAY_PRIVATE_KEY / ALIPAY_ALIPAY_PUBLIC_KEY /
+  // ALIPAY_SELLER_ID。四项缺一即 fail closed，购买入口不会显示可用按钮。
   // EXPIRY_SWEEP_LIVE 用 `wrangler secret put` 或 dashboard 设 —— 它是行为开关
   // (true 才真删生产资源),刻意不放 vars 防误开。见 src/index.ts 的注释。
 }

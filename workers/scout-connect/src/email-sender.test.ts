@@ -19,7 +19,8 @@ describe("expiryReminderText", () => {
     expect(text).toContain("/pricing");
     expect(text).toContain("/login");
     expect(text).toContain("DF Digital");
-    expect(text).toContain("Paddle");
+    expect(text).toContain("支付宝");
+    expect(text).not.toContain("Paddle");
   });
 
   it("无 hostname(未开通)时不提专属地址", () => {

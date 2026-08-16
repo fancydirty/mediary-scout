@@ -2,9 +2,9 @@
 
 ## 退款政策
 
-Last updated: 2026-07-28
+Last updated: 2026-08-16
 
-最后更新:2026-07-28
+最后更新:2026-08-16
 
 ## 14-day, no-questions-asked
 
@@ -14,19 +14,13 @@ Within **14 days** of payment you may request a full refund for any reason, **wh
 
 自付款之日起 **14 天内**,你可以无理由申请全额退款,**无论是否已经使用过本服务**。没有任何条件、例外或扣费 —— 配置没跑通、觉得不合适、或者单纯改了主意,都可以。
 
-This meets and supplements the [Paddle Buyer Terms](https://www.paddle.com/legal/checkout-buyer-terms): Paddle is the Merchant of Record for your payment, and nothing here limits the rights its buyer terms grant you.
-
-这一承诺与我们的支付服务商 Paddle 的 [Buyer Terms](https://www.paddle.com/legal/checkout-buyer-terms) 一致,并作为其补充:Paddle 作为记录商户(Merchant of Record)处理你的付款,其买家条款赋予你的权利不受本政策限制。
-
 ## How to request
 
 ## 如何申请
 
-- Use the link in the Paddle receipt email you received after paying; or
-- Email the address on our Contact page with your payment email. **No reason needed.**
+- Email **support@mediaryconnect.app** from your registered email and include the original Alipay order or transaction number. **No reason needed.**
 
-- 通过你付款后收到的 Paddle 收据邮件中的链接直接发起;或
-- 发邮件至本站「联系我们」页面所列邮箱,附上付款邮箱即可。**无需说明理由。**
+- 使用注册邮箱发邮件至 **support@mediaryconnect.app**,附上原支付宝订单号或交易号即可。**无需说明理由。**
 
 Refunds return by the original payment method, typically within 5–10 business days.
 
@@ -52,6 +46,6 @@ Payments past 14 days are generally non-refundable, except: service unavailable 
 
 超过 14 天的付款原则上不予退款,但以下情形除外:因我方原因导致服务连续不可用超过 72 小时;或服务被我方永久终止(将按未使用时长比例退款)。
 
-For disputes, the Paddle Buyer Terms and applicable law prevail.
+For disputes, this policy and applicable law prevail.
 
-如有争议,以 Paddle Buyer Terms 与适用法律为准。
+如有争议,以本政策与适用法律为准。

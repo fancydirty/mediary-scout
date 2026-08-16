@@ -882,7 +882,7 @@ describe("payment-order and provider-neutral entitlement persistence", () => {
         }),
       ),
     ).toBe(true);
-    expect(await db.getEntitlementByPayment("alipay", "MC202608160001")).toMatchObject({
+    expect((await db.listEntitlements("act_1"))[0]).toMatchObject({
       id: "ent_1",
     });
   });

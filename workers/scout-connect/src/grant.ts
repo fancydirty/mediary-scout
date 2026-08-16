@@ -4,8 +4,8 @@ import type { AccountRow, ConnectDb, EntitlementRow } from "./db.js";
 /**
  * 发放预付时长(账本式)。
  *
- * 由两条路径共用:admin 手工授予(`POST /api/admin/grant`)与 Paddle webhook
- * 付款入账。抽出来的理由不只是去重 —— 它们的续费语义、幂等语义、账号 upsert
+ * 由两条路径共用:admin 手工授予(`POST /api/admin/grant`)与支付订单入账。
+ * 抽出来的理由不只是去重 —— 它们的续费语义、幂等语义、账号 upsert
  * 的竞态处理必须**完全一致**。此前 adminGrant 里还手写了一遍「找最新到期」的
  * for 循环,而 entitlement.ts 早就有 latestExpiry();两份实现迟早漂移。
  */
@@ -29,15 +29,13 @@ export interface GrantInput {
   /** Payment-scoped idempotency pair. Manual grants use two nulls. */
   paymentProvider?: EntitlementRow["payment_provider"];
   paymentTransactionId?: string | null;
-  /** Transitional input for the Paddle runtime removed later in this migration. */
-  paddleTransactionId?: string | null;
 }
 
 export interface GrantResult {
   accountId: string;
   /** 授予后的最新到期时刻。幂等命中时是**已存在**的到期时刻,不会再叠加一次。 */
   expiresAt: string;
-  /** true = 真的入账了;false = 幂等命中(同一 paddle_transaction_id 已入过)。 */
+  /** true = 真的入账了;false = 幂等命中(同一支付交易已入过)。 */
   applied: boolean;
 }
 
@@ -76,18 +74,12 @@ export async function grantEntitlement(
   input: GrantInput,
   deps: GrantDeps,
 ): Promise<GrantResult> {
-  // 邮箱归一:Paddle 回传的大小写不一定与注册时一致,不归一会给同一个人建两个
-  // 账号(付了钱却在另一个账号下)。
+  // 邮箱归一:输入大小写不一定与注册时一致,不归一会给同一个人建两个账号。
   const email = input.email.trim().toLowerCase();
   const now = deps.now();
   const account = await resolveAccount(input, email, deps);
-  const legacyPaddleTransactionId = input.paddleTransactionId ?? null;
-  const paymentProvider =
-    input.paymentProvider ?? (legacyPaddleTransactionId === null ? null : "paddle");
-  const paymentTransactionId =
-    input.paymentTransactionId === undefined
-      ? legacyPaddleTransactionId
-      : input.paymentTransactionId;
+  const paymentProvider = input.paymentProvider ?? null;
+  const paymentTransactionId = input.paymentTransactionId ?? null;
   if ((paymentProvider === null) !== (paymentTransactionId === null)) {
     throw new Error("payment provider and transaction id must be supplied together");
   }
@@ -114,9 +106,9 @@ export async function grantEntitlement(
   });
 
   if (!applied) {
-    // 幂等命中(同一 paddle_transaction_id 已入过账)。**必须回读**而不是返回
+    // 幂等命中(同一支付交易已入过账)。**必须回读**而不是返回
     // 上面算出的 expiresAt —— 那个值是「假设本次入账」算出来的,比真实到期多
-    // 一个周期。Paddle 重投很常见,回错值会让控制台显示比实际更长的有效期。
+    // 一个周期。支付通知重投很常见,回错值会让控制台显示比实际更长的有效期。
     // **重投要有自愈能力。** 上一次的并发收敛可能在 insert 之后、update
     // 之前失败。统一重建每个有效缓存，既修复旧错误，也正确排除退款行。
     const truth = await reconcileEntitlementLedger(account.id, deps.db);

@@ -656,7 +656,7 @@ ${BRAND_CSS}
     <div class="pfoot">
       <p><b>怎么买:</b>先在下面用邮箱登录,进控制台后选档位付款、再选你的域名。<b>不能直接下单</b> —— 时长必须记在一个账号上,所以登录在前。</p>
       <p><b>不自动续费</b>:到期前邮件提醒,不续就自然到期,不会再扣一分钱。到期后 7 天宽限,之后域名停止解析 —— 你的实例本身不受任何影响。</p>
-      <p>结账由 <b>Paddle</b> 完成,支持<b>微信支付</b>与信用卡(也支持 Apple Pay / Google Pay)。你的账单上会显示 Paddle 的名字,这是正常的 —— Paddle 是本服务的记录商户(MoR),收据与退款入口都在它的邮件里。</p>
+      <p>结账<b>仅支持支付宝</b>,每次都是一次性付款,不自动续费。付款后以服务端确认结果为准,浏览器返回本站本身不代表已经到账。</p>
     </div>
   </section>
 
@@ -691,7 +691,7 @@ ${BRAND_CSS}
   <footer class="ft">
     Mediary Connect · 自托管 <a href="https://mediaryscout.app">Mediary Scout</a> 的远程访问服务<br>
     <a href="/pricing">定价</a> · <a href="/terms">服务条款</a> · <a href="/privacy">隐私政策</a> · <a href="/refund">退款政策</a> · <a href="/contact">联系我们</a> · <a href="https://github.com/fancydirty/mediary-scout">GitHub</a><br>
-    运营主体 DF Digital · 付款由 Paddle 作为记录商户(Merchant of Record)处理
+    运营主体与销售方 DF Digital · 付款使用支付宝
   </footer>
 
 </div>

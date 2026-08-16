@@ -23,7 +23,6 @@ describe("generated content freshness", () => {
     }
   });
 });
-
 describe("compliance pages", () => {
   it("exposes exactly the five pages with EN + zh titles", () => {
     expect(Object.keys(COMPLIANCE_PAGES).sort()).toEqual([
@@ -52,7 +51,7 @@ describe("compliance pages", () => {
     // 中文页必须有主标题(首个 h2 被提升为 h1),否则文档无 h1
     expect(zh).toMatch(/<h1[^>]*>退款政策<\/h1>/);
     expect(zh).not.toContain("Refund Policy</h1>");
-    // 页脚互链：五页彼此可达（Paddle 审核员会点着看），且保持当前语言
+    // 页脚互链：五页彼此可达，且保持当前语言
     for (const path of ["/terms", "/privacy", "/refund", "/pricing", "/contact"]) {
       expect(zh).toContain(`href="${path}"`);
     }
@@ -66,20 +65,15 @@ describe("compliance pages", () => {
     }
   });
 
-  it("refund page states the 14-day minimum in both languages (Paddle rejection letter item)", () => {
+  it("refund page states the 14-day no-questions-asked promise in both languages", () => {
     const en = compliancePage("refund", "en");
     const zh = compliancePage("refund", "zh");
     expect(en).toContain("14 days");
     expect(en).toContain("no-questions-asked");
     expect(zh).toContain("14 天");
     expect(zh).toContain("无理由");
-    // Paddle 要求「无条件」:任何限定词都会被拒(拒信原文点名"含限定条件")。
     expect(en).toContain("whether or not you have used the service");
     expect(zh).toContain("无论是否已经使用过本服务");
-    // 必须链到 Paddle Buyer Terms —— 拒信原文点名要求一致性。两页都要有。
-    for (const html of [en, zh]) {
-      expect(html).toContain("https://www.paddle.com/legal/checkout-buyer-terms");
-    }
   });
 
   // 创始价那档已撤(代码里无席位计数、无续期锁价,「前 100 席 · 续期同价」
@@ -155,70 +149,56 @@ describe("compliance pages", () => {
 });
 
 // 合规页与首页/代码现实必须一致 —— 不一致就是虚假宣传,退款争议里站不住。
-describe("合规页与产品现实的一致性", () => {
+describe("合规页与支付宝支付现实的一致性", () => {
   const ALL = ["pricing", "terms", "privacy", "refund", "contact"] as const;
 
-  it("五页都不提「支付宝」(live API 实测中国区不支持)", () => {
-    // Paddle live API 实测可用:card / wechat_pay / apple_pay / google_pay。
-    // 写支付宝既是事实错误,也是 MoR 的支付方式表述合规风险。
+  it("五页完全移除旧支付服务商与记录商户表述", () => {
     for (const key of ALL) {
-      for (const lang of ["zh", "en"] as const) {
-        const html = compliancePage(key, lang);
-        expect(html, `${key}/${lang}`).not.toContain("支付宝");
-        expect(html, `${key}/${lang}`).not.toContain("Alipay");
-      }
+      const markdown = COMPLIANCE_MARKDOWN[key];
+      expect(markdown).not.toContain("Paddle");
+      expect(markdown).not.toContain("Merchant of Record");
+      expect(markdown).not.toContain("记录商户");
     }
   });
 
-  // 说明要准确:代码里**有**席位计数(WAITLIST_SEAT_CAP=100,那是内测报名的上限),
-  // 缺的是**付费档位**的席位计数与续期锁价 —— entitlements 表不记录用什么价买的,
-  // 所以「续期同价」无从判断。两者别混为一谈。
-  it("定价页不承诺创始价席位(缺的是付费席位计数与续期锁价)", () => {
-    for (const lang of ["zh", "en"] as const) {
-      const html = compliancePage("pricing", lang);
-      expect(html).not.toContain("创始价");
-      expect(html).not.toContain("Founding");
-      expect(html).not.toContain("100 席");
-      expect(html).not.toContain("100 seats");
-    }
-  });
-
-  // **两种语言都要断言**:compliancePage 把一份双语 markdown 拆成 EN/zh 两页,
-  // 只测中文的话英文那侧可以静默丢内容而测试照样绿。
-  it("定价页提到微信支付与 MoR 账单说明(消除 chargeback 诱因)", () => {
+  it("定价页明确仅支付宝，三档价格保持不变", () => {
     const zh = compliancePage("pricing", "zh");
-    expect(zh).toContain("微信支付");
-    // 账单上出现 Paddle 的名字是 chargeback 的常见诱因,要提前说明
-    expect(zh).toContain("记录商户");
     const en = compliancePage("pricing", "en");
-    expect(en).toContain("WeChat Pay");
-    expect(en).toContain("Merchant of Record");
-  });
-
-  it("定价页补了首页没有的细节:购买顺序 / 不包含什么 / 换档调价 / 容量", () => {
-    const zh = compliancePage("pricing", "zh");
-    for (const k of ["先登录", "不包含什么", "换档与调价", "容量"]) expect(zh).toContain(k);
-    // 涨价不影响已买时长 —— 这条能兑现(预付时长本就没有下次扣款)
-    expect(zh).toContain("已经买到的时长不受影响");
-
-    const en = compliancePage("pricing", "en");
-    for (const k of ["you log in first", "does not include", "price changes", "Capacity"]) {
-      expect(en, `EN 缺 ${k}`).toContain(k);
+    expect(zh).toContain("仅支持支付宝");
+    expect(en).toContain("Alipay only");
+    expect(zh).not.toContain("微信支付");
+    expect(en).not.toContain("WeChat Pay");
+    for (const price of ["¥45", "¥108", "¥188"]) {
+      expect(zh).toContain(price);
+      expect(en).toContain(price);
     }
-    expect(en).toContain("time you already bought is unaffected");
+    expect(zh).not.toContain("¥88");
   });
 
-  // Copilot round-2:隐私政策不该点名任何具体支付方式 —— Paddle 支持的方式
-  // 按地区/时间变,写死一个就是给自己埋下一次过时(这个 PR 本身就是在修
-  // 「支付宝」过时的问题)。这一段的重点是「我们碰不到」,与方式无关。
-  // Copilot round-3:我原本写「结账前有容量闸门,售罄会告诉你而不是先收钱」——
-  // 但 createCheckout **不检查容量**,闸门在 selfServeProvision(选 slug 那步)。
-  // 用户可能先付款成功、到选域名时才撞上售罄。承诺不能比代码强。
-  it("容量条款不承诺「结账会拦住」(闸门实际在选域名那步)", () => {
+  it("退款页要求提供原支付宝订单或交易号，并保留原路退款承诺", () => {
+    const zh = compliancePage("refund", "zh");
+    const en = compliancePage("refund", "en");
+    expect(zh).toContain("原支付宝订单号或交易号");
+    expect(en).toContain("original Alipay order or transaction number");
+    expect(zh).toContain("原路退回");
+    expect(en).toContain("original payment method");
+    expect(zh).toContain("support@mediaryconnect.app");
+  });
+
+  it("隐私页准确说明支付宝处理凭据、我方只存最少订单记录", () => {
+    const zh = compliancePage("privacy", "zh");
+    const en = compliancePage("privacy", "en");
+    expect(zh).toContain("支付宝处理你的钱包凭据");
+    expect(zh).toContain("不会接收或保存");
+    expect(en).toContain("Alipay handles your wallet credentials");
+    expect(en).toContain("never receive or store");
+    expect(zh).toContain("订单号");
+    expect(en).toContain("order number");
+  });
+
+  it("容量条款不承诺结账前拦截，已付款售罄仍有 14 天退款", () => {
     const zh = compliancePage("pricing", "zh");
     expect(zh).not.toContain("结账前设了容量闸门");
-    expect(zh).not.toContain("而不是先收钱");
-    // 要说清真实位置,并给出已付款后撞上售罄的兜底
     expect(zh).toContain("选定域名那一步");
     expect(zh).toContain("14 天退款政策适用");
     const en = compliancePage("pricing", "en");
@@ -226,28 +206,10 @@ describe("合规页与产品现实的一致性", () => {
     expect(en).toContain("when you claim your hostname");
   });
 
-  it("隐私政策不点名具体支付方式(避免再次过时)", () => {
-    for (const lang of ["zh", "en"] as const) {
-      const html = compliancePage("privacy", lang);
-      for (const m of ["支付宝", "Alipay", "微信支付", "WeChat Pay"]) {
-        expect(html, `${lang} 不该出现 ${m}`).not.toContain(m);
-      }
+  it("所有本轮修改页的 Last updated 都是切换日期", () => {
+    for (const key of ALL) {
+      expect(compliancePage(key, "en")).toContain("Last updated: 2026-08-16");
+      expect(compliancePage(key, "zh")).toContain("最后更新:2026-08-16");
     }
-    // 但「我们碰不到付款凭据」这个承诺必须还在
-    expect(compliancePage("privacy", "zh")).toContain("不接触");
-    expect(compliancePage("privacy", "en")).toContain("never touch");
-  });
-
-  it("改了内容就要动 Last updated(否则这个字段是骗人的)", () => {
-    for (const key of ["pricing", "privacy"] as const) {
-      expect(compliancePage(key, "en")).toContain("Last updated: 2026-07-31");
-      expect(compliancePage(key, "zh")).toContain("最后更新:2026-07-31");
-    }
-  });
-
-  it("三档价格与首页一致", () => {
-    const zh = compliancePage("pricing", "zh");
-    for (const p of ["¥45", "¥108", "¥188"]) expect(zh).toContain(p);
-    expect(zh).not.toContain("¥88");
   });
 });

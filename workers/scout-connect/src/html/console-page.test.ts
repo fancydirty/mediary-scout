@@ -70,7 +70,6 @@ describe("console page — shared dark theme", () => {
     expect(html).toContain("buyer@example.com");
   });
 });
-
 describe("console page — not entitled", () => {
   it("shows a 尚未开通 badge and an 开通 CTA, no access area", () => {
     const html = base({ entitlements: [] });
@@ -219,194 +218,72 @@ describe("consolePage 报到时间", () => {
   });
 });
 
-describe("无时长态 = 购买入口(不是死链)", () => {
-  // 这一整块是补债:线上曾经是 `<a href="/pricing">开通</a>`,而 /pricing 是纯
-  // 说明页、零结账入口 —— 整条付款路径断了,后端 /api/checkout 从来没有调用方。
-  // 用户截图才发现。所有自动化测试当时都是绿的,因为没人测这一态。
+describe("无时长态 = 支付宝购买入口", () => {
   const TIERS = [
-    { priceId: "pri_q", months: 3, label: "季度", price: "¥45", featured: false, note: "3 个月" },
-    { priceId: "pri_y", months: 12, label: "年度", price: "¥108", featured: true, note: "12 个月 · 折月付 ¥9" },
-    { priceId: "pri_2y", months: 24, label: "两年", price: "¥188", featured: false, note: "24 个月" },
+    { tierId: "quarter", months: 3, label: "季度", price: "¥45", featured: false, note: "3 个月" },
+    { tierId: "year", months: 12, label: "年度", price: "¥108", featured: true, note: "12 个月 · 折月付 ¥9" },
+    { tierId: "two_year", months: 24, label: "两年", price: "¥188", featured: false, note: "24 个月" },
   ];
   const noTime = (tiers = TIERS) => base({ entitlements: [], endpoint: null, tiers });
 
-  it("三档都渲染成带 price_id 的按钮", () => {
+  it("三档都渲染成固定 tier id 的按钮，价格不变", () => {
     const html = noTime();
-    for (const t of TIERS) {
-      expect(html).toContain(`data-price="${t.priceId}"`);
-      expect(html).toContain(t.price);
+    for (const tier of TIERS) {
+      expect(html).toContain(`data-tier="${tier.tierId}"`);
+      expect(html).toContain(tier.price);
     }
+    expect(html).not.toContain("price_id");
+    expect(html).not.toContain("data-price");
   });
 
-  it("绝不再出现「跳 /pricing 就算完事」的死链按钮", () => {
-    // 这是本次 bug 的精确复现条件:一个 class="btn" 的链接指向 /pricing。
-    // 页脚那个「定价」文字链是正常的,所以只禁按钮形态。
+  it("调用支付宝 checkout，并使用服务端返回的同源 hop", () => {
     const html = noTime();
-    expect(html).not.toMatch(/class="btn"[^>]*href="\/pricing"/);
-    expect(html).not.toMatch(/href="\/pricing"[^>]*class="btn"/);
-  });
-
-  it("有下单脚本,且真的打 /api/checkout", () => {
-    const html = noTime();
-    expect(html).toContain("/api/checkout");
-    expect(html).toContain("price_id");
-    // 拿到 checkout_url 后必须真跳过去,否则等于建了交易却不结账。
+    expect(html).toContain("/api/alipay/checkout");
+    expect(html).toContain("JSON.stringify({tier:btn.dataset.tier})");
     expect(html).toContain("checkout_url");
     expect(html).toContain("window.location.href");
   });
 
-  it("年度是主推档(用户拍板),且只有一个主推", () => {
+  it("年度是唯一主推档", () => {
     const html = noTime();
-    // 只数**按钮上**的,不数 CSS 规则里的 —— 样式表里也有 .tier-featured,
-    // 直接数字符串会把它算进去(第一版就踩了)。
-    expect(html).toContain("tier-featured");
     expect(html.match(/class="tier tier-featured"/g)?.length).toBe(1);
-    // 主推标记必须落在年度那颗按钮上,不能飘到别档。
-    const yearBtn = html.slice(html.indexOf('data-price="pri_y"'));
-    expect(yearBtn.slice(0, 400)).toContain("¥108");
+    const yearButton = html.slice(html.indexOf('data-tier="year"'));
+    expect(yearButton.slice(0, 400)).toContain("¥108");
   });
 
-  it("白名单为空 → 不给假按钮,老实说不可用", () => {
-    // 假按钮点下去必然吃 /api/checkout 的 503。让用户点一下才发现,是最差体验。
-    const html = base({ entitlements: [], endpoint: null, tiers: [] });
-    expect(html).not.toContain("data-price");
+  it("支付宝配置缺失时不给假按钮或死脚本", () => {
+    const html = noTime([]);
+    expect(html).not.toContain("data-tier");
+    expect(html).not.toContain("/api/alipay/checkout");
     expect(html).toContain("购买通道暂时不可用");
-    // 也不该注入脚本 —— 那会对不存在的 .tier 做 querySelectorAll(空数组,不崩,
-    // 但白挂一段死代码)。
-    expect(html).not.toContain("/api/checkout");
   });
 
-  it("三种失败各有不同的下一步动作", () => {
+  it("失败有明确下一步，点击后禁用全部按钮防重复订单", () => {
     const html = noTime();
-    // 「请重试」对 session 过期毫无用处 —— 必须让他重新登录。
     expect(html).toContain("401");
     expect(html).toContain("重新登录");
     expect(html).toContain("503");
+    expect(html).toContain("disabled=true");
   });
 
-  it("防连点:点击后禁用所有按钮", () => {
-    // 不禁的话用户连点三下就在 Paddle 建三笔 draft 交易。
-    expect(noTime()).toContain("disabled=true");
-  });
-
-  it("已有有效时长时不显示购买按钮", () => {
-    const html = base({
-      entitlements: [ent("2027-01-01T00:00:00.000Z")],
-      endpoint: null,
-      tiers: TIERS,
-    });
-    expect(html).not.toContain("data-price");
-  });
-
-  it("标明预付/不自动续费与退款政策", () => {
-    // 合规与预期管理:这是一次性付款,不是订阅。必须在下单按钮旁边就说清。
+  it("明确仅支付宝、一次性付款、不自动续费，并说明返回页不等于到账", () => {
     const html = noTime();
+    expect(html).toContain("支付宝");
+    expect(html).toContain("一次性付款");
     expect(html).toContain("不自动续费");
+    expect(html).toContain("不代表已经到账");
     expect(html).toContain("/refund");
-  });
-});
-
-describe("已付款但未入账 = 必须说钱没丢(事故防线)", () => {
-  // 事故复盘:用户微信付了 ¥45,webhook 因签名密钥配错而全部 401,他回到控制台
-  // 看到「尚未开通」。付了钱,界面像没付过。真实用户会直接开退款争议。
-  const TIERS = [
-    { priceId: "pri_y", months: 12, label: "年度", price: "¥108", featured: true, note: "12 个月" },
-  ];
-  const pending = (n: number) =>
-    base({ entitlements: [], endpoint: null, tiers: TIERS, pendingPaidCount: n });
-  const justPaid = () =>
-    base({ entitlements: [], endpoint: null, tiers: TIERS, justPaid: true });
-
-  it("Paddle 确认已付款 → 绝不显示「尚未开通」", () => {
-    // 这是整条防线最核心的一条断言:那句话是事故里最伤人的一幕。
-    const html = pending(1);
-    expect(html).not.toContain("尚未开通");
-    expect(html).toContain("已付款");
+    expect(html).not.toContain("微信支付");
+    expect(html).not.toContain("Paddle");
   });
 
-  it("明确告诉用户钱不会丢", () => {
-    const html = pending(1);
-    expect(html).toContain("付款不会丢失");
-  });
-
-  it("不提支付宝 —— Paddle 不支持它,写了就是说谎", () => {
-    // 第一版文案写了「微信支付与支付宝」。Paddle 在中国只支持 WeChat Pay,
-    // 没有 Alipay(PR #209 已为此清过一轮合规页,我又在新文案里犯了同一个错)。
-    for (const h of [pending(1), justPaid()]) {
-      expect(h).not.toContain("支付宝");
-      expect(h).not.toContain("Alipay");
-    }
-  });
-
-  it("购买区不吹不存在的支付方式", () => {
-    // Paddle 后台勾了全部方式,但结账页按地区显示 —— 对中国用户实际就是微信。
-    // 所以主推微信 + 信用卡,并说明「按地区显示」,不逐个列 Apple/Google Pay。
-    const html = pending(0);
-    expect(html).toContain("微信支付");
-    expect(html).not.toContain("支付宝");
-  });
-
-  it("解释延迟到账,并给出具体时间上限", () => {
-    // 不给上限的「请稍候」等于没说 —— 用户不知道该等 10 秒还是一小时。
-    const html = pending(1);
-    expect(html).toContain("延迟到账");
-    expect(html).toContain("10 分钟");
-  });
-
-  it("给出超时后的求助路径,并承认这是我们的问题", () => {
-    const html = pending(1);
-    expect(html).toContain("15 分钟");
-    expect(html).toContain("/contact");
-    expect(html).toContain("我们这边的问题");
-    // 退款兜底也要在场:用户此刻最坏的预期就是钱白花了。
-    expect(html).toContain("/refund");
-  });
-
-  it("待入账时不显示购买按钮(防重复付款)", () => {
-    // 这条最要紧:显示购买按钮会让一个已经付过款的人再付一次。
-    const html = pending(1);
-    expect(html).not.toContain("data-price");
-  });
-
-  it("刚付款(?paid=1)但 Paddle 还没确认 → 也要安抚", () => {
-    // 微信是延迟捕获,跳回来那一刻 Paddle 往往还没标 paid。
-    // 这个空窗不安抚,用户看到的就是「尚未开通」。
-    const html = justPaid();
-    expect(html).not.toContain("尚未开通");
-    expect(html).toContain("正在确认");
-    expect(html).not.toContain("data-price");
-  });
-
-  it("有刷新按钮,且刷新时去掉 ?paid=1", () => {
-    // 不去掉的话「刚付款」这个软状态会永远粘着,即使付款其实失败了,
-    // 用户也一直看到「正在确认」—— 那是另一种形式的说谎。
-    const html = justPaid();
-    expect(html).toContain('id="recheck"');
-    expect(html).toContain('"/console"');
-    expect(html).not.toContain("/console?paid=1");
-  });
-
-  it("不做持续轮询(每次都要打 Paddle API)", () => {
-    const html = pending(1);
-    expect(html).not.toContain("setInterval");
-    expect(html).toContain("setTimeout");
-  });
-
-  it("pendingPaidCount=0 且非 justPaid → 正常显示购买按钮", () => {
-    const html = pending(0);
-    expect(html).toContain("data-price");
-    expect(html).toContain("尚未开通");
-  });
-
-  it("已有有效时长时,pendingPaidCount 不干扰正常显示", () => {
-    // 续费场景:老用户还有时长,同时买了新的。不能把他打回待入账态。
+  it("有效权益仍走原开通流程，不显示购买按钮", () => {
     const html = base({
       entitlements: [ent("2027-01-01T00:00:00.000Z")],
       endpoint: null,
       tiers: TIERS,
-      pendingPaidCount: 1,
     });
-    expect(html).toContain("有效");
-    expect(html).not.toContain("付款不会丢失");
+    expect(html).not.toContain("data-tier");
+    expect(html).toContain("选择专属地址");
   });
 });

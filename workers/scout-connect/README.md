@@ -1,7 +1,7 @@
 # Mediary Connect — remote access control plane
 
-Invite-only remote access for self-hosted Mediary Scout instances. The control
-plane provisions, per invitee, a Cloudflare Tunnel + public hostname
+Paid remote access for self-hosted Mediary Scout instances. The control plane
+accepts one-time Alipay payments, grants prepaid access time, and provisions a Cloudflare Tunnel + public hostname
 (`<slug>.mediaryconnect.app`), and hands the home side a one-time
 `TUNNEL_TOKEN`. The entry gate is the app's own access password, set in the
 browser on first open (remote requests require login afterwards; LAN stays
@@ -18,6 +18,14 @@ admin ──► mediaryconnect.app (this worker)
             ├─ GET  /beta        beta signup page (two-step: email → optional
             │                    survey; also served on beta.mediaryconnect.app)
             ├─ GET  /admin       admin page (bearer token in sessionStorage)
+            ├─ GET  /buy         Alipay-only tier selector (¥45 / ¥108 / ¥188)
+            ├─ POST /api/alipay/checkout                    create owned order
+            ├─ GET  /alipay/checkout                        one-time signed-form hop
+            ├─ POST /api/alipay/notify                      signed async result
+            ├─ GET  /api/alipay/orders/:id/status           query compensation
+            ├─ POST /api/alipay/orders/:id/close            close unpaid order
+            ├─ POST /api/admin/alipay/refund                full refund
+            ├─ GET  /api/admin/alipay/refund/:requestNo     refund query
             ├─ GET  /api/admin/invites                     list invites
             ├─ POST /api/admin/invites                     create invite
             ├─ POST /api/admin/invites/:id/provision       tunnel+ingress+dns
@@ -104,6 +112,10 @@ sha256. After `token_shown_at` is set, the plaintext is unrecoverable.
 | `TOKEN_WRAP_KEY` | `openssl rand -hex 32` — AES-256-GCM key for token-at-rest |
 | `SESSION_SECRET` | `openssl rand -hex 32` — HMAC key for magic-link + session cookies (P3) |
 | `RESEND_API_KEY` | Resend API key for magic-link emails (P3) |
+| `ALIPAY_APP_ID` | Alipay application ID |
+| `ALIPAY_PRIVATE_KEY` | Merchant RSA2 private key (PKCS#1 or PKCS#8 PEM/bare base64) |
+| `ALIPAY_ALIPAY_PUBLIC_KEY` | Alipay platform public key used to verify responses and notifications |
+| `ALIPAY_SELLER_ID` | Expected Alipay seller/PID; notifications with another seller are rejected |
 
 Vars (wrangler.jsonc, non-secret): `CONNECT_ROOT_DOMAIN=mediaryconnect.app`.
 
@@ -114,8 +126,8 @@ cd workers/scout-connect
 # first time only:
 npx wrangler d1 create scout-connect          # put database_id into wrangler.jsonc
 npx wrangler d1 execute scout-connect --remote --file=./schema.sql
-# secrets above, then:
-npx wrangler deploy
+# secrets above, then use the guarded deployment entrypoint:
+./scripts/deploy.sh
 curl https://mediaryconnect.app/healthz       # → ok
 ```
 
@@ -133,13 +145,14 @@ new shape; deploying first takes the control plane down.
 cd workers/scout-connect
 npx wrangler d1 execute scout-connect --remote \
   --file=./migrations/0001-drop-access-notnull-add-last-seen.sql
-npx wrangler deploy
+./scripts/deploy.sh
 ```
 
 | Migration | What / why |
 | --- | --- |
 | `0001-drop-access-notnull-add-last-seen.sql` | Drops the `cf_access_app_id NOT NULL` (post-Access `provision.ts` writes `NULL`; the old table rejected it, so **every provision 500'd** after creating and then rolling back the tunnel/DNS). Adds `last_seen_at` for `POST /api/instance/status`. Adds `idx_endpoints_token_sha256` + `idx_waitlist_batch_created` (both paths were full table scans). Realigns `waitlist.status` default `'waiting'` → `'pending'`. |
 | `0002-waitlist-survey.sql` | Adds nullable `waitlist.survey_json TEXT` for `POST /waitlist/survey`. Single additive `ALTER` (no rebuild; pre-existing rows read back NULL). Migrate before deploying. Wrong order no longer takes the funnel down — `insertWaitlist` falls back to the legacy column list and the survey route answers 503 — but degraded means exactly that: signups land without the column and their survey submits fail until this runs. |
+| `0006-alipay-payment-orders.sql` | Adds durable Alipay orders, provider-neutral payment identity, refund tombstones, and backfills historical payment rows without changing their existing access time. Required before the Alipay-only Worker deploy. |
 
 Notes on writing migrations here:
 
@@ -165,6 +178,18 @@ wrangler picks it up as *its own* auth and fails with account-list errors —
 run deploy/secret commands as `env -u CF_API_TOKEN npx wrangler ...`.
 
 ## Operations
+
+**Payment lifecycle**: login → choose one of the fixed tiers → create a local order →
+submit the server-signed form to Alipay. A browser return never proves payment.
+Entitlements are granted only after a verified async notification or signed
+`alipay.trade.query` result matches app ID, seller ID, owned order, amount, and
+paid status. Notification and query races converge through the same durable
+idempotency key. Refunds are full amount only and revoke access only when no
+other unrefunded entitlement remains.
+
+After deploying, the script performs no-charge production checks. Final launch
+acceptance still requires one real payment by a non-merchant account, automatic
+entitlement fulfillment, and a full refund returned to the original Alipay transaction.
 
 **Invite someone** (admin page `https://mediaryconnect.app/admin`):
 1. Paste `ADMIN_TOKEN`, create invite with their email (+ optional slug).

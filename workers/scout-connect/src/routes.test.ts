@@ -2391,17 +2391,15 @@ describe("GET /buy — Alipay-only tier selector", () => {
     expect(body).toContain("disabled");
   });
 
-  it("旧 Paddle 浏览器配置不会再进入页面", async () => {
+  it("页面只依赖支付宝服务端配置，不包含第三方浏览器 SDK", async () => {
     const res = await handleRequest(new Request(`${BASE}/buy`), {
       ...setup().deps,
-      paddleClientToken: "test_tok_xyz",
-      paddleEnvironment: "sandbox",
       alipayApi: { pagePayForm: async () => "" } as never,
     });
     const body = await res.text();
-    expect(body).not.toContain("test_tok_xyz");
     expect(body).not.toContain("Paddle");
     expect(body).not.toContain("paddle.com");
+    expect(body).not.toContain("<script src=");
   });
 });
 

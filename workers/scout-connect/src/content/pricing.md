@@ -2,9 +2,9 @@
 
 ## 定价
 
-Last updated: 2026-07-31
+Last updated: 2026-08-16
 
-最后更新:2026-07-31
+最后更新:2026-08-16
 
 ## Prepaid time, never auto-charged
 
@@ -26,9 +26,9 @@ Mediary Connect 按**预付时长**计费:一次付费,获得对应月数的远�
 - **年度(12 个月)** — ¥108
 - **两年(24 个月)** — ¥188
 
-Prices are in CNY, checked out securely by Paddle. **WeChat Pay** and international cards are supported (Apple Pay / Google Pay also work). Your statement will show Paddle's name — that is expected, as Paddle is the Merchant of Record for this service.
+Prices are in CNY. Checkout is handled through **Alipay only**. Each purchase is a one-time payment and never starts an automatic renewal.
 
-价格以人民币计,由 Paddle 安全结账,支持**微信支付**与国际信用卡(也支持 Apple Pay / Google Pay)。你的账单上会显示 Paddle 的名字,这是正常的 —— Paddle 是本服务的记录商户(Merchant of Record)。
+价格以人民币计,**仅支持支付宝**结账。每次购买都是一次性付款,不会开通自动续费。
 
 ## Every tier includes
 

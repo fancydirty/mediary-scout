@@ -35,11 +35,11 @@ describe("home page(apex 落地页)", () => {
     expect(html).toContain("不能直接下单");
   });
 
-  it("支付方式只写实际可用的(live API 实测:card/wechat_pay/apple_pay/google_pay)", () => {
+  it("明确全站仅支付宝付款", () => {
     const html = homePage();
-    expect(html).toContain("微信支付");
-    // 支付宝不在可用列表里 —— 写了是事实错误,也是 MoR 合规风险
-    expect(html).not.toContain("支付宝");
+    expect(html).toContain("仅支持支付宝");
+    expect(html).not.toContain("微信支付");
+    expect(html).not.toContain("Paddle");
   });
 
   it("四层防误购都在(附加服务不是独立产品)", () => {
@@ -297,12 +297,12 @@ describe("home page(apex 落地页)", () => {
     expect(html).toContain(".apex .btn2{color:var(--tx-1)}");
   });
 
-  it("页脚合规五链接与运营主体齐全(Paddle MoR 要求)", () => {
+  it("页脚合规五链接、运营主体与支付宝说明齐全", () => {
     const html = homePage();
     for (const p of ["/pricing", "/terms", "/privacy", "/refund", "/contact"]) {
       expect(html).toContain(`href="${p}"`);
     }
     expect(html).toContain("DF Digital");
-    expect(html).toContain("记录商户");
+    expect(html).toContain("付款使用支付宝");
   });
 });

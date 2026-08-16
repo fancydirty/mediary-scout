@@ -227,7 +227,7 @@ describe("admin full Alipay refund", () => {
       { outTradeNo: row.out_trade_no, outRequestNo: expect.stringMatching(/^RF_TEST_/), refundAmount: "108.00" },
     ]);
     expect((await db.getPaymentOrderById(row.id))?.status).toBe("refunded");
-    expect((await db.getEntitlementByPayment("alipay", row.out_trade_no))?.refunded_at).toBe(NOW);
+    expect((await db.listEntitlements(row.account_id))[0]?.refunded_at).toBe(NOW);
     expect((await db.getEndpointById("ep_paid"))?.status).toBe("revoked");
     expect(cfCalls).toEqual(["dns:dns_1", "tunnel:tun_1"]);
 
@@ -317,7 +317,7 @@ describe("admin full Alipay refund", () => {
     );
     expect(response.status).toBe(502);
     expect((await db.getPaymentOrderById(row.id))?.status).toBe("fulfilled");
-    expect((await db.getEntitlementByPayment("alipay", row.out_trade_no))?.refunded_at).toBeNull();
+    expect((await db.listEntitlements(row.account_id))[0]?.refunded_at).toBeNull();
   });
 
   it("repairs a failed endpoint revoke without issuing a second external refund", async () => {
