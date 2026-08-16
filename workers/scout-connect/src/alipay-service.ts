@@ -2,6 +2,9 @@ import type { AlipayApi } from "./alipay-api.js";
 import { canTransitionPaymentOrder, normalizeAlipayAmount } from "./alipay-order.js";
 import type { ConnectDb, PaymentOrderRow } from "./db.js";
 import { grantEntitlement } from "./grant.js";
+import type { CfApi } from "./cf-api.js";
+import { isEntitlementActive, reconcileEntitlementLedger } from "./entitlement.js";
+import { revokeEndpoint } from "./revoke.js";
 
 export interface AlipayServiceDeps {
   db: ConnectDb;
@@ -11,6 +14,12 @@ export interface AlipayServiceDeps {
   now: () => string;
   newAccountId: () => string;
   newEntitlementId: () => string;
+}
+
+export interface AlipayRefundDeps extends AlipayServiceDeps {
+  cf: CfApi;
+  newAuditId: () => string;
+  newRefundRequestNo: () => string;
 }
 
 export interface AlipayPaymentEvidence {
@@ -25,6 +34,13 @@ export class InvalidAlipayEvidenceError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "InvalidAlipayEvidenceError";
+  }
+}
+
+export class AlipayOperationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AlipayOperationError";
   }
 }
 
@@ -227,4 +243,169 @@ export async function compensateAlipayOrder(
     return (await deps.db.getPaymentOrderById(order.id)) ?? order;
   }
   return order;
+}
+
+async function revokeRefundedAccountIfNeeded(
+  order: PaymentOrderRow,
+  deps: AlipayRefundDeps,
+): Promise<void> {
+  const expiry = await reconcileEntitlementLedger(order.account_id, deps.db);
+  if (isEntitlementActive(expiry, deps.now())) return;
+  // Refund is rare and admin-only. listEndpoints also finds revoke_failed rows, unlike
+  // getActiveEndpointByAccountId, so retrying a partial Cloudflare deletion can self-heal.
+  const endpoint = (await deps.db.listEndpoints()).find(
+    (candidate) =>
+      candidate.account_id === order.account_id && candidate.status !== "revoked",
+  );
+  if (endpoint === undefined) return;
+  await revokeEndpoint({
+    endpointId: endpoint.id,
+    deps: {
+      cf: deps.cf,
+      db: deps.db,
+      now: deps.now,
+      newAuditId: deps.newAuditId,
+      actor: "admin",
+    },
+  });
+}
+
+async function applyConfirmedAlipayRefund(
+  staleOrder: PaymentOrderRow,
+  deps: AlipayRefundDeps,
+): Promise<PaymentOrderRow> {
+  let order = (await deps.db.getPaymentOrderById(staleOrder.id)) ?? staleOrder;
+  if (order.refund_request_no === null) {
+    throw new AlipayOperationError("refund request number is missing");
+  }
+  if (order.status !== "refunded") {
+    if (!canTransitionPaymentOrder(order.status, "refunded")) {
+      throw new AlipayOperationError("order cannot be refunded from its current state");
+    }
+    // Persist external money truth first. Any later local failure is repaired through the same
+    // request number without calling the refund API twice.
+    await deps.db.updatePaymentOrder(order.id, {
+      status: "refunded",
+      refunded_at: deps.now(),
+    });
+    order = (await deps.db.getPaymentOrderById(order.id)) ?? order;
+  }
+  await deps.db.markEntitlementRefunded("alipay", order.out_trade_no, deps.now());
+  await revokeRefundedAccountIfNeeded(order, deps);
+  return (await deps.db.getPaymentOrderById(order.id)) ?? order;
+}
+
+function assertRefundAmount(order: PaymentOrderRow, amount: string | undefined): void {
+  if (amount === undefined) throw new AlipayOperationError("refund amount is missing");
+  const expected = normalizeAlipayAmount(order.total_amount);
+  const actual = normalizeAlipayAmount(amount);
+  if (expected === null || actual === null || expected !== actual) {
+    throw new AlipayOperationError("refund amount mismatch");
+  }
+}
+
+export interface AlipayRefundOutcome {
+  status: "pending" | "refunded";
+  order: PaymentOrderRow;
+}
+
+async function queryRefundForOrder(
+  staleOrder: PaymentOrderRow,
+  deps: AlipayRefundDeps,
+): Promise<AlipayRefundOutcome> {
+  const order = (await deps.db.getPaymentOrderById(staleOrder.id)) ?? staleOrder;
+  if (order.refund_request_no === null) {
+    throw new AlipayOperationError("refund request number is missing");
+  }
+  if (order.status === "refunded") {
+    return { status: "refunded", order: await applyConfirmedAlipayRefund(order, deps) };
+  }
+  const result = await deps.alipayApi.queryRefund({
+    outTradeNo: order.out_trade_no,
+    outRequestNo: order.refund_request_no,
+  });
+  if (result?.refund_status !== "REFUND_SUCCESS") return { status: "pending", order };
+  assertRefundAmount(order, result.refund_amount);
+  if (result.total_amount !== undefined) assertRefundAmount(order, result.total_amount);
+  return { status: "refunded", order: await applyConfirmedAlipayRefund(order, deps) };
+}
+
+export async function requestFullAlipayRefund(
+  orderId: string,
+  deps: AlipayRefundDeps,
+): Promise<AlipayRefundOutcome> {
+  let order = await deps.db.getPaymentOrderById(orderId);
+  if (order === null) throw new InvalidAlipayEvidenceError("Alipay payment order not found");
+  if (order.status === "refunded") {
+    return { status: "refunded", order: await applyConfirmedAlipayRefund(order, deps) };
+  }
+  if (order.status !== "paid" && order.status !== "fulfilled") {
+    throw new AlipayOperationError("only a paid order can be refunded");
+  }
+  if (order.refund_request_no === null) {
+    const requestNo = requireNonEmpty(deps.newRefundRequestNo(), "refund request number");
+    await deps.db.updatePaymentOrder(order.id, { refund_request_no: requestNo });
+    order = (await deps.db.getPaymentOrderById(order.id)) ?? order;
+  }
+  const result = await deps.alipayApi.refundTrade({
+    outTradeNo: order.out_trade_no,
+    outRequestNo: order.refund_request_no!,
+    refundAmount: order.total_amount,
+  });
+  if (result.code === "10000" && result.fund_change === "Y") {
+    assertRefundAmount(order, result.refund_fee);
+    return { status: "refunded", order: await applyConfirmedAlipayRefund(order, deps) };
+  }
+  // code=10000 alone does not prove that funds changed. Persisted request identity lets query
+  // distinguish a pending response from a completed full refund.
+  return queryRefundForOrder(order, deps);
+}
+
+export async function queryAlipayRefund(
+  requestNo: string,
+  deps: AlipayRefundDeps,
+): Promise<AlipayRefundOutcome> {
+  const order = await deps.db.getPaymentOrderByRefundRequestNo(requestNo);
+  if (order === null) throw new InvalidAlipayEvidenceError("Alipay refund request not found");
+  return queryRefundForOrder(order, deps);
+}
+
+/** Close only unpaid orders. Local paid state is re-queried and fulfilled instead. */
+export async function closeAlipayOrder(
+  orderId: string,
+  deps: AlipayServiceDeps,
+): Promise<PaymentOrderRow> {
+  let order = await deps.db.getPaymentOrderById(orderId);
+  if (order === null) throw new InvalidAlipayEvidenceError("Alipay payment order not found");
+  if (order.status === "closed" || order.status === "fulfilled" || order.status === "refunded") {
+    return order;
+  }
+  if (order.status === "paid") {
+    // A close attempt on a locally paid order is a reconciliation action, never a destructive one.
+    const queried = await deps.alipayApi.queryTrade(order.out_trade_no);
+    if (queried !== null && isAlipayPaidStatus(queried.trade_status)) {
+      return acceptAlipayPayment(
+        {
+          outTradeNo: queried.out_trade_no,
+          tradeNo: requireNonEmpty(queried.trade_no, "trade_no"),
+          totalAmount: requireNonEmpty(queried.total_amount, "total_amount"),
+        },
+        deps,
+      );
+    }
+    return compensateAlipayOrder(order.id, deps);
+  }
+
+  const result = await deps.alipayApi.closeTrade(order.out_trade_no);
+  if (result.code === "10000") {
+    order = (await deps.db.getPaymentOrderById(order.id)) ?? order;
+    if (order.status === "paid") return compensateAlipayOrder(order.id, deps);
+    if (order.status === "fulfilled") return order;
+    if (canTransitionPaymentOrder(order.status, "closed")) {
+      await deps.db.updatePaymentOrder(order.id, { status: "closed", closed_at: deps.now() });
+      return (await deps.db.getPaymentOrderById(order.id)) ?? order;
+    }
+    return order;
+  }
+  return compensateAlipayOrder(order.id, deps);
 }

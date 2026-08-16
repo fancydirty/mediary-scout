@@ -47,8 +47,13 @@ import type { AlipayApi } from "./alipay-api.js";
 import { ALIPAY_TIERS, resolveAlipayTier } from "./alipay-order.js";
 import {
   acceptAlipayNotification,
+  closeAlipayOrder,
   compensateAlipayOrder,
   InvalidAlipayEvidenceError,
+  AlipayOperationError,
+  queryAlipayRefund,
+  requestFullAlipayRefund,
+  type AlipayRefundDeps,
   type AlipayServiceDeps,
 } from "./alipay-service.js";
 
@@ -92,6 +97,7 @@ export interface RouteDeps {
   newPaymentOrderId?: (() => string) | undefined;
   newAlipayOutTradeNo?: (() => string) | undefined;
   newCheckoutToken?: (() => string) | undefined;
+  newAlipayRefundRequestNo?: (() => string) | undefined;
   turnstileSecret?: string | undefined;
   // P3: 魔法链接登录
   newAccountId: () => string;
@@ -380,6 +386,14 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
     }
     return getAlipayOrderStatus(request, deps, rawOrderId);
   }
+  const alipayCloseMatch = path.match(/^\/api\/alipay\/orders\/([^/]+)\/close$/);
+  if (method === "POST" && alipayCloseMatch !== null) {
+    const rawOrderId = alipayCloseMatch[1] ?? "";
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(rawOrderId)) {
+      return json({ error: "not found" }, 404, { noStore: true });
+    }
+    return closeAlipayOrderRoute(request, deps, rawOrderId);
+  }
   if (method === "POST" && path === "/api/checkout") {
     return createCheckout(request, deps);
   }
@@ -566,6 +580,17 @@ ${hreflang}
   }
 
   // ---- admin api (bearer required) ----
+  if (path === "/api/admin/alipay/refund" && method === "POST") {
+    requireAdmin(request, deps.adminToken);
+    return adminAlipayRefund(request, deps);
+  }
+  const refundQueryMatch = path.match(/^\/api\/admin\/alipay\/refund\/([^/]+)$/);
+  if (refundQueryMatch !== null && method === "GET") {
+    requireAdmin(request, deps.adminToken);
+    const requestNo = decodeParam(refundQueryMatch[1] ?? "");
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(requestNo)) throw new HttpError(404, "not found");
+    return adminAlipayRefundQuery(requestNo, deps);
+  }
   if (path === "/api/admin/invites") {
     requireAdmin(request, deps.adminToken);
     if (method === "GET") {
@@ -813,6 +838,18 @@ function alipayServiceDeps(deps: RouteDeps): AlipayServiceDeps | null {
   };
 }
 
+function alipayRefundDeps(deps: RouteDeps): AlipayRefundDeps | null {
+  const service = alipayServiceDeps(deps);
+  if (service === null) return null;
+  return {
+    ...service,
+    cf: deps.cf,
+    newAuditId: deps.newAuditId,
+    newRefundRequestNo:
+      deps.newAlipayRefundRequestNo ?? (() => `RF${randomHex(16).toUpperCase()}`),
+  };
+}
+
 function alipayNotifyResponse(body: "success" | "rejected" | "retry", status: number): Response {
   return new Response(body, {
     status,
@@ -850,6 +887,86 @@ async function alipayNotify(request: Request, deps: RouteDeps): Promise<Response
     // Never include raw notification fields, signatures, or internal storage errors in the reply.
     console.error("Alipay notification fulfillment failed");
     return alipayNotifyResponse("retry", 503);
+  }
+}
+
+async function closeAlipayOrderRoute(
+  request: Request,
+  deps: RouteDeps,
+  orderId: string,
+): Promise<Response> {
+  const session = await parseSessionWithValidatedNow(request.headers.get("cookie"), deps);
+  if (!session.ok) return json({ error: "unauthorized" }, 401, { noStore: true });
+  const order = await deps.db.getPaymentOrderById(orderId);
+  if (order === null || order.account_id !== session.accountId) {
+    return json({ error: "not found" }, 404, { noStore: true });
+  }
+  const service = alipayServiceDeps(deps);
+  if (service === null) return json({ error: "checkout not configured" }, 503, { noStore: true });
+  try {
+    const result = await closeAlipayOrder(order.id, service);
+    if (result.status === "closed") return json({ status: "closed" }, 200, { noStore: true });
+    if (result.status === "fulfilled") {
+      return json({ status: "fulfilled" }, 409, { noStore: true });
+    }
+    if (result.status === "paid") {
+      return json({ status: "paid_unfulfilled" }, 409, { noStore: true });
+    }
+    if (result.status === "refunded") return json({ status: "closed" }, 409, { noStore: true });
+    return json({ error: "close unavailable" }, 502, { noStore: true });
+  } catch {
+    return json({ error: "close unavailable" }, 502, { noStore: true });
+  }
+}
+
+function refundResponse(
+  result: Awaited<ReturnType<typeof requestFullAlipayRefund>>,
+): Response {
+  return json(
+    {
+      status: result.status,
+      order_id: result.order.id,
+      refund_request_no: result.order.refund_request_no,
+    },
+    result.status === "refunded" ? 200 : 202,
+    { noStore: true },
+  );
+}
+
+async function adminAlipayRefund(request: Request, deps: RouteDeps): Promise<Response> {
+  const body = await readJsonBody(request);
+  const orderId = optString(body.order_id);
+  if (orderId === null || !/^[A-Za-z0-9_-]{1,128}$/.test(orderId)) {
+    throw new HttpError(400, "order_id required");
+  }
+  const order = await deps.db.getPaymentOrderById(orderId);
+  if (order === null) throw new HttpError(404, "order not found");
+  if (order.status !== "paid" && order.status !== "fulfilled" && order.status !== "refunded") {
+    throw new HttpError(409, "order is not refundable");
+  }
+  const service = alipayRefundDeps(deps);
+  if (service === null) return json({ error: "checkout not configured" }, 503, { noStore: true });
+  try {
+    return refundResponse(await requestFullAlipayRefund(order.id, service));
+  } catch (error) {
+    if (error instanceof AlipayOperationError) {
+      return json({ error: "refund unavailable" }, 409, { noStore: true });
+    }
+    return json({ error: "refund unavailable" }, 502, { noStore: true });
+  }
+}
+
+async function adminAlipayRefundQuery(requestNo: string, deps: RouteDeps): Promise<Response> {
+  if ((await deps.db.getPaymentOrderByRefundRequestNo(requestNo)) === null) {
+    throw new HttpError(404, "refund not found");
+  }
+  const service = alipayRefundDeps(deps);
+  if (service === null) return json({ error: "checkout not configured" }, 503, { noStore: true });
+  try {
+    return refundResponse(await queryAlipayRefund(requestNo, service));
+  } catch (error) {
+    if (error instanceof InvalidAlipayEvidenceError) throw new HttpError(404, "refund not found");
+    return json({ error: "refund unavailable" }, 502, { noStore: true });
   }
 }
 

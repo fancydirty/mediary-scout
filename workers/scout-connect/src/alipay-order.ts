@@ -62,7 +62,7 @@ const PAYMENT_ORDER_TRANSITIONS: Readonly<
   created: new Set<PaymentOrderStatus>(["form_issued", "paid", "closed"]),
   form_issued: new Set<PaymentOrderStatus>(["pending", "paid", "closed"]),
   pending: new Set<PaymentOrderStatus>(["paid", "closed"]),
-  paid: new Set<PaymentOrderStatus>(["fulfilled"]),
+  paid: new Set<PaymentOrderStatus>(["fulfilled", "refunded"]),
   fulfilled: new Set<PaymentOrderStatus>(["refunded"]),
   closed: new Set<PaymentOrderStatus>(),
   refunded: new Set<PaymentOrderStatus>(),

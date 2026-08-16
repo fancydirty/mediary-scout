@@ -56,6 +56,7 @@ describe("payment-order transitions", () => {
     ["form_issued", "paid"],
     ["form_issued", "closed"],
     ["paid", "fulfilled"],
+    ["paid", "refunded"],
     ["fulfilled", "refunded"],
     ["paid", "paid"],
   ] as const)("allows %s -> %s", (from, to) => {
