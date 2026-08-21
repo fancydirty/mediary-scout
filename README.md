@@ -236,4 +236,4 @@ This project actively participates in and endorses the [LINUX DO](https://linux.
 [![认可 LINUX DO](https://img.shields.io/badge/LINUX%20DO-认可-2ecc71?style=flat&labelColor=1f1f1f)](https://linux.do)
 
 ## Star History
-![Star History Chart](https://api.star-history.com/svg?repos=fancydirty/mediary-scout)
+![Star History Chart](https://star-history.dera.page/svg?repos=fancydirty/mediary-scout)
