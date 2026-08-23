@@ -1304,6 +1304,44 @@ p {
     align-items: stretch;
     gap: 10px;
   }
+
+  /* The drive switcher is a desktop sidebar control (see .workspace-switcher):
+     its `.ws-menu` expands INLINE, which is harmless in a fixed-width vertical
+     sidebar. On mobile the sidebar becomes a horizontal top bar, so an inline
+     menu joins the flex main-axis width calculation — opening it grew the
+     switcher 125px→161px and squeezed `.brand` 175px→139px, forcing the wordmark
+     to wrap onto a second line (top bar 49px→68px). Lift the menu out of flow so
+     opening it can't resize its row, mirroring what
+     `.sidebar-top-identity .account-identity-menu` already does for the identity
+     dropdown a few rules above. */
+  .workspace-switcher {
+    /* Positioning context for the menu below (and it must not shrink/grow with
+       the menu's content width). */
+    position: relative;
+    flex: 0 0 auto;
+  }
+  .workspace-switcher .ws-menu {
+    position: absolute;
+    /* Right-anchored: the switcher sits at the top bar's right end, so opening
+       leftward keeps the menu inside a ≤390px viewport. */
+    right: 0;
+    top: 100%;
+    min-width: 100%;
+    /* Wide enough for "夸克网盘 …5Kr2" without inheriting the summary's width,
+       but capped so it can't overflow a narrow phone. */
+    width: max-content;
+    max-width: min(240px, calc(100vw - 28px));
+    /* Above the page content; below the identity menu's 60 is fine (they can't
+       both be open in a way that overlaps meaningfully, but keep it explicit). */
+    z-index: 60;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  }
+  /* Truncate long drive labels instead of widening the menu. */
+  .workspace-switcher .ws-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
 .candidate-actions {
@@ -3798,6 +3836,25 @@ select.setting-control {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+}
+/* Narrow phones: measured at 368px viewport, "近期热门"(71) + three pills(76×3)
+   + 3×10px gaps = 329px inline, but `.trending-head` only leaves ~320px (the
+   `每日更新 · 来自 TMDB` note shares the row), so the LAST pill wrapped alone onto
+   a second line and left-aligned under the heading — ragged and easy to miss.
+   329px of need maps to a ~376px viewport, so below that give the heading its own
+   line and let the three pills (248px together) share the next one; they still
+   fit down to ~300px. Deliberately NOT 390px+ — a 390px phone (iPhone 12–15) has
+   ~342px available and fits all four on one line, which reads better.
+   Scoped by width, not the 860px mobile breakpoint: the same squeeze appears in a
+   narrow desktop window. */
+@media (max-width: 376px) {
+  .trending-tabs {
+    /* The h2 takes a full row; the pills flow together on the row below. */
+    row-gap: 8px;
+  }
+  .trending-tabs h2 {
+    flex: 0 0 100%;
+  }
 }
 .trending-tabs h2 {
   margin: 0;
