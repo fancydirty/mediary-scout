@@ -1315,10 +1315,17 @@ p {
      `.sidebar-top-identity .account-identity-menu` already does for the identity
      dropdown a few rules above. */
   .workspace-switcher {
-    /* Positioning context for the menu below (and it must not shrink/grow with
-       the menu's content width). */
+    /* Positioning context for the menu below. */
     position: relative;
-    flex: 0 0 auto;
+    /* Shrinkable (0 1), NOT 0 0: `storage.label` is free-form text from the
+       connected-storages table, so a long custom label ("我的家庭影音收藏主力盘")
+       would otherwise push the switcher past the viewport and make the whole page
+       scroll horizontally (measured: 280px wide, 49px past a 368px viewport).
+       The floor keeps a typical label ("103164004") from being ellipsised just
+       because `.brand` — which is also a default `0 1 auto` flex item — competes
+       for the row; only genuinely long labels get truncated. */
+    flex: 0 1 auto;
+    min-width: min(125px, 34vw);
   }
   .workspace-switcher .ws-menu {
     position: absolute;
@@ -1336,11 +1343,13 @@ p {
     z-index: 60;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
   }
-  /* Truncate long drive labels instead of widening the menu. */
+  /* The ellipsis itself is already declared for all viewports further down; what
+     it additionally needs here is permission to shrink. `.ws-label` is a flex item
+     of `.ws-current`, so it also defaults to min-width:auto and would hold its
+     full intrinsic width, leaving the ellipsis inert no matter how narrow the
+     switcher gets. */
   .workspace-switcher .ws-label {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    min-width: 0;
   }
 }
 
