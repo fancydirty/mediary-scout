@@ -4,8 +4,8 @@ import "./globals.css";
 import { isDemoMode } from "../lib/demo-mode";
 
 export const metadata: Metadata = {
-  title: "Mediary Scout",
-  description: "Background media acquisition workflow dashboard.",
+  title: "巡影 · Mediary Scout",
+  description: "自建网盘的媒体获取 agent —— 搜索、转存、验证、追踪补缺。",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

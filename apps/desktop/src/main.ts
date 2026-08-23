@@ -150,7 +150,9 @@ function createWindow(url: string): void {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
-    title: "Mediary Scout",
+    // 显示用中文主名;技术标识(appId / productName)保持英文不变 —— 改那些会让
+    // 系统认成另一个应用,老用户升级时装出两份、数据还不通。
+    title: "巡影 · Mediary Scout",
     show: true,
   });
   mainWindow.on("close", (event) => {
@@ -172,7 +174,7 @@ function createTray(): void {
   const icon = nativeImage.createFromDataURL(TRAY_ICON_DATA_URL);
   icon.setTemplateImage(true); // macOS: auto-recolor for the menu bar
   tray = new Tray(icon);
-  tray.setToolTip("Mediary Scout");
+  tray.setToolTip("巡影 · Mediary Scout");
   refreshTray();
 }
 

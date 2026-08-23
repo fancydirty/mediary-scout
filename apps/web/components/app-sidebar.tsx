@@ -32,8 +32,8 @@ export function AppSidebar({
           <Aperture size={18} aria-hidden />
         </span>
         <span className="brand-copy">
-          <strong>Mediary Scout</strong>
-          <span>multi-drive media agent</span>
+          <strong>巡影 · Mediary Scout</strong>
+          <span>多网盘媒体 agent</span>
         </span>
       </div>
 

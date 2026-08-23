@@ -1,8 +1,9 @@
 <p align="center">
-  <img src="docs/images/hero.svg" alt="Mediary Scout" width="600">
+  <img src="docs/images/hero.svg" alt="巡影 · Mediary Scout" width="600">
 </p>
 
 <p align="center">
+  <b>巡影 · Mediary Scout</b><br>
   <b>给你自己网盘用的 agent 驱动媒体库。</b>
 </p>
 

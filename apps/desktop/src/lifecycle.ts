@@ -24,7 +24,7 @@ export function onWindowClose(input: { isQuitting: boolean }): { preventDefault:
 export function trayMenuState(input: { openAtLogin: boolean; serverReady: boolean }): TrayMenuState {
   return {
     items: [
-      { id: "open", label: "打开 Mediary Scout", type: "normal", enabled: true },
+      { id: "open", label: "打开 巡影", type: "normal", enabled: true },
       // The tray is only created after the server boots, so serverReady=false means the
       // server has STOPPED/crashed — not "starting". Show a stopped label, not a spinner.
       { id: "status", label: input.serverReady ? "● 运行中" : "○ 已停止", type: "normal", enabled: false },
