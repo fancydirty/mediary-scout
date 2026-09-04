@@ -202,9 +202,13 @@ export async function getTitleHubView(tmdbId: number, storageId?: string): Promi
     const tracked = trackedBySeason.get(seasonNumber);
     const targetSeason = target?.seasons.find((season) => season.seasonNumber === seasonNumber);
     if (tracked) {
+      // Scope to THIS workspace's drive: the same season can be tracked on
+      // several drives (醒来 on 123 21/22 and on 115 0/22), and an unscoped
+      // lookup returned the other drive's episodes on the detail page.
       const view = await getTrackedSeasonStatusView({
         repository,
         trackedSeasonId: tracked.season.id,
+        scope,
       });
       seasons.push({
         seasonNumber,

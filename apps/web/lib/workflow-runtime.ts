@@ -757,10 +757,12 @@ export async function getWorkflowStatusView(
   if (!firstTracked) {
     return null;
   }
+  // Read the spotlight season on the SAME drive it was picked from — the same
+  // season may be tracked on other drives with different episode states.
   return getTrackedSeasonStatusView({
     repository: targetRepository,
     trackedSeasonId: firstTracked.season.id,
-    accountId: resolvedAccountId,
+    scope: { accountId: resolvedAccountId, connectedStorageId: firstTracked.connectedStorageId },
   });
 }
 
