@@ -69,9 +69,10 @@ describe("getTrackedSeasonStatusView", () => {
 
   // 123 醒来 bug (2026-09-04): the same season tracked on two drives. The detail
   // page must show THAT drive's episodes — passing only accountId drops the
-  // storage filter, and the unfiltered lookup lands on whichever drive's row
-  // comes first (the 115 copy at 0/22) while the library card correctly said
-  // 21/22 for the 123 copy.
+  // storage filter and the unscoped lookup returns an arbitrary drive's copy
+  // (the 115 copy at 0/22) while the library card correctly said 21/22 for 123.
+  // Which copy "wins" unscoped is repository-specific: Postgres takes the first
+  // row, InMemoryWorkflowRepository takes the latest run across drives.
   it("scopes the view to the requested drive when the season is tracked on multiple drives", async () => {
     const repository = new InMemoryWorkflowRepository();
     const { title, season } = fixture();
@@ -95,8 +96,9 @@ describe("getTrackedSeasonStatusView", () => {
       transferAttempts: [],
       notifications: [],
     });
-    // The drive with NOTHING has the more recent run, so an unscoped "latest
-    // snapshot wins" lookup would pick it and report 0 obtained.
+    // InMemoryWorkflowRepository picks the latest run across drives when
+    // unscoped; give the drive with NOTHING the more recent run so an unscoped
+    // read would report 0 obtained — the scoped reads below must not.
     await repository.saveWorkflowRunSnapshot(snapshot("cs_pan123", "run_123", "2026-09-01T00:00:00.000Z", true));
     await repository.saveWorkflowRunSnapshot(snapshot("cs_115", "run_115", "2026-09-02T00:00:00.000Z", false));
 

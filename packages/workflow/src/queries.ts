@@ -1,4 +1,4 @@
-import type { ScopeArg } from "./workflow-scope.js";
+import type { WorkflowScope } from "./workflow-scope.js";
 import {
   episodeNumberFromCode,
   type AirStatus,
@@ -38,12 +38,14 @@ export async function getTrackedSeasonStatusView(input: {
   trackedSeasonId: string;
   /** Legacy account-only scope (no drive filter). Prefer `scope`. */
   accountId?: string;
-  /** Full (account, drive) scope. The same season can be tracked on several
-   *  drives with different episode states, and an account-only lookup lands on
-   *  whichever drive's row the store returns first — the 123 醒来 detail page
+  /** Full (account, drive) scope — deliberately NOT `ScopeArg`, so a bare
+   *  accountId string cannot be passed here and silently drop the drive filter.
+   *  The same season can be tracked on several drives with different episode
+   *  states; an unscoped lookup returns an arbitrary drive's copy (Postgres:
+   *  first row; in-memory: latest run across drives) — the 123 醒来 detail page
    *  showed the 115 copy's 0/22 while the card correctly said 21/22. Callers
-   *  rendering a specific workspace MUST pass its connectedStorageId here. */
-  scope?: ScopeArg;
+   *  rendering a specific workspace MUST pass its connectedStorageId. */
+  scope?: WorkflowScope;
 }): Promise<TrackedSeasonStatusView | null> {
   const state = await input.repository.getTrackedSeasonState(
     input.trackedSeasonId,
