@@ -199,7 +199,11 @@ export async function queueSeriesInitialization(input: {
     id: `${input.title.id}_s${firstSeason.seasonNumber}`,
     mediaTitleId: input.title.id,
     seasonNumber: firstSeason.seasonNumber,
-    status: firstSeason.latestAiredEpisode >= firstSeason.totalEpisodes ? "completed" : "active",
+    // Enqueue-time lock row: nothing obtained yet → "active" even for a 完结
+    // series. The bridge grades it "completed" only once fully obtained; grading
+    // it completed on airing alone would leave a failed/pre-bridge run stuck
+    // completed-with-gaps and the patrol would skip it forever.
+    status: "active",
     qualityPreference: "4K",
     storageDirectoryId: "",
     totalEpisodes: firstSeason.totalEpisodes,

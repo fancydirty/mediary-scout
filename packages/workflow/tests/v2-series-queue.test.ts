@@ -161,6 +161,27 @@ describe("queueSeriesInitialization + runQueuedSeriesInitialization (live series
     expect(afterRun.status).toBe("already_tracked");
   });
 
+  // 完结剧缺集 bug (2026-09-04): the enqueue-time lock row must start "active".
+  // season 1 here is fully aired (2/2); grading it "completed" on airing alone
+  // means a run that fails before the bridge overwrites status leaves a
+  // completed-with-gaps season the patrol skips forever.
+  it("queues a fully-aired series with the lock season as active — not completed on airing alone", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    await queueSeriesInitialization({
+      title: theBoys,
+      seasons, // season 1 is fully aired (2/2)
+      keyword: "黑袍纠察队 4K",
+      repository,
+      createWorkflowRunId: () => "run_series_lock",
+      now: () => "2026-09-04T00:00:00.000Z",
+    });
+
+    const states = await repository.listTrackedSeasonStates();
+    expect(states).toHaveLength(1);
+    expect(states[0]!.season.seasonNumber).toBe(1);
+    expect(states[0]!.season.status).toBe("active");
+  });
+
   it("lands an anime title under the separate anime parent, not the TV parent", async () => {
     const anime: MediaTitle = {
       id: "tmdb_tv_240411",
