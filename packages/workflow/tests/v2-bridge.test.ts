@@ -276,4 +276,58 @@ describe("bridgeV2WorkflowToResult — V2 facts → per-season WorkflowResult sh
     expect(result.notification.kind).toBe("series_initialized");
     expect(result.notification.title).toBe("示例剧");
   });
+
+  // 完结剧缺集 bug (2026-09-04): a season is "completed" ONLY when fully OBTAINED,
+  // never merely because every episode has AIRED. A fully-aired (完结) drama whose
+  // initial acquisition left gaps must stay "active" so the daily patrol keeps
+  // filling it — otherwise it graduates to completed at track time and is skipped
+  // forever (这一秒过火 缺 1-13, 永不消逝的电波 缺全集, 醒来 缺 21).
+  it("type2 init: fully aired but a LEADING gap remains (obtained 14-33 of 33) → stays active", () => {
+    const missing = Array.from({ length: 33 }, (_, i) => `S01E${String(i + 1).padStart(2, "0")}`);
+    const obtained = missing.slice(13); // E14..E33; E01..E13 missing
+    const result = bridgeV2WorkflowToResult({
+      title,
+      mode: "type2",
+      seasons: [{ seasonNumber: 1, totalEpisodes: 33, latestAiredEpisode: 33, qualityPreference: "4K" }],
+      v2: v2Result({ missingBefore: missing, obtained, stillMissing: missing.slice(0, 13) }),
+      workflowRunId: "run-x",
+      now: () => "2026-09-04T00:00:00.000Z",
+    });
+
+    expect(result.seasons[0]!.season.status).toBe("active");
+  });
+
+  it("type2 init: fully aired but NOTHING obtained (no_coverage) → stays active, not completed", () => {
+    const result = bridgeV2WorkflowToResult({
+      title,
+      mode: "type2",
+      seasons: [{ seasonNumber: 1, totalEpisodes: 3, latestAiredEpisode: 3, qualityPreference: "4K" }],
+      v2: v2Result({
+        missingBefore: ["S01E01", "S01E02", "S01E03"],
+        obtained: [],
+        stillMissing: ["S01E01", "S01E02", "S01E03"],
+      }),
+      workflowRunId: "run-x",
+      now: () => "2026-09-04T00:00:00.000Z",
+    });
+
+    expect(result.seasons[0]!.season.status).toBe("active");
+  });
+
+  it("a stale persisted status:'completed' does NOT stick a season that still has a real gap → active", () => {
+    const result = bridgeV2WorkflowToResult({
+      title,
+      mode: "type3",
+      seasons: [{ seasonNumber: 1, totalEpisodes: 3, latestAiredEpisode: 3, qualityPreference: "4K", status: "completed" }],
+      v2: v2Result({
+        missingBefore: ["S01E02"],
+        obtained: ["S01E01", "S01E03"],
+        stillMissing: ["S01E02"],
+      }),
+      workflowRunId: "run-x",
+      now: () => "2026-09-04T00:00:00.000Z",
+    });
+
+    expect(result.seasons[0]!.season.status).toBe("active");
+  });
 });

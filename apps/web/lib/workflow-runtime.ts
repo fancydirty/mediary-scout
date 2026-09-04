@@ -1693,7 +1693,11 @@ function targetFromSearchCandidate(
     id: candidateId,
     mediaTitleId: title.id,
     seasonNumber,
-    status: season.latestAiredEpisode >= season.episodeCount ? "completed" : "active",
+    // Freshly tracked = nothing obtained yet → "active" even for a 完结 show.
+    // The bridge grades it "completed" only once fully obtained (see
+    // workflow-v2-bridge bridgeSeason). Marking it completed on airing alone made
+    // the patrol skip 完结剧-with-gaps forever.
+    status: "active",
     qualityPreference: defaultQuality(),
     storageDirectoryId: storageDirectoryIdForCandidate(candidateId),
     totalEpisodes: season.episodeCount,

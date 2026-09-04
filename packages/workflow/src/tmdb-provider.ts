@@ -383,7 +383,11 @@ export async function prepareTrackingTarget(input: TvTrackingTargetInput): Promi
       id: `${titleId}_s${input.seasonNumber}`,
       mediaTitleId: titleId,
       seasonNumber: input.seasonNumber,
-      status: latestAiredEpisode >= totalEpisodes ? "completed" : "active",
+      // A freshly-tracked season has obtained NOTHING yet, so it starts "active"
+      // (has episodes to acquire) even for a 完结/fully-aired show. The bridge
+      // graduates it to "completed" only once actually fully obtained; marking it
+      // completed at track time made the patrol skip 完结剧-with-gaps forever.
+      status: "active",
       qualityPreference: input.qualityPreference,
       storageDirectoryId: input.storageDirectoryId ?? "",
       totalEpisodes,

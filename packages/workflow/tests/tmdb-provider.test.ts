@@ -95,6 +95,56 @@ describe("TmdbMetadataProvider", () => {
     });
   });
 
+  // 完结剧缺集 bug (2026-09-04): a freshly-tracked season has obtained NOTHING, so
+  // it must start "active" — even for a fully-aired (完结) show. Marking it
+  // "completed" at track time (aired >= total) makes the patrol skip it forever
+  // when the initial acquisition leaves gaps.
+  it("prepares a fully-aired (完结) TV target as active — nothing obtained yet", async () => {
+    const provider = new TmdbMetadataProvider({
+      readToken: "token",
+      fetchJson: async (url) => {
+        if (url.includes("/tv/240001?")) {
+          return {
+            id: 240001,
+            name: "醒来",
+            original_name: "醒来",
+            first_air_date: "2026-08-01",
+            number_of_episodes: 22,
+            overview: "",
+            poster_path: null,
+            backdrop_path: null,
+            last_episode_to_air: { season_number: 1, episode_number: 22 },
+            seasons: [{ season_number: 1, episode_count: 22 }],
+          };
+        }
+        if (url.includes("/tv/240001/season/1?")) {
+          return {
+            id: 1,
+            season_number: 1,
+            episodes: Array.from({ length: 22 }, (_, index) => ({
+              episode_number: index + 1,
+              name: `Episode ${index + 1}`,
+              air_date: `2026-08-${String(index + 1).padStart(2, "0")}`,
+            })),
+          };
+        }
+        throw new Error(`Unexpected URL ${url}`);
+      },
+    });
+
+    const target = await prepareTrackingTarget({
+      tmdbId: 240001,
+      mediaType: "tv",
+      seasonNumber: 1,
+      qualityPreference: "4K",
+      metadataProvider: provider,
+    });
+
+    expect(target.season.latestAiredEpisode).toBe(22);
+    expect(target.season.totalEpisodes).toBe(22);
+    expect(target.season.status).toBe("active");
+  });
+
   it("uses aired season episodes when last_episode_to_air is absent or from another season", async () => {
     const provider = new TmdbMetadataProvider({
       readToken: "token",

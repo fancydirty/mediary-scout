@@ -48,7 +48,10 @@ export interface V2BridgeSeasonIntent {
   totalEpisodes: number;
   latestAiredEpisode: number;
   qualityPreference: string;
-  /** Tracked status; defaults to completed when fully aired, else active. */
+  /** Persisted status of the season, if any. IGNORED for the completed decision:
+   *  bridgeSeason recomputes status purely from the obtained facts (a season is
+   *  completed iff fully acquired), so a stale "completed" never sticks a season
+   *  that still has a real gap. Kept only so callers can pass their row through. */
   status?: SeasonStatus;
 }
 
@@ -177,20 +180,27 @@ function bridgeSeason(input: {
     });
   }
 
+  // A season is "completed" ONLY when it is actually fully ACQUIRED — every
+  // aired episode obtained and the obtained count covering the whole season —
+  // never merely because every episode has AIRED. A 完结 (fully-aired) drama
+  // whose acquisition left gaps must stay "active" so the daily patrol keeps
+  // filling it; grading it "completed" on airing alone made the patrol skip it
+  // forever (这一秒过火 缺 1-13, 永不消逝的电波 缺全集, 醒来 缺 21).
+  //
+  // intent.status is deliberately NOT trusted here: this bridge is the sole
+  // post-creation writer of season.status, so it recomputes from the obtained
+  // facts. A stale "completed" therefore can never stick a season that still
+  // has a real gap, and if TMDB later grows the season the new gap correctly
+  // reverts it to active so the patrol resumes. The graduation season-sync.ts
+  // promises ("only the finale — all obtained — graduates it to completed")
+  // happens here: an active season that becomes fully obtained turns completed
+  // so the patrol stops re-sweeping a finished show and the library drops 追更中.
   const fullyAired = intent.totalEpisodes > 0 && intent.latestAiredEpisode >= intent.totalEpisodes;
-  const baseStatus: SeasonStatus = intent.status ?? (fullyAired ? "completed" : "active");
-  // The finale graduation season-sync.ts promises ("only the finale — all
-  // obtained — graduates it to completed"). Callers pass the persisted status
-  // through, and this bridge is the only post-creation writer of it — so an
-  // active season that is now fully aired AND fully obtained must graduate
-  // HERE, or the patrol re-sweeps a finished show daily and the library keeps
-  // 追更中 while the notification claims 不再追踪. A season with real aired
-  // gaps stays active so the sweep keeps filling them; completed never reverts.
   const fullyObtained =
     fullyAired &&
     episodes.filter((episode) => episode.airStatus === "aired").every((episode) => episode.obtained) &&
     episodes.filter((episode) => episode.obtained).length >= intent.totalEpisodes;
-  const status: SeasonStatus = baseStatus === "active" && fullyObtained ? "completed" : baseStatus;
+  const status: SeasonStatus = fullyObtained ? "completed" : "active";
 
   const season: TrackedSeason = {
     id: trackedSeasonId,
