@@ -144,7 +144,7 @@ async function waitForRun(runId: string): Promise<string> {
   throw new Error(`run ${runId} did not finish within ${TIMEOUT_MIN} min`);
 }
 
-function collect(runId: string, tmdbId: number): RunFacts {
+function collect(runId: string, tmdbId: number, window: { since: string; until: string }): RunFacts {
   const status = psql(`SELECT payload->>'status' FROM workflow_runs WHERE id='${runId}'`);
   const steps = Number(psql(`SELECT count(*) FROM agent_steps WHERE workflow_run_id='${runId}'`) || 0);
   const searches = Number(psql(`SELECT count(*) FROM agent_steps WHERE workflow_run_id='${runId}' AND payload->>'toolName'='searchResources'`) || 0);
@@ -161,7 +161,7 @@ function collect(runId: string, tmdbId: number): RunFacts {
   const jevCalls = Number(psql(`SELECT count(*) FROM resource_snapshots WHERE workflow_run_id='${runId}' AND payload->'prefilter'->>'status'='applied'`) || 0);
   // The ⚠ suffix is rendered into the agent's document; MEDIA_TRACK_AGENT_LOG=1 echoes tool
   // results to the container log. Best-effort: absent log → false, not a gate.
-  const flagSeen = DRY ? false : ssh(`docker logs --since 6h ${WEB} 2>&1 | grep -c '相关度存疑' || true`) !== "0";
+  const flagSeen = DRY ? false : ssh(`docker logs --since ${sq(window.since)} --until ${sq(window.until)} ${WEB} 2>&1 | grep -c '相关度存疑' || true`) !== "0";
   return { runId, status, steps, searches, transfers, durationS, obtained, prefilter, flagSeen, jevCalls };
 }
 
@@ -177,10 +177,12 @@ for (const t of titles) {
     resetTracking();
     pointDriveAt(armCids);
     setPrefilter(arm === "on");
+    const since = new Date().toISOString();
     const runId = acquire(t);
     console.log(`    queued run ${runId}`);
     const status = await waitForRun(runId);
-    const facts = DRY ? { runId, status, steps: 0, searches: 0, transfers: 0, durationS: 0, obtained: [], prefilter: "-", flagSeen: false, jevCalls: 0 } : collect(runId, t.tmdbId);
+    const until = new Date(Date.now() + 5_000).toISOString();
+    const facts = DRY ? { runId, status, steps: 0, searches: 0, transfers: 0, durationS: 0, obtained: [], prefilter: "-", flagSeen: false, jevCalls: 0 } : collect(runId, t.tmdbId, { since, until });
     row[arm] = facts;
     console.log(`    ${status} steps=${facts.steps} searches=${facts.searches} transfers=${facts.transfers} ${facts.durationS}s obtained=${facts.obtained.length} prefilter=${facts.prefilter}${arm === "on" ? ` flagSeen=${facts.flagSeen}` : ""}`);
     writeFileSync(OUT, JSON.stringify(results, null, 2));
