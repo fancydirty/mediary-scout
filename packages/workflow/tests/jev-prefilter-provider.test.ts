@@ -1,6 +1,6 @@
 // packages/workflow/tests/jev-prefilter-provider.test.ts
 import { describe, expect, it } from "vitest";
-import { JevPrefilterProvider } from "../src/jev-prefilter-provider.js";
+import { isTitleless, JevPrefilterProvider } from "../src/jev-prefilter-provider.js";
 import type { JevJudge, JevJudgeInput } from "../src/jev-judge.js";
 import type { ResourceProvider, ResourceSnapshot } from "../src/index.js";
 
@@ -84,10 +84,55 @@ describe("JevPrefilterProvider", () => {
     expect(out.prefilter).toBeUndefined();
   });
 
+  it("keeps a title-less candidate even when the judge scores it, and records only judgeable scores", async () => {
+    // The title-less guarantee has to be structural: a buggy (or prompt-injected) judge
+    // that answers for a candidate it was never asked about must not be able to drop it.
+    const seen: JevJudgeInput[] = [];
+    const p = new JevPrefilterProvider({
+      inner: inner(snapshot(["交锋 全24集", "http://example.com/x", "📅 9月6日"])),
+      target,
+      judge: judge({ c1: 0.9, c2: 0.01, c3: 0.01, ghost: 0.9 }, seen),
+    });
+    const out = await p.search({ keyword: "交锋" });
+    expect(seen[0]!.candidates.map((c) => c.id)).toEqual(["c1"]);
+    expect(out.candidates.map((c) => c.id)).toEqual(["c1", "c2", "c3"]);
+    expect(out.prefilter?.scores).toEqual({ c1: 0.9 });
+    expect(out.prefilter?.dropped).toEqual([]);
+  });
+
+  it("flags a partial judge result in reason + log while still applying the scores it got", async () => {
+    const lines: string[] = [];
+    const partial: JevJudge = {
+      judgeCandidates: async () => ({ scores: { c1: 0.9 }, model: "m", failedChunks: 1 }),
+    };
+    const p = new JevPrefilterProvider({
+      inner: inner(snapshot(["交锋 全24集", "无敌少侠"])),
+      target,
+      judge: partial,
+      log: (line) => lines.push(line),
+    });
+    const out = await p.search({ keyword: "交锋" });
+    expect(out.candidates.map((c) => c.id)).toEqual(["c1", "c2"]); // c2 unscored → kept
+    expect(out.prefilter).toMatchObject({ status: "applied" });
+    expect(out.prefilter?.reason).toMatch(/partial: 1 chunk/);
+    expect(lines.join("\n")).toContain("failedChunks=1");
+  });
+
   it("passes workflowRunId through to the inner provider", async () => {
     let seenRun: string | undefined;
     const innerSpy: ResourceProvider = { search: async (i) => { seenRun = i.workflowRunId; return snapshot([]); } };
     await new JevPrefilterProvider({ inner: innerSpy, target, judge: judge({}) }).search({ keyword: "x", workflowRunId: "run-9" });
     expect(seenRun).toBe("run-9");
+  });
+});
+
+
+describe("isTitleless", () => {
+  it.each(["", "  \t ", "📅 9月6日", "http://x", "HTTP://X"])("%j carries no judgeable text", (title) => {
+    expect(isTitleless(title)).toBe(true);
+  });
+
+  it.each(["magnet:?xt=urn:btih:abc", "交锋 (2026) https://x"])("%j is judgeable", (title) => {
+    expect(isTitleless(title)).toBe(false);
   });
 });
