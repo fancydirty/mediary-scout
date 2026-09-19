@@ -137,3 +137,51 @@ describe("isTitleless", () => {
     expect(isTitleless(title)).toBe(false);
   });
 });
+
+describe("JevPrefilterProvider containment floor", () => {
+  it("keeps (and records) a sub-threshold candidate whose title contains the target title", async () => {
+    // Production replay: the agent selected 《权利交锋 S01E08》 for target 《交锋》 — an
+    // uploader mislabel Jev scores 0.04 under every wording tried. Containment is the
+    // floor because the prefilter's only unacceptable failure is dropping the right one.
+    const lines: string[] = [];
+    const p = new JevPrefilterProvider({
+      inner: inner(snapshot(["交锋 全24集", "权利交锋 S01E08", "无敌少侠"])),
+      target,
+      judge: judge({ c1: 0.95, c2: 0.04, c3: 0.02 }),
+      log: (line) => lines.push(line),
+    });
+    const out = await p.search({ keyword: "交锋" });
+    expect(out.candidates.map((c) => c.id)).toEqual(["c1", "c2"]);
+    expect(out.prefilter?.dropped).toEqual([{ id: "c3", title: "无敌少侠", score: 0.02 }]);
+    expect(out.prefilter?.floored).toEqual([{ id: "c2", title: "权利交锋 S01E08", score: 0.04 }]);
+    // The raw score is never rewritten to buy the keep: the agent sees 0.04 on the row.
+    expect(out.prefilter?.scores.c2).toBe(0.04);
+    expect(lines.join("\n")).toContain("floored=1");
+  });
+
+  it("an alias in the candidate title floors it too", async () => {
+    const p = new JevPrefilterProvider({
+      inner: inner(snapshot(["Sousou.no.Frieren.S02E01"])),
+      target: { kind: "tv", title: "葬送的芙莉莲", aliases: ["Sousou no Frieren"], year: 2023 },
+      judge: judge({ c1: 0.1 }),
+    });
+    const out = await p.search({ keyword: "葬送的芙莉莲" });
+    expect(out.candidates.map((c) => c.id)).toEqual(["c1"]);
+    expect(out.prefilter?.floored).toEqual([{ id: "c1", title: "Sousou.no.Frieren.S02E01", score: 0.1 }]);
+    expect(out.prefilter?.dropped).toEqual([]);
+  });
+
+  it("omits the field entirely (and the log fragment) when nothing was floored", async () => {
+    const lines: string[] = [];
+    const p = new JevPrefilterProvider({
+      inner: inner(snapshot(["交锋 全24集", "无敌少侠"])),
+      target,
+      judge: judge({ c1: 0.95, c2: 0.02 }),
+      log: (line) => lines.push(line),
+    });
+    const out = await p.search({ keyword: "交锋" });
+    expect(out.candidates.map((c) => c.id)).toEqual(["c1"]);
+    expect("floored" in out.prefilter!).toBe(false);
+    expect(lines.join("\n")).not.toContain("floored=");
+  });
+});

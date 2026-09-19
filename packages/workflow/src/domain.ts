@@ -154,6 +154,10 @@ export interface SnapshotPrefilter {
   /** candidateId → P(refers to target) for every judged candidate, dropped ones included. */
   scores: Record<string, number>;
   dropped: Array<{ id: string; title: string; score: number }>;
+  /** Candidates the judge scored below dropBelow but that were KEPT because their title
+   *  contains the target title/alias verbatim (structural floor — the one unacceptable
+   *  failure is dropping the right pack). Only present when non-empty. */
+  floored?: Array<{ id: string; title: string; score: number }>;
   thresholds: { dropBelow: number; uncertainBelow: number };
   durationMs: number;
   inputTokens?: number;

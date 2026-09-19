@@ -9,6 +9,8 @@ import {
   classifyJevScore,
   jevAllDroppedWarning,
   jevUncertaintyFlag,
+  normalizeTitleForContainment,
+  titleContainsTarget,
 } from "../src/jev-judge.js";
 import type { ResourceSnapshot, SnapshotPrefilter } from "../src/domain.js";
 
@@ -84,7 +86,7 @@ describe("SnapshotPrefilter type", () => {
 });
 
 describe("jevUncertaintyFlag", () => {
-  it("flags only the uncertain band and floors the score to 2 dp", () => {
+  it("flags every kept candidate the judge was not confident about, floored to 2 dp", () => {
     expect(jevUncertaintyFlag(0.52)).toBe(" ⚠ 相关度存疑(0.52)");
     // 0.699 must never print as 0.70 next to a "< 0.7" rule.
     expect(jevUncertaintyFlag(0.699)).toBe(" ⚠ 相关度存疑(0.69)");
@@ -93,18 +95,28 @@ describe("jevUncertaintyFlag", () => {
     // the agent would read a number the judge never produced.
     expect(jevUncertaintyFlag(0.57)).toBe(" ⚠ 相关度存疑(0.57)");
     expect(jevUncertaintyFlag(0.58)).toBe(" ⚠ 相关度存疑(0.58)");
+    // Below dropBelow: such a row only ever reaches the agent through the containment
+    // floor, and it must carry the judge's REAL number — flagging it 0.29/0.04 is the
+    // honest signal; hiding the flag would present a 0.04 row as an ordinary result.
+    expect(jevUncertaintyFlag(0.29)).toBe(" ⚠ 相关度存疑(0.29)");
+    expect(jevUncertaintyFlag(0.04)).toBe(" ⚠ 相关度存疑(0.04)");
     expect(jevUncertaintyFlag(0.7)).toBe("");
-    expect(jevUncertaintyFlag(0.29)).toBe("");
     expect(jevUncertaintyFlag(undefined)).toBe("");
+    // NaN classifies as keep (fail-open) → no flag, and never "NaN" in a title.
     expect(jevUncertaintyFlag(Number.NaN)).toBe("");
   });
 });
 
 describe("prefilter legend and all-dropped warning", () => {
-  it("legend explains the flag is not an exclusion", () => {
+  it("legend explains the flag is not an exclusion, the number, and the floor", () => {
     // The one semantic that matters: a flag is not an exclusion. Asserting the
     // constant contains its own opening words would only restate the source.
     expect(JEV_UNCERTAIN_LEGEND).toMatch(/不是排除/);
+    // The flag now carries sub-threshold numbers (containment floor), so a naked
+    // "(0.04)" needs both halves said out loud: what the number is, and that a low
+    // one did not sneak past the filter — the title matched, so it was kept on purpose.
+    expect(JEV_UNCERTAIN_LEGEND).toMatch(/括号内/);
+    expect(JEV_UNCERTAIN_LEGEND).toMatch(/概率很低也会保留/);
   });
 
   it("all-dropped warning names the count and rules out a source outage", () => {
@@ -115,5 +127,37 @@ describe("prefilter legend and all-dropped warning", () => {
     expect(w).not.toContain("全部剔除");
     expect(w).toContain("不是搜索源故障");
     expect(w).toContain("reportNoCoverage");
+  });
+});
+
+describe("normalizeTitleForContainment", () => {
+  it("folds case and strips whitespace/brackets/punctuation, keeping the letters", () => {
+    expect(normalizeTitleForContainment("《交 锋》(2026)")).toBe("交锋2026");
+    expect(normalizeTitleForContainment("Sousou.no.Frieren S02E01")).toBe("sousounofrierens02e01");
+    expect(normalizeTitleForContainment("   ")).toBe("");
+  });
+});
+
+describe("titleContainsTarget", () => {
+  it("is a structural floor: the target's name appearing verbatim in the title is enough", () => {
+    // The replay's only violation: an uploader mislabel of 《交锋》 that Jev scores 0.04
+    // under every wording tried, yet was the pack the agent actually selected.
+    expect(titleContainsTarget("📺 权利交锋 (2026) S01E08 ✨4K", { title: "交锋", aliases: [] })).toBe(true);
+    // Deliberately loose: this really is another work, but the judge's score still
+    // marks it 相关度存疑 and the agent decides. Never dropping the right one wins.
+    expect(titleContainsTarget("【2月新番】[交锋联盟：机巧一族][23]", { title: "交锋", aliases: [] })).toBe(true);
+    expect(titleContainsTarget("无敌少侠 全4季", { title: "交锋", aliases: [] })).toBe(false);
+  });
+
+  it("an alias counts, across the separators a release name uses", () => {
+    expect(
+      titleContainsTarget("Sousou.no.Frieren.S02E01", { title: "葬送的芙莉莲", aliases: ["Sousou no Frieren"] }),
+    ).toBe(true);
+  });
+
+  it("a target with no usable name floors nothing (never a blanket keep-all)", () => {
+    expect(titleContainsTarget("权利交锋 S01E08", { title: "   ", aliases: [] })).toBe(false);
+    expect(titleContainsTarget("权利交锋 S01E08", { title: "《》", aliases: ["  "] })).toBe(false);
+    expect(titleContainsTarget("   ", { title: "交锋", aliases: [] })).toBe(false);
   });
 });

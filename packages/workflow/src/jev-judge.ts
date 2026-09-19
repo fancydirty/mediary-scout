@@ -59,6 +59,29 @@ export function classifyJevScore(score: number): JevBand {
   return "keep";
 }
 
+/** Loose title normalisation for containment checks: case-folded, whitespace and the
+ *  usual title punctuation removed. NOT a matcher for identity — only for "the target's
+ *  name appears verbatim inside this candidate title". */
+export function normalizeTitleForContainment(s: string): string {
+  return s.toLowerCase().replace(/[\s《》〈〉「」『』()（）\[\]【】{}<>:：;；·・\-–—_.,，、。!！?？|/\\'"“”‘’~～*]+/g, "");
+}
+
+/** True when the candidate title contains the target title or any alias verbatim (after
+ *  normalisation). Such a candidate is NEVER dropped by the prefilter, only flagged: an
+ *  uploader mislabel like 《权利交锋》 for 《交锋》 scores 0.04 under every wording tried
+ *  (old, asymmetric, hedged) yet was the pack the agent actually selected in production.
+ *  A prefilter's only unacceptable failure is dropping the right one, so containment is a
+ *  structural floor rather than a judgement — deliberately loose: 《交锋联盟》 floors too,
+ *  keeps its low score, and the agent reads the title and decides. */
+export function titleContainsTarget(candidateTitle: string, target: { title: string; aliases: string[] }): boolean {
+  const c = normalizeTitleForContainment(candidateTitle);
+  if (!c) return false;
+  return [target.title, ...target.aliases].some((t) => {
+    const n = normalizeTitleForContainment(t);
+    return n.length > 0 && c.includes(n);
+  });
+}
+
 export interface JevNoulQuestion {
   type: "noul";
   instructions: string;
@@ -98,19 +121,22 @@ export function buildJevQuestions(
   return out;
 }
 
-/** Row suffix the agent sees for a candidate in the uncertain band; "" otherwise.
+/** Row suffix the agent sees for any KEPT candidate the judge was not confident about
+ *  — the uncertain band, plus the sub-threshold rows the containment floor keeps (those
+ *  reach the agent at their real 0.04, and presenting one as an ordinary result would be
+ *  the dishonest half of the floor). "" for the keep band and for unjudged rows.
  *  Floors to 2 dp so a 0.699 never prints as "(0.70)" next to a "< 0.7" rule. The
  *  1e-9 nudge absorbs binary-float error (0.57 * 100 === 56.99999999999999, which a
  *  bare floor would print as 0.56 — a number the judge never produced). */
 export function jevUncertaintyFlag(score: number | undefined): string {
-  if (score === undefined || classifyJevScore(score) !== "uncertain") return "";
+  if (score === undefined || classifyJevScore(score) === "keep") return "";
   return ` ⚠ 相关度存疑(${(Math.floor(score * 100 + 1e-9) / 100).toFixed(2)})`;
 }
 
 /** One-line legend shown wherever at least one row carries the flag. Data, not
  *  prompt: the system prompt and tool descriptions stay untouched. */
 export const JEV_UNCERTAIN_LEGEND =
-  "⚠ 相关度存疑 = 系统按片名判断该候选可能是同名/近名的另一部作品。这不是排除:请读标题与详情自行确认,该收的照收。";
+  "⚠ 相关度存疑 = 系统按片名判断该候选可能是同名/近名的另一部作品(括号内为其判定的相关概率;标题含目标片名者即使概率很低也会保留给你)。这不是排除:请读标题与详情自行确认,该收的照收。";
 
 /** Warning when the agent is looking at an empty candidate list and the prefilter
  *  dropped some. It deliberately does NOT claim the drop explains the whole empty

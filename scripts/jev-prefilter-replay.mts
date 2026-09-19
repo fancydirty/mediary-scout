@@ -158,7 +158,7 @@ type Row = {
 if (runReplay) {
   const rows: Row[] = JSON.parse(readFileSync("/tmp/jev-eval/labels.json", "utf8")).slice(0, limit);
 
-  let total = 0, dropped = 0, selectedTitled = 0, selectedDropped = 0, skipped = 0, cost = 0;
+  let total = 0, dropped = 0, floored = 0, selectedTitled = 0, selectedDropped = 0, skipped = 0, cost = 0;
   const violations: string[] = [];
   for (const r of rows) {
     const cands = r.candidates ?? [];
@@ -185,6 +185,9 @@ if (runReplay) {
     if (out.prefilter?.status !== "applied") { skipped += 1; continue; }
     total += cands.length;
     dropped += out.prefilter.dropped.length;
+    // Sub-threshold rows the containment floor kept: the cost side of the go/no-go
+    // guarantee, so a wording change that quietly leans on the floor is visible here.
+    floored += out.prefilter.floored?.length ?? 0;
     cost += out.prefilter.cost ?? 0;
     const kept = new Set(out.candidates.map((c) => c.id));
     for (const c of cands) {
@@ -200,7 +203,7 @@ if (runReplay) {
       }
     }
   }
-  console.log(`snapshots=${rows.length} skipped(fail-open)=${skipped} candidates=${total} dropped=${dropped} (${((100 * dropped) / total).toFixed(1)}%) cost=$${cost.toFixed(3)}`);
+  console.log(`snapshots=${rows.length} skipped(fail-open)=${skipped} candidates=${total} dropped=${dropped} (${((100 * dropped) / total).toFixed(1)}%) floored=${floored} cost=$${cost.toFixed(3)}`);
   console.log(`agent-selected titled=${selectedTitled} dropped=${selectedDropped}`);
   for (const v of violations) console.log("  VIOLATION", v);
   if (selectedDropped > 0) {

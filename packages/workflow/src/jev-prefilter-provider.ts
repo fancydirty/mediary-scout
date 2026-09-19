@@ -1,7 +1,7 @@
 // packages/workflow/src/jev-prefilter-provider.ts
 import type { ResourceCandidate, ResourceSnapshot, SnapshotPrefilter } from "./domain.js";
 import type { ResourceProvider } from "./ports.js";
-import { JEV_THRESHOLDS, classifyJevScore, type JevJudge, type JevJudgeTarget } from "./jev-judge.js";
+import { JEV_THRESHOLDS, classifyJevScore, titleContainsTarget, type JevJudge, type JevJudgeTarget } from "./jev-judge.js";
 
 export interface JevPrefilterProviderOptions {
   inner: ResourceProvider;
@@ -31,6 +31,8 @@ export function isTitleless(title: string): boolean {
  *    masking a provider outage here would hide real incidents);
  *  - title-less candidates (empty / 📅 / http…) are never judged and never dropped,
  *    even if the judge returns a score for them;
+ *  - a candidate whose title contains the target title/alias verbatim is never dropped,
+ *    only flagged (see titleContainsTarget) — recorded in prefilter.floored;
  *  - ids, index, order, sourceHealth, keyword and snapshot id are untouched.
  */
 export class JevPrefilterProvider implements ResourceProvider {
@@ -68,12 +70,22 @@ export class JevPrefilterProvider implements ResourceProvider {
     try {
       const result = await this.judge.judgeCandidates({ target: this.target, candidates: judgeable.map((c) => ({ id: c.id, title: c.title })) });
       const dropped: SnapshotPrefilter["dropped"] = [];
+      const floored: NonNullable<SnapshotPrefilter["floored"]> = [];
       let uncertain = 0;
       kept = snapshot.candidates.filter((c) => {
         const score = judgeableIds.has(c.id) ? result.scores[c.id] : undefined;
         if (score === undefined) return true; // unjudged (title-less or missing) → keep
         const band = classifyJevScore(score);
-        if (band === "drop") { dropped.push({ id: c.id, title: c.title, score }); return false; }
+        if (band === "drop") {
+          // Containment floor: a title that carries the target's own name verbatim is
+          // kept whatever the score says. The judge is right that 《权利交锋》 is another
+          // work — and wrong about this row, which was an uploader mislabel of 《交锋》
+          // and the pack the agent actually selected. The score is NOT rewritten: the
+          // row reaches the agent flagged 相关度存疑(0.04) and the agent decides.
+          if (titleContainsTarget(c.title, this.target)) { floored.push({ id: c.id, title: c.title, score }); uncertain += 1; return true; }
+          dropped.push({ id: c.id, title: c.title, score });
+          return false;
+        }
         if (band === "uncertain") uncertain += 1;
         return true;
       });
@@ -83,6 +95,7 @@ export class JevPrefilterProvider implements ResourceProvider {
       prefilter = {
         provider: "jev", model: result.model, status: "applied", scores, dropped, thresholds,
         durationMs: this.now() - t0,
+        ...(floored.length === 0 ? {} : { floored }),
         // Still "applied" — the chunks that answered were applied — but a dedicated
         // field records that the filter saw less than everything, so a thin drop list is
         // explainable later without overloading `reason` (which means "why not applied").
@@ -90,7 +103,7 @@ export class JevPrefilterProvider implements ResourceProvider {
         ...(result.inputTokens === undefined ? {} : { inputTokens: result.inputTokens }),
         ...(result.cost === undefined ? {} : { cost: result.cost }),
       };
-      this.log(`[jev-prefilter] ${JSON.stringify(input.keyword)} kept=${kept.length} dropped=${dropped.length} uncertain=${uncertain} ms=${prefilter.durationMs}${result.inputTokens === undefined ? "" : ` tok=${result.inputTokens}`}${failedChunks === 0 ? "" : ` failedChunks=${failedChunks}`}`);
+      this.log(`[jev-prefilter] ${JSON.stringify(input.keyword)} kept=${kept.length} dropped=${dropped.length} uncertain=${uncertain} ms=${prefilter.durationMs}${result.inputTokens === undefined ? "" : ` tok=${result.inputTokens}`}${floored.length === 0 ? "" : ` floored=${floored.length}`}${failedChunks === 0 ? "" : ` failedChunks=${failedChunks}`}`);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       kept = snapshot.candidates;
