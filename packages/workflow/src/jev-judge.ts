@@ -28,6 +28,8 @@ export interface JevJudgeResult {
   model: string;
   inputTokens?: number;
   cost?: number;
+  /** Chunks that failed; their candidates have no score. Absent when all chunks succeeded. */
+  failedChunks?: number;
 }
 
 export interface JevJudge {

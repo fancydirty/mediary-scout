@@ -28,7 +28,9 @@ interface DecisionsResponse {
 /** Real Jev judge. No retries by design: the provider is fail-open, and OpenRouter
  *  warns an unknown outcome may already be billed. Errors never include the key. */
 export function createJevJudge(config: JevClientConfig): JevJudge {
-  const baseUrl = (config.baseUrl ?? DEFAULT_JEV_BASE_URL).trim();
+  if (!config.apiKey || config.apiKey.trim() === "") throw new Error("Jev API key is blank");
+  // A whitespace-only baseUrl from a settings row must not POST to "" (same-origin).
+  const baseUrl = config.baseUrl?.trim() || DEFAULT_JEV_BASE_URL;
   const fetchImpl = config.fetchImpl ?? ((input, init) => globalThis.fetch(input, init));
   const timeoutMs = config.timeoutMs ?? JEV_TIMEOUT_MS;
 
@@ -49,17 +51,28 @@ export function createJevJudge(config: JevClientConfig): JevJudge {
       },
       questions: buildJevQuestions(input.target, keys),
     };
-    const response = await fetchImpl(baseUrl, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
+    let response: Response;
+    try {
+      response = await fetchImpl(baseUrl, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (error) {
+      // undici quotes the offending header VALUE in its message ('Headers.append: "Bearer
+      // sk-…" is an invalid header value.'), and this message is persisted verbatim into
+      // prefilter.reason in the DB. Only the error name is ever allowed out.
+      // A timeout surfaces here too, as name "TimeoutError" (AbortSignal.timeout's reason).
+      throw new Error(`Jev request failed: ${error instanceof Error ? error.name : "unknown"}`);
+    }
     if (!response.ok) throw new Error(`Jev HTTP ${response.status}`);
     let parsed: DecisionsResponse;
     try {
       parsed = (await response.json()) as DecisionsResponse;
-    } catch {
+    } catch (error) {
+      const name = error instanceof Error ? error.name : "";
+      if (name === "TimeoutError" || name === "AbortError") throw new Error(`Jev request failed: ${name}`);
       throw new Error("Jev returned invalid JSON");
     }
     const answers = parsed.answers;
@@ -89,16 +102,34 @@ export function createJevJudge(config: JevClientConfig): JevJudge {
       for (let i = 0; i < input.candidates.length; i += JEV_CHUNK_SIZE) {
         chunks.push({ target: input.target, candidates: input.candidates.slice(i, i + JEV_CHUNK_SIZE) });
       }
-      const results = await Promise.all(chunks.map(judgeChunk));
-      const merged: JevJudgeResult = { scores: {}, model: results[0]!.model };
+      // allSettled, not all: a single 429'd chunk must not throw away the chunks that
+      // answered. Unscored candidates are kept by the provider, so a partial result costs
+      // filtering, never a wrong drop. All chunks failing is still a real failure.
+      const settled = await Promise.allSettled(chunks.map((chunk) => judgeChunk(chunk)));
+      const fulfilled = settled.filter(
+        (s): s is PromiseFulfilledResult<JevJudgeResult> => s.status === "fulfilled",
+      );
+      const rejected = settled.filter((s): s is PromiseRejectedResult => s.status === "rejected");
+      if (fulfilled.length === 0) throw rejected[0]!.reason;
+      const lost = settled.reduce(
+        (sum, s, i) => (s.status === "rejected" ? sum + chunks[i]!.candidates.length : sum),
+        0,
+      );
+      const merged: JevJudgeResult = { scores: {}, model: fulfilled[0]!.value.model };
       let tokens = 0, cost = 0, sawTokens = false, sawCost = false;
-      for (const r of results) {
+      for (const { value: r } of fulfilled) {
         Object.assign(merged.scores, r.scores);
         if (r.inputTokens !== undefined) { tokens += r.inputTokens; sawTokens = true; }
         if (r.cost !== undefined) { cost += r.cost; sawCost = true; }
       }
       if (sawTokens) merged.inputTokens = tokens;
       if (sawCost) merged.cost = cost;
+      if (rejected.length > 0) merged.failedChunks = rejected.length;
+      // Defensive: each chunk validates every one of its keys, so a short merge would mean
+      // a chunking/merge bug silently shrinking what the agent gets to see.
+      if (Object.keys(merged.scores).length !== input.candidates.length - lost) {
+        throw new Error("Jev merge invariant violated");
+      }
       return merged;
     },
   };

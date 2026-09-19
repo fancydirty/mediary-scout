@@ -28,6 +28,7 @@ describe("createJevJudge", () => {
     });
     expect(captured).toHaveLength(1);
     expect(captured[0]!.url).toBe(DEFAULT_JEV_BASE_URL);
+    expect(captured[0]!.init.signal).toBeInstanceOf(AbortSignal);
     expect((captured[0]!.init.headers as Record<string, string>).Authorization).toBe("Bearer sk-test");
     expect(captured[0]!.body.model).toBe("jev-latest");
     expect(captured[0]!.body.state.target).toEqual({ title: "交锋", type: "tv", year: 2026, aliases: ["Crossfire"] });
@@ -63,6 +64,98 @@ describe("createJevJudge", () => {
     expect(captured[0]!.url).toBe("https://api.typesafe.ai/v1/systemone");
   });
 
+  it("rejects a blank API key synchronously at construction", () => {
+    expect(() =>
+      createJevJudge({ apiKey: "   ", fetchImpl: (async () => new Response("{}")) as unknown as typeof fetch }),
+    ).toThrow(/Jev API key is blank/);
+  });
+
+  it("falls back to the default base URL when baseUrl is blank", async () => {
+    const captured: Captured[] = [];
+    const judge = createJevJudge({ apiKey: "k", baseUrl: "", fetchImpl: fetchReturning(() => ({ c0: 0.5 }), captured) });
+    await judge.judgeCandidates({ target: { kind: "tv", title: "t", aliases: [] }, candidates: [{ id: "a", title: "x" }] });
+    expect(captured[0]!.url).toBe(DEFAULT_JEV_BASE_URL);
+  });
+
+  it("never leaks the key from a transport error (undici embeds the header value verbatim)", async () => {
+    const leaky = (async () => {
+      throw new Error('Headers.append: "Bearer sk-SECRET\nX" is an invalid header value.');
+    }) as unknown as typeof fetch;
+    const judge = createJevJudge({ apiKey: "sk-SECRET", fetchImpl: leaky });
+    await expect(
+      judge.judgeCandidates({ target: { kind: "tv", title: "t", aliases: [] }, candidates: [{ id: "a", title: "x" }] }),
+    ).rejects.toThrow(/Jev request failed: Error/);
+    await expect(
+      judge.judgeCandidates({ target: { kind: "tv", title: "t", aliases: [] }, candidates: [{ id: "a", title: "x" }] }),
+    ).rejects.not.toThrow(/SECRET/);
+  });
+
+  it("aborts the request when it exceeds timeoutMs and reports a clean timeout error", async () => {
+    const hangs = ((_url: string, init: RequestInit) =>
+      new Promise((_resolve, reject) => {
+        init.signal!.addEventListener("abort", () => reject((init.signal as AbortSignal).reason));
+      })) as unknown as typeof fetch;
+    const judge = createJevJudge({ apiKey: "k", timeoutMs: 5, fetchImpl: hangs });
+    await expect(
+      judge.judgeCandidates({ target: { kind: "tv", title: "t", aliases: [] }, candidates: [{ id: "a", title: "x" }] }),
+    ).rejects.toThrow(/Jev request failed: TimeoutError/);
+  });
+
+  it("does not relabel a timeout/abort as invalid JSON", async () => {
+    const abortish = (async () =>
+      ({
+        ok: true,
+        status: 200,
+        json: async () => {
+          throw Object.assign(new Error("aborted"), { name: "TimeoutError" });
+        },
+      }) as unknown as Response) as unknown as typeof fetch;
+    const judge = createJevJudge({ apiKey: "k", fetchImpl: abortish });
+    await expect(
+      judge.judgeCandidates({ target: { kind: "tv", title: "t", aliases: [] }, candidates: [{ id: "a", title: "x" }] }),
+    ).rejects.toThrow(/TimeoutError|aborted/);
+    await expect(
+      judge.judgeCandidates({ target: { kind: "tv", title: "t", aliases: [] }, candidates: [{ id: "a", title: "x" }] }),
+    ).rejects.not.toThrow(/invalid JSON/);
+  });
+
+  it("resolves with partial results and failedChunks count when some (not all) chunks fail", async () => {
+    const n = JEV_CHUNK_SIZE * 2 + 5;
+    let call = 0;
+    const flaky = (async (_url: string, init: RequestInit) => {
+      call += 1;
+      if (call === 2) return new Response("nope", { status: 429 });
+      const body = JSON.parse(String(init.body));
+      const answers = Object.fromEntries(
+        Object.keys(body.state.candidates).map((k) => [k, { type: "noul", noul: 0.8 }]),
+      );
+      return new Response(
+        JSON.stringify({ model: "m", answers, usage: { input_tokens: 10, cost: 0.000001 } }),
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch;
+    const judge = createJevJudge({ apiKey: "k", fetchImpl: flaky });
+    const res = await judge.judgeCandidates({
+      target: { kind: "tv", title: "t", aliases: [] },
+      candidates: Array.from({ length: n }, (_, i) => ({ id: `id${i}`, title: `t${i}` })),
+    });
+    expect(call).toBe(3);
+    expect(Object.keys(res.scores)).toHaveLength(n - JEV_CHUNK_SIZE);
+    expect(res.failedChunks).toBe(1);
+  });
+
+  it("rejects when every chunk fails", async () => {
+    const allFail = (async () => new Response("nope", { status: 429 })) as unknown as typeof fetch;
+    const judge = createJevJudge({ apiKey: "k", fetchImpl: allFail });
+    const n = JEV_CHUNK_SIZE + 5;
+    await expect(
+      judge.judgeCandidates({
+        target: { kind: "tv", title: "t", aliases: [] },
+        candidates: Array.from({ length: n }, (_, i) => ({ id: `id${i}`, title: `t${i}` })),
+      }),
+    ).rejects.toThrow(/Jev HTTP 429/);
+  });
+
   it("throws on non-2xx without leaking the key", async () => {
     const judge = createJevJudge({ apiKey: "sk-SECRET", fetchImpl: (async () => new Response("nope", { status: 401 })) as unknown as typeof fetch });
     await expect(judge.judgeCandidates({ target: { kind: "tv", title: "t", aliases: [] }, candidates: [{ id: "a", title: "x" }] }))
@@ -84,5 +177,14 @@ describe("createJevJudge", () => {
     const res = await judge.judgeCandidates({ target: { kind: "tv", title: "t", aliases: [] }, candidates: [] });
     expect(res.scores).toEqual({});
     expect(calls).toBe(0);
+  });
+
+  it("omits inputTokens/cost entirely when the response has no usage field", async () => {
+    const noUsage = (async () =>
+      new Response(JSON.stringify({ model: "m", answers: { c0: { type: "noul", noul: 0.5 } } }), { status: 200 })) as unknown as typeof fetch;
+    const judge = createJevJudge({ apiKey: "k", fetchImpl: noUsage });
+    const res = await judge.judgeCandidates({ target: { kind: "tv", title: "t", aliases: [] }, candidates: [{ id: "a", title: "x" }] });
+    expect("inputTokens" in res).toBe(false);
+    expect("cost" in res).toBe(false);
   });
 });
