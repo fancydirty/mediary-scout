@@ -10,6 +10,8 @@ import { RealStorageV2 } from "./real-storage-adapter.js";
 import { budgetSoftThreshold } from "./agent-loop-guards.js";
 import { TaskSandbox } from "./sandbox.js";
 import { AssrtSubtitleProvider, type AssrtProviderPort } from "../subtitle-provider.js";
+import { JevPrefilterProvider } from "../jev-prefilter-provider.js";
+import type { JevJudge, JevJudgeTarget } from "../jev-judge.js";
 import type { SearchProfile } from "./search-profile.js";
 import {
   needForMovie,
@@ -71,6 +73,10 @@ export interface RunAcquisitionV2Request {
   /** Injectable assrt provider (tests pass a spy). When absent, the orchestrator
    *  builds a real AssrtSubtitleProvider from assrtToken. */
   assrtProvider?: AssrtProviderPort;
+  /** Optional Jev candidate prefilter. When present, request.provider is wrapped so
+   *  the pre-warm AND every agent search are judged before the agent sees them.
+   *  Absent = bare provider, byte-identical to before. Tests pass a spy. */
+  jevJudge?: JevJudge;
   /** Per-tool-call live progress for the activity page (best-effort). */
   onProgress?: (event: AgentToolEvent) => void;
 }
@@ -90,8 +96,13 @@ export interface RunAcquisitionV2Result extends AcquisitionAgentResult {
 
 export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promise<RunAcquisitionV2Result> {
   const registry = new CandidateRegistry();
+  // Wrapping HERE (not at the call site) is what makes the pre-warm and every agent
+  // searchResources go through the same filter — they all funnel through this adapter.
+  const searchProvider = request.jevJudge
+    ? new JevPrefilterProvider({ inner: request.provider, target: jevTargetOf(request.target), judge: request.jevJudge })
+    : request.provider;
   const provider = new RealResourceProviderV2({
-    provider: request.provider,
+    provider: searchProvider,
     registry,
     workflowRunId: request.workflowRunId,
     ...(request.deadLinkStore ? { deadLinkStore: request.deadLinkStore } : {}),
@@ -274,4 +285,12 @@ export function buildAgentDecisions(input: {
 function stripKind<T extends { kind: unknown }>(target: T): Omit<T, "kind"> {
   const { kind: _kind, ...rest } = target;
   return rest;
+}
+
+/** The judge sees only what identifies the work: title, aliases, kind, and — for
+ *  movies, which carry it — the release year (the tv target has no year field). */
+function jevTargetOf(target: AcquisitionV2Target): JevJudgeTarget {
+  return target.kind === "movie"
+    ? { kind: "movie", title: target.title, aliases: target.aliases, year: target.year }
+    : { kind: "tv", title: target.title, aliases: target.aliases };
 }

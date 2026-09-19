@@ -4,6 +4,7 @@ import { runAcquisitionV2 } from "../src/acquisition-v2/orchestrator.js";
 import type { ResourceProvider } from "../src/ports.js";
 import type { ResourceSnapshot } from "../src/domain.js";
 import { FakeStorageExecutor } from "../src/fakes.js";
+import type { JevJudge, JevJudgeInput } from "../src/jev-judge.js";
 
 const USAGE = {
   inputTokens: { total: undefined, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
@@ -260,5 +261,85 @@ describe("runAcquisitionV2 — raw snapshot pre-warming integration", () => {
     // This proves audit events flow from sandbox → orchestrator → workflow → bridge.
     expect(result.auditEvents.some((e) => e.type === "search_dedup")).toBe(true);
     expect(result.auditEvents[0]?.message).toContain("重复搜索");
+  });
+});
+
+describe("runAcquisitionV2 — Jev prefilter wiring", () => {
+  function twoCandidateProvider(): ResourceProvider {
+    return {
+      search: async ({ keyword }) => ({
+        id: `snap_${keyword}`, provider: "pansou", keyword, createdAt: "2026-09-19T00:00:00.000Z",
+        candidates: [
+          { id: `${keyword}_a`, snapshotId: `snap_${keyword}`, index: 0, title: "铁拳教育 S01", type: "115", source: "pansou", providerPayload: {} },
+          { id: `${keyword}_b`, snapshotId: `snap_${keyword}`, index: 1, title: "无敌少侠 全4季", type: "115", source: "pansou", providerPayload: {} },
+        ],
+      }),
+    };
+  }
+  function viewThenSearchThenReportModel() {
+    let i = 0;
+    const tool = (name: string, input: unknown) => ({
+      content: [{ type: "tool-call" as const, toolCallId: `c${i}`, toolName: name, input: JSON.stringify(input) }],
+      finishReason: { unified: "tool-calls" as const, raw: "tool-calls" as const }, usage: USAGE, warnings: [],
+    });
+    return new MockLanguageModelV3({
+      doGenerate: async () => {
+        i += 1;
+        if (i === 1) return tool("viewResourceSnapshot", {});
+        if (i === 2) return tool("searchResources", { keyword: "铁拳教育 全集" });
+        if (i === 3) return tool("reportNoCoverage", { reason: "test" });
+        return { content: [{ type: "text" as const, text: "done" }], finishReason: { unified: "stop" as const, raw: "stop" as const }, usage: USAGE, warnings: [] };
+      },
+    });
+  }
+
+  it("filters BOTH the pre-warm search and the agent's searchResources through the judge, with the tv target", async () => {
+    const seen: JevJudgeInput[] = [];
+    const jevJudge: JevJudge = {
+      judgeCandidates: async (input) => {
+        seen.push(input);
+        return { scores: Object.fromEntries(input.candidates.map((c) => [c.id, c.title.startsWith("铁拳") ? 0.95 : 0.05])), model: "m" };
+      },
+    };
+    const result = await runAcquisitionV2({
+      provider: twoCandidateProvider(), executor: new FakeStorageExecutor({ directories: { staging: [], season: [] } }),
+      model: viewThenSearchThenReportModel(), workflowRunId: "run-jev",
+      target: { kind: "tv", title: "铁拳教育", aliases: ["Iron Fist"], seasons: [1], missingEpisodes: ["S01E01"], qualityPreference: "1080p" },
+      stagingDirectoryId: "staging", targetSeasonDirectoryIds: { 1: "season" },
+      jevJudge,
+    });
+    expect(seen).toHaveLength(2); // pre-warm + agent search
+    expect(seen[0]!.target).toEqual({ kind: "tv", title: "铁拳教育", aliases: ["Iron Fist"] });
+    for (const snap of result.outcome.resourceSnapshots) {
+      expect(snap.candidates.map((c) => c.title)).toEqual(["铁拳教育 S01"]);
+      expect(snap.prefilter?.status).toBe("applied");
+      expect(snap.prefilter?.dropped).toHaveLength(1);
+    }
+  });
+
+  it("without jevJudge the provider is used bare (no prefilter metadata)", async () => {
+    const result = await runAcquisitionV2({
+      provider: twoCandidateProvider(), executor: new FakeStorageExecutor({ directories: { staging: [], season: [] } }),
+      model: viewThenSearchThenReportModel(), workflowRunId: "run-nojev",
+      target: { kind: "tv", title: "铁拳教育", aliases: [], seasons: [1], missingEpisodes: ["S01E01"], qualityPreference: "1080p" },
+      stagingDirectoryId: "staging", targetSeasonDirectoryIds: { 1: "season" },
+    });
+    for (const snap of result.outcome.resourceSnapshots) {
+      expect(snap.candidates).toHaveLength(2);
+      expect(snap.prefilter).toBeUndefined();
+    }
+  });
+
+  it("movie target passes kind=movie and year to the judge", async () => {
+    const seen: JevJudgeInput[] = [];
+    const jevJudge: JevJudge = { judgeCandidates: async (input) => { seen.push(input); return { scores: {}, model: "m" }; } };
+    await runAcquisitionV2({
+      provider: twoCandidateProvider(), executor: new FakeStorageExecutor({ directories: { staging: [], movie: [] } }),
+      model: viewThenSearchThenReportModel(), workflowRunId: "run-jev-movie",
+      target: { kind: "movie", title: "沙丘", aliases: ["Dune"], year: 2021, qualityPreference: "4K" },
+      stagingDirectoryId: "staging", targetMovieDirectoryId: "movie",
+      jevJudge,
+    });
+    expect(seen[0]!.target).toEqual({ kind: "movie", title: "沙丘", aliases: ["Dune"], year: 2021 });
   });
 });
