@@ -309,7 +309,7 @@ describe("runAcquisitionV2 — Jev prefilter wiring", () => {
       jevJudge,
     });
     expect(seen).toHaveLength(2); // pre-warm + agent search
-    // The tv year must reach the judge — its 「相差≥2 判否」 rule is dormant without it.
+    // The tv year must reach the judge — its 「早2年及以上判否」 rule is dormant without it.
     expect(seen[0]!.target).toEqual({ kind: "tv", title: "铁拳教育", aliases: ["Iron Fist"], year: 2024 });
     expect(result.outcome.resourceSnapshots).toHaveLength(2);
     for (const snap of result.outcome.resourceSnapshots) {
@@ -357,7 +357,10 @@ describe("runAcquisitionV2 — Jev prefilter wiring", () => {
       stagingDirectoryId: "staging", targetMovieDirectoryId: "movie",
       jevJudge,
     });
-    // year 0 would trip 「与 target.year 相差≥2 判否」 against every dated candidate.
+    // year 0 would trip the year rule against every dated candidate. Pin the call
+    // count too: without it, seen[0] could be an unrelated call and the ! would hide
+    // an empty array entirely.
+    expect(seen).toHaveLength(1);
     expect(seen[0]!.target).toEqual({ kind: "movie", title: "沙丘", aliases: ["Dune"] });
     expect("year" in seen[0]!.target).toBe(false);
   });

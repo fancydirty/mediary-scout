@@ -290,9 +290,11 @@ function stripKind<T extends { kind: unknown }>(target: T): Omit<T, "kind"> {
 /** The judge sees only what identifies the work: title, aliases, kind, and the
  *  first-air/release year when it is actually known. A 0 (movie-workflow's
  *  `year ?? 0` for an undated film) or a NaN must NEVER reach the judge — its
- *  「与 target.year 相差≥2 判否」 rule would then reject every dated candidate. */
+ *  「候选标注年份比首播年份早2年及以上判否」 rule would then reject every dated candidate. */
 function jevTargetOf(target: AcquisitionV2Target): JevJudgeTarget {
-  const year = Number.isFinite(target.year) && (target.year as number) > 0 ? target.year : undefined;
+  // `typeof` first so the narrowing is real, not a cast asserting what we hope is true.
+  const y = target.year;
+  const year = typeof y === "number" && Number.isFinite(y) && y > 0 ? y : undefined;
   const base = { title: target.title, aliases: target.aliases, ...(year === undefined ? {} : { year }) };
   switch (target.kind) {
     case "movie":

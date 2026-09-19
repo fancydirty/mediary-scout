@@ -5,9 +5,18 @@ import type { ResourceProviderV2, ResourceSnapshotV2 } from "../src/acquisition-
 import { Storage115Simulator } from "../src/acquisition-v2/storage-115-simulator.js";
 import { buildTvAnimeSystemPrompt, buildMovieSystemPrompt } from "../src/acquisition-v2/task-agents.js";
 import { JEV_UNCERTAIN_LEGEND } from "../src/jev-judge.js";
+import { JevPrefilterProvider } from "../src/jev-prefilter-provider.js";
+import { RealResourceProviderV2 } from "../src/acquisition-v2/real-provider-adapter.js";
+import { CandidateRegistry } from "../src/acquisition-v2/candidate-registry.js";
+import type { ResourceProvider } from "../src/ports.js";
+import type { ResourceSnapshot } from "../src/domain.js";
 
-async function createTestSandbox(candidateTitles: string[], keyword = "铁拳教育") {
-  const provider = new FakeResourceProviderV2({
+async function createTestSandbox(
+  candidateTitles: string[],
+  keyword = "铁拳教育",
+  prefilter?: { scores: Record<string, number>; dropped?: number },
+) {
+  const fake = new FakeResourceProviderV2({
     results: {
       [keyword]: candidateTitles.map((title, idx) => ({
         id: `c${idx}`,
@@ -15,6 +24,17 @@ async function createTestSandbox(candidateTitles: string[], keyword = "铁拳教
       })),
     },
   });
+  // The fake models PanSou, which knows nothing about a prefilter — in production the
+  // JevPrefilterProvider stamps these fields on top, so stamp them the same way here.
+  const provider: ResourceProviderV2 = prefilter
+    ? {
+        search: async (kw: string): Promise<ResourceSnapshotV2> => ({
+          ...(await fake.search(kw)),
+          prefilterScores: prefilter.scores,
+          ...(prefilter.dropped === undefined ? {} : { prefilterDropped: prefilter.dropped }),
+        }),
+      }
+    : fake;
   const storage = new Storage115Simulator({ packs: {} });
   const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
   const targetSeasonDirectoryId = await storage.createDirectory({ name: "Season 1", parentId: "root" });
@@ -172,19 +192,11 @@ describe("system prompt carries subtitle snapshot pointer (symmetric with raw po
 
 describe("viewResourceSnapshot renders the Jev uncertainty flag", () => {
   it("appends ⚠ 相关度存疑(p) only for candidates in the uncertain band", async () => {
-    const provider: ResourceProviderV2 = {
-      async search(keyword: string): Promise<ResourceSnapshotV2> {
-        return {
-          id: "s", keyword,
-          candidates: [{ id: "c0", title: "交锋 全24集" }, { id: "c1", title: "权利交锋 S01E08" }, { id: "c2", title: "📅 9月6日" }],
-          prefilterScores: { c0: 0.95, c1: 0.52 },
-        };
-      },
-    };
-    const storage = new Storage115Simulator({ packs: {} });
-    const staging = await storage.createDirectory({ name: "staging", parentId: "root" });
-    const season = await storage.createDirectory({ name: "Season 1", parentId: "root" });
-    const sandbox = new TaskSandbox({ provider, storage, stagingDirectoryId: staging, targetSeasonDirectoryIds: { 1: season }, need: ["S01E01"] });
+    const sandbox = await createTestSandbox(
+      ["交锋 全24集", "权利交锋 S01E08", "📅 9月6日"],
+      "交锋",
+      { scores: { c0: 0.95, c1: 0.52 } },
+    );
     await sandbox.primeRawSnapshot("交锋");
     const doc = sandbox.viewResourceSnapshot().document;
     expect(doc).toContain("[c0] 交锋 全24集\n");
@@ -195,34 +207,90 @@ describe("viewResourceSnapshot renders the Jev uncertainty flag", () => {
   });
 
   it("renders no flag and no legend when nothing is in the uncertain band", async () => {
-    const provider: ResourceProviderV2 = {
-      async search(keyword: string): Promise<ResourceSnapshotV2> {
-        return { id: "s", keyword, candidates: [{ id: "c0", title: "交锋 全24集" }], prefilterScores: { c0: 0.9 } };
-      },
-    };
-    const storage = new Storage115Simulator({ packs: {} });
-    const staging = await storage.createDirectory({ name: "staging", parentId: "root" });
-    const season = await storage.createDirectory({ name: "Season 1", parentId: "root" });
-    const sandbox = new TaskSandbox({ provider, storage, stagingDirectoryId: staging, targetSeasonDirectoryIds: { 1: season }, need: ["S01E01"] });
+    const sandbox = await createTestSandbox(["交锋 全24集"], "交锋", { scores: { c0: 0.9 } });
     await sandbox.primeRawSnapshot("交锋");
     const doc = sandbox.viewResourceSnapshot().document;
     expect(doc).toContain("[c0] 交锋 全24集\n");
     expect(doc).not.toContain("相关度存疑");
   });
 
+  it("attaches the legend only when a flagged row survives the 120-row truncation", async () => {
+    const titles = Array.from({ length: 121 }, (_, i) => `Candidate ${i + 1}`);
+
+    // c120 is the 121st row — truncated away. Explaining a ⚠ that is nowhere in the
+    // document teaches the agent the flag means something other than what it sees.
+    const hidden = await createTestSandbox(titles, "title", { scores: { c120: 0.52 } });
+    await hidden.primeRawSnapshot("title");
+    const hiddenDoc = hidden.viewResourceSnapshot().document;
+    expect(hiddenDoc).not.toContain("相关度存疑");
+    expect(hiddenDoc).not.toContain(JEV_UNCERTAIN_LEGEND);
+
+    // c119 is the last visible row — the flag renders, so the legend must too.
+    const visible = await createTestSandbox(titles, "title", { scores: { c119: 0.52 } });
+    await visible.primeRawSnapshot("title");
+    const visibleDoc = visible.viewResourceSnapshot().document;
+    expect(visibleDoc).toContain("[c119] Candidate 120 ⚠ 相关度存疑(0.52)\n");
+    expect(visibleDoc).toContain(JEV_UNCERTAIN_LEGEND);
+  });
+
   it("explains an all-dropped prefilter instead of showing a bare empty snapshot", async () => {
-    const provider: ResourceProviderV2 = {
-      async search(keyword: string): Promise<ResourceSnapshotV2> {
-        return { id: "s", keyword, candidates: [], prefilterScores: {}, prefilterDropped: 7 };
-      },
-    };
-    const storage = new Storage115Simulator({ packs: {} });
-    const staging = await storage.createDirectory({ name: "staging", parentId: "root" });
-    const season = await storage.createDirectory({ name: "Season 1", parentId: "root" });
-    const sandbox = new TaskSandbox({ provider, storage, stagingDirectoryId: staging, targetSeasonDirectoryIds: { 1: season }, need: ["S01E01"] });
+    const sandbox = await createTestSandbox([], "交锋", { scores: {}, dropped: 7 });
     await sandbox.primeRawSnapshot("交锋");
     const doc = sandbox.viewResourceSnapshot().document;
-    expect(doc).toContain("预筛全部剔除");
-    expect(doc).toContain("7 个候选");
+    expect(doc).toMatch(/7 个被系统按片名预筛剔除/);
+  });
+});
+
+describe("prefilter → adapter → sandbox seam (real classes, no hand-stamped fields)", () => {
+  it("carries the Jev scores from the domain provider all the way into both agent read paths", async () => {
+    // Every other Jev test stamps prefilterScores onto a fake V2 provider by hand,
+    // which is exactly the shape of the bug that once dropped sourceHealth for 6 days:
+    // the field existed at both ends and nobody wired the boundary between them.
+    // This one builds the production chain and asserts the flag survives it.
+    const inner: ResourceProvider = {
+      search: async ({ keyword }): Promise<ResourceSnapshot> => ({
+        id: "snap_1",
+        provider: "pansou",
+        keyword,
+        createdAt: "2026-09-19T00:00:00.000Z",
+        candidates: [
+          { id: "c1", snapshotId: "snap_1", index: 0, title: "交锋 全24集", type: "115", source: "pansou", providerPayload: {} },
+          { id: "c2", snapshotId: "snap_1", index: 1, title: "权利交锋 S01E08", type: "115", source: "pansou", providerPayload: {} },
+          { id: "c3", snapshotId: "snap_1", index: 2, title: "无敌少侠", type: "115", source: "pansou", providerPayload: {} },
+        ],
+      }),
+    };
+    const prefiltered = new JevPrefilterProvider({
+      inner,
+      target: { kind: "tv", title: "交锋", aliases: [] },
+      judge: { judgeCandidates: async () => ({ scores: { c1: 0.95, c2: 0.52, c3: 0.05 }, model: "m" }) },
+      log: () => {},
+    });
+    const provider = new RealResourceProviderV2({
+      provider: prefiltered,
+      registry: new CandidateRegistry(),
+      workflowRunId: "run-1",
+    });
+    const storage = new Storage115Simulator({ packs: {} });
+    const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
+    const seasonDirectoryId = await storage.createDirectory({ name: "Season 1", parentId: "root" });
+    const sandbox = new TaskSandbox({
+      provider,
+      storage,
+      stagingDirectoryId,
+      targetSeasonDirectoryIds: { 1: seasonDirectoryId },
+      need: ["S01E01"],
+    });
+
+    await sandbox.primeRawSnapshot("交锋");
+    const doc = sandbox.viewResourceSnapshot().document;
+    expect(doc).toContain("[c1] 交锋 全24集\n");
+    expect(doc).toContain("[c2] 权利交锋 S01E08 ⚠ 相关度存疑(0.52)\n");
+    expect(doc).not.toContain("无敌少侠"); // 0.05 → dropped before the agent ever sees it
+    expect(doc).toContain(JEV_UNCERTAIN_LEGEND);
+
+    // The agent's own search path must tell the same story as the 活期文档.
+    const result = await sandbox.searchResources("交锋");
+    expect(result.snapshot!.candidates[1]!.title).toBe("权利交锋 S01E08 ⚠ 相关度存疑(0.52)");
   });
 });

@@ -678,6 +678,9 @@ describe("searchResources presents the prefilter to the agent", () => {
     expect(result.snapshot!.candidates[1]!.title).toBe("权利交锋 S01E08 ⚠ 相关度存疑(0.52)");
     // The agent judges titles, not numbers — the raw score map never reaches the tool result.
     expect("prefilterScores" in result.snapshot!).toBe(false);
+    // Same reason for the drop count: the all-dropped warning is the only place the
+    // agent is told about removals, and a stray number invites it to do arithmetic.
+    expect("prefilterDropped" in result.snapshot!).toBe(false);
     expect(result.warnings).toContain(JEV_UNCERTAIN_LEGEND);
   });
 
@@ -705,7 +708,7 @@ describe("searchResources presents the prefilter to the agent", () => {
 
     const result = await sandbox.searchResources("交锋");
 
-    expect(result.warnings?.some((w) => /12 个候选[\s\S]*预筛全部剔除/.test(w))).toBe(true);
+    expect(result.warnings?.some((w) => /12 个被系统按片名预筛剔除/.test(w))).toBe(true);
   });
 
   it("leaves titles untouched and adds no legend when no prefilter ran", async () => {

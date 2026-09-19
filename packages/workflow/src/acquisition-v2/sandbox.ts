@@ -52,24 +52,33 @@ function sourceHealthWarning(health: MergedSourceHealth | undefined): string | u
   }
 }
 
+/** Rows viewResourceSnapshot renders before it truncates. Shared with the presenter
+ *  so the legend is gated on exactly the rows that make it into the document. */
+const RAW_SNAPSHOT_ROW_LIMIT = 120;
+
 /** The tool-facing view of a snapshot: the ⚠ suffix rendered into each title (same as
  *  the 活期文档), the raw score map stripped (the agent judges titles, not numbers).
  *  Both read paths (searchResources and viewResourceSnapshot) go through here so the
  *  agent can never see two different stories about the same candidates. */
-function presentSnapshotForAgent(snapshot: ResourceSnapshotV2): {
+function presentSnapshotForAgent(snapshot: ResourceSnapshotV2, limit?: number): {
   snapshot: ResourceSnapshotV2;
   legend: string | undefined;
   allDroppedWarning: string | undefined;
 } {
   const scores = snapshot.prefilterScores;
   if (!scores) return { snapshot, legend: undefined, allDroppedWarning: undefined };
+  // The legend explains a ⚠ the agent can SEE. viewResourceSnapshot truncates its
+  // rows, so a flag past the cut must not pull in a legend for a document that has
+  // no flag in it. `limit` undefined = every row is shown (searchResources).
   let flagged = 0;
-  const candidates = snapshot.candidates.map((c) => {
+  const candidates = snapshot.candidates.map((c, index) => {
     const flag = jevUncertaintyFlag(scores[c.id]);
-    if (flag) flagged += 1;
+    if (flag && (limit === undefined || index < limit)) flagged += 1;
     return flag ? { ...c, title: `${c.title}${flag}` } : c;
   });
-  const { prefilterScores: _scores, ...rest } = snapshot;
+  // Both prefilter fields are stripped: the agent judges titles, not numbers, and the
+  // drop count only ever reaches it through the all-dropped warning below.
+  const { prefilterScores: _scores, prefilterDropped: _dropped, ...rest } = snapshot;
   const dropped = snapshot.prefilterDropped ?? 0;
   return {
     snapshot: { ...rest, candidates },
@@ -874,10 +883,10 @@ export class TaskSandbox {
     // A score in the uncertain band means the judge could not tell this apart from a
     // near-name (《权利交锋》 vs 《交锋》) — it is kept, and flagged so the agent looks twice.
     // Same presenter as searchResources: one story, two read paths.
-    const view = presentSnapshotForAgent(this.rawSnapshot);
+    const view = presentSnapshotForAgent(this.rawSnapshot, RAW_SNAPSHOT_ROW_LIMIT);
     const candidates = view.snapshot.candidates;
     const total = candidates.length;
-    const truncated = candidates.slice(0, 120);
+    const truncated = candidates.slice(0, RAW_SNAPSHOT_ROW_LIMIT);
     const remaining = total - truncated.length;
 
     let document = `📋 Raw snapshot (${total} candidates):\n\n`;

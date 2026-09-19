@@ -66,13 +66,21 @@ export interface JevNoulQuestion {
 
 const TV_RULES =
   "同一IP的剧场版/电影/广播剧/有声书/漫画/游戏/衍生动画/综艺都不算这部剧集本身,必须判否。" +
-  "`target.year` 是首播年份:候选标注年份与之相差≥2 大概率是同名/近名的另一部作品,应判否。" +
+  "`target.year` 是首播年份:候选标注年份比首播年份早2年及以上,必定是同名/近名的另一部作品,应判否;" +
+  "标注年份晚于首播年份的可能是同一部剧的后续季,不能仅凭年份判否。" +
   "`target.aliases` 是原名/别名,候选用这些名字也算指向目标";
 
 const MOVIE_RULES = "`target.aliases` 是原名/别名,候选用这些名字也算指向目标";
 
 /** One noul per candidate key. Wording was tuned in the 2026-09-19 evals
- *  (identity 28/29, injection 8/9, season 20/20); change it only with a re-run. */
+ *  (identity 28/29, injection 8/9, season 20/20); change it only with a re-run.
+ *
+ *  2026-09-19: the tv year rule became ASYMMETRIC. The symmetric 「相差≥2」 form
+ *  measured well on identity collisions (《锋刃(2015)又名交锋》 0.46→0.07) but would
+ *  reject a long-running show's later seasons (first air 2016, S8 labelled 2024 →
+ *  diff 8 → 否), silently dropping exactly what multi-season acquisition needs. Only
+ *  the EARLIER side rejects now. Both directions are guarded by the wording sentinels
+ *  in `scripts/jev-prefilter-replay.mts` — run it before changing this string. */
 export function buildJevQuestions(
   target: { kind: JevTargetKind },
   candidateKeys: string[],
@@ -91,10 +99,12 @@ export function buildJevQuestions(
 }
 
 /** Row suffix the agent sees for a candidate in the uncertain band; "" otherwise.
- *  Floors to 2 dp so a 0.699 never prints as "(0.70)" next to a "< 0.7" rule. */
+ *  Floors to 2 dp so a 0.699 never prints as "(0.70)" next to a "< 0.7" rule. The
+ *  1e-9 nudge absorbs binary-float error (0.57 * 100 === 56.99999999999999, which a
+ *  bare floor would print as 0.56 — a number the judge never produced). */
 export function jevUncertaintyFlag(score: number | undefined): string {
   if (score === undefined || classifyJevScore(score) !== "uncertain") return "";
-  return ` ⚠ 相关度存疑(${(Math.floor(score * 100) / 100).toFixed(2)})`;
+  return ` ⚠ 相关度存疑(${(Math.floor(score * 100 + 1e-9) / 100).toFixed(2)})`;
 }
 
 /** One-line legend shown wherever at least one row carries the flag. Data, not
@@ -102,7 +112,10 @@ export function jevUncertaintyFlag(score: number | undefined): string {
 export const JEV_UNCERTAIN_LEGEND =
   "⚠ 相关度存疑 = 系统按片名判断该候选可能是同名/近名的另一部作品。这不是排除:请读标题与详情自行确认,该收的照收。";
 
-/** Warning when a search's candidates were ALL dropped by the prefilter. */
+/** Warning when the agent is looking at an empty candidate list and the prefilter
+ *  dropped some. It deliberately does NOT claim the drop explains the whole empty
+ *  result: dead-link filtering runs after the prefilter and can remove the rest, so
+ *  「全部剔除」 would be an assertion the caller cannot actually make. */
 export function jevAllDroppedWarning(dropped: number): string {
-  return `本次搜索返回的 ${dropped} 个候选经系统按片名预筛全部剔除(均为同名/近名的其它作品或无关资源),这不是搜索源故障。可换 繁体/英文/原名 关键词再搜;若确认没有,再 reportNoCoverage。`;
+  return `本次搜索的候选中有 ${dropped} 个被系统按片名预筛剔除(同名/近名的其它作品或无关资源),剩余为空。这不是搜索源故障;可换 繁体/英文/原名 关键词再搜,若确认没有再 reportNoCoverage。`;
 }

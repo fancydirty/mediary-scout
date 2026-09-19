@@ -25,9 +25,22 @@ describe("buildJevQuestions", () => {
     expect(q.c1!.instructions).toContain("`candidates.c1`");
   });
 
+  it("tv year rule is ASYMMETRIC: an earlier-labelled candidate is rejected, a later one never is", () => {
+    // The symmetric 「相差≥2」 rule rejected a long-running show's later seasons
+    // (first air 2016, S8 labelled 2024 → diff 8 → 否 → silently dropped). That is
+    // the one unacceptable failure for this prefilter: multi-season acquisition is core.
+    const text = buildJevQuestions({ kind: "tv" }, ["c0"]).c0!.instructions;
+    expect(text).toContain("早2年及以上");
+    expect(text).toContain("后续季");
+    expect(text).not.toContain("相差≥2");
+  });
+
   it("movie wording guards against remakes/sequels and mentions aliases", () => {
     const q = buildJevQuestions({ kind: "movie" }, ["c0"]);
     expect(q.c0!.instructions).toContain("这部电影本身");
+    // The movie wording is NOT asymmetric — a movie's year identifies the film itself
+    // (1984 沙丘 vs 2021 沙丘), so it stays exactly as the evals measured it.
+    expect(q.c0!.instructions).toContain("(`target.year`)");
     expect(q.c0!.instructions).toContain("续集/前传/翻拍");
     expect(q.c0!.instructions).toContain("`target.aliases`");
   });
@@ -76,6 +89,10 @@ describe("jevUncertaintyFlag", () => {
     // 0.699 must never print as 0.70 next to a "< 0.7" rule.
     expect(jevUncertaintyFlag(0.699)).toBe(" ⚠ 相关度存疑(0.69)");
     expect(jevUncertaintyFlag(0.3)).toBe(" ⚠ 相关度存疑(0.30)");
+    // Binary float: 0.57 * 100 === 56.99999999999999, so a naive floor prints 0.56 —
+    // the agent would read a number the judge never produced.
+    expect(jevUncertaintyFlag(0.57)).toBe(" ⚠ 相关度存疑(0.57)");
+    expect(jevUncertaintyFlag(0.58)).toBe(" ⚠ 相关度存疑(0.58)");
     expect(jevUncertaintyFlag(0.7)).toBe("");
     expect(jevUncertaintyFlag(0.29)).toBe("");
     expect(jevUncertaintyFlag(undefined)).toBe("");
@@ -85,14 +102,17 @@ describe("jevUncertaintyFlag", () => {
 
 describe("prefilter legend and all-dropped warning", () => {
   it("legend explains the flag is not an exclusion", () => {
-    expect(JEV_UNCERTAIN_LEGEND).toContain("⚠ 相关度存疑");
-    expect(JEV_UNCERTAIN_LEGEND).toContain("这不是排除");
+    // The one semantic that matters: a flag is not an exclusion. Asserting the
+    // constant contains its own opening words would only restate the source.
+    expect(JEV_UNCERTAIN_LEGEND).toMatch(/不是排除/);
   });
 
   it("all-dropped warning names the count and rules out a source outage", () => {
     const w = jevAllDroppedWarning(7);
-    expect(w).toContain("7 个候选");
-    expect(w).toContain("预筛全部剔除");
+    expect(w).toMatch(/7 个被系统按片名预筛剔除/);
+    // It must NOT claim the search returned only those 7: dead-link filtering runs
+    // after the prefilter and can remove the rest, so "全部剔除" would be a lie.
+    expect(w).not.toContain("全部剔除");
     expect(w).toContain("不是搜索源故障");
     expect(w).toContain("reportNoCoverage");
   });
