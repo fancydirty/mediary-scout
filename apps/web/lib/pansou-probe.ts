@@ -70,7 +70,12 @@ function isPanSouShaped(payload: unknown): boolean {
   if (typeof payload !== "object" || payload === null) return false;
   const data = (payload as { data?: unknown }).data;
   if (typeof data !== "object" || data === null) return false;
-  return Array.isArray((data as { results?: unknown }).results);
+  // PanSou omits `results` when a search has zero hits (`results,omitempty` in
+  // model/response.go) and answers `{"data":{"total":0}}`. The probe keyword is
+  // deliberately meaningless, so on a fresh instance THIS is the normal reply —
+  // it must count as PanSou-shaped or a healthy address gets refused.
+  const shaped = data as { results?: unknown; total?: unknown };
+  return Array.isArray(shaped.results) || typeof shaped.total === "number";
 }
 
 /** 保存前的便宜格式校验。抽出来是为了两个保存入口(设置页 action / agent API)共用

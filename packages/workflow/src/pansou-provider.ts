@@ -98,7 +98,7 @@ export class PanSouResourceProvider implements ResourceProvider {
     if (!isPanSouSuccessResponse(response)) {
       throw new PanSouProtocolError(`not a PanSou payload from ${this.baseURL}`);
     }
-    const facts = collectLinkFacts(response.data.results);
+    const facts = collectLinkFacts(response.data.results ?? []);
     // Per-brand filter: a quark drive only sees quark links; a 115 drive only
     // sees 115/magnet. Keeps a candidate set that its executor can actually transfer.
     return this.allowedTypes ? facts.filter((fact) => this.allowedTypes!.has(fact.type)) : facts;
@@ -195,13 +195,21 @@ function isPanSouErrorResponse(value: unknown): boolean {
 function isPanSouSuccessResponse(value: unknown): value is {
   code: 0;
   data: {
-    results: unknown[];
+    results?: unknown[];
+    total?: number;
   };
 } {
   if (!isRecord(value) || value["code"] !== 0 || !isRecord(value["data"])) {
     return false;
   }
-  return Array.isArray(value["data"]["results"]);
+  const data = value["data"];
+  // PanSou (model/response.go) tags `Results` with `omitempty`: a search with
+  // ZERO hits serialises as `{"code":0,"data":{"total":0}}` — no `results` key.
+  // That is a legitimate PanSou answer ("nothing matched"), not a foreign payload.
+  // Rejecting it turned every honest miss into a false 「搜索源连不上」 alert
+  // (2026-09-07 → 09-19, daily patrol). Only a data object with NEITHER field is
+  // "not PanSou".
+  return Array.isArray(data["results"]) || typeof data["total"] === "number";
 }
 
 function collectLinkFacts(results: unknown[]): PanSouLinkFact[] {
