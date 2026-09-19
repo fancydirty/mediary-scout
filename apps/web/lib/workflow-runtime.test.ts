@@ -6,6 +6,9 @@ import {
   getLlmConfig,
   getPanSouBaseUrl,
   getProwlarrConfig,
+  getJevConfig,
+  resolveJevJudge,
+  isJevPrefilterActive,
   getQualityPreference,
   movieTargetFromTmdbId,
   PANSOU_BASE_URL_SETTING_KEY,
@@ -16,6 +19,10 @@ import {
   LLM_MODEL_ID_SETTING_KEY,
   PROWLARR_API_KEY_SETTING_KEY,
   PROWLARR_BASE_URL_SETTING_KEY,
+  JEV_API_KEY_SETTING_KEY,
+  JEV_BASE_URL_SETTING_KEY,
+  JEV_PREFILTER_ENABLED_SETTING_KEY,
+  JEV_HEALTH_SETTING_KEY,
   TMDB_API_KEY_SETTING_KEY,
 } from "./workflow-runtime";
 
@@ -653,5 +660,72 @@ describe("requireAuthenticatedAccountId (C2: refuse acct_unauthenticated writes)
       status: "unsupported",
       message: expect.stringMatching(/未登录/),
     });
+  });
+});
+
+/** `{}` is not a structurally valid NodeJS.ProcessEnv here (NODE_ENV is required);
+ *  same cast the getProwlarrConfig tests above use. */
+const noEnv = {} as unknown as NodeJS.ProcessEnv;
+
+describe("getJevConfig", () => {
+  it("setting keys are the DB column values the rest of the suite hardcodes", () => {
+    expect(JEV_API_KEY_SETTING_KEY).toBe("jev_api_key");
+    expect(JEV_BASE_URL_SETTING_KEY).toBe("jev_base_url");
+    expect(JEV_PREFILTER_ENABLED_SETTING_KEY).toBe("jev_prefilter_enabled");
+    expect(JEV_HEALTH_SETTING_KEY).toBe("jev_health");
+  });
+
+  it("unset → apiKey undefined, baseUrl default, enabled false, health undefined", async () => {
+    expect(await getJevConfig(repoWith(null), noEnv)).toEqual({
+      apiKey: undefined,
+      baseUrl: "https://openrouter.ai/api/alpha/decisions",
+      enabled: false,
+      health: undefined,
+    });
+  });
+
+  it("reads + trims DB keys; enabled only when exactly \"1\"", async () => {
+    const cfg = await getJevConfig(
+      repoMap({
+        jev_api_key: " sk-or-x ",
+        jev_base_url: " https://x/y ",
+        jev_prefilter_enabled: "1",
+        jev_health: "ok",
+      }),
+      noEnv,
+    );
+    expect(cfg).toEqual({ apiKey: "sk-or-x", baseUrl: "https://x/y", enabled: true, health: "ok" });
+    expect((await getJevConfig(repoMap({ jev_prefilter_enabled: "true" }), noEnv)).enabled).toBe(false);
+  });
+
+  it("env JEV_API_KEY / JEV_BASE_URL fill in when DB is blank", async () => {
+    const cfg = await getJevConfig(repoWith(null), { JEV_API_KEY: "sk-env", JEV_BASE_URL: "https://env/" } as unknown as NodeJS.ProcessEnv);
+    expect(cfg.apiKey).toBe("sk-env");
+    expect(cfg.baseUrl).toBe("https://env/");
+  });
+});
+
+describe("resolveJevJudge (the single go/no-go for wrapping the provider)", () => {
+  it("undefined unless key set AND enabled AND health ok", async () => {
+    expect(await resolveJevJudge(repoMap({ jev_api_key: "k", jev_prefilter_enabled: "1" }), noEnv)).toBeUndefined(); // no health
+    expect(await resolveJevJudge(repoMap({ jev_api_key: "k", jev_health: "ok" }), noEnv)).toBeUndefined(); // not enabled
+    expect(await resolveJevJudge(repoMap({ jev_prefilter_enabled: "1", jev_health: "ok" }), noEnv)).toBeUndefined(); // no key
+    const judge = await resolveJevJudge(
+      repoMap({ jev_api_key: "k", jev_prefilter_enabled: "1", jev_health: "ok" }),
+      noEnv,
+    );
+    expect(judge).toBeDefined();
+    expect(typeof judge!.judgeCandidates).toBe("function");
+  });
+
+  it("isJevPrefilterActive is the same go/no-go, on an already-read config", async () => {
+    const active = await getJevConfig(
+      repoMap({ jev_api_key: "k", jev_prefilter_enabled: "1", jev_health: "ok" }),
+      noEnv,
+    );
+    expect(isJevPrefilterActive(active)).toBe(true);
+    expect(isJevPrefilterActive({ ...active, health: "fail" })).toBe(false);
+    expect(isJevPrefilterActive({ ...active, enabled: false })).toBe(false);
+    expect(isJevPrefilterActive({ ...active, apiKey: undefined })).toBe(false);
   });
 });

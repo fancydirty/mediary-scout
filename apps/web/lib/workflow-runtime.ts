@@ -12,6 +12,9 @@ import {
   createBootstrapPan115CookieStorageExecutor,
   CompositeResourceProvider,
   ProwlarrResourceProvider,
+  createJevJudge,
+  DEFAULT_JEV_BASE_URL,
+  type JevJudge,
   createTmdbMetadataProvider,
   TMDB_DIRECT_BASE_URL,
   type TmdbAccess,
@@ -1166,6 +1169,57 @@ export async function getProwlarrConfig(
     baseURL: await read(PROWLARR_BASE_URL_SETTING_KEY, "PROWLARR_BASE_URL"),
     apiKey: await read(PROWLARR_API_KEY_SETTING_KEY, "PROWLARR_API_KEY"),
   };
+}
+
+export const JEV_API_KEY_SETTING_KEY = "jev_api_key";
+export const JEV_BASE_URL_SETTING_KEY = "jev_base_url";
+export const JEV_PREFILTER_ENABLED_SETTING_KEY = "jev_prefilter_enabled";
+/** "ok" | "fail" — written by the save-time probe. The prefilter never runs on "fail". */
+export const JEV_HEALTH_SETTING_KEY = "jev_health";
+
+export interface JevConfig {
+  apiKey: string | undefined;
+  baseUrl: string;
+  enabled: boolean;
+  health: string | undefined;
+}
+
+/** Jev candidate prefilter settings (Settings → 资源提供商). DB wins over env;
+ *  blank = unset. `enabled` is true only for the exact string "1". */
+export async function getJevConfig(
+  repository: { getSetting(key: string): Promise<string | null> },
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<JevConfig> {
+  const read = async (key: string, envKey: string): Promise<string | undefined> => {
+    const dbValue = (await repository.getSetting(key))?.trim();
+    if (dbValue) return dbValue;
+    const envValue = env[envKey]?.trim();
+    return envValue ? envValue : undefined;
+  };
+  return {
+    apiKey: await read(JEV_API_KEY_SETTING_KEY, "JEV_API_KEY"),
+    baseUrl: (await read(JEV_BASE_URL_SETTING_KEY, "JEV_BASE_URL")) ?? DEFAULT_JEV_BASE_URL,
+    enabled: ((await repository.getSetting(JEV_PREFILTER_ENABLED_SETTING_KEY))?.trim() ?? "") === "1",
+    health: (await repository.getSetting(JEV_HEALTH_SETTING_KEY))?.trim() || undefined,
+  };
+}
+
+/** The go/no-go, on an already-read config: key set AND enabled AND the last
+ *  probe succeeded. The settings page and resolveJevJudge share this one rule. */
+export function isJevPrefilterActive(cfg: JevConfig): boolean {
+  return Boolean(cfg.apiKey) && cfg.enabled && cfg.health === "ok";
+}
+
+/** The ONE place that decides whether the prefilter is active. Anything short of
+ *  key + enabled + healthy → undefined → the orchestrator uses the bare provider
+ *  (zero Jev calls, zero prompt change). */
+export async function resolveJevJudge(
+  repository: { getSetting(key: string): Promise<string | null> },
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<JevJudge | undefined> {
+  const cfg = await getJevConfig(repository, env);
+  if (!isJevPrefilterActive(cfg) || !cfg.apiKey) return undefined;
+  return createJevJudge({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl });
 }
 
 export const DAILY_SWEEP_TIME_SETTING_KEY = "daily_sweep_time";
