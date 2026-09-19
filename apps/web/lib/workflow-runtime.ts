@@ -884,7 +884,7 @@ export async function runStartupMigrations(): Promise<void> {
  * shared one. model/resourceProvider/language stay global (shared author LLM/
  * PanSou) for v1 — per-account LLM/Prowlarr is a later refinement.
  */
-function buildAccountContextResolver(): ResolveAccountWorkerContext {
+export function buildAccountContextResolver(): ResolveAccountWorkerContext {
   return async (accountId: string, connectedStorageId?: string | null) => {
     // Per-account settings (account_settings → global → env) drive the agent
     // model, resource providers, language and quality — so each user's
@@ -900,12 +900,17 @@ function buildAccountContextResolver(): ResolveAccountWorkerContext {
     const driveProvider =
       (await getAccountStorageCredentials(accountId, connectedStorageId))?.provider ?? "pan115";
     const assrtToken = await getAssrtToken(scoped);
+    // Per-account: undefined unless THIS account set a key, enabled the prefilter
+    // and the save-time probe passed. Undefined → the orchestrator keeps the bare
+    // provider, so an unconfigured account costs exactly zero Jev calls.
+    const jevJudge = await resolveJevJudge(scoped);
     return {
       storage: await getWorkerStorageExecutor(accountId, connectedStorageId),
       resourceProvider: await getWorkerResourceProvider(scoped, driveProvider, accountId),
       storageProvider: driveProvider,
       model,
       ...(assrtToken === undefined ? {} : { assrtToken }),
+      ...(jevJudge === undefined ? {} : { jevJudge }),
       ...(preferredLanguage === undefined ? {} : { preferredLanguage }),
       ...(qualityPreference === undefined ? {} : { qualityPreference }),
       storageParentDirectoryId: parents.tv,
