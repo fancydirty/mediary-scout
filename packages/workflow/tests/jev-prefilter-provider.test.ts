@@ -100,7 +100,7 @@ describe("JevPrefilterProvider", () => {
     expect(out.prefilter?.dropped).toEqual([]);
   });
 
-  it("flags a partial judge result in reason + log while still applying the scores it got", async () => {
+  it("flags a partial judge result in failedChunks + log while still applying the scores it got", async () => {
     const lines: string[] = [];
     const partial: JevJudge = {
       judgeCandidates: async () => ({ scores: { c1: 0.9 }, model: "m", failedChunks: 1 }),
@@ -114,7 +114,8 @@ describe("JevPrefilterProvider", () => {
     const out = await p.search({ keyword: "交锋" });
     expect(out.candidates.map((c) => c.id)).toEqual(["c1", "c2"]); // c2 unscored → kept
     expect(out.prefilter).toMatchObject({ status: "applied" });
-    expect(out.prefilter?.reason).toMatch(/partial: 1 chunk/);
+    expect(out.prefilter?.failedChunks).toBe(1);
+    expect(out.prefilter?.reason).toBeUndefined();
     expect(lines.join("\n")).toContain("failedChunks=1");
   });
 

@@ -42,6 +42,7 @@ describe("createJevJudge", () => {
     expect(res.model).toBe("typesafe/jev-1.13-20260917");
     expect(res.inputTokens).toBe(100);
     expect(res.cost).toBeCloseTo(0.000004);
+    expect("failedChunks" in res).toBe(false);
   });
 
   it("chunks candidates beyond JEV_CHUNK_SIZE into parallel requests and merges scores/usage", async () => {
@@ -72,7 +73,7 @@ describe("createJevJudge", () => {
 
   it("falls back to the default base URL when baseUrl is blank", async () => {
     const captured: Captured[] = [];
-    const judge = createJevJudge({ apiKey: "k", baseUrl: "", fetchImpl: fetchReturning(() => ({ c0: 0.5 }), captured) });
+    const judge = createJevJudge({ apiKey: "k", baseUrl: "   ", fetchImpl: fetchReturning(() => ({ c0: 0.5 }), captured) });
     await judge.judgeCandidates({ target: { kind: "tv", title: "t", aliases: [] }, candidates: [{ id: "a", title: "x" }] });
     expect(captured[0]!.url).toBe(DEFAULT_JEV_BASE_URL);
   });
@@ -84,7 +85,7 @@ describe("createJevJudge", () => {
     const judge = createJevJudge({ apiKey: "sk-SECRET", fetchImpl: leaky });
     await expect(
       judge.judgeCandidates({ target: { kind: "tv", title: "t", aliases: [] }, candidates: [{ id: "a", title: "x" }] }),
-    ).rejects.toThrow(/Jev request failed: Error/);
+    ).rejects.toThrow(/^Jev request failed: Error$/);
     await expect(
       judge.judgeCandidates({ target: { kind: "tv", title: "t", aliases: [] }, candidates: [{ id: "a", title: "x" }] }),
     ).rejects.not.toThrow(/SECRET/);
@@ -101,31 +102,41 @@ describe("createJevJudge", () => {
     ).rejects.toThrow(/Jev request failed: TimeoutError/);
   });
 
-  it("does not relabel a timeout/abort as invalid JSON", async () => {
-    const abortish = (async () =>
+  const jsonThrowing = (name: string): typeof fetch =>
+    (async () =>
       ({
         ok: true,
         status: 200,
         json: async () => {
-          throw Object.assign(new Error("aborted"), { name: "TimeoutError" });
+          throw Object.assign(new Error("aborted"), { name });
         },
       }) as unknown as Response) as unknown as typeof fetch;
-    const judge = createJevJudge({ apiKey: "k", fetchImpl: abortish });
+
+  it("does not relabel a timeout as invalid JSON", async () => {
+    const judge = createJevJudge({ apiKey: "k", fetchImpl: jsonThrowing("TimeoutError") });
     await expect(
       judge.judgeCandidates({ target: { kind: "tv", title: "t", aliases: [] }, candidates: [{ id: "a", title: "x" }] }),
-    ).rejects.toThrow(/TimeoutError|aborted/);
+    ).rejects.toThrow(/^Jev request failed: TimeoutError$/);
+  });
+
+  it("does not relabel an abort as invalid JSON", async () => {
+    const judge = createJevJudge({ apiKey: "k", fetchImpl: jsonThrowing("AbortError") });
     await expect(
       judge.judgeCandidates({ target: { kind: "tv", title: "t", aliases: [] }, candidates: [{ id: "a", title: "x" }] }),
-    ).rejects.not.toThrow(/invalid JSON/);
+    ).rejects.toThrow(/^Jev request failed: AbortError$/);
   });
 
   it("resolves with partial results and failedChunks count when some (not all) chunks fail", async () => {
     const n = JEV_CHUNK_SIZE * 2 + 5;
     let call = 0;
+    let failedChunkCandidates = 0;
     const flaky = (async (_url: string, init: RequestInit) => {
       call += 1;
-      if (call === 2) return new Response("nope", { status: 429 });
       const body = JSON.parse(String(init.body));
+      if (call === 2) {
+        failedChunkCandidates = Object.keys(body.state.candidates).length;
+        return new Response("nope", { status: 429 });
+      }
       const answers = Object.fromEntries(
         Object.keys(body.state.candidates).map((k) => [k, { type: "noul", noul: 0.8 }]),
       );
@@ -140,7 +151,13 @@ describe("createJevJudge", () => {
       candidates: Array.from({ length: n }, (_, i) => ({ id: `id${i}`, title: `t${i}` })),
     });
     expect(call).toBe(3);
-    expect(Object.keys(res.scores)).toHaveLength(n - JEV_CHUNK_SIZE);
+    expect(failedChunkCandidates).toBeGreaterThan(0);
+    expect(Object.keys(res.scores)).toHaveLength(n - failedChunkCandidates);
+    // The chunks that answered are applied in full; the 429'd chunk's candidates are absent.
+    expect(res.scores.id0).toBe(0.8);
+    expect(res.scores[`id${n - 1}`]).toBe(0.8);
+    expect("id150" in res.scores).toBe(false);
+    expect(res.inputTokens).toBe(20);
     expect(res.failedChunks).toBe(1);
   });
 
@@ -186,5 +203,70 @@ describe("createJevJudge", () => {
     const res = await judge.judgeCandidates({ target: { kind: "tv", title: "t", aliases: [] }, candidates: [{ id: "a", title: "x" }] });
     expect("inputTokens" in res).toBe(false);
     expect("cost" in res).toBe(false);
+  });
+
+  it("trims the API key before putting it in the Authorization header", async () => {
+    // A key pasted into a settings textarea arrives with whitespace; undici rejects a
+    // header value containing a newline (and quotes the value verbatim when it does).
+    const captured: Captured[] = [];
+    const judge = createJevJudge({ apiKey: " sk-test\n", fetchImpl: fetchReturning(() => ({ c0: 0.5 }), captured) });
+    await judge.judgeCandidates({ target: { kind: "tv", title: "t", aliases: [] }, candidates: [{ id: "a", title: "x" }] });
+    expect((captured[0]!.init.headers as Record<string, string>).Authorization).toBe("Bearer sk-test");
+  });
+
+  it("appends the transport cause code when the platform provides one", async () => {
+    const refused = (async () => {
+      throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } });
+    }) as unknown as typeof fetch;
+    const judge = createJevJudge({ apiKey: "sk-SECRET", fetchImpl: refused });
+    await expect(
+      judge.judgeCandidates({ target: { kind: "tv", title: "t", aliases: [] }, candidates: [{ id: "a", title: "x" }] }),
+    ).rejects.toThrow(/^Jev request failed: TypeError \(ECONNREFUSED\)$/);
+  });
+
+  it("reports a mid-body connection drop as a request failure, not invalid JSON", async () => {
+    const dropped = (async () =>
+      ({
+        ok: true,
+        status: 200,
+        json: async () => {
+          throw new TypeError("terminated");
+        },
+      }) as unknown as Response) as unknown as typeof fetch;
+    const judge = createJevJudge({ apiKey: "k", fetchImpl: dropped });
+    await expect(
+      judge.judgeCandidates({ target: { kind: "tv", title: "t", aliases: [] }, candidates: [{ id: "a", title: "x" }] }),
+    ).rejects.toThrow(/^Jev request failed: TypeError$/);
+  });
+
+  it("reports a genuinely unparseable body as invalid JSON", async () => {
+    const notJson = (async () => new Response("not json", { status: 200 })) as unknown as typeof fetch;
+    const judge = createJevJudge({ apiKey: "k", fetchImpl: notJson });
+    await expect(
+      judge.judgeCandidates({ target: { kind: "tv", title: "t", aliases: [] }, candidates: [{ id: "a", title: "x" }] }),
+    ).rejects.toThrow(/^Jev returned invalid JSON$/);
+  });
+
+  it("treats a literal null body as a missing answers field", async () => {
+    const nullBody = (async () => new Response("null", { status: 200 })) as unknown as typeof fetch;
+    const judge = createJevJudge({ apiKey: "k", fetchImpl: nullBody });
+    await expect(
+      judge.judgeCandidates({ target: { kind: "tv", title: "t", aliases: [] }, candidates: [{ id: "a", title: "x" }] }),
+    ).rejects.toThrow(/Jev response invalid: no answers/);
+  });
+
+  it("throws when the merge does not cover every candidate (merge invariant)", async () => {
+    // Ids are minted `${snapshotId}_candidate_${index+1}` upstream so duplicates cannot
+    // occur in production; this pins the guard that would catch a chunking/merge bug.
+    const judge = createJevJudge({
+      apiKey: "k",
+      fetchImpl: fetchReturning((b) => Object.fromEntries(Object.keys(b.state.candidates).map((k) => [k, 0.5]))),
+    });
+    await expect(
+      judge.judgeCandidates({
+        target: { kind: "tv", title: "t", aliases: [] },
+        candidates: [{ id: "a", title: "x" }, { id: "a", title: "y" }],
+      }),
+    ).rejects.toThrow(/merge invariant/);
   });
 });

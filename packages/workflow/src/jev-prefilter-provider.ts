@@ -83,9 +83,10 @@ export class JevPrefilterProvider implements ResourceProvider {
       prefilter = {
         provider: "jev", model: result.model, status: "applied", scores, dropped, thresholds,
         durationMs: this.now() - t0,
-        // Still "applied" — the chunks that answered were applied — but the reason says
-        // the filter saw less than everything, so a thin drop list is explainable later.
-        ...(failedChunks === 0 ? {} : { reason: `partial: ${failedChunks} chunk(s) failed` }),
+        // Still "applied" — the chunks that answered were applied — but a dedicated
+        // field records that the filter saw less than everything, so a thin drop list is
+        // explainable later without overloading `reason` (which means "why not applied").
+        ...(failedChunks === 0 ? {} : { failedChunks }),
         ...(result.inputTokens === undefined ? {} : { inputTokens: result.inputTokens }),
         ...(result.cost === undefined ? {} : { cost: result.cost }),
       };

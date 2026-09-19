@@ -158,6 +158,9 @@ export interface SnapshotPrefilter {
   durationMs: number;
   inputTokens?: number;
   cost?: number;
+  /** Chunks the judge could not answer (their candidates were kept unjudged). Only
+   *  present when > 0; status stays "applied". */
+  failedChunks?: number;
 }
 
 export interface AgentDecision {

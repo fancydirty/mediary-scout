@@ -29,6 +29,9 @@ interface DecisionsResponse {
  *  warns an unknown outcome may already be billed. Errors never include the key. */
 export function createJevJudge(config: JevClientConfig): JevJudge {
   if (!config.apiKey || config.apiKey.trim() === "") throw new Error("Jev API key is blank");
+  // Validated trimmed, so SEND trimmed: a key pasted from a settings textarea carries a
+  // trailing newline, and undici rejects a header value containing one.
+  const apiKey = config.apiKey.trim();
   // A whitespace-only baseUrl from a settings row must not POST to "" (same-origin).
   const baseUrl = config.baseUrl?.trim() || DEFAULT_JEV_BASE_URL;
   const fetchImpl = config.fetchImpl ?? ((input, init) => globalThis.fetch(input, init));
@@ -55,7 +58,7 @@ export function createJevJudge(config: JevClientConfig): JevJudge {
     try {
       response = await fetchImpl(baseUrl, {
         method: "POST",
-        headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
+        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(timeoutMs),
       });
@@ -64,18 +67,26 @@ export function createJevJudge(config: JevClientConfig): JevJudge {
       // sk-…" is an invalid header value.'), and this message is persisted verbatim into
       // prefilter.reason in the DB. Only the error name is ever allowed out.
       // A timeout surfaces here too, as name "TimeoutError" (AbortSignal.timeout's reason).
-      throw new Error(`Jev request failed: ${error instanceof Error ? error.name : "unknown"}`);
+      // The cause code (ECONNREFUSED/ENOTFOUND/…) is a fixed enum — it cannot carry the
+      // header value — and it is the one bit that makes a transport failure diagnosable.
+      const name = error instanceof Error ? error.name : "unknown";
+      const cause = (error as { cause?: { code?: unknown } })?.cause;
+      const code = typeof cause?.code === "string" ? ` (${cause.code})` : "";
+      throw new Error(`Jev request failed: ${name}${code}`);
     }
     if (!response.ok) throw new Error(`Jev HTTP ${response.status}`);
     let parsed: DecisionsResponse;
     try {
       parsed = (await response.json()) as DecisionsResponse;
     } catch (error) {
-      const name = error instanceof Error ? error.name : "";
-      if (name === "TimeoutError" || name === "AbortError") throw new Error(`Jev request failed: ${name}`);
-      throw new Error("Jev returned invalid JSON");
+      // Only a real parse failure is "invalid JSON". A connection dropped mid-body is a
+      // TypeError("terminated"), an aborted read an AbortError — calling those bad JSON
+      // sends the next reader hunting a parser bug that does not exist.
+      const name = error instanceof Error ? error.name : "unknown";
+      throw new Error(name === "SyntaxError" ? "Jev returned invalid JSON" : `Jev request failed: ${name}`);
     }
-    const answers = parsed.answers;
+    // A literal `null` body parses to null; `parsed.answers` would throw a raw TypeError.
+    const answers = parsed?.answers;
     if (!answers || typeof answers !== "object") throw new Error("Jev response invalid: no answers");
     const scores: Record<string, number> = {};
     input.candidates.forEach((candidate, i) => {
