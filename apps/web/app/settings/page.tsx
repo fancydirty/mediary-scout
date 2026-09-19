@@ -15,6 +15,7 @@ import { LlmConfigForm } from "../../components/llm-config-form";
 import { TmdbApiKeyForm } from "../../components/tmdb-api-key-form";
 import { AssrtTokenForm } from "../../components/assrt-token-form";
 import { ProwlarrConfigForm } from "../../components/prowlarr-config-form";
+import { JevPrefilterForm } from "../../components/jev-prefilter-form";
 import { PanSouConfigForm } from "../../components/pansou-config-form";
 import { DailySweepForm } from "../../components/daily-sweep-form";
 import { PatrolNowButton } from "../../components/patrol-now-button";
@@ -48,6 +49,8 @@ import {
   ASSRT_TOKEN_SETTING_KEY,
   PROWLARR_BASE_URL_SETTING_KEY,
   PROWLARR_API_KEY_SETTING_KEY,
+  getJevConfig,
+  isJevPrefilterActive,
   PANSOU_BASE_URL_SETTING_KEY,
   resolveGlobalWorkspace,
   resolveIsDesktop,
@@ -327,6 +330,10 @@ async function ResourceProviderSection() {
   const pansouBaseURL = (await repository.getSetting(PANSOU_BASE_URL_SETTING_KEY)) ?? "";
   const prowlarrBaseURL = (await repository.getSetting(PROWLARR_BASE_URL_SETTING_KEY)) ?? "";
   const prowlarrApiKeySet = Boolean((await repository.getSetting(PROWLARR_API_KEY_SETTING_KEY))?.trim());
+  // One read, one rule: getJevConfig applies the DB→env fallback and
+  // isJevPrefilterActive is the same go/no-go the worker uses, so the badge
+  // cannot drift from what actually runs.
+  const jev = await getJevConfig(repository);
   // Prowlarr (磁力/PT) only works for brands that support magnet (115). Hide it
   // when every connected drive is 夸克 (no magnet API). Shown for legacy/env-only
   // setups (no connected_storages rows) so we never hide it from a working 115.
@@ -358,6 +365,14 @@ async function ResourceProviderSection() {
           </p>
         </>
       ) : null}
+      <div style={{ height: 18 }} />
+      <JevPrefilterForm
+        baseUrl={jev.baseUrl}
+        apiKeySet={Boolean(jev.apiKey)}
+        enabled={jev.enabled}
+        healthy={jev.health === "ok"}
+        active={isJevPrefilterActive(jev)}
+      />
     </section>
   );
 }
