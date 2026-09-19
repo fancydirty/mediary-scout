@@ -225,7 +225,11 @@ for (const t of titles) {
     for (let attempt = 1; attempt <= 2; attempt++) {
       console.log(`\n=== ${label} — prefilter ${arm.toUpperCase()} (drive → ${arm === "off" ? "A" : "B"})${attempt > 1 ? ` — attempt ${attempt}` : ""}`);
       await waitForIdle();
-      if (PRE_ARM_REMOTE) { console.log(`    pre-arm: ${PRE_ARM_REMOTE}`); const out = ssh(PRE_ARM_REMOTE); if (out) console.log(out.split("\n").map((l) => `      ${l}`).join("\n")); }
+      if (PRE_ARM_REMOTE) {
+        console.log(`    pre-arm: ${PRE_ARM_REMOTE}`);
+        try { const out = ssh(PRE_ARM_REMOTE); if (out) console.log(out.split("\n").map((l) => `      ${l}`).join("\n")); }
+        catch (error) { console.log(`    pre-arm hook failed (continuing): ${String((error as { stderr?: unknown }).stderr ?? error).split("\n")[0]}`); }
+      }
       resetTracking();
       pointDriveAt(armCids);
       setPrefilter(arm === "on");
