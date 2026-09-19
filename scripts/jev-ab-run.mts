@@ -87,14 +87,32 @@ if (titles.length === 0) { console.error("no titles given"); process.exit(2); }
 const PG = `docker exec -e PGPASSWORD=mediatrack ${PROJECT}-postgres-1 psql -U mediatrack -d mediatrack -tA`;
 const WEB = `${PROJECT}-web-1`;
 
-/** One short ssh call. Output trimmed. Throws on non-zero exit. */
+/** One short ssh call. Output trimmed. Throws on non-zero exit. Transient transport
+ *  failures (the CF tunnel hiccups, "Network is unreachable", timeouts) are retried
+ *  with backoff — a 2-hour A/B must not die on one dropped hop. */
 function ssh(remote: string): string {
   if (DRY) { console.log(`[dry] ssh ${HOST} ${remote}`); return ""; }
-  return execFileSync("ssh", ["-o", "ConnectTimeout=20", "-o", "ServerAliveInterval=10", HOST, remote], {
-    encoding: "utf8",
-    timeout: 120_000,
-    maxBuffer: 16 * 1024 * 1024,
-  }).trim();
+  const delays = [0, 5_000, 20_000, 60_000];
+  let lastError: unknown;
+  for (const delay of delays) {
+    if (delay > 0) { console.log(`    (ssh retry in ${delay / 1000}s)`); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay); }
+    try {
+      return execFileSync("ssh", ["-o", "ConnectTimeout=20", "-o", "ServerAliveInterval=10", HOST, remote], {
+        encoding: "utf8",
+        timeout: 120_000,
+        maxBuffer: 16 * 1024 * 1024,
+        stdio: ["ignore", "pipe", "pipe"],
+      }).trim();
+    } catch (error) {
+      lastError = error;
+      const stderr = String((error as { stderr?: unknown }).stderr ?? "");
+      const status = (error as { status?: unknown }).status;
+      // status 255 = ssh itself failed (transport); anything else came from the remote command.
+      if (status !== 255 && !/ETIMEDOUT|timed out/i.test(String(error))) throw error;
+      console.log(`    (ssh transport failure: ${stderr.trim().split("\n")[0] ?? String(error)})`);
+    }
+  }
+  throw lastError;
 }
 const sq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 const psql = (sql: string) => ssh(`${PG} -c ${sq(sql)}`);
@@ -104,6 +122,19 @@ function readCids(): Record<"A" | "B", Arm> {
   const raw = ssh(`cat ${sq(CIDS_FILE)}`);
   if (DRY) return { A: { root: "a", movies: "a", tv: "a", anime: "a" }, B: { root: "b", movies: "b", tv: "b", anime: "b" } };
   return JSON.parse(raw) as Record<"A" | "B", Arm>;
+}
+
+/** Never wipe the tables while the worker is mid-run (a crashed/restarted harness could
+ *  otherwise TRUNCATE under an in-flight acquisition and corrupt its persistence). */
+async function waitForIdle(): Promise<void> {
+  const deadline = Date.now() + TIMEOUT_MIN * 60_000;
+  while (Date.now() < deadline) {
+    const busy = psql("SELECT count(*) FROM workflow_runs WHERE payload->>'status' IN ('queued','running')");
+    if (DRY || busy === "0") return;
+    console.log(`    waiting for ${busy} in-flight run(s) to finish before resetting…`);
+    await sleep(20_000);
+  }
+  throw new Error("instance did not become idle");
 }
 
 function resetTracking(): void {
@@ -189,6 +220,7 @@ for (const t of titles) {
     let facts: RunFacts | undefined;
     for (let attempt = 1; attempt <= 2; attempt++) {
       console.log(`\n=== ${label} — prefilter ${arm.toUpperCase()} (drive → ${arm === "off" ? "A" : "B"})${attempt > 1 ? ` — attempt ${attempt}` : ""}`);
+      await waitForIdle();
       resetTracking();
       pointDriveAt(armCids);
       setPrefilter(arm === "on");
