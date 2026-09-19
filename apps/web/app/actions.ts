@@ -713,6 +713,86 @@ export async function clearProwlarrConfigAction(): Promise<PushSettingsActionRes
   }
 }
 
+export async function saveJevConfigAction(input: {
+  apiKey: string;
+  baseUrl: string;
+}): Promise<PushSettingsActionResult> {
+  assertNotDemo();
+  try {
+    const {
+      getWorkflowRepository,
+      getCurrentAccountId,
+      JEV_API_KEY_SETTING_KEY,
+      JEV_BASE_URL_SETTING_KEY,
+      JEV_HEALTH_SETTING_KEY,
+      JEV_PREFILTER_ENABLED_SETTING_KEY,
+    } = await import("../lib/workflow-runtime");
+    const { DEFAULT_JEV_BASE_URL } = await import("@media-track/workflow");
+    const { probeJev } = await import("../lib/jev-probe");
+    const repository = getWorkflowRepository();
+    const accountId = await getCurrentAccountId();
+    // 留空 = 沿用已保存的 key(同 Prowlarr 表单语义)。
+    const apiKey =
+      input.apiKey.trim() ||
+      ((await repository.getAccountSetting(accountId, JEV_API_KEY_SETTING_KEY)) ?? "").trim();
+    if (!apiKey) return { success: false, message: "需要 API Key（OpenRouter 的 sk-or-… 即可）。" };
+    const baseUrl = input.baseUrl.trim() || DEFAULT_JEV_BASE_URL;
+    // 存之前真打一次:一个打不通的 key 被保存后,预筛会在每次搜索上静默 fail-open,
+    // 用户以为开了其实从没生效 —— 与 PanSou 自建源「活了 6 天」是同一种病。
+    const probe = await probeJev({ apiKey, baseUrl });
+    if (!probe.ok) return { success: false, message: probe.message };
+    await repository.setAccountSetting(accountId, JEV_API_KEY_SETTING_KEY, apiKey);
+    await repository.setAccountSetting(accountId, JEV_BASE_URL_SETTING_KEY, baseUrl);
+    await repository.setAccountSetting(accountId, JEV_HEALTH_SETTING_KEY, "ok");
+    await repository.setAccountSetting(accountId, JEV_PREFILTER_ENABLED_SETTING_KEY, "1");
+    return { success: true };
+  } catch (error) {
+    return { success: false, message: `保存失败：${String(error)}` };
+  }
+}
+
+export async function clearJevConfigAction(): Promise<PushSettingsActionResult> {
+  assertNotDemo();
+  try {
+    const {
+      getWorkflowRepository,
+      getCurrentAccountId,
+      JEV_API_KEY_SETTING_KEY,
+      JEV_BASE_URL_SETTING_KEY,
+      JEV_HEALTH_SETTING_KEY,
+      JEV_PREFILTER_ENABLED_SETTING_KEY,
+    } = await import("../lib/workflow-runtime");
+    const repository = getWorkflowRepository();
+    const accountId = await getCurrentAccountId();
+    for (const key of [
+      JEV_API_KEY_SETTING_KEY,
+      JEV_BASE_URL_SETTING_KEY,
+      JEV_HEALTH_SETTING_KEY,
+      JEV_PREFILTER_ENABLED_SETTING_KEY,
+    ]) {
+      await repository.setAccountSetting(accountId, key, "");
+    }
+    return { success: true };
+  } catch (error) {
+    return { success: false, message: `清除失败：${String(error)}` };
+  }
+}
+
+export async function setJevPrefilterEnabledAction(enabled: boolean): Promise<PushSettingsActionResult> {
+  assertNotDemo();
+  try {
+    const { getWorkflowRepository, getCurrentAccountId, JEV_PREFILTER_ENABLED_SETTING_KEY } = await import(
+      "../lib/workflow-runtime"
+    );
+    const repository = getWorkflowRepository();
+    const accountId = await getCurrentAccountId();
+    await repository.setAccountSetting(accountId, JEV_PREFILTER_ENABLED_SETTING_KEY, enabled ? "1" : "0");
+    return { success: true };
+  } catch (error) {
+    return { success: false, message: `保存失败：${String(error)}` };
+  }
+}
+
 export async function testPushNotificationAction(
   settings: Record<string, string>,
 ): Promise<PushSettingsActionResult> {
