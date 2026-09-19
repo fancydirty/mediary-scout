@@ -30,6 +30,9 @@
 //   --arms on,off        run only these arms (default off,on)
 //   --timeout-min 30     per-run timeout
 //   --dry                print the remote commands instead of running them
+//   --pre-arm-remote "<cmd>"   a command run ON the host before every arm (after the instance is
+//                        idle, before the reset) — e.g. purge the 115 offline-task records the
+//                        previous arm added, so 115's "任务已存在" refusal cannot bias the next arm
 //
 // ab-cids.json (on the router, produced by the setup script):
 //   { "A": { "root": "...", "movies": "...", "tv": "...", "anime": "..." }, "B": { ... } }
@@ -75,6 +78,7 @@ const OUT = opt("out", "/tmp/jev-ab-results.json");
 const ARMS = opt("arms", "off,on").split(",").map((a) => a.trim()) as Array<"off" | "on">;
 const TIMEOUT_MIN = Number(opt("timeout-min", "30"));
 const DRY = args.includes("--dry");
+const PRE_ARM_REMOTE = args.includes("--pre-arm-remote") ? opt("pre-arm-remote") : undefined;
 const titles = args
   .filter((a, i) => !a.startsWith("--") && !(i > 0 && args[i - 1]!.startsWith("--") && args[i - 1] !== "--dry"))
   .map((spec) => {
@@ -221,6 +225,7 @@ for (const t of titles) {
     for (let attempt = 1; attempt <= 2; attempt++) {
       console.log(`\n=== ${label} — prefilter ${arm.toUpperCase()} (drive → ${arm === "off" ? "A" : "B"})${attempt > 1 ? ` — attempt ${attempt}` : ""}`);
       await waitForIdle();
+      if (PRE_ARM_REMOTE) { console.log(`    pre-arm: ${PRE_ARM_REMOTE}`); const out = ssh(PRE_ARM_REMOTE); if (out) console.log(out.split("\n").map((l) => `      ${l}`).join("\n")); }
       resetTracking();
       pointDriveAt(armCids);
       setPrefilter(arm === "on");
