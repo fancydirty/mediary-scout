@@ -16,9 +16,10 @@
 // Run:  OPENROUTER_API_KEY=… npx tsx scripts/jev-prefilter-replay.mts [limit]
 //       … --sentinels-only        wording guard only (no labels.json needed)
 //       … --replay-only [limit]   replay only
+//       … --dump <file>           append one JSON line per replayed snapshot (for analysis)
 //       JEV_FAKE=1 …              stub judge, every score 0.95 — exercises the plumbing
 //                                 and the FAIL path without a network call or a key.
-import { readFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 import { JevPrefilterProvider, createJevJudge, classifyJevScore } from "../packages/workflow/src/index.js";
 import type {
   JevJudge,
@@ -31,7 +32,11 @@ const args = process.argv.slice(2);
 const runSentinels = !args.includes("--replay-only");
 const runReplay = !args.includes("--sentinels-only");
 const limitArg = args.find((a) => !a.startsWith("--"));
-const limit = limitArg === undefined ? Infinity : Number(limitArg);
+// --dump <file>: write one JSON line per replayed snapshot (target, scores, dropped,
+// floored) so the floor's cost can be broken down by title after the fact.
+const dumpIdx = args.indexOf("--dump");
+const dumpPath = dumpIdx >= 0 ? args[dumpIdx + 1] : undefined;
+const limit = limitArg === undefined || limitArg === dumpPath ? Infinity : Number(limitArg);
 
 // The stub exists so the script itself can be exercised (and its exit codes proven)
 // without spending a call. It scores everything 0.95, so every "drop" sentinel FAILS
@@ -189,6 +194,9 @@ if (runReplay) {
     // guarantee, so a wording change that quietly leans on the floor is visible here.
     floored += out.prefilter.floored?.length ?? 0;
     cost += out.prefilter.cost ?? 0;
+    if (dumpPath) {
+      appendFileSync(dumpPath, JSON.stringify({ run_id: r.run_id, title: r.title, title_type: r.title_type, year, keyword: r.keyword, selected: r.selected, candidates: cands.map((c) => c.title), scores: out.prefilter.scores, dropped: out.prefilter.dropped, floored: out.prefilter.floored ?? [] }) + "\n");
+    }
     const kept = new Set(out.candidates.map((c) => c.id));
     for (const c of cands) {
       // Title-less rows (date headers, bare URLs) are never judged, so counting them
@@ -210,7 +218,13 @@ if (runReplay) {
     console.log("FAIL: prefilter dropped an agent-selected titled candidate");
     process.exit(1);
   }
-  if (total > 0 && dropped / total < 0.4) { console.log("WARN: drop rate below 40% (soft metric)"); }
+  // Soft metric provenance: 48.4% batched without the containment floor (2026-09-20),
+  // 32.2% with it — the floor keeps 1,604 sub-threshold rows whose title contains the
+  // target (mostly 交锋联盟/寒蝉鸣泣之时 noise) to guarantee 0 selected-drop (it rescued
+  // the 权利交锋 mislabel at p=0.04 and the real 攻壳机动队 2026 E01 at p=0.29). Those rows
+  // still reach the agent flagged ⚠ with their score, so the cleanup is larger than the
+  // raw drop rate suggests. Below 25% would mean the wording or the floor regressed.
+  if (total > 0 && dropped / total < 0.25) { console.log("WARN: drop rate below 25% (soft metric)"); }
 }
 
 console.log("PASS");
