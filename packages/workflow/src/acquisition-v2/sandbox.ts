@@ -13,6 +13,7 @@ import { isSystemicTransferBlockMessage } from "./transfer-block.js";
 import { animeSearchTabooWarnings, type SearchProfile } from "./search-profile.js";
 import type { AuditEvent } from "../domain.js";
 import { isMergedSourceEvidenceUsable, type MergedSourceHealth } from "../resource-source-health.js";
+import { classifyJevScore } from "../jev-judge.js";
 
 /** Quality / subtitle / source tokens that PanSou share titles almost never carry,
  *  so appending them collapses recall (实测归零). Case-insensitive; word-ish so
@@ -840,8 +841,13 @@ export class TaskSandbox {
 
     let document = `📋 Raw snapshot (${total} candidates):\n\n`;
 
+    // A score in the uncertain band means the judge could not tell this apart from a
+    // near-name (《权利交锋》 vs 《交锋》) — it is kept, and flagged so the agent looks twice.
+    const scores = this.rawSnapshot.prefilterScores ?? {};
     for (const candidate of truncated) {
-      document += `[${candidate.id}] ${candidate.title}\n`;
+      const score = scores[candidate.id];
+      const flag = score !== undefined && classifyJevScore(score) === "uncertain" ? ` ⚠ 相关度存疑(${score.toFixed(2)})` : "";
+      document += `[${candidate.id}] ${candidate.title}${flag}\n`;
     }
 
     if (remaining > 0) {

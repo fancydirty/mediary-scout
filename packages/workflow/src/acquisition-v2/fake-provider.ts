@@ -27,6 +27,9 @@ export interface ResourceSnapshotV2 {
    *  在 candidates 层面完全同形（都是空数组）。丢掉它，agent 就只能上报
    *  reportNoCoverage，用户看到「暂未找到可用资源」，系统故障被甩锅给资源。 */
   sourceHealth?: MergedSourceHealth;
+  /** candidateId → Jev P(refers to target), only when a prefilter ran. The sandbox
+   *  renders the uncertain band as ⚠ 相关度存疑 so the agent knows where to look twice. */
+  prefilterScores?: Record<string, number>;
 }
 
 /** The provider surface the sandbox depends on — the fake and the real PanSou

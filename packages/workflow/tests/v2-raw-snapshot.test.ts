@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { TaskSandbox } from "../src/acquisition-v2/sandbox.js";
 import { FakeResourceProviderV2 } from "../src/acquisition-v2/fake-provider.js";
+import type { ResourceProviderV2, ResourceSnapshotV2 } from "../src/acquisition-v2/fake-provider.js";
 import { Storage115Simulator } from "../src/acquisition-v2/storage-115-simulator.js";
 import { buildTvAnimeSystemPrompt, buildMovieSystemPrompt } from "../src/acquisition-v2/task-agents.js";
 
@@ -165,5 +166,28 @@ describe("system prompt carries subtitle snapshot pointer (symmetric with raw po
     expect(buildTvAnimeSystemPrompt({ subtitle: true, subtitleCandidateCount: 0 })).not.toContain(
       "SUBTITLE SNAPSHOT",
     );
+  });
+});
+
+describe("viewResourceSnapshot renders the Jev uncertainty flag", () => {
+  it("appends ⚠ 相关度存疑(p) only for candidates in the uncertain band", async () => {
+    const provider: ResourceProviderV2 = {
+      async search(keyword: string): Promise<ResourceSnapshotV2> {
+        return {
+          id: "s", keyword,
+          candidates: [{ id: "c0", title: "交锋 全24集" }, { id: "c1", title: "权利交锋 S01E08" }, { id: "c2", title: "📅 9月6日" }],
+          prefilterScores: { c0: 0.95, c1: 0.52 },
+        };
+      },
+    };
+    const storage = new Storage115Simulator({ packs: {} });
+    const staging = await storage.createDirectory({ name: "staging", parentId: "root" });
+    const season = await storage.createDirectory({ name: "Season 1", parentId: "root" });
+    const sandbox = new TaskSandbox({ provider, storage, stagingDirectoryId: staging, targetSeasonDirectoryIds: { 1: season }, need: ["S01E01"] });
+    await sandbox.primeRawSnapshot("交锋");
+    const doc = sandbox.viewResourceSnapshot().document;
+    expect(doc).toContain("[c0] 交锋 全24集\n");
+    expect(doc).toContain("[c1] 权利交锋 S01E08 ⚠ 相关度存疑(0.52)\n");
+    expect(doc).toContain("[c2] 📅 9月6日\n");
   });
 });
