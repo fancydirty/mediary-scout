@@ -4,6 +4,7 @@ import { runAcquisitionV2Workflow } from "../src/acquisition-v2/workflow-v2.js";
 import { FakeStorageExecutor } from "../src/fakes.js";
 import type { ResourceProvider } from "../src/ports.js";
 import type { ResourceSnapshot } from "../src/domain.js";
+import type { JevJudge, JevJudgeInput } from "../src/jev-judge.js";
 
 const USAGE = {
   inputTokens: { total: undefined, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
@@ -110,5 +111,32 @@ describe("runAcquisitionV2Workflow — outer orchestration (dirs → sync → ag
     // obtained reflects the DB mark; stillMissing is the rest.
     expect(result.obtained).toEqual(["S01E01"]);
     expect(result.stillMissing).toEqual(["S01E02", "S01E03"]);
+  });
+});
+
+describe("runAcquisitionV2Workflow forwards jevJudge to the orchestrator", () => {
+  it("the judge is invoked for the pre-warm search when supplied", async () => {
+    const seen: JevJudgeInput[] = [];
+    const jevJudge: JevJudge = { judgeCandidates: async (input) => { seen.push(input); return { scores: {}, model: "m" }; } };
+    // One real candidate so the prefilter has something to judge (empty snapshots skip the judge).
+    const provider: ResourceProvider = {
+      search: async ({ keyword }) => ({
+        id: `snap_${keyword}`, provider: "pansou", keyword, createdAt: "2026-09-19T00:00:00.000Z",
+        candidates: [{ id: "c1", snapshotId: `snap_${keyword}`, index: 0, title: "Show S01", type: "115", source: "pansou", providerPayload: {} }],
+      }),
+    };
+    await runAcquisitionV2Workflow({
+      provider,
+      executor: new FakeStorageExecutor(),
+      model: searchThenReportModel(),
+      workflowRunId: "run-jev",
+      title: { name: "Show", year: 2024, aliases: ["The Show"], tmdbId: 42 },
+      categoryParentId: "tv_root",
+      seasons: [{ seasonNumber: 1, latestAiredEpisode: 3 }],
+      qualityPreference: "1080p",
+      jevJudge,
+    });
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen[0]!.target).toEqual({ kind: "tv", title: "Show", aliases: ["The Show"], year: 2024 });
   });
 });

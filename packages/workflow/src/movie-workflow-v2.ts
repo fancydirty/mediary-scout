@@ -21,6 +21,7 @@ import type { DeadLinkStore } from "./acquisition-v2/dead-links.js";
 import { readLandedSize, type LandedSize } from "./acquisition-v2/landed-size.js";
 import type { AgentToolEvent } from "./acquisition-v2/activity.js";
 import { runAcquisitionV2 } from "./acquisition-v2/orchestrator.js";
+import type { JevJudge } from "./jev-judge.js";
 import { getQualityGuidance, getSearchRecipe } from "./acquisition-v2/search-profile.js";
 import { ensureMediaLibraryDirectory } from "./media-library-folder.js";
 
@@ -51,6 +52,8 @@ export interface RunMovieAcquisitionV2Request {
   storageProvider?: string;
   /** assrt token (Settings → 字幕来源). Undefined = 字幕流程不触发。 */
   assrtToken?: string;
+  /** Optional Jev candidate prefilter (see orchestrator.jevJudge). */
+  jevJudge?: JevJudge;
   deadLinkStore?: DeadLinkStore;
   onProgress?: (event: AgentToolEvent) => void;
   now?: () => string;
@@ -100,6 +103,7 @@ export async function runMovieAcquisitionV2(
     ...(request.title.originCountries === undefined ? {} : { originCountries: request.title.originCountries }),
     ...(request.storageProvider === undefined ? {} : { storageProvider: request.storageProvider }),
     ...(request.assrtToken === undefined ? {} : { assrtToken: request.assrtToken }),
+    ...(request.jevJudge === undefined ? {} : { jevJudge: request.jevJudge }),
     ...(request.deadLinkStore ? { deadLinkStore: request.deadLinkStore } : {}),
     ...(request.onProgress ? { onProgress: request.onProgress } : {}),
   });
