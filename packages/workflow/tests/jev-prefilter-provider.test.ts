@@ -157,6 +157,10 @@ describe("JevPrefilterProvider containment floor", () => {
     // The raw score is never rewritten to buy the keep: the agent sees 0.04 on the row.
     expect(out.prefilter?.scores.c2).toBe(0.04);
     expect(lines.join("\n")).toContain("floored=1");
+    // The counter covers uncertain-band AND floored rows, so it is named for what it
+    // means to the agent (a ⚠ on the row), not for one of the two bands it comes from.
+    expect(lines.join("\n")).toContain("flagged=1");
+    expect(lines.join("\n")).not.toContain("uncertain=");
   });
 
   it("an alias in the candidate title floors it too", async () => {
@@ -183,5 +187,37 @@ describe("JevPrefilterProvider containment floor", () => {
     expect(out.candidates.map((c) => c.id)).toEqual(["c1"]);
     expect("floored" in out.prefilter!).toBe(false);
     expect(lines.join("\n")).not.toContain("floored=");
+  });
+});
+
+describe("JevPrefilterProvider floor-rate log", () => {
+  const lines: string[] = [];
+  const run = async (titles: string[], scores: Record<string, number>) => {
+    lines.length = 0;
+    const p = new JevPrefilterProvider({ inner: inner(snapshot(titles)), target, judge: judge(scores), log: (line) => lines.push(line) });
+    await p.search({ keyword: "交锋" });
+    return lines.join("\n");
+  };
+
+  it("reports floorRate when the floor carried at least half of the judged candidates", async () => {
+    // A batch where the floor does most of the keeping is a wording regression in
+    // disguise: the judge stopped recognising the target and only containment saved it.
+    // Silent in the drop rate, loud here.
+    const line = await run(
+      ["权利交锋 S01E08", "交锋联盟 23", "交锋 (2015) 全集", "无敌少侠"],
+      { c1: 0.04, c2: 0.05, c3: 0.06, c4: 0.02 },
+    );
+    expect(line).toContain("floored=3");
+    expect(line).toContain("floorRate=75%");
+  });
+
+  it("50% is inside the band (≥), and a minority floor prints no rate at all", async () => {
+    expect(await run(["权利交锋 S01E08", "无敌少侠"], { c1: 0.04, c2: 0.02 })).toContain("floorRate=50%");
+    const quiet = await run(
+      ["权利交锋 S01E08", "无敌少侠", "少年歌行", "铁拳教育"],
+      { c1: 0.04, c2: 0.02, c3: 0.02, c4: 0.02 },
+    );
+    expect(quiet).toContain("floored=1");
+    expect(quiet).not.toContain("floorRate=");
   });
 });

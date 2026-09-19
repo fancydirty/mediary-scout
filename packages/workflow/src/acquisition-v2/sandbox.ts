@@ -880,8 +880,9 @@ export class TaskSandbox {
       };
     }
 
-    // A score in the uncertain band means the judge could not tell this apart from a
-    // near-name (《权利交锋》 vs 《交锋》) — it is kept, and flagged so the agent looks twice.
+    // A flag means the judge was not confident this is the target: the uncertain band,
+    // or a drop-band row the containment floor kept because its title contains the
+    // target's name. Kept and flagged so the agent looks twice.
     // Same presenter as searchResources: one story, two read paths.
     const view = presentSnapshotForAgent(this.rawSnapshot, RAW_SNAPSHOT_ROW_LIMIT);
     const candidates = view.snapshot.candidates;

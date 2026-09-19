@@ -59,11 +59,38 @@ export function classifyJevScore(score: number): JevBand {
   return "keep";
 }
 
-/** Loose title normalisation for containment checks: case-folded, whitespace and the
- *  usual title punctuation removed. NOT a matcher for identity — only for "the target's
- *  name appears verbatim inside this candidate title". */
+/** Loose title normalisation for containment checks: NFKC-folded, case-folded, whitespace
+ *  and the usual title punctuation removed. NOT a matcher for identity — only for "the
+ *  target's name appears verbatim inside this candidate title".
+ *
+ *  NFKC runs BEFORE the case fold on purpose: `"Ｔ".toLowerCase()` is the full-width `ｔ`,
+ *  so folding case first would leave 《ＴＨＥ ＢＯＹＳ》 and "The Boys" as two different keys
+ *  and the floor would silently miss the release names that use full-width latin. The
+ *  full-width ＆＋＃ in the stripped set are already ASCII by then — they stay so the set
+ *  still reads as a complete list of what a release name uses as a separator. */
 export function normalizeTitleForContainment(s: string): string {
-  return s.toLowerCase().replace(/[\s《》〈〉「」『』()（）\[\]【】{}<>:：;；·・\-–—_.,，、。!！?？|/\\'"“”‘’~～*]+/g, "");
+  return s.normalize("NFKC").toLowerCase().replace(/[\s《》〈〉「」『』()（）\[\]【】{}<>:：;；·・\-–—_.,，、。!！?？|/\\'"“”‘’~～*&＆+＋#＃]+/g, "");
+}
+
+/** The target's names, normalised once and with the unusable ones dropped (an empty or
+ *  punctuation-only title/alias would make `includes` true for everything). Hoist this
+ *  out of a candidate loop: the provider computes it once per search, not per row. */
+export function normalizedTargetNames(target: { title: string; aliases: string[] }): string[] {
+  const names: string[] = [];
+  for (const name of [target.title, ...target.aliases]) {
+    const normalized = normalizeTitleForContainment(name);
+    if (normalized.length > 0) names.push(normalized);
+  }
+  return names;
+}
+
+/** True when the candidate title contains any of the already-normalised target names.
+ *  An empty list floors nothing — see `titleContainsTarget` for what this is for. */
+export function titleContainsAny(candidateTitle: string, normalizedNames: string[]): boolean {
+  if (normalizedNames.length === 0) return false;
+  const c = normalizeTitleForContainment(candidateTitle);
+  if (!c) return false;
+  return normalizedNames.some((n) => c.includes(n));
 }
 
 /** True when the candidate title contains the target title or any alias verbatim (after
@@ -72,14 +99,18 @@ export function normalizeTitleForContainment(s: string): string {
  *  (old, asymmetric, hedged) yet was the pack the agent actually selected in production.
  *  A prefilter's only unacceptable failure is dropping the right one, so containment is a
  *  structural floor rather than a judgement — deliberately loose: 《交锋联盟》 floors too,
- *  keeps its low score, and the agent reads the title and decides. */
+ *  keeps its low score, and the agent reads the title and decides.
+ *
+ *  Loose by design. Cost measured on 9,968 production candidates (2026-09-20): 1,604
+ *  sub-threshold rows floored, 472 of them for the 1-character target 《蝉》 (寒蝉鸣泣之时
+ *  noise) and 1,098 for 《交锋》 (交锋联盟). Every floored row still reaches the agent
+ *  flagged with its score, so the cost is noise the agent already handled before the
+ *  prefilter existed — never a wrong drop.
+ *
+ *  Convenience wrapper: a caller with more than one candidate should hoist
+ *  `normalizedTargetNames` out of the loop and call `titleContainsAny`. */
 export function titleContainsTarget(candidateTitle: string, target: { title: string; aliases: string[] }): boolean {
-  const c = normalizeTitleForContainment(candidateTitle);
-  if (!c) return false;
-  return [target.title, ...target.aliases].some((t) => {
-    const n = normalizeTitleForContainment(t);
-    return n.length > 0 && c.includes(n);
-  });
+  return titleContainsAny(candidateTitle, normalizedTargetNames(target));
 }
 
 export interface JevNoulQuestion {

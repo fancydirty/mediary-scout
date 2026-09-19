@@ -1,7 +1,7 @@
 // packages/workflow/src/jev-prefilter-provider.ts
 import type { ResourceCandidate, ResourceSnapshot, SnapshotPrefilter } from "./domain.js";
 import type { ResourceProvider } from "./ports.js";
-import { JEV_THRESHOLDS, classifyJevScore, titleContainsTarget, type JevJudge, type JevJudgeTarget } from "./jev-judge.js";
+import { JEV_THRESHOLDS, classifyJevScore, normalizedTargetNames, titleContainsAny, type JevJudge, type JevJudgeTarget } from "./jev-judge.js";
 
 export interface JevPrefilterProviderOptions {
   inner: ResourceProvider;
@@ -32,12 +32,14 @@ export function isTitleless(title: string): boolean {
  *  - title-less candidates (empty / 📅 / http…) are never judged and never dropped,
  *    even if the judge returns a score for them;
  *  - a candidate whose title contains the target title/alias verbatim is never dropped,
- *    only flagged (see titleContainsTarget) — recorded in prefilter.floored;
+ *    only flagged (see titleContainsAny) — recorded in prefilter.floored;
  *  - ids, index, order, sourceHealth, keyword and snapshot id are untouched.
  */
 export class JevPrefilterProvider implements ResourceProvider {
   private readonly inner: ResourceProvider;
   private readonly target: JevJudgeTarget;
+  /** The target's names, normalised once per provider rather than per candidate. */
+  private readonly targetNames: string[];
   private readonly judge: JevJudge;
   private readonly now: () => number;
   private readonly log: (line: string) => void;
@@ -45,6 +47,7 @@ export class JevPrefilterProvider implements ResourceProvider {
   constructor(options: JevPrefilterProviderOptions) {
     this.inner = options.inner;
     this.target = options.target;
+    this.targetNames = normalizedTargetNames(options.target);
     this.judge = options.judge;
     this.now = options.now ?? (() => Date.now());
     this.log = options.log ?? ((line) => console.log(line));
@@ -71,7 +74,9 @@ export class JevPrefilterProvider implements ResourceProvider {
       const result = await this.judge.judgeCandidates({ target: this.target, candidates: judgeable.map((c) => ({ id: c.id, title: c.title })) });
       const dropped: SnapshotPrefilter["dropped"] = [];
       const floored: NonNullable<SnapshotPrefilter["floored"]> = [];
-      let uncertain = 0;
+      // Named for what the agent sees (a ⚠ on the row), not for one band: it counts the
+      // uncertain band AND the sub-threshold rows the containment floor kept.
+      let flagged = 0;
       kept = snapshot.candidates.filter((c) => {
         const score = judgeableIds.has(c.id) ? result.scores[c.id] : undefined;
         if (score === undefined) return true; // unjudged (title-less or missing) → keep
@@ -82,11 +87,11 @@ export class JevPrefilterProvider implements ResourceProvider {
           // work — and wrong about this row, which was an uploader mislabel of 《交锋》
           // and the pack the agent actually selected. The score is NOT rewritten: the
           // row reaches the agent flagged 相关度存疑(0.04) and the agent decides.
-          if (titleContainsTarget(c.title, this.target)) { floored.push({ id: c.id, title: c.title, score }); uncertain += 1; return true; }
+          if (titleContainsAny(c.title, this.targetNames)) { floored.push({ id: c.id, title: c.title, score }); flagged += 1; return true; }
           dropped.push({ id: c.id, title: c.title, score });
           return false;
         }
-        if (band === "uncertain") uncertain += 1;
+        if (band === "uncertain") flagged += 1;
         return true;
       });
       // Audit trail mirrors what was applied: scores for ids we actually asked about.
@@ -103,7 +108,12 @@ export class JevPrefilterProvider implements ResourceProvider {
         ...(result.inputTokens === undefined ? {} : { inputTokens: result.inputTokens }),
         ...(result.cost === undefined ? {} : { cost: result.cost }),
       };
-      this.log(`[jev-prefilter] ${JSON.stringify(input.keyword)} kept=${kept.length} dropped=${dropped.length} uncertain=${uncertain} ms=${prefilter.durationMs}${result.inputTokens === undefined ? "" : ` tok=${result.inputTokens}`}${floored.length === 0 ? "" : ` floored=${floored.length}`}${failedChunks === 0 ? "" : ` failedChunks=${failedChunks}`}`);
+      // A batch where the floor carried half the judged rows is a wording regression in
+      // disguise — the judge stopped recognising the target and only containment saved
+      // it. The drop rate alone cannot show that, so it is spelled out when it happens.
+      // judgeable.length > 0 here: the empty case returned "skipped" above.
+      const floorRate = floored.length / judgeable.length;
+      this.log(`[jev-prefilter] ${JSON.stringify(input.keyword)} kept=${kept.length} dropped=${dropped.length} flagged=${flagged} ms=${prefilter.durationMs}${result.inputTokens === undefined ? "" : ` tok=${result.inputTokens}`}${floored.length === 0 ? "" : ` floored=${floored.length}`}${failedChunks === 0 ? "" : ` failedChunks=${failedChunks}`}${floorRate < 0.5 ? "" : ` floorRate=${Math.round(floorRate * 100)}%`}`);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       kept = snapshot.candidates;

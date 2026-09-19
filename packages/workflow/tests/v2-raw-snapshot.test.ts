@@ -5,6 +5,7 @@ import type { ResourceProviderV2, ResourceSnapshotV2 } from "../src/acquisition-
 import { Storage115Simulator } from "../src/acquisition-v2/storage-115-simulator.js";
 import { buildTvAnimeSystemPrompt, buildMovieSystemPrompt } from "../src/acquisition-v2/task-agents.js";
 import { JEV_UNCERTAIN_LEGEND } from "../src/jev-judge.js";
+import type { JevJudgeTarget } from "../src/jev-judge.js";
 import { JevPrefilterProvider } from "../src/jev-prefilter-provider.js";
 import { RealResourceProviderV2 } from "../src/acquisition-v2/real-provider-adapter.js";
 import { CandidateRegistry } from "../src/acquisition-v2/candidate-registry.js";
@@ -241,46 +242,58 @@ describe("viewResourceSnapshot renders the Jev uncertainty flag", () => {
   });
 });
 
+/** The production chain, no hand-stamped V2 fields: a domain ResourceProvider →
+ *  JevPrefilterProvider → RealResourceProviderV2 → TaskSandbox. Both seam tests build
+ *  their sandbox here so a boundary that stops carrying the flag fails both at once. */
+async function createRealChainSandbox(
+  titles: string[],
+  scores: Record<string, number>,
+  target: JevJudgeTarget = { kind: "tv", title: "交锋", aliases: [] },
+) {
+  const inner: ResourceProvider = {
+    search: async ({ keyword }): Promise<ResourceSnapshot> => ({
+      id: "snap_1",
+      provider: "pansou",
+      keyword,
+      createdAt: "2026-09-19T00:00:00.000Z",
+      candidates: titles.map((title, index) => ({
+        id: `c${index + 1}`, snapshotId: "snap_1", index, title, type: "115", source: "pansou", providerPayload: {},
+      })),
+    }),
+  };
+  const prefiltered = new JevPrefilterProvider({
+    inner,
+    target,
+    judge: { judgeCandidates: async () => ({ scores, model: "m" }) },
+    log: () => {},
+  });
+  const provider = new RealResourceProviderV2({
+    provider: prefiltered,
+    registry: new CandidateRegistry(),
+    workflowRunId: "run-1",
+  });
+  const storage = new Storage115Simulator({ packs: {} });
+  const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
+  const seasonDirectoryId = await storage.createDirectory({ name: "Season 1", parentId: "root" });
+  return new TaskSandbox({
+    provider,
+    storage,
+    stagingDirectoryId,
+    targetSeasonDirectoryIds: { 1: seasonDirectoryId },
+    need: ["S01E01"],
+  });
+}
+
 describe("prefilter → adapter → sandbox seam (real classes, no hand-stamped fields)", () => {
   it("carries the Jev scores from the domain provider all the way into both agent read paths", async () => {
     // Every other Jev test stamps prefilterScores onto a fake V2 provider by hand,
     // which is exactly the shape of the bug that once dropped sourceHealth for 6 days:
     // the field existed at both ends and nobody wired the boundary between them.
     // This one builds the production chain and asserts the flag survives it.
-    const inner: ResourceProvider = {
-      search: async ({ keyword }): Promise<ResourceSnapshot> => ({
-        id: "snap_1",
-        provider: "pansou",
-        keyword,
-        createdAt: "2026-09-19T00:00:00.000Z",
-        candidates: [
-          { id: "c1", snapshotId: "snap_1", index: 0, title: "交锋 全24集", type: "115", source: "pansou", providerPayload: {} },
-          { id: "c2", snapshotId: "snap_1", index: 1, title: "权利交锋 S01E08", type: "115", source: "pansou", providerPayload: {} },
-          { id: "c3", snapshotId: "snap_1", index: 2, title: "无敌少侠", type: "115", source: "pansou", providerPayload: {} },
-        ],
-      }),
-    };
-    const prefiltered = new JevPrefilterProvider({
-      inner,
-      target: { kind: "tv", title: "交锋", aliases: [] },
-      judge: { judgeCandidates: async () => ({ scores: { c1: 0.95, c2: 0.52, c3: 0.05 }, model: "m" }) },
-      log: () => {},
-    });
-    const provider = new RealResourceProviderV2({
-      provider: prefiltered,
-      registry: new CandidateRegistry(),
-      workflowRunId: "run-1",
-    });
-    const storage = new Storage115Simulator({ packs: {} });
-    const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
-    const seasonDirectoryId = await storage.createDirectory({ name: "Season 1", parentId: "root" });
-    const sandbox = new TaskSandbox({
-      provider,
-      storage,
-      stagingDirectoryId,
-      targetSeasonDirectoryIds: { 1: seasonDirectoryId },
-      need: ["S01E01"],
-    });
+    const sandbox = await createRealChainSandbox(
+      ["交锋 全24集", "权利交锋 S01E08", "无敌少侠"],
+      { c1: 0.95, c2: 0.52, c3: 0.05 },
+    );
 
     await sandbox.primeRawSnapshot("交锋");
     const doc = sandbox.viewResourceSnapshot().document;
@@ -292,5 +305,26 @@ describe("prefilter → adapter → sandbox seam (real classes, no hand-stamped 
     // The agent's own search path must tell the same story as the 活期文档.
     const result = await sandbox.searchResources("交锋");
     expect(result.snapshot!.candidates[1]!.title).toBe("权利交锋 S01E08 ⚠ 相关度存疑(0.52)");
+  });
+
+  it("a FLOORED row (0.04, below the drop band) reaches both read paths flagged with its real score", async () => {
+    // The containment floor is only worth anything if the rescued row actually arrives:
+    // the provider keeps it, but four layers later the presenter has to flag it rather
+    // than render it as an ordinary result — a 0.04 shown bare would be the dishonest
+    // half of the floor, and 0.04 is BELOW the uncertain band the flag was built for.
+    const sandbox = await createRealChainSandbox(
+      ["交锋 全24集", "权利交锋 S01E08"],
+      { c1: 0.95, c2: 0.04 },
+    );
+
+    await sandbox.primeRawSnapshot("交锋");
+    const doc = sandbox.viewResourceSnapshot().document;
+    expect(doc).toContain("[c1] 交锋 全24集\n");
+    expect(doc).toContain("[c2] 权利交锋 S01E08 ⚠ 相关度存疑(0.04)\n");
+    expect(doc).toContain(JEV_UNCERTAIN_LEGEND);
+
+    const result = await sandbox.searchResources("交锋");
+    expect(result.snapshot!.candidates.map((c) => c.id)).toEqual(["c1", "c2"]);
+    expect(result.snapshot!.candidates[1]!.title).toBe("权利交锋 S01E08 ⚠ 相关度存疑(0.04)");
   });
 });

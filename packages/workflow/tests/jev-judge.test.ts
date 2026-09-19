@@ -10,6 +10,8 @@ import {
   jevAllDroppedWarning,
   jevUncertaintyFlag,
   normalizeTitleForContainment,
+  normalizedTargetNames,
+  titleContainsAny,
   titleContainsTarget,
 } from "../src/jev-judge.js";
 import type { ResourceSnapshot, SnapshotPrefilter } from "../src/domain.js";
@@ -136,6 +138,14 @@ describe("normalizeTitleForContainment", () => {
     expect(normalizeTitleForContainment("Sousou.no.Frieren S02E01")).toBe("sousounofrierens02e01");
     expect(normalizeTitleForContainment("   ")).toBe("");
   });
+
+  it("NFKC-folds full-width forms and strips the &+# separators release names use", () => {
+    // Full-width latin is common in Chinese release names; without NFKC 「ＴＨＥ ＢＯＹＳ」
+    // and "The Boys" normalise to two different keys and the floor silently misses.
+    expect(normalizeTitleForContainment("ＴＨＥ ＢＯＹＳ")).toBe("theboys");
+    expect(normalizeTitleForContainment("Tom & Jerry")).toBe("tomjerry");
+    expect(normalizeTitleForContainment("C＋＋＃1 ＆ A")).toBe("c1a");
+  });
 });
 
 describe("titleContainsTarget", () => {
@@ -149,6 +159,13 @@ describe("titleContainsTarget", () => {
     expect(titleContainsTarget("无敌少侠 全4季", { title: "交锋", aliases: [] })).toBe(false);
   });
 
+  it("separator-only punctuation between the words never breaks containment", () => {
+    expect(titleContainsTarget("The.Boys.S04E01", { title: "The Boys", aliases: [] })).toBe(true);
+    expect(titleContainsTarget("ＴＨＥ ＢＯＹＳ S04E01", { title: "The Boys", aliases: [] })).toBe(true);
+    expect(titleContainsTarget("Tom.and.Jerry", { title: "Tom & Jerry", aliases: [] })).toBe(false);
+    expect(titleContainsTarget("Tom&Jerry.2026.1080p", { title: "Tom & Jerry", aliases: [] })).toBe(true);
+  });
+
   it("an alias counts, across the separators a release name uses", () => {
     expect(
       titleContainsTarget("Sousou.no.Frieren.S02E01", { title: "葬送的芙莉莲", aliases: ["Sousou no Frieren"] }),
@@ -159,5 +176,21 @@ describe("titleContainsTarget", () => {
     expect(titleContainsTarget("权利交锋 S01E08", { title: "   ", aliases: [] })).toBe(false);
     expect(titleContainsTarget("权利交锋 S01E08", { title: "《》", aliases: ["  "] })).toBe(false);
     expect(titleContainsTarget("   ", { title: "交锋", aliases: [] })).toBe(false);
+  });
+});
+
+describe("normalizedTargetNames + titleContainsAny", () => {
+  it("pre-normalises the target once so the provider does not re-normalise per candidate", () => {
+    const names = normalizedTargetNames({ title: "交锋", aliases: [] });
+    expect(names).toEqual(["交锋"]);
+    expect(titleContainsAny("权利交锋 S01E08", names)).toBe(true);
+    expect(titleContainsAny("无敌少侠 全4季", names)).toBe(false);
+  });
+
+  it("drops names that normalise to nothing, and an empty name list floors nothing", () => {
+    expect(normalizedTargetNames({ title: " ", aliases: ["", "Frieren"] })).toEqual(["frieren"]);
+    expect(normalizedTargetNames({ title: "《》", aliases: ["  "] })).toEqual([]);
+    expect(titleContainsAny("权利交锋 S01E08", [])).toBe(false);
+    expect(titleContainsAny("   ", ["交锋"])).toBe(false);
   });
 });
