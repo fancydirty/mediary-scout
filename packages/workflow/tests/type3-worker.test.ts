@@ -8,6 +8,8 @@ import {
   reconcileVerifiedFiles,
   reserveMovie,
   runScheduledType3Monitoring,
+  type JevJudge,
+  type JevJudgeInput,
   type MediaTitle,
   type TrackedSeason,
   type VerifiedFile,
@@ -516,5 +518,50 @@ describe("runScheduledType3Monitoring (V2 engine)", () => {
     expect(outcomes[1]).toMatchObject({ trackedSeasonId: healthy.season.id, status: "ran", workflowStatus: "succeeded" });
     const failed = await repository.getWorkflowRunSnapshot("run_multi_1");
     expect(failed?.workflowRun.status).toBe("failed");
+  });
+});
+
+/**
+ * Chain guard (2026-09-20). The live A/B ran with the prefilter ON and still
+ * persisted `prefilter: null`: worker.ts spreads `jevJudge` into runner-v2's
+ * persist input, whose type never declared it — TypeScript does not
+ * excess-property-check spread expressions, so the judge was silently dropped
+ * one hop below the worker. These tests therefore enter at the WORKER entry
+ * point (not at runAcquisitionV2Workflow) so every hop is covered.
+ */
+describe("runScheduledType3Monitoring — the Jev prefilter reaches the engine", () => {
+  it("runs the per-account judge over the patrol's candidates (worker → runner-v2 → run-tv-v2 → workflow)", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const { title, season } = trackedFixture();
+    // A REAL need (E02 aired, never obtained) — a patrol with nothing to fetch
+    // short-circuits before the engine searches, and would never reach a judge.
+    await seedTrackedSeason({ repository, title, season, obtainedCodes: ["S01E01"] });
+    const storage = new FakeStorageExecutor();
+    await seedV2Season(storage, title, season, ["S01E01"]);
+
+    const seen: JevJudgeInput[] = [];
+    const jevJudge: JevJudge = {
+      judgeCandidates: async (input) => {
+        seen.push(input);
+        return { scores: {}, model: "m" };
+      },
+    };
+
+    await runScheduledType3Monitoring({
+      repository,
+      // Keyed on the bare title: that is the keyword the engine pre-warms with.
+      resourceProvider: new FakeResourceProvider({
+        keywordResults: { [title.title]: [{ title: `${title.title} S01 2160p WEB-DL` }] },
+      }),
+      storage,
+      model: noCoverageModel(),
+      storageParentDirectoryId: "library_root",
+      now: fixedNow,
+      createWorkflowRunId: () => "run_jev_type3",
+      resolveAccountContext: async () => ({ jevJudge }),
+    });
+
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen[0]!.target.kind).toBe("tv");
   });
 });

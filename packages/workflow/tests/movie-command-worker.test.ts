@@ -6,6 +6,8 @@ import {
   InMemoryWorkflowRepository,
   queueMovieAcquisition,
   runQueuedMovieAcquisition,
+  type JevJudge,
+  type JevJudgeInput,
   type MediaTitle,
 } from "../src/index.js";
 
@@ -115,5 +117,63 @@ describe("movie acquisition command + worker", () => {
     expect(saved?.workflowRun.kind).toBe("movie_init");
     expect(saved?.workflowRun.status).toBe("succeeded");
     expect(saved?.title.type).toBe("movie");
+  });
+});
+
+/**
+ * Chain guard (2026-09-20). The live A/B ran with the prefilter ON and still
+ * persisted `prefilter: null`: worker.ts spreads `jevJudge` into runner-v2's
+ * persist input, whose type never declared it — TypeScript does not
+ * excess-property-check spread expressions, so the judge was silently dropped
+ * one hop below the worker. These tests therefore enter at the WORKER entry
+ * point (not at runAcquisitionV2Workflow) so every hop is covered.
+ */
+describe("runQueuedMovieAcquisition — the Jev prefilter reaches the engine", () => {
+  it("runs the per-account judge over the film's candidates (worker → runner-v2 → movie workflow)", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const title = movieTitle();
+    await queueMovieAcquisition({
+      title,
+      keyword: "奥本海默 4K",
+      repository,
+      createWorkflowRunId: () => "run_jev_movie",
+      now: fixedNow,
+    });
+    const storage = new FakeStorageExecutor();
+    const movieDir = await storage.createDirectory({ name: `${title.title} (${title.year})`, parentId: "movies_root" });
+    storage.seedDirectoryFiles(movieDir, [
+      {
+        id: "oppen_v",
+        storageDirectoryId: movieDir,
+        name: "Oppenheimer.2023.mkv",
+        sizeBytes: 8_000_000_000,
+        episodeCode: null,
+        providerFileId: "oppen_v",
+      },
+    ]);
+
+    const seen: JevJudgeInput[] = [];
+    const jevJudge: JevJudge = {
+      judgeCandidates: async (input) => {
+        seen.push(input);
+        return { scores: {}, model: "m" };
+      },
+    };
+
+    await runQueuedMovieAcquisition({
+      repository,
+      resourceProvider: new FakeResourceProvider({
+        keywordResults: { [title.title]: [{ title: "奥本海默.Oppenheimer.2023.2160p.mkv" }] },
+      }),
+      storage,
+      model: inspectAndMarkModel(),
+      moviesParentDirectoryId: "movies_root",
+      now: fixedNow,
+      resolveAccountContext: async () => ({ jevJudge }),
+    });
+
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen[0]!.target.kind).toBe("movie");
+    expect(seen[0]!.target.title).toBe("奥本海默");
   });
 });

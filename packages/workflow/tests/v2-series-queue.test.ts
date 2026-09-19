@@ -6,6 +6,8 @@ import {
   InMemoryWorkflowRepository,
   queueSeriesInitialization,
   runQueuedSeriesInitialization,
+  type JevJudge,
+  type JevJudgeInput,
   type MediaTitle,
 } from "../src/index.js";
 
@@ -218,5 +220,50 @@ describe("queueSeriesInitialization + runQueuedSeriesInitialization (live series
     const [state] = await repository.listTrackedSeasonStates();
     expect(state?.season.storageDirectoryId.startsWith("anime_root_")).toBe(true);
     expect(state?.season.storageDirectoryId.includes("tv_root")).toBe(false);
+  });
+});
+
+/**
+ * Chain guard (2026-09-20). The live A/B ran with the prefilter ON and still
+ * persisted `prefilter: null`: worker.ts spreads `jevJudge` into runner-v2's
+ * persist input, whose type never declared it — TypeScript does not
+ * excess-property-check spread expressions, so the judge was silently dropped
+ * one hop below the worker. These tests therefore enter at the WORKER entry
+ * point (not at runAcquisitionV2Workflow) so every hop is covered.
+ */
+describe("runQueuedSeriesInitialization — the Jev prefilter reaches the engine", () => {
+  it("runs the per-account judge over the series' candidates (worker → runner-v2 → run-tv-v2 → workflow)", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    await queueSeriesInitialization({
+      title: theBoys,
+      seasons,
+      keyword: "黑袍纠察队 4K",
+      repository,
+      createWorkflowRunId: () => "run_jev_series",
+      now: () => "2026-06-13T00:00:00.000Z",
+    });
+
+    const seen: JevJudgeInput[] = [];
+    const jevJudge: JevJudge = {
+      judgeCandidates: async (input) => {
+        seen.push(input);
+        return { scores: {}, model: "m" };
+      },
+    };
+
+    await runQueuedSeriesInitialization({
+      repository,
+      resourceProvider: new FakeResourceProvider({
+        keywordResults: { [theBoys.title]: [{ title: "黑袍纠察队.The.Boys.S01.2160p" }] },
+      }),
+      storage: new FakeStorageExecutor(),
+      model: noCoverageModel(),
+      storageParentDirectoryId: "library_root",
+      now: () => "2026-06-13T00:05:00.000Z",
+      resolveAccountContext: async () => ({ jevJudge }),
+    });
+
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen[0]!.target.kind).toBe("tv");
   });
 });

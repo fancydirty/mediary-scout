@@ -13,6 +13,7 @@ import type { BridgedV2Result } from "./acquisition-v2/workflow-v2-bridge.js";
 import { makeProgressSink } from "./acquisition-v2/progress-sink.js";
 import { makeAgentTraceSink, combineToolEventSinks } from "./acquisition-v2/agent-trace-sink.js";
 import { runMovieAcquisitionV2 } from "./movie-workflow-v2.js";
+import type { JevJudge } from "./jev-judge.js";
 import type { ResourceProvider, StorageExecutor } from "./ports.js";
 import type { WorkflowRepository } from "./repository.js";
 
@@ -48,6 +49,8 @@ interface TvV2Common {
   storageProvider?: string;
   /** assrt token (Settings → 字幕来源). Undefined = 字幕流程不触发。 */
   assrtToken?: string;
+  /** Optional Jev candidate prefilter (Settings); resolved per account by the worker. */
+  jevJudge?: JevJudge;
   /**
    * Wall clock for the run. Drives the engine's timestamps (including the
    * terminal notification's `createdAt`) AND the persisted `finishedAt`, which
@@ -63,6 +66,7 @@ function resolveNow(input: { now?: () => string }): () => string {
   return input.now ?? (() => new Date().toISOString());
 }
 
+// ⚠ TS does not excess-property-check spread expressions: a field spread by worker.ts that is NOT listed here is silently dropped (this happened to jevJudge on 2026-09-20 and was only caught by the live A/B). Every optional worker→workflow field must appear in TvV2Common, here, and in run-tv-v2.ts.
 function passthrough(input: TvV2Common): {
   searchBudget?: number;
   maxSteps?: number;
@@ -70,6 +74,7 @@ function passthrough(input: TvV2Common): {
   qualityPreference?: "high" | "medium";
   storageProvider?: string;
   assrtToken?: string;
+  jevJudge?: JevJudge;
 } {
   return {
     ...(input.searchBudget === undefined ? {} : { searchBudget: input.searchBudget }),
@@ -78,6 +83,7 @@ function passthrough(input: TvV2Common): {
     ...(input.qualityPreference === undefined ? {} : { qualityPreference: input.qualityPreference }),
     ...(input.storageProvider === undefined ? {} : { storageProvider: input.storageProvider }),
     ...(input.assrtToken === undefined ? {} : { assrtToken: input.assrtToken }),
+    ...(input.jevJudge === undefined ? {} : { jevJudge: input.jevJudge }),
   };
 }
 
@@ -329,6 +335,8 @@ export async function runMovieAcquisitionV2AndPersist(input: {
   storageProvider?: string;
   /** assrt token (Settings → 字幕来源). Undefined = 字幕流程不触发。 */
   assrtToken?: string;
+  /** Optional Jev candidate prefilter (Settings); resolved per account by the worker. */
+  jevJudge?: JevJudge;
   /** See TvV2Common.now — finishedAt is stamped post-run from this clock. */
   now?: () => string;
 }): Promise<MovieWorkflowResult> {
@@ -354,6 +362,7 @@ export async function runMovieAcquisitionV2AndPersist(input: {
     ...(input.qualityPreference === undefined ? {} : { qualityPreference: input.qualityPreference }),
     ...(input.storageProvider === undefined ? {} : { storageProvider: input.storageProvider }),
     ...(input.assrtToken === undefined ? {} : { assrtToken: input.assrtToken }),
+    ...(input.jevJudge === undefined ? {} : { jevJudge: input.jevJudge }),
   });
 
   await input.repository.saveWorkflowRunSnapshot({

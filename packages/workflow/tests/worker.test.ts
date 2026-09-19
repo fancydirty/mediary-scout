@@ -6,6 +6,8 @@ import {
   InMemoryWorkflowRepository,
   queueTrackingInitialization,
   runQueuedType2Workflow,
+  type JevJudge,
+  type JevJudgeInput,
   type MediaTitle,
   type TrackedSeason,
 } from "../src/index.js";
@@ -239,4 +241,66 @@ function monotonicNow(): () => string {
     tick += 1;
     return new Date(Date.UTC(2026, 5, 11, 0, 0, tick)).toISOString();
   };
+}
+
+/**
+ * Chain guard (2026-09-20). The live A/B ran with the prefilter ON and still
+ * persisted `prefilter: null`: worker.ts spreads `jevJudge` into runner-v2's
+ * persist input, whose type never declared it — TypeScript does not
+ * excess-property-check spread expressions, so the judge was silently dropped
+ * one hop below the worker. These tests therefore enter at the WORKER entry
+ * point (not at runAcquisitionV2Workflow) so every hop is covered.
+ */
+describe("runQueuedType2Workflow — the Jev prefilter reaches the engine", () => {
+  it("runs the per-account judge over the run's candidates (worker → runner-v2 → run-tv-v2 → workflow)", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const { title, season } = trackedFixture();
+    await queueTrackingInitialization({
+      title,
+      season,
+      keyword: "Show 4K",
+      repository,
+      createWorkflowRunId: () => "run_jev_type2",
+      now: fixedNow,
+    });
+
+    const seen: JevJudgeInput[] = [];
+    const jevJudge: JevJudge = {
+      judgeCandidates: async (input) => {
+        seen.push(input);
+        return { scores: {}, model: "m" };
+      },
+    };
+
+    await runQueuedType2Workflow({
+      repository,
+      resourceProvider: judgeableProvider(),
+      storage: new FakeStorageExecutor(),
+      model: noCoverageModel(),
+      storageParentDirectoryId: "library_root",
+      now: fixedNow,
+      // Production path: the judge arrives through the per-account resolver,
+      // exactly like the account's 115 credentials.
+      resolveAccountContext: async () => ({
+        storage: new FakeStorageExecutor(),
+        storageParentDirectoryId: "library_root",
+        jevJudge,
+      }),
+    });
+
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen[0]!.target.kind).toBe("tv");
+  });
+});
+
+/** One titled candidate under both the pre-warm keyword (the bare title) and the
+ *  agent's own search keyword — the prefilter only calls the judge for a snapshot
+ *  that carries at least one judgeable (titled) candidate. */
+function judgeableProvider() {
+  return new FakeResourceProvider({
+    keywordResults: {
+      Show: [{ title: "Show.S01.2026.2160p.WEB-DL" }],
+      show: [{ title: "Show.S01.2026.2160p.WEB-DL" }],
+    },
+  });
 }
