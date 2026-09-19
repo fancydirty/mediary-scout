@@ -28,6 +28,9 @@
 //     --cids-file /path/on/router/ab-cids.json --out /tmp/jev-ab-results.json \
 //     tv:276161 tv:289761 movie:438631 ...
 //   --arms on,off        run only these arms (default off,on)
+//   --alternate          flip the arm order on every other title (title 0 off→on, title 1 on→off, …)
+//                        so a same-115-account order effect (a magnet the first arm queued is
+//                        refused as 任务已存在 for the second arm) cannot systematically favour one arm
 //   --timeout-min 30     per-run timeout
 //   --dry                print the remote commands instead of running them
 //   --pre-arm-remote "<cmd>"   a command run ON the host before every arm (after the instance is
@@ -76,11 +79,12 @@ const TOKEN_FILE = opt("token-file");
 const CIDS_FILE = opt("cids-file");
 const OUT = opt("out", "/tmp/jev-ab-results.json");
 const ARMS = opt("arms", "off,on").split(",").map((a) => a.trim()) as Array<"off" | "on">;
+const ALTERNATE = args.includes("--alternate");
 const TIMEOUT_MIN = Number(opt("timeout-min", "30"));
 const DRY = args.includes("--dry");
 const PRE_ARM_REMOTE = args.includes("--pre-arm-remote") ? opt("pre-arm-remote") : undefined;
 const titles = args
-  .filter((a, i) => !a.startsWith("--") && !(i > 0 && args[i - 1]!.startsWith("--") && args[i - 1] !== "--dry"))
+  .filter((a, i) => !a.startsWith("--") && !(i > 0 && args[i - 1]!.startsWith("--") && args[i - 1] !== "--dry" && args[i - 1] !== "--alternate"))
   .map((spec) => {
     const m = /^(tv|movie):(\d+)$/.exec(spec);
     if (!m) throw new Error(`bad title spec "${spec}" (want tv:<tmdbId> | movie:<tmdbId>)`);
@@ -214,12 +218,13 @@ function collect(runId: string, tmdbId: number, window: { since: string; until: 
 
 const isAborted = (x: RunFacts) => x.finish === "content-filter" || x.finish === "error";
 const cids = readCids();
-const results: Array<{ title: string; type: string; tmdbId: number; off?: RunFacts; on?: RunFacts; verdict?: string }> = [];
-for (const t of titles) {
+const results: Array<{ title: string; type: string; tmdbId: number; order: string; off?: RunFacts; on?: RunFacts; verdict?: string }> = [];
+for (const [index, t] of titles.entries()) {
   const label = `${t.type}:${t.tmdbId}`;
-  const row: (typeof results)[number] = { title: label, type: t.type, tmdbId: t.tmdbId };
+  const arms = ALTERNATE && index % 2 === 1 ? [...ARMS].reverse() : ARMS;
+  const row: (typeof results)[number] = { title: label, type: t.type, tmdbId: t.tmdbId, order: arms.join("→") };
   results.push(row);
-  for (const arm of ARMS) {
+  for (const arm of arms) {
     const armCids = arm === "off" ? cids.A : cids.B;
     let facts: RunFacts | undefined;
     for (let attempt = 1; attempt <= 2; attempt++) {
@@ -259,12 +264,12 @@ for (const t of titles) {
   }
 }
 
-console.log("\n| title | OFF status/finish | OFF eps | OFF steps/search/s/ktok | ON status/finish | ON eps | ON steps/search/s/ktok | ON prefilter (status:dropped/floored/total per search) | quality |");
-console.log("|---|---|---|---|---|---|---|---|---|");
+console.log("\n| title | order | OFF status/finish | OFF eps | OFF steps/search/s/ktok | ON status/finish | ON eps | ON steps/search/s/ktok | ON prefilter (status:dropped/floored/total per search) | quality |");
+console.log("|---|---|---|---|---|---|---|---|---|---|");
 for (const r of results) {
   const f = (x?: RunFacts) => (x ? `${x.steps}/${x.searches}/${x.durationS}/${Math.round(x.tokens / 1000)}` : "-");
   const sf = (x?: RunFacts) => (x ? `${x.status}/${x.finish}${x.attempts > 1 ? ` (×${x.attempts})` : ""}` : "-");
-  console.log(`| ${r.title} | ${sf(r.off)} | ${r.off?.obtained.length ?? "-"} | ${f(r.off)} | ${sf(r.on)} | ${r.on?.obtained.length ?? "-"} | ${f(r.on)} | ${r.on?.prefilter ?? "-"} | ${r.verdict ?? "-"} |`);
+  console.log(`| ${r.title} | ${r.order} | ${sf(r.off)} | ${r.off?.obtained.length ?? "-"} | ${f(r.off)} | ${sf(r.on)} | ${r.on?.obtained.length ?? "-"} | ${f(r.on)} | ${r.on?.prefilter ?? "-"} | ${r.verdict ?? "-"} |`);
 }
 const regressions = results.filter((r) => r.verdict === "REGRESSION");
 const inconclusive = results.filter((r) => r.verdict === "INCONCLUSIVE");
