@@ -137,6 +137,26 @@ export interface ResourceSnapshot {
   /** 本次搜索各源的健康态。可选：老快照与不关心健康态的 provider 不带此字段。
    *  缺失时按 healthy 处理（向后兼容），因此新增判定必须显式检查而非假设存在。 */
   sourceHealth?: MergedSourceHealth;
+  /** Optional pre-agent filter trace (see SnapshotPrefilter). Absent when no filter ran. */
+  prefilter?: SnapshotPrefilter;
+}
+
+/** Result of an optional pre-agent candidate filter (today: Jev). Rides the jsonb
+ *  snapshot payload so dropped candidates stay auditable and future evals can be
+ *  replayed from production data. `skipped` = fail-open (nothing was dropped). */
+export interface SnapshotPrefilter {
+  provider: "jev";
+  model: string;
+  status: "applied" | "skipped";
+  /** Why it was skipped (timeout / http / invalid response). Never contains secrets. */
+  reason?: string;
+  /** candidateId → P(refers to target) for every judged candidate, dropped ones included. */
+  scores: Record<string, number>;
+  dropped: Array<{ id: string; title: string; score: number }>;
+  thresholds: { dropBelow: number; uncertainBelow: number };
+  durationMs: number;
+  inputTokens?: number;
+  cost?: number;
 }
 
 export interface AgentDecision {

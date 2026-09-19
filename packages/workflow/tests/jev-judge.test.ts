@@ -40,3 +40,23 @@ describe("classifyJevScore", () => {
     expect(classifyJevScore(1)).toBe("keep");
   });
 });
+
+import type { ResourceSnapshot, SnapshotPrefilter } from "../src/domain.js";
+
+describe("SnapshotPrefilter type", () => {
+  it("is assignable onto ResourceSnapshot.prefilter", () => {
+    const pf: SnapshotPrefilter = {
+      provider: "jev",
+      model: "typesafe/jev-1.13",
+      status: "applied",
+      scores: { c1: 0.95 },
+      dropped: [{ id: "c2", title: "x", score: 0.1 }],
+      thresholds: { dropBelow: 0.3, uncertainBelow: 0.7 },
+      durationMs: 12,
+    };
+    const snap: ResourceSnapshot = {
+      id: "s", provider: "p", keyword: "k", candidates: [], createdAt: "2026-09-19T00:00:00.000Z", prefilter: pf,
+    };
+    expect(snap.prefilter?.status).toBe("applied");
+  });
+});
