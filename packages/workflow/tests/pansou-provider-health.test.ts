@@ -200,4 +200,39 @@ describe("PanSouResourceProvider zero-hit response shape", () => {
     expect(snapshot.candidates).toEqual([]);
     expect(snapshot.sourceHealth?.status).toBe("protocol_error");
   });
+
+  it("flags protocol_error when results is PRESENT but not an array, even with a numeric total", async () => {
+    // Copilot (#259 r1): a numeric `total` must not mask a malformed `results`.
+    // Without this guard a non-iterable value reaches collectLinkFacts' for...of and
+    // throws a TypeError → misclassified as `unreachable` (「源挂了」) instead of
+    // `protocol_error` (「那不是 PanSou」); an iterable string would silently yield
+    // zero facts and read as a healthy miss.
+    for (const results of [{}, "garbage", 42, true]) {
+      const provider = new PanSouResourceProvider({
+        baseURL: "http://pansou.test",
+        fetchJson: async () => ({ code: 0, data: { total: 1, results } }),
+        wait: async () => {},
+      });
+
+      const snapshot = await provider.search({ keyword: "示例" });
+
+      expect(snapshot.candidates).toEqual([]);
+      expect(snapshot.sourceHealth?.status).toBe("protocol_error");
+    }
+  });
+
+  it("treats results:null like an omitted results (zero hits), not as malformed", async () => {
+    // encoding/json emits `null` for a nil slice when a build lacks `omitempty`;
+    // that is "no list", not a broken one — same handling as the omitted key.
+    const provider = new PanSouResourceProvider({
+      baseURL: "http://pansou.test",
+      fetchJson: async () => ({ code: 0, data: { total: 0, results: null } }),
+      wait: async () => {},
+    });
+
+    const snapshot = await provider.search({ keyword: "示例" });
+
+    expect(snapshot.candidates).toEqual([]);
+    expect(snapshot.sourceHealth?.status).toBe("healthy");
+  });
 });

@@ -145,4 +145,15 @@ describe("probePanSou zero-hit response shape", () => {
     });
     expect(result).toEqual({ ok: true });
   });
+
+  it("rejects a PRESENT but malformed results even when total is numeric", async () => {
+    // Copilot (#259 r1): the probe must share the provider's exact shape rule, or a
+    // save-time probe can persist an address the workflow provider then cannot consume.
+    for (const results of [{}, "garbage", 42]) {
+      const result = await probePanSou("http://192.168.1.10:8899", {
+        fetchImpl: pansouResponse({ code: 0, data: { total: 1, results } }),
+      });
+      expect(result).toMatchObject({ ok: false, reason: "not_pansou" });
+    }
+  });
 });

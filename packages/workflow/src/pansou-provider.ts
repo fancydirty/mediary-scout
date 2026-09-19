@@ -192,24 +192,47 @@ function isPanSouErrorResponse(value: unknown): boolean {
   return typeof value["code"] === "number" && value["code"] !== 0;
 }
 
+/** PanSou `SearchResponse` data (fish2018/pansou model/response.go). `Results` is
+ *  tagged `json:"results,omitempty"`, so a search with ZERO hits serialises as
+ *  `{"code":0,"message":"success","data":{"total":0}}` — no `results` key at all
+ *  (verified live 2026-09-19 on the self-hosted container and so.252035.xyz).
+ *
+ *  Rule, in order:
+ *   1. a PRESENT `results` must be an array — a numeric `total` never excuses a
+ *      malformed one (an object would blow up `for...of` and be misread as
+ *      「源挂了」; a string would iterate silently and look like a healthy miss);
+ *      `null` counts as absent (encoding/json writes null for a nil slice on a
+ *      build without omitempty);
+ *   2. with `results` absent, a numeric `total` is the zero-hit signature;
+ *   3. anything else is not PanSou.
+ *
+ *  Exported so the settings-page save probe applies the SAME rule: the two
+ *  drifting apart is exactly how a probe could persist an address the provider
+ *  then cannot consume (Copilot, #259). */
+export function isPanSouSearchData(
+  data: unknown,
+): data is { results?: unknown[] | null; total?: number } {
+  if (!isRecord(data)) return false;
+  const results = data["results"];
+  if (results !== undefined && results !== null) {
+    return Array.isArray(results);
+  }
+  return typeof data["total"] === "number";
+}
+
 function isPanSouSuccessResponse(value: unknown): value is {
   code: 0;
   data: {
-    results?: unknown[];
+    results?: unknown[] | null;
     total?: number;
   };
 } {
-  if (!isRecord(value) || value["code"] !== 0 || !isRecord(value["data"])) {
+  if (!isRecord(value) || value["code"] !== 0) {
     return false;
   }
-  const data = value["data"];
-  // PanSou (model/response.go) tags `Results` with `omitempty`: a search with
-  // ZERO hits serialises as `{"code":0,"data":{"total":0}}` — no `results` key.
-  // That is a legitimate PanSou answer ("nothing matched"), not a foreign payload.
-  // Rejecting it turned every honest miss into a false 「搜索源连不上」 alert
-  // (2026-09-07 → 09-19, daily patrol). Only a data object with NEITHER field is
-  // "not PanSou".
-  return Array.isArray(data["results"]) || typeof data["total"] === "number";
+  // Treating the zero-hit shape as "not a PanSou payload" turned every honest
+  // miss into a false 「搜索源连不上」 alert (2026-09-07 → 09-19, daily patrol).
+  return isPanSouSearchData(value["data"]);
 }
 
 function collectLinkFacts(results: unknown[]): PanSouLinkFact[] {
