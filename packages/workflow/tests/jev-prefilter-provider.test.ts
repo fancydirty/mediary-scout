@@ -1,7 +1,7 @@
 // packages/workflow/tests/jev-prefilter-provider.test.ts
 import { describe, expect, it } from "vitest";
-import { isTitleless, JevPrefilterProvider } from "../src/jev-prefilter-provider.js";
-import type { JevJudge, JevJudgeInput } from "../src/jev-judge.js";
+import { isTitleless, JEV_CIRCUIT_BREAKER_FAILURES, JevPrefilterProvider } from "../src/jev-prefilter-provider.js";
+import { JEV_MODEL, type JevJudge, type JevJudgeInput } from "../src/jev-judge.js";
 import type { ResourceProvider, ResourceSnapshot } from "../src/index.js";
 
 function snapshot(titles: Array<string | { title: string; type?: "115" | "magnet" }>): ResourceSnapshot {
@@ -60,6 +60,9 @@ describe("JevPrefilterProvider", () => {
     expect(calls).toBe(0);
     expect(out.candidates).toHaveLength(2);
     expect(out.prefilter).toMatchObject({ status: "skipped", reason: "no judgeable candidates", dropped: [] });
+    // One source of truth for the model name: a literal here (and in the provider) would
+    // drift the moment the client's model changes, and the audit trail would lie.
+    expect(out.prefilter?.model).toBe(JEV_MODEL);
   });
 
   it("fail-open: judge throws → snapshot returned untouched with status failed + reason", async () => {
@@ -68,6 +71,7 @@ describe("JevPrefilterProvider", () => {
     const out = await p.search({ keyword: "交锋" });
     expect(out.candidates.map((c) => c.id)).toEqual(["c1", "c2"]);
     expect(out.prefilter).toMatchObject({ status: "failed", reason: "Jev HTTP 503", scores: {}, dropped: [] });
+    expect(out.prefilter?.model).toBe(JEV_MODEL);
   });
 
   it("fail-open: a candidate the judge did not score is kept", async () => {
@@ -219,5 +223,68 @@ describe("JevPrefilterProvider floor-rate log", () => {
     );
     expect(quiet).toContain("floored=1");
     expect(quiet).not.toContain("floorRate=");
+  });
+});
+
+
+describe("JevPrefilterProvider circuit breaker", () => {
+  // The provider instance is built per acquisition run, so the counter is that run's:
+  // a judge that is down stops costing the run one timeout per search (and the agent
+  // searches many times), while the next run starts with a closed circuit.
+  const throwing = (calls: { n: number }): JevJudge["judgeCandidates"] => async () => { calls.n += 1; throw new Error("Jev HTTP 503"); };
+
+  it("opens after two consecutive judge failures: the third search never calls the judge", async () => {
+    const calls = { n: 0 };
+    const lines: string[] = [];
+    const p = new JevPrefilterProvider({
+      inner: inner(snapshot(["交锋 全24集", "无敌少侠"])),
+      target,
+      judge: { judgeCandidates: throwing(calls) },
+      log: (line) => lines.push(line),
+    });
+    await p.search({ keyword: "交锋" });
+    await p.search({ keyword: "交锋" });
+    const third = await p.search({ keyword: "交锋" });
+    expect(calls.n).toBe(2); // the judge was spared the third round trip
+    expect(third.candidates.map((c) => c.id)).toEqual(["c1", "c2"]); // still fail-open
+    expect(third.prefilter?.status).toBe("failed");
+    expect(third.prefilter?.reason).toMatch(/circuit-open/);
+    expect(third.prefilter?.model).toBe(JEV_MODEL);
+    expect(third.prefilter?.dropped).toEqual([]);
+    expect(lines.join("\n")).toContain("circuit open");
+  });
+
+  it("counts CONSECUTIVE failures only: a success in between resets the counter", async () => {
+    const calls = { n: 0 };
+    let round = 0;
+    const flaky: JevJudge = {
+      judgeCandidates: async (input) => {
+        calls.n += 1;
+        round += 1;
+        if (round === 2) return { scores: Object.fromEntries(input.candidates.map((c) => [c.id, 0.9])), model: "m" };
+        throw new Error("Jev HTTP 503");
+      },
+    };
+    const p = new JevPrefilterProvider({ inner: inner(snapshot(["交锋 全24集", "无敌少侠"])), target, judge: flaky });
+    await p.search({ keyword: "交锋" }); // fail  → 1
+    await p.search({ keyword: "交锋" }); // ok    → 0
+    const third = await p.search({ keyword: "交锋" }); // fail → 1, still below the threshold
+    expect(calls.n).toBe(3);
+    expect(third.prefilter?.reason).toBe("Jev HTTP 503");
+  });
+
+  it("the threshold is two failures by default, and is overridable per provider", async () => {
+    expect(JEV_CIRCUIT_BREAKER_FAILURES).toBe(2);
+    const calls = { n: 0 };
+    const p = new JevPrefilterProvider({
+      inner: inner(snapshot(["交锋 全24集"])),
+      target,
+      judge: { judgeCandidates: throwing(calls) },
+      maxConsecutiveFailures: 1,
+    });
+    await p.search({ keyword: "交锋" });
+    const second = await p.search({ keyword: "交锋" });
+    expect(calls.n).toBe(1);
+    expect(second.prefilter?.reason).toMatch(/circuit-open/);
   });
 });

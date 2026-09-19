@@ -36,6 +36,14 @@ export interface JevJudge {
   judgeCandidates(input: JevJudgeInput): Promise<JevJudgeResult>;
 }
 
+/** The model every Jev call asks for. It lives beside the port rather than in the HTTP
+ *  client because the PROVIDER also stamps it into SnapshotPrefilter on the paths where
+ *  no judge answer carries a model name (skipped, failed, circuit-open) — a literal in
+ *  either place would let the audit trail name a model that was never asked for.
+ *  jev-client re-exports it, so `import { JEV_MODEL } from "./jev-client.js"` (and the
+ *  web probe's package-level import) keep resolving. */
+export const JEV_MODEL = "jev-latest";
+
 /** Below this the candidate is dropped before the agent sees it. Reliability curve on
  *  9,958 titled production candidates: agent-selected rate in [0,0.3) is exactly 0%. */
 export const JEV_DROP_BELOW = 0.3;

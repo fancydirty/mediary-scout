@@ -4,6 +4,7 @@ import { runMovieAcquisitionV2 } from "../src/movie-workflow-v2.js";
 import { FakeStorageExecutor } from "../src/fakes.js";
 import type { ResourceProvider } from "../src/ports.js";
 import type { MediaTitle, ResourceSnapshot } from "../src/domain.js";
+import type { JevJudge, JevJudgeInput } from "../src/jev-judge.js";
 
 const USAGE = {
   inputTokens: { total: undefined, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
@@ -228,5 +229,44 @@ describe("runMovieAcquisitionV2 — obtained comes from the AGENT'S coverage, ne
     expect(executor.createdDirs).toEqual([
       { name: "盗梦空间 (2010) {tmdb-27205}", parentId: "movies_root" },
     ]);
+  });
+});
+
+
+describe("runMovieAcquisitionV2 forwards jevJudge to the orchestrator", () => {
+  it("the judge is invoked for the movie search, asked the MOVIE question", async () => {
+    // Threading test. The tv path has the same guard in v2-workflow.test.ts; the kind
+    // is what makes it worth its own case — a movie judged with the tv question would
+    // keep sequels and remakes (the movie rules are symmetric on year, tv's are not).
+    const seen: JevJudgeInput[] = [];
+    const jevJudge: JevJudge = { judgeCandidates: async (input) => { seen.push(input); return { scores: {}, model: "m" }; } };
+    const provider: ResourceProvider = {
+      search: async ({ keyword }): Promise<ResourceSnapshot> => ({
+        id: "snap_jev",
+        provider: "pansou",
+        keyword,
+        candidates: [
+          { id: "cand_jev", snapshotId: "snap_jev", index: 0, title: "盗梦空间 2010 1080p", type: "magnet", source: "pansou", providerPayload: { url: "magnet:?xt=urn:btih:abc" } },
+        ],
+        createdAt: "2026-06-14T00:00:00.000Z",
+      }),
+    };
+
+    await runMovieAcquisitionV2({
+      title,
+      resourceProvider: provider,
+      storage: new FakeStorageExecutor(),
+      model: scriptModel([
+        { tool: "searchResources", input: { keyword: "盗梦空间" } },
+        { tool: "reportNoCoverage", input: { reason: "threading test" } },
+      ]),
+      workflowRunId: "run-jev-movie",
+      moviesParentDirectoryId: "movies_root",
+      jevJudge,
+      now: () => "2026-06-14T00:00:00.000Z",
+    });
+
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen[0]!.target).toMatchObject({ kind: "movie", title: "盗梦空间", aliases: ["Inception"] });
   });
 });

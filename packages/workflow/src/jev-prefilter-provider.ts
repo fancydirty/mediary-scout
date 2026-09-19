@@ -1,7 +1,7 @@
 // packages/workflow/src/jev-prefilter-provider.ts
 import type { ResourceCandidate, ResourceSnapshot, SnapshotPrefilter } from "./domain.js";
 import type { ResourceProvider } from "./ports.js";
-import { JEV_THRESHOLDS, classifyJevScore, normalizedTargetNames, titleContainsAny, type JevJudge, type JevJudgeTarget } from "./jev-judge.js";
+import { JEV_MODEL, JEV_THRESHOLDS, classifyJevScore, normalizedTargetNames, titleContainsAny, type JevJudge, type JevJudgeTarget } from "./jev-judge.js";
 
 export interface JevPrefilterProviderOptions {
   inner: ResourceProvider;
@@ -10,7 +10,17 @@ export interface JevPrefilterProviderOptions {
   /** Injectable clock for durationMs (tests). */
   now?: () => number;
   log?: (line: string) => void;
+  /** Consecutive judge failures after which this provider stops calling the judge for
+   *  the rest of its life. Default JEV_CIRCUIT_BREAKER_FAILURES. */
+  maxConsecutiveFailures?: number;
 }
+
+/** A judge that has failed this many times in a row is treated as down for the rest of
+ *  the run. Two, not one: a single timeout is ordinary (p90 0.9s against an 8s ceiling)
+ *  and re-arming on the next search is cheap; two in a row is an outage, and the agent
+ *  searches many times per run — each one would otherwise pay the full timeout for a
+ *  result that is fail-open anyway. */
+export const JEV_CIRCUIT_BREAKER_FAILURES = 2;
 
 /** True for candidates whose "title" carries no judgeable text (a date row, a bare
  *  URL, empty). The agent picks these via their link; judging the title would only
@@ -26,6 +36,8 @@ export function isTitleless(title: string): boolean {
  *
  * Guarantees:
  *  - judge error/timeout → snapshot returned untouched, status "failed" (fail-open);
+ *  - after JEV_CIRCUIT_BREAKER_FAILURES consecutive judge failures the judge is not
+ *    called again by this instance (same fail-open shape, reason "circuit-open: …");
  *  - nothing judgeable (all title-less) → judge not called, status "skipped";
  *  - inner.search() errors PROPAGATE (source health is classified one layer down;
  *    masking a provider outage here would hide real incidents);
@@ -43,6 +55,10 @@ export class JevPrefilterProvider implements ResourceProvider {
   private readonly judge: JevJudge;
   private readonly now: () => number;
   private readonly log: (line: string) => void;
+  private readonly maxConsecutiveFailures: number;
+  /** Per instance = per acquisition run: a down judge stops costing this run a timeout
+   *  per search, and the next run starts with the circuit closed (no global state). */
+  private consecutiveFailures = 0;
 
   constructor(options: JevPrefilterProviderOptions) {
     this.inner = options.inner;
@@ -51,6 +67,7 @@ export class JevPrefilterProvider implements ResourceProvider {
     this.judge = options.judge;
     this.now = options.now ?? (() => Date.now());
     this.log = options.log ?? ((line) => console.log(line));
+    this.maxConsecutiveFailures = options.maxConsecutiveFailures ?? JEV_CIRCUIT_BREAKER_FAILURES;
   }
 
   async search(input: { keyword: string; workflowRunId?: string }): Promise<ResourceSnapshot> {
@@ -61,7 +78,16 @@ export class JevPrefilterProvider implements ResourceProvider {
     if (judgeable.length === 0) {
       // Nothing to judge (every candidate is title-less): not attempted, nothing dropped.
       // Outside the try: it cannot throw, so a "skipped" here is never a masked failure.
-      return { ...snapshot, prefilter: { provider: "jev", model: "jev-latest", status: "skipped", reason: "no judgeable candidates", scores: {}, dropped: [], thresholds, durationMs: 0 } };
+      return { ...snapshot, prefilter: { provider: "jev", model: JEV_MODEL, status: "skipped", reason: "no judgeable candidates", scores: {}, dropped: [], thresholds, durationMs: 0 } };
+    }
+    // Circuit breaker. Checked after the "nothing judgeable" branch so that case keeps
+    // its more precise reason (the judge would not have been called either way).
+    // Same fail-open shape as a real failure — the snapshot is returned untouched — so
+    // an open circuit can never be the thing that drops a candidate.
+    if (this.consecutiveFailures >= this.maxConsecutiveFailures) {
+      const reason = `circuit-open: ${this.consecutiveFailures} consecutive judge failures`;
+      this.log(`[jev-prefilter] ${JSON.stringify(input.keyword)} circuit open (${this.consecutiveFailures} consecutive failures) — skipping judge for the rest of this run`);
+      return { ...snapshot, prefilter: { provider: "jev", model: JEV_MODEL, status: "failed", reason, scores: {}, dropped: [], thresholds, durationMs: 0 } };
     }
     // The title-less guarantee is enforced by this set, not by the judge behaving: an
     // answer for a candidate we never asked about (bug, or a title that prompt-injected
@@ -72,6 +98,9 @@ export class JevPrefilterProvider implements ResourceProvider {
     let kept: ResourceCandidate[];
     try {
       const result = await this.judge.judgeCandidates({ target: this.target, candidates: judgeable.map((c) => ({ id: c.id, title: c.title })) });
+      // CONSECUTIVE failures only: an answer — even a partial one (failedChunks) — proves
+      // the judge is reachable, so a flaky one never accumulates its way to an open circuit.
+      this.consecutiveFailures = 0;
       const dropped: SnapshotPrefilter["dropped"] = [];
       const floored: NonNullable<SnapshotPrefilter["floored"]> = [];
       // Named for what the agent sees (a ⚠ on the row), not for one band: it counts the
@@ -116,8 +145,9 @@ export class JevPrefilterProvider implements ResourceProvider {
       this.log(`[jev-prefilter] ${JSON.stringify(input.keyword)} kept=${kept.length} dropped=${dropped.length} flagged=${flagged} ms=${prefilter.durationMs}${result.inputTokens === undefined ? "" : ` tok=${result.inputTokens}`}${floored.length === 0 ? "" : ` floored=${floored.length}`}${failedChunks === 0 ? "" : ` failedChunks=${failedChunks}`}${floorRate < 0.5 ? "" : ` floorRate=${Math.round(floorRate * 100)}%`}`);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
+      this.consecutiveFailures += 1;
       kept = snapshot.candidates;
-      prefilter = { provider: "jev", model: "jev-latest", status: "failed", reason, scores: {}, dropped: [], thresholds, durationMs: this.now() - t0 };
+      prefilter = { provider: "jev", model: JEV_MODEL, status: "failed", reason, scores: {}, dropped: [], thresholds, durationMs: this.now() - t0 };
       this.log(`[jev-prefilter] ${JSON.stringify(input.keyword)} FAILED (fail-open, nothing dropped): ${reason}`);
     }
     return { ...snapshot, candidates: kept, prefilter };

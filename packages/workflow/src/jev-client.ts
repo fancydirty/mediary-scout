@@ -1,11 +1,13 @@
 // packages/workflow/src/jev-client.ts
-import { buildJevQuestions, type JevJudge, type JevJudgeInput, type JevJudgeResult } from "./jev-judge.js";
+import { buildJevQuestions, JEV_MODEL, type JevJudge, type JevJudgeInput, type JevJudgeResult } from "./jev-judge.js";
 
 /** OpenRouter's decisions router for TypeSafe Jev. The chat/completions endpoint
  *  rejects this model (400 "decisions model"); this alpha route speaks the native
  *  {state, questions} → {answers} shape. */
 export const DEFAULT_JEV_BASE_URL = "https://openrouter.ai/api/alpha/decisions";
-export const JEV_MODEL = "jev-latest";
+/** Re-exported from jev-judge.ts (its single definition) so existing importers of
+ *  this module are unaffected by the move. */
+export { JEV_MODEL };
 /** Evals: 322 candidates in one call (~37k tokens) succeeded but sits above the
  *  documented ~32k budget; 150 (~17k) leaves headroom. Chunks run in parallel. */
 export const JEV_CHUNK_SIZE = 150;

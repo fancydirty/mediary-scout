@@ -12,6 +12,9 @@
 //      Hard assertion (go/no-go): no titled candidate the agent actually selected is
 //      dropped. Soft metric: drop rate. Input: /tmp/jev-eval/labels.json (exported from
 //      prod agent_decisions ⋈ resource_snapshots — see memory/jev-system-one-model.md).
+//      labels.json carries no aliases (the export predates them); production always
+//      passes TMDB aliases, so this replay is the HARSHER input: the containment floor
+//      and the judge see the title only. A pass here is conservative.
 //
 // Run:  OPENROUTER_API_KEY=… npx tsx scripts/jev-prefilter-replay.mts [limit]
 //       … --sentinels-only        wording guard only (no labels.json needed)
@@ -24,6 +27,7 @@ import {
   JevPrefilterProvider,
   createJevJudge,
   classifyJevScore,
+  isTitleless,
   normalizedTargetNames,
   titleContainsAny,
 } from "../packages/workflow/src/index.js";
@@ -236,8 +240,10 @@ if (runReplay) {
     const kept = new Set(out.candidates.map((c) => c.id));
     for (const c of cands) {
       // Title-less rows (date headers, bare URLs) are never judged, so counting them
-      // here would dilute the only metric that can veto this filter.
-      const titled = c.title.trim() !== "" && !c.title.startsWith("📅") && !/^https?:\/\//i.test(c.title);
+      // here would dilute the only metric that can veto this filter. The provider's own
+      // predicate, not a copy: a divergence would measure a filter that is not the one
+      // production runs.
+      const titled = !isTitleless(c.title);
       if (r.selected.includes(c.id) && titled) {
         selectedTitled += 1;
         if (!kept.has(c.id)) {
