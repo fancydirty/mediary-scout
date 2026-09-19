@@ -89,3 +89,20 @@ export function buildJevQuestions(
   }
   return out;
 }
+
+/** Row suffix the agent sees for a candidate in the uncertain band; "" otherwise.
+ *  Floors to 2 dp so a 0.699 never prints as "(0.70)" next to a "< 0.7" rule. */
+export function jevUncertaintyFlag(score: number | undefined): string {
+  if (score === undefined || classifyJevScore(score) !== "uncertain") return "";
+  return ` ⚠ 相关度存疑(${(Math.floor(score * 100) / 100).toFixed(2)})`;
+}
+
+/** One-line legend shown wherever at least one row carries the flag. Data, not
+ *  prompt: the system prompt and tool descriptions stay untouched. */
+export const JEV_UNCERTAIN_LEGEND =
+  "⚠ 相关度存疑 = 系统按片名判断该候选可能是同名/近名的另一部作品。这不是排除:请读标题与详情自行确认,该收的照收。";
+
+/** Warning when a search's candidates were ALL dropped by the prefilter. */
+export function jevAllDroppedWarning(dropped: number): string {
+  return `本次搜索返回的 ${dropped} 个候选经系统按片名预筛全部剔除(均为同名/近名的其它作品或无关资源),这不是搜索源故障。可换 繁体/英文/原名 关键词再搜;若确认没有,再 reportNoCoverage。`;
+}

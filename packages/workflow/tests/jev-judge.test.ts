@@ -5,7 +5,10 @@ import {
   JEV_DROP_BELOW,
   JEV_THRESHOLDS,
   JEV_UNCERTAIN_BELOW,
+  JEV_UNCERTAIN_LEGEND,
   classifyJevScore,
+  jevAllDroppedWarning,
+  jevUncertaintyFlag,
 } from "../src/jev-judge.js";
 import type { ResourceSnapshot, SnapshotPrefilter } from "../src/domain.js";
 
@@ -64,5 +67,33 @@ describe("SnapshotPrefilter type", () => {
     };
     expect(snap.prefilter?.status).toBe("applied");
     expect(JEV_THRESHOLDS).toEqual({ dropBelow: 0.3, uncertainBelow: 0.7 });
+  });
+});
+
+describe("jevUncertaintyFlag", () => {
+  it("flags only the uncertain band and floors the score to 2 dp", () => {
+    expect(jevUncertaintyFlag(0.52)).toBe(" ⚠ 相关度存疑(0.52)");
+    // 0.699 must never print as 0.70 next to a "< 0.7" rule.
+    expect(jevUncertaintyFlag(0.699)).toBe(" ⚠ 相关度存疑(0.69)");
+    expect(jevUncertaintyFlag(0.3)).toBe(" ⚠ 相关度存疑(0.30)");
+    expect(jevUncertaintyFlag(0.7)).toBe("");
+    expect(jevUncertaintyFlag(0.29)).toBe("");
+    expect(jevUncertaintyFlag(undefined)).toBe("");
+    expect(jevUncertaintyFlag(Number.NaN)).toBe("");
+  });
+});
+
+describe("prefilter legend and all-dropped warning", () => {
+  it("legend explains the flag is not an exclusion", () => {
+    expect(JEV_UNCERTAIN_LEGEND).toContain("⚠ 相关度存疑");
+    expect(JEV_UNCERTAIN_LEGEND).toContain("这不是排除");
+  });
+
+  it("all-dropped warning names the count and rules out a source outage", () => {
+    const w = jevAllDroppedWarning(7);
+    expect(w).toContain("7 个候选");
+    expect(w).toContain("预筛全部剔除");
+    expect(w).toContain("不是搜索源故障");
+    expect(w).toContain("reportNoCoverage");
   });
 });

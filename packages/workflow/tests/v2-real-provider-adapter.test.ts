@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { CandidateRegistry } from "../src/acquisition-v2/candidate-registry.js";
 import { RealResourceProviderV2 } from "../src/acquisition-v2/real-provider-adapter.js";
 import type { ResourceProvider } from "../src/ports.js";
-import type { ResourceSnapshot } from "../src/domain.js";
+import type { ResourceSnapshot, SnapshotPrefilter } from "../src/domain.js";
 
 function realSnapshot(): ResourceSnapshot {
   return {
@@ -21,6 +21,18 @@ function realSnapshot(): ResourceSnapshot {
         providerPayload: { url: "https://115.com/s/abc", receiveCode: "x1" },
       },
     ],
+  };
+}
+
+function prefilterOf(overrides: Partial<SnapshotPrefilter> & Pick<SnapshotPrefilter, "status">): SnapshotPrefilter {
+  return {
+    provider: "jev",
+    model: "m",
+    scores: {},
+    dropped: [],
+    thresholds: { dropBelow: 0.3, uncertainBelow: 0.7 },
+    durationMs: 1,
+    ...overrides,
   };
 }
 
@@ -180,5 +192,76 @@ describe("RealResourceProviderV2 — pansou → ResourceProviderV2 adapter", () 
     expect(Object.keys(candidate).sort()).toEqual(["id", "title"]);
     expect(candidate.id).toBe("cand_a");
     expect(candidate.title).toBe("莉可丽丝 全集 1080p");
+  });
+
+  it("carries an applied prefilter's scores and dropped count to the V2 snapshot", async () => {
+    const scores = { cand_a: 0.52 };
+    const provider: ResourceProvider = {
+      search: async () => ({
+        ...realSnapshot(),
+        prefilter: prefilterOf({ status: "applied", scores, dropped: [{ id: "x", title: "y", score: 0.1 }] }),
+      }),
+    };
+    const adapter = new RealResourceProviderV2({
+      provider,
+      registry: new CandidateRegistry(),
+      workflowRunId: "run-1",
+    });
+
+    const view = await adapter.search("莉可丽丝 全集");
+
+    expect(view.prefilterScores).toEqual({ cand_a: 0.52 });
+    // Shallow copy: the V2 view must not share the persisted snapshot's object.
+    expect(view.prefilterScores).not.toBe(scores);
+    expect(view.prefilterDropped).toBe(1);
+  });
+
+  it("omits both prefilter fields when the prefilter failed (fail-open, nothing dropped)", async () => {
+    const provider: ResourceProvider = {
+      search: async () => ({
+        ...realSnapshot(),
+        prefilter: prefilterOf({ status: "failed", reason: "timeout" }),
+      }),
+    };
+    const adapter = new RealResourceProviderV2({
+      provider,
+      registry: new CandidateRegistry(),
+      workflowRunId: "run-1",
+    });
+
+    const view = await adapter.search("莉可丽丝 全集");
+
+    expect(view.prefilterScores).toBeUndefined();
+    expect(view.prefilterDropped).toBeUndefined();
+  });
+
+  it("omits both prefilter fields when the prefilter was skipped", async () => {
+    const provider: ResourceProvider = {
+      search: async () => ({ ...realSnapshot(), prefilter: prefilterOf({ status: "skipped" }) }),
+    };
+    const adapter = new RealResourceProviderV2({
+      provider,
+      registry: new CandidateRegistry(),
+      workflowRunId: "run-1",
+    });
+
+    const view = await adapter.search("莉可丽丝 全集");
+
+    expect(view.prefilterScores).toBeUndefined();
+    expect(view.prefilterDropped).toBeUndefined();
+  });
+
+  it("omits both prefilter fields when no prefilter ran at all", async () => {
+    const provider: ResourceProvider = { search: async () => realSnapshot() };
+    const adapter = new RealResourceProviderV2({
+      provider,
+      registry: new CandidateRegistry(),
+      workflowRunId: "run-1",
+    });
+
+    const view = await adapter.search("莉可丽丝 全集");
+
+    expect(view.prefilterScores).toBeUndefined();
+    expect(view.prefilterDropped).toBeUndefined();
   });
 });

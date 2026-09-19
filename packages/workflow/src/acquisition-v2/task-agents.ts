@@ -247,6 +247,9 @@ export function needForMovie(): string[] {
 export interface TvAnimeTarget {
   title: string;
   aliases: string[];
+  /** First-air year (TMDB). Consumed only by the Jev prefilter's year rule; the
+   *  prompt builders do not render it. */
+  year?: number;
   /** The season number(s) this task covers — one, several, or all (multi-season pack). */
   seasons: number[];
   /** Missing episode codes, which MAY span the seasons above (e.g. ["S01E07","S02E13"]). */

@@ -4,6 +4,8 @@ import { FakeResourceProviderV2 } from "../src/acquisition-v2/fake-provider.js";
 import { RealResourceProviderV2 } from "../src/acquisition-v2/real-provider-adapter.js";
 import { CandidateRegistry } from "../src/acquisition-v2/candidate-registry.js";
 import type { ResourceProvider } from "../src/ports.js";
+import type { ResourceProviderV2, ResourceSnapshotV2 } from "../src/acquisition-v2/fake-provider.js";
+import { JEV_UNCERTAIN_LEGEND } from "../src/jev-judge.js";
 
 describe("TaskSandbox — searchResources (system-budgeted, dedup, snapshot-bound)", () => {
   it("returns the full candidate snapshot for a fresh keyword", async () => {
@@ -646,5 +648,79 @@ describe("证据全不健康时禁止上报「没有资源」（Task 10：从劝
     expect(event!.data?.unhealthySources).toEqual(["pansou"]);
     // 被拒的上报绝不能同时留下一条「已上报无覆盖」——否则审计自相矛盾。
     expect(sandbox.auditTrail().some((e) => e.type === "no_coverage_reported")).toBe(false);
+  });
+});
+
+describe("searchResources presents the prefilter to the agent", () => {
+  function prefilteredProvider(): ResourceProviderV2 {
+    return {
+      async search(keyword: string): Promise<ResourceSnapshotV2> {
+        return {
+          id: "s",
+          keyword,
+          candidates: [
+            { id: "c0", title: "交锋 全24集" },
+            { id: "c1", title: "权利交锋 S01E08" },
+          ],
+          prefilterScores: { c0: 0.95, c1: 0.52 },
+          prefilterDropped: 3,
+        };
+      },
+    };
+  }
+
+  it("renders the ⚠ flag into the title, hides the raw scores, and attaches the legend", async () => {
+    const sandbox = new TaskSandbox({ provider: prefilteredProvider(), searchBudget: 8 });
+
+    const result = await sandbox.searchResources("交锋");
+
+    expect(result.snapshot!.candidates[0]!.title).toBe("交锋 全24集");
+    expect(result.snapshot!.candidates[1]!.title).toBe("权利交锋 S01E08 ⚠ 相关度存疑(0.52)");
+    // The agent judges titles, not numbers — the raw score map never reaches the tool result.
+    expect("prefilterScores" in result.snapshot!).toBe(false);
+    expect(result.warnings).toContain(JEV_UNCERTAIN_LEGEND);
+  });
+
+  it("the dedup path presents the same thing (a re-search must not look 'clean')", async () => {
+    const sandbox = new TaskSandbox({ provider: prefilteredProvider(), searchBudget: 8 });
+
+    await sandbox.searchResources("交锋");
+    const result = await sandbox.searchResources("  交锋 ");
+
+    expect(result.deduped).toBe(true);
+    expect(result.snapshot!.candidates[1]!.title).toBe("权利交锋 S01E08 ⚠ 相关度存疑(0.52)");
+    expect("prefilterScores" in result.snapshot!).toBe(false);
+    expect(result.warnings).toContain(JEV_UNCERTAIN_LEGEND);
+  });
+
+  it("warns when the prefilter dropped every candidate (not a source outage)", async () => {
+    const sandbox = new TaskSandbox({
+      provider: {
+        async search(keyword: string): Promise<ResourceSnapshotV2> {
+          return { id: "s", keyword, candidates: [], prefilterScores: {}, prefilterDropped: 12 };
+        },
+      },
+      searchBudget: 8,
+    });
+
+    const result = await sandbox.searchResources("交锋");
+
+    expect(result.warnings?.some((w) => /12 个候选[\s\S]*预筛全部剔除/.test(w))).toBe(true);
+  });
+
+  it("leaves titles untouched and adds no legend when no prefilter ran", async () => {
+    const sandbox = new TaskSandbox({
+      provider: {
+        async search(keyword: string): Promise<ResourceSnapshotV2> {
+          return { id: "s", keyword, candidates: [{ id: "c0", title: "交锋 全24集" }] };
+        },
+      },
+      searchBudget: 8,
+    });
+
+    const result = await sandbox.searchResources("交锋");
+
+    expect(result.snapshot!.candidates[0]!.title).toBe("交锋 全24集");
+    expect(result.warnings ?? []).not.toContain(JEV_UNCERTAIN_LEGEND);
   });
 });

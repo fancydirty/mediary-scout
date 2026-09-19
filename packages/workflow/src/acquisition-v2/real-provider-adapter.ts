@@ -75,7 +75,12 @@ export class RealResourceProviderV2 implements ResourceProviderV2 {
       ...(snapshot.sourceHealth ? { sourceHealth: snapshot.sourceHealth } : {}),
       // Same boundary that once dropped sourceHealth for 6 days — carry the scores
       // through explicitly; without this the ⚠ 相关度存疑 flag can never reach the agent.
-      ...(snapshot.prefilter?.status === "applied" ? { prefilterScores: snapshot.prefilter.scores } : {}),
+      ...(snapshot.prefilter?.status === "applied"
+        ? {
+            prefilterScores: { ...snapshot.prefilter.scores },
+            prefilterDropped: snapshot.prefilter.dropped.length,
+          }
+        : {}),
     };
   }
 }

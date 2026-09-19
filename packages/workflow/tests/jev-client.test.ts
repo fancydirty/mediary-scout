@@ -156,7 +156,7 @@ describe("createJevJudge", () => {
     // The chunks that answered are applied in full; the 429'd chunk's candidates are absent.
     expect(res.scores.id0).toBe(0.8);
     expect(res.scores[`id${n - 1}`]).toBe(0.8);
-    expect("id150" in res.scores).toBe(false);
+    expect(`id${JEV_CHUNK_SIZE}` in res.scores).toBe(false);
     expect(res.inputTokens).toBe(20);
     expect(res.failedChunks).toBe(1);
   });

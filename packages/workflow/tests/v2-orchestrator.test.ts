@@ -304,12 +304,14 @@ describe("runAcquisitionV2 — Jev prefilter wiring", () => {
     const result = await runAcquisitionV2({
       provider: twoCandidateProvider(), executor: new FakeStorageExecutor({ directories: { staging: [], season: [] } }),
       model: viewThenSearchThenReportModel(), workflowRunId: "run-jev",
-      target: { kind: "tv", title: "铁拳教育", aliases: ["Iron Fist"], seasons: [1], missingEpisodes: ["S01E01"], qualityPreference: "1080p" },
+      target: { kind: "tv", title: "铁拳教育", aliases: ["Iron Fist"], year: 2024, seasons: [1], missingEpisodes: ["S01E01"], qualityPreference: "1080p" },
       stagingDirectoryId: "staging", targetSeasonDirectoryIds: { 1: "season" },
       jevJudge,
     });
     expect(seen).toHaveLength(2); // pre-warm + agent search
-    expect(seen[0]!.target).toEqual({ kind: "tv", title: "铁拳教育", aliases: ["Iron Fist"] });
+    // The tv year must reach the judge — its 「相差≥2 判否」 rule is dormant without it.
+    expect(seen[0]!.target).toEqual({ kind: "tv", title: "铁拳教育", aliases: ["Iron Fist"], year: 2024 });
+    expect(result.outcome.resourceSnapshots).toHaveLength(2);
     for (const snap of result.outcome.resourceSnapshots) {
       expect(snap.candidates.map((c) => c.title)).toEqual(["铁拳教育 S01"]);
       expect(snap.prefilter?.status).toBe("applied");
@@ -340,6 +342,23 @@ describe("runAcquisitionV2 — Jev prefilter wiring", () => {
       stagingDirectoryId: "staging", targetMovieDirectoryId: "movie",
       jevJudge,
     });
+    // The agent's 铁拳教育 keyword is rejected by the title guard, so only the pre-warm reaches the judge.
+    expect(seen).toHaveLength(1);
     expect(seen[0]!.target).toEqual({ kind: "movie", title: "沙丘", aliases: ["Dune"], year: 2021 });
+  });
+
+  it("a year of 0 (unknown release year) never reaches the judge", async () => {
+    const seen: JevJudgeInput[] = [];
+    const jevJudge: JevJudge = { judgeCandidates: async (input) => { seen.push(input); return { scores: {}, model: "m" }; } };
+    await runAcquisitionV2({
+      provider: twoCandidateProvider(), executor: new FakeStorageExecutor({ directories: { staging: [], movie: [] } }),
+      model: viewThenSearchThenReportModel(), workflowRunId: "run-jev-year0",
+      target: { kind: "movie", title: "沙丘", aliases: ["Dune"], year: 0, qualityPreference: "4K" },
+      stagingDirectoryId: "staging", targetMovieDirectoryId: "movie",
+      jevJudge,
+    });
+    // year 0 would trip 「与 target.year 相差≥2 判否」 against every dated candidate.
+    expect(seen[0]!.target).toEqual({ kind: "movie", title: "沙丘", aliases: ["Dune"] });
+    expect("year" in seen[0]!.target).toBe(false);
   });
 });

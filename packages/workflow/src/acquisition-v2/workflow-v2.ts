@@ -132,6 +132,7 @@ export async function runAcquisitionV2Workflow(
       kind: "tv",
       title: request.title.name,
       aliases: request.title.aliases,
+      year: request.title.year,
       seasons: request.seasons.map((season) => season.seasonNumber),
       missingEpisodes: before.missing,
       qualityPreference: request.qualityPreference,

@@ -30,6 +30,8 @@ export interface ResourceSnapshotV2 {
   /** candidateId → Jev P(refers to target), only when a prefilter ran. The sandbox
    *  renders the uncertain band as ⚠ 相关度存疑 so the agent knows where to look twice. */
   prefilterScores?: Record<string, number>;
+  /** How many candidates the prefilter removed from this search (only when it ran). */
+  prefilterDropped?: number;
 }
 
 /** The provider surface the sandbox depends on — the fake and the real PanSou
