@@ -48,6 +48,14 @@ interface RunFacts {
   prefilter: string;
   flagSeen: boolean;
   jevCalls: number;
+  /** The agent loop's terminal finishReason from the container log ("stop" | "tool-calls" |
+   *  "content-filter" | "error" | …). A "content-filter"/"error" finish is an LLM-side abort
+   *  that ends the loop mid-flight (files land, nothing gets marked) — it is not the
+   *  prefilter's doing in either direction, so such arms are re-run once and, if they abort
+   *  again, the title is reported INCONCLUSIVE rather than OK/REGRESSION. */
+  finish: string;
+  tokens: number;
+  attempts: number;
 }
 
 const args = process.argv.slice(2);
@@ -162,9 +170,14 @@ function collect(runId: string, tmdbId: number, window: { since: string; until: 
   // The ⚠ suffix is rendered into the agent's document; MEDIA_TRACK_AGENT_LOG=1 echoes tool
   // results to the container log. Best-effort: absent log → false, not a gate.
   const flagSeen = DRY ? false : ssh(`docker logs --since ${sq(window.since)} --until ${sq(window.until)} ${WEB} 2>&1 | grep -c '相关度存疑' || true`) !== "0";
-  return { runId, status, steps, searches, transfers, durationS, obtained, prefilter, flagSeen, jevCalls };
+  // MEDIA_TRACK_AGENT_LOG=1 prints one "[agent] loop done: steps=… tokens=… finish=…" per loop.
+  const loopLine = DRY ? "" : ssh(`docker logs --since ${sq(window.since)} --until ${sq(window.until)} ${WEB} 2>&1 | grep -E '\\[agent\\] loop done' | tail -1 || true`);
+  const finish = /finish=([a-z-]+)/.exec(loopLine)?.[1] ?? "unknown";
+  const tokens = Number(/tokens=(\d+)/.exec(loopLine)?.[1] ?? 0);
+  return { runId, status, steps, searches, transfers, durationS, obtained, prefilter, flagSeen, jevCalls, finish, tokens, attempts: 1 };
 }
 
+const isAborted = (x: RunFacts) => x.finish === "content-filter" || x.finish === "error";
 const cids = readCids();
 const results: Array<{ title: string; type: string; tmdbId: number; off?: RunFacts; on?: RunFacts; verdict?: string }> = [];
 for (const t of titles) {
@@ -173,18 +186,25 @@ for (const t of titles) {
   results.push(row);
   for (const arm of ARMS) {
     const armCids = arm === "off" ? cids.A : cids.B;
-    console.log(`\n=== ${label} — prefilter ${arm.toUpperCase()} (drive → ${arm === "off" ? "A" : "B"})`);
-    resetTracking();
-    pointDriveAt(armCids);
-    setPrefilter(arm === "on");
-    const since = new Date().toISOString();
-    const runId = acquire(t);
-    console.log(`    queued run ${runId}`);
-    const status = await waitForRun(runId);
-    const until = new Date(Date.now() + 5_000).toISOString();
-    const facts = DRY ? { runId, status, steps: 0, searches: 0, transfers: 0, durationS: 0, obtained: [], prefilter: "-", flagSeen: false, jevCalls: 0 } : collect(runId, t.tmdbId, { since, until });
-    row[arm] = facts;
-    console.log(`    ${status} steps=${facts.steps} searches=${facts.searches} transfers=${facts.transfers} ${facts.durationS}s obtained=${facts.obtained.length} prefilter=${facts.prefilter}${arm === "on" ? ` flagSeen=${facts.flagSeen}` : ""}`);
+    let facts: RunFacts | undefined;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      console.log(`\n=== ${label} — prefilter ${arm.toUpperCase()} (drive → ${arm === "off" ? "A" : "B"})${attempt > 1 ? ` — attempt ${attempt}` : ""}`);
+      resetTracking();
+      pointDriveAt(armCids);
+      setPrefilter(arm === "on");
+      const since = new Date().toISOString();
+      const runId = acquire(t);
+      console.log(`    queued run ${runId}`);
+      const status = await waitForRun(runId);
+      const until = new Date(Date.now() + 5_000).toISOString();
+      facts = DRY
+        ? { runId, status, steps: 0, searches: 0, transfers: 0, durationS: 0, obtained: [], prefilter: "-", flagSeen: false, jevCalls: 0, finish: "dry", tokens: 0, attempts: attempt }
+        : { ...collect(runId, t.tmdbId, { since, until }), attempts: attempt };
+      console.log(`    ${status} finish=${facts.finish} steps=${facts.steps} searches=${facts.searches} transfers=${facts.transfers} ${facts.durationS}s tokens=${facts.tokens} obtained=${facts.obtained.length} prefilter=${facts.prefilter}${arm === "on" ? ` flagSeen=${facts.flagSeen}` : ""}`);
+      if (!isAborted(facts) || DRY) break;
+      console.log(`    ↻ the LLM aborted the loop (finish=${facts.finish}) — not a prefilter effect; re-running this arm`);
+    }
+    row[arm] = facts!;
     writeFileSync(OUT, JSON.stringify(results, null, 2));
   }
   if (row.off && row.on) {
@@ -192,18 +212,21 @@ for (const t of titles) {
     const superset = row.off.obtained.every((code) => row.on!.obtained.includes(code));
     const statusRank = (s: string) => (s === "succeeded" ? 3 : s === "partial" ? 2 : s === "no_coverage" ? 1 : 0);
     const notWorse = statusRank(row.on.status) >= statusRank(row.off.status);
-    row.verdict = superset && notWorse ? "OK" : "REGRESSION";
-    console.log(`    → quality ${row.verdict} (OFF ${offSet.size} eps ${row.off.status} | ON ${row.on.obtained.length} eps ${row.on.status})`);
+    row.verdict = isAborted(row.off) || isAborted(row.on) ? "INCONCLUSIVE" : superset && notWorse ? "OK" : "REGRESSION";
+    console.log(`    → quality ${row.verdict} (OFF ${offSet.size} eps ${row.off.status}/${row.off.finish} | ON ${row.on.obtained.length} eps ${row.on.status}/${row.on.finish})`);
     writeFileSync(OUT, JSON.stringify(results, null, 2));
   }
 }
 
-console.log("\n| title | OFF status | OFF eps | OFF steps/search/s | ON status | ON eps | ON steps/search/s | ON prefilter (status:dropped/floored/total per search) | quality |");
+console.log("\n| title | OFF status/finish | OFF eps | OFF steps/search/s/ktok | ON status/finish | ON eps | ON steps/search/s/ktok | ON prefilter (status:dropped/floored/total per search) | quality |");
 console.log("|---|---|---|---|---|---|---|---|---|");
 for (const r of results) {
-  const f = (x?: RunFacts) => (x ? `${x.steps}/${x.searches}/${x.durationS}` : "-");
-  console.log(`| ${r.title} | ${r.off?.status ?? "-"} | ${r.off?.obtained.length ?? "-"} | ${f(r.off)} | ${r.on?.status ?? "-"} | ${r.on?.obtained.length ?? "-"} | ${f(r.on)} | ${r.on?.prefilter ?? "-"} | ${r.verdict ?? "-"} |`);
+  const f = (x?: RunFacts) => (x ? `${x.steps}/${x.searches}/${x.durationS}/${Math.round(x.tokens / 1000)}` : "-");
+  const sf = (x?: RunFacts) => (x ? `${x.status}/${x.finish}${x.attempts > 1 ? ` (×${x.attempts})` : ""}` : "-");
+  console.log(`| ${r.title} | ${sf(r.off)} | ${r.off?.obtained.length ?? "-"} | ${f(r.off)} | ${sf(r.on)} | ${r.on?.obtained.length ?? "-"} | ${f(r.on)} | ${r.on?.prefilter ?? "-"} | ${r.verdict ?? "-"} |`);
 }
 const regressions = results.filter((r) => r.verdict === "REGRESSION");
+const inconclusive = results.filter((r) => r.verdict === "INCONCLUSIVE");
 if (regressions.length > 0) { console.log(`\nNO-GO: ${regressions.map((r) => r.title).join(", ")}`); process.exit(1); }
-console.log("\nGO");
+if (inconclusive.length > 0) console.log(`\nINCONCLUSIVE (LLM aborted both attempts of an arm): ${inconclusive.map((r) => r.title).join(", ")}`);
+console.log(`\nGO (${results.length - inconclusive.length} conclusive, ${inconclusive.length} inconclusive)`);
