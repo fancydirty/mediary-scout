@@ -147,7 +147,8 @@ export interface ResourceSnapshot {
 export interface SnapshotPrefilter {
   provider: "jev";
   model: string;
-  status: "applied" | "skipped";
+  /** applied = filtered; skipped = not attempted (nothing judgeable); failed = attempted and errored → fail-open, nothing dropped. */
+  status: "applied" | "skipped" | "failed";
   /** Why it was skipped (timeout / http / invalid response). Never contains secrets. */
   reason?: string;
   /** candidateId → P(refers to target) for every judged candidate, dropped ones included. */

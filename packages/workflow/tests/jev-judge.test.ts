@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest";
 import {
   buildJevQuestions,
   JEV_DROP_BELOW,
+  JEV_THRESHOLDS,
   JEV_UNCERTAIN_BELOW,
   classifyJevScore,
 } from "../src/jev-judge.js";
+import type { ResourceSnapshot, SnapshotPrefilter } from "../src/domain.js";
 
 describe("buildJevQuestions", () => {
   it("emits one noul question per candidate keyed by candidate key, tv wording", () => {
@@ -38,10 +40,13 @@ describe("classifyJevScore", () => {
     expect(classifyJevScore(0.69)).toBe("uncertain");
     expect(classifyJevScore(0.7)).toBe("keep");
     expect(classifyJevScore(1)).toBe("keep");
+    expect(classifyJevScore(Number.NaN)).toBe("keep");
+    expect(classifyJevScore(null as unknown as number)).toBe("keep");
+    expect(classifyJevScore(undefined as unknown as number)).toBe("keep");
+    expect(classifyJevScore(-1)).toBe("drop");   // finite but out of range: honest low score
+    expect(classifyJevScore(1.5)).toBe("keep");
   });
 });
-
-import type { ResourceSnapshot, SnapshotPrefilter } from "../src/domain.js";
 
 describe("SnapshotPrefilter type", () => {
   it("is assignable onto ResourceSnapshot.prefilter", () => {
@@ -58,5 +63,6 @@ describe("SnapshotPrefilter type", () => {
       id: "s", provider: "p", keyword: "k", candidates: [], createdAt: "2026-09-19T00:00:00.000Z", prefilter: pf,
     };
     expect(snap.prefilter?.status).toBe("applied");
+    expect(JEV_THRESHOLDS).toEqual({ dropBelow: 0.3, uncertainBelow: 0.7 });
   });
 });

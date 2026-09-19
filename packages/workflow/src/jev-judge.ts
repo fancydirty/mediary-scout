@@ -41,9 +41,17 @@ export const JEV_DROP_BELOW = 0.3;
  *  short Chinese titles collide here (《权利交锋》 vs 《交锋》) and only the agent can tell. */
 export const JEV_UNCERTAIN_BELOW = 0.7;
 
+/** The pair the provider stamps into SnapshotPrefilter.thresholds — derived from the
+ *  constants above so the audit trail can never disagree with what was applied. */
+export const JEV_THRESHOLDS = { dropBelow: JEV_DROP_BELOW, uncertainBelow: JEV_UNCERTAIN_BELOW } as const;
+
 export type JevBand = "drop" | "uncertain" | "keep";
 
 export function classifyJevScore(score: number): JevBand {
+  // Fail OPEN on anything that is not a real number: null from a jsonb round-trip
+  // of NaN, an unanswered question, a malformed response. A prefilter's only
+  // unacceptable failure is dropping a good candidate — never drop on bad data.
+  if (typeof score !== "number" || !Number.isFinite(score)) return "keep";
   if (score < JEV_DROP_BELOW) return "drop";
   if (score < JEV_UNCERTAIN_BELOW) return "uncertain";
   return "keep";
