@@ -722,30 +722,43 @@ export async function saveJevConfigAction(input: {
     const {
       getWorkflowRepository,
       getCurrentAccountId,
+      getAccountScopedSettings,
+      getJevConfig,
       JEV_API_KEY_SETTING_KEY,
       JEV_BASE_URL_SETTING_KEY,
       JEV_HEALTH_SETTING_KEY,
       JEV_PREFILTER_ENABLED_SETTING_KEY,
     } = await import("../lib/workflow-runtime");
-    const { DEFAULT_JEV_BASE_URL } = await import("@media-track/workflow");
-    const { probeJev } = await import("../lib/jev-probe");
+    const { probeJev, validateJevBaseUrlFormat } = await import("../lib/jev-probe");
     const repository = getWorkflowRepository();
     const accountId = await getCurrentAccountId();
-    // 留空 = 沿用已保存的 key(同 Prowlarr 表单语义)。
-    const apiKey =
-      input.apiKey.trim() ||
-      ((await repository.getAccountSetting(accountId, JEV_API_KEY_SETTING_KEY)) ?? "").trim();
+    // 留空 = 沿用当前**生效**的配置(account → 全局 → env) —— 与表单上「已设置」
+    // 占位符同一条规则。只读 account 行的话,一个存在于全局作用域或 env 的 key
+    // 会在这里被判成「没有 key」;而 enabled/health 只有这个 action 会写,于是
+    // 纯 env 部署永远激活不了。
+    const effective = await getJevConfig(getAccountScopedSettings(accountId, repository));
+    const typedKey = input.apiKey.trim();
+    const apiKey = typedKey || effective.apiKey || "";
     if (!apiKey) return { success: false, message: "需要 API Key（OpenRouter 的 sk-or-… 即可）。" };
-    const baseUrl = input.baseUrl.trim() || DEFAULT_JEV_BASE_URL;
+    const typedUrl = input.baseUrl.trim();
+    // effective.baseUrl 已经兜到 env → DEFAULT_JEV_BASE_URL。
+    const baseUrl = typedUrl || effective.baseUrl;
+    // 先跑便宜的格式校验:漏写 scheme 的地址否则要耗满 8s 探活,再换回一句
+    // 含糊的「连不上」,而真正的问题是格式(与 PanSou 同一条规则)。
+    const format = validateJevBaseUrlFormat(baseUrl);
+    if (!format.ok) return { success: false, message: format.message };
     // 存之前真打一次:一个打不通的 key 被保存后,预筛会在每次搜索上静默 fail-open,
     // 用户以为开了其实从没生效 —— 与 PanSou 自建源「活了 6 天」是同一种病。
     const probe = await probeJev({ apiKey, baseUrl });
     if (!probe.ok) return { success: false, message: probe.message };
-    await repository.setAccountSetting(accountId, JEV_API_KEY_SETTING_KEY, apiKey);
-    await repository.setAccountSetting(accountId, JEV_BASE_URL_SETTING_KEY, baseUrl);
+    // 只写用户**这次真输入**的内容:留空的 key 不重写(全局/env 的 key 不会被
+    // 复制进 account 行),留空的 URL 写 ""=无覆盖(同 Prowlarr),否则今天的默认
+    // 端点会被冻进 DB,日后改 env JEV_BASE_URL 也推不动它。
+    if (typedKey) await repository.setAccountSetting(accountId, JEV_API_KEY_SETTING_KEY, typedKey);
+    await repository.setAccountSetting(accountId, JEV_BASE_URL_SETTING_KEY, typedUrl);
     await repository.setAccountSetting(accountId, JEV_HEALTH_SETTING_KEY, "ok");
     await repository.setAccountSetting(accountId, JEV_PREFILTER_ENABLED_SETTING_KEY, "1");
-    return { success: true };
+    return { success: true, message: `已连通（${probe.model}）` };
   } catch (error) {
     return { success: false, message: `保存失败：${String(error)}` };
   }

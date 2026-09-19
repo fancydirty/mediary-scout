@@ -5,6 +5,8 @@
  * silently failing" — that failure mode is exactly what fail-open would hide
  * (the 自建搜索源 that "worked" for 6 days is the same story).
  */
+import { JEV_MODEL } from "@media-track/workflow";
+
 export type JevProbeFailure = "unreachable" | "auth_failed" | "http_error" | "not_jev";
 
 export type JevProbeResult =
@@ -27,7 +29,9 @@ export async function probeJev(
       // One fixed noul question — the answer's VALUE is irrelevant, its shape is
       // the whole point: only a real decisions endpoint returns answers.probe.noul.
       body: JSON.stringify({
-        model: "jev-latest",
+        // The same constant jev-client sends: probing a model the client never
+        // asks for would certify an endpoint the real搜索 doesn't exercise.
+        model: JEV_MODEL,
         state: { candidate: "都挺好 2019 全46集 国语中字 1080P" },
         questions: { probe: { type: "noul", instructions: "`candidate` 是一个中文电视剧资源标题" } },
       }),
@@ -57,10 +61,29 @@ export async function probeJev(
           "这个地址返回的不是 Jev decisions 响应（缺少 answers.probe.noul），未保存。Base URL 应指向 OpenRouter 的 /api/alpha/decisions 或 TypeSafe 的 /v1/systemone。",
       };
     }
-    return { ok: true, model: typeof body?.model === "string" ? body.model : "jev-latest" };
-  } catch {
-    // The key must never reach this message: undici quotes the offending header
-    // VALUE in its own error text, and this string is shown to the user.
-    return { ok: false, reason: "unreachable", message: "连不上 Jev 端点（超时或网络错误），未保存。" };
+    return { ok: true, model: typeof body?.model === "string" ? body.model : JEV_MODEL };
+  } catch (error) {
+    // AbortSignal.timeout rejects with TimeoutError (AbortError when something
+    // else aborts). Folding both into the generic 「网络错误」 text hides the one
+    // actionable fact — the endpoint answered nothing inside the budget.
+    const timedOut =
+      error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+    return {
+      ok: false,
+      reason: "unreachable",
+      // NEVER interpolate `error`: undici quotes the offending header VALUE —
+      // i.e. the API key — in its own message, and this string is shown to the user.
+      message: timedOut
+        ? `Jev 端点 ${PROBE_TIMEOUT_MS / 1000} 秒内没有响应，未保存。`
+        : "连不上 Jev 端点（网络错误），未保存。",
+    };
   }
+}
+
+/** 保存前的便宜格式校验（同 pansou-probe.validatePanSouBaseUrlFormat）。少了它，
+ *  一个漏写 scheme 的地址要先花 8s 探活，再拿到含糊的「连不上」，而真正的问题是格式。 */
+export function validateJevBaseUrlFormat(url: string): { ok: true } | { ok: false; message: string } {
+  return /^https?:\/\//.test(url.trim())
+    ? { ok: true }
+    : { ok: false, message: "Base URL 必须以 http:// 或 https:// 开头，未保存。" };
 }

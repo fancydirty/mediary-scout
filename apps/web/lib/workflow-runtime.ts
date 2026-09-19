@@ -539,8 +539,14 @@ export async function resolveSessionAccountId(signedCookie: string): Promise<str
  * has no per-key account_settings, so it reads exactly the global values it
  * always did — single-user behavior is unchanged.
  */
-export function getAccountScopedSettings(accountId: string): { getSetting(key: string): Promise<string | null> } {
-  const repository = getWorkflowRepository();
+export function getAccountScopedSettings(
+  accountId: string,
+  /** Injectable for callers that already hold the repository (a server action
+   *  that also writes through it, a test with a swapped repo). Defaults to the
+   *  process-wide one, so every existing call site is unchanged. */
+  repo?: Pick<WorkflowRepository, "getAccountSetting" | "getSetting">,
+): { getSetting(key: string): Promise<string | null> } {
+  const repository = repo ?? getWorkflowRepository();
   return {
     async getSetting(key: string): Promise<string | null> {
       const own = await repository.getAccountSetting(accountId, key);
@@ -1179,7 +1185,10 @@ export async function getProwlarrConfig(
 export const JEV_API_KEY_SETTING_KEY = "jev_api_key";
 export const JEV_BASE_URL_SETTING_KEY = "jev_base_url";
 export const JEV_PREFILTER_ENABLED_SETTING_KEY = "jev_prefilter_enabled";
-/** "ok" | "fail" — written by the save-time probe. The prefilter never runs on "fail". */
+/** "ok" after a successful save-time probe; anything else (absent/blank) = inactive.
+ *  A failed probe refuses the save and leaves the previous state untouched, so
+ *  "fail" is never written; runtime failures fail open per search (see
+ *  SnapshotPrefilter.status) and are not recorded here (future: health badge). */
 export const JEV_HEALTH_SETTING_KEY = "jev_health";
 
 export interface JevConfig {
@@ -1190,7 +1199,10 @@ export interface JevConfig {
 }
 
 /** Jev candidate prefilter settings (Settings → 资源提供商). DB wins over env;
- *  blank = unset. `enabled` is true only for the exact string "1". */
+ *  blank = unset. `enabled` is true only for the exact string "1".
+ *  env JEV_API_KEY / JEV_BASE_URL only supply the key/url; activation still
+ *  requires a successful 保存并测试 (which writes enabled/health) — an env-only
+ *  deployment activates by saving the form with the key left blank. */
 export async function getJevConfig(
   repository: { getSetting(key: string): Promise<string | null> },
   env: NodeJS.ProcessEnv = process.env,

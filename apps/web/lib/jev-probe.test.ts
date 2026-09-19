@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { probeJev } from "./jev-probe";
+import { JEV_MODEL } from "@media-track/workflow";
+import { probeJev, validateJevBaseUrlFormat } from "./jev-probe";
 
 /** A valid decisions answer: what a live Jev endpoint returns for the probe question. */
 const ok = (async () =>
@@ -36,7 +37,7 @@ describe("probeJev", () => {
     expect(seen).toHaveLength(1);
     expect(seen[0]!.url).toBe("https://x/decisions");
     expect(seen[0]!.auth).toBe("Bearer sk-abc");
-    expect(seen[0]!.body.model).toBe("jev-latest");
+    expect(seen[0]!.body.model).toBe(JEV_MODEL);
     expect(Object.keys(seen[0]!.body.questions as Record<string, unknown>)).toEqual(["probe"]);
   });
 
@@ -78,5 +79,63 @@ describe("probeJev", () => {
       { fetchImpl: failWith(async () => new Response(JSON.stringify({ choices: [] }), { status: 200 })) },
     );
     expect(r).toMatchObject({ ok: false, reason: "not_jev" });
+  });
+
+  // The client sends JEV_MODEL; a probe that asked for a different model would
+  // validate an endpoint the real搜索 never exercises.
+  it("asks for the same model constant the client sends", async () => {
+    let body: Record<string, unknown> = {};
+    await probeJev(
+      { apiKey: "k", baseUrl: "https://x" },
+      {
+        fetchImpl: (async (_url: string, init: RequestInit) => {
+          body = JSON.parse(String(init.body)) as Record<string, unknown>;
+          return new Response(JSON.stringify({ model: "m", answers: { probe: { noul: 0.1 } } }), {
+            status: 200,
+          });
+        }) as unknown as typeof fetch,
+      },
+    );
+    expect(body.model).toBe(JEV_MODEL);
+  });
+
+  it("timeout → a message that names the 8s budget (not the generic network text)", async () => {
+    const r = await probeJev(
+      { apiKey: "k", baseUrl: "https://x" },
+      {
+        fetchImpl: failWith(async () => {
+          throw Object.assign(new Error("x"), { name: "TimeoutError" });
+        }),
+      },
+    );
+    expect(r).toMatchObject({ ok: false, reason: "unreachable" });
+    if (!r.ok) expect(r.message).toMatch(/8 秒/);
+  });
+
+  // undici quotes the offending header VALUE — i.e. the API key — in its own
+  // error text. That text must never be interpolated into a user-facing message.
+  it("never leaks the key from an error message into the failure text", async () => {
+    const r = await probeJev(
+      { apiKey: "sk-SECRET", baseUrl: "https://x" },
+      {
+        fetchImpl: failWith(async () => {
+          throw new Error('Headers.append: "Bearer sk-SECRET" is an invalid header value.');
+        }),
+      },
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).not.toContain("SECRET");
+  });
+});
+
+describe("validateJevBaseUrlFormat", () => {
+  it("rejects a scheme-less address before any 8s probe is spent on it", () => {
+    expect(validateJevBaseUrlFormat("openrouter.ai/x")).toMatchObject({ ok: false });
+    expect(validateJevBaseUrlFormat("ftp://x")).toMatchObject({ ok: false });
+  });
+
+  it("accepts http/https (whitespace tolerated, same as the probe)", () => {
+    expect(validateJevBaseUrlFormat("https://openrouter.ai/api/alpha/decisions")).toEqual({ ok: true });
+    expect(validateJevBaseUrlFormat("  http://localhost:8080/v1/systemone  ")).toEqual({ ok: true });
   });
 });

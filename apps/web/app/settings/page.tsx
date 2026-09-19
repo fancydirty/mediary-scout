@@ -51,6 +51,7 @@ import {
   PROWLARR_API_KEY_SETTING_KEY,
   getJevConfig,
   isJevPrefilterActive,
+  JEV_BASE_URL_SETTING_KEY,
   PANSOU_BASE_URL_SETTING_KEY,
   resolveGlobalWorkspace,
   resolveIsDesktop,
@@ -334,6 +335,11 @@ async function ResourceProviderSection() {
   // isJevPrefilterActive is the same go/no-go the worker uses, so the badge
   // cannot drift from what actually runs.
   const jev = await getJevConfig(repository);
+  // The input shows the stored OVERRIDE, not the resolved default (same as the two
+  // reads above). Prefilling the resolved default would be typed straight back on
+  // the next 保存, freezing today's endpoint into the DB and shadowing env
+  // JEV_BASE_URL — the placeholder already tells the user what blank resolves to.
+  const jevBaseUrlOverride = (await repository.getSetting(JEV_BASE_URL_SETTING_KEY)) ?? "";
   // Prowlarr (磁力/PT) only works for brands that support magnet (115). Hide it
   // when every connected drive is 夸克 (no magnet API). Shown for legacy/env-only
   // setups (no connected_storages rows) so we never hide it from a working 115.
@@ -367,7 +373,7 @@ async function ResourceProviderSection() {
       ) : null}
       <div style={{ height: 18 }} />
       <JevPrefilterForm
-        baseUrl={jev.baseUrl}
+        baseUrl={jevBaseUrlOverride}
         apiKeySet={Boolean(jev.apiKey)}
         enabled={jev.enabled}
         healthy={jev.health === "ok"}

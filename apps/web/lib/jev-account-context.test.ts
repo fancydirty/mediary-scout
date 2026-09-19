@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
  * only CONSTRUCTED here, never called.
  */
 
+const prevSqlite = process.env.MEDIA_TRACK_SQLITE_PATH;
 const prevPg = process.env.MEDIA_TRACK_POSTGRES_URL;
 const prevMultiUser = process.env.MEDIA_TRACK_MULTI_USER;
 const prevAgentAdapter = process.env.MEDIA_TRACK_AGENT_ADAPTER;
@@ -32,7 +33,8 @@ const boot = async () => {
 };
 
 afterEach(() => {
-  delete process.env.MEDIA_TRACK_SQLITE_PATH;
+  if (prevSqlite !== undefined) process.env.MEDIA_TRACK_SQLITE_PATH = prevSqlite;
+  else delete process.env.MEDIA_TRACK_SQLITE_PATH;
   if (prevPg !== undefined) process.env.MEDIA_TRACK_POSTGRES_URL = prevPg;
   if (prevMultiUser !== undefined) process.env.MEDIA_TRACK_MULTI_USER = prevMultiUser;
   if (prevAgentAdapter !== undefined) process.env.MEDIA_TRACK_AGENT_ADAPTER = prevAgentAdapter;

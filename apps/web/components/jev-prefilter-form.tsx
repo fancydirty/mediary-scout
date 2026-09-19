@@ -47,7 +47,8 @@ export function JevPrefilterForm({
       );
       if (!r.ok) return;
       if (r.value.success) {
-        flash("✅ 已连通并保存，预筛已启用");
+        // 带上 action 回的模型名:保存成功时用户最想确认的是「到底是谁答的」。
+        flash(`✅ ${r.value.message ?? "已连通并保存"}，预筛已启用`);
         setApiKey("");
         setHasKey(true);
         setIsHealthy(true);
@@ -65,6 +66,8 @@ export function JevPrefilterForm({
       if (!r.ok) return;
       if (r.value.success) {
         flash("✅ 已清除");
+        // 输入框里还留着刚打的 key 的话,下一次「保存并测试」会把已清除的配置又写回去。
+        setApiKey("");
         setHasKey(false);
         setIsHealthy(false);
         setEnabled(false);
