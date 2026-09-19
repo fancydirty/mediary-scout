@@ -1,0 +1,81 @@
+/**
+ * Jev (TypeSafe "System One" decision model) judge port.
+ *
+ * The prefilter provider depends ONLY on this port; the real HTTP client lives in
+ * jev-client.ts and tests pass a spy. Keeping the question wording here — and
+ * exporting it — means the offline eval scripts and production ask the SAME
+ * questions, so a wording tweak can never silently diverge from what was measured.
+ */
+
+export type JevTargetKind = "tv" | "movie";
+
+export interface JevJudgeTarget {
+  kind: JevTargetKind;
+  title: string;
+  aliases: string[];
+  /** First-air / release year when known; undefined lets the year rule stay dormant. */
+  year?: number;
+}
+
+export interface JevJudgeInput {
+  target: JevJudgeTarget;
+  candidates: Array<{ id: string; title: string }>;
+}
+
+export interface JevJudgeResult {
+  /** candidateId → P(candidate refers to the target), 0..1. Missing id = not judged. */
+  scores: Record<string, number>;
+  model: string;
+  inputTokens?: number;
+  cost?: number;
+}
+
+export interface JevJudge {
+  judgeCandidates(input: JevJudgeInput): Promise<JevJudgeResult>;
+}
+
+/** Below this the candidate is dropped before the agent sees it. Reliability curve on
+ *  9,958 titled production candidates: agent-selected rate in [0,0.3) is exactly 0%. */
+export const JEV_DROP_BELOW = 0.3;
+/** Below this (and ≥ JEV_DROP_BELOW) the candidate is kept but flagged 相关度存疑 —
+ *  short Chinese titles collide here (《权利交锋》 vs 《交锋》) and only the agent can tell. */
+export const JEV_UNCERTAIN_BELOW = 0.7;
+
+export type JevBand = "drop" | "uncertain" | "keep";
+
+export function classifyJevScore(score: number): JevBand {
+  if (score < JEV_DROP_BELOW) return "drop";
+  if (score < JEV_UNCERTAIN_BELOW) return "uncertain";
+  return "keep";
+}
+
+export interface JevNoulQuestion {
+  type: "noul";
+  instructions: string;
+}
+
+const TV_RULES =
+  "同一IP的剧场版/电影/广播剧/有声书/漫画/游戏/衍生动画/综艺都不算这部剧集本身,必须判否。" +
+  "`target.year` 是首播年份:候选标注年份与之相差≥2 大概率是同名/近名的另一部作品,应判否。" +
+  "`target.aliases` 是原名/别名,候选用这些名字也算指向目标";
+
+const MOVIE_RULES = "`target.aliases` 是原名/别名,候选用这些名字也算指向目标";
+
+/** One noul per candidate key. Wording was tuned in the 2026-09-19 evals
+ *  (identity 28/29, injection 8/9, season 20/20); change it only with a re-run. */
+export function buildJevQuestions(
+  target: { kind: JevTargetKind },
+  candidateKeys: string[],
+): Record<string, JevNoulQuestion> {
+  const out: Record<string, JevNoulQuestion> = {};
+  for (const key of candidateKeys) {
+    out[key] = {
+      type: "noul",
+      instructions:
+        target.kind === "movie"
+          ? `\`candidates.${key}\` 明确是 \`target.title\`(\`target.year\`)这部电影本身,而不是续集/前传/翻拍/同IP不同片/同名综艺或动画。${MOVIE_RULES}`
+          : `\`candidates.${key}\` 明确指向 \`target.title\` 这部剧集/动漫作品(不是仅关键词相似的其它作品;第1季可无季标记,第2季以上必须明确标出季)。${TV_RULES}`,
+    };
+  }
+  return out;
+}
