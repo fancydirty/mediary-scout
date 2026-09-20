@@ -772,8 +772,9 @@ export class Storage115Executor implements StorageExecutor {
     // (the single-file window's own patience — a file quiet that long is a miss),
     // or once every file has had one extra round of grace (the hard cap on cost).
     // Never poll past the transfer budget line: the calls beyond it are the
-    // wrap-up reserve (with no reserve configured this stops one call short of the
-    // hard limit — a graceful miss instead of a throw).
+    // wrap-up reserve (with no reserve configured the poll stops once the count
+    // reaches the hard limit, i.e. instead of making the call the guard would
+    // throw on — a graceful miss instead of a throw).
     const maxPolls = this.subtitleMaterializeAttempts + submitted.size;
     const budgetStopMessage =
       "subtitle landing poll stopped: 115 call budget reached the wrap-up reserve";
@@ -1300,6 +1301,8 @@ export function createProtectedStorage115Executor(
     ...optionalExecutorOptions(options, env),
   };
   if (options.apiGuard) {
+    // A caller-supplied guard is used as-is: it must carry its own transferReserveCalls
+    // (the default reserve below is only applied when the factory builds the guard).
     executorOptions.apiGuard = options.apiGuard;
   } else {
     // The call budget is a lifetime backstop against runaway loops, not a

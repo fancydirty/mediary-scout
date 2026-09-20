@@ -1050,8 +1050,8 @@ describe("115 factories wire the transfer reserve (收尾永远有额度)", () =
     for (let i = 0; i < 4; i += 1) {
       await executor.listVideoFiles("season_1");
     }
-    // transfer(): write-scope check (getDirectoryInfo) + before listing are allowed
-    // past the cutoff; the receiveShare itself is refused — nothing is received.
+    // transfer(): the refusal lands on the transfer line BEFORE any preparatory call
+    // (no write-scope check, no before-listing) — nothing is received.
     await expect(
       executor.transfer({
         workflowRunId: "run_1",
@@ -1381,7 +1381,7 @@ describe("Storage115Executor.transferSubtitleUrls (整包一次:1 校验 + 1 快
     const guard = new Pan115ApiGuard({ minDelayMs: 0 });
     const executor = new Storage115Executor({ api, apiGuard: guard, sleep: async () => {} });
 
-    const attempts = await executor.transferSubtitleUrls!({ files: subtitleFiles(3), directoryId: "stage", workflowRunId: "run-b" });
+    const attempts = await executor.transferSubtitleUrls({ files: subtitleFiles(3), directoryId: "stage", workflowRunId: "run-b" });
 
     expect(attempts.map((a) => a.status)).toEqual(["succeeded", "succeeded", "succeeded"]);
     expect(attempts.map((a) => a.materializedFileIds)).toEqual([["fid_Show.S01E01.srt"], ["fid_Show.S01E02.srt"], ["fid_Show.S01E03.srt"]]);
@@ -1398,7 +1398,7 @@ describe("Storage115Executor.transferSubtitleUrls (整包一次:1 校验 + 1 快
     api.addOfflineTask = async () => ({ ok: true, message: "accepted" });
     const executor = new Storage115Executor({ api, subtitleMaterializeAttempts: 2, subtitleMaterializePollMs: 1, sleep: async () => {} });
 
-    await executor.transferSubtitleUrls!({ files: subtitleFiles(1), directoryId: "stage", workflowRunId: "run-b" });
+    await executor.transferSubtitleUrls({ files: subtitleFiles(1), directoryId: "stage", workflowRunId: "run-b" });
 
     expect(api.listCalls.every((cid) => cid === "stage")).toBe(true);
   });
@@ -1418,7 +1418,7 @@ describe("Storage115Executor.transferSubtitleUrls (整包一次:1 校验 + 1 快
     const guard = new Pan115ApiGuard({ minDelayMs: 0 });
     const executor = new Storage115Executor({ api, apiGuard: guard, subtitleMaterializeAttempts: 3, subtitleMaterializePollMs: 1, sleep: async () => {} });
 
-    const attempts = await executor.transferSubtitleUrls!({ files: subtitleFiles(6), directoryId: "stage", workflowRunId: "run-b" });
+    const attempts = await executor.transferSubtitleUrls({ files: subtitleFiles(6), directoryId: "stage", workflowRunId: "run-b" });
 
     expect(attempts.filter((a) => a.status === "succeeded")).toHaveLength(2);
     expect(attempts.filter((a) => a.status === "no_target_change")).toHaveLength(4);
@@ -1447,7 +1447,7 @@ describe("Storage115Executor.transferSubtitleUrls (整包一次:1 校验 + 1 快
     };
     const executor = new Storage115Executor({ api, subtitleMaterializeAttempts: 2, subtitleMaterializePollMs: 1, sleep: async () => {} });
 
-    const attempts = await executor.transferSubtitleUrls!({ files: subtitleFiles(10), directoryId: "stage", workflowRunId: "run-b" });
+    const attempts = await executor.transferSubtitleUrls({ files: subtitleFiles(10), directoryId: "stage", workflowRunId: "run-b" });
 
     expect(listCalls).toBe(1 + 2 + 10); // before + (attempts + files) polls
     expect(attempts.filter((a) => a.status === "succeeded")).toHaveLength(6); // polls 1,3,5,7,9,11 landed one each
@@ -1471,7 +1471,7 @@ describe("Storage115Executor.transferSubtitleUrls (整包一次:1 校验 + 1 快
     };
     const executor = new Storage115Executor({ api, subtitleMaterializeAttempts: 1, subtitleMaterializePollMs: 1, sleep: async () => {} });
 
-    const attempts = await executor.transferSubtitleUrls!({ files, directoryId: "stage", workflowRunId: "run-b" });
+    const attempts = await executor.transferSubtitleUrls({ files, directoryId: "stage", workflowRunId: "run-b" });
 
     expect(attempts.map((a) => a.status)).toEqual(["no_target_change", "no_target_change", "no_target_change", "succeeded"]);
     expect(api.listOfflineTasksCalls).toBe(1);
@@ -1489,7 +1489,7 @@ describe("Storage115Executor.transferSubtitleUrls (整包一次:1 校验 + 1 快
     };
     const executor = new Storage115Executor({ api, sleep: async () => {} });
 
-    const attempts = await executor.transferSubtitleUrls!({
+    const attempts = await executor.transferSubtitleUrls({
       files: [
         { url: "http://x/evil.srt", filename: "sub/evil.srt" },
         { url: "http://x/Show.S01E01.srt", filename: "Show.S01E01.srt" },
@@ -1514,7 +1514,7 @@ describe("Storage115Executor.transferSubtitleUrls (整包一次:1 校验 + 1 快
     const guard = new Pan115ApiGuard({ minDelayMs: 0 });
     const executor = new Storage115Executor({ api, apiGuard: guard });
 
-    const attempts = await executor.transferSubtitleUrls!({ files: [{ url: "http://x/a", filename: "a/b.srt" }], directoryId: "stage", workflowRunId: "run-b" });
+    const attempts = await executor.transferSubtitleUrls({ files: [{ url: "http://x/a", filename: "a/b.srt" }], directoryId: "stage", workflowRunId: "run-b" });
 
     expect(attempts).toHaveLength(1);
     expect(guard.callsSpent()).toBe(0);
@@ -1529,7 +1529,7 @@ describe("Storage115Executor.transferSubtitleUrls (整包一次:1 校验 + 1 快
     };
     const executor = new Storage115Executor({ api, subtitleMaterializeAttempts: 1, subtitleMaterializePollMs: 1, sleep: async () => {} });
 
-    const attempts = await executor.transferSubtitleUrls!({ files: subtitleFiles(6), directoryId: "stage", workflowRunId: "run-b" });
+    const attempts = await executor.transferSubtitleUrls({ files: subtitleFiles(6), directoryId: "stage", workflowRunId: "run-b" });
 
     expect(submissions).toBe(3);
     expect(attempts.slice(0, 3).map((a) => a.providerMessage)).toEqual(["云下载配额不足", "云下载配额不足", "云下载配额不足"]);
@@ -1546,7 +1546,7 @@ describe("Storage115Executor.transferSubtitleUrls (整包一次:1 校验 + 1 快
     };
     const executor = new Storage115Executor({ api, subtitleMaterializeAttempts: 1, subtitleMaterializePollMs: 1, sleep: async () => {} });
 
-    await executor.transferSubtitleUrls!({ files: subtitleFiles(6), directoryId: "stage", workflowRunId: "run-b" });
+    await executor.transferSubtitleUrls({ files: subtitleFiles(6), directoryId: "stage", workflowRunId: "run-b" });
 
     expect(submissions).toBe(6);
   });
@@ -1557,7 +1557,7 @@ describe("Storage115Executor.transferSubtitleUrls (整包一次:1 校验 + 1 快
     const guard = new Pan115ApiGuard({ minDelayMs: 0, maxCallsPerOperation: 20, transferReserveCalls: 10 });
     const executor = new Storage115Executor({ api, apiGuard: guard, subtitleMaterializeAttempts: 8, subtitleMaterializePollMs: 1, sleep: async () => {} });
 
-    const attempts = await executor.transferSubtitleUrls!({ files: subtitleFiles(3), directoryId: "stage", workflowRunId: "run-b" });
+    const attempts = await executor.transferSubtitleUrls({ files: subtitleFiles(3), directoryId: "stage", workflowRunId: "run-b" });
 
     expect(attempts.map((a) => a.status)).toEqual(["failed", "failed", "failed"]);
     expect(attempts[0]!.providerMessage).toMatch(/SUBTITLE_BUDGET_INSUFFICIENT.*3-file.*~13 115 calls.*only 10 remain/);
@@ -1579,7 +1579,7 @@ describe("Storage115Executor.transferSubtitleUrls (整包一次:1 校验 + 1 快
     const guard = new Pan115ApiGuard({ minDelayMs: 0 });
     const executor = new Storage115Executor({ api, apiGuard: guard, subtitleMaterializeAttempts: 2, subtitleMaterializePollMs: 1, sleep: async () => {} });
 
-    const attempts = await executor.transferSubtitleUrls!({ files: subtitleFiles(5), directoryId: "stage", workflowRunId: "run-b" });
+    const attempts = await executor.transferSubtitleUrls({ files: subtitleFiles(5), directoryId: "stage", workflowRunId: "run-b" });
 
     expect(submissions).toBe(3); // files 4 and 5 were never submitted
     expect(attempts.map((a) => a.status)).toEqual(["no_target_change", "no_target_change", "failed", "failed", "failed"]);
@@ -1616,7 +1616,7 @@ describe("Storage115Executor.transferSubtitleUrls (整包一次:1 校验 + 1 快
       },
     });
 
-    const attempts = await executor.transferSubtitleUrls!({ files: subtitleFiles(3), directoryId: "stage", workflowRunId: "run-b" });
+    const attempts = await executor.transferSubtitleUrls({ files: subtitleFiles(3), directoryId: "stage", workflowRunId: "run-b" });
 
     expect(attempts.map((a) => a.status)).toEqual(["succeeded", "succeeded", "no_target_change"]);
     expect(attempts[2]!.providerMessage).toMatch(/wrap-up reserve/);
@@ -1651,7 +1651,7 @@ describe("Storage115Executor.transferSubtitleUrls (整包一次:1 校验 + 1 快
       sleep: async () => {},
     });
 
-    const attempts = await executor.transferSubtitleUrls!({ files: subtitleFiles(4), directoryId: "sub_stage", workflowRunId: "run-b" });
+    const attempts = await executor.transferSubtitleUrls({ files: subtitleFiles(4), directoryId: "sub_stage", workflowRunId: "run-b" });
 
     expect(attempts.every((a) => a.status === "succeeded")).toBe(true);
     expect(directoryInfoCalls).toBe(1); // the scope check, once — NOT once per file
@@ -1667,7 +1667,7 @@ describe("Storage115Executor.transferSubtitleUrls (整包一次:1 校验 + 1 快
       await executor.listVideoFiles("stage");
     }
 
-    const attempts = await executor.transferSubtitleUrls!({ files: subtitleFiles(1), directoryId: "stage", workflowRunId: "run-b" });
+    const attempts = await executor.transferSubtitleUrls({ files: subtitleFiles(1), directoryId: "stage", workflowRunId: "run-b" });
 
     expect(attempts[0]!.status).toBe("failed");
     expect(attempts[0]!.providerMessage).toMatch(/SUBTITLE_BUDGET_INSUFFICIENT/);
@@ -1687,7 +1687,7 @@ describe("Storage115Executor.transferSubtitleUrls (整包一次:1 校验 + 1 快
     api.addOfflineTask = async () => ({ ok: true, message: "accepted" }); // lands nothing
     const executor = new Storage115Executor({ api, subtitleMaterializeAttempts: 1, subtitleMaterializePollMs: 1, sleep: async () => {} });
 
-    const attempts = await executor.transferSubtitleUrls!({
+    const attempts = await executor.transferSubtitleUrls({
       files: [
         { url: SHARED_URL, filename: "Show.S01E01.srt" },
         { url: SHARED_URL, filename: "Show.S01E02.srt" },
@@ -1721,7 +1721,7 @@ describe("Storage115Executor.transferSubtitleUrls (整包一次:1 校验 + 1 快
     const guard = new Pan115ApiGuard({ minDelayMs: 0 });
     const executor = new Storage115Executor({ api, apiGuard: guard, sleep: async () => {} });
 
-    const attempts = await executor.transferSubtitleUrls!({ files, directoryId: "stage", workflowRunId: "run-b" });
+    const attempts = await executor.transferSubtitleUrls({ files, directoryId: "stage", workflowRunId: "run-b" });
 
     expect(attempts.filter((a) => a.status === "succeeded")).toHaveLength(22);
     expect(listCalls).toBe(1 + 3); // before + 3 polls (8 + 8 + 6 landings)
@@ -1748,7 +1748,7 @@ describe("Storage115Executor.transferSubtitleUrls (整包一次:1 校验 + 1 快
     const guard = new Pan115ApiGuard({ minDelayMs: 0 });
     const executor = new Storage115Executor({ api, apiGuard: guard, subtitleMaterializeAttempts: 8, subtitleMaterializePollMs: 1, sleep: async () => {} });
 
-    const attempts = await executor.transferSubtitleUrls!({ files, directoryId: "stage", workflowRunId: "run-b" });
+    const attempts = await executor.transferSubtitleUrls({ files, directoryId: "stage", workflowRunId: "run-b" });
 
     expect(attempts.filter((a) => a.status === "succeeded")).toHaveLength(10);
     expect(attempts.filter((a) => a.status === "no_target_change")).toHaveLength(12);
@@ -1768,7 +1768,7 @@ describe("Storage115Executor.transferSubtitleUrls (整包一次:1 校验 + 1 快
     const executor = new Storage115Executor({ api, sleep: async () => {} });
 
     const single = await executor.transferSubtitleUrl!({ url: "http://x/Show.S01E01.srt", filename: "Show.S01E01.srt", directoryId: "stage", workflowRunId: "run-s" });
-    const next = await executor.transferSubtitleUrls!({ files: [{ url: "http://x/Show.S01E02.srt", filename: "Show.S01E02.srt" }], directoryId: "stage", workflowRunId: "run-s" });
+    const next = await executor.transferSubtitleUrls({ files: [{ url: "http://x/Show.S01E02.srt", filename: "Show.S01E02.srt" }], directoryId: "stage", workflowRunId: "run-s" });
 
     expect(single).toMatchObject({ id: "run-s_subtitle_1", candidateId: "subtitle:Show.S01E01.srt", status: "succeeded", materializedFileIds: ["sub_1"] });
     expect(next[0]!.id).toBe("run-s_subtitle_2");

@@ -383,11 +383,18 @@ describe("RealStorageV2.transferSubtitleUrls — batch-first, per-file fallback 
     expect(results[3]!.providerMessage).toMatch(/已连续 3 个/);
   });
 
-  it("neither path records subtitle attempts into attempts() (snapshot-persistence invariant)", async () => {
+  it("records the VIDEO attempt but never subtitle attempts into attempts() (snapshot-persistence invariant)", async () => {
     for (const subtitleBatch of [true, false]) {
-      const { storage } = adapter(new RecordingExecutor({ subtitleBatch }));
+      const { storage, registry } = adapter(new RecordingExecutor({ subtitleBatch }));
+      registry.record(candidate("cand"));
+      await storage.transferCandidate({ candidateId: "cand", intoDirectoryId: "staging" });
+
       await storage.transferSubtitleUrls({ files: files(2), intoDirectoryId: "staging" });
-      expect(storage.attempts()).toEqual([]);
+
+      const attempts = storage.attempts();
+      expect(attempts).toHaveLength(1);
+      expect(attempts[0]!.candidateId).toBe("cand");
+      expect(attempts.some((a) => a.candidateId.startsWith("subtitle:"))).toBe(false);
     }
   });
 
