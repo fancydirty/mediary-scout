@@ -739,7 +739,7 @@ export async function saveJevConfigAction(input: {
     const effective = await getJevConfig(getAccountScopedSettings(accountId, repository));
     const typedKey = input.apiKey.trim();
     const apiKey = typedKey || effective.apiKey || "";
-    if (!apiKey) return { success: false, message: "需要 API Key（OpenRouter 的 sk-or-… 即可）。" };
+    if (!apiKey) return { success: false, message: "需要 Jev API Key（OpenRouter 的 sk-or-… 或 TypeSafe 官方控制台的 Key 都可以）。" };
     const typedUrl = input.baseUrl.trim();
     // effective.baseUrl 已经兜到 env → DEFAULT_JEV_BASE_URL。
     const baseUrl = typedUrl || effective.baseUrl;

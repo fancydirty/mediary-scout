@@ -16,7 +16,9 @@
 //      passes TMDB aliases, so this replay is the HARSHER input: the containment floor
 //      and the judge see the title only. A pass here is conservative.
 //
-// Run:  OPENROUTER_API_KEY=… npx tsx scripts/jev-prefilter-replay.mts [limit]
+// Run:  JEV_API_KEY=… [JEV_BASE_URL=https://api.typesafe.ai/v1/systemone] npx tsx scripts/jev-prefilter-replay.mts [limit]
+//       (OPENROUTER_API_KEY is still honoured as the key when JEV_API_KEY is unset; the
+//        default base URL is OpenRouter's decisions endpoint, same as production)
 //       … --sentinels-only        wording guard only (no labels.json needed)
 //       … --replay-only [limit]   replay only
 //       … --dump <file>           one JSON line per replayed snapshot (truncated at start)
@@ -39,7 +41,7 @@ import type {
 } from "../packages/workflow/src/index.js";
 
 const USAGE =
-  "usage: [OPENROUTER_API_KEY=… | JEV_FAKE=1] npx tsx scripts/jev-prefilter-replay.mts [limit] " +
+  "usage: [JEV_API_KEY=… [JEV_BASE_URL=…] | OPENROUTER_API_KEY=… | JEV_FAKE=1] npx tsx scripts/jev-prefilter-replay.mts [limit] " +
   "[--sentinels-only] [--replay-only] [--dump <file>]\n" +
   "       limit must be a positive integer (number of snapshots to replay).";
 
@@ -72,9 +74,12 @@ if (dumpPath) writeFileSync(dumpPath, "");
 // — that IS the dry-run signal: a green run under JEV_FAKE would mean the sentinels
 // are not actually checking anything.
 const fake = process.env.JEV_FAKE === "1";
-const key = process.env.OPENROUTER_API_KEY;
+// Key source is the operator's choice (OpenRouter or TypeSafe's own console) — exactly
+// like the settings page; the base URL follows the same override rule as production.
+const key = process.env.JEV_API_KEY || process.env.OPENROUTER_API_KEY;
+const baseUrl = process.env.JEV_BASE_URL;
 if (!fake && !key) {
-  console.log("SKIP: OPENROUTER_API_KEY not set");
+  console.log("SKIP: neither JEV_API_KEY nor OPENROUTER_API_KEY is set");
   process.exit(0);
 }
 const judge: JevJudge = fake
@@ -84,7 +89,7 @@ const judge: JevJudge = fake
         model: "fake-0.95",
       }),
     }
-  : createJevJudge({ apiKey: key! });
+  : createJevJudge({ apiKey: key!, ...(baseUrl ? { baseUrl } : {}) });
 
 // ─── 1. Wording sentinels ────────────────────────────────────────────────────
 // `keep` = score ≥ 0.7, `notdrop` = ≥ 0.3 (kept, possibly flagged), `drop` = < 0.3,

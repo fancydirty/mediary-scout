@@ -41,7 +41,7 @@ export async function probeJev(
       return {
         ok: false,
         reason: "auth_failed",
-        message: "Jev 拒绝了这个 API Key（401/403），未保存。请检查 OpenRouter Key 是否正确、是否有余额。",
+        message: "这个 Jev API Key 被拒绝（401/403），未保存。请检查 Key 是否正确、账户是否有余额（OpenRouter 或 TypeSafe 官方的 Key 都可以）。",
       };
     }
     if (!response.ok) {

@@ -99,13 +99,18 @@ export function JevPrefilterForm({
         Jev 候选预筛：搜索结果进入 agent 之前，先由 Jev（TypeSafe 决策模型）判断每条候选是否指向目标作品——确定无关的直接剔除，拿不准的标记「相关度存疑」交给 agent。每次搜索约 1 秒、几乎零成本。未配置时不产生任何调用。
       </p>
       <p className="push-help" style={{ marginBottom: 12 }}>
-        用 OpenRouter 的 API Key 即可（模型 jev-latest）{" "}
+        Jev API Key 两种来源都可以（模型 jev-latest）：{" "}
         <a href="https://openrouter.ai/typesafe/jev-latest" target="_blank" rel="noopener noreferrer">
-          模型页 <ExternalLink size={12} style={{ verticalAlign: "-1px" }} />
+          OpenRouter <ExternalLink size={12} style={{ verticalAlign: "-1px" }} />
+        </a>{" "}
+        或{" "}
+        <a href="https://console.typesafe.ai/keys" target="_blank" rel="noopener noreferrer">
+          TypeSafe 官方 <ExternalLink size={12} style={{ verticalAlign: "-1px" }} />
         </a>
+        （官方 Key 需把 Base URL 填为 https://api.typesafe.ai/v1/systemone）
       </p>
       <div className="push-field">
-        <label className="push-label">Base URL（留空用 OpenRouter decisions 端点）</label>
+        <label className="push-label">Base URL（留空 = OpenRouter 的 decisions 端点；官方 Key 填 TypeSafe 的 /v1/systemone）</label>
         <input
           type="text"
           className="setting-control"
@@ -123,7 +128,7 @@ export function JevPrefilterForm({
             className="setting-control"
             value={apiKey}
             onChange={(event) => setApiKey(event.target.value)}
-            placeholder={hasKey ? "已设置(留空不改)" : "粘贴 OpenRouter API Key"}
+            placeholder={hasKey ? "已设置(留空不改)" : "粘贴 Jev API Key"}
             aria-label="Jev API Key"
             autoComplete="off"
           />

@@ -50,6 +50,10 @@ describe("probeJev", () => {
     if (!r.ok) {
       expect(r.reason).toBe("auth_failed");
       expect(r.message).not.toContain("SECRET");
+      // The key may come from OpenRouter OR TypeSafe's own console: the message names
+      // the thing the user configured ("Jev API Key"), never one vendor's key.
+      expect(r.message).toContain("Jev API Key");
+      expect(r.message).not.toContain("OpenRouter Key");
     }
   });
 

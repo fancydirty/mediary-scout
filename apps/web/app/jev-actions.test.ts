@@ -126,6 +126,16 @@ describe("Jev settings actions", () => {
       expect(await repo.getAccountSetting(ACCOUNT_ID, rt.JEV_PREFILTER_ENABLED_SETTING_KEY)).toBe("1");
     });
 
+    it("no key anywhere: blank save is refused with a source-neutral 'Jev API Key' message", async () => {
+      const result = await actions.saveJevConfigAction({ apiKey: "", baseUrl: "" });
+      expect(result.success).toBe(false);
+      expect(result.message).toContain("Jev API Key");
+      // Both OpenRouter keys and TypeSafe console keys are valid — the copy must not
+      // imply only one vendor works.
+      expect(result.message).toContain("TypeSafe");
+      expect(probeMock).not.toHaveBeenCalled();
+    });
+
     it("global-scope key: blank save probes the instance-wide key", async () => {
       await repo.setSetting(rt.JEV_API_KEY_SETTING_KEY, "sk-global");
       probeMock.mockResolvedValue({ ok: true, model: "m" });
