@@ -266,6 +266,13 @@ export class Pan115ApiGuard {
     return Math.max(1, this.maxCallsPerOperation - this.transferReserveCalls);
   }
 
+  /** Fail fast on the transfer line BEFORE a caller spends preparatory calls
+   *  (write-scope check, before-snapshot) it would only waste: same check and same
+   *  message assertBudget applies right before the ingest call itself. */
+  assertTransferBudget(operation: "receiveShare" | "addOfflineTask"): void {
+    this.assertBudget(operation);
+  }
+
   async run<T>(operation: Pan115Operation, call: () => Promise<T>): Promise<T> {
     this.assertCircuitClosed(operation);
     await this.applyDelay(operation);
@@ -325,10 +332,12 @@ export class Pan115ApiGuard {
     }
     // A transfer refused inside the reserve zone gets a message that says what the
     // remaining calls are FOR — the agent reads it as tool output and must switch to
-    // wrapping up, not retry. Neither refusal is counted nor opens the circuit.
+    // wrapping up, not retry. Neither refusal is counted nor opens the circuit. The
+    // branch keys on STATE, not on config: once callCount has passed the hard limit
+    // there are no wrap-up calls left, so promising a reserve would be a lie.
     const remaining = Math.max(0, this.maxCallsPerOperation - this.callCount);
     const message =
-      limit < this.maxCallsPerOperation
+      this.callCount < this.maxCallsPerOperation
         ? `PAN115_RATE_LIMIT: transfer budget exhausted before ${operation}; ` +
           `${this.callCount} of maxCallsPerOperation=${this.maxCallsPerOperation} calls spent, ` +
           `transfers stop at ${limit} and the remaining ${remaining} calls are reserved for wrap-up ` +
@@ -499,6 +508,11 @@ export class Storage115Executor implements StorageExecutor {
     directoryId: string;
     candidate: ResourceCandidate;
   }): Promise<TransferAttempt> {
+    // Fail fast ON the transfer line: the write-scope check and the before-snapshot
+    // below are preparatory calls whose only purpose is the ingest call the guard is
+    // about to refuse anyway — spending them burns 2–5 of the calls the reserve is
+    // holding for the wrap-up. Same check, same message, zero calls.
+    this.apiGuard.assertTransferBudget(isOfflineTaskCandidate(input.candidate) ? "addOfflineTask" : "receiveShare");
     const safeDirectoryId = await this.assertWithinWriteScope(input.directoryId, "transfer");
     const before = new Set((await this.listVideoFiles(safeDirectoryId)).map((file) => file.id));
     const action = await this.executeCandidateTransfer(input.candidate, safeDirectoryId);
@@ -663,6 +677,31 @@ export class Storage115Executor implements StorageExecutor {
       return attempts;
     }
 
+    // Pre-flight: a package we cannot land BEFORE the transfer line must not be
+    // started at all — half-submitting it would leave tasks we can't wait for, and a
+    // reserve-triggered stop mid-submission would leave callsSpent exactly AT the
+    // line, starving the landing poll of even one listing (the files would then be
+    // reported as misses and their tasks cancelled). Cost estimate = write-scope
+    // check (≤1) + before snapshot (1) + one submission per file + the minimum poll
+    // patience (subtitleMaterializeAttempts rounds), all counted against the
+    // TRANSFER budget so landing polls never eat the wrap-up reserve. Zero calls
+    // spent on a refusal; the agent reads the reason as tool output and moves on
+    // without subtitles (a soft goal).
+    const needed = 1 + 1 + pending.size + this.subtitleMaterializeAttempts;
+    const room = this.apiGuard.transferCallBudget() - this.apiGuard.callsSpent();
+    if (needed > room) {
+      const reason =
+        `SUBTITLE_BUDGET_INSUFFICIENT: a ${pending.size}-file subtitle package needs ~${needed} 115 calls ` +
+        `(scope check + snapshot + ${pending.size} submissions + ${this.subtitleMaterializeAttempts} landing polls) ` +
+        `but only ${room} remain before the wrap-up reserve ` +
+        `(${this.apiGuard.callsSpent()} of ${this.apiGuard.transferCallBudget()} transfer-budget calls spent) — ` +
+        `skip subtitles and wrap up`;
+      for (const index of pending.keys()) {
+        attempts[index]!.providerMessage = reason;
+      }
+      return attempts;
+    }
+
     const safeDirectoryId = await this.assertWithinWriteScope(input.directoryId, "transfer subtitle");
     const basenameOf = (path: string): string => path.split("/").pop() ?? path;
     // BEFORE snapshot — one listing for the whole package. Only a same-named file
@@ -697,11 +736,14 @@ export class Storage115Executor implements StorageExecutor {
         );
       } catch (error) {
         const message = errorMessage(error);
-        attempt.providerMessage = message;
         if (error instanceof Pan115RiskControlError) {
+          // The refusal lands on THIS file too — every unsubmitted file in the
+          // package carries the same prefix so the agent can read them uniformly.
+          attempt.providerMessage = `SUBTITLE_NOT_SUBMITTED: ${message}`;
           abortReason = `submission stopped by the 115 guard (${message})`;
           continue;
         }
+        attempt.providerMessage = message;
         action = { ok: false, message };
       }
       if (!action.ok) {

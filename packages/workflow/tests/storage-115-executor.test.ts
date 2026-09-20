@@ -1071,6 +1071,39 @@ describe("115 factories wire the transfer reserve (收尾永远有额度)", () =
     expect(executor.apiCallBudget()).toBe(300);
     expect(executor.apiTransferCallBudget()).toBe(300 - PAN115_TRANSFER_RESERVE_CALLS);
   });
+
+  it("an explicit apiGuardOptions.transferReserveCalls overrides the factory default", () => {
+    const api = new FakePan115Api({ directories: { season_1: [] } });
+    const executor = createProtectedStorage115Executor({
+      api,
+      env: { MEDIA_TRACK_115_TEST_ROOT_CID: "test_root" },
+      apiGuardOptions: { minDelayMs: 0, transferReserveCalls: 0 },
+    });
+    expect(executor.apiTransferCallBudget()).toBe(executor.apiCallBudget());
+  });
+
+  it("transfer() fails fast ON the transfer line — no write-scope check, no before-snapshot listing is wasted", async () => {
+    const api = new FakePan115Api({ directories: { season_1: [] } });
+    const guard = new Pan115ApiGuard({ minDelayMs: 0, maxCallsPerOperation: 10, transferReserveCalls: 6 });
+    const executor = new Storage115Executor({ api, apiGuard: guard });
+    for (let i = 0; i < 4; i += 1) {
+      await executor.listVideoFiles("season_1"); // reaches the transfer line (10 − 6 = 4)
+    }
+
+    await expect(
+      executor.transfer({
+        workflowRunId: "run_1",
+        directoryId: "season_1",
+        candidate: candidateFixture({
+          type: "115",
+          providerPayload: { url: "https://115.com/s/abc123?password=pw", rawType: "115" },
+        }),
+      }),
+    ).rejects.toThrow(/transfer budget exhausted before receiveShare/);
+    expect(api.listCalls).toHaveLength(4); // the 4 listVideoFiles only — no before-snapshot
+    expect(api.receivedShares).toEqual([]);
+    expect(guard.callsSpent()).toBe(4); // the refusal itself costs nothing
+  });
 });
 
 describe("Storage115Executor.transferSubtitleUrl", () => {
@@ -1517,62 +1550,68 @@ describe("Storage115Executor.transferSubtitleUrls (整包一次:1 校验 + 1 快
     expect(submissions).toBe(6);
   });
 
-  // PLAN DEFECT (left skipped for the controller to rule on — the algorithm is the
-  // plan's, verbatim; this test encodes an outcome that algorithm cannot produce):
-  //
-  // 1. POLL STARVATION. The poll loop's pre-check is `callsSpent() >= transferCallBudget()`
-  //    ("polls never eat the wrap-up reserve"). But a submission stop caused by the
-  //    RESERVE leaves callsSpent EXACTLY at transferCallBudget by construction, so the
-  //    pre-check always trips on the next line and the already-submitted files are never
-  //    polled once. Measured here (hard 20 / reserve 17 → transfer line 3): before-listing
-  //    (1) + submit #1 (2) + submit #2 (3) → submit #3 refused at callCount 3 ≥ 3 → poll
-  //    loop sees 3 ≥ 3 → breaks with the reserve message → files 1–2 report
-  //    "no_target_change" although their files ARE in the staging dir. No choice of
-  //    numbers avoids this: ANY reserve-triggered submission stop ends at exactly the
-  //    line. Production consequence beyond the test: landed subtitles are reported as
-  //    misses AND their (possibly completed) offline tasks get batch-cancelled by the
-  //    cleanup below. Fixing it needs a rule the plan does not have — e.g. allow polls
-  //    into the reserve up to a small subtitle-poll allowance, or make the poll stop line
-  //    `callBudget() − <wrap-up minimum>` instead of the transfer line.
-  // 2. MESSAGE SHAPE. The file that TAKES the refusal (index 2) gets the raw guard message
-  //    ("PAN115_RATE_LIMIT: transfer budget exhausted before addOfflineTask; …") with no
-  //    "SUBTITLE_NOT_SUBMITTED:" prefix — only the files AFTER it get the prefix. So
-  //    `slice(2).every(/SUBTITLE_NOT_SUBMITTED.*PAN115_RATE_LIMIT/)` fails on index 2 even
-  //    with starvation fixed. One-line fix if the prefix is wanted for the refused file too:
-  //    set `attempt.providerMessage = \`SUBTITLE_NOT_SUBMITTED: \${message}\`` on the
-  //    Pan115RiskControlError branch.
-  it.skip("a guard refusal (budget/circuit) stops submission at once; already-submitted files are still polled", async () => {
+  it("refuses up front, with ZERO API calls, a package that cannot land before the transfer line (SUBTITLE_BUDGET_INSUFFICIENT)", async () => {
     const api = new FakePan115Api({ directories: { stage: [] } });
+    // hard 20, reserve 10 → transfer line 10; 3 files with 8-poll patience need 2 + 3 + 8 = 13 > 10.
+    const guard = new Pan115ApiGuard({ minDelayMs: 0, maxCallsPerOperation: 20, transferReserveCalls: 10 });
+    const executor = new Storage115Executor({ api, apiGuard: guard, subtitleMaterializeAttempts: 8, subtitleMaterializePollMs: 1, sleep: async () => {} });
+
+    const attempts = await executor.transferSubtitleUrls!({ files: subtitleFiles(3), directoryId: "stage", workflowRunId: "run-b" });
+
+    expect(attempts.map((a) => a.status)).toEqual(["failed", "failed", "failed"]);
+    expect(attempts[0]!.providerMessage).toMatch(/SUBTITLE_BUDGET_INSUFFICIENT.*3-file.*~13 115 calls.*only 10 remain/);
+    expect(guard.callsSpent()).toBe(0);
+    expect(api.listCalls).toEqual([]);
+    expect(api.offlineTasks).toEqual([]);
+    expect(new Set(attempts.map((a) => a.id)).size).toBe(3); // numbers still consumed
+  });
+
+  it("a circuit-breaker refusal (115 风控) mid-submission stops submitting at once; the rest are SUBTITLE_NOT_SUBMITTED and the landing poll fails closed", async () => {
+    const api = new FakePan115Api({ directories: { stage: [] } });
+    let submissions = 0;
     api.addOfflineTask = async (input) => {
-      api.offlineTasks.push({ ...input }); // the override replaces the fake's own bookkeeping
-      const name = input.url.split("/").pop()!;
-      api.directories[input.directoryId] = [...(api.directories[input.directoryId] ?? []), { fid: `fid_${name}`, n: name, s: "1KB" }];
-      return { ok: true, message: "accepted" };
+      api.offlineTasks.push({ ...input });
+      submissions += 1;
+      // The 3rd submission answers with a risk-control signal → the guard opens its circuit and throws.
+      return submissions === 3 ? { ok: false, message: "请求过于频繁" } : { ok: true, message: "accepted" };
     };
-    // hard 20, reserve 17 → transfers stop at 3: before-listing (1) + 2 submissions reach the cutoff.
-    const guard = new Pan115ApiGuard({ minDelayMs: 0, maxCallsPerOperation: 20, transferReserveCalls: 17 });
+    const guard = new Pan115ApiGuard({ minDelayMs: 0 });
     const executor = new Storage115Executor({ api, apiGuard: guard, subtitleMaterializeAttempts: 2, subtitleMaterializePollMs: 1, sleep: async () => {} });
 
     const attempts = await executor.transferSubtitleUrls!({ files: subtitleFiles(5), directoryId: "stage", workflowRunId: "run-b" });
 
-    expect(api.offlineTasks).toHaveLength(2);
-    expect(attempts.slice(0, 2).map((a) => a.status)).toEqual(["succeeded", "succeeded"]);
-    expect(attempts.slice(2).every((a) => a.status === "failed" && /SUBTITLE_NOT_SUBMITTED.*PAN115_RATE_LIMIT/.test(a.providerMessage))).toBe(true);
+    expect(submissions).toBe(3); // files 4 and 5 were never submitted
+    expect(attempts.map((a) => a.status)).toEqual(["no_target_change", "no_target_change", "failed", "failed", "failed"]);
+    expect(attempts.slice(2).every((a) => /^SUBTITLE_NOT_SUBMITTED: .*PAN115_RATE_LIMIT/.test(a.providerMessage))).toBe(true);
+    expect(attempts[0]!.providerMessage).toMatch(/subtitle landing poll failed: PAN115_RATE_LIMIT: circuit breaker open/);
+    expect(guard.callsSpent()).toBe(4); // before 1 + 3 submissions; polls and cleanup refused by the open circuit
+    expect(api.listOfflineTasksCalls).toBe(0);
   });
 
-  it("polling stops at the transfer budget line instead of eating the wrap-up reserve (graceful miss, not a throw)", async () => {
+  it("polling stops at the transfer budget line instead of eating the wrap-up reserve (backstop: graceful miss, not a throw)", async () => {
     const api = new FakePan115Api({ directories: { stage: [] } });
     api.addOfflineTask = async () => ({ ok: true, message: "accepted" });
-    // hard 10, reserve 6 → transfer line 4: before 1 + submit 1 = 2, then polls 3, 4 → stop before the 5th call.
-    const guard = new Pan115ApiGuard({ minDelayMs: 0, maxCallsPerOperation: 10, transferReserveCalls: 6 });
-    const executor = new Storage115Executor({ api, apiGuard: guard, subtitleMaterializeAttempts: 8, subtitleMaterializePollMs: 1, sleep: async () => {} });
+    let listCalls = 0;
+    const orig = api.listItems.bind(api);
+    api.listItems = async (input) => {
+      listCalls += 1;
+      // listing 1 = before; E01 lands on poll 1 (listing 2), E02 on poll 3 (listing 4); E03 never.
+      if (listCalls === 2) api.directories["stage"] = [{ fid: "f1", n: "Show.S01E01.srt", s: "1KB" }];
+      if (listCalls === 4) api.directories["stage"] = [...api.directories["stage"]!, { fid: "f2", n: "Show.S01E02.srt", s: "1KB" }];
+      return orig(input);
+    };
+    // hard 12, reserve 4 → transfer line 8. Pre-flight: 2 + 3 + 2 = 7 ≤ 8 → proceeds.
+    // before (1) + submits (2..4) + polls 5,6,7,8 → the pre-check sees 8 ≥ 8 and stops
+    // before a 5th poll; idle patience (2) never fires because E01/E02 keep landing.
+    const guard = new Pan115ApiGuard({ minDelayMs: 0, maxCallsPerOperation: 12, transferReserveCalls: 4 });
+    const executor = new Storage115Executor({ api, apiGuard: guard, subtitleMaterializeAttempts: 2, subtitleMaterializePollMs: 1, sleep: async () => {} });
 
-    const attempts = await executor.transferSubtitleUrls!({ files: subtitleFiles(1), directoryId: "stage", workflowRunId: "run-b" });
+    const attempts = await executor.transferSubtitleUrls!({ files: subtitleFiles(3), directoryId: "stage", workflowRunId: "run-b" });
 
-    expect(attempts[0]!.status).toBe("no_target_change");
-    expect(attempts[0]!.providerMessage).toMatch(/wrap-up reserve/);
-    expect(api.listCalls).toHaveLength(3); // before + 2 polls
-    expect(guard.callsSpent()).toBe(5); // + the cleanup task_lists read (allowed: not transfer-class)
+    expect(attempts.map((a) => a.status)).toEqual(["succeeded", "succeeded", "no_target_change"]);
+    expect(attempts[2]!.providerMessage).toMatch(/wrap-up reserve/);
+    expect(listCalls).toBe(1 + 4); // before + 4 polls, none in the reserve
+    expect(guard.callsSpent()).toBe(9); // + the cleanup task_lists read (wrap-up class, allowed under hard 12)
   });
 
   it("transferSubtitleUrl (single) delegates to the batch — same attempt shape, one number per call", async () => {
