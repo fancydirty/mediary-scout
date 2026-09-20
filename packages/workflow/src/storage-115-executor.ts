@@ -16,6 +16,22 @@ import type { StorageExecutor, UnparsedVideoFile } from "./ports.js";
  */
 const MAX_RECURSIVE_COLLECT_DEPTH = 6;
 
+/**
+ * Depth of the subtitle landing poll. A 115 http offline task saves a single
+ * file DIRECTLY under the target directory — no wrapper dir (wrappers are a
+ * torrent thing). Read-dir evidence 2026-09-20 (LIAR GAME staging
+ * 3522136304546481686): every landed `Liar_Game_epNN.*.srt` had the staging dir
+ * itself as parent, the video packs were the only subdirectories. Depth 1 makes
+ * each poll exactly ONE listItems call no matter how many packs sit in staging
+ * (depth 2 cost 1 + #packs per poll — 4 calls/poll in that run).
+ */
+const SUBTITLE_LANDING_DEPTH = 1;
+
+/** Consecutive addOfflineTask rejections after which the rest of a subtitle
+ *  package is not submitted: a dead assrt mirror or a 115 quota refusal rejects
+ *  every file the same way — no point paying a call per file to learn it. */
+const SUBTITLE_MAX_CONSECUTIVE_REJECTIONS = 3;
+
 const DEFAULT_VIDEO_EXTENSIONS = [
   ".mp4",
   ".mkv",
@@ -136,15 +152,16 @@ export interface Storage115ExecutorOptions {
   offlineMaterializeAttempts?: number;
   /** Delay between offline-task materialization checks (ms). */
   offlineMaterializePollMs?: number;
-  /** Subtitle-landing window (transferSubtitleUrl). Separate from the video
+  /** Subtitle-landing window (transferSubtitleUrls). Separate from the video
    *  window: that one only confirms a 秒传 cache hit (~8s), while a subtitle is
    *  a REAL server-side HTTP fetch whose queue latency varies — live e2e
    *  (2026-07-02, The Matrix) measured landings at ~20s and ~60s.
    *  Timing semantics: the first poll is immediate; sleeps happen only BETWEEN
    *  polls, so the effective wait ≈ (attempts - 1) × pollMs plus listTree time
-   *  (defaults 8 & 6000ms → ~42s of sleeps). Worst-case listTree count is
-   *  1 + attempts (the before/after-diff snapshot + each poll), so attempts
-   *  bounds the 115 API spend per file. */
+   *  (defaults 8 & 6000ms → ~42s of sleeps). It is the batch's IDLE patience:
+   *  polling stops after this many consecutive rounds that land nothing, and the
+   *  whole package costs 1 + attempts + N poll listings at worst (N = files),
+   *  not that per file. */
   subtitleMaterializeAttempts?: number;
   subtitleMaterializePollMs?: number;
   /** Injectable sleep (tests pass a fast/no-op). */
@@ -576,132 +593,209 @@ export class Storage115Executor implements StorageExecutor {
     return attempt;
   }
 
-  /** Subtitle direct-link landing: submit the http url as a 115 offline task
-   *  (115's lixianssp add_task_url accepts http/https/ftp/magnet/ed2k), then
-   *  confirm the named file landed by reading listTree (NOT listVideoFiles —
-   *  subtitle extensions are invisible to that path). Mirrors transfer()'s
-   *  offline-task materialization window, but matches by FILE NAME instead of
-   *  by video extension diff. */
+  /** Subtitle direct-link landing, single file — delegates to the batch so there
+   *  is exactly one landing algorithm (the capability gate probes THIS method). */
   async transferSubtitleUrl(input: {
     url: string;
     filename: string;
     directoryId: string;
     workflowRunId: string;
   }): Promise<TransferAttempt> {
-    // Boundary validation: the filename comes from an EXTERNAL provider (assrt).
-    // A path-y name like "subdir/file.ass" would pollute the synthetic
-    // candidateId and make the listTree endsWith-match ambiguous — reject it
-    // before spending any API call. Soft failure (attempt, not throw): the
-    // sandbox counts it like any other landing failure.
-    if (/[\\/]/.test(input.filename)) {
-      // Consume a number even for guard-rejected calls (same "one number per
-      // call" invariant as every other attempt) so ids stay unique; keep the
-      // raw filename OUT of the candidateId — it's exactly what pollutes ids.
-      const invalidAttemptNumber = this.nextTransferNumber;
-      this.nextTransferNumber += 1;
-      return {
-        id: `${input.workflowRunId}_subtitle_${invalidAttemptNumber}`,
-        workflowRunId: input.workflowRunId,
-        candidateId: `subtitle:invalid_name_${invalidAttemptNumber}`,
-        status: "failed",
-        providerMessage:
-          "SUBTITLE_INVALID_FILENAME: filename must be a bare name without path separators (路径分隔符)",
-        materializedFileIds: [],
-      };
-    }
-    const safeDirectoryId = await this.assertWithinWriteScope(input.directoryId, "transfer subtitle");
-    // Mirror transfer(): one number consumed per call from the SHARED transfer
-    // counter (video transfers advance it too, so the suffix reflects the run's
-    // overall attempt order, not a subtitle-only sequence), unconditionally — a
-    // failed subtitle attempt burns a slot just like a failed transfer does, so
-    // subsequent ids never collide.
-    const attemptNumber = this.nextTransferNumber;
-    this.nextTransferNumber += 1;
-    const candidateId = `subtitle:${input.filename}`;
+    const [attempt] = await this.transferSubtitleUrls({
+      files: [{ url: input.url, filename: input.filename }],
+      directoryId: input.directoryId,
+      workflowRunId: input.workflowRunId,
+    });
+    return attempt!;
+  }
 
-    // Landing detection is a BEFORE/AFTER diff (mirroring transfer()'s
-    // materialization diff): only a same-named file that APPEARS after the task
-    // was submitted counts. Matching a pre-existing file (an earlier attempt's
-    // leftover with the same name) would report success for a transfer that
-    // landed nothing. Match by exact basename — endsWith("/name") could be
-    // satisfied by a same-named file in any wrapper dir, which is intended, but
-    // exact basename keeps it unambiguous.
-    const basenameMatches = (path: string): boolean => path.split("/").pop() === input.filename;
+  /** Subtitle direct-link landing for a WHOLE package: submit every http url as a
+   *  115 offline task (lixianssp add_task_url accepts http/https/ftp/magnet/ed2k),
+   *  then confirm landings by FILE NAME with one depth-1 listing per poll round for
+   *  all of them (NOT listVideoFiles — subtitle extensions are invisible there).
+   *  Cost for N files and p poll rounds: ≤ 1 (write-scope) + 1 (before) + N + p + 2
+   *  (cancel), p ≤ subtitleMaterializeAttempts + N. The per-file predecessor paid
+   *  the scope check, the snapshot and the whole poll window PER FILE — 20–31
+   *  calls each, 260 for the 22-file LIAR GAME package (run d98dc4ca, 2026-09-20). */
+  async transferSubtitleUrls(input: {
+    files: Array<{ url: string; filename: string }>;
+    directoryId: string;
+    workflowRunId: string;
+  }): Promise<TransferAttempt[]> {
+    // One attempt number per input file, allocated up front in input order from the
+    // SHARED transfer counter (video transfers advance it too) — the same "one
+    // number per file, consumed unconditionally" invariant as transfer(), so a
+    // guard-rejected or failed file burns a slot and ids never collide.
+    const firstNumber = this.nextTransferNumber;
+    this.nextTransferNumber += input.files.length;
+    const attempts: TransferAttempt[] = input.files.map((file, index) => ({
+      id: `${input.workflowRunId}_subtitle_${firstNumber + index}`,
+      workflowRunId: input.workflowRunId,
+      candidateId: `subtitle:${file.filename}`,
+      status: "failed",
+      providerMessage: "",
+      materializedFileIds: [],
+    }));
+
+    // Boundary validation (zero API calls): filenames come from an EXTERNAL provider
+    // (assrt). A path-y name would pollute the candidateId and make the basename
+    // match ambiguous; a duplicate basename could never be told apart from its twin
+    // once both land. Soft failures — the sandbox counts them like any other landing
+    // failure. The raw filename stays OUT of an invalid id.
+    const packageNames = new Set<string>();
+    const pending = new Map<number, { url: string; filename: string }>();
+    input.files.forEach((file, index) => {
+      const attempt = attempts[index]!;
+      if (/[\\/]/.test(file.filename)) {
+        attempt.candidateId = `subtitle:invalid_name_${firstNumber + index}`;
+        attempt.providerMessage =
+          "SUBTITLE_INVALID_FILENAME: filename must be a bare name without path separators (路径分隔符)";
+        return;
+      }
+      if (packageNames.has(file.filename)) {
+        attempt.providerMessage = "SUBTITLE_DUPLICATE_FILENAME: a same-named file is already in this package";
+        return;
+      }
+      packageNames.add(file.filename);
+      pending.set(index, file);
+    });
+    if (pending.size === 0) {
+      return attempts;
+    }
+
+    const safeDirectoryId = await this.assertWithinWriteScope(input.directoryId, "transfer subtitle");
+    const basenameOf = (path: string): string => path.split("/").pop() ?? path;
+    // BEFORE snapshot — one listing for the whole package. Only a same-named file
+    // that APPEARS after submission counts: claiming a pre-existing leftover (an
+    // earlier attempt's file with the same name) would report success for a
+    // transfer that landed nothing.
     const beforeIds = new Set(
-      (await this.listTree({ directoryId: safeDirectoryId, maxDepth: 2 }))
-        .filter((file) => basenameMatches(file.path))
+      (await this.listTree({ directoryId: safeDirectoryId, maxDepth: SUBTITLE_LANDING_DEPTH }))
+        .filter((file) => packageNames.has(basenameOf(file.path)))
         .map((file) => file.providerFileId),
     );
 
-    const action = await this.callApi("addOfflineTask", () =>
-      this.api.addOfflineTask({ url: input.url, directoryId: safeDirectoryId }),
-    );
-    if (!action.ok) {
-      return {
-        id: `${input.workflowRunId}_subtitle_${attemptNumber}`,
-        workflowRunId: input.workflowRunId,
-        candidateId,
-        status: "failed",
-        providerMessage: action.message,
-        materializedFileIds: [],
-      };
+    // Submit everything up front. A rejection (ok:false or a thrown provider error)
+    // is per-file; after SUBTITLE_MAX_CONSECUTIVE_REJECTIONS in a row the rest is
+    // not submitted. A guard refusal (budget / circuit) stops submission AT ONCE:
+    // every later call would be refused the same way and would still pay the pacing
+    // delay — the files already submitted are still polled below (listing is
+    // allowed up to the hard limit).
+    const submitted = new Map<number, { url: string; filename: string }>();
+    let consecutiveRejections = 0;
+    let abortReason: string | null = null;
+    for (const [index, file] of pending) {
+      const attempt = attempts[index]!;
+      if (abortReason !== null) {
+        attempt.providerMessage = `SUBTITLE_NOT_SUBMITTED: ${abortReason}`;
+        continue;
+      }
+      let action: Pan115ActionResult;
+      try {
+        action = await this.callApi("addOfflineTask", () =>
+          this.api.addOfflineTask({ url: file.url, directoryId: safeDirectoryId }),
+        );
+      } catch (error) {
+        const message = errorMessage(error);
+        attempt.providerMessage = message;
+        if (error instanceof Pan115RiskControlError) {
+          abortReason = `submission stopped by the 115 guard (${message})`;
+          continue;
+        }
+        action = { ok: false, message };
+      }
+      if (!action.ok) {
+        attempt.providerMessage = action.message;
+        consecutiveRejections += 1;
+        if (consecutiveRejections >= SUBTITLE_MAX_CONSECUTIVE_REJECTIONS) {
+          abortReason = `aborted after ${SUBTITLE_MAX_CONSECUTIVE_REJECTIONS} consecutive rejections (last: ${action.message})`;
+        }
+        continue;
+      }
+      consecutiveRejections = 0;
+      submitted.set(index, file);
     }
 
-    let remaining = this.subtitleMaterializeAttempts;
-    let materializedFileIds: string[] = [];
-    while (remaining > 0) {
-      // maxDepth: 2 bounds the per-poll API fan-out (listTree recurses + lists each
-      // subdir; the default depth-6 could explode calls on a big staging tree). A 115
-      // offline task lands the file directly under the target dir OR one wrapper level
-      // down, so depth 2 catches both while staying cheap.
-      const tree = await this.listTree({ directoryId: safeDirectoryId, maxDepth: 2 });
-      const hit = tree.find(
-        (file) => basenameMatches(file.path) && !beforeIds.has(file.providerFileId),
-      );
-      if (hit) {
-        materializedFileIds = [hit.providerFileId];
+    // Unified poll: one depth-1 listing per round claims every file that appeared.
+    // The first poll is immediate; sleeps happen only BETWEEN polls. Stop when all
+    // landed, after subtitleMaterializeAttempts consecutive rounds with nothing new
+    // (the single-file window's own patience — a file quiet that long is a miss),
+    // or once every file has had one extra round of grace (the hard cap on cost).
+    // Never poll past the transfer budget line: the calls beyond it are the
+    // wrap-up reserve (with no reserve configured this stops one call short of the
+    // hard limit — a graceful miss instead of a throw).
+    const maxPolls = this.subtitleMaterializeAttempts + submitted.size;
+    let polls = 0;
+    let idlePolls = 0;
+    let pollStop: string | null = null;
+    while (submitted.size > 0) {
+      if (this.apiGuard.callsSpent() >= this.apiGuard.transferCallBudget()) {
+        pollStop = "subtitle landing poll stopped: 115 call budget reached the wrap-up reserve";
         break;
       }
-      remaining -= 1;
-      if (remaining > 0) await this.sleep(this.subtitleMaterializePollMs);
+      let tree: PackageTreeFile[];
+      try {
+        tree = await this.listTree({ directoryId: safeDirectoryId, maxDepth: SUBTITLE_LANDING_DEPTH });
+      } catch (error) {
+        pollStop = `subtitle landing poll failed: ${errorMessage(error)}`;
+        break;
+      }
+      polls += 1;
+      let landedThisPoll = 0;
+      for (const [index, file] of submitted) {
+        const hit = tree.find(
+          (entry) => basenameOf(entry.path) === file.filename && !beforeIds.has(entry.providerFileId),
+        );
+        if (hit) {
+          const attempt = attempts[index]!;
+          attempt.status = "succeeded";
+          attempt.materializedFileIds = [hit.providerFileId];
+          submitted.delete(index);
+          landedThisPoll += 1;
+        }
+      }
+      if (submitted.size === 0) {
+        break;
+      }
+      idlePolls = landedThisPoll > 0 ? 0 : idlePolls + 1;
+      if (idlePolls >= this.subtitleMaterializeAttempts || polls >= maxPolls) {
+        break;
+      }
+      await this.sleep(this.subtitleMaterializePollMs);
     }
 
-    // Nothing materialized in the window: 115 queued a real background download we
-    // will not wait for. Best-effort cancel it (task_del) so it can't drop the file
-    // into staging AFTER the workflow moves on, and so it doesn't tie up offline-task
-    // quota — mirroring transfer()'s non-秒传 cleanup. The HTTP subtitle url has no
-    // infoHash up front, so resolve the queued task by matching its url in the task
-    // list, then remove it by the infoHash 115 assigned. Only cancel on an UNAMBIGUOUS
-    // single match — if the account-wide list has zero or multiple tasks for this url
-    // (e.g. a stale task from a prior run), skip rather than risk cancelling the wrong
-    // task. Never fail the attempt over cleanup.
-    if (materializedFileIds.length === 0) {
+    // Not everything materialized in the window: 115 queued real background
+    // downloads we will not wait for. Best-effort cancel them (task_del) so they
+    // can't drop files into staging AFTER the workflow moves on and don't tie up
+    // offline-task quota. An http url has no infoHash up front, so resolve each
+    // queued task by matching its url in the task list — only on an UNAMBIGUOUS
+    // single match (a stale task from a prior run for the same url makes it
+    // ambiguous: skip rather than cancel the wrong task). ONE task_lists read and
+    // ONE task_del for the whole package. Never fail the attempts over cleanup.
+    if (submitted.size > 0) {
       try {
         const tasks = await this.callApi("listOfflineTasks", () => this.api.listOfflineTasks());
-        const matches = tasks.filter((task) => task.url === input.url && task.infoHash);
-        if (matches.length === 1) {
-          await this.callApi("removeOfflineTask", () =>
-            this.api.removeOfflineTask({ infoHashes: [matches[0]!.infoHash] }),
-          );
+        const infoHashes: string[] = [];
+        for (const file of submitted.values()) {
+          const matches = tasks.filter((task) => task.url === file.url && task.infoHash);
+          if (matches.length === 1) {
+            infoHashes.push(matches[0]!.infoHash);
+          }
+        }
+        if (infoHashes.length > 0) {
+          await this.callApi("removeOfflineTask", () => this.api.removeOfflineTask({ infoHashes }));
         }
       } catch {
-        // best-effort cleanup — a failed cancel must never fail the subtitle attempt
+        // best-effort cleanup — a failed cancel must never fail the subtitle attempts
+      }
+      for (const index of submitted.keys()) {
+        const attempt = attempts[index]!;
+        attempt.status = "no_target_change";
+        attempt.providerMessage =
+          pollStop ?? "subtitle offline task accepted but file did not materialize in window";
       }
     }
-
-    const status: TransferStatus =
-      materializedFileIds.length > 0 ? "succeeded" : "no_target_change";
-    return {
-      id: `${input.workflowRunId}_subtitle_${attemptNumber}`,
-      workflowRunId: input.workflowRunId,
-      candidateId,
-      status,
-      providerMessage:
-        status === "succeeded"
-          ? ""
-          : "subtitle offline task accepted but file did not materialize in window",
-      materializedFileIds,
-    };
+    return attempts;
   }
 
   async flattenDirectory(directoryId: string): Promise<{ moved: string[]; removed: string[] }> {
