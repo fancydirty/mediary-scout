@@ -439,8 +439,10 @@ export class Storage115Executor implements StorageExecutor {
     // fetches with queue latency. Live e2e (The Matrix, 2026-07-02) measured
     // one landing at ~20s and one at ~60s (the 8s video window mis-judged it
     // no_target_change and the file dropped in late). 8 attempts sleep only
-    // BETWEEN polls (7 gaps × 6s ≈ 42s + listing time) — covers the common
-    // case while bounding poll cost (each poll = one depth-2 listTree).
+    // BETWEEN polls (7 gaps × 6s ≈ 42s + listing time). This is IDLE patience,
+    // not a per-file count: the batch stops after this many consecutive poll
+    // rounds that land nothing new, and each round is ONE depth-1 listTree
+    // (see SUBTITLE_LANDING_DEPTH) shared by the whole package.
     this.subtitleMaterializeAttempts = options.subtitleMaterializeAttempts ?? 8;
     this.subtitleMaterializePollMs = options.subtitleMaterializePollMs ?? 6000;
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -511,7 +513,10 @@ export class Storage115Executor implements StorageExecutor {
     // Fail fast ON the transfer line: the write-scope check and the before-snapshot
     // below are preparatory calls whose only purpose is the ingest call the guard is
     // about to refuse anyway — spending them burns 2–5 of the calls the reserve is
-    // holding for the wrap-up. Same check, same message, zero calls.
+    // holding for the wrap-up. Same check, same message, zero calls. It also refuses
+    // candidates that would never have reached an ingest call at all (missing or
+    // unsupported url, which executeCandidateTransfer rejects locally) — an accepted
+    // trade-off: at the budget edge the caller must stop transferring either way.
     this.apiGuard.assertTransferBudget(isOfflineTaskCandidate(input.candidate) ? "addOfflineTask" : "receiveShare");
     const safeDirectoryId = await this.assertWithinWriteScope(input.directoryId, "transfer");
     const before = new Set((await this.listVideoFiles(safeDirectoryId)).map((file) => file.id));
@@ -688,7 +693,7 @@ export class Storage115Executor implements StorageExecutor {
     // spent on a refusal; the agent reads the reason as tool output and moves on
     // without subtitles (a soft goal).
     const needed = 1 + 1 + pending.size + this.subtitleMaterializeAttempts;
-    const room = this.apiGuard.transferCallBudget() - this.apiGuard.callsSpent();
+    const room = Math.max(0, this.apiGuard.transferCallBudget() - this.apiGuard.callsSpent());
     if (needed > room) {
       const reason =
         `SUBTITLE_BUDGET_INSUFFICIENT: a ${pending.size}-file subtitle package needs ~${needed} 115 calls ` +
@@ -708,6 +713,10 @@ export class Storage115Executor implements StorageExecutor {
     // that APPEARS after submission counts: claiming a pre-existing leftover (an
     // earlier attempt's file with the same name) would report success for a
     // transfer that landed nothing.
+    // HAZARD (pre-existing, inherited from the per-file path): 115 never overwrites.
+    // If such a leftover IS there, the new copy lands as "name (1).srt", which no
+    // longer matches by basename — the file is reported as a miss and its finished
+    // task is cancelled, leaving a stray copy in staging for discardStaging to sweep.
     const beforeIds = new Set(
       (await this.listTree({ directoryId: safeDirectoryId, maxDepth: SUBTITLE_LANDING_DEPTH }))
         .filter((file) => packageNames.has(basenameOf(file.path)))
@@ -743,8 +752,7 @@ export class Storage115Executor implements StorageExecutor {
           abortReason = `submission stopped by the 115 guard (${message})`;
           continue;
         }
-        attempt.providerMessage = message;
-        action = { ok: false, message };
+        action = { ok: false, message }; // reported below, same as a returned ok:false
       }
       if (!action.ok) {
         attempt.providerMessage = action.message;
@@ -767,12 +775,16 @@ export class Storage115Executor implements StorageExecutor {
     // wrap-up reserve (with no reserve configured this stops one call short of the
     // hard limit — a graceful miss instead of a throw).
     const maxPolls = this.subtitleMaterializeAttempts + submitted.size;
+    const budgetStopMessage =
+      "subtitle landing poll stopped: 115 call budget reached the wrap-up reserve";
+    const budgetReached = (): boolean =>
+      this.apiGuard.callsSpent() >= this.apiGuard.transferCallBudget();
     let polls = 0;
     let idlePolls = 0;
     let pollStop: string | null = null;
     while (submitted.size > 0) {
-      if (this.apiGuard.callsSpent() >= this.apiGuard.transferCallBudget()) {
-        pollStop = "subtitle landing poll stopped: 115 call budget reached the wrap-up reserve";
+      if (budgetReached()) {
+        pollStop = budgetStopMessage;
         break;
       }
       let tree: PackageTreeFile[];
@@ -800,7 +812,14 @@ export class Storage115Executor implements StorageExecutor {
         break;
       }
       idlePolls = landedThisPoll > 0 ? 0 : idlePolls + 1;
-      if (idlePolls >= this.subtitleMaterializeAttempts || polls >= maxPolls) {
+      // Stop BEFORE sleeping when the budget line is already reached: the loop-entry
+      // check would stop anyway on re-entry, and sleeping first would burn the poll
+      // interval (6s by default) for nothing. Only the budget stop carries a reason —
+      // an idle/cap stop is an ordinary miss and keeps the plain window message.
+      if (idlePolls >= this.subtitleMaterializeAttempts || polls >= maxPolls || budgetReached()) {
+        if (budgetReached()) {
+          pollStop = budgetStopMessage;
+        }
         break;
       }
       await this.sleep(this.subtitleMaterializePollMs);
@@ -814,6 +833,9 @@ export class Storage115Executor implements StorageExecutor {
     // single match (a stale task from a prior run for the same url makes it
     // ambiguous: skip rather than cancel the wrong task). ONE task_lists read and
     // ONE task_del for the whole package. Never fail the attempts over cleanup.
+    // The match is exact on the url string, and 115 may store a NORMALIZED form of
+    // it (a 2026-07 live run saw the exact match miss): the task is then left alone
+    // and its file may still land after the workflow moves on — best-effort by design.
     if (submitted.size > 0) {
       try {
         const tasks = await this.callApi("listOfflineTasks", () => this.api.listOfflineTasks());
@@ -825,7 +847,12 @@ export class Storage115Executor implements StorageExecutor {
           }
         }
         if (infoHashes.length > 0) {
-          await this.callApi("removeOfflineTask", () => this.api.removeOfflineTask({ infoHashes }));
+          // Dedupe: several files of one package may share a url (the same task),
+          // and 115 must not be asked to delete the same hash twice.
+          const uniqueInfoHashes = [...new Set(infoHashes)];
+          await this.callApi("removeOfflineTask", () =>
+            this.api.removeOfflineTask({ infoHashes: uniqueInfoHashes }),
+          );
         }
       } catch {
         // best-effort cleanup — a failed cancel must never fail the subtitle attempts

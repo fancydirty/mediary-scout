@@ -1410,7 +1410,7 @@ describe("Storage115Executor.transferSubtitleUrls (整包一次:1 校验 + 1 快
     const orig = api.listItems.bind(api);
     api.listItems = async (input) => {
       listCalls += 1;
-      // listing 1 = before; E01 lands on poll 3 (listing 4), E02 on poll 5 (listing 6); E03–E05 never.
+      // listing 1 = before; E01 lands on poll 3 (listing 4), E02 on poll 5 (listing 6); E03–E06 never.
       if (listCalls === 4) api.directories["stage"] = [{ fid: "f1", n: "Show.S01E01.srt", s: "1KB" }];
       if (listCalls === 6) api.directories["stage"] = [...api.directories["stage"]!, { fid: "f2", n: "Show.S01E02.srt", s: "1KB" }];
       return orig(input);
@@ -1418,14 +1418,15 @@ describe("Storage115Executor.transferSubtitleUrls (整包一次:1 校验 + 1 快
     const guard = new Pan115ApiGuard({ minDelayMs: 0 });
     const executor = new Storage115Executor({ api, apiGuard: guard, subtitleMaterializeAttempts: 3, subtitleMaterializePollMs: 1, sleep: async () => {} });
 
-    const attempts = await executor.transferSubtitleUrls!({ files: subtitleFiles(5), directoryId: "stage", workflowRunId: "run-b" });
+    const attempts = await executor.transferSubtitleUrls!({ files: subtitleFiles(6), directoryId: "stage", workflowRunId: "run-b" });
 
-    expect(attempts.map((a) => a.status)).toEqual(["succeeded", "succeeded", "no_target_change", "no_target_change", "no_target_change"]);
-    // polls: 1,2 idle(2) → 3 lands (idle reset) → 4 idle → 5 lands (reset) → 6,7,8 idle(3) → stop
-    // (8 is also the cap, attempts 3 + files 5).
+    expect(attempts.filter((a) => a.status === "succeeded")).toHaveLength(2);
+    expect(attempts.filter((a) => a.status === "no_target_change")).toHaveLength(4);
+    // polls: 1,2 idle(2) → 3 lands (idle reset) → 4 idle → 5 lands (reset) → 6,7,8 idle(3) → stop.
+    // 6 files keep the cap (attempts 3 + files 6 = 9) OUT of reach, so ONLY the idle rule can end this loop.
     expect(listCalls).toBe(1 + 8);
-    // before 1 + submit 5 + polls 8 + cancel listOfflineTasks 1 (no unambiguous match → no task_del)
-    expect(guard.callsSpent()).toBe(15);
+    // before 1 + submit 6 + polls 8 + cancel listOfflineTasks 1 (no unambiguous match → no task_del)
+    expect(guard.callsSpent()).toBe(16);
   });
 
   it("caps total polls at attempts + files even when landings trickle forever", async () => {
@@ -1601,17 +1602,161 @@ describe("Storage115Executor.transferSubtitleUrls (整包一次:1 校验 + 1 快
       return orig(input);
     };
     // hard 12, reserve 4 → transfer line 8. Pre-flight: 2 + 3 + 2 = 7 ≤ 8 → proceeds.
-    // before (1) + submits (2..4) + polls 5,6,7,8 → the pre-check sees 8 ≥ 8 and stops
-    // before a 5th poll; idle patience (2) never fires because E01/E02 keep landing.
+    // before (1) + submits (2..4) + polls 5,6,7,8 → the budget stop fires right after the
+    // 4th poll; idle patience (2) never fires because E01/E02 keep landing.
     const guard = new Pan115ApiGuard({ minDelayMs: 0, maxCallsPerOperation: 12, transferReserveCalls: 4 });
-    const executor = new Storage115Executor({ api, apiGuard: guard, subtitleMaterializeAttempts: 2, subtitleMaterializePollMs: 1, sleep: async () => {} });
+    let sleeps = 0;
+    const executor = new Storage115Executor({
+      api,
+      apiGuard: guard,
+      subtitleMaterializeAttempts: 2,
+      subtitleMaterializePollMs: 1,
+      sleep: async () => {
+        sleeps += 1;
+      },
+    });
 
     const attempts = await executor.transferSubtitleUrls!({ files: subtitleFiles(3), directoryId: "stage", workflowRunId: "run-b" });
 
     expect(attempts.map((a) => a.status)).toEqual(["succeeded", "succeeded", "no_target_change"]);
     expect(attempts[2]!.providerMessage).toMatch(/wrap-up reserve/);
     expect(listCalls).toBe(1 + 4); // before + 4 polls, none in the reserve
+    expect(sleeps).toBe(3); // polls − 1: the loop never sleeps after the poll that hits the line
     expect(guard.callsSpent()).toBe(9); // + the cleanup task_lists read (wrap-up class, allowed under hard 12)
+  });
+
+  it("the write-scope check is ONE getDirectoryInfo for the whole package, not one per file", async () => {
+    const api = new FakePan115Api({
+      directories: { sub_stage: [] },
+      directoryInfo: { sub_stage: seasonPathInfo("test_root", "sub_stage") },
+    });
+    let directoryInfoCalls = 0;
+    const origInfo = api.getDirectoryInfo.bind(api);
+    api.getDirectoryInfo = async (input) => {
+      directoryInfoCalls += 1;
+      return origInfo(input);
+    };
+    api.addOfflineTask = async (input) => {
+      api.offlineTasks.push({ ...input });
+      const name = input.url.split("/").pop()!;
+      api.directories[input.directoryId] = [...(api.directories[input.directoryId] ?? []), { fid: `fid_${name}`, n: name, s: "1KB" }];
+      return { ok: true, message: "accepted" };
+    };
+    const executor = createProtectedStorage115Executor({
+      api,
+      env: { MEDIA_TRACK_115_TEST_ROOT_CID: "test_root" },
+      apiGuardOptions: { minDelayMs: 0 },
+      subtitleMaterializeAttempts: 2,
+      subtitleMaterializePollMs: 1,
+      sleep: async () => {},
+    });
+
+    const attempts = await executor.transferSubtitleUrls!({ files: subtitleFiles(4), directoryId: "sub_stage", workflowRunId: "run-b" });
+
+    expect(attempts.every((a) => a.status === "succeeded")).toBe(true);
+    expect(directoryInfoCalls).toBe(1); // the scope check, once — NOT once per file
+    expect(executor.apiCallCount()).toBe(7); // scope 1 + before 1 + submits 4 + one poll 1
+  });
+
+  it("clamps the reported headroom at 0 — a package asked for past the line never prints a negative remainder", async () => {
+    const api = new FakePan115Api({ directories: { stage: [] } });
+    // hard 10, reserve 6 → transfer line 4; 6 listings (wrap-up class) push callsSpent PAST it.
+    const guard = new Pan115ApiGuard({ minDelayMs: 0, maxCallsPerOperation: 10, transferReserveCalls: 6 });
+    const executor = new Storage115Executor({ api, apiGuard: guard, subtitleMaterializeAttempts: 1, subtitleMaterializePollMs: 1, sleep: async () => {} });
+    for (let i = 0; i < 6; i += 1) {
+      await executor.listVideoFiles("stage");
+    }
+
+    const attempts = await executor.transferSubtitleUrls!({ files: subtitleFiles(1), directoryId: "stage", workflowRunId: "run-b" });
+
+    expect(attempts[0]!.status).toBe("failed");
+    expect(attempts[0]!.providerMessage).toMatch(/SUBTITLE_BUDGET_INSUFFICIENT/);
+    expect(attempts[0]!.providerMessage).toMatch(/only 0 remain/); // not "-2"
+    expect(guard.callsSpent()).toBe(6); // refused before any further call
+    expect(api.listCalls).toHaveLength(6);
+  });
+
+  it("cancels one task ONCE when several package files share a url (deduped infoHashes)", async () => {
+    const SHARED_URL = "http://file0.assrt.net/onthefly/1/pack.srt";
+    const api = new FakePan115Api({
+      directories: { stage: [] },
+      offlineTaskList: [
+        { infoHash: "h1", name: "pack", percentDone: 0, status: 1, statusText: "downloading", url: SHARED_URL },
+      ],
+    });
+    api.addOfflineTask = async () => ({ ok: true, message: "accepted" }); // lands nothing
+    const executor = new Storage115Executor({ api, subtitleMaterializeAttempts: 1, subtitleMaterializePollMs: 1, sleep: async () => {} });
+
+    const attempts = await executor.transferSubtitleUrls!({
+      files: [
+        { url: SHARED_URL, filename: "Show.S01E01.srt" },
+        { url: SHARED_URL, filename: "Show.S01E02.srt" },
+      ],
+      directoryId: "stage",
+      workflowRunId: "run-b",
+    });
+
+    expect(attempts.map((a) => a.status)).toEqual(["no_target_change", "no_target_change"]);
+    expect(api.listOfflineTasksCalls).toBe(1);
+    expect(api.removedOfflineHashes).toEqual(["h1"]); // ONE hash, not ["h1","h1"]
+  });
+
+  it("acceptance: a 22-file package that lands promptly costs ≤ 40 calls (the per-file path spent 260)", async () => {
+    const files = subtitleFiles(22);
+    const api = new FakePan115Api({ directories: { stage: [] } });
+    api.addOfflineTask = async () => ({ ok: true, message: "accepted" });
+    let listCalls = 0;
+    const orig = api.listItems.bind(api);
+    api.listItems = async (input) => {
+      listCalls += 1;
+      const poll = listCalls - 1; // listing 1 is the before-snapshot
+      if (poll >= 1) {
+        // 8 files land per poll → all 22 are in by poll 3.
+        api.directories["stage"] = files
+          .slice(0, Math.min(8 * poll, files.length))
+          .map((file, index) => ({ fid: `fid_${index + 1}`, n: file.filename, s: "40KB" }));
+      }
+      return orig(input);
+    };
+    const guard = new Pan115ApiGuard({ minDelayMs: 0 });
+    const executor = new Storage115Executor({ api, apiGuard: guard, sleep: async () => {} });
+
+    const attempts = await executor.transferSubtitleUrls!({ files, directoryId: "stage", workflowRunId: "run-b" });
+
+    expect(attempts.filter((a) => a.status === "succeeded")).toHaveLength(22);
+    expect(listCalls).toBe(1 + 3); // before + 3 polls (8 + 8 + 6 landings)
+    expect(guard.callsSpent()).toBe(26); // before 1 + submits 22 + polls 3; nothing left to cancel
+    expect(guard.callsSpent()).toBeLessThanOrEqual(40);
+  });
+
+  it("acceptance: a 22-file package where 12 files never land still costs ≤ 60 calls (full idle window + one batch cancel)", async () => {
+    const files = subtitleFiles(22);
+    const api = new FakePan115Api({ directories: { stage: [] }, offlineTaskList: [] });
+    api.addOfflineTask = async () => ({ ok: true, message: "accepted" });
+    let listCalls = 0;
+    const orig = api.listItems.bind(api);
+    api.listItems = async (input) => {
+      listCalls += 1;
+      // Only the FIRST poll lands anything: 10 of 22. The other 12 never appear.
+      if (listCalls === 2) {
+        api.directories["stage"] = files
+          .slice(0, 10)
+          .map((file, index) => ({ fid: `fid_${index + 1}`, n: file.filename, s: "40KB" }));
+      }
+      return orig(input);
+    };
+    const guard = new Pan115ApiGuard({ minDelayMs: 0 });
+    const executor = new Storage115Executor({ api, apiGuard: guard, subtitleMaterializeAttempts: 8, subtitleMaterializePollMs: 1, sleep: async () => {} });
+
+    const attempts = await executor.transferSubtitleUrls!({ files, directoryId: "stage", workflowRunId: "run-b" });
+
+    expect(attempts.filter((a) => a.status === "succeeded")).toHaveLength(10);
+    expect(attempts.filter((a) => a.status === "no_target_change")).toHaveLength(12);
+    // poll 1 lands 10 (idle reset) → polls 2–9 idle → idle hits 8 at poll 9 → stop
+    // (the cap, attempts 8 + files 22 = 30, is never reached).
+    expect(listCalls).toBe(1 + 9);
+    expect(guard.callsSpent()).toBe(33); // before 1 + submits 22 + polls 9 + task_lists 1 (empty list → no task_del)
+    expect(guard.callsSpent()).toBeLessThanOrEqual(60);
   });
 
   it("transferSubtitleUrl (single) delegates to the batch — same attempt shape, one number per call", async () => {
