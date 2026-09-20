@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { RealStorageV2 } from "../src/acquisition-v2/real-storage-adapter.js";
 import { CandidateRegistry } from "../src/acquisition-v2/candidate-registry.js";
+import { GuangYaAuthError } from "../src/guangya-client.js";
+import { Pan115AuthError } from "../src/pan115-cookie-client.js";
 import type { StorageExecutor, UnparsedVideoFile } from "../src/ports.js";
 import type { PackageTreeFile, ResourceCandidate, TransferAttempt, VerifiedFile } from "../src/domain.js";
 
@@ -324,6 +326,51 @@ describe("RealStorageV2.transferSubtitleUrls — batch-first, per-file fallback 
     expect(results.every((r) => r.providerMessage === "WRITE_SCOPE_VIOLATION: nope")).toBe(true);
     expect(results.every((r) => r.materializedFileIds.length === 0)).toBe(true);
     expect(storage.attempts()).toEqual([]);
+  });
+
+  // The contrast with the WRITE_SCOPE_VIOLATION test above: a scope violation IS a
+  // landing problem (soften it), a dead cookie is NOT — it must reach the worker's
+  // drive-freeze path untouched instead of becoming N fake "failed" files.
+  it("brand auth errors are NOT softened on the batch path (dead cookie ≠ landing miss)", async () => {
+    class AuthFailingBatch extends RecordingExecutor {
+      constructor() {
+        super({ subtitleBatch: true });
+        this.transferSubtitleUrls = async () => {
+          throw new Pan115AuthError("PAN115_AUTH_FAILED: cookie dead", 990001);
+        };
+      }
+    }
+    const { storage } = adapter(new AuthFailingBatch());
+
+    await expect(storage.transferSubtitleUrls({ files: files(3), intoDirectoryId: "staging" })).rejects.toBeInstanceOf(
+      Pan115AuthError,
+    );
+  });
+
+  it("brand auth errors are NOT softened on the per-file fallback (and stop the loop at once)", async () => {
+    class AuthFailingSingle extends RecordingExecutor {
+      override async transferSubtitleUrl(input: { url: string; filename: string; directoryId: string; workflowRunId: string }) {
+        this.subtitleSingleCalls.push(input.filename);
+        if (this.subtitleSingleCalls.length >= 2) {
+          throw new GuangYaAuthError("GUANGYA_AUTH_FAILED: token dead");
+        }
+        return {
+          id: `${input.workflowRunId}_subtitle_${this.subtitleSingleCalls.length}`,
+          workflowRunId: input.workflowRunId,
+          candidateId: `subtitle:${input.filename}`,
+          status: "succeeded" as const,
+          providerMessage: "",
+          materializedFileIds: [`sub_${input.filename}`],
+        };
+      }
+    }
+    const executor = new AuthFailingSingle();
+    const { storage } = adapter(executor);
+
+    await expect(storage.transferSubtitleUrls({ files: files(3), intoDirectoryId: "staging" })).rejects.toBeInstanceOf(
+      GuangYaAuthError,
+    );
+    expect(executor.subtitleSingleCalls).toHaveLength(2); // no third attempt on a dead token
   });
 
   it("falls back to the per-file method when the executor has no batch (光鸭 today)", async () => {

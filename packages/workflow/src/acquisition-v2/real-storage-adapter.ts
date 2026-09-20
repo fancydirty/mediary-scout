@@ -2,6 +2,7 @@ import type { TransferAttempt } from "../domain.js";
 import { parsePan123ShareUrl } from "../pan123-storage-executor.js";
 import type { StorageExecutor } from "../ports.js";
 import { parseQuarkShareUrl } from "../quark-storage-executor.js";
+import { isBrandStorageAuthError } from "../storage-auth-error.js";
 import { parseTianyiShareUrl } from "../tianyi-storage-executor.js";
 import type { CandidateRegistry } from "./candidate-registry.js";
 import { deadLinkKey, deadLinkReason, UNRESOLVED_MAGNET_DEAD_LINK_TTL_MS, type DeadLinkStore } from "./dead-links.js";
@@ -170,7 +171,12 @@ export class RealStorageV2 implements StorageV2 {
         // guard refused, …) kills the whole package at once. Subtitles are a SOFT
         // goal — the sandbox promises the agent {status:"failed"}, never an {error}
         // — so map it to the same per-file soft failure the fallback loop produces
-        // for a thrown per-file error.
+        // for a thrown per-file error. EXCEPT a dead cookie/token: that is not a
+        // landing miss, and softening it would hide the one error the worker freezes
+        // the drive on (the video path's transfer() lets it out the same way).
+        if (isBrandStorageAuthError(error)) {
+          throw error;
+        }
         return input.files.map((file) => ({
           filename: file.filename,
           status: "failed" as const,
@@ -217,6 +223,9 @@ export class RealStorageV2 implements StorageV2 {
           }),
         );
       } catch (error) {
+        if (isBrandStorageAuthError(error)) {
+          throw error; // dead credential ≠ a landing miss (see the batch catch)
+        }
         result = {
           filename: file.filename,
           status: "failed",

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { TaskSandbox } from "../src/acquisition-v2/sandbox.js";
 import { FakeResourceProviderV2 } from "../src/acquisition-v2/fake-provider.js";
 import { Storage115Simulator, type TransferAttemptResult } from "../src/acquisition-v2/storage-115-simulator.js";
+import { Pan115AuthError } from "../src/pan115-cookie-client.js";
 import type { AssrtCandidate, AssrtSubtitleFile } from "../src/subtitle-provider.js";
 import { buildSandboxToolSet } from "../src/acquisition-v2/agent-loop.js";
 
@@ -106,6 +107,29 @@ describe("transferSubtitle", () => {
     expect(result.status).toBe("succeeded");
     expect(result.landedFilenames).toEqual(["Breaking.Bad.S02E01.ass", "Breaking.Bad.S02E02.ass"]);
     expect(storage.batches).toEqual([["Breaking.Bad.S02E01.ass", "Breaking.Bad.S02E02.ass"]]); // one call, whole package
+  });
+
+  // Storage owns soft-failing a LANDING; a dead credential is not one. It must ride
+  // out of transferSubtitle so the run fails loud (and the worker freezes the drive)
+  // instead of the agent being told the subtitles merely "didn't materialize".
+  it("a brand auth error propagates out of transferSubtitle untouched (dead credential ≠ subtitle miss)", async () => {
+    const provider = new FakeResourceProviderV2({ results: { title: [] } });
+    class AuthFailingStorage extends Storage115Simulator {
+      override async transferSubtitleUrls(_input: { files: Array<{ url: string; filename: string }>; intoDirectoryId: string }): Promise<never> {
+        throw new Pan115AuthError("PAN115_AUTH_FAILED: cookie dead", 990001);
+      }
+    }
+    const storage = new AuthFailingStorage({ packs: {} });
+    const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
+    const sandbox = new TaskSandbox({ provider, storage, stagingDirectoryId, targetSeasonDirectoryIds: {}, need: [] });
+    await sandbox.primeSubtitleSnapshot(
+      "BB",
+      makeAssrtProvider([{ id: 713570, title: "BB S02", lang: "简" }], {
+        713570: [{ filename: "Breaking.Bad.S02E01.ass", url: "http://file0.assrt.net/onthefly/713570/-/1/a.ass?api=1" }],
+      }),
+    );
+
+    await expect(sandbox.transferSubtitle({ candidateId: 713570 })).rejects.toBeInstanceOf(Pan115AuthError);
   });
 
   it("throws when the candidate was not in the pre-warmed snapshot (no stale ids)", async () => {

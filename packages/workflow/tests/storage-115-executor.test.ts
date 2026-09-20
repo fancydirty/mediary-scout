@@ -4,6 +4,7 @@ import {
   createProtectedStorage115Executor,
   infoHashFromMagnet,
   Pan115ApiGuard,
+  Pan115AuthError,
   Pan115RiskControlError,
   PAN115_TRANSFER_RESERVE_CALLS,
   Storage115Executor,
@@ -1772,6 +1773,66 @@ describe("Storage115Executor.transferSubtitleUrls (整包一次:1 校验 + 1 快
 
     expect(single).toMatchObject({ id: "run-s_subtitle_1", candidateId: "subtitle:Show.S01E01.srt", status: "succeeded", materializedFileIds: ["sub_1"] });
     expect(next[0]!.id).toBe("run-s_subtitle_2");
+  });
+
+  // A dead cookie is NOT a landing miss: it must ride out of the package the same
+  // way transfer() lets it out, so the worker can freeze the drive instead of the
+  // agent reading 22 fake "did not materialize" lines and hunting another source.
+  it("a dead cookie during submission propagates as Pan115AuthError (not a per-file rejection)", async () => {
+    const api = new FakePan115Api({ directories: { stage: [] } });
+    let submits = 0;
+    api.addOfflineTask = async () => {
+      submits += 1;
+      if (submits >= 2) {
+        throw new Pan115AuthError("PAN115_AUTH_FAILED: cookie dead", 990001);
+      }
+      return { ok: true, message: "accepted" };
+    };
+    const executor = new Storage115Executor({ api, sleep: async () => {} });
+
+    await expect(
+      executor.transferSubtitleUrls({ files: subtitleFiles(3), directoryId: "stage", workflowRunId: "run-b" }),
+    ).rejects.toBeInstanceOf(Pan115AuthError);
+    // No cancel sweep either: the same dead cookie would refuse task_lists anyway.
+    expect(api.listOfflineTasksCalls).toBe(0);
+  });
+
+  it("a dead cookie during the landing poll propagates as Pan115AuthError (not no_target_change)", async () => {
+    const api = new FakePan115Api({ directories: { stage: [] } });
+    api.addOfflineTask = async () => ({ ok: true, message: "accepted" });
+    let listings = 0;
+    const orig = api.listItems.bind(api);
+    api.listItems = async (input) => {
+      listings += 1;
+      // listing 1 = the before-snapshot; the cookie dies on the first poll.
+      if (listings >= 2) {
+        throw new Pan115AuthError("PAN115_AUTH_FAILED: cookie dead", 990001);
+      }
+      return orig(input);
+    };
+    const executor = new Storage115Executor({ api, sleep: async () => {} });
+
+    await expect(
+      executor.transferSubtitleUrls({ files: subtitleFiles(2), directoryId: "stage", workflowRunId: "run-b" }),
+    ).rejects.toBeInstanceOf(Pan115AuthError);
+  });
+
+  it("a dead cookie during cleanup propagates too (best-effort cancel ≠ swallow a dead credential)", async () => {
+    const api = new FakePan115Api({ directories: { stage: [] } });
+    api.addOfflineTask = async () => ({ ok: true, message: "accepted" }); // accepted, never lands
+    api.listOfflineTasks = async () => {
+      throw new Pan115AuthError("PAN115_AUTH_FAILED: cookie dead", 990001);
+    };
+    const executor = new Storage115Executor({
+      api,
+      subtitleMaterializeAttempts: 1,
+      subtitleMaterializePollMs: 1,
+      sleep: async () => {},
+    });
+
+    await expect(
+      executor.transferSubtitleUrls({ files: subtitleFiles(1), directoryId: "stage", workflowRunId: "run-b" }),
+    ).rejects.toBeInstanceOf(Pan115AuthError);
   });
 });
 

@@ -22,10 +22,6 @@ import { stagingLeakAuditEvent, stagingLeaksOf } from "./acquisition-v2/director
 import { describeAgentRunError, summarizeErrorForNotification } from "./agent-error.js";
 import { formatReportPushText } from "./notification-report.js";
 import { isMovieUnreleased } from "./domain.js";
-import { isGuangYaAuthError } from "./guangya-client.js";
-import { isPan115AuthError } from "./pan115-cookie-client.js";
-import { isPan123AuthError } from "./pan123-client.js";
-import { isQuarkAuthError } from "./quark-cookie-client.js";
 import {
   runMovieAcquisitionV2AndPersist,
   runSeriesInitializationV2AndPersist,
@@ -33,18 +29,7 @@ import {
   runType3MonitoringV2AndPersist,
 } from "./runner-v2.js";
 import { syncSeasonAgainstMetadata } from "./season-sync.js";
-import { isTianyiAuthError } from "./tianyi-client.js";
-
-/** Brand netdisk auth failures only — never LLM Unauthorized / plain Errors. */
-function isBrandStorageAuthError(error: unknown): boolean {
-  return (
-    isPan115AuthError(error) ||
-    isQuarkAuthError(error) ||
-    isGuangYaAuthError(error) ||
-    isTianyiAuthError(error) ||
-    isPan123AuthError(error)
-  );
-}
+import { isBrandStorageAuthError } from "./storage-auth-error.js";
 
 async function maybeFreezeOnBrandAuthError(input: {
   connectedStorageId: string | null | undefined;

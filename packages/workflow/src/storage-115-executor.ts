@@ -6,6 +6,7 @@ import type {
   VerifiedFile,
 } from "./domain.js";
 import { episodeCodeFromFileName } from "./episode-code.js";
+import { isPan115AuthError } from "./pan115-cookie-client.js";
 import type { StorageExecutor, UnparsedVideoFile } from "./ports.js";
 
 /**
@@ -747,6 +748,12 @@ export class Storage115Executor implements StorageExecutor {
           this.api.addOfflineTask({ url: file.url, directoryId: safeDirectoryId }),
         );
       } catch (error) {
+        // A dead cookie is NOT a per-file landing failure: let it out the way
+        // transfer() does, so the worker can freeze the drive instead of the agent
+        // reading N fake "did not materialize" lines and hunting another source.
+        if (isPan115AuthError(error)) {
+          throw error;
+        }
         const message = errorMessage(error);
         if (error instanceof Pan115RiskControlError) {
           // The refusal lands on THIS file too — every unsubmitted file in the
@@ -795,6 +802,9 @@ export class Storage115Executor implements StorageExecutor {
       try {
         tree = await this.listTree({ directoryId: safeDirectoryId, maxDepth: SUBTITLE_LANDING_DEPTH });
       } catch (error) {
+        if (isPan115AuthError(error)) {
+          throw error; // dead cookie ≠ a landing miss (see the submission catch)
+        }
         pollStop = `subtitle landing poll failed: ${errorMessage(error)}`;
         break;
       }
@@ -858,7 +868,10 @@ export class Storage115Executor implements StorageExecutor {
             this.api.removeOfflineTask({ infoHashes: uniqueInfoHashes }),
           );
         }
-      } catch {
+      } catch (error) {
+        if (isPan115AuthError(error)) {
+          throw error; // dead cookie ≠ a landing miss (see the submission catch)
+        }
         // best-effort cleanup — a failed cancel must never fail the subtitle attempts
       }
       for (const index of submitted.keys()) {
