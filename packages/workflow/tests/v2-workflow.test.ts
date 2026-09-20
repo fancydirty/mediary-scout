@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { MockLanguageModelV3 } from "ai/test";
 import { runAcquisitionV2Workflow } from "../src/acquisition-v2/workflow-v2.js";
+import { stagingLeaksOf } from "../src/acquisition-v2/directory-lifecycle.js";
 import { FakeStorageExecutor } from "../src/fakes.js";
 import type { ResourceProvider } from "../src/ports.js";
 import type { ResourceSnapshot } from "../src/domain.js";
@@ -156,5 +157,67 @@ describe("runAcquisitionV2Workflow — outer orchestration (dirs → sync → ag
     // and the fake really dropped it
     const children = await executor.listChildDirectories(result.directories.showDirectoryId);
     expect(children.some((child) => child.id === result.directories.stagingDirectoryId)).toBe(false);
+  });
+
+  it("carries the leak on the thrown error when the body FAILS and the staging dir survives (Copilot #260 r1)", async () => {
+    // The throw path is exactly the one the harness guard exists for (斗破苍穹). If
+    // the agent dies AND the delete silently no-ops, the leak must still reach the
+    // persisted failed run — the success-path audit append never runs here, so the
+    // leak rides on the error itself for the failure handler to pick up.
+    class SilentNoopDeleteExecutor extends FakeStorageExecutor {
+      override async removeDirectory(): Promise<{ removed: boolean }> {
+        return { removed: true };
+      }
+    }
+    const model = new MockLanguageModelV3({
+      doGenerate: async () => {
+        throw new Error("agent model unavailable");
+      },
+    });
+    let caught: unknown;
+    try {
+      await runAcquisitionV2Workflow({
+        provider: emptyProvider(),
+        executor: new SilentNoopDeleteExecutor(),
+        model,
+        workflowRunId: "run-leak-throw",
+        title: { name: "Show", year: 2024, aliases: [], tmdbId: 42 },
+        categoryParentId: "tv_root",
+        seasons: [{ seasonNumber: 1, latestAiredEpisode: 3 }],
+        qualityPreference: "1080p",
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toContain("agent model unavailable"); // original error, not a wrapper
+    const leaks = stagingLeaksOf(caught);
+    expect(leaks).toHaveLength(1);
+    expect(leaks[0]?.stagingDirectoryId).toContain("staging-run-leak-throw");
+  });
+
+  it("carries NO leak on the thrown error when the cleanup really removed staging", async () => {
+    const model = new MockLanguageModelV3({
+      doGenerate: async () => {
+        throw new Error("agent model unavailable");
+      },
+    });
+    let caught: unknown;
+    try {
+      await runAcquisitionV2Workflow({
+        provider: emptyProvider(),
+        executor: new FakeStorageExecutor(),
+        model,
+        workflowRunId: "run-clean-throw",
+        title: { name: "Show", year: 2024, aliases: [], tmdbId: 42 },
+        categoryParentId: "tv_root",
+        seasons: [{ seasonNumber: 1, latestAiredEpisode: 3 }],
+        qualityPreference: "1080p",
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect(stagingLeaksOf(caught)).toEqual([]);
   });
 });

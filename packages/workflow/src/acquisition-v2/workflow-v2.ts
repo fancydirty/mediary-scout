@@ -3,6 +3,7 @@ import type { ResourceProvider, StorageExecutor } from "../ports.js";
 import type { AuditEvent } from "../domain.js";
 import {
   ensureSeasonAcquisitionDirectories,
+  stagingLeakAuditEvent,
   withStagingCleanup,
   type StagingLeak,
   type AcquisitionDirectories,
@@ -197,17 +198,7 @@ export async function runAcquisitionV2Workflow(
     ...result,
     auditEvents: [
       ...result.auditEvents,
-      ...leaks.map((leak) => ({
-        type: "staging_leaked",
-        message: `staging 目录清理后仍在网盘上(${leak.stagingDirectoryId})——本次转存的临时文件没有被删除,请手动清理`,
-        data: {
-          stagingDirectoryId: leak.stagingDirectoryId,
-          showDirectoryId: directories.showDirectoryId,
-          ...(leak.error === undefined
-            ? {}
-            : { cleanupError: leak.error instanceof Error ? leak.error.message : String(leak.error) }),
-        },
-      })),
+      ...leaks.map((leak) => stagingLeakAuditEvent(leak, { showDirectoryId: directories.showDirectoryId })),
     ],
   };
 }

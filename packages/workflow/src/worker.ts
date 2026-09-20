@@ -18,6 +18,7 @@ import {
   requeueWorkflowRunForRetry,
 } from "./repository.js";
 import { isTransientAcquisitionError } from "./acquisition-v2/transient-error.js";
+import { stagingLeakAuditEvent, stagingLeaksOf } from "./acquisition-v2/directory-lifecycle.js";
 import { describeAgentRunError, summarizeErrorForNotification } from "./agent-error.js";
 import { formatReportPushText } from "./notification-report.js";
 import { isMovieUnreleased } from "./domain.js";
@@ -226,10 +227,19 @@ export async function handleWorkflowRunFailure(input: {
   const transient = isTransientAcquisitionError(error);
   const willRetry = transient && priorCount < AUTO_REQUEUE_MAX;
 
+  // A staging dir that survived the harness cleanup on this failed body rides on
+  // the error (attachStagingLeaks). This handler is the ONLY persist path for a
+  // failed/requeued run, so the leak is recorded here or nowhere (Copilot #260 r1).
+  const leakEvents = stagingLeaksOf(error).map((leak) => stagingLeakAuditEvent(leak));
+  const claimedRun =
+    leakEvents.length === 0
+      ? claimed.workflowRun
+      : { ...claimed.workflowRun, auditEvents: [...claimed.workflowRun.auditEvents, ...leakEvents] };
+
   let report: NotificationReport;
   let workflowRun;
   if (willRetry) {
-    workflowRun = requeueWorkflowRunForRetry(claimed.workflowRun, errorMessage, nowIso);
+    workflowRun = requeueWorkflowRunForRetry(claimedRun, errorMessage, nowIso);
     const minutes = Math.round((AUTO_REQUEUE_BACKOFF_MS[priorCount] ?? 0) / 60_000);
     // 把真实报因摘要带进「重试中」通知——以前一律「网络波动」把根因藏了,
     // 用户和我们都得翻日志才知道发生了什么(issue #196)。摘要已脱敏+截断,
@@ -239,7 +249,7 @@ export async function handleWorkflowRunFailure(input: {
       `原因:${summarizeErrorForNotification(errorMessage)}`,
     ]);
   } else {
-    workflowRun = failWorkflowRun(claimed.workflowRun, errorMessage, nowIso);
+    workflowRun = failWorkflowRun(claimedRun, errorMessage, nowIso);
     report = failureReport(claimed, "failed", [
       transient ? `网络中断,已自动重试 ${priorCount} 次仍失败` : "获取失败",
       errorMessage,
@@ -579,6 +589,7 @@ export async function runScheduledType3Monitoring(input: {
               type: "type3_scheduled",
               message: "Scheduled Type 3 monitoring reserved",
             },
+            ...stagingLeaksOf(error).map((leak) => stagingLeakAuditEvent(leak)),
             { type: "workflow_failed", message: errorMessage },
           ],
         },
@@ -743,6 +754,7 @@ async function patrolMovie(args: {
             type: "movie_patrol_scheduled",
             message: "Scheduled movie patrol reserved",
           },
+          ...stagingLeaksOf(error).map((leak) => stagingLeakAuditEvent(leak)),
           { type: "workflow_failed", message: errorMessage },
         ],
       },

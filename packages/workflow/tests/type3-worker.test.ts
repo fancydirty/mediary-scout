@@ -187,6 +187,39 @@ describe("runScheduledType3Monitoring (V2 engine)", () => {
     expect(saved?.workflowRun.kind).toBe("type3_monitor");
   });
 
+  it("persists staging_leaked on the FAILED type3 run when the agent dies and the staging dir survives cleanup", async () => {
+    // The patrol's inline catch builds the failed run's audit events by hand; a
+    // leak carried on the error must land there too (Copilot #260 r1).
+    class SilentNoopDeleteExecutor extends FakeStorageExecutor {
+      override async removeDirectory(): Promise<{ removed: boolean }> {
+        return { removed: true };
+      }
+    }
+    const repository = new InMemoryWorkflowRepository();
+    const { title, season } = trackedFixture();
+    // 实有 = the DB marks: E01 only → E02 is a real gap → the agent runs → it throws.
+    await seedTrackedSeason({ repository, title, season, obtainedCodes: ["S01E01"] });
+    const storage = new SilentNoopDeleteExecutor();
+    await seedV2Season(storage, title, season, ["S01E01"]);
+
+    const outcomes = await runScheduledType3Monitoring({
+      repository,
+      resourceProvider: emptyProvider(),
+      storage,
+      model: throwingModel(),
+      storageParentDirectoryId: "library_root",
+      now: fixedNow,
+      createWorkflowRunId: () => "run_leak_type3",
+    });
+
+    expect(outcomes[0]).toMatchObject({ status: "failed", workflowRunId: "run_leak_type3" });
+    const saved = await repository.getWorkflowRunSnapshot("run_leak_type3");
+    expect(saved?.workflowRun.status).toBe("failed");
+    const leak = saved?.workflowRun.auditEvents.find((event) => event.type === "staging_leaked");
+    expect(leak).toBeDefined();
+    expect(String(leak?.data?.stagingDirectoryId)).toContain("staging-run_leak_type3");
+  });
+
   it("syncs against fresh TMDB metadata so episodes that aired after tracking began become the need", async () => {
     const repository = new InMemoryWorkflowRepository();
     const { title } = trackedFixture("airing");
