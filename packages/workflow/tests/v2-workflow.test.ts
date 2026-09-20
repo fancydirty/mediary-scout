@@ -111,4 +111,50 @@ describe("runAcquisitionV2Workflow — outer orchestration (dirs → sync → ag
     expect(result.obtained).toEqual(["S01E01"]);
     expect(result.stillMissing).toEqual(["S01E02", "S01E03"]);
   });
+
+  it("records a staging_leaked audit event when the staging dir survives the harness cleanup (123 silent-no-op delete)", async () => {
+    // 2026-09-20: 123's file/trash answered code:0 and deleted nothing; the
+    // executor said {removed:true}; 80 staging dirs / ~1.4 TB piled up unseen.
+    // Model that with an executor whose removeDirectory is a silent no-op and
+    // assert the leak is visible in the run's audit trail.
+    class SilentNoopDeleteExecutor extends FakeStorageExecutor {
+      override async removeDirectory(): Promise<{ removed: boolean }> {
+        return { removed: true }; // lies, exactly like production did
+      }
+    }
+    const executor = new SilentNoopDeleteExecutor();
+    const result = await runAcquisitionV2Workflow({
+      provider: emptyProvider(),
+      executor,
+      model: searchThenReportModel(),
+      workflowRunId: "run-leak",
+      title: { name: "Show", year: 2024, aliases: [], tmdbId: 42 },
+      categoryParentId: "tv_root",
+      seasons: [{ seasonNumber: 1, latestAiredEpisode: 3 }],
+      qualityPreference: "1080p",
+    });
+
+    const leak = result.auditEvents.find((event) => event.type === "staging_leaked");
+    expect(leak).toBeDefined();
+    expect(leak?.data).toMatchObject({ stagingDirectoryId: result.directories.stagingDirectoryId });
+    expect(leak?.message).toContain("staging");
+  });
+
+  it("records NO staging_leaked event when the cleanup really removed the staging dir", async () => {
+    const executor = new FakeStorageExecutor();
+    const result = await runAcquisitionV2Workflow({
+      provider: emptyProvider(),
+      executor,
+      model: searchThenReportModel(),
+      workflowRunId: "run-clean",
+      title: { name: "Show", year: 2024, aliases: [], tmdbId: 42 },
+      categoryParentId: "tv_root",
+      seasons: [{ seasonNumber: 1, latestAiredEpisode: 3 }],
+      qualityPreference: "1080p",
+    });
+    expect(result.auditEvents.some((event) => event.type === "staging_leaked")).toBe(false);
+    // and the fake really dropped it
+    const children = await executor.listChildDirectories(result.directories.showDirectoryId);
+    expect(children.some((child) => child.id === result.directories.stagingDirectoryId)).toBe(false);
+  });
 });

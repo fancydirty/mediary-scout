@@ -70,19 +70,53 @@ export async function ensureSeasonAcquisitionDirectories(
  * removeDirectory is idempotent: if the agent already discarded, the "already gone"
  * error is swallowed so cleanup never masks the real result. It only ever touches
  * THIS run's ephemeral staging dir — never a Season/library dir.
+ *
+ * VERIFY THE LANDING POINT, DON'T TRUST THE CALL (2026-09-20 123网盘): file/trash
+ * answered code:0 to a string FileId and deleted nothing; removeDirectory dutifully
+ * returned {removed:true}; this finally swallowed the rest — 80 staging dirs /
+ * ~1.4 TB leaked over a month with zero signal. So when the caller hands over the
+ * parent dir, the cleanup READS BACK whether the staging dir is still listed under
+ * it and reports a leak through `onLeak` (audit trail + notification upstream).
+ * The read-back is best-effort: a failing listing never masks the run's outcome.
  */
+export interface StagingLeak {
+  stagingDirectoryId: string;
+  /** The removeDirectory error when the cleanup threw; undefined when it "succeeded". */
+  error?: unknown;
+}
+
 export async function withStagingCleanup<T>(
-  args: { executor: Pick<StorageExecutor, "removeDirectory">; stagingDirectoryId: string },
+  args: {
+    executor: Pick<StorageExecutor, "removeDirectory"> & Partial<Pick<StorageExecutor, "listChildDirectories">>;
+    stagingDirectoryId: string;
+    /** The show dir the staging dir was created under. When given (together with a
+     *  listChildDirectories-capable executor) the cleanup verifies removal by reading
+     *  back the parent. Omit for the legacy fire-and-forget form. */
+    parentDirectoryId?: string;
+    onLeak?: (leak: StagingLeak) => void;
+  },
   run: () => Promise<T>,
 ): Promise<T> {
   try {
     return await run();
   } finally {
+    let cleanupError: unknown;
     try {
       await args.executor.removeDirectory(args.stagingDirectoryId);
-    } catch {
+    } catch (error) {
       // Idempotent: staging may already be gone (agent discarded it). Never let
       // a cleanup failure throw over the real outcome.
+      cleanupError = error;
+    }
+    if (args.parentDirectoryId !== undefined && args.executor.listChildDirectories && args.onLeak) {
+      try {
+        const children = await args.executor.listChildDirectories(args.parentDirectoryId);
+        if (children.some((child) => child.id === args.stagingDirectoryId)) {
+          args.onLeak({ stagingDirectoryId: args.stagingDirectoryId, error: cleanupError });
+        }
+      } catch {
+        // Read-back is diagnostic only; a listing failure must not mask the result.
+      }
     }
   }
 }
