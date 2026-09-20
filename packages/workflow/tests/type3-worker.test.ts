@@ -218,6 +218,7 @@ describe("runScheduledType3Monitoring (V2 engine)", () => {
     const leak = saved?.workflowRun.auditEvents.find((event) => event.type === "staging_leaked");
     expect(leak).toBeDefined();
     expect(String(leak?.data?.stagingDirectoryId)).toContain("staging-run_leak_type3");
+    expect(leak?.data?.showDirectoryId).toBeTruthy(); // same shape as the success path
   });
 
   it("syncs against fresh TMDB metadata so episodes that aired after tracking began become the need", async () => {

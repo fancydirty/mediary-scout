@@ -75,7 +75,7 @@ describe("withStagingCleanup leak detection (verify the landing point, don't tru
   }
 
   it("reports a leak when the staging dir is STILL under its parent after cleanup — even though removeDirectory 'succeeded'", async () => {
-    const leaks: Array<{ stagingDirectoryId: string; error?: unknown }> = [];
+    const leaks: Array<{ stagingDirectoryId: string; showDirectoryId: string; error?: unknown }> = [];
     const { executor, calls } = executorWithParentListing({
       childrenAfterCleanup: [{ id: "stg", name: "staging-run1" }],
     });
@@ -85,11 +85,13 @@ describe("withStagingCleanup leak detection (verify the landing point, don't tru
     );
     expect(result).toBe("ok");
     expect(calls).toEqual(["remove:stg", "list:show"]);
-    expect(leaks).toEqual([{ stagingDirectoryId: "stg", error: undefined }]);
+    // The leak names its parent too: a user cleaning up by hand needs the show dir,
+    // and the failure persist path has no `directories` object to look it up from.
+    expect(leaks).toEqual([{ stagingDirectoryId: "stg", showDirectoryId: "show", error: undefined }]);
   });
 
   it("carries the removeDirectory error into the leak report when the dir survived a throwing cleanup", async () => {
-    const leaks: Array<{ stagingDirectoryId: string; error?: unknown }> = [];
+    const leaks: Array<{ stagingDirectoryId: string; showDirectoryId: string; error?: unknown }> = [];
     const { executor } = executorWithParentListing({
       removeBehavior: async () => {
         throw new Error("PAN123_TRASH_NOOP: file/trash answered code:0 but did not act on stg");

@@ -189,7 +189,11 @@ describe("handleWorkflowRunFailure", () => {
     // append the event — otherwise a failed run can leave 1.4 TB behind unseen.
     const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
     const error = attachStagingLeaks(new Error("agent gave up: no coverage"), [
-      { stagingDirectoryId: "stg-77", error: new Error("PAN123_TRASH_NOOP: did not act on stg-77") },
+      {
+        stagingDirectoryId: "stg-77",
+        showDirectoryId: "show-7",
+        error: new Error("PAN123_TRASH_NOOP: did not act on stg-77"),
+      },
     ]);
     await handleWorkflowRunFailure({
       claimed: snapshot(),
@@ -201,14 +205,22 @@ describe("handleWorkflowRunFailure", () => {
     expect(saved.workflowRun.status).toBe("failed");
     const leak = saved.workflowRun.auditEvents.find((event) => event.type === "staging_leaked");
     expect(leak).toBeDefined();
-    expect(leak?.data).toMatchObject({ stagingDirectoryId: "stg-77", cleanupError: expect.stringContaining("PAN123_TRASH_NOOP") });
+    // Same shape as the success path (Copilot #260 r2): the show dir rides along so
+    // a hand cleanup knows WHERE the leaked staging dir lives.
+    expect(leak?.data).toMatchObject({
+      stagingDirectoryId: "stg-77",
+      showDirectoryId: "show-7",
+      cleanupError: expect.stringContaining("PAN123_TRASH_NOOP"),
+    });
     // the failure itself is still recorded
     expect(saved.workflowRun.auditEvents.some((event) => event.type === "workflow_failed")).toBe(true);
   });
 
   it("persists staging_leaked audit events on the REQUEUED run too (transient failure + surviving staging)", async () => {
     const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
-    const error = attachStagingLeaks(new Error("read ECONNRESET"), [{ stagingDirectoryId: "stg-78" }]);
+    const error = attachStagingLeaks(new Error("read ECONNRESET"), [
+      { stagingDirectoryId: "stg-78", showDirectoryId: "show-8" },
+    ]);
     const out = await handleWorkflowRunFailure({
       claimed: snapshot(),
       error,
@@ -224,7 +236,7 @@ describe("handleWorkflowRunFailure", () => {
     const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
     const onAuthErrorFreeze = vi.fn(async (_storageId: string, _reason: string) => {});
     const error = attachStagingLeaks(new QuarkAuthError("QUARK_AUTH_FAILED: require login"), [
-      { stagingDirectoryId: "stg-79" },
+      { stagingDirectoryId: "stg-79", showDirectoryId: "show-9" },
     ]);
     await handleWorkflowRunFailure({
       claimed: snapshot(),

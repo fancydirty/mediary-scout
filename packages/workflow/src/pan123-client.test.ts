@@ -80,6 +80,15 @@ describe("rawJsonWithNumericIds (bigint-safe request serialiser)", () => {
     expect(() => numericIdPlaceholder("12 ")).toThrow(/PAN123_BAD_ID/);
   });
 
+  it("rejects leading zeros (a bare `007` is not a valid JSON number) but accepts a lone `0`", () => {
+    // Copilot #260 r2: a digit-only check would splice `"FileId":007` into the body,
+    // which JSON forbids — 123 would reject or misparse it. Real ids never carry a
+    // leading zero, so refusing is safe; "0" (the root folder id) stays representable.
+    expect(() => numericIdPlaceholder("007")).toThrow(/PAN123_BAD_ID/);
+    expect(() => numericIdPlaceholder("0123456789")).toThrow(/PAN123_BAD_ID/);
+    expect(rawJsonWithNumericIds({ FileId: numericIdPlaceholder("0") }, ["0"])).toBe('{"FileId":0}');
+  });
+
   it("leaves an unrelated string that merely contains digits untouched", () => {
     const raw = rawJsonWithNumericIds({ FileName: "42.mkv", FileId: numericIdPlaceholder("42") }, ["42"]);
     expect(raw).toBe('{"FileName":"42.mkv","FileId":42}');

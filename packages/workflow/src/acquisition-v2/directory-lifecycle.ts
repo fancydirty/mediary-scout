@@ -82,6 +82,10 @@ export async function ensureSeasonAcquisitionDirectories(
  */
 export interface StagingLeak {
   stagingDirectoryId: string;
+  /** The show dir the staging dir was created under — where a hand cleanup has to
+   *  look. Carried on the leak itself because the failure persist path has no
+   *  `directories` object to look it up from (Copilot #260 r2). */
+  showDirectoryId: string;
   /** The removeDirectory error when the cleanup threw; undefined when it "succeeded". */
   error?: unknown;
 }
@@ -117,16 +121,13 @@ export function stagingLeaksOf(error: unknown): StagingLeak[] {
 
 /** The ONE shape of the `staging_leaked` audit event, shared by the success path
  *  (workflow-v2 result) and every failure persist site (worker). */
-export function stagingLeakAuditEvent(
-  leak: StagingLeak,
-  extra: Record<string, unknown> = {},
-): AuditEvent {
+export function stagingLeakAuditEvent(leak: StagingLeak): AuditEvent {
   return {
     type: "staging_leaked",
     message: `staging 目录清理后仍在网盘上(${leak.stagingDirectoryId})——本次转存的临时文件没有被删除,请手动清理`,
     data: {
       stagingDirectoryId: leak.stagingDirectoryId,
-      ...extra,
+      showDirectoryId: leak.showDirectoryId,
       ...(leak.error === undefined
         ? {}
         : { cleanupError: leak.error instanceof Error ? leak.error.message : String(leak.error) }),
@@ -167,7 +168,11 @@ export async function withStagingCleanup<T>(
       try {
         const children = await args.executor.listChildDirectories(args.parentDirectoryId);
         if (children.some((child) => child.id === args.stagingDirectoryId)) {
-          const leak: StagingLeak = { stagingDirectoryId: args.stagingDirectoryId, error: cleanupError };
+          const leak: StagingLeak = {
+            stagingDirectoryId: args.stagingDirectoryId,
+            showDirectoryId: args.parentDirectoryId,
+            error: cleanupError,
+          };
           args.onLeak(leak);
           if (threw) {
             // The rethrown body error is the only thing leaving this frame: make

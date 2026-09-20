@@ -194,6 +194,10 @@ describe("runAcquisitionV2Workflow — outer orchestration (dirs → sync → ag
     const leaks = stagingLeaksOf(caught);
     expect(leaks).toHaveLength(1);
     expect(leaks[0]?.stagingDirectoryId).toContain("staging-run-leak-throw");
+    // The failure path has no `directories` to consult: the leak itself names the
+    // show dir (the fake nests ids, so staging id starts with its parent's id).
+    expect(leaks[0]?.showDirectoryId).toBeTruthy();
+    expect(leaks[0]?.stagingDirectoryId.startsWith(leaks[0]!.showDirectoryId)).toBe(true);
   });
 
   it("carries NO leak on the thrown error when the cleanup really removed staging", async () => {

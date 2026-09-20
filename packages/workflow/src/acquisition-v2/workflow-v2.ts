@@ -196,9 +196,6 @@ export async function runAcquisitionV2Workflow(
   }
   return {
     ...result,
-    auditEvents: [
-      ...result.auditEvents,
-      ...leaks.map((leak) => stagingLeakAuditEvent(leak, { showDirectoryId: directories.showDirectoryId })),
-    ],
+    auditEvents: [...result.auditEvents, ...leaks.map((leak) => stagingLeakAuditEvent(leak))],
   };
 }
