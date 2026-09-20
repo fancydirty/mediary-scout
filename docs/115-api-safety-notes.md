@@ -64,10 +64,11 @@ one write-scope check, one depth-1 before-snapshot, N `addOfflineTask`
 submissions (stopping after 3 consecutive rejections), polls the staging dir once
 per round at depth 1 for every file (stop: all landed / `subtitleMaterializeAttempts`
 (default 8) idle rounds / attempts + N rounds / the transfer line), and cancels
-the unlanded tasks with a single `task_del`. Cost: worst case ≤ 2N + 12 for N
-files (every poll round used); typical ≈ N + 30 (packages land within the idle
-window); the per-file
-predecessor cost 20–31 per file (260 calls for a 22-file package on 2026-09-20).
+the unlanded tasks with a single `task_del`. Cost for N files: worst case = 2N + attempts + 4 (= 2N + 12 at the default
+8 attempts: scope check + snapshot + N submissions + at most attempts + N poll
+rounds + 2 cancel calls); typical ≈ N + 30 when the package lands within the
+idle window. The per-file predecessor cost 20–31 per file (260 calls for a
+22-file package on 2026-09-20).
 Measured live 2026-09-21 on the real drive: a 168-file package cost 197 calls
 (120 landed, 48 timed out and were cancelled), no guard events. Very large
 packages are still bounded by the wrap-up reserve, not cheap: budget ≈ N + 30
