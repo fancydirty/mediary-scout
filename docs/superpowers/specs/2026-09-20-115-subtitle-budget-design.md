@@ -1,7 +1,7 @@
 # 115 字幕包一步吃光 API 预算 — 修复设计
 
 日期：2026-09-20
-状态：设计已定，待实施（本 session 自主拍板；用户可在 PR 里否决任一决策）
+状态：已实施（PR #261，2026-09-21）。本文是实施前的设计记录；实施中经审阅追加的四处决定见 §9
 分支：`fix/115-subtitle-budget`（从 `origin/main` c49300c 开）
 关联：待办①（记忆 `backlog-2026-09-20-subtitle-budget-and-brands`），事故 run `d98dc4ca-a4ad-483d-bece-4cfd99bc792a`（欺诈游戏 / LIAR GAME 2026，anime，115 盘 `cs_103164004`）
 
@@ -147,3 +147,11 @@ orchestrator 能力门控（`typeof executor.transferSubtitleUrl === "function"`
 - StorageV2 接口只留批量：单文件留在模拟器上当测试注入点。
 - 熔断策略下沉到 adapter：谁知道一次失败的成本，谁决定何时止损。
 - 轮询深 1：基于本次取证，若 115 将来把 http 文件套包装目录，后果是字幕软失败（视频不受影响），可接受。
+
+## 9. 实施中追加的决定（审阅抓出，与 §4 有出入处以本节为准）
+
+1. **预检替代「轮询止于转存线」的饥饿场景**：§4.2 第 5 条的轮询止损单独看正确，但与「提交被保留额截停」组合时会让已提交文件一轮都轮不到（callsSpent 恰好停在转存线）。改为在任何 API 调用之前预检 `needed = 2 + N + subtitleMaterializeAttempts ≤ transferCallBudget − callsSpent`，装不下则整包零调用拒绝（`SUBTITLE_BUDGET_INSUFFICIENT`）；轮询止损保留为纯兜底，且到线即停不多睡一轮。
+2. **`transfer()` 首行先查转存线**（`Pan115ApiGuard.assertTransferBudget`），被拒的视频转存不再白花写域校验与 before 快照；转存线钳在 `[0, hard]`（reserve ≥ hard 时无转存额度；hard=0 时转存与列目录同样被拒）。
+3. **适配器批量路径**：executor 返回的 attempts 数量必须与输入文件数一致（`REAL_STORAGE_SUBTITLE_BATCH_ARITY`，契约违反保持抛出）；批量层面的普通抛错（写域违规、快照列目录失败）映射为全文件 `failed`，与逐文件回退路径的软失败形状对称。
+4. **品牌鉴权错误永不软化**：`Pan115AuthError` / `GuangYaAuthError` 等（共享谓词 `isBrandStorageAuthError`，从 worker.ts 抽出）在执行器的提交/轮询/取消三个 catch 与适配器的两个 catch 里一律 rethrow——凭证死了不是落盘失败。
+
