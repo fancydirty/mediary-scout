@@ -44,6 +44,26 @@ const DEFAULT_PAN115_RISK_PATTERNS = [
 
 type Pan115Operation = keyof Pan115StorageApi;
 
+/** Operations that INGEST new content into the drive (a share receive / an
+ *  offline task). These are the calls a transfer reserve refuses first — see
+ *  Pan115ApiGuardOptions.transferReserveCalls. Everything else (listing, moving,
+ *  deleting, renaming, folder creation, offline-task cleanup) is what a run needs
+ *  to WRAP UP, and keeps running to the hard limit. */
+const PAN115_TRANSFER_OPERATIONS: ReadonlySet<Pan115Operation> = new Set<Pan115Operation>([
+  "receiveShare",
+  "addOfflineTask",
+]);
+
+/** Calls held back from transfers so the wrap-up (inspectStaging + moveToSeason /
+ *  flattenMovie + discardStaging) always fits: default hard 300 → transfers stop
+ *  at 260 while listing/moving/deleting run to 300. Sits ABOVE the agent's soft
+ *  nudge (240 = 300 − BUDGET_SOFT_HEADROOM) so the agent is warned first and keeps
+ *  ~20 calls of its own discretion before the mechanical stop. One wrap-up pass on
+ *  a 3-pack staging costs ~15–20 calls (2026-09-20 LIAR GAME run d98dc4ca: a
+ *  22-file subtitle package spent 260 calls in ONE step, the wrap-up then hit the
+ *  hard limit and 15 episodes stayed in staging); 40 fits one pass and a half. */
+export const PAN115_TRANSFER_RESERVE_CALLS = 40;
+
 export interface Pan115Item {
   id?: string | number;
   fid?: string | number;
@@ -163,6 +183,12 @@ export interface Pan115ApiGuardEvent {
 export interface Pan115ApiGuardOptions {
   minDelayMs?: number;
   maxCallsPerOperation?: number;
+  /** Calls held back from TRANSFER-class operations (receiveShare / addOfflineTask):
+   *  they are refused once callCount reaches maxCallsPerOperation − this value,
+   *  while every other operation keeps running to the hard limit — so a run that
+   *  spent its budget on transfers can still move landed files into their season
+   *  and discard staging. Default 0 = no tiering (a plain hard cap). */
+  transferReserveCalls?: number;
   maxListItemsPerResponse?: number;
   riskMessagePatterns?: RegExp[];
   now?: () => number;
@@ -180,6 +206,7 @@ export class Pan115RiskControlError extends Error {
 export class Pan115ApiGuard {
   private readonly minDelayMs: number;
   private readonly maxCallsPerOperation: number;
+  private readonly transferReserveCalls: number;
   private readonly maxListItemsPerResponse: number;
   private readonly riskMessagePatterns: RegExp[];
   private readonly now: () => number;
@@ -192,6 +219,7 @@ export class Pan115ApiGuard {
   constructor(options: Pan115ApiGuardOptions = {}) {
     this.minDelayMs = options.minDelayMs ?? 0;
     this.maxCallsPerOperation = options.maxCallsPerOperation ?? 80;
+    this.transferReserveCalls = Math.max(0, options.transferReserveCalls ?? 0);
     // Matches the client's paginated stitch cap (DEFAULT_MAX_LIST_TOTAL=1000): the
     // client refuses dirs bigger than that, so a result above it is a real anomaly.
     this.maxListItemsPerResponse = options.maxListItemsPerResponse ?? 1000;
@@ -212,6 +240,13 @@ export class Pan115ApiGuard {
    *  actually-configured limit instead of hardcoding a number. */
   callBudget(): number {
     return this.maxCallsPerOperation;
+  }
+
+  /** The TRANSFER call budget: receiveShare / addOfflineTask are refused once
+   *  callCount reaches this (hard limit minus the wrap-up reserve, never below 1).
+   *  Equals callBudget() when no reserve is configured. */
+  transferCallBudget(): number {
+    return Math.max(1, this.maxCallsPerOperation - this.transferReserveCalls);
   }
 
   async run<T>(operation: Pan115Operation, call: () => Promise<T>): Promise<T> {
@@ -265,11 +300,24 @@ export class Pan115ApiGuard {
   }
 
   private assertBudget(operation: Pan115Operation): void {
-    if (this.callCount < this.maxCallsPerOperation) {
+    const limit = PAN115_TRANSFER_OPERATIONS.has(operation)
+      ? this.transferCallBudget()
+      : this.maxCallsPerOperation;
+    if (this.callCount < limit) {
       return;
     }
-    const message = `PAN115_RATE_LIMIT: API call budget exhausted before ${operation}; ` +
-      `maxCallsPerOperation=${this.maxCallsPerOperation}`;
+    // A transfer refused inside the reserve zone gets a message that says what the
+    // remaining calls are FOR — the agent reads it as tool output and must switch to
+    // wrapping up, not retry. Neither refusal is counted nor opens the circuit.
+    const remaining = Math.max(0, this.maxCallsPerOperation - this.callCount);
+    const message =
+      limit < this.maxCallsPerOperation
+        ? `PAN115_RATE_LIMIT: transfer budget exhausted before ${operation}; ` +
+          `${this.callCount} of maxCallsPerOperation=${this.maxCallsPerOperation} calls spent, ` +
+          `transfers stop at ${limit} and the remaining ${remaining} calls are reserved for wrap-up ` +
+          `(moveToSeason / flattenMovie / discardStaging / finish) — do not transfer again, wrap up now`
+        : `PAN115_RATE_LIMIT: API call budget exhausted before ${operation}; ` +
+          `maxCallsPerOperation=${this.maxCallsPerOperation}`;
     this.onEvent({
       kind: "budget_exhausted",
       operation,
@@ -382,6 +430,13 @@ export class Storage115Executor implements StorageExecutor {
    *  threshold from this so the two stay consistent when the limit is overridden. */
   apiCallBudget(): number {
     return this.apiGuard.callBudget();
+  }
+
+  /** The TRANSFER call budget (hard limit minus the wrap-up reserve): where
+   *  receiveShare / addOfflineTask start being refused. Also the executor's own
+   *  stop line for subtitle landing polls — polling must never eat the reserve. */
+  apiTransferCallBudget(): number {
+    return this.apiGuard.transferCallBudget();
   }
 
   async createDirectory(input: { name: string; parentId: string }): Promise<string> {
@@ -1097,6 +1152,9 @@ export function createProtectedStorage115Executor(
       // discardStaging cleanup still fits before the hard stop. Override-safe: the
       // soft threshold is derived from this value, never hardcoded.
       maxCallsPerOperation: positiveIntFromEnv(env["MEDIA_TRACK_115_MAX_API_CALLS"]) ?? 300,
+      // Wrap-up reserve: transfers stop at maxCallsPerOperation − 40 (default 260),
+      // listing/moving/deleting continue to the hard limit. See PAN115_TRANSFER_RESERVE_CALLS.
+      transferReserveCalls: PAN115_TRANSFER_RESERVE_CALLS,
       maxListItemsPerResponse: 1000,
       ...options.apiGuardOptions,
     };

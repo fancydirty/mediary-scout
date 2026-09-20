@@ -1,6 +1,7 @@
 import {
   createProtectedStorage115Executor,
   Storage115Executor,
+  PAN115_TRANSFER_RESERVE_CALLS,
   type Pan115ApiGuard,
   type Pan115ApiGuardOptions,
 } from "./storage-115-executor.js";
@@ -77,6 +78,8 @@ export function createBootstrapPan115CookieStorageExecutor(options: {
       // HARD limit (default 300, env-overridable) — kept in sync with
       // createProtectedStorage115Executor; the agent's SOFT warning is derived from it.
       maxCallsPerOperation: Number.isFinite(maxCalls) && maxCalls > 0 ? maxCalls : 300,
+      // Same wrap-up reserve as createProtectedStorage115Executor (kept in sync).
+      transferReserveCalls: PAN115_TRANSFER_RESERVE_CALLS,
       maxListItemsPerResponse: 1_000,
     },
   });

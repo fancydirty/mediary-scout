@@ -5,6 +5,7 @@ import {
   infoHashFromMagnet,
   Pan115ApiGuard,
   Pan115RiskControlError,
+  PAN115_TRANSFER_RESERVE_CALLS,
   Storage115Executor,
   type Pan115ActionResult,
   type Pan115DirectoryInfo,
@@ -1027,6 +1028,48 @@ describe("Storage115Executor", () => {
     );
     await expect(executor.listVideoFiles("big")).rejects.toThrow("circuit breaker open");
     expect(api.listCalls).toEqual(["big"]);
+  });
+});
+
+describe("115 factories wire the transfer reserve (收尾永远有额度)", () => {
+  it("createProtectedStorage115Executor: transfers stop at hard − PAN115_TRANSFER_RESERVE_CALLS, listings continue", async () => {
+    const api = new FakePan115Api({
+      directories: { season_1: [] },
+      directoryInfo: { season_1: seasonPathInfo("test_root", "season_1") },
+    });
+    const executor = createProtectedStorage115Executor({
+      api,
+      env: {
+        MEDIA_TRACK_115_TEST_ROOT_CID: "test_root",
+        MEDIA_TRACK_115_MAX_API_CALLS: "44", // transfer cutoff = 44 − 40 = 4
+        MEDIA_TRACK_115_MIN_DELAY_MS: "1",
+      },
+    });
+    expect(executor.apiCallBudget()).toBe(44);
+    expect(executor.apiTransferCallBudget()).toBe(4);
+    for (let i = 0; i < 4; i += 1) {
+      await executor.listVideoFiles("season_1");
+    }
+    // transfer(): write-scope check (getDirectoryInfo) + before listing are allowed
+    // past the cutoff; the receiveShare itself is refused — nothing is received.
+    await expect(
+      executor.transfer({
+        workflowRunId: "run_1",
+        directoryId: "season_1",
+        candidate: candidateFixture({
+          type: "115",
+          providerPayload: { url: "https://115.com/s/abc123?password=pw", rawType: "115" },
+        }),
+      }),
+    ).rejects.toThrow(/transfer budget exhausted before receiveShare/);
+    expect(api.receivedShares).toHaveLength(0);
+    await executor.listVideoFiles("season_1"); // still allowed (wrap-up class)
+  });
+
+  it("createBootstrapPan115CookieStorageExecutor carries the same reserve (kept in sync)", () => {
+    const executor = createBootstrapPan115CookieStorageExecutor({ cookie: "UID=1_abc" });
+    expect(executor.apiCallBudget()).toBe(300);
+    expect(executor.apiTransferCallBudget()).toBe(300 - PAN115_TRANSFER_RESERVE_CALLS);
   });
 });
 
