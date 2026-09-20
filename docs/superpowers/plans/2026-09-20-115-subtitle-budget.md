@@ -435,7 +435,7 @@ describe("Storage115Executor.transferSubtitleUrls (整包一次:1 校验 + 1 快
 
   it("polls the staging dir at depth 1 — subdirectories (video packs) are never listed", async () => {
     const api = new FakePan115Api({
-      directories: { stage: [{ cid: "pack_1", n: "Q-Show-2026", pid: "stage" }], pack_1: [] },
+      directories: { stage: [{ isDirectory: true, cid: "pack_1", n: "Q-Show-2026" }], pack_1: [] },
     });
     api.addOfflineTask = async () => ({ ok: true, message: "accepted" });
     const executor = new Storage115Executor({ api, subtitleMaterializeAttempts: 2, subtitleMaterializePollMs: 1, sleep: async () => {} });
