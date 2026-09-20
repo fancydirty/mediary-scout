@@ -50,7 +50,8 @@ export const BUDGET_REMINDER =
   "② 对确实落盘的 markObtained、把已转存好的归位(TV/动漫用 moveToSeason 入季;电影用 flattenMovie 收进影片目录);" +
   "③ 打扫战场:TV/动漫用 discardStaging 清空 staging;电影已落影片目录、flattenMovie 已就地清理,不要再 discardStaging;④ finish。" +
   "这次没来得及拿的集不要紧——只要没被 markObtained,下次每日巡检会自动补齐。" +
-  "请立刻稳妥收尾:调用一旦到硬上限会被强制中断,别把预算耗在还没收尾上。";
+  "请立刻稳妥收尾:调用一旦到硬上限会被强制中断,别把预算耗在还没收尾上。" +
+  "系统会在硬上限之前的保留额处直接拒绝转存类调用(transferCandidate / transferUntilLanded / transferSubtitle),剩余额度只留给收尾——转存被拒不是让你换一个再试,是必须立刻收尾的信号。";
 
 /** The step-cap reminder as a pure nudge (text or null) — within the last
  *  `within` steps before the cap. Composable with other nudges in prepareStep. */
