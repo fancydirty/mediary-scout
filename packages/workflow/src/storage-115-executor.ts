@@ -161,8 +161,10 @@ export interface Storage115ExecutorOptions {
    *  polls, so the effective wait ≈ (attempts - 1) × pollMs plus listTree time
    *  (defaults 8 & 6000ms → ~42s of sleeps). It is the batch's IDLE patience:
    *  polling stops after this many consecutive rounds that land nothing, and the
-   *  whole package costs 1 + attempts + N poll listings at worst (N = files),
-   *  not that per file. */
+   *  poll loop is capped at attempts + N rounds for the WHOLE package (N = files),
+   *  not per file. Total 115 calls for a package ≤ 2N + attempts + 4 (scope check
+   *  1 + before-snapshot 1 + N submissions + at most attempts + N poll listings +
+   *  cancel 2) — see transferSubtitleUrls. */
   subtitleMaterializeAttempts?: number;
   subtitleMaterializePollMs?: number;
   /** Injectable sleep (tests pass a fast/no-op). */
