@@ -5,7 +5,7 @@ import { parseQuarkShareUrl } from "../quark-storage-executor.js";
 import { parseTianyiShareUrl } from "../tianyi-storage-executor.js";
 import type { CandidateRegistry } from "./candidate-registry.js";
 import { deadLinkKey, deadLinkReason, UNRESOLVED_MAGNET_DEAD_LINK_TTL_MS, type DeadLinkStore } from "./dead-links.js";
-import type { SimTreeFile, StorageV2, TransferAttemptResult } from "./storage-115-simulator.js";
+import type { SimTreeFile, StorageV2, SubtitleLandingResult, TransferAttemptResult } from "./storage-115-simulator.js";
 
 /**
  * Phase 6 — the real 115 executor as a StorageV2. It maps the V2 sandbox's tool
@@ -16,6 +16,14 @@ import type { SimTreeFile, StorageV2, TransferAttemptResult } from "./storage-11
 const VIDEO_EXTENSIONS = /\.(mkv|mp4|avi|ts|m2ts|mov|flv|wmv)$/i;
 const SUBTITLE_EXTENSIONS = /\.(srt|ass|ssa|sub|idx|vtt|sup|smi)$/i;
 const PAN115_SHARE_URL = /^https?:\/\/(115\.com|115cdn\.com|anxia\.com)\/s\//i;
+
+/** Consecutive per-file landing failures after which the rest of a package is
+ *  skipped on the per-file fallback path. Each failed landing costs real drive
+ *  API calls (offline task + materialization polls + cleanup) and a dead assrt
+ *  package fails file after file the same way; a success resets the counter so
+ *  mixed flakiness still lands. A brand with a batch method owns this policy
+ *  itself (115 stops SUBMITTING after 3 rejections and polls once per round). */
+const MAX_CONSECUTIVE_SUBTITLE_FAILURES = 3;
 
 export interface RealStorageV2Options {
   executor: StorageExecutor;
@@ -157,6 +165,80 @@ export class RealStorageV2 implements StorageV2 {
       materializedFileIds: attempt.materializedFileIds,
       ...(attempt.providerMessage ? { providerMessage: attempt.providerMessage } : {}),
     };
+  }
+
+  /** Whole-package subtitle landing. Batch-capable executor (115) → one call;
+   *  otherwise (光鸭) loop the per-file method under the consecutive-failure
+   *  abort. Either way the attempts stay OUT of attempts(): their synthetic
+   *  `subtitle:<filename>` candidateIds belong to no snapshot, and persisting them
+   *  would abort the run's snapshot save after the video already landed. */
+  async transferSubtitleUrls(input: {
+    files: Array<{ url: string; filename: string }>;
+    intoDirectoryId: string;
+  }): Promise<SubtitleLandingResult[]> {
+    const toResult = (filename: string, attempt: TransferAttempt): SubtitleLandingResult => ({
+      filename,
+      status: attempt.status === "succeeded" ? "succeeded" : "failed",
+      materializedFileIds: attempt.materializedFileIds,
+      ...(attempt.providerMessage ? { providerMessage: attempt.providerMessage } : {}),
+    });
+    if (this.executor.transferSubtitleUrls) {
+      const attempts = await this.executor.transferSubtitleUrls({
+        files: input.files,
+        directoryId: input.intoDirectoryId,
+        workflowRunId: this.workflowRunId,
+      });
+      return input.files.map((file, index) => toResult(file.filename, attempts[index]!));
+    }
+    if (!this.executor.transferSubtitleUrl) {
+      throw new Error("REAL_STORAGE_NO_SUBTITLE_SUPPORT: this storage brand has no transferSubtitleUrl");
+    }
+    const results: SubtitleLandingResult[] = [];
+    let consecutiveFailures = 0;
+    let lastError: string | undefined;
+    let abortMessage: string | null = null;
+    for (let i = 0; i < input.files.length; i += 1) {
+      const file = input.files[i]!;
+      if (abortMessage !== null) {
+        results.push({ filename: file.filename, status: "failed", materializedFileIds: [], providerMessage: abortMessage });
+        continue;
+      }
+      let result: SubtitleLandingResult;
+      try {
+        result = toResult(
+          file.filename,
+          await this.executor.transferSubtitleUrl({
+            url: file.url,
+            filename: file.filename,
+            directoryId: input.intoDirectoryId,
+            workflowRunId: this.workflowRunId,
+          }),
+        );
+      } catch (error) {
+        result = {
+          filename: file.filename,
+          status: "failed",
+          materializedFileIds: [],
+          providerMessage: error instanceof Error ? error.message : String(error),
+        };
+      }
+      results.push(result);
+      if (result.status === "succeeded") {
+        consecutiveFailures = 0;
+        continue;
+      }
+      consecutiveFailures += 1;
+      if (result.providerMessage) {
+        lastError = result.providerMessage;
+      }
+      if (consecutiveFailures >= MAX_CONSECUTIVE_SUBTITLE_FAILURES) {
+        const remaining = input.files.length - i - 1;
+        abortMessage =
+          `已连续 ${MAX_CONSECUTIVE_SUBTITLE_FAILURES} 个字幕文件落盘失败,提前中止(剩余 ${remaining} 个未尝试)。` +
+          `字幕是软目标——不要重试,带着已落的继续,或直接只交付视频。${lastError ? ` 最后错误: ${lastError}` : ""}`;
+      }
+    }
+    return results;
   }
 
   async listTree(input: { directoryId: string }): Promise<SimTreeFile[]> {

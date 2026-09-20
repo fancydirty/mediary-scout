@@ -37,6 +37,11 @@ export interface TransferAttemptResult {
   noTargetChange?: true;
 }
 
+/** One file's outcome inside a subtitle package landing (StorageV2.transferSubtitleUrls). */
+export interface SubtitleLandingResult extends TransferAttemptResult {
+  filename: string;
+}
+
 /** What a candidate transfer would land — files keyed by their path relative to
  *  the staging dir (paths with "/" model the pack's own wrapper directory). */
 export interface PackSpec {
@@ -91,6 +96,16 @@ export interface StorageV2 {
     filename: string;
     intoDirectoryId: string;
   }): Promise<TransferAttemptResult>;
+  /** Subtitle direct-link landing for a WHOLE package: each file's url and the
+   *  bare filename it should land under. One result per input file, in input
+   *  order. Batch is the production path — a per-file loop pays the landing poll
+   *  once per file (the 2026-09-20 LIAR GAME run spent 260 of its 300 115 calls
+   *  on one 22-file package); a batch polls the directory once per round for all
+   *  of them. No workflowRunId here: run identity is the ADAPTER's business. */
+  transferSubtitleUrls(input: {
+    files: Array<{ url: string; filename: string }>;
+    intoDirectoryId: string;
+  }): Promise<SubtitleLandingResult[]>;
 }
 
 export class Storage115Simulator implements StorageV2 {
@@ -187,6 +202,9 @@ export class Storage115Simulator implements StorageV2 {
     return { status: "succeeded", materializedFileIds };
   }
 
+  /** Single-file landing — the per-file SEAM (kept public so tests can seed staging
+   *  and script individual outcomes by overriding it); transferSubtitleUrls below
+   *  dispatches through it, so those overrides apply to the batch too. */
   async transferSubtitleUrl(input: {
     url: string;
     filename: string;
@@ -204,6 +222,30 @@ export class Storage115Simulator implements StorageV2 {
       sizeBytes: 1024, // test double; size irrelevant to subtitle logic
     });
     return { status: "succeeded", materializedFileIds: [id] };
+  }
+
+  /** Batch landing — the StorageV2 surface. Cost model: 1 for the package's shared
+   *  overhead (write-scope check + before snapshot on the real 115) + 1 per file —
+   *  the same "one call per file it touches" 口径 as transferCandidate's
+   *  1 + files.length. */
+  async transferSubtitleUrls(input: {
+    files: Array<{ url: string; filename: string }>;
+    intoDirectoryId: string;
+  }): Promise<SubtitleLandingResult[]> {
+    if (!this.dirs.has(input.intoDirectoryId)) {
+      throw new Error(`SIM_DIR_NOT_FOUND: target ${input.intoDirectoryId}`);
+    }
+    this.spendBudget(1);
+    const results: SubtitleLandingResult[] = [];
+    for (const file of input.files) {
+      const result = await this.transferSubtitleUrl({
+        url: file.url,
+        filename: file.filename,
+        intoDirectoryId: input.intoDirectoryId,
+      });
+      results.push({ filename: file.filename, ...result });
+    }
+    return results;
   }
 
   /** Recursive, path-preserving snapshot of everything under a directory. */
