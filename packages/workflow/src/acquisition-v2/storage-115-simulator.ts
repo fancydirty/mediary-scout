@@ -87,21 +87,15 @@ export interface StorageV2 {
   deleteFiles(input: { directoryId: string; fileIds: string[] }): Promise<{ deleted: string[] }>;
   /** Remove a directory and everything nested under it (the flatten peel-off). */
   removeDirectory(input: { directoryId: string }): Promise<{ removed: string[] }>;
-  /** Subtitle direct-link landing (test-double): drops a same-named file into the
-   *  target dir so sandbox/agent-loop tests work without a real 115 round-trip.
-   *  No workflowRunId here: run identity is the ADAPTER's business (RealStorageV2
-   *  scopes attempts to its own run) — callers must not pretend to control it. */
-  transferSubtitleUrl(input: {
-    url: string;
-    filename: string;
-    intoDirectoryId: string;
-  }): Promise<TransferAttemptResult>;
   /** Subtitle direct-link landing for a WHOLE package: each file's url and the
    *  bare filename it should land under. One result per input file, in input
    *  order. Batch is the production path — a per-file loop pays the landing poll
    *  once per file (the 2026-09-20 LIAR GAME run spent 260 of its 300 115 calls
    *  on one 22-file package); a batch polls the directory once per round for all
-   *  of them. No workflowRunId here: run identity is the ADAPTER's business. */
+   *  of them. No workflowRunId here: run identity is the ADAPTER's business
+   *  (RealStorageV2 scopes attempts to its own run) — callers must not pretend to
+   *  control it. This is the ONLY subtitle-landing entry point on the surface: a
+   *  per-file one would invite exactly the loop that burned the budget. */
   transferSubtitleUrls(input: {
     files: Array<{ url: string; filename: string }>;
     intoDirectoryId: string;
@@ -227,7 +221,10 @@ export class Storage115Simulator implements StorageV2 {
   /** Batch landing — the StorageV2 surface. Cost model: 1 for the package's shared
    *  overhead (write-scope check + before snapshot on the real 115) + 1 per file —
    *  the same "one call per file it touches" 口径 as transferCandidate's
-   *  1 + files.length. */
+   *  1 + files.length. Note the sim can THROW mid-package when the budget runs out:
+   *  that is deliberate 逆鳞 fail-loud behavior for tests, NOT what the real 115
+   *  executor does (it degrades to SUBTITLE_NOT_SUBMITTED / no_target_change per
+   *  file and returns) — don't "fix" one to match the other. */
   async transferSubtitleUrls(input: {
     files: Array<{ url: string; filename: string }>;
     intoDirectoryId: string;
@@ -243,7 +240,9 @@ export class Storage115Simulator implements StorageV2 {
         filename: file.filename,
         intoDirectoryId: input.intoDirectoryId,
       });
-      results.push({ filename: file.filename, ...result });
+      // Input filename is authoritative: spread the result FIRST so no future field
+      // on TransferAttemptResult can ever override the name the caller asked for.
+      results.push({ ...result, filename: file.filename });
     }
     return results;
   }

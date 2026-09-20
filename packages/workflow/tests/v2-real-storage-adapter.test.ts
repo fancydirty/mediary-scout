@@ -196,29 +196,6 @@ describe("RealStorageV2 — StorageExecutor → StorageV2 adapter", () => {
     expect(executor.deletes).toEqual([{ directoryId: "season", fileIds: ["f1"] }]);
   });
 
-  it("keeps subtitle transfers OUT of attempts() so they can't fail snapshot persistence validation", async () => {
-    // A subtitle transfer's synthetic `subtitle:<filename>` candidateId belongs to no
-    // resource snapshot; validateWorkflowRunSnapshot rejects any persisted transferAttempt
-    // whose candidateId is not in a snapshot. So subtitle attempts must NOT enter attempts()
-    // (the persisted video-candidate trace) — otherwise a subtitle would abort the whole
-    // run's save after the video already landed.
-    const executor = new RecordingExecutor();
-    const { storage, registry } = adapter(executor);
-    registry.record(candidate("cand"));
-
-    await storage.transferCandidate({ candidateId: "cand", intoDirectoryId: "staging" });
-    await storage.transferSubtitleUrl({
-      url: "http://file0.assrt.net/onthefly/1/Show.S01E01.ass",
-      filename: "Show.S01E01.ass",
-      intoDirectoryId: "staging",
-    });
-
-    const attempts = storage.attempts();
-    expect(attempts).toHaveLength(1); // only the video transfer, not the subtitle
-    expect(attempts[0]!.candidateId).toBe("cand");
-    expect(attempts.some((a) => a.candidateId.startsWith("subtitle:"))).toBe(false);
-  });
-
   it("classifies candidate link kind from the recorded url (fail-loud share brand / magnet / unknown)", async () => {
     const { storage, registry } = adapter(new RecordingExecutor());
     // every 转存分享 brand (fail-loud) → "share"
@@ -311,6 +288,44 @@ describe("RealStorageV2.transferSubtitleUrls — batch-first, per-file fallback 
     expect(results[0]!.materializedFileIds).toEqual(["sub_E0.srt"]);
   });
 
+  it("fails loud when the executor's batch drops a file instead of marking it failed (arity contract)", async () => {
+    class DroppingBatch extends RecordingExecutor {
+      constructor() {
+        super({ subtitleBatch: true });
+        const batch = this.transferSubtitleUrls!;
+        this.transferSubtitleUrls = async (input) => (await batch(input)).slice(0, 1);
+      }
+    }
+    const { storage } = adapter(new DroppingBatch());
+
+    await expect(storage.transferSubtitleUrls({ files: files(3), intoDirectoryId: "staging" })).rejects.toThrow(
+      "REAL_STORAGE_SUBTITLE_BATCH_ARITY",
+    );
+  });
+
+  it("maps a batch-level THROW to every file failing softly (same shape as the per-file fallback's thrown error)", async () => {
+    class ThrowingBatch extends RecordingExecutor {
+      constructor() {
+        super({ subtitleBatch: true });
+        this.transferSubtitleUrls = async () => {
+          throw new Error("WRITE_SCOPE_VIOLATION: nope");
+        };
+      }
+    }
+    const { storage } = adapter(new ThrowingBatch());
+
+    const results = await storage.transferSubtitleUrls({ files: files(3), intoDirectoryId: "staging" });
+
+    expect(results.map((r) => [r.filename, r.status])).toEqual([
+      ["E0.srt", "failed"],
+      ["E1.srt", "failed"],
+      ["E2.srt", "failed"],
+    ]);
+    expect(results.every((r) => r.providerMessage === "WRITE_SCOPE_VIOLATION: nope")).toBe(true);
+    expect(results.every((r) => r.materializedFileIds.length === 0)).toBe(true);
+    expect(storage.attempts()).toEqual([]);
+  });
+
   it("falls back to the per-file method when the executor has no batch (光鸭 today)", async () => {
     const executor = new RecordingExecutor();
     const { storage } = adapter(executor);
@@ -331,6 +346,16 @@ describe("RealStorageV2.transferSubtitleUrls — batch-first, per-file fallback 
     expect(results.slice(0, 3).map((r) => r.providerMessage)).toEqual(["dead link", "dead link", "dead link"]);
     expect(results.slice(3).every((r) => r.status === "failed")).toBe(true);
     expect(results[9]!.providerMessage).toMatch(/已连续 3 个字幕文件落盘失败,提前中止\(剩余 7 个未尝试\).*最后错误: dead link/);
+  });
+
+  it("per-file fallback: when the 3rd consecutive failure IS the last file nothing was skipped — its own message stands", async () => {
+    const executor = new RecordingExecutor({ subtitleFail: () => "dead link" });
+    const { storage } = adapter(executor);
+
+    const results = await storage.transferSubtitleUrls({ files: files(3), intoDirectoryId: "staging" });
+
+    expect(executor.subtitleSingleCalls).toHaveLength(3);
+    expect(results[2]!.providerMessage).toBe("dead link"); // no "剩余 0 个未尝试" lie
   });
 
   it("per-file fallback: a success in between resets the counter (mixed flakiness still lands everything)", async () => {

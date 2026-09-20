@@ -893,8 +893,8 @@ export class TaskSandbox {
   }
 
   /** Land a chosen subtitle package's files into staging via the 115 offline-task
-   *  path (transferSubtitleUrl). Resolves the package's filelist via detail(),
-   *  submits each file's url, returns the filenames that actually landed. The
+   *  path. Resolves the package's filelist via detail(), hands the whole package
+   *  to storage.transferSubtitleUrls, returns the filenames that actually landed. The
    *  agent then renames them (moveToSeason/flattenMovie) to ride beside the video.
    *  Soft-fails: empty filelist → {status:"failed", landedFilenames:[]}. */
   async transferSubtitle(input: {
@@ -935,40 +935,20 @@ export class TaskSandbox {
           "该字幕包没有可直接落盘的字幕文件(整包压缩包 zip/rar 落盘也无法使用)——换一个候选,或放弃字幕(软目标,不阻塞视频)。",
       };
     }
-    const landedFilenames: string[] = [];
-    let lastError: string | undefined;
-    // Budget guard: each failed landing costs real 115 API calls (offline task +
-    // materialization polls + cleanup). A dead assrt package fails file after file
-    // the same way — abort after 3 CONSECUTIVE failures instead of hammering the
-    // whole filelist (a success resets the counter: mixed flakiness still lands).
-    const MAX_CONSECUTIVE_FAILURES = 3;
-    let consecutiveFailures = 0;
-    for (let i = 0; i < subtitleFiles.length; i += 1) {
-      const file = subtitleFiles[i]!;
-      try {
-        const result = await this.storage.transferSubtitleUrl({
-          url: file.url,
-          filename: file.filename,
-          intoDirectoryId: this.stagingDirectoryId,
-        });
-        if (result.status === "succeeded") {
-          landedFilenames.push(file.filename);
-          consecutiveFailures = 0;
-        } else {
-          consecutiveFailures += 1;
-          if (result.providerMessage) {
-            lastError = result.providerMessage;
-          }
-        }
-      } catch (error) {
-        consecutiveFailures += 1;
-        lastError = error instanceof Error ? error.message : String(error);
-      }
-      if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-        lastError = `已连续 ${MAX_CONSECUTIVE_FAILURES} 个字幕文件落盘失败,提前中止(剩余 ${subtitleFiles.length - i - 1} 个未尝试)。字幕是软目标——不要重试,带着已落的继续,或直接只交付视频。${lastError ? ` 最后错误: ${lastError}` : ""}`;
-        break;
-      }
-    }
+    // The WHOLE package goes to storage in one call: the storage layer knows what a
+    // landing costs on its brand (115 submits everything then polls the dir once per
+    // round; a per-file brand loops under its own consecutive-failure abort), the
+    // sandbox only reads back per-file outcomes. The 2026-09-20 LIAR GAME run spent
+    // 260 of its 300 115 calls looping this per file — the wrap-up then hit the hard
+    // limit with 15 episodes still in staging.
+    const results = await this.storage.transferSubtitleUrls({
+      files: subtitleFiles.map((file) => ({ url: file.url, filename: file.filename })),
+      intoDirectoryId: this.stagingDirectoryId,
+    });
+    const landedFilenames = results.filter((result) => result.status === "succeeded").map((result) => result.filename);
+    // Surface WHY (the last failure's message — for a per-file abort that is the
+    // "已连续 N 个失败,提前中止" notice) so the agent can decide, never retry blindly.
+    let lastError = [...results].reverse().find((result) => result.status !== "succeeded" && result.providerMessage)?.providerMessage;
     if (landedFilenames.length === 0 && lastError === undefined) {
       lastError = "subtitle transfer failed (no files landed, no provider message)";
     }
