@@ -71,8 +71,13 @@ describe("Pan115ApiGuard transfer reserve (预算分层:转存类在硬上限之
     );
   });
 
-  it("transferCallBudget never drops below 1 for a tiny hard limit", () => {
-    expect(new Pan115ApiGuard({ maxCallsPerOperation: 2, transferReserveCalls: 40 }).transferCallBudget()).toBe(1);
+  it("transferCallBudget is clamped into [0, hard]: a reserve larger than the hard limit means no transfers at all, and a zero hard limit refuses transfers exactly like listings", async () => {
+    expect(new Pan115ApiGuard({ maxCallsPerOperation: 2, transferReserveCalls: 40 }).transferCallBudget()).toBe(0);
+    const zero = new Pan115ApiGuard({ maxCallsPerOperation: 0 });
+    expect(zero.transferCallBudget()).toBe(0);
+    await expect(zero.run("listItems", async () => [])).rejects.toThrow("maxCallsPerOperation=0");
+    await expect(zero.run("receiveShare", async () => ({ ok: true, message: "" }))).rejects.toThrow("maxCallsPerOperation=0");
+    expect(zero.callsSpent()).toBe(0);
   });
 
   it("a negative reserve clamps to 0 — it can never WIDEN the transfer budget past the hard limit", () => {

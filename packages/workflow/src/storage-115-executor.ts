@@ -260,10 +260,13 @@ export class Pan115ApiGuard {
   }
 
   /** The TRANSFER call budget: receiveShare / addOfflineTask are refused once
-   *  callCount reaches this (hard limit minus the wrap-up reserve, never below 1).
-   *  Equals callBudget() when no reserve is configured. */
+   *  callCount reaches this (hard limit minus the wrap-up reserve, clamped into
+   *  [0, hard]). Equals callBudget() when no reserve is configured. */
   transferCallBudget(): number {
-    return Math.max(1, this.maxCallsPerOperation - this.transferReserveCalls);
+    // Clamped into [0, hard]: a reserve at or above the hard limit leaves no room
+    // for transfers (every call is wrap-up), and the line never exceeds the hard
+    // limit itself — a transfer must never be allowed where the hard cap would refuse it.
+    return Math.min(this.maxCallsPerOperation, Math.max(0, this.maxCallsPerOperation - this.transferReserveCalls));
   }
 
   /** Fail fast on the transfer line BEFORE a caller spends preparatory calls
