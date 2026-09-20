@@ -154,6 +154,11 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
   // Soft-fail: a flaky assrt / empty search sets an empty snapshot, never
   // blocks the video task. When the gates don't pass, the subtitle tools are
   // simply not registered (the agent never knows subtitles were an option).
+  // The probe deliberately targets the SINGLE-FILE method even though
+  // RealStorageV2 prefers a brand's batch transferSubtitleUrls: every brand
+  // that lands subtitles implements the single one (115's is a thin delegate
+  // to its batch), so a brand adding only the batch must add the delegate
+  // too — see the 加品牌 touch-point list.
   const origins = request.originCountries ?? [];
   const subtitleActive =
     request.assrtToken !== undefined &&

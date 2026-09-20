@@ -940,7 +940,10 @@ export class TaskSandbox {
     // round; a per-file brand loops under its own consecutive-failure abort), the
     // sandbox only reads back per-file outcomes. The 2026-09-20 LIAR GAME run spent
     // 260 of its 300 115 calls looping this per file — the wrap-up then hit the hard
-    // limit with 15 episodes still in staging.
+    // limit with 15 episodes still in staging. Storage OWNS soft-failing (a landing
+    // problem comes back as status "failed" per file); a throw out of
+    // transferSubtitleUrls is a contract violation (batch arity / no subtitle
+    // support), not a landing failure, and is deliberately left to surface.
     const results = await this.storage.transferSubtitleUrls({
       files: subtitleFiles.map((file) => ({ url: file.url, filename: file.filename })),
       intoDirectoryId: this.stagingDirectoryId,

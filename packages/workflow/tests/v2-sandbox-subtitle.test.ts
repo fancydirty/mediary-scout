@@ -184,6 +184,24 @@ describe("transferSubtitle", () => {
     expect(result.landedFilenames).toEqual(["E1.ass"]);
     expect(result.error).toMatch(/连续/);
   });
+
+  it("a landing problem never surfaces as a throw: storage reports per-file failures and the tool returns status failed", async () => {
+    const provider = new FakeResourceProviderV2({ results: { title: [] } });
+    class AllFailing extends Storage115Simulator {
+      override async transferSubtitleUrl(): Promise<TransferAttemptResult> {
+        return { status: "failed", materializedFileIds: [], providerMessage: "WRITE_SCOPE_VIOLATION: refusing to transfer subtitle outside configured write scope" };
+      }
+    }
+    const storage = new AllFailing({ packs: {} });
+    const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
+    const sandbox = new TaskSandbox({ provider, storage, stagingDirectoryId, targetSeasonDirectoryIds: {}, need: [] });
+    const files = [{ filename: "E1.ass", url: "http://x/1.ass" }, { filename: "E2.ass", url: "http://x/2.ass" }];
+    await sandbox.primeSubtitleSnapshot("t", makeAssrtProvider([{ id: 11, title: "t", lang: "" }], { 11: files }));
+
+    const result = await sandbox.transferSubtitle({ candidateId: 11 });
+
+    expect(result).toEqual({ status: "failed", landedFilenames: [], error: "WRITE_SCOPE_VIOLATION: refusing to transfer subtitle outside configured write scope" });
+  });
 });
 
 describe("renameSubtitle (batch, per-item guards)", () => {
