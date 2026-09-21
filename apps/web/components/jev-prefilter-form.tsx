@@ -1,15 +1,17 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Check, ExternalLink, LoaderCircle, Trash2 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Check, LoaderCircle, Trash2 } from "lucide-react";
 import { saveJevConfigAction, clearJevConfigAction, setJevPrefilterEnabledAction } from "../app/actions";
 import { runAction } from "../lib/run-action";
 
 /**
- * Settings → 资源提供商 的 Jev 候选预筛表单。保存即探活(见 lib/jev-probe):
- * 打不通的 key 不会被存下来,所以界面上的「已启用」永远等于「至少连通过一次」。
- * `active` 与服务端 isJevPrefilterActive 同一条规则(key + 启用 + 探活通过);
- * 本地改动后就地重算,避免点一下要等整页刷新才看到状态。
+ * Settings → AI 模型 的 Jev 候选预筛表单（字段 + 动作行；块头的状态胶囊由
+ * 服务端 ServiceBlock 渲染,保存/清除/开关成功后 router.refresh() 让它跟上）。
+ * 保存即探活(见 lib/jev-probe):打不通的 key 不会被存下来,所以「已启用」永远
+ * 等于「至少连通过一次」。本地的 hasKey/isHealthy 只用来决定「清除」和「启用」
+ * 勾选是否出现,不再自己算「生效中」—— 那是胶囊的事(单一事实源 isJevPrefilterActive)。
  */
 export function JevPrefilterForm({
   baseUrl: initialBaseUrl,
@@ -17,7 +19,6 @@ export function JevPrefilterForm({
   apiKeySet,
   enabled: initialEnabled,
   healthy,
-  active: initialActive,
 }: {
   baseUrl: string;
   /** Where a blank field resolves (instance → env → OpenRouter); shown as the placeholder. */
@@ -25,15 +26,14 @@ export function JevPrefilterForm({
   apiKeySet: boolean;
   enabled: boolean;
   healthy: boolean;
-  active: boolean;
 }) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [baseUrl, setBaseUrl] = useState(initialBaseUrl);
   const [apiKey, setApiKey] = useState("");
   const [hasKey, setHasKey] = useState(apiKeySet);
   const [isHealthy, setIsHealthy] = useState(healthy);
   const [enabled, setEnabled] = useState(initialEnabled);
-  const [active, setActive] = useState(initialActive);
   const [result, setResult] = useState<string | null>(null);
   const flash = (msg: string) => {
     setResult(msg);
@@ -56,7 +56,7 @@ export function JevPrefilterForm({
         setHasKey(true);
         setIsHealthy(true);
         setEnabled(true);
-        setActive(true);
+        router.refresh();
       } else {
         flash(`❌ ${r.value.message ?? "保存失败"}`);
       }
@@ -74,8 +74,8 @@ export function JevPrefilterForm({
         setHasKey(false);
         setIsHealthy(false);
         setEnabled(false);
-        setActive(false);
         setBaseUrl("");
+        router.refresh();
       } else {
         flash(`❌ ${r.value.message ?? "清除失败"}`);
       }
@@ -88,8 +88,8 @@ export function JevPrefilterForm({
       if (!r.ok) return;
       if (r.value.success) {
         setEnabled(next);
-        setActive(next && hasKey && isHealthy);
         flash(next ? "✅ 预筛已启用" : "✅ 预筛已关闭");
+        router.refresh();
       } else {
         flash(`❌ ${r.value.message ?? "保存失败"}`);
       }
@@ -98,22 +98,8 @@ export function JevPrefilterForm({
 
   return (
     <div className="push-form">
-      <p className="panel-note" style={{ marginBottom: 6 }}>
-        Jev 候选预筛：搜索结果进入 agent 之前，先由 Jev（TypeSafe 决策模型）判断每条候选是否指向目标作品——确定无关的直接剔除，拿不准的标记「相关度存疑」交给 agent。每次搜索约 1 秒、几乎零成本。未配置时不产生任何调用。
-      </p>
-      <p className="push-help" style={{ marginBottom: 12 }}>
-        Jev API Key 两种来源都可以（模型 jev-latest）：{" "}
-        <a href="https://openrouter.ai/typesafe/jev-latest" target="_blank" rel="noopener noreferrer">
-          OpenRouter <ExternalLink size={12} style={{ verticalAlign: "-1px" }} />
-        </a>{" "}
-        或{" "}
-        <a href="https://console.typesafe.ai/keys" target="_blank" rel="noopener noreferrer">
-          TypeSafe 官方 <ExternalLink size={12} style={{ verticalAlign: "-1px" }} />
-        </a>
-        （官方 Key 需把 Base URL 填为 https://api.typesafe.ai/v1/systemone）
-      </p>
       <div className="push-field">
-        <label className="push-label">Base URL（留空 = 沿用实例配置的地址，即框内灰字；官方 Key 填 TypeSafe 的 /v1/systemone）</label>
+        <label className="push-label">Base URL（留空 = 沿用实例配置，即框内灰字）</label>
         <input
           type="text"
           className="setting-control"
@@ -124,32 +110,30 @@ export function JevPrefilterForm({
         />
       </div>
       <div className="push-field">
-        <label className="push-label">API Key</label>
-        <div className="setting-row">
-          <input
-            type="password"
-            className="setting-control"
-            value={apiKey}
-            onChange={(event) => setApiKey(event.target.value)}
-            placeholder={hasKey ? "已设置(留空不改)" : "粘贴 Jev API Key"}
-            aria-label="Jev API Key"
-            autoComplete="off"
-          />
-          <button type="button" className="primary-button" onClick={handleSave} disabled={isPending}>
-            {isPending ? <LoaderCircle size={14} className="spin" aria-hidden /> : <Check size={14} aria-hidden />}
-            保存并测试
-          </button>
-          {hasKey ? (
-            <button type="button" className="secondary-button" onClick={handleClear} disabled={isPending}>
-              <Trash2 size={14} aria-hidden />
-              清除
-            </button>
-          ) : null}
-        </div>
+        <label className="push-label">Jev API Key</label>
+        <input
+          type="password"
+          className="setting-control"
+          value={apiKey}
+          onChange={(event) => setApiKey(event.target.value)}
+          placeholder={hasKey ? "已设置(留空不改)" : "粘贴 Jev API Key"}
+          aria-label="Jev API Key"
+          autoComplete="off"
+        />
       </div>
-      {hasKey && isHealthy ? (
-        <div className="push-field">
-          <label className="push-label" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div className="service-actions">
+        <button type="button" className="primary-button" onClick={handleSave} disabled={isPending}>
+          {isPending ? <LoaderCircle size={14} className="spin" aria-hidden /> : <Check size={14} aria-hidden />}
+          保存并测试
+        </button>
+        {hasKey ? (
+          <button type="button" className="secondary-button" onClick={handleClear} disabled={isPending}>
+            <Trash2 size={14} aria-hidden />
+            清除
+          </button>
+        ) : null}
+        {hasKey && isHealthy ? (
+          <label className="service-toggle">
             <input
               type="checkbox"
               checked={enabled}
@@ -159,16 +143,9 @@ export function JevPrefilterForm({
             />
             启用候选预筛
           </label>
-          <p className="push-help" style={{ margin: "6px 0 0" }}>
-            {active ? "当前生效：搜索结果会先过一遍 Jev。" : "当前不生效：agent 拿到的是未经预筛的全部候选。"}
-          </p>
-        </div>
-      ) : null}
-      {result ? (
-        <p className="panel-note" style={{ marginTop: 10 }}>
-          {result}
-        </p>
-      ) : null}
+        ) : null}
+        {result ? <span className="panel-note">{result}</span> : null}
+      </div>
     </div>
   );
 }

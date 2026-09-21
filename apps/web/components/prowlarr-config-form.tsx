@@ -1,11 +1,13 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Check, ExternalLink, LoaderCircle, Trash2 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Check, LoaderCircle, Trash2 } from "lucide-react";
 import { saveProwlarrConfigAction, clearProwlarrConfigAction } from "../app/actions";
 import { runAction } from "../lib/run-action";
 
 export function ProwlarrConfigForm({ baseURL: initialBaseURL, apiKeySet }: { baseURL: string; apiKeySet: boolean }) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [baseURL, setBaseURL] = useState(initialBaseURL);
   const [apiKey, setApiKey] = useState("");
@@ -31,6 +33,7 @@ export function ProwlarrConfigForm({ baseURL: initialBaseURL, apiKeySet }: { bas
         setApiKey("");
         setHasKey(true);
       }
+      if (res.success) router.refresh();
       setTimeout(() => setResult(null), 3000);
     });
   };
@@ -53,6 +56,7 @@ export function ProwlarrConfigForm({ baseURL: initialBaseURL, apiKeySet }: { bas
       if (res.success) {
         setHasKey(false);
         setBaseURL("");
+        router.refresh();
       }
       setTimeout(() => setResult(null), 3000);
     });
@@ -60,15 +64,6 @@ export function ProwlarrConfigForm({ baseURL: initialBaseURL, apiKeySet }: { bas
 
   return (
     <div className="push-form">
-      <p className="panel-note" style={{ marginBottom: 6 }}>
-        Prowlarr 是索引器聚合器：用它把你的公共/私有种子站统一成一个 API，agent 搜资源时会把 Prowlarr 的磁力和网盘搜索结果合并判断。磁力靠 115 秒传（哈希匹配）瞬时转存。不填则只用内置网盘搜索。留空 API Key 不改动已保存的值。
-      </p>
-      <p className="push-help" style={{ marginBottom: 12 }}>
-        了解 Prowlarr{" "}
-        <a href="https://prowlarr.com/" target="_blank" rel="noopener noreferrer">
-          官网 <ExternalLink size={12} style={{ verticalAlign: "-1px" }} />
-        </a>
-      </p>
       <div className="push-field">
         <label className="push-label">Base URL（Prowlarr 实例地址）</label>
         <input
@@ -82,33 +77,29 @@ export function ProwlarrConfigForm({ baseURL: initialBaseURL, apiKeySet }: { bas
       </div>
       <div className="push-field">
         <label className="push-label">API Key（Prowlarr 设置 → General 里获取）</label>
-        <div className="setting-row">
-          <input
-            type="password"
-            className="setting-control"
-            value={apiKey}
-            onChange={(event) => setApiKey(event.target.value)}
-            placeholder={hasKey ? "已设置(留空不改)" : "粘贴 Prowlarr API Key"}
-            aria-label="Prowlarr API Key"
-            autoComplete="off"
-          />
-          <button type="button" className="primary-button" onClick={handleSave} disabled={isPending}>
-            {isPending ? <LoaderCircle size={14} className="spin" aria-hidden /> : <Check size={14} aria-hidden />}
-            保存
-          </button>
-          {hasKey ? (
-            <button type="button" className="secondary-button" onClick={handleClear} disabled={isPending}>
-              <Trash2 size={14} aria-hidden />
-              清除
-            </button>
-          ) : null}
-        </div>
+        <input
+          type="password"
+          className="setting-control"
+          value={apiKey}
+          onChange={(event) => setApiKey(event.target.value)}
+          placeholder={hasKey ? "已设置(留空不改)" : "粘贴 Prowlarr API Key"}
+          aria-label="Prowlarr API Key"
+          autoComplete="off"
+        />
       </div>
-      {result ? (
-        <p className="panel-note" style={{ marginTop: 10 }}>
-          {result}
-        </p>
-      ) : null}
+      <div className="service-actions">
+        <button type="button" className="primary-button" onClick={handleSave} disabled={isPending}>
+          {isPending ? <LoaderCircle size={14} className="spin" aria-hidden /> : <Check size={14} aria-hidden />}
+          保存
+        </button>
+        {hasKey ? (
+          <button type="button" className="secondary-button" onClick={handleClear} disabled={isPending}>
+            <Trash2 size={14} aria-hidden />
+            清除
+          </button>
+        ) : null}
+        {result ? <span className="panel-note">{result}</span> : null}
+      </div>
     </div>
   );
 }
