@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { Check, LoaderCircle } from "lucide-react";
 import { saveLlmConfigAction } from "../app/actions";
 import { runAction } from "../lib/run-action";
@@ -15,6 +16,7 @@ export function LlmConfigForm({
   modelId: string;
   apiKeySet: boolean;
 }) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [baseURL, setBaseURL] = useState(initialBaseURL);
   const [modelId, setModelId] = useState(initialModelId);
@@ -38,16 +40,17 @@ export function LlmConfigForm({
       if (!r.ok) return;
       const res = r.value;
       setResult(res.success ? "✅ 保存成功 —— 点「测试连接」确认可用" : `❌ ${res.message ?? "保存失败"}`);
-      if (res.success) setApiKey("");
+      if (res.success) {
+        setApiKey("");
+        // 块头的状态胶囊由服务端渲染;刷新让「已配置 · <model>」跟上刚保存的值。
+        router.refresh();
+      }
       setTimeout(() => setResult(null), 4000);
     });
   };
 
   return (
     <div className="push-form">
-      <p className="panel-note" style={{ marginBottom: 12 }}>
-        AI 模型(OpenAI 兼容)。自带你自己的 key——它只存在你这台机器的数据库里,作者看不到。留空 API Key 不会改动已保存的值。
-      </p>
       <div className="push-field">
         <label className="push-label">Base URL</label>
         <input
@@ -82,7 +85,7 @@ export function LlmConfigForm({
           autoComplete="off"
         />
       </div>
-      <div className="setting-row" style={{ marginTop: 4, gap: 12, flexWrap: "wrap" }}>
+      <div className="service-actions">
         <button type="button" className="primary-button" onClick={handleSave} disabled={isPending}>
           {isPending ? <LoaderCircle size={14} className="spin" aria-hidden /> : <Check size={14} aria-hidden />}
           保存

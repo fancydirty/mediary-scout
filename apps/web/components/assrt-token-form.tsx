@@ -1,11 +1,13 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Check, ExternalLink, LoaderCircle, Trash2 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Check, LoaderCircle, Trash2 } from "lucide-react";
 import { saveAssrtTokenAction, clearAssrtTokenAction } from "../app/actions";
 import { runAction } from "../lib/run-action";
 
 export function AssrtTokenForm({ tokenSet }: { tokenSet: boolean }) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [token, setToken] = useState("");
   const [hasToken, setHasToken] = useState(tokenSet);
@@ -37,6 +39,7 @@ export function AssrtTokenForm({ tokenSet }: { tokenSet: boolean }) {
         setToken("");
         setHasToken(true);
       }
+      if (res.success) router.refresh();
       setTimeout(() => setResult(null), 3000);
     });
   };
@@ -59,6 +62,7 @@ export function AssrtTokenForm({ tokenSet }: { tokenSet: boolean }) {
       if (res.success) {
         setHasToken(false);
         setToken("");
+        router.refresh();
       }
       setTimeout(() => setResult(null), 3000);
     });
@@ -66,19 +70,6 @@ export function AssrtTokenForm({ tokenSet }: { tokenSet: boolean }) {
 
   return (
     <div className="push-form">
-      <p className="panel-note" style={{ marginBottom: 6 }}>
-        外挂中文字幕来源：assrt.net（伪射手）有免费官方 API，agent 获取非国产剧集/电影时会自动搜字幕候选并挑合适的落盘到视频旁。需网盘支持外链离线落盘（115 / 光鸭 / 123 支持，123 会占用该账号的离线下载额度；夸克、天翼没有离线接口，不触发）。免费申请 Token，留空则该功能完全不启用。国产内容原生中文对白，不需要此功能。
-      </p>
-      <p className="push-help" style={{ marginBottom: 12 }}>
-        了解 assrt.net{" "}
-        <a href="https://assrt.net" target="_blank" rel="noopener noreferrer">
-          官网 <ExternalLink size={12} style={{ verticalAlign: "-1px" }} />
-        </a>
-        {" · 免费申请 Token "}
-        <a href="https://secure.assrt.net/user/register.xml" target="_blank" rel="noopener noreferrer">
-          注册页面 <ExternalLink size={12} style={{ verticalAlign: "-1px" }} />
-        </a>
-      </p>
       <div className="setting-row">
         <input
           type="password"
