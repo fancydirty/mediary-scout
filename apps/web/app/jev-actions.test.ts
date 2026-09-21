@@ -151,6 +151,12 @@ describe("Jev settings actions", () => {
       expect(result.message).toContain("typesafe/jev-1.13");
     });
 
+    it("persists the probed model name as jev_model (the pill's only source)", async () => {
+      probeMock.mockResolvedValue({ ok: true, model: "jev-1.13.0" });
+      await actions.saveJevConfigAction({ apiKey: "sk-or-1", baseUrl: "" });
+      expect(await repo.getAccountSetting(ACCOUNT_ID, rt.JEV_MODEL_SETTING_KEY)).toBe("jev-1.13.0");
+    });
+
     // The 已设置 placeholder comes from the EFFECTIVE config (account → global →
     // env). A blank save that only looked at the account row would answer
     // 「需要 API Key」 for a key the UI just said was set — and an env-only
@@ -257,9 +263,10 @@ describe("Jev settings actions", () => {
       rt.JEV_HEALTH_SETTING_KEY,
       rt.JEV_PREFILTER_ENABLED_SETTING_KEY,
       rt.JEV_PROBED_FOR_SETTING_KEY,
+      rt.JEV_MODEL_SETTING_KEY,
     ];
 
-    it("clear blanks the account's own Jev config and records an explicit per-account OFF (enabled=\"0\")", async () => {
+    it("clear blanks the account's own Jev config (incl. the fingerprint and the model name) and records an explicit per-account OFF (enabled=\"0\")", async () => {
       for (const key of allKeys()) await repo.setAccountSetting(ACCOUNT_ID, key, "x");
       expect((await actions.clearJevConfigAction()).success).toBe(true);
       for (const key of allKeys()) {

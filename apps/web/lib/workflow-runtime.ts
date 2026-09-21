@@ -1196,6 +1196,11 @@ export const JEV_PREFILTER_ENABLED_SETTING_KEY = "jev_prefilter_enabled";
  *  "fail" is never written; runtime failures fail open per search (see
  *  SnapshotPrefilter.status) and are not recorded here (future: health badge). */
 export const JEV_HEALTH_SETTING_KEY = "jev_health";
+/** The model name the save-time probe answered with (e.g. "jev-1.13.0" direct,
+ *  "typesafe/jev-1.13-20260917" via OpenRouter). Display only — the settings page
+ *  shows it as a pill next to 生效中. Blank/absent → no pill; never invented. */
+export const JEV_MODEL_SETTING_KEY = "jev_model";
+
 /** Which (key, base URL) the "ok" above was probed with — see jevConfigFingerprint.
  *  Written together with health by 保存并测试, blanked by 清除. */
 export const JEV_PROBED_FOR_SETTING_KEY = "jev_probed_for";
