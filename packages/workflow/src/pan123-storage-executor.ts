@@ -30,6 +30,9 @@ const DEFAULT_TRANSFER_SETTLE_POLL_ATTEMPTS = 8;
 const DEFAULT_TRANSFER_SETTLE_POLL_INTERVAL_MS = 2500;
 const OFFLINE_TASK_DELETE_MAX_ATTEMPTS = 3;
 const OFFLINE_TASK_DELETE_RETRY_DELAY_MS = 250;
+/** Consecutive resolve failures after which the rest of a subtitle package is not
+ *  resolved: a dead assrt mirror rejects every url the same way. */
+const SUBTITLE_MAX_CONSECUTIVE_RESOLVE_FAILURES = 3;
 /** 个人云根目录 id — a plain non-empty id (unlike 光鸭's "" root). */
 const PAN123_ROOT_FOLDER_ID = "0";
 
@@ -65,6 +68,16 @@ export interface Pan123StorageExecutorOptions {
   /** Offline-task poll caps (magnet path). Default 60 × 3s ≈ 3min, mirrors 光鸭. */
   offlineTaskPollMaxPolls?: number;
   offlineTaskPollIntervalMs?: number;
+  /** Subtitle-landing poll caps (transferSubtitleUrls), SEPARATE from the video
+   *  offline caps above — a ~100KB subtitle lands in seconds or effectively never
+   *  (真机 2026-09-21: http task 0→2 in ~7s). Default 16 × 3s ≈ 48s, same budget
+   *  as 115/光鸭. */
+  subtitleTaskPollMaxPolls?: number;
+  subtitleTaskPollIntervalMs?: number;
+  /** Gap between consecutive resolve calls (123 resolves ONE url per call — a
+   *  multi-url body is rejected with code 5252 or fails every entry past the first,
+   *  真机 2026-09-21). 10 single resolves at 1s spacing were all accepted. */
+  subtitleResolveGapMs?: number;
   /** Sleep primitive — injected so tests can advance the poll without real waiting. */
   sleep?: (ms: number) => Promise<void>;
 }
@@ -90,6 +103,9 @@ export class Pan123StorageExecutor implements StorageExecutor {
   private readonly transferSettlePollIntervalMs: number;
   private readonly offlineTaskPollMaxPolls: number;
   private readonly offlineTaskPollIntervalMs: number;
+  private readonly subtitleTaskPollMaxPolls: number;
+  private readonly subtitleTaskPollIntervalMs: number;
+  private readonly subtitleResolveGapMs: number;
   private readonly sleep: (ms: number) => Promise<void>;
   private nextTransferNumber = 1;
 
@@ -110,6 +126,9 @@ export class Pan123StorageExecutor implements StorageExecutor {
       options.transferSettlePollIntervalMs ?? DEFAULT_TRANSFER_SETTLE_POLL_INTERVAL_MS;
     this.offlineTaskPollMaxPolls = options.offlineTaskPollMaxPolls ?? 60;
     this.offlineTaskPollIntervalMs = options.offlineTaskPollIntervalMs ?? 3000;
+    this.subtitleTaskPollMaxPolls = options.subtitleTaskPollMaxPolls ?? 16;
+    this.subtitleTaskPollIntervalMs = options.subtitleTaskPollIntervalMs ?? 3000;
+    this.subtitleResolveGapMs = options.subtitleResolveGapMs ?? 1000;
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
 
@@ -238,6 +257,218 @@ export class Pan123StorageExecutor implements StorageExecutor {
     };
     this.nextTransferNumber += 1;
     return attempt;
+  }
+
+  /** Subtitle direct-link landing, single file — delegates to the batch (the
+   *  capability gate the orchestrator probes is THIS method). */
+  async transferSubtitleUrl(input: {
+    url: string;
+    filename: string;
+    directoryId: string;
+    workflowRunId: string;
+  }): Promise<TransferAttempt> {
+    const [attempt] = await this.transferSubtitleUrls({
+      files: [{ url: input.url, filename: input.filename }],
+      directoryId: input.directoryId,
+      workflowRunId: input.workflowRunId,
+    });
+    return attempt!;
+  }
+
+  /** Whole-package subtitle landing via 123's native http offline download.
+   *  Live-verified 2026-09-21 (5 probes, isolated dir): resolve accepts an assrt
+   *  http url and reports the exact landing `name`; ONE url per resolve (a
+   *  multi-url body → code 5252 / every entry past the first fails); submit takes
+   *  a resource array; the task row carries upload_idr but NO file id, so the
+   *  landing is claimed by NAME from a before/after listing; the file lands
+   *  directly in upload_dir (no wrapper); deleting a finished task keeps the file.
+   *  Cost: 1 before-list + N resolves + 1 submit + p polls + 1 claim-list + 1 delete. */
+  async transferSubtitleUrls(input: {
+    files: Array<{ url: string; filename: string }>;
+    directoryId: string;
+    workflowRunId: string;
+  }): Promise<TransferAttempt[]> {
+    const firstNumber = this.nextTransferNumber;
+    this.nextTransferNumber += input.files.length;
+    const attempts: TransferAttempt[] = input.files.map((file, index) => ({
+      id: `${input.workflowRunId}_subtitle_${firstNumber + index}`,
+      workflowRunId: input.workflowRunId,
+      candidateId: `subtitle:${file.filename}`,
+      status: "failed",
+      providerMessage: "",
+      materializedFileIds: [],
+    }));
+
+    // Boundary (zero API): path-y names pollute the id and the name match; a
+    // duplicate name could never be told apart from its twin once both land.
+    const packageNames = new Set<string>();
+    const pending = new Map<number, { url: string; filename: string }>();
+    input.files.forEach((file, index) => {
+      const attempt = attempts[index]!;
+      if (/[\\/]/.test(file.filename)) {
+        attempt.candidateId = `subtitle:invalid_name_${firstNumber + index}`;
+        attempt.providerMessage =
+          "SUBTITLE_INVALID_FILENAME: filename must be a bare name without path separators (路径分隔符)";
+        return;
+      }
+      if (packageNames.has(file.filename)) {
+        attempt.providerMessage = "SUBTITLE_DUPLICATE_FILENAME: a same-named file is already in this package";
+        return;
+      }
+      packageNames.add(file.filename);
+      pending.set(index, file);
+    });
+    if (pending.size === 0) {
+      return attempts;
+    }
+
+    const safe = this.assertWithinWriteScope(input.directoryId, "transfer subtitle"); // sync, derived scope
+    // BEFORE snapshot: only a same-named file that APPEARS after submission counts
+    // (a leftover from an earlier attempt must not fake a success).
+    const beforeIds = new Set((await this.client.listFiles(safe)).map((it) => it.id));
+
+    // Resolve ONE url per call (123 hard constraint), paced; stop after 3
+    // consecutive failures (a dead mirror rejects everything the same way).
+    const resolved = new Map<number, { resourceId: string; fileIds: string[]; landingName: string }>();
+    let consecutiveFailures = 0;
+    let abortReason: string | null = null;
+    let first = true;
+    for (const [index, file] of pending) {
+      const attempt = attempts[index]!;
+      if (abortReason !== null) {
+        attempt.providerMessage = `SUBTITLE_NOT_SUBMITTED: ${abortReason}`;
+        continue;
+      }
+      if (!first && this.subtitleResolveGapMs > 0) {
+        await this.sleep(this.subtitleResolveGapMs);
+      }
+      first = false;
+      try {
+        const r = await this.client.resolveOffline(file.url);
+        resolved.set(index, { resourceId: r.resourceId, fileIds: r.fileIds, landingName: r.resolvedName || file.filename });
+        consecutiveFailures = 0;
+      } catch (error) {
+        if (isPan123AuthError(error)) {
+          throw error;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        attempt.providerMessage = message;
+        consecutiveFailures += 1;
+        if (consecutiveFailures >= SUBTITLE_MAX_CONSECUTIVE_RESOLVE_FAILURES) {
+          abortReason = `aborted after ${SUBTITLE_MAX_CONSECUTIVE_RESOLVE_FAILURES} consecutive resolve failures (last: ${message})`;
+        }
+      }
+    }
+    if (resolved.size === 0) {
+      return attempts;
+    }
+
+    // Submit all resolved resources in ONE call; if the multi-resource form itself
+    // throws (its acceptance is not live-verified), fall back to one submit each.
+    const taskByIndex = new Map<number, string>();
+    const indexes = [...resolved.keys()];
+    try {
+      const results = await this.client.submitOfflineResources({
+        resources: indexes.map((i) => ({ resourceId: resolved.get(i)!.resourceId, fileIds: resolved.get(i)!.fileIds })),
+        uploadDirId: safe,
+      });
+      indexes.forEach((i, k) => {
+        const r = results[k];
+        if (r?.taskId) {
+          taskByIndex.set(i, r.taskId);
+        } else {
+          attempts[i]!.providerMessage = `PAN123_OFFLINE_SUBMIT_FAILED: ${r?.error ?? "no result"}`;
+        }
+      });
+    } catch (error) {
+      if (isPan123AuthError(error)) {
+        throw error;
+      }
+      for (const i of indexes) {
+        try {
+          const taskId = await this.client.submitOffline({
+            resourceId: resolved.get(i)!.resourceId,
+            fileIds: resolved.get(i)!.fileIds,
+            uploadDirId: safe,
+          });
+          taskByIndex.set(i, taskId);
+        } catch (single) {
+          if (isPan123AuthError(single)) {
+            throw single;
+          }
+          attempts[i]!.providerMessage = `PAN123_OFFLINE_SUBMIT_FAILED: ${single instanceof Error ? single.message : String(single)}`;
+        }
+      }
+    }
+    if (taskByIndex.size === 0) {
+      return attempts;
+    }
+
+    // Unified poll: one task/list round covers every task. status 2 = done (verify
+    // by name below), 1 = failed (fixed template — never the uploader-controlled
+    // name), 0/3 = keep waiting.
+    const indexByTask = new Map([...taskByIndex].map(([i, t]) => [t, i]));
+    const pendingTasks = new Set(taskByIndex.values());
+    const landedIndexes: number[] = [];
+    for (let poll = 0; poll < this.subtitleTaskPollMaxPolls && pendingTasks.size > 0; poll++) {
+      if (poll > 0) {
+        await this.sleep(this.subtitleTaskPollIntervalMs);
+      }
+      const rows = await this.client.listOfflineTasks([...pendingTasks]);
+      for (const row of rows) {
+        const i = indexByTask.get(row.taskId);
+        if (i === undefined) {
+          continue;
+        }
+        if (row.status === 2) {
+          landedIndexes.push(i);
+          pendingTasks.delete(row.taskId);
+        } else if (row.status === 1) {
+          attempts[i]!.providerMessage = `PAN123_OFFLINE_FAILED: offline task failed at progress=${row.progress}`;
+          pendingTasks.delete(row.taskId);
+        }
+      }
+    }
+    for (const t of pendingTasks) {
+      const i = indexByTask.get(t)!;
+      attempts[i]!.status = "no_target_change";
+      attempts[i]!.providerMessage = "SUBTITLE_NOT_LANDED: 离线任务在轮询窗口内未落盘(任务可能迟到,不等)";
+    }
+
+    // Claim by name from ONE listing — the task row has no file id.
+    if (landedIndexes.length > 0) {
+      const after = await this.client.listFiles(safe);
+      const newByName = new Map<string, string>();
+      for (const it of after) {
+        if (!it.isFolder && !beforeIds.has(it.id) && !newByName.has(it.name)) {
+          newByName.set(it.name, it.id);
+        }
+      }
+      for (const i of landedIndexes) {
+        const r = resolved.get(i)!;
+        const file = pending.get(i)!;
+        const id = newByName.get(r.landingName) ?? newByName.get(file.filename);
+        if (id) {
+          attempts[i]!.status = "succeeded";
+          attempts[i]!.materializedFileIds = [id];
+        } else {
+          attempts[i]!.status = "no_target_change";
+          attempts[i]!.providerMessage = "SUBTITLE_NOT_LANDED: 任务报告完成但文件不在目标目录";
+        }
+      }
+    }
+
+    // Delete every task we created (finished ones too — live-verified the file
+    // survives; frees the account's task list). Best-effort: a subtitle that lands
+    // late is staging junk discardStaging sweeps, not a double-landed video.
+    try {
+      await this.client.deleteOfflineTasks([...taskByIndex.values()]);
+    } catch (error) {
+      if (isPan123AuthError(error)) {
+        throw error;
+      }
+    }
+    return attempts;
   }
 
   /** magnet/ed2k offline: resolve → submit → poll until status 2 or fail/timeout.

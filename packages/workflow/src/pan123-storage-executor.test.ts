@@ -16,6 +16,8 @@ type Pan123ClientShape = Pick<
   | "saveShare"
   | "resolveOffline"
   | "submitOffline"
+  | "submitOfflineResources"
+  | "listOfflineTasks"
   | "getOfflineTask"
   | "deleteOfflineTasks"
   | "renameFile"
@@ -33,6 +35,12 @@ function fakeClient(overrides: Partial<Pan123ClientShape> = {}): Pan123ClientSha
       fileIds: ["9007199254740993002"],
     })),
     submitOffline: vi.fn<Pan123Client["submitOffline"]>(async () => "9007199254740993003"),
+    submitOfflineResources: vi.fn<Pan123Client["submitOfflineResources"]>(async (input) =>
+      input.resources.map((r, i) => ({ resourceId: r.resourceId, taskId: `task-${i + 1}`, error: null })),
+    ),
+    listOfflineTasks: vi.fn<Pan123Client["listOfflineTasks"]>(async (ids) =>
+      ids.map((taskId) => ({ taskId, name: "sub", status: 2, progress: 100, size: 1 })),
+    ),
     getOfflineTask: vi.fn<Pan123Client["getOfflineTask"]>(async (taskId) => ({
       taskId,
       name: "Some.Show.mkv",
@@ -449,6 +457,256 @@ describe("Pan123StorageExecutor.transfer", () => {
     expect(saveShare).toHaveBeenCalledWith(expect.objectContaining({ sharePwd: "override1" }));
     expect(attempt.status).toBe("no_target_change");
     expect(attempt.providerMessage).toMatch(/未出现新视频/);
+  });
+});
+
+describe("Pan123StorageExecutor.transferSubtitleUrl(s) — assrt http 直链走 123 原生离线(真机 2026-09-21:单条 resolve、任务无 fileId、落目录根)", () => {
+  const SUB_URL = (i: number) => `http://file1.assrt.net/onthefly/661796/-/${i}/Show.S01E0${i}.ass?_=1&-=x&api=1`;
+  const SUB_NAME = (i: number) => `Show.S01E0${i}.ass`;
+  const files = (n: number) => Array.from({ length: n }, (_, i) => ({ url: SUB_URL(i + 1), filename: SUB_NAME(i + 1) }));
+  const subOpts = { subtitleTaskPollMaxPolls: 3, subtitleTaskPollIntervalMs: 0, subtitleResolveGapMs: 0 };
+
+  it("lands a 3-file package: 1 before-list + 3 resolves + 1 submit + poll + 1 claim-list + 1 delete; ids/candidateIds in input order", async () => {
+    let rn = 0;
+    const resolveOffline = vi.fn<Pan123Client["resolveOffline"]>(async () => ({ resourceId: `res-${++rn}`, fileIds: ["f"] }));
+    let listCalls = 0;
+    const listFiles = vi.fn<Pan123Client["listFiles"]>(async () => {
+      listCalls += 1;
+      // 1st = before snapshot (empty); 2nd = claim (all three landed at the dir ROOT)
+      return listCalls === 1 ? [] : [file("L1", SUB_NAME(1), 1), file("L2", SUB_NAME(2), 1), file("L3", SUB_NAME(3), 1)];
+    });
+    const client = fakeClient({ resolveOffline, listFiles });
+    const executor = makeExecutor(client, [SCOPE], subOpts);
+
+    const attempts = await executor.transferSubtitleUrls({ files: files(3), directoryId: SCOPE, workflowRunId: "run-1" });
+
+    expect(attempts.map((a) => a.status)).toEqual(["succeeded", "succeeded", "succeeded"]);
+    expect(attempts.map((a) => a.materializedFileIds)).toEqual([["L1"], ["L2"], ["L3"]]);
+    expect(attempts.map((a) => a.id)).toEqual(["run-1_subtitle_1", "run-1_subtitle_2", "run-1_subtitle_3"]);
+    expect(attempts.map((a) => a.candidateId)).toEqual([`subtitle:${SUB_NAME(1)}`, `subtitle:${SUB_NAME(2)}`, `subtitle:${SUB_NAME(3)}`]);
+    expect(resolveOffline).toHaveBeenCalledTimes(3); // one url per resolve — 123 hard constraint
+    expect(client.submitOfflineResources).toHaveBeenCalledTimes(1);
+    expect((client.submitOfflineResources as ReturnType<typeof vi.fn>).mock.calls[0]![0]).toMatchObject({ uploadDirId: SCOPE });
+    expect(client.listOfflineTasks).toHaveBeenCalledTimes(1); // all terminal on the first poll
+    expect(listFiles).toHaveBeenCalledTimes(2); // before + claim
+    expect(client.deleteOfflineTasks).toHaveBeenCalledWith(["task-1", "task-2", "task-3"]);
+  });
+
+  it("claims by the RESOLVED name when it differs from the assrt filename (123 lands under the url's decoded path segment)", async () => {
+    const resolveOffline = vi.fn<Pan123Client["resolveOffline"]>(async () => ({ resourceId: "r1", fileIds: ["f"], resolvedName: "Show.S01E01 (1).ass" }));
+    let n = 0;
+    const listFiles = vi.fn<Pan123Client["listFiles"]>(async () => (++n === 1 ? [] : [file("L9", "Show.S01E01 (1).ass", 1)]));
+    const executor = makeExecutor(fakeClient({ resolveOffline, listFiles }), [SCOPE], subOpts);
+
+    const [a] = await executor.transferSubtitleUrls({ files: files(1), directoryId: SCOPE, workflowRunId: "run-1" });
+
+    expect(a!.status).toBe("succeeded");
+    expect(a!.materializedFileIds).toEqual(["L9"]);
+  });
+
+  it("rejects path-y and duplicate filenames at the boundary with ZERO client calls for them; others proceed", async () => {
+    let n = 0;
+    const listFiles = vi.fn<Pan123Client["listFiles"]>(async () => (++n === 1 ? [] : [file("L1", "ok.ass", 1)]));
+    const client = fakeClient({ listFiles });
+    const executor = makeExecutor(client, [SCOPE], subOpts);
+
+    const attempts = await executor.transferSubtitleUrls({
+      files: [
+        { url: "http://x/a", filename: "sub/evil.ass" },
+        { url: "http://x/b", filename: "ok.ass" },
+        { url: "http://x/c", filename: "ok.ass" },
+      ],
+      directoryId: SCOPE,
+      workflowRunId: "run-1",
+    });
+
+    expect(attempts[0]!.status).toBe("failed");
+    expect(attempts[0]!.providerMessage).toMatch(/SUBTITLE_INVALID_FILENAME/);
+    expect(attempts[0]!.candidateId).toBe("subtitle:invalid_name_1");
+    expect(attempts[1]!.status).toBe("succeeded");
+    expect(attempts[2]!.status).toBe("failed");
+    expect(attempts[2]!.providerMessage).toMatch(/SUBTITLE_DUPLICATE_FILENAME/);
+    expect(client.resolveOffline).toHaveBeenCalledTimes(1);
+  });
+
+  it("an all-invalid package returns without touching the client", async () => {
+    const client = fakeClient();
+    const executor = makeExecutor(client, [SCOPE], subOpts);
+    const attempts = await executor.transferSubtitleUrls({ files: [{ url: "http://x/a", filename: "a/b.ass" }], directoryId: SCOPE, workflowRunId: "run-1" });
+    expect(attempts).toHaveLength(1);
+    expect(client.listFiles).not.toHaveBeenCalled();
+    expect(client.resolveOffline).not.toHaveBeenCalled();
+  });
+
+  it("a resolve rejection (e.g. 「暂不支持 TransferEncoding: chunked」) fails THAT file with the provider text; the rest land", async () => {
+    let call = 0;
+    const resolveOffline = vi.fn<Pan123Client["resolveOffline"]>(async () => {
+      call += 1;
+      if (call === 2) throw new Error("PAN123_OFFLINE_RESOLVE_FAILED: 解析失败：暂不支持 TransferEncoding: chunked 链接 (err_code=3)");
+      return { resourceId: `r${call}`, fileIds: ["f"] };
+    });
+    let n = 0;
+    const listFiles = vi.fn<Pan123Client["listFiles"]>(async () => (++n === 1 ? [] : [file("L1", SUB_NAME(1), 1), file("L3", SUB_NAME(3), 1)]));
+    const client = fakeClient({ resolveOffline, listFiles });
+    const executor = makeExecutor(client, [SCOPE], subOpts);
+
+    const attempts = await executor.transferSubtitleUrls({ files: files(3), directoryId: SCOPE, workflowRunId: "run-1" });
+
+    expect(attempts.map((a) => a.status)).toEqual(["succeeded", "failed", "succeeded"]);
+    expect(attempts[1]!.providerMessage).toMatch(/TransferEncoding: chunked/);
+    const submitted = (client.submitOfflineResources as ReturnType<typeof vi.fn>).mock.calls[0]![0] as { resources: Array<{ resourceId: string }> };
+    expect(submitted.resources.map((r) => r.resourceId)).toEqual(["r1", "r3"]); // the failed one is not submitted
+  });
+
+  it("stops resolving after 3 consecutive resolve failures; the rest are SUBTITLE_NOT_SUBMITTED and nothing is submitted", async () => {
+    const resolveOffline = vi.fn<Pan123Client["resolveOffline"]>(async () => { throw new Error("PAN123_OFFLINE_RESOLVE_FAILED: empty response"); });
+    const client = fakeClient({ resolveOffline });
+    const executor = makeExecutor(client, [SCOPE], subOpts);
+
+    const attempts = await executor.transferSubtitleUrls({ files: files(6), directoryId: SCOPE, workflowRunId: "run-1" });
+
+    expect(resolveOffline).toHaveBeenCalledTimes(3);
+    expect(attempts.slice(0, 3).every((a) => a.status === "failed" && /empty response/.test(a.providerMessage))).toBe(true);
+    expect(attempts.slice(3).every((a) => a.status === "failed" && /^SUBTITLE_NOT_SUBMITTED: aborted after 3 consecutive resolve failures/.test(a.providerMessage))).toBe(true);
+    expect(client.submitOfflineResources).not.toHaveBeenCalled();
+    expect(client.listOfflineTasks).not.toHaveBeenCalled();
+    expect(client.deleteOfflineTasks).not.toHaveBeenCalled();
+  });
+
+  it("a per-resource submit rejection fails that file (PAN123_OFFLINE_SUBMIT_FAILED prefix) and its task is not polled", async () => {
+    const submitOfflineResources = vi.fn<Pan123Client["submitOfflineResources"]>(async (input) =>
+      input.resources.map((r, i) => (i === 0 ? { resourceId: r.resourceId, taskId: null, error: "云下载配额不足，请升级VIP (err_code=41006)" } : { resourceId: r.resourceId, taskId: `task-${i}`, error: null })),
+    );
+    let n = 0;
+    const listFiles = vi.fn<Pan123Client["listFiles"]>(async () => (++n === 1 ? [] : [file("L2", SUB_NAME(2), 1)]));
+    const client = fakeClient({ submitOfflineResources, listFiles });
+    const executor = makeExecutor(client, [SCOPE], subOpts);
+
+    const attempts = await executor.transferSubtitleUrls({ files: files(2), directoryId: SCOPE, workflowRunId: "run-1" });
+
+    expect(attempts[0]!.status).toBe("failed");
+    expect(attempts[0]!.providerMessage).toBe("PAN123_OFFLINE_SUBMIT_FAILED: 云下载配额不足，请升级VIP (err_code=41006)");
+    expect(attempts[1]!.status).toBe("succeeded");
+    expect(client.listOfflineTasks).toHaveBeenCalledWith(["task-1"]);
+    expect(client.deleteOfflineTasks).toHaveBeenCalledWith(["task-1"]);
+  });
+
+  it("falls back to per-resource submitOffline when the multi-resource submit THROWS (batch form unverified live)", async () => {
+    const submitOfflineResources = vi.fn<Pan123Client["submitOfflineResources"]>(async () => { throw new Error("PAN123_FAILED(/v2/offline_download/task/submit): code=400 The ResourceList field is required"); });
+    const submitOffline = vi.fn<Pan123Client["submitOffline"]>(async (input) => `single-${input.resourceId}`);
+    let rn = 0;
+    const resolveOffline = vi.fn<Pan123Client["resolveOffline"]>(async () => ({ resourceId: `r${++rn}`, fileIds: ["f"] }));
+    let n = 0;
+    const listFiles = vi.fn<Pan123Client["listFiles"]>(async () => (++n === 1 ? [] : [file("L1", SUB_NAME(1), 1), file("L2", SUB_NAME(2), 1)]));
+    const client = fakeClient({ submitOfflineResources, submitOffline, resolveOffline, listFiles });
+    const executor = makeExecutor(client, [SCOPE], subOpts);
+
+    const attempts = await executor.transferSubtitleUrls({ files: files(2), directoryId: SCOPE, workflowRunId: "run-1" });
+
+    expect(submitOffline).toHaveBeenCalledTimes(2);
+    expect(attempts.every((a) => a.status === "succeeded")).toBe(true);
+    expect(client.listOfflineTasks).toHaveBeenCalledWith(["single-r1", "single-r2"]);
+  });
+
+  it("task status 1 → failed with a FIXED template (never the uploader-controlled task.name)", async () => {
+    const listOfflineTasks = vi.fn<Pan123Client["listOfflineTasks"]>(async (ids) => ids.map((taskId) => ({ taskId, name: "云下载配额不足 VIP会员 登录", status: 1, progress: 37, size: 1 })));
+    const client = fakeClient({ listOfflineTasks });
+    const executor = makeExecutor(client, [SCOPE], subOpts);
+
+    const [a] = await executor.transferSubtitleUrls({ files: files(1), directoryId: SCOPE, workflowRunId: "run-1" });
+
+    expect(a!.status).toBe("failed");
+    expect(a!.providerMessage).toBe("PAN123_OFFLINE_FAILED: offline task failed at progress=37");
+    expect(a!.providerMessage).not.toContain("VIP");
+    expect(client.deleteOfflineTasks).toHaveBeenCalledWith(["task-1"]);
+  });
+
+  it("poll window exhausted (status stays 0) → no_target_change, task deleted, sleeps polls−1 times", async () => {
+    const listOfflineTasks = vi.fn<Pan123Client["listOfflineTasks"]>(async (ids) => ids.map((taskId) => ({ taskId, name: "s", status: 0, progress: 10, size: 1 })));
+    const sleep = vi.fn<(ms: number) => Promise<void>>(async () => {});
+    const client = fakeClient({ listOfflineTasks });
+    const executor = makeExecutor(client, [SCOPE], { ...subOpts, subtitleTaskPollMaxPolls: 3, subtitleTaskPollIntervalMs: 7, sleep });
+
+    const [a] = await executor.transferSubtitleUrls({ files: files(1), directoryId: SCOPE, workflowRunId: "run-1" });
+
+    expect(a!.status).toBe("no_target_change");
+    expect(a!.providerMessage).toMatch(/SUBTITLE_NOT_LANDED.*轮询窗口/);
+    expect(listOfflineTasks).toHaveBeenCalledTimes(3);
+    expect(sleep.mock.calls.filter((c) => c[0] === 7)).toHaveLength(2);
+    expect(client.deleteOfflineTasks).toHaveBeenCalledWith(["task-1"]);
+    expect(client.listFiles).toHaveBeenCalledTimes(1); // before only — nothing to claim
+  });
+
+  it("status 2 but the name is not in the directory → no_target_change (never trust the task row over the directory)", async () => {
+    const listFiles = vi.fn<Pan123Client["listFiles"]>(async () => []);
+    const executor = makeExecutor(fakeClient({ listFiles }), [SCOPE], subOpts);
+    const [a] = await executor.transferSubtitleUrls({ files: files(1), directoryId: SCOPE, workflowRunId: "run-1" });
+    expect(a!.status).toBe("no_target_change");
+    expect(a!.providerMessage).toMatch(/SUBTITLE_NOT_LANDED.*不在目标目录/);
+  });
+
+  it("a PRE-EXISTING same-named file is not claimed (before/after diff), so a stale leftover cannot fake a success", async () => {
+    const listFiles = vi.fn<Pan123Client["listFiles"]>(async () => [file("OLD", SUB_NAME(1), 1)]); // same before and after
+    const executor = makeExecutor(fakeClient({ listFiles }), [SCOPE], subOpts);
+    const [a] = await executor.transferSubtitleUrls({ files: files(1), directoryId: SCOPE, workflowRunId: "run-1" });
+    expect(a!.status).toBe("no_target_change");
+    expect(a!.materializedFileIds).toEqual([]);
+  });
+
+  it("deleteOfflineTasks failure is swallowed (subtitles are soft; a late landing is staging junk), attempts unchanged", async () => {
+    const deleteOfflineTasks = vi.fn<Pan123Client["deleteOfflineTasks"]>(async () => { throw new Error("PAN123_FAILED(/offline_download/task/delete): code=500"); });
+    let n = 0;
+    const listFiles = vi.fn<Pan123Client["listFiles"]>(async () => (++n === 1 ? [] : [file("L1", SUB_NAME(1), 1)]));
+    const executor = makeExecutor(fakeClient({ deleteOfflineTasks, listFiles }), [SCOPE], subOpts);
+    const [a] = await executor.transferSubtitleUrls({ files: files(1), directoryId: SCOPE, workflowRunId: "run-1" });
+    expect(a!.status).toBe("succeeded");
+  });
+
+  it("Pan123AuthError propagates from resolve, from the poll, and from the claim listing (never softened)", async () => {
+    const auth = () => new Pan123AuthError("PAN123_AUTH_FAILED: token dead");
+    const viaResolve = makeExecutor(fakeClient({ resolveOffline: vi.fn(async () => { throw auth(); }) }), [SCOPE], subOpts);
+    await expect(viaResolve.transferSubtitleUrls({ files: files(1), directoryId: SCOPE, workflowRunId: "r" })).rejects.toBeInstanceOf(Pan123AuthError);
+    const viaPoll = makeExecutor(fakeClient({ listOfflineTasks: vi.fn(async () => { throw auth(); }) }), [SCOPE], subOpts);
+    await expect(viaPoll.transferSubtitleUrls({ files: files(1), directoryId: SCOPE, workflowRunId: "r" })).rejects.toBeInstanceOf(Pan123AuthError);
+    let n = 0;
+    const viaClaim = makeExecutor(fakeClient({ listFiles: vi.fn(async () => { if (++n === 2) throw auth(); return []; }) }), [SCOPE], subOpts);
+    await expect(viaClaim.transferSubtitleUrls({ files: files(1), directoryId: SCOPE, workflowRunId: "r" })).rejects.toBeInstanceOf(Pan123AuthError);
+  });
+
+  it("refuses a target directory outside the write scope before any client call", async () => {
+    const client = fakeClient();
+    const executor = makeExecutor(client, [SCOPE], subOpts);
+    await expect(executor.transferSubtitleUrls({ files: files(1), directoryId: "elsewhere", workflowRunId: "r" })).rejects.toThrow("WRITE_SCOPE_VIOLATION");
+    expect(client.listFiles).not.toHaveBeenCalled();
+  });
+
+  it("shares the attempt counter with transfer(): a video transfer then a subtitle batch never collide on id", async () => {
+    let n = 0;
+    // listFiles calls: video before(1), video after(2), subtitle before(3), subtitle claim(4)
+    const listFiles = vi.fn<Pan123Client["listFiles"]>(async () => (++n <= 3 ? [] : [file("L1", SUB_NAME(1), 1)]));
+    const client = fakeClient({ listFiles });
+    const executor = makeExecutor(client, [SCOPE], { ...subOpts, transferSettlePollAttempts: 1 });
+    const video = await executor.transfer({ workflowRunId: "run-1", directoryId: SCOPE, candidate: candidate() });
+    const [sub] = await executor.transferSubtitleUrls({ files: files(1), directoryId: SCOPE, workflowRunId: "run-1" });
+    expect(video.id).toBe("run-1_transfer_1");
+    expect(sub!.id).toBe("run-1_subtitle_2");
+  });
+
+  it("transferSubtitleUrl (single) delegates to the batch and returns the one attempt", async () => {
+    let n = 0;
+    const listFiles = vi.fn<Pan123Client["listFiles"]>(async () => (++n === 1 ? [] : [file("L1", SUB_NAME(1), 1)]));
+    const executor = makeExecutor(fakeClient({ listFiles }), [SCOPE], subOpts);
+    const a = await executor.transferSubtitleUrl({ url: SUB_URL(1), filename: SUB_NAME(1), directoryId: SCOPE, workflowRunId: "run-1" });
+    expect(a).toMatchObject({ id: "run-1_subtitle_1", candidateId: `subtitle:${SUB_NAME(1)}`, status: "succeeded", materializedFileIds: ["L1"] });
+  });
+
+  it("paces resolves with subtitleResolveGapMs between them (not before the first)", async () => {
+    const sleep = vi.fn<(ms: number) => Promise<void>>(async () => {});
+    let n = 0;
+    const listFiles = vi.fn<Pan123Client["listFiles"]>(async () => (++n === 1 ? [] : [file("L1", SUB_NAME(1), 1), file("L2", SUB_NAME(2), 1), file("L3", SUB_NAME(3), 1)]));
+    const executor = makeExecutor(fakeClient({ listFiles }), [SCOPE], { ...subOpts, subtitleResolveGapMs: 11, sleep });
+    await executor.transferSubtitleUrls({ files: files(3), directoryId: SCOPE, workflowRunId: "run-1" });
+    expect(sleep.mock.calls.filter((c) => c[0] === 11)).toHaveLength(2);
   });
 });
 

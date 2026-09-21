@@ -440,8 +440,10 @@ export class Pan123Client {
   // Ported from OpenList drivers/123 OfflineDownload. Status codes observed there:
   // 0=downloading, 1=failed, 2=succeed (3 may appear as retrying on open-api face).
 
-  /** Resolve a magnet/ed2k/http URL into a resource_id + selectable file ids. */
-  async resolveOffline(url: string): Promise<{ resourceId: string; fileIds: string[] }> {
+  /** Resolve a magnet/ed2k/http URL into a resource_id + selectable file ids.
+   *  `name` = the file name 123 will land under (the url's decoded path segment;
+   *  an http task lands it directly in upload_dir). */
+  async resolveOffline(url: string): Promise<{ resourceId: string; fileIds: string[]; resolvedName?: string }> {
     const resp = await this.signed("/v2/offline_download/task/resolve", {
       method: "POST",
       body: { urls: url },
@@ -473,7 +475,8 @@ export class Pan123Client {
     if (fileIds.length === 0) {
       throw new Error("PAN123_OFFLINE_RESOLVE_FAILED: empty file list");
     }
-    return { resourceId, fileIds };
+    const resolvedName = strOf(first["name"]);
+    return { resourceId, fileIds, ...(resolvedName ? { resolvedName } : {}) };
   }
 
   /** Submit a previously-resolved offline resource into `uploadDirId`. Returns taskId. */
