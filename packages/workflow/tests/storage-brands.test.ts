@@ -78,6 +78,17 @@ describe("storage brand registry", () => {
     expect(brandSupportsProwlarr("baidu")).toBe(false);
   });
 
+  it("brandsSupportingProwlarr: the labels of every brand whose kinds include prowlarr, in registry order", async () => {
+    const { brandsSupportingProwlarr, brandSupportsProwlarr } = await import("../src/index.js");
+    const labels = brandsSupportingProwlarr();
+    // 115 / 光鸭 / 123 carry "prowlarr"; 夸克 / 天翼 don't (share-link only).
+    expect(labels).toEqual(["115 网盘", "光鸭云盘", "123网盘"]);
+    // Consistent with the per-provider predicate — same source of truth.
+    for (const brand of STORAGE_BRANDS) {
+      expect(labels.includes(brand.label)).toBe(brandSupportsProwlarr(brand.provider));
+    }
+  });
+
   it("brand registry carries assumeChineseSubsFromChineseTitle flag (Task 4)", () => {
     // 115 and quark are Chinese-world drives → assume Chinese subs from Chinese titles
     expect(getStorageBrand("pan115").assumeChineseSubsFromChineseTitle).toBe(true);

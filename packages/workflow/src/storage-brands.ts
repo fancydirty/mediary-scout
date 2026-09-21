@@ -173,3 +173,13 @@ export function brandSupportsProwlarr(provider: string): boolean {
     getStorageBrand(provider).resourceProviderKinds.includes("prowlarr")
   );
 }
+
+/** Display labels of every registered brand that can use Prowlarr, in registry
+ *  order. Settings derives "which drives magnet works on" from this instead of a
+ *  hand-written note — the old 「仅对 115 盘生效」 went stale the day 光鸭/123 gained
+ *  magnet. Same source of truth as brandSupportsProwlarr. */
+export function brandsSupportingProwlarr(): string[] {
+  return STORAGE_BRANDS.filter((brand) => brand.resourceProviderKinds.includes("prowlarr")).map(
+    (brand) => brand.label,
+  );
+}
