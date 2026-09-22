@@ -980,7 +980,12 @@ export class TaskSandbox {
     // land as unusable junk in staging (renameSubtitle rejects them, cleanup has
     // to sweep them) while burning real 115 API budget, and a zip-only landing
     // would report a misleading "succeeded".
-    const subtitleFiles = files.filter((file) => SUBTITLE_NAME_PATTERN.test(file.filename));
+    // macOS AppleDouble twins (`._name.ass`, a few hundred bytes of resource-fork
+    // metadata) ride inside zip-sourced assrt packages and pass the extension filter;
+    // they land as junk (真机 2026-09-21). Drop them here too.
+    const subtitleFiles = files.filter(
+      (file) => SUBTITLE_NAME_PATTERN.test(file.filename) && !file.filename.startsWith("._"),
+    );
     if (subtitleFiles.length === 0) {
       return {
         status: "failed",
@@ -1002,7 +1007,12 @@ export class TaskSandbox {
       files: subtitleFiles.map((file) => ({ url: file.url, filename: file.filename })),
       intoDirectoryId: this.stagingDirectoryId,
     });
-    const landedFilenames = results.filter((result) => result.status === "succeeded").map((result) => result.filename);
+    // The name each file REALLY landed under when storage knows it (123 lands a taken name
+    // as name(1).ext) — the agent reads staging by these names; the package name would
+    // point it at a file this call did not produce.
+    const landedFilenames = results
+      .filter((result) => result.status === "succeeded")
+      .map((result) => result.landedFilename ?? result.filename);
     // Surface WHY (the last failure's message — for a per-file abort that is the
     // "已连续 N 个失败,提前中止" notice) so the agent can decide, never retry blindly.
     let lastError = [...results].reverse().find((result) => result.status !== "succeeded" && result.providerMessage)?.providerMessage;

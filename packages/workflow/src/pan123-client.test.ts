@@ -579,3 +579,47 @@ describe("Pan123Client directory write ops", () => {
     });
   });
 });
+
+describe("Pan123Client.listOfflineTasks (rows for a set of task ids)", () => {
+  it("collects the wanted rows across pages and stops early once all are found", async () => {
+    const pages: string[] = [];
+    const fetchImpl = fetchStub((url, init) => {
+      expect(url).toContain("/offline_download/task/list");
+      const b = JSON.parse(init.body ?? "{}") as { current_page: number };
+      pages.push(String(b.current_page));
+      if (b.current_page === 1) {
+        return { status: 200, body: '{"code":0,"data":{"list":[{"task_id":1,"name":"a","status":0,"progress":0,"size":1}],"total":250}}' };
+      }
+      return {
+        status: 200,
+        body:
+          '{"code":0,"data":{"list":[{"task_id":9007199254740993003,"name":"b","status":2,"progress":100,"size":2},' +
+          '{"task_id":2,"name":"c","status":1,"progress":50,"size":3}],"total":250}}',
+      };
+    });
+    const client = new Pan123Client({ token: "TK", fetchImpl });
+
+    const rows = await client.listOfflineTasks(["9007199254740993003", "2"]);
+
+    expect(pages).toEqual(["1", "2"]); // stopped after page 2 — never fetched page 3
+    expect(rows.map((r) => [r.taskId, r.status])).toEqual([["9007199254740993003", 2], ["2", 1]]);
+  });
+
+  it("returns an empty array for an empty id set without any request", async () => {
+    const fetchImpl = fetchStub(() => { throw new Error("must not call"); });
+    const client = new Pan123Client({ token: "TK", fetchImpl });
+    await expect(client.listOfflineTasks([])).resolves.toEqual([]);
+  });
+
+  it("caps paging at maxPages (default 3) — a huge account queue must not spin", async () => {
+    let calls = 0;
+    const fetchImpl = fetchStub(() => {
+      calls += 1;
+      return { status: 200, body: { code: 0, data: { list: [{ task_id: 5, status: 0 }], total: 100000 } } };
+    });
+    const client = new Pan123Client({ token: "TK", fetchImpl });
+    const rows = await client.listOfflineTasks(["404"]);
+    expect(rows).toEqual([]);
+    expect(calls).toBe(3);
+  });
+});

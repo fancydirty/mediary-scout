@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * Bind-level tests for the 123网盘 connect flow (T7). Exercises the REAL
@@ -80,6 +80,16 @@ const boot = async (opts: { failProvision?: boolean } = {}) => {
   return import("./workflow-runtime");
 };
 
+// Boot in the hook, not the test body: the first import of ./workflow-runtime in a
+// worker is cold (the whole @media-track/workflow graph) and would count against the
+// test's 5 s timeout. That import alone has taken up to ~8.5 s on a loaded dev machine
+// (load avg ~30), too close to the default 10 s hookTimeout, so the hook sets its own.
+const COLD_IMPORT_TIMEOUT_MS = 30_000;
+let rt: typeof import("./workflow-runtime");
+beforeEach(async () => {
+  rt = await boot();
+}, COLD_IMPORT_TIMEOUT_MS);
+
 afterEach(() => {
   vi.doUnmock("@media-track/workflow");
   delete process.env.MEDIA_TRACK_SQLITE_PATH;
@@ -90,7 +100,6 @@ afterEach(() => {
 
 describe("connectPan123Token (bind)", () => {
   it("same-account re-login (refresh): providerUid from JWT payload id, blob is exactly {token}+meta, keeps resolved CIDs", async () => {
-    const rt = await boot();
     const repository = rt.getWorkflowRepository();
     // Seed an existing 123 drive owned by the current (default) account.
     await repository.upsertConnectedStorage({
@@ -130,7 +139,6 @@ describe("connectPan123Token (bind)", () => {
   });
 
   it("cross-account: the 123 account already belongs to another account → StorageOwnedByOtherAccountError, other row untouched", async () => {
-    const rt = await boot();
     const repository = rt.getWorkflowRepository();
     await repository.upsertConnectedStorage({
       id: "cs_pan123_other",
@@ -159,7 +167,8 @@ describe("connectPan123Token (bind)", () => {
     // → createExecutorForBrand stubbed to throw. The bind must swallow it and still
     // persist the connection (best-effort provision contract). This is the primary
     // real-world path: a brand-new user's first bind.
-    const rt = await boot({ failProvision: true });
+    // Re-boot with provision stubbed to throw; warm, since beforeEach already paid the cold import.
+    rt = await boot({ failProvision: true });
     const repository = rt.getWorkflowRepository();
 
     const { providerUid } = await rt.connectPan123Token(VALID_TOKEN);
@@ -180,13 +189,11 @@ describe("connectPan123Token (bind)", () => {
   });
 
   it("empty token → friendly error, zero network (no probe client constructed)", async () => {
-    const rt = await boot();
     await expect(rt.connectPan123Token("   ")).rejects.toThrow(/token/);
     expect(pan123ClientConstructions).toBe(0);
   });
 
   it("unparseable token (not a 123 JWT) → precise local error, zero network, nothing stored", async () => {
-    const rt = await boot();
     // uid is parsed LOCALLY before the probe: garbage input must hit the precise
     // "不是有效的 123 登录 token" message WITHOUT ever sending the garbage token to
     // 123 (no Pan123Client construction), and must not be masked by the probe's
@@ -200,7 +207,6 @@ describe("connectPan123Token (bind)", () => {
   });
 
   it("dead token: probe (listFiles) throws → friendly error, nothing stored (probe gates bind)", async () => {
-    const rt = await boot();
     await expect(rt.connectPan123Token(DEAD_TOKEN)).rejects.toThrow(/无法用该 token 连接 123网盘/);
     const rows = (await rt.getWorkflowRepository().listConnectedStorages("acct_default")).filter(
       (s) => s.provider === "pan123",
@@ -211,7 +217,6 @@ describe("connectPan123Token (bind)", () => {
 
 describe("completePan123QrLogin (QR bind)", () => {
   it("binds the polled 90-day token directly (refresh): providerUid + {token}+meta blob", async () => {
-    const rt = await boot();
     const repository = rt.getWorkflowRepository();
     await repository.upsertConnectedStorage({
       id: "cs_pan123_seed",
@@ -239,19 +244,16 @@ describe("completePan123QrLogin (QR bind)", () => {
   });
 
   it("QR flow returned an empty token → friendly re-scan error, no probe", async () => {
-    const rt = await boot();
     await expect(rt.completePan123QrLogin("  ")).rejects.toThrow(/扫码/);
     expect(pan123ClientConstructions).toBe(0);
   });
 
   it("QR flow returned an unparseable token → precise local error, zero network", async () => {
-    const rt = await boot();
     await expect(rt.completePan123QrLogin("garbage-not-a-jwt")).rejects.toThrow(/识别/);
     expect(pan123ClientConstructions).toBe(0);
   });
 
   it("QR flow returned a dead token → probe fails with a re-scan error, nothing stored", async () => {
-    const rt = await boot();
     await expect(rt.completePan123QrLogin(DEAD_TOKEN)).rejects.toThrow(/请重新扫码/);
     const rows = (await rt.getWorkflowRepository().listConnectedStorages("acct_default")).filter(
       (s) => s.provider === "pan123",

@@ -67,7 +67,7 @@ export function AssrtTokenForm({ tokenSet }: { tokenSet: boolean }) {
   return (
     <div className="push-form">
       <p className="panel-note" style={{ marginBottom: 6 }}>
-        外挂中文字幕来源：assrt.net（伪射手）有免费官方 API，agent 获取非国产剧集/电影时会自动搜字幕候选并挑合适的落盘到视频旁。需网盘支持外链离线落盘（115/光鸭支持；夸克暂不触发）。免费申请 Token，留空则该功能完全不启用。国产内容原生中文对白，不需要此功能。
+        外挂中文字幕来源：assrt.net（伪射手）有免费官方 API，agent 获取非国产剧集/电影时会自动搜字幕候选并挑合适的落盘到视频旁。需网盘支持外链离线落盘（115 / 光鸭 / 123 支持，123 会占用该账号的离线下载额度；夸克、天翼没有离线接口，不触发）。免费申请 Token，留空则该功能完全不启用。国产内容原生中文对白，不需要此功能。
       </p>
       <p className="push-help" style={{ marginBottom: 12 }}>
         了解 assrt.net{" "}

@@ -290,6 +290,19 @@ describe("RealStorageV2.transferSubtitleUrls — batch-first, per-file fallback 
     expect(results[0]!.materializedFileIds).toEqual(["sub_E0.srt"]);
   });
 
+  it("carries the name a file ACTUALLY landed under (executor's materializedNames) as landedFilename; absent when the executor does not know it", async () => {
+    const executor = new RecordingExecutor({ subtitleBatch: true });
+    const batch = executor.transferSubtitleUrls!;
+    executor.transferSubtitleUrls = async (input) =>
+      (await batch(input)).map((attempt, index) => (index === 0 ? { ...attempt, materializedNames: ["E0(1).srt"] } : attempt));
+    const { storage } = adapter(executor);
+
+    const results = await storage.transferSubtitleUrls({ files: files(2), intoDirectoryId: "staging" });
+
+    expect(results[0]).toMatchObject({ filename: "E0.srt", landedFilename: "E0(1).srt", status: "succeeded" });
+    expect("landedFilename" in results[1]!).toBe(false);
+  });
+
   it("fails loud when the executor's batch drops a file instead of marking it failed (arity contract)", async () => {
     class DroppingBatch extends RecordingExecutor {
       constructor() {

@@ -40,6 +40,9 @@ export interface TransferAttemptResult {
 /** One file's outcome inside a subtitle package landing (StorageV2.transferSubtitleUrls). */
 export interface SubtitleLandingResult extends TransferAttemptResult {
   filename: string;
+  /** The name the file actually landed under, when the executor knows it differs or
+   *  may differ from `filename` (123: `name(1).ext` next to an existing `name.ext`). */
+  landedFilename?: string;
 }
 
 /** What a candidate transfer would land — files keyed by their path relative to

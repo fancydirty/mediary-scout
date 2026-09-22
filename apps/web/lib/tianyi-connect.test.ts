@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * Bind-level tests for the 天翼 connect flow (Task 7). Exercises the REAL bind
@@ -73,6 +73,16 @@ const boot = async (opts: { failProvision?: boolean } = {}) => {
   return import("./workflow-runtime");
 };
 
+// Boot in the hook, not the test body: the first import of ./workflow-runtime in a
+// worker is cold (the whole @media-track/workflow graph) and would count against the
+// test's 5 s timeout. That import alone has taken up to ~8.5 s on a loaded dev machine
+// (load avg ~30), too close to the default 10 s hookTimeout, so the hook sets its own.
+const COLD_IMPORT_TIMEOUT_MS = 30_000;
+let rt: typeof import("./workflow-runtime");
+beforeEach(async () => {
+  rt = await boot();
+}, COLD_IMPORT_TIMEOUT_MS);
+
 afterEach(() => {
   vi.doUnmock("@media-track/workflow");
   delete process.env.MEDIA_TRACK_SQLITE_PATH;
@@ -83,7 +93,6 @@ afterEach(() => {
 
 describe("connectTianyiSson (bind)", () => {
   it("same-account re-login (refresh): providerUid=loginName, loginName under meta (NOT top-level), keeps resolved CIDs", async () => {
-    const rt = await boot();
     const repository = rt.getWorkflowRepository();
     // Seed an existing 天翼 drive owned by the current (default) account.
     await repository.upsertConnectedStorage({
@@ -138,7 +147,6 @@ describe("connectTianyiSson (bind)", () => {
   });
 
   it("cross-account: the 天翼 account already belongs to another account → StorageOwnedByOtherAccountError, other row untouched", async () => {
-    const rt = await boot();
     const repository = rt.getWorkflowRepository();
     await repository.upsertConnectedStorage({
       id: "cs_tianyi_other",
@@ -169,12 +177,10 @@ describe("connectTianyiSson (bind)", () => {
   });
 
   it("empty SSON → friendly error before any network/login call", async () => {
-    const rt = await boot();
     await expect(rt.connectTianyiSson("   ")).rejects.toThrow(/SSON/);
   });
 
   it("login yielded no loginName → refuses to bind an account with an empty uid", async () => {
-    const rt = await boot();
     await expect(rt.connectTianyiSson("EMPTY_UID")).rejects.toThrow(/loginName/);
     const rows = (await rt.getWorkflowRepository().listConnectedStorages("acct_default")).filter(
       (s) => s.provider === "tianyi",
@@ -186,7 +192,8 @@ describe("connectTianyiSson (bind)", () => {
     // Fresh uid (no seeded row) → resolveStorageBinding → insert → provision runs
     // → createExecutorForBrand stubbed to throw. The bind must swallow it and still
     // persist the connection (best-effort provision contract).
-    const rt = await boot({ failProvision: true });
+    // Re-boot with provision stubbed to throw; warm, since beforeEach already paid the cold import.
+    rt = await boot({ failProvision: true });
     const repository = rt.getWorkflowRepository();
 
     const { providerUid } = await rt.connectTianyiSson("SSON-fresh");
@@ -209,7 +216,6 @@ describe("connectTianyiSson (bind)", () => {
 
 describe("completeTianyiQrLogin (QR bind)", () => {
   it("exchanges the poll redirectUrl for a session, then binds (refresh): providerUid + meta.loginName", async () => {
-    const rt = await boot();
     const repository = rt.getWorkflowRepository();
     await repository.upsertConnectedStorage({
       id: "cs_tianyi_seed",

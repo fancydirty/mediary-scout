@@ -16,6 +16,7 @@ type Pan123ClientShape = Pick<
   | "saveShare"
   | "resolveOffline"
   | "submitOffline"
+  | "listOfflineTasks"
   | "getOfflineTask"
   | "deleteOfflineTasks"
   | "renameFile"
@@ -33,6 +34,9 @@ function fakeClient(overrides: Partial<Pan123ClientShape> = {}): Pan123ClientSha
       fileIds: ["9007199254740993002"],
     })),
     submitOffline: vi.fn<Pan123Client["submitOffline"]>(async () => "9007199254740993003"),
+    listOfflineTasks: vi.fn<Pan123Client["listOfflineTasks"]>(async (ids) =>
+      ids.map((taskId) => ({ taskId, name: "sub", status: 2, progress: 100, size: 1 })),
+    ),
     getOfflineTask: vi.fn<Pan123Client["getOfflineTask"]>(async (taskId) => ({
       taskId,
       name: "Some.Show.mkv",
@@ -449,6 +453,956 @@ describe("Pan123StorageExecutor.transfer", () => {
     expect(saveShare).toHaveBeenCalledWith(expect.objectContaining({ sharePwd: "override1" }));
     expect(attempt.status).toBe("no_target_change");
     expect(attempt.providerMessage).toMatch(/未出现新视频/);
+  });
+});
+
+describe("Pan123StorageExecutor.transferSubtitleUrl(s) — 逐文件 resolve→立即 submit 流水线、以目录为准认领(真机 2026-09-22:assrt 直链约 5 分钟过期、多资源 submit 静默失败)", () => {
+  const SUB_URL = (i: number) => `http://file1.assrt.net/onthefly/661796/-/${i}/Show.S01E0${i}.ass?_=1&-=x&api=1`;
+  const SUB_NAME = (i: number) => `Show.S01E0${i}.ass`;
+  const files = (n: number) => Array.from({ length: n }, (_, i) => ({ url: SUB_URL(i + 1), filename: SUB_NAME(i + 1) }));
+  /** Package file i as the claim listing shows it once it has landed. */
+  const landed = (i: number) => file(`L${i}`, SUB_NAME(i), 1);
+  const subOpts = { subtitleTaskPollMaxPolls: 3, subtitleTaskPollIntervalMs: 0, subtitleResolveRetryDelayMs: 0 };
+  const auth = (why = "token dead") => new Pan123AuthError(`PAN123_AUTH_FAILED: ${why}`);
+  const resolveFailure = (text = "解析失败") => new Error(`PAN123_OFFLINE_RESOLVE_FAILED: ${text} (err_code=3)`);
+  const run = (executor: Pan123StorageExecutor, n: number) =>
+    executor.transferSubtitleUrls({ files: files(n), directoryId: SCOPE, workflowRunId: "run-1" });
+
+  type ResolveResult = Awaited<ReturnType<Pan123Client["resolveOffline"]>>;
+  type TaskRow = Awaited<ReturnType<Pan123Client["listOfflineTasks"]>>[number];
+  const row = (taskId: string, status: number, progress = 100, name = "sub"): TaskRow => ({ taskId, name, status, progress, size: 1 });
+
+  /** Deviations from the happy path. Any hook may throw; resolve/submit/poll
+   *  returning undefined fall through to the default answer. */
+  interface Script {
+    before?: Pan123Item[];
+    after?: Pan123Item[] | (() => Pan123Item[]);
+    resolve?: (url: string, call: number) => ResolveResult | undefined;
+    submit?: (resourceId: string, call: number) => string | undefined;
+    poll?: (ids: string[], call: number) => TaskRow[] | undefined;
+    remove?: (ids: string[]) => void;
+  }
+
+  /** fakeClient wired for the pipeline: every client call and every sleep appends
+   *  to ONE shared `log`. Defaults: resolveOffline → res-<k>, k numbering the
+   *  DISTINCT urls in first-seen order (a retry of a url gets the same id);
+   *  submitOffline → task-<n> (n = submit call #); every polled task is status 2;
+   *  listFiles call #1 = the BEFORE snapshot, every later call = the claim listing. */
+  function harness(script: Script = {}, extra: Partial<Pan123StorageExecutorOptions> = {}) {
+    const log: string[] = [];
+    const resourceIds = new Map<string, string>();
+    const calls = { resolve: 0, submit: 0, poll: 0, list: 0 };
+    const client = fakeClient({
+      listFiles: vi.fn<Pan123Client["listFiles"]>(async () => {
+        calls.list += 1;
+        if (calls.list === 1) {
+          log.push("list:before");
+          return script.before ?? [];
+        }
+        log.push("list:claim");
+        return typeof script.after === "function" ? script.after() : (script.after ?? []);
+      }),
+      resolveOffline: vi.fn<Pan123Client["resolveOffline"]>(async (url) => {
+        calls.resolve += 1;
+        log.push(`resolve:${url}`);
+        if (!resourceIds.has(url)) {
+          resourceIds.set(url, `res-${resourceIds.size + 1}`);
+        }
+        return script.resolve?.(url, calls.resolve) ?? { resourceId: resourceIds.get(url)!, fileIds: ["f"] };
+      }),
+      submitOffline: vi.fn<Pan123Client["submitOffline"]>(async (input) => {
+        calls.submit += 1;
+        log.push(`submit:${input.resourceId}`);
+        return script.submit?.(input.resourceId, calls.submit) ?? `task-${calls.submit}`;
+      }),
+      listOfflineTasks: vi.fn<Pan123Client["listOfflineTasks"]>(async (ids) => {
+        calls.poll += 1;
+        log.push(`poll:${ids.join(",")}`);
+        return script.poll?.(ids, calls.poll) ?? ids.map((id) => row(id, 2));
+      }),
+      deleteOfflineTasks: vi.fn<Pan123Client["deleteOfflineTasks"]>(async (ids) => {
+        log.push(`delete:${ids.join(",")}`);
+        script.remove?.(ids);
+      }),
+    });
+    const sleep = vi.fn<(ms: number) => Promise<void>>(async (ms) => {
+      log.push(`sleep:${ms}`);
+    });
+    const executor = makeExecutor(client, [SCOPE], { ...subOpts, sleep, ...extra });
+    return { client, executor, log, sleep };
+  }
+
+  it("pipelines each file — resolve → IMMEDIATE submit → next — then 1 poll round, 1 claim listing, 1 delete; ids/candidateIds in input order", async () => {
+    const { client, executor, log } = harness({ after: [landed(1), landed(2), landed(3)] });
+
+    const attempts = await run(executor, 3);
+
+    expect(log).toEqual([
+      "list:before",
+      `resolve:${SUB_URL(1)}`,
+      "submit:res-1",
+      `resolve:${SUB_URL(2)}`,
+      "submit:res-2",
+      `resolve:${SUB_URL(3)}`,
+      "submit:res-3",
+      "poll:task-1,task-2,task-3",
+      "list:claim",
+      "delete:task-1,task-2,task-3",
+    ]);
+    expect(client.submitOffline).toHaveBeenNthCalledWith(1, { resourceId: "res-1", fileIds: ["f"], uploadDirId: SCOPE });
+    expect(attempts.map((a) => a.status)).toEqual(["succeeded", "succeeded", "succeeded"]);
+    expect(attempts.map((a) => a.materializedFileIds)).toEqual([["L1"], ["L2"], ["L3"]]);
+    expect(attempts.map((a) => a.providerMessage)).toEqual(["", "", ""]);
+    expect(attempts.map((a) => a.id)).toEqual(["run-1_subtitle_1", "run-1_subtitle_2", "run-1_subtitle_3"]);
+    expect(attempts.map((a) => a.candidateId)).toEqual([1, 2, 3].map((i) => `subtitle:${SUB_NAME(i)}`));
+    expect(client.listFiles).toHaveBeenCalledTimes(2);
+    expect(client.deleteOfflineTasks).toHaveBeenCalledWith(["task-1", "task-2", "task-3"]);
+  });
+
+  it("costs 1 before-list + per file 1 resolve + 1 submit, then 1 poll round + 1 claim-list + 1 delete when all land on the first poll (N=3)", async () => {
+    const { client, executor } = harness({ after: [landed(1), landed(2), landed(3)] });
+
+    await run(executor, 3);
+
+    expect(client.listFiles).toHaveBeenCalledTimes(2);
+    expect(client.resolveOffline).toHaveBeenCalledTimes(3);
+    expect(client.submitOffline).toHaveBeenCalledTimes(3);
+    expect(client.listOfflineTasks).toHaveBeenCalledTimes(1);
+    expect(client.deleteOfflineTasks).toHaveBeenCalledTimes(1);
+    expect(client.getOfflineTask).not.toHaveBeenCalled();
+  });
+
+  it("claims by the RESOLVED name when it differs from the assrt filename (123 lands under the url's decoded path segment)", async () => {
+    const { executor } = harness({
+      after: [file("L9", "Show.S01E01 (1).ass", 1)],
+      resolve: () => ({ resourceId: "res-1", fileIds: ["f"], resolvedName: "Show.S01E01 (1).ass" }),
+    });
+
+    const [a] = await run(executor, 1);
+
+    expect(a).toMatchObject({ status: "succeeded", materializedFileIds: ["L9"], materializedNames: ["Show.S01E01 (1).ass"] });
+  });
+
+  it("rejects path-y and duplicate filenames at the boundary with ZERO client calls for them; the valid file proceeds", async () => {
+    const { client, executor, log } = harness({ after: [file("L1", "ok.ass", 1)] });
+
+    const attempts = await executor.transferSubtitleUrls({
+      files: [
+        { url: "http://x/a", filename: "sub/evil.ass" },
+        { url: "http://x/b", filename: "ok.ass" },
+        { url: "http://x/c", filename: "ok.ass" },
+      ],
+      directoryId: SCOPE,
+      workflowRunId: "run-1",
+    });
+
+    expect(attempts[0]).toMatchObject({ status: "failed", candidateId: "subtitle:invalid_name_1" });
+    expect(attempts[0]!.providerMessage).toMatch(/^SUBTITLE_INVALID_FILENAME/);
+    expect(attempts[1]).toMatchObject({ status: "succeeded", materializedFileIds: ["L1"] });
+    expect(attempts[2]!.status).toBe("failed");
+    expect(attempts[2]!.providerMessage).toMatch(/^SUBTITLE_DUPLICATE_FILENAME/);
+    expect(log.filter((entry) => entry.startsWith("resolve:"))).toEqual(["resolve:http://x/b"]);
+    expect(client.submitOffline).toHaveBeenCalledTimes(1);
+  });
+
+  it("an all-invalid package returns without touching the client", async () => {
+    const { executor, log } = harness();
+
+    const attempts = await executor.transferSubtitleUrls({
+      files: [
+        { url: "http://x/a", filename: "a/b.ass" },
+        { url: "http://x/b", filename: "c\\d.ass" },
+      ],
+      directoryId: SCOPE,
+      workflowRunId: "run-1",
+    });
+
+    expect(attempts.map((a) => a.status)).toEqual(["failed", "failed"]);
+    expect(log).toEqual([]);
+  });
+
+  it("retries a non-auth resolve failure ONCE after subtitleResolveRetryDelayMs (some err_code=3 are transient assrt 503s), and the retried file lands", async () => {
+    let tries = 0;
+    const { executor, log } = harness(
+      {
+        after: [landed(1)],
+        resolve: () => {
+          tries += 1;
+          if (tries === 1) {
+            throw resolveFailure();
+          }
+          return undefined;
+        },
+      },
+      { subtitleResolveRetryDelayMs: 13 },
+    );
+
+    const [a] = await run(executor, 1);
+
+    expect(log.slice(0, 5)).toEqual(["list:before", `resolve:${SUB_URL(1)}`, "sleep:13", `resolve:${SUB_URL(1)}`, "submit:res-1"]);
+    expect(a).toMatchObject({ status: "succeeded", materializedFileIds: ["L1"], providerMessage: "" });
+  });
+
+  it("defaults subtitleResolveRetryDelayMs to 2 s", async () => {
+    let tries = 0;
+    const h = harness({
+      after: [landed(1)],
+      resolve: () => {
+        tries += 1;
+        if (tries === 1) {
+          throw resolveFailure();
+        }
+        return undefined;
+      },
+    });
+    const executor = makeExecutor(h.client, [SCOPE], { sleep: h.sleep, subtitleTaskPollIntervalMs: 0 });
+
+    await run(executor, 1);
+
+    expect(h.log.slice(0, 4)).toEqual(["list:before", `resolve:${SUB_URL(1)}`, "sleep:2000", `resolve:${SUB_URL(1)}`]);
+  });
+
+  it("a file whose resolve fails twice is failed with the provider text and never submitted; the others land", async () => {
+    let fileTwoTries = 0;
+    const { client, executor, log } = harness({
+      after: [landed(1), landed(3)],
+      resolve: (url) => {
+        if (url !== SUB_URL(2)) {
+          return undefined;
+        }
+        fileTwoTries += 1;
+        throw fileTwoTries === 1 ? resolveFailure() : resolveFailure("解析失败：暂不支持 TransferEncoding: chunked 链接");
+      },
+    });
+
+    const attempts = await run(executor, 3);
+
+    expect(attempts.map((a) => a.status)).toEqual(["succeeded", "failed", "succeeded"]);
+    expect(attempts[1]!.providerMessage).toBe("PAN123_OFFLINE_RESOLVE_FAILED: 解析失败：暂不支持 TransferEncoding: chunked 链接 (err_code=3)");
+    expect(client.resolveOffline).toHaveBeenCalledTimes(4);
+    expect(log.filter((entry) => entry.startsWith("submit:"))).toEqual(["submit:res-1", "submit:res-3"]);
+  });
+
+  it("aborts after 3 consecutive files fail to resolve (each tried twice): the rest are SUBTITLE_NOT_SUBMITTED; with no task created there is no poll/claim/delete", async () => {
+    const { client, executor } = harness({
+      resolve: () => {
+        throw resolveFailure();
+      },
+    });
+
+    const attempts = await run(executor, 6);
+
+    expect(client.resolveOffline).toHaveBeenCalledTimes(6); // 3 files × (try + 1 retry)
+    for (const a of attempts.slice(0, 3)) {
+      expect(a).toMatchObject({ status: "failed", providerMessage: "PAN123_OFFLINE_RESOLVE_FAILED: 解析失败 (err_code=3)" });
+    }
+    for (const a of attempts.slice(3)) {
+      expect(a).toMatchObject({
+        status: "failed",
+        providerMessage:
+          "SUBTITLE_NOT_SUBMITTED: aborted after 3 consecutive files failed to submit (last: PAN123_OFFLINE_RESOLVE_FAILED: 解析失败 (err_code=3))",
+      });
+    }
+    expect(client.submitOffline).not.toHaveBeenCalled();
+    expect(client.listOfflineTasks).not.toHaveBeenCalled();
+    expect(client.listFiles).toHaveBeenCalledTimes(1); // the before snapshot only
+    expect(client.deleteOfflineTasks).not.toHaveBeenCalled();
+  });
+
+  it("a created task resets the consecutive-failure count (2 dead, 1 submitted, 2 dead, 1 submitted → no abort)", async () => {
+    const dead = new Set([SUB_URL(1), SUB_URL(2), SUB_URL(4), SUB_URL(5)]);
+    const { client, executor } = harness({
+      after: [landed(3), landed(6)],
+      resolve: (url) => {
+        if (dead.has(url)) {
+          throw resolveFailure();
+        }
+        return undefined;
+      },
+    });
+
+    const attempts = await run(executor, 6);
+
+    expect(attempts.map((a) => a.status)).toEqual(["failed", "failed", "succeeded", "failed", "failed", "succeeded"]);
+    expect(client.resolveOffline).toHaveBeenCalledTimes(10);
+  });
+
+  // A non-member's offline quota is tiny (the settings copy says so): once it is gone,
+  // EVERY submit fails. Without this abort the batch spent the whole 210 s window
+  // resolving and submitting into a wall, and the agent was told "package too big".
+  it("aborts after 3 consecutive SUBMIT failures too (quota gone): no further resolves, and the real cause reaches the agent via last:", async () => {
+    const quota = "PAN123_OFFLINE_SUBMIT_FAILED: 云下载配额不足，请升级VIP (err_code=41006)";
+    const { client, executor } = harness({
+      submit: () => {
+        throw new Error(quota);
+      },
+    });
+
+    const attempts = await run(executor, 6);
+
+    expect(client.resolveOffline).toHaveBeenCalledTimes(3);
+    expect(client.submitOffline).toHaveBeenCalledTimes(3);
+    expect(attempts.slice(0, 3).map((a) => a.providerMessage)).toEqual([quota, quota, quota]);
+    for (const a of attempts.slice(3)) {
+      expect(a).toMatchObject({
+        status: "failed",
+        providerMessage: `SUBTITLE_NOT_SUBMITTED: aborted after 3 consecutive files failed to submit (last: ${quota})`,
+      });
+    }
+    expect(client.listOfflineTasks).not.toHaveBeenCalled();
+    expect(client.deleteOfflineTasks).not.toHaveBeenCalled();
+  });
+
+  it("ONE counter for files that never got a task: resolve-dead, submit-refused, resolve-dead in a row abort; a resolve that succeeds does NOT reset it, only a created task does", async () => {
+    const { client, executor } = harness({
+      resolve: (url) => {
+        if (url === SUB_URL(1) || url === SUB_URL(3)) {
+          throw resolveFailure();
+        }
+        return undefined;
+      },
+      submit: () => {
+        throw new Error("PAN123_OFFLINE_SUBMIT_FAILED: 云下载配额不足 (err_code=41006)");
+      },
+    });
+
+    const attempts = await run(executor, 5);
+
+    expect(client.submitOffline).toHaveBeenCalledTimes(1); // file 2 only
+    expect(attempts.slice(3).map((a) => a.providerMessage)).toEqual([
+      "SUBTITLE_NOT_SUBMITTED: aborted after 3 consecutive files failed to submit (last: PAN123_OFFLINE_RESOLVE_FAILED: 解析失败 (err_code=3))",
+      "SUBTITLE_NOT_SUBMITTED: aborted after 3 consecutive files failed to submit (last: PAN123_OFFLINE_RESOLVE_FAILED: 解析失败 (err_code=3))",
+    ]);
+  });
+
+  it("a submit failure fails that file with PAN123_OFFLINE_SUBMIT_FAILED (never doubled when the client already says so); the siblings are polled and land", async () => {
+    const { executor, log } = harness({
+      after: [landed(1), landed(4)],
+      submit: (resourceId) => {
+        if (resourceId === "res-2") {
+          throw new Error("PAN123_OFFLINE_SUBMIT_FAILED: 云下载配额不足，请升级VIP (err_code=41006)");
+        }
+        if (resourceId === "res-3") {
+          throw new Error("PAN123_FAILED(/v2/offline_download/task/submit): code=500 服务繁忙");
+        }
+        return undefined;
+      },
+    });
+
+    const attempts = await run(executor, 4);
+
+    expect(attempts.map((a) => a.status)).toEqual(["succeeded", "failed", "failed", "succeeded"]);
+    expect(attempts[1]!.providerMessage).toBe("PAN123_OFFLINE_SUBMIT_FAILED: 云下载配额不足，请升级VIP (err_code=41006)");
+    expect(attempts[2]!.providerMessage).toBe(
+      "PAN123_OFFLINE_SUBMIT_FAILED: PAN123_FAILED(/v2/offline_download/task/submit): code=500 服务繁忙",
+    );
+    expect(log).toContain("poll:task-1,task-4");
+    expect(log.at(-1)).toBe("delete:task-1,task-4");
+  });
+
+  it("stops submitting once subtitleSubmitWindowMs has passed since the batch started (assrt links die ~5 min after detail(); 123 fetches at SUBMIT time) — later files are never resolved", async () => {
+    let clock = 5_000_000;
+    const { executor, log } = harness(
+      {
+        after: [landed(1), landed(2), landed(3)],
+        resolve: () => {
+          clock += 80_000; // one resolve = 80 s on this fake clock
+          return undefined;
+        },
+      },
+      { now: () => clock, subtitleSubmitWindowMs: 210_000 },
+    );
+
+    const attempts = await run(executor, 5);
+
+    expect(attempts.map((a) => a.status)).toEqual(["succeeded", "succeeded", "succeeded", "failed", "failed"]);
+    const expired = "SUBTITLE_NOT_SUBMITTED: 字幕直链约 5 分钟过期,整包太大,有效期内只提交了前 3 个;本文件未尝试";
+    expect(attempts[3]!.providerMessage).toBe(expired);
+    expect(attempts[4]!.providerMessage).toBe(expired);
+    expect(log.filter((entry) => entry.startsWith("resolve:"))).toEqual([1, 2, 3].map((i) => `resolve:${SUB_URL(i)}`));
+  });
+
+  it("defaults subtitleSubmitWindowMs to exactly 210 s (live 2026-09-22: links alive at 4 min, dead at 6 min); a file starting AT 210 000 ms is still tried, one at 210 001 ms is not", async () => {
+    let clock = 0;
+    const steps = [210_000, 1];
+    const { executor, log } = harness(
+      {
+        resolve: (_url, call) => {
+          clock += steps[call - 1] ?? 0;
+          return undefined;
+        },
+      },
+      { now: () => clock },
+    );
+
+    const attempts = await run(executor, 3);
+
+    expect(log.filter((entry) => entry.startsWith("resolve:"))).toEqual([1, 2].map((i) => `resolve:${SUB_URL(i)}`));
+    expect(attempts[2]!.providerMessage).toBe(
+      "SUBTITLE_NOT_SUBMITTED: 字幕直链约 5 分钟过期,整包太大,有效期内只提交了前 2 个;本文件未尝试",
+    );
+  });
+
+  // "Package too big" is only true when something WAS submitted. With nothing submitted
+  // the window ran out on slow failures (e.g. resolves timing out twice each), and the
+  // last one's text is the only actionable fact.
+  // The window only gates a file's START; its resolve (two 60 s timeouts + the retry
+  // delay, worst case) can still run past the link's life. Checked again right before
+  // the submit, against the longest time a link was observed alive (4 min).
+  it("a file that STARTED in the window but finished resolving past subtitleLinkLifetimeMs (default 240 s) is not submitted", async () => {
+    let clock = 0;
+    const { client, executor } = harness(
+      {
+        resolve: () => {
+          clock += 250_000; // one slow resolve: starts at 0, ends at 250 s
+          return undefined;
+        },
+      },
+      { now: () => clock },
+    );
+
+    const [a] = await run(executor, 1);
+
+    expect(client.submitOffline).not.toHaveBeenCalled();
+    expect(a).toMatchObject({
+      status: "failed",
+      providerMessage: "SUBTITLE_NOT_SUBMITTED: 字幕直链约 5 分钟过期,本文件解析完成时已超过 240 秒,提交也会落空;本文件未提交",
+    });
+    expect(client.listOfflineTasks).not.toHaveBeenCalled();
+    expect(client.deleteOfflineTasks).not.toHaveBeenCalled();
+  });
+
+  it("the link-lifetime check is exact: a resolve ending AT 240 000 ms still submits, one at 240 001 ms does not", async () => {
+    for (const [end, submits] of [[240_000, 1], [240_001, 0]] as const) {
+      let clock = 0;
+      const { client, executor } = harness(
+        {
+          after: [landed(1)],
+          resolve: () => {
+            clock = end;
+            return undefined;
+          },
+        },
+        { now: () => clock },
+      );
+      await run(executor, 1);
+      expect(client.submitOffline, `resolve ending at ${end}`).toHaveBeenCalledTimes(submits);
+    }
+  });
+
+  it("when the window is gone before the FIRST file is even tried, the message says so — neither 整包太大 nor a null failure", async () => {
+    // Every clock read is 1 ms later: the batch starts at 0 and the first window check
+    // (after the BEFORE listing) already reads 1 > a zero window.
+    let clock = 0;
+    const { executor, log } = harness({}, { now: () => clock++, subtitleSubmitWindowMs: 0 });
+
+    const attempts = await run(executor, 2);
+
+    expect(log.filter((entry) => entry.startsWith("resolve:"))).toEqual([]);
+    for (const a of attempts) {
+      expect(a.providerMessage).toBe("SUBTITLE_NOT_SUBMITTED: 字幕直链约 5 分钟过期,开始提交前有效期已过;本文件未尝试");
+    }
+  });
+
+  it("when the window runs out with NOTHING submitted, the message says so and carries the last real failure instead of 整包太大", async () => {
+    let clock = 0;
+    const { executor } = harness(
+      {
+        resolve: () => {
+          clock += 60_000; // each try times out after 60 s
+          throw new Error("PAN123_OFFLINE_RESOLVE_FAILED: timeout");
+        },
+      },
+      { now: () => clock },
+    );
+
+    const attempts = await run(executor, 3);
+
+    // two files × two tries = 240 s > 210 s: the third is never tried
+    expect(attempts[2]!.providerMessage).toBe(
+      "SUBTITLE_NOT_SUBMITTED: 字幕直链约 5 分钟过期,有效期内一个文件都没提交成功(最近一次失败: PAN123_OFFLINE_RESOLVE_FAILED: timeout);本文件未尝试",
+    );
+  });
+
+  it("task status 1 → failed with a FIXED template (never the uploader-controlled task.name); nothing to claim; the task is still deleted", async () => {
+    const { executor, log } = harness({ poll: (ids) => ids.map((id) => row(id, 1, 37, "云下载配额不足 VIP会员 登录")) });
+
+    const [a] = await run(executor, 1);
+
+    expect(a).toMatchObject({
+      status: "failed",
+      providerMessage: "PAN123_OFFLINE_FAILED: offline task failed at progress=37",
+      materializedFileIds: [],
+    });
+    expect(a!.providerMessage).not.toContain("VIP");
+    expect(log).not.toContain("list:claim");
+    expect(log.at(-1)).toBe("delete:task-1");
+  });
+
+  it("later poll rounds ask only for tasks not yet terminal (status 0/3 keep waiting) and sleep only BETWEEN rounds", async () => {
+    const { executor, log } = harness(
+      {
+        after: [landed(1), landed(2)],
+        poll: (ids, call) => (call === 1 ? [row("task-1", 2), row("task-2", 3)] : ids.map((id) => row(id, 2))),
+      },
+      { subtitleTaskPollIntervalMs: 7 },
+    );
+
+    const attempts = await run(executor, 2);
+
+    expect(log.slice(log.indexOf("submit:res-2") + 1)).toEqual([
+      "poll:task-1,task-2",
+      "sleep:7",
+      "poll:task-2",
+      "list:claim",
+      "delete:task-1,task-2",
+    ]);
+    expect(attempts.map((a) => a.status)).toEqual(["succeeded", "succeeded"]);
+  });
+
+  it("poll window exhausted at status 0: the file that IS in the directory succeeds (the directory is the truth), the absent one is no_target_change", async () => {
+    const { client, executor, sleep, log } = harness(
+      { after: [landed(1)], poll: (ids) => ids.map((id) => row(id, 0, 10)) },
+      { subtitleTaskPollMaxPolls: 3, subtitleTaskPollIntervalMs: 7 },
+    );
+
+    const attempts = await run(executor, 2);
+
+    expect(attempts[0]).toMatchObject({ status: "succeeded", materializedFileIds: ["L1"], providerMessage: "" });
+    expect(attempts[1]).toMatchObject({
+      status: "no_target_change",
+      providerMessage: "SUBTITLE_NOT_LANDED: 离线任务在轮询窗口内未落盘(已放弃等待)",
+      materializedFileIds: [],
+    });
+    expect(client.listOfflineTasks).toHaveBeenCalledTimes(3);
+    expect(sleep.mock.calls.filter(([ms]) => ms === 7)).toHaveLength(2);
+    expect(log.at(-1)).toBe("delete:task-1,task-2");
+  });
+
+  it("a task never seen in task/list still succeeds when its file is in the directory", async () => {
+    const { client, executor } = harness({ after: [landed(1)], poll: () => [] });
+
+    const [a] = await run(executor, 1);
+
+    expect(a).toMatchObject({ status: "succeeded", materializedFileIds: ["L1"] });
+    expect(client.listOfflineTasks).toHaveBeenCalledTimes(3); // never terminal → the whole window
+  });
+
+  it("status 2 but the file is not in the directory → no_target_change (the task row is not the truth)", async () => {
+    const { executor } = harness({ after: [] });
+
+    const [a] = await run(executor, 1);
+
+    expect(a).toMatchObject({
+      status: "no_target_change",
+      providerMessage: "SUBTITLE_NOT_LANDED: 任务报告完成但文件不在目标目录",
+      materializedFileIds: [],
+    });
+  });
+
+  it("never claims a file that was there BEFORE (a stale same-named leftover cannot fake a success), but does claim a NEW same-named one", async () => {
+    const stale = file("OLD", SUB_NAME(1), 1);
+
+    const [a] = await run(harness({ before: [stale], after: [stale] }).executor, 1);
+    const [b] = await run(harness({ before: [stale], after: [stale, file("NEW", SUB_NAME(1), 1)] }).executor, 1);
+
+    expect(a).toMatchObject({ status: "no_target_change", materializedFileIds: [] });
+    expect(b).toMatchObject({ status: "succeeded", materializedFileIds: ["NEW"] });
+  });
+
+  // 123 never overwrites: re-landing a name that is already in the directory arrives as
+  // name(1).ext (真机 2026-09-21 probe 2). A rerun of a package cut short by the window
+  // hits exactly this — the file DID land, under the twin name, and must be claimed
+  // (a stale original is still never claimed: it is in the BEFORE snapshot).
+  it("claims 123's numbered twin (Show.S01E01(1).ass) when the plain name was already there BEFORE", async () => {
+    const stale = file("OLD", SUB_NAME(1), 1);
+    const { executor } = harness({ before: [stale], after: [stale, file("TWIN", "Show.S01E01(1).ass", 1)] });
+
+    const [a] = await run(executor, 1);
+
+    // The attempt names what REALLY landed: the agent reads it back, and "Show.S01E01.ass"
+    // (the stale one) is not what this batch produced.
+    expect(a).toMatchObject({ status: "succeeded", materializedFileIds: ["TWIN"], materializedNames: ["Show.S01E01(1).ass"], providerMessage: "" });
+  });
+
+  it("only 123's numbered form counts as a twin: Show.S01E01(a).ass / Show.S01E01().ass are not claimed", async () => {
+    const stale = file("OLD", SUB_NAME(1), 1);
+    for (const name of ["Show.S01E01(a).ass", "Show.S01E01().ass", "Show.S01E01 (1).ass"]) {
+      const [a] = await run(harness({ before: [stale], after: [stale, file("X", name, 1)] }).executor, 1);
+      expect(a, name).toMatchObject({ status: "no_target_change", materializedFileIds: [] });
+    }
+  });
+
+  it("an exact assrt filename outranks another task's twin match (tiers run in order across all tasks)", async () => {
+    const { executor } = harness({
+      after: [file("F", "c(1).ass", 1)],
+      resolve: (url) => ({ resourceId: url, fileIds: ["f"], resolvedName: url === "http://x/1" ? "zzz.ass" : "c.ass" }),
+    });
+
+    const attempts = await executor.transferSubtitleUrls({
+      files: [
+        { url: "http://x/1", filename: "c(1).ass" }, // exact assrt filename match
+        { url: "http://x/2", filename: "other.ass" }, // lands as c.ass → its twin is c(1).ass
+      ],
+      directoryId: SCOPE,
+      workflowRunId: "run-1",
+    });
+
+    expect(attempts.map((a) => a.status)).toEqual(["succeeded", "no_target_change"]);
+    expect(attempts[0]!.materializedFileIds).toEqual(["F"]);
+  });
+
+  it("a twin claim never crosses stems: Show.S01E01(1).ass is not claimed for Show.S01E02.ass", async () => {
+    const { executor } = harness({ after: [file("TWIN", "Show.S01E01(1).ass", 1)] });
+
+    const attempts = await executor.transferSubtitleUrls({
+      files: [{ url: SUB_URL(2), filename: SUB_NAME(2) }],
+      directoryId: SCOPE,
+      workflowRunId: "run-1",
+    });
+
+    expect(attempts[0]).toMatchObject({ status: "no_target_change", materializedFileIds: [] });
+  });
+
+  it("exact names are claimed before any fallback: a task's filename fallback cannot take another task's exact landing name", async () => {
+    const { executor } = harness({
+      after: [file("Y", "y.ass", 1)],
+      resolve: (url) => ({ resourceId: url, fileIds: ["f"], resolvedName: url === "http://x/1" ? "x.ass" : "y.ass" }),
+    });
+
+    const attempts = await executor.transferSubtitleUrls({
+      files: [
+        { url: "http://x/1", filename: "y.ass" }, // lands as x.ass; its assrt name is y.ass
+        { url: "http://x/2", filename: "z.ass" }, // lands as y.ass
+      ],
+      directoryId: SCOPE,
+      workflowRunId: "run-1",
+    });
+
+    expect(attempts.map((a) => a.status)).toEqual(["no_target_change", "succeeded"]);
+    expect(attempts[1]!.materializedFileIds).toEqual(["Y"]);
+  });
+
+  it("claims ONE-TO-ONE: two package files resolving to the same landing name cannot both claim the single new file", async () => {
+    const { executor } = harness({
+      after: [file("N1", "Show.ass", 1)],
+      resolve: (url) => ({ resourceId: url, fileIds: ["f"], resolvedName: "Show.ass" }),
+    });
+
+    const attempts = await executor.transferSubtitleUrls({
+      files: [
+        { url: "http://x/a", filename: "a.ass" },
+        { url: "http://x/b", filename: "b.ass" },
+      ],
+      directoryId: SCOPE,
+      workflowRunId: "run-1",
+    });
+
+    expect(attempts.map((a) => a.status)).toEqual(["succeeded", "no_target_change"]);
+    expect(attempts.flatMap((a) => a.materializedFileIds)).toEqual(["N1"]);
+  });
+
+  it("tolerates a non-auth poll error: one failed round, then a good one, still lands", async () => {
+    const { client, executor } = harness({
+      after: [landed(1)],
+      poll: (_ids, call) => {
+        if (call === 1) {
+          throw new Error("PAN123_FAILED(/offline_download/task/list): code=500");
+        }
+        return undefined;
+      },
+    });
+
+    const [a] = await run(executor, 1);
+
+    expect(a!.status).toBe("succeeded");
+    expect(client.listOfflineTasks).toHaveBeenCalledTimes(2);
+  });
+
+  it("a good poll round resets the poll-error count (2 errors, ok, 2 errors, done → 6 rounds, not stopped at 4)", async () => {
+    const { client, executor } = harness(
+      {
+        after: [landed(1)],
+        poll: (ids, call) => {
+          if ([1, 2, 4, 5].includes(call)) {
+            throw new Error("PAN123_FAILED(/offline_download/task/list): code=500");
+          }
+          return ids.map((id) => row(id, call === 3 ? 0 : 2));
+        },
+      },
+      { subtitleTaskPollMaxPolls: 8 },
+    );
+
+    const [a] = await run(executor, 1);
+
+    expect(a!.status).toBe("succeeded");
+    expect(client.listOfflineTasks).toHaveBeenCalledTimes(6);
+  });
+
+  it("stops polling after 3 consecutive non-auth poll errors WITHOUT throwing; the claim still runs and the task is still deleted", async () => {
+    const { client, executor, log } = harness(
+      {
+        after: [landed(1)],
+        poll: () => {
+          throw new Error("PAN123_FAILED(/offline_download/task/list): code=500");
+        },
+      },
+      { subtitleTaskPollMaxPolls: 8 },
+    );
+
+    const [a] = await run(executor, 1);
+
+    expect(client.listOfflineTasks).toHaveBeenCalledTimes(3);
+    expect(a).toMatchObject({ status: "succeeded", materializedFileIds: ["L1"] });
+    expect(log.at(-1)).toBe("delete:task-1");
+  });
+
+  // Files land 6–12 s after their OWN submit (真机 2026-09-22). Three quick poll errors
+  // end the poll within seconds of the last submit; claiming at once would report the
+  // tail as not landed and the cleanup would then cancel it.
+  it("after abandoning the poll it still waits out a 15 s landing grace since the LAST submit before the claim listing", async () => {
+    const clock = 1_000_000;
+    const { executor, log } = harness(
+      {
+        after: [landed(1)],
+        poll: () => {
+          throw new Error("PAN123_FAILED(/offline_download/task/list): code=500");
+        },
+      },
+      { now: () => clock, subtitleTaskPollMaxPolls: 8 },
+    );
+
+    await run(executor, 1);
+
+    expect(log.slice(-4)).toEqual(["poll:task-1", "sleep:15000", "list:claim", "delete:task-1"]);
+  });
+
+  it("the grace counts from the LAST submit, not the batch start: 6 s after it → sleeps the remaining 9 s", async () => {
+    let clock = 1_000_000;
+    const { executor, log } = harness(
+      {
+        after: [landed(1), landed(2)],
+        resolve: () => {
+          clock += 12_000; // each resolve takes 12 s → last submit at +24 s
+          return undefined;
+        },
+        poll: () => {
+          clock += 2_000; // three failed polls → +6 s after the last submit
+          throw new Error("PAN123_FAILED(/offline_download/task/list): code=500");
+        },
+      },
+      { now: () => clock, subtitleTaskPollMaxPolls: 8 },
+    );
+
+    await run(executor, 2);
+
+    expect(log.filter((entry) => entry.startsWith("sleep:") && entry !== "sleep:0")).toEqual(["sleep:9000"]);
+  });
+
+  it("a clock that steps BACK never stretches the grace past 15 s", async () => {
+    let clock = 5_000_000;
+    const { executor, log } = harness(
+      {
+        after: [landed(1)],
+        poll: (_ids, call) => {
+          if (call === 1) clock -= 3_600_000; // NTP step back by an hour
+          throw new Error("PAN123_FAILED(/offline_download/task/list): code=500");
+        },
+      },
+      { now: () => clock, subtitleTaskPollMaxPolls: 8 },
+    );
+
+    await run(executor, 1);
+
+    expect(log.filter((entry) => entry.startsWith("sleep:") && entry !== "sleep:0")).toEqual(["sleep:15000"]);
+  });
+
+  it("no extra wait when the grace has already passed while polling failed", async () => {
+    let clock = 1_000_000;
+    const { executor, log } = harness(
+      {
+        after: [landed(1)],
+        poll: () => {
+          clock += 6_000;
+          throw new Error("PAN123_FAILED(/offline_download/task/list): code=500");
+        },
+      },
+      { now: () => clock, subtitleTaskPollMaxPolls: 8 },
+    );
+
+    await run(executor, 1);
+
+    expect(log.filter((entry) => entry === "sleep:15000")).toEqual([]);
+    expect(log.slice(-3)).toEqual(["poll:task-1", "list:claim", "delete:task-1"]);
+  });
+
+  it("a non-auth failure of the claim listing marks every claimable file no_target_change with the error (no throw); a status-1 file keeps its own failure; tasks are still deleted", async () => {
+    const { executor, log } = harness({
+      poll: (ids) => ids.map((id) => row(id, id === "task-1" ? 1 : 2, 5)),
+      after: () => {
+        throw new Error("PAN123_FAILED(/b/api/file/list/new): code=500 busy");
+      },
+    });
+
+    const attempts = await run(executor, 3);
+
+    expect(attempts[0]).toMatchObject({ status: "failed", providerMessage: "PAN123_OFFLINE_FAILED: offline task failed at progress=5" });
+    for (const a of attempts.slice(1)) {
+      expect(a).toMatchObject({
+        status: "no_target_change",
+        providerMessage: "SUBTITLE_NOT_LANDED: 认领时列目录失败: PAN123_FAILED(/b/api/file/list/new): code=500 busy",
+        materializedFileIds: [],
+      });
+    }
+    expect(log.at(-1)).toBe("delete:task-1,task-2,task-3");
+  });
+
+  it("a non-auth deleteOfflineTasks failure is swallowed (a late subtitle landing is staging junk), attempts unchanged", async () => {
+    const { executor } = harness({
+      after: [landed(1)],
+      remove: () => {
+        throw new Error("PAN123_FAILED(/offline_download/task/delete): code=500");
+      },
+    });
+
+    const [a] = await run(executor, 1);
+
+    expect(a).toMatchObject({ status: "succeeded", materializedFileIds: ["L1"] });
+  });
+
+  it("Pan123AuthError from resolve is rethrown at once — never retried, never softened; nothing created, nothing deleted", async () => {
+    const { client, executor } = harness({
+      resolve: () => {
+        throw auth();
+      },
+    });
+
+    await expect(run(executor, 2)).rejects.toBeInstanceOf(Pan123AuthError);
+    expect(client.resolveOffline).toHaveBeenCalledTimes(1);
+    expect(client.deleteOfflineTasks).not.toHaveBeenCalled();
+  });
+
+  it.each<{ via: string; n: number; script: Script }>([
+    {
+      via: "a later file's resolve",
+      n: 2,
+      script: {
+        resolve: (url) => {
+          if (url === SUB_URL(2)) {
+            throw auth();
+          }
+          return undefined;
+        },
+      },
+    },
+    {
+      via: "a later file's submit",
+      n: 2,
+      script: {
+        submit: (_resourceId, call) => {
+          if (call === 2) {
+            throw auth();
+          }
+          return undefined;
+        },
+      },
+    },
+    {
+      via: "the RETRY of a later file's resolve (first try failed non-auth)",
+      n: 2,
+      script: {
+        resolve: (url, call) => {
+          if (url === SUB_URL(2)) {
+            throw call === 2 ? resolveFailure() : auth();
+          }
+          return undefined;
+        },
+      },
+    },
+    {
+      via: "the poll",
+      n: 1,
+      script: {
+        poll: () => {
+          throw auth();
+        },
+      },
+    },
+    {
+      via: "the claim listing",
+      n: 1,
+      script: {
+        after: () => {
+          throw auth();
+        },
+      },
+    },
+  ])("Pan123AuthError from $via propagates AND the task already created is still deleted", async ({ n, script }) => {
+    const { executor, log } = harness(script);
+
+    await expect(run(executor, n)).rejects.toBeInstanceOf(Pan123AuthError);
+    expect(log.at(-1)).toBe("delete:task-1");
+  });
+
+  it("Pan123AuthError from the cleanup delete itself propagates when everything else succeeded", async () => {
+    const { executor } = harness({
+      after: [landed(1)],
+      remove: () => {
+        throw auth("from delete");
+      },
+    });
+
+    const error = await run(executor, 1).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(Pan123AuthError);
+    expect((error as Error).message).toContain("from delete");
+  });
+
+  it("a cleanup-delete Pan123AuthError never masks the error the main flow already threw", async () => {
+    const { executor } = harness({
+      poll: () => {
+        throw auth("from poll");
+      },
+      remove: () => {
+        throw auth("from delete");
+      },
+    });
+
+    const error = await run(executor, 1).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(Pan123AuthError);
+    expect((error as Error).message).toContain("from poll");
+  });
+
+  it("refuses a target directory outside the write scope before any client call", async () => {
+    const { executor, log } = harness();
+
+    await expect(
+      executor.transferSubtitleUrls({ files: files(1), directoryId: "elsewhere", workflowRunId: "run-1" }),
+    ).rejects.toThrow("WRITE_SCOPE_VIOLATION");
+    expect(log).toEqual([]);
+  });
+
+  it("shares the attempt counter with transfer(): a video transfer then a subtitle batch never collide on id", async () => {
+    let n = 0;
+    // listFiles calls: video before(1), video after(2), subtitle before(3), subtitle claim(4)
+    const listFiles = vi.fn<Pan123Client["listFiles"]>(async () => (++n <= 3 ? [] : [landed(1)]));
+    const executor = makeExecutor(fakeClient({ listFiles }), [SCOPE], { ...subOpts, transferSettlePollAttempts: 1 });
+
+    const video = await executor.transfer({ workflowRunId: "run-1", directoryId: SCOPE, candidate: candidate() });
+    const [sub] = await run(executor, 1);
+
+    expect(video.id).toBe("run-1_transfer_1");
+    expect(sub).toMatchObject({ id: "run-1_subtitle_2", status: "succeeded" });
+  });
+
+  it("transferSubtitleUrl (single) delegates to the batch and returns its one attempt", async () => {
+    const { executor, log } = harness({ after: [landed(1)] });
+
+    const a = await executor.transferSubtitleUrl({ url: SUB_URL(1), filename: SUB_NAME(1), directoryId: SCOPE, workflowRunId: "run-1" });
+
+    expect(a).toMatchObject({ id: "run-1_subtitle_1", candidateId: `subtitle:${SUB_NAME(1)}`, status: "succeeded", materializedFileIds: ["L1"] });
+    expect(log).toEqual(["list:before", `resolve:${SUB_URL(1)}`, "submit:res-1", "poll:task-1", "list:claim", "delete:task-1"]);
   });
 });
 
