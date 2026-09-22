@@ -127,10 +127,10 @@ interface SubtitleTask {
  *  Tiers run across ALL tasks before the next tier starts, so one task's fallback can
  *  never take another task's exact hit: the resolved landing name, then the assrt
  *  filename, then 123's numbered twin of either (123 never overwrites — a name already
- *  in the directory lands as name(1).ext). Returns task → claimed file id. */
-function claimSubtitleLandings(tasks: SubtitleTask[], newFiles: Pan123Item[]): Map<SubtitleTask, string> {
+ *  in the directory lands as name(1).ext). Returns task → the claimed directory entry. */
+function claimSubtitleLandings(tasks: SubtitleTask[], newFiles: Pan123Item[]): Map<SubtitleTask, Pan123Item> {
   const pool = [...newFiles];
-  const claimed = new Map<SubtitleTask, string>();
+  const claimed = new Map<SubtitleTask, Pan123Item>();
   const tiers: Array<(task: SubtitleTask, name: string) => boolean> = [
     (task, name) => name === task.landingName,
     (task, name) => name === task.filename,
@@ -144,7 +144,7 @@ function claimSubtitleLandings(tasks: SubtitleTask[], newFiles: Pan123Item[]): M
       }
       const at = pool.findIndex((it) => matches(task, it.name));
       if (at >= 0) {
-        claimed.set(task, pool[at]!.id);
+        claimed.set(task, pool[at]!);
         pool.splice(at, 1);
       }
     }
@@ -573,17 +573,19 @@ export class Pan123StorageExecutor implements StorageExecutor {
         }
         const claimed =
           listing === null
-            ? new Map<SubtitleTask, string>()
+            ? new Map<SubtitleTask, Pan123Item>()
             : claimSubtitleLandings(
                 claimable,
                 listing.filter((it) => !it.isFolder && !beforeIds.has(it.id)),
               );
         for (const task of claimable) {
           const attempt = attempts[task.index]!;
-          const fileId = claimed.get(task);
-          if (fileId !== undefined) {
+          const landed = claimed.get(task);
+          if (landed !== undefined) {
             attempt.status = "succeeded";
-            attempt.materializedFileIds = [fileId];
+            attempt.materializedFileIds = [landed.id];
+            // The real name: resolvedName or 123's name(1).ext twin, not always the input.
+            attempt.materializedNames = [landed.name];
             attempt.providerMessage = "";
             continue;
           }

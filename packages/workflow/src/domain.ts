@@ -202,6 +202,11 @@ export interface TransferAttempt {
   status: TransferStatus;
   providerMessage: string;
   materializedFileIds: string[];
+  /** The names those files actually landed under, parallel to materializedFileIds —
+   *  set only by an executor that knows them and whose landing name can differ from
+   *  the requested one (123 lands a taken name as `name(1).ext`). Absent = the
+   *  requested name. */
+  materializedNames?: string[];
 }
 
 export interface VerifiedFile {

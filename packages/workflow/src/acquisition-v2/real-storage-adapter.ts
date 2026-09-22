@@ -156,6 +156,7 @@ export class RealStorageV2 implements StorageV2 {
       filename,
       status: attempt.status === "succeeded" ? "succeeded" : "failed",
       materializedFileIds: attempt.materializedFileIds,
+      ...(attempt.materializedNames?.[0] ? { landedFilename: attempt.materializedNames[0] } : {}),
       ...(attempt.providerMessage ? { providerMessage: attempt.providerMessage } : {}),
     });
     if (this.executor.transferSubtitleUrls) {

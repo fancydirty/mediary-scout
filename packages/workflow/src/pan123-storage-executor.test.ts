@@ -580,7 +580,7 @@ describe("Pan123StorageExecutor.transferSubtitleUrl(s) — 逐文件 resolve→�
 
     const [a] = await run(executor, 1);
 
-    expect(a).toMatchObject({ status: "succeeded", materializedFileIds: ["L9"] });
+    expect(a).toMatchObject({ status: "succeeded", materializedFileIds: ["L9"], materializedNames: ["Show.S01E01 (1).ass"] });
   });
 
   it("rejects path-y and duplicate filenames at the boundary with ZERO client calls for them; the valid file proceeds", async () => {
@@ -976,7 +976,9 @@ describe("Pan123StorageExecutor.transferSubtitleUrl(s) — 逐文件 resolve→�
 
     const [a] = await run(executor, 1);
 
-    expect(a).toMatchObject({ status: "succeeded", materializedFileIds: ["TWIN"], providerMessage: "" });
+    // The attempt names what REALLY landed: the agent reads it back, and "Show.S01E01.ass"
+    // (the stale one) is not what this batch produced.
+    expect(a).toMatchObject({ status: "succeeded", materializedFileIds: ["TWIN"], materializedNames: ["Show.S01E01(1).ass"], providerMessage: "" });
   });
 
   it("only 123's numbered form counts as a twin: Show.S01E01(a).ass / Show.S01E01().ass are not claimed", async () => {

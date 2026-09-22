@@ -187,6 +187,29 @@ describe("transferSubtitle", () => {
     expect(result.error).toBe("dead link"); // the failure's message surfaced
   });
 
+  it("reports the name each subtitle ACTUALLY landed under (123 lands a taken name as name(1).ext), falling back to the package filename", async () => {
+    const provider = new FakeResourceProviderV2({ results: { title: [] } });
+    const storage = new Storage115Simulator({ packs: {} });
+    const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
+    storage.transferSubtitleUrls = async (input: { files: Array<{ url: string; filename: string }>; intoDirectoryId: string }) =>
+      input.files.map((file, index) => ({
+        filename: file.filename,
+        status: "succeeded" as const,
+        materializedFileIds: [`f${index}`],
+        ...(index === 0 ? { landedFilename: "Show.S01E01(1).ass" } : {}),
+      }));
+    const sandbox = new TaskSandbox({ provider, storage, stagingDirectoryId, targetSeasonDirectoryIds: {}, need: [] });
+    const files = [
+      { filename: "Show.S01E01.ass", url: "http://x/1.ass" },
+      { filename: "Show.S01E02.ass", url: "http://x/2.ass" },
+    ];
+    await sandbox.primeSubtitleSnapshot("t", makeAssrtProvider([{ id: 9, title: "t", lang: "" }], { 9: files }));
+
+    const result = await sandbox.transferSubtitle({ candidateId: 9 });
+
+    expect(result.landedFilenames).toEqual(["Show.S01E01(1).ass", "Show.S01E02.ass"]);
+  });
+
   it("surfaces the LAST failed file's providerMessage as error (the adapter's abort message rides here)", async () => {
     const provider = new FakeResourceProviderV2({ results: { title: [] } });
     class Scripted extends Storage115Simulator {
