@@ -30,13 +30,18 @@ const DEFAULT_TRANSFER_SETTLE_POLL_ATTEMPTS = 8;
 const DEFAULT_TRANSFER_SETTLE_POLL_INTERVAL_MS = 2500;
 const OFFLINE_TASK_DELETE_MAX_ATTEMPTS = 3;
 const OFFLINE_TASK_DELETE_RETRY_DELAY_MS = 250;
-/** Consecutive subtitle files whose resolve failed (each after its one retry) after
- *  which the rest of the package is not attempted: a dead assrt mirror rejects
- *  every url the same way. */
-const SUBTITLE_MAX_CONSECUTIVE_RESOLVE_FAILURES = 3;
+/** Consecutive subtitle files that failed to get a task — resolve dead (after its one
+ *  retry) or submit refused — after which the rest of the package is not attempted:
+ *  a dead assrt mirror rejects every url the same way, and an exhausted offline
+ *  quota refuses every submit the same way. */
+const SUBTITLE_MAX_CONSECUTIVE_FAILED_FILES = 3;
 /** Consecutive non-auth task/list errors after which the subtitle poll stops early
  *  (not an error: the claim from the directory still decides every file). */
 const SUBTITLE_MAX_CONSECUTIVE_POLL_ERRORS = 3;
+/** A subtitle lands 6–12 s after its OWN submit (真机 2026-09-22). When the poll is
+ *  abandoned early, the claim listing waits until this long after the last submit,
+ *  so the tail is not reported "not landed" (and then cancelled by the cleanup). */
+const SUBTITLE_LANDING_GRACE_MS = 15_000;
 /** 个人云根目录 id — a plain non-empty id (unlike 光鸭's "" root). */
 const PAN123_ROOT_FOLDER_ID = "0";
 
@@ -78,11 +83,14 @@ export interface Pan123StorageExecutorOptions {
    *  as 115/光鸭. */
   subtitleTaskPollMaxPolls?: number;
   subtitleTaskPollIntervalMs?: number;
-  /** How long after a subtitle batch starts a file may still be SUBMITTED (default
-   *  210 000 ms); later files are not attempted. assrt download links expire ~5 min
-   *  after detail() and 123 fetches the url at SUBMIT time, not at resolve time
-   *  (真机 2026-09-22: a link was HTTP 200 at 4 min and 402 at 6 min; a url resolved
-   *  and then submitted 300 s later failed within 6 s). */
+  /** How long after a subtitle batch starts a file may still START (default
+   *  210 000 ms); a file whose turn comes later is not attempted. The check gates the
+   *  start only: a file that began inside the window may submit a little after it
+   *  (its resolve + one retry). The margin to the ~5 min link life covers that.
+   *  assrt download links expire ~5 min after detail() and 123 fetches the url at
+   *  SUBMIT time, not at resolve time (真机 2026-09-22: a link was HTTP 200 at 4 min
+   *  and 402 at 6 min; a url resolved and then submitted 300 s later failed within
+   *  6 s). */
   subtitleSubmitWindowMs?: number;
   /** Delay before the ONE retry of a failed (non-auth) subtitle resolve (default
    *  2000 ms): some err_code=3 are transient assrt 503s (assrt answers a burst of
@@ -112,6 +120,48 @@ interface SubtitleTask {
   landingName: string;
   filename: string;
   state: "waiting" | "done" | "failed";
+}
+
+/** Match landed subtitle files to the tasks that produced them, ONE-TO-ONE, from the
+ *  new files of ONE listing (the directory is the truth; the task row has no file id).
+ *  Tiers run across ALL tasks before the next tier starts, so one task's fallback can
+ *  never take another task's exact hit: the resolved landing name, then the assrt
+ *  filename, then 123's numbered twin of either (123 never overwrites — a name already
+ *  in the directory lands as name(1).ext). Returns task → claimed file id. */
+function claimSubtitleLandings(tasks: SubtitleTask[], newFiles: Pan123Item[]): Map<SubtitleTask, string> {
+  const pool = [...newFiles];
+  const claimed = new Map<SubtitleTask, string>();
+  const tiers: Array<(task: SubtitleTask, name: string) => boolean> = [
+    (task, name) => name === task.landingName,
+    (task, name) => name === task.filename,
+    (task, name) => isNumberedTwin(name, task.landingName),
+    (task, name) => isNumberedTwin(name, task.filename),
+  ];
+  for (const matches of tiers) {
+    for (const task of tasks) {
+      if (claimed.has(task)) {
+        continue;
+      }
+      const at = pool.findIndex((it) => matches(task, it.name));
+      if (at >= 0) {
+        claimed.set(task, pool[at]!.id);
+        pool.splice(at, 1);
+      }
+    }
+  }
+  return claimed;
+}
+
+/** `Show.S01E01(1).ass` is a numbered twin of `Show.S01E01.ass` (and `name(2)` of
+ *  `name`): 123's rename when the plain name is taken. */
+function isNumberedTwin(candidate: string, original: string): boolean {
+  const dot = original.lastIndexOf(".");
+  const stem = dot > 0 ? original.slice(0, dot) : original;
+  const ext = dot > 0 ? original.slice(dot) : "";
+  if (!candidate.startsWith(`${stem}(`) || !candidate.endsWith(`)${ext}`)) {
+    return false;
+  }
+  return /^\d+$/.test(candidate.slice(stem.length + 1, candidate.length - ext.length - 1));
 }
 
 export class Pan123StorageExecutor implements StorageExecutor {
@@ -324,10 +374,12 @@ export class Pan123StorageExecutor implements StorageExecutor {
    *  Guards: a file not reached within `subtitleSubmitWindowMs` of the batch start is
    *  not attempted (its link would be dead by submit time); a non-auth resolve
    *  failure is retried once after `subtitleResolveRetryDelayMs` (some err_code=3
-   *  are transient assrt 503s); 3 consecutive files failing to resolve abort the rest
-   *  (a dead mirror rejects every url the same way). Non-auth poll / claim-listing
-   *  errors are tolerated; a Pan123AuthError always propagates, and the created
-   *  tasks are deleted either way.
+   *  are transient assrt 503s); 3 consecutive files that got no task (resolve dead or
+   *  submit refused) abort the rest — a dead mirror, an exhausted offline quota. Non-
+   *  auth poll / claim-listing errors are tolerated (an abandoned poll still waits
+   *  out a landing grace before the claim); a Pan123AuthError always propagates, and
+   *  the created tasks are deleted either way. 123 never overwrites: a name already
+   *  in the directory lands as name(1).ext, which the claim accepts as a fallback.
    *  Still true from 真机 2026-09-21: ONE url per resolve; resolve reports the
    *  landing `name`; the task row carries NO file id; the file lands directly in
    *  upload_dir (no wrapper); deleting a finished task keeps the file.
@@ -383,8 +435,20 @@ export class Pan123StorageExecutor implements StorageExecutor {
     let mainFlowCompleted = false;
     try {
       // Per-file pipeline, in input order: resolve (one retry) → submit at once.
-      let consecutiveResolveFailures = 0;
+      // ONE counter for files that got no task, whichever step refused them; only a
+      // created task resets it (a resolve that succeeds into a refused submit does not).
+      let consecutiveFailedFiles = 0;
+      let lastFailure: string | null = null;
       let abortReason: string | null = null;
+      let lastSubmitAt = batchStart;
+      const failFile = (attempt: TransferAttempt, message: string) => {
+        attempt.providerMessage = message;
+        lastFailure = message;
+        consecutiveFailedFiles += 1;
+        if (consecutiveFailedFiles >= SUBTITLE_MAX_CONSECUTIVE_FAILED_FILES) {
+          abortReason = `aborted after ${SUBTITLE_MAX_CONSECUTIVE_FAILED_FILES} consecutive files failed to submit (last: ${message})`;
+        }
+      };
       for (const [index, file] of pending) {
         const attempt = attempts[index]!;
         if (abortReason !== null) {
@@ -392,7 +456,13 @@ export class Pan123StorageExecutor implements StorageExecutor {
           continue;
         }
         if (this.now() - batchStart > this.subtitleSubmitWindowMs) {
-          attempt.providerMessage = `SUBTITLE_NOT_SUBMITTED: 字幕直链约 5 分钟过期,整包太大,有效期内只提交了前 ${tasks.length} 个;本文件未尝试`;
+          // "Package too big" only holds when something WAS submitted; with nothing
+          // submitted the window ran out on slow failures, and the last one is the
+          // actionable fact.
+          attempt.providerMessage =
+            tasks.length === 0 && lastFailure !== null
+              ? `SUBTITLE_NOT_SUBMITTED: 字幕直链约 5 分钟过期,有效期内一个文件都没提交成功(最近一次失败: ${lastFailure});本文件未尝试`
+              : `SUBTITLE_NOT_SUBMITTED: 字幕直链约 5 分钟过期,整包太大,有效期内只提交了前 ${tasks.length} 个;本文件未尝试`;
           continue;
         }
         let resource: Pan123OfflineResource;
@@ -402,21 +472,17 @@ export class Pan123StorageExecutor implements StorageExecutor {
           if (isPan123AuthError(error)) {
             throw error;
           }
-          const message = errorMessageOf(error);
-          attempt.providerMessage = message;
-          consecutiveResolveFailures += 1;
-          if (consecutiveResolveFailures >= SUBTITLE_MAX_CONSECUTIVE_RESOLVE_FAILURES) {
-            abortReason = `aborted after ${SUBTITLE_MAX_CONSECUTIVE_RESOLVE_FAILURES} consecutive resolve failures (last: ${message})`;
-          }
+          failFile(attempt, errorMessageOf(error));
           continue;
         }
-        consecutiveResolveFailures = 0;
         try {
           const taskId = await this.client.submitOffline({
             resourceId: resource.resourceId,
             fileIds: resource.fileIds,
             uploadDirId: safe,
           });
+          lastSubmitAt = this.now();
+          consecutiveFailedFiles = 0;
           tasks.push({
             index,
             taskId,
@@ -429,9 +495,10 @@ export class Pan123StorageExecutor implements StorageExecutor {
             throw error;
           }
           const message = errorMessageOf(error);
-          attempt.providerMessage = message.startsWith("PAN123_OFFLINE_SUBMIT_FAILED:")
-            ? message
-            : `PAN123_OFFLINE_SUBMIT_FAILED: ${message}`;
+          failFile(
+            attempt,
+            message.startsWith("PAN123_OFFLINE_SUBMIT_FAILED:") ? message : `PAN123_OFFLINE_SUBMIT_FAILED: ${message}`,
+          );
         }
       }
 
@@ -441,6 +508,7 @@ export class Pan123StorageExecutor implements StorageExecutor {
       // 0/3/absent = keep waiting. A non-auth poll error is tolerated; 3 in a row
       // stop the poll early.
       let consecutivePollErrors = 0;
+      let pollAbandoned = false;
       for (let round = 0; round < this.subtitleTaskPollMaxPolls; round++) {
         const waiting = new Map(tasks.filter((t) => t.state === "waiting").map((t) => [t.taskId, t]));
         if (waiting.size === 0) {
@@ -458,6 +526,7 @@ export class Pan123StorageExecutor implements StorageExecutor {
           }
           consecutivePollErrors += 1;
           if (consecutivePollErrors >= SUBTITLE_MAX_CONSECUTIVE_POLL_ERRORS) {
+            pollAbandoned = true;
             break;
           }
           continue;
@@ -478,10 +547,14 @@ export class Pan123StorageExecutor implements StorageExecutor {
       }
 
       // Claim from ONE listing — the task row has no file id, and a task still
-      // waiting (or never seen in task/list) may well have landed. New files only
-      // (not in the BEFORE snapshot), ONE-TO-ONE in input order: the resolved
-      // landing name first, then the assrt filename.
+      // waiting (or never seen in task/list) may well have landed.
       const claimable = tasks.filter((t) => t.state !== "failed");
+      if (pollAbandoned && claimable.length > 0) {
+        const wait = SUBTITLE_LANDING_GRACE_MS - (this.now() - lastSubmitAt);
+        if (wait > 0) {
+          await this.sleep(wait);
+        }
+      }
       if (claimable.length > 0) {
         let listing: Pan123Item[] | null = null;
         let listingError = "";
@@ -493,29 +566,29 @@ export class Pan123StorageExecutor implements StorageExecutor {
           }
           listingError = errorMessageOf(error);
         }
-        const pool = (listing ?? []).filter((it) => !it.isFolder && !beforeIds.has(it.id));
+        const claimed =
+          listing === null
+            ? new Map<SubtitleTask, string>()
+            : claimSubtitleLandings(
+                claimable,
+                listing.filter((it) => !it.isFolder && !beforeIds.has(it.id)),
+              );
         for (const task of claimable) {
           const attempt = attempts[task.index]!;
-          attempt.status = "no_target_change";
-          if (listing === null) {
-            attempt.providerMessage = `SUBTITLE_NOT_LANDED: 认领时列目录失败: ${listingError}`;
+          const fileId = claimed.get(task);
+          if (fileId !== undefined) {
+            attempt.status = "succeeded";
+            attempt.materializedFileIds = [fileId];
+            attempt.providerMessage = "";
             continue;
           }
-          let at = pool.findIndex((it) => it.name === task.landingName);
-          if (at < 0) {
-            at = pool.findIndex((it) => it.name === task.filename);
-          }
-          if (at >= 0) {
-            attempt.status = "succeeded";
-            attempt.materializedFileIds = [pool[at]!.id];
-            attempt.providerMessage = "";
-            pool.splice(at, 1);
-          } else {
-            attempt.providerMessage =
-              task.state === "done"
+          attempt.status = "no_target_change";
+          attempt.providerMessage =
+            listing === null
+              ? `SUBTITLE_NOT_LANDED: 认领时列目录失败: ${listingError}`
+              : task.state === "done"
                 ? "SUBTITLE_NOT_LANDED: 任务报告完成但文件不在目标目录"
-                : "SUBTITLE_NOT_LANDED: 离线任务在轮询窗口内未落盘(任务已删除,不会再落)";
-          }
+                : "SUBTITLE_NOT_LANDED: 离线任务在轮询窗口内未落盘(已放弃等待)";
         }
       }
       mainFlowCompleted = true;

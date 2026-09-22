@@ -700,7 +700,7 @@ describe("Pan123StorageExecutor.transferSubtitleUrl(s) — 逐文件 resolve→�
       expect(a).toMatchObject({
         status: "failed",
         providerMessage:
-          "SUBTITLE_NOT_SUBMITTED: aborted after 3 consecutive resolve failures (last: PAN123_OFFLINE_RESOLVE_FAILED: 解析失败 (err_code=3))",
+          "SUBTITLE_NOT_SUBMITTED: aborted after 3 consecutive files failed to submit (last: PAN123_OFFLINE_RESOLVE_FAILED: 解析失败 (err_code=3))",
       });
     }
     expect(client.submitOffline).not.toHaveBeenCalled();
@@ -725,6 +725,54 @@ describe("Pan123StorageExecutor.transferSubtitleUrl(s) — 逐文件 resolve→�
 
     expect(attempts.map((a) => a.status)).toEqual(["failed", "failed", "succeeded", "failed", "failed", "succeeded"]);
     expect(client.resolveOffline).toHaveBeenCalledTimes(10);
+  });
+
+  // A non-member's offline quota is tiny (the settings copy says so): once it is gone,
+  // EVERY submit fails. Without this abort the batch spent the whole 210 s window
+  // resolving and submitting into a wall, and the agent was told "package too big".
+  it("aborts after 3 consecutive SUBMIT failures too (quota gone): no further resolves, and the real cause reaches the agent via last:", async () => {
+    const quota = "PAN123_OFFLINE_SUBMIT_FAILED: 云下载配额不足，请升级VIP (err_code=41006)";
+    const { client, executor } = harness({
+      submit: () => {
+        throw new Error(quota);
+      },
+    });
+
+    const attempts = await run(executor, 6);
+
+    expect(client.resolveOffline).toHaveBeenCalledTimes(3);
+    expect(client.submitOffline).toHaveBeenCalledTimes(3);
+    expect(attempts.slice(0, 3).map((a) => a.providerMessage)).toEqual([quota, quota, quota]);
+    for (const a of attempts.slice(3)) {
+      expect(a).toMatchObject({
+        status: "failed",
+        providerMessage: `SUBTITLE_NOT_SUBMITTED: aborted after 3 consecutive files failed to submit (last: ${quota})`,
+      });
+    }
+    expect(client.listOfflineTasks).not.toHaveBeenCalled();
+    expect(client.deleteOfflineTasks).not.toHaveBeenCalled();
+  });
+
+  it("ONE counter for files that never got a task: resolve-dead, submit-refused, resolve-dead in a row abort; a resolve that succeeds does NOT reset it, only a created task does", async () => {
+    const { client, executor } = harness({
+      resolve: (url) => {
+        if (url === SUB_URL(1) || url === SUB_URL(3)) {
+          throw resolveFailure();
+        }
+        return undefined;
+      },
+      submit: () => {
+        throw new Error("PAN123_OFFLINE_SUBMIT_FAILED: 云下载配额不足 (err_code=41006)");
+      },
+    });
+
+    const attempts = await run(executor, 5);
+
+    expect(client.submitOffline).toHaveBeenCalledTimes(1); // file 2 only
+    expect(attempts.slice(3).map((a) => a.providerMessage)).toEqual([
+      "SUBTITLE_NOT_SUBMITTED: aborted after 3 consecutive files failed to submit (last: PAN123_OFFLINE_RESOLVE_FAILED: 解析失败 (err_code=3))",
+      "SUBTITLE_NOT_SUBMITTED: aborted after 3 consecutive files failed to submit (last: PAN123_OFFLINE_RESOLVE_FAILED: 解析失败 (err_code=3))",
+    ]);
   });
 
   it("a submit failure fails that file with PAN123_OFFLINE_SUBMIT_FAILED (never doubled when the client already says so); the siblings are polled and land", async () => {
@@ -774,23 +822,48 @@ describe("Pan123StorageExecutor.transferSubtitleUrl(s) — 逐文件 resolve→�
     expect(log.filter((entry) => entry.startsWith("resolve:"))).toEqual([1, 2, 3].map((i) => `resolve:${SUB_URL(i)}`));
   });
 
-  it("defaults subtitleSubmitWindowMs to 210 s (live 2026-09-22: links alive at 4 min, dead at 6 min)", async () => {
+  it("defaults subtitleSubmitWindowMs to exactly 210 s (live 2026-09-22: links alive at 4 min, dead at 6 min); a file starting AT 210 000 ms is still tried, one at 210 001 ms is not", async () => {
     let clock = 0;
+    const steps = [210_000, 1];
     const { executor, log } = harness(
       {
-        resolve: () => {
-          clock += 100_000;
+        resolve: (_url, call) => {
+          clock += steps[call - 1] ?? 0;
           return undefined;
         },
       },
       { now: () => clock },
     );
 
-    const attempts = await run(executor, 4);
+    const attempts = await run(executor, 3);
 
-    // files start at 0 / 100 / 200 s; the 4th would start at 300 s — past 210 s
-    expect(log.filter((entry) => entry.startsWith("resolve:"))).toHaveLength(3);
-    expect(attempts[3]!.providerMessage).toMatch(/^SUBTITLE_NOT_SUBMITTED: 字幕直链约 5 分钟过期/);
+    expect(log.filter((entry) => entry.startsWith("resolve:"))).toEqual([1, 2].map((i) => `resolve:${SUB_URL(i)}`));
+    expect(attempts[2]!.providerMessage).toBe(
+      "SUBTITLE_NOT_SUBMITTED: 字幕直链约 5 分钟过期,整包太大,有效期内只提交了前 2 个;本文件未尝试",
+    );
+  });
+
+  // "Package too big" is only true when something WAS submitted. With nothing submitted
+  // the window ran out on slow failures (e.g. resolves timing out twice each), and the
+  // last one's text is the only actionable fact.
+  it("when the window runs out with NOTHING submitted, the message says so and carries the last real failure instead of 整包太大", async () => {
+    let clock = 0;
+    const { executor } = harness(
+      {
+        resolve: () => {
+          clock += 60_000; // each try times out after 60 s
+          throw new Error("PAN123_OFFLINE_RESOLVE_FAILED: timeout");
+        },
+      },
+      { now: () => clock },
+    );
+
+    const attempts = await run(executor, 3);
+
+    // two files × two tries = 240 s > 210 s: the third is never tried
+    expect(attempts[2]!.providerMessage).toBe(
+      "SUBTITLE_NOT_SUBMITTED: 字幕直链约 5 分钟过期,有效期内一个文件都没提交成功(最近一次失败: PAN123_OFFLINE_RESOLVE_FAILED: timeout);本文件未尝试",
+    );
   });
 
   it("task status 1 → failed with a FIXED template (never the uploader-controlled task.name); nothing to claim; the task is still deleted", async () => {
@@ -840,7 +913,7 @@ describe("Pan123StorageExecutor.transferSubtitleUrl(s) — 逐文件 resolve→�
     expect(attempts[0]).toMatchObject({ status: "succeeded", materializedFileIds: ["L1"], providerMessage: "" });
     expect(attempts[1]).toMatchObject({
       status: "no_target_change",
-      providerMessage: "SUBTITLE_NOT_LANDED: 离线任务在轮询窗口内未落盘(任务已删除,不会再落)",
+      providerMessage: "SUBTITLE_NOT_LANDED: 离线任务在轮询窗口内未落盘(已放弃等待)",
       materializedFileIds: [],
     });
     expect(client.listOfflineTasks).toHaveBeenCalledTimes(3);
@@ -877,6 +950,50 @@ describe("Pan123StorageExecutor.transferSubtitleUrl(s) — 逐文件 resolve→�
 
     expect(a).toMatchObject({ status: "no_target_change", materializedFileIds: [] });
     expect(b).toMatchObject({ status: "succeeded", materializedFileIds: ["NEW"] });
+  });
+
+  // 123 never overwrites: re-landing a name that is already in the directory arrives as
+  // name(1).ext (真机 2026-09-21 probe 2). A rerun of a package cut short by the window
+  // hits exactly this — the file DID land, under the twin name, and must be claimed
+  // (a stale original is still never claimed: it is in the BEFORE snapshot).
+  it("claims 123's numbered twin (Show.S01E01(1).ass) when the plain name was already there BEFORE", async () => {
+    const stale = file("OLD", SUB_NAME(1), 1);
+    const { executor } = harness({ before: [stale], after: [stale, file("TWIN", "Show.S01E01(1).ass", 1)] });
+
+    const [a] = await run(executor, 1);
+
+    expect(a).toMatchObject({ status: "succeeded", materializedFileIds: ["TWIN"], providerMessage: "" });
+  });
+
+  it("a twin claim never crosses stems: Show.S01E01(1).ass is not claimed for Show.S01E02.ass", async () => {
+    const { executor } = harness({ after: [file("TWIN", "Show.S01E01(1).ass", 1)] });
+
+    const attempts = await executor.transferSubtitleUrls({
+      files: [{ url: SUB_URL(2), filename: SUB_NAME(2) }],
+      directoryId: SCOPE,
+      workflowRunId: "run-1",
+    });
+
+    expect(attempts[0]).toMatchObject({ status: "no_target_change", materializedFileIds: [] });
+  });
+
+  it("exact names are claimed before any fallback: a task's filename fallback cannot take another task's exact landing name", async () => {
+    const { executor } = harness({
+      after: [file("Y", "y.ass", 1)],
+      resolve: (url) => ({ resourceId: url, fileIds: ["f"], resolvedName: url === "http://x/1" ? "x.ass" : "y.ass" }),
+    });
+
+    const attempts = await executor.transferSubtitleUrls({
+      files: [
+        { url: "http://x/1", filename: "y.ass" }, // lands as x.ass; its assrt name is y.ass
+        { url: "http://x/2", filename: "z.ass" }, // lands as y.ass
+      ],
+      directoryId: SCOPE,
+      workflowRunId: "run-1",
+    });
+
+    expect(attempts.map((a) => a.status)).toEqual(["no_target_change", "succeeded"]);
+    expect(attempts[1]!.materializedFileIds).toEqual(["Y"]);
   });
 
   it("claims ONE-TO-ONE: two package files resolving to the same landing name cannot both claim the single new file", async () => {
@@ -953,6 +1070,45 @@ describe("Pan123StorageExecutor.transferSubtitleUrl(s) — 逐文件 resolve→�
     expect(log.at(-1)).toBe("delete:task-1");
   });
 
+  // Files land 6–12 s after their OWN submit (真机 2026-09-22). Three quick poll errors
+  // end the poll within seconds of the last submit; claiming at once would report the
+  // tail as not landed and the cleanup would then cancel it.
+  it("after abandoning the poll it still waits out a 15 s landing grace since the LAST submit before the claim listing", async () => {
+    const clock = 1_000_000;
+    const { executor, log } = harness(
+      {
+        after: [landed(1)],
+        poll: () => {
+          throw new Error("PAN123_FAILED(/offline_download/task/list): code=500");
+        },
+      },
+      { now: () => clock, subtitleTaskPollMaxPolls: 8 },
+    );
+
+    await run(executor, 1);
+
+    expect(log.slice(-4)).toEqual(["poll:task-1", "sleep:15000", "list:claim", "delete:task-1"]);
+  });
+
+  it("no extra wait when the grace has already passed while polling failed", async () => {
+    let clock = 1_000_000;
+    const { executor, log } = harness(
+      {
+        after: [landed(1)],
+        poll: () => {
+          clock += 6_000;
+          throw new Error("PAN123_FAILED(/offline_download/task/list): code=500");
+        },
+      },
+      { now: () => clock, subtitleTaskPollMaxPolls: 8 },
+    );
+
+    await run(executor, 1);
+
+    expect(log.filter((entry) => entry === "sleep:15000")).toEqual([]);
+    expect(log.slice(-3)).toEqual(["poll:task-1", "list:claim", "delete:task-1"]);
+  });
+
   it("a non-auth failure of the claim listing marks every claimable file no_target_change with the error (no throw); a status-1 file keeps its own failure; tasks are still deleted", async () => {
     const { executor, log } = harness({
       poll: (ids) => ids.map((id) => row(id, id === "task-1" ? 1 : 2, 5)),
@@ -1019,6 +1175,18 @@ describe("Pan123StorageExecutor.transferSubtitleUrl(s) — 逐文件 resolve→�
         submit: (_resourceId, call) => {
           if (call === 2) {
             throw auth();
+          }
+          return undefined;
+        },
+      },
+    },
+    {
+      via: "the RETRY of a later file's resolve (first try failed non-auth)",
+      n: 2,
+      script: {
+        resolve: (url, call) => {
+          if (url === SUB_URL(2)) {
+            throw call === 2 ? resolveFailure() : auth();
           }
           return undefined;
         },
