@@ -144,7 +144,18 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 function readCids(): Record<"A" | "B", Arm> {
   const raw = ssh(`cat ${sq(CIDS_FILE)}`);
   if (DRY) return { A: { root: "a", movies: "a", tv: "a", anime: "a" }, B: { root: "b", movies: "b", tv: "b", anime: "b" } };
-  return JSON.parse(raw) as Record<"A" | "B", Arm>;
+  const cids = JSON.parse(raw) as Record<"A" | "B", Arm>;
+  // These ids are interpolated into SQL (pointDriveAt): only 115 CIDs — digits — pass.
+  for (const arm of ["A", "B"] as const) {
+    for (const key of ["root", "movies", "tv", "anime"] as const) {
+      const value: unknown = cids?.[arm]?.[key];
+      if (typeof value !== "string" || !/^\d+$/.test(value)) {
+        console.error(`${CIDS_FILE}: ${arm}.${key} must be a numeric 115 CID`);
+        process.exit(2);
+      }
+    }
+  }
+  return cids;
 }
 
 /** Never wipe the tables while the worker is mid-run (a crashed/restarted harness could
@@ -189,6 +200,10 @@ function acquire(t: { type: "tv" | "movie"; tmdbId: number }): string {
   try { parsed = JSON.parse(out); } catch { throw new Error(`acquire returned non-JSON: ${out.slice(0, 300)}`); }
   if (parsed.status !== "requested" || !parsed.workflowRunId) {
     throw new Error(`acquire ${t.type}:${t.tmdbId} → ${parsed.status}: ${parsed.message ?? out.slice(0, 300)}`);
+  }
+  // Interpolated into every per-run SQL statement below: accept only an id-shaped value.
+  if (!/^[A-Za-z0-9_-]+$/.test(parsed.workflowRunId)) {
+    throw new Error(`acquire ${t.type}:${t.tmdbId} returned a run id that is not id-shaped; refusing to use it in SQL`);
   }
   return parsed.workflowRunId;
 }
