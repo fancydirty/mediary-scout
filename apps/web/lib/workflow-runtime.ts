@@ -545,7 +545,7 @@ export function getAccountScopedSettings(
    *  that also writes through it, a test with a swapped repo). Defaults to the
    *  process-wide one, so every existing call site is unchanged. */
   repo?: Pick<WorkflowRepository, "getAccountSetting" | "getSetting">,
-): { getSetting(key: string): Promise<string | null> } {
+): { getSetting(key: string): Promise<string | null>; getOwnSetting(key: string): Promise<string | null> } {
   const repository = repo ?? getWorkflowRepository();
   return {
     async getSetting(key: string): Promise<string | null> {
@@ -554,6 +554,12 @@ export function getAccountScopedSettings(
         return own;
       }
       return repository.getSetting(key);
+    },
+    // The account's own row only, no fallback: for the few readers that must know
+    // WHERE a value came from (getJevConfig: a URL the account chose may not carry a
+    // key the account borrowed from the instance).
+    async getOwnSetting(key: string): Promise<string | null> {
+      return repository.getAccountSetting(accountId, key);
     },
   };
 }
@@ -1200,6 +1206,14 @@ export function jevConfigFingerprint(apiKey: string, baseUrl: string): string {
   return createHash("sha256").update(`${apiKey.trim()}\n${baseUrl.trim()}`).digest("hex").slice(0, 16);
 }
 
+/** Where Jev settings are read from: a plain repository, or the account → global
+ *  facade (getAccountScopedSettings), whose getOwnSetting tells the account's own rows
+ *  apart from what it inherits. */
+export interface JevSettingsSource {
+  getSetting(key: string): Promise<string | null>;
+  getOwnSetting?(key: string): Promise<string | null>;
+}
+
 export interface JevConfig {
   apiKey: string | undefined;
   baseUrl: string;
@@ -1213,7 +1227,7 @@ export interface JevConfig {
  *  requires a successful 保存并测试 (which writes enabled/health) — an env-only
  *  deployment activates by saving the form with the key left blank. */
 export async function getJevConfig(
-  repository: { getSetting(key: string): Promise<string | null> },
+  repository: JevSettingsSource,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<JevConfig> {
   const read = async (key: string, envKey: string): Promise<string | undefined> => {
@@ -1233,11 +1247,19 @@ export async function getJevConfig(
   // the prefilter off silently.
   const probedFor = (await repository.getSetting(JEV_PROBED_FOR_SETTING_KEY))?.trim();
   const stale = Boolean(probedFor) && probedFor !== jevConfigFingerprint(apiKey ?? "", baseUrl);
+  // A URL the account chose carries the account's OWN key or nothing. With the key
+  // inherited from the instance (global row or env), an account-level URL would send
+  // the shared key to a host of the account's choosing on every search (multi-user);
+  // it reads as untested instead, so no call is ever made. 保存并测试 refuses to
+  // create this state; this covers rows it did not write.
+  const ownUrl = (await repository.getOwnSetting?.(JEV_BASE_URL_SETTING_KEY))?.trim();
+  const ownKey = (await repository.getOwnSetting?.(JEV_API_KEY_SETTING_KEY))?.trim();
+  const borrowedKeyAtOwnUrl = Boolean(ownUrl) && !ownKey;
   return {
     apiKey,
     baseUrl,
     enabled: ((await repository.getSetting(JEV_PREFILTER_ENABLED_SETTING_KEY))?.trim() ?? "") === "1",
-    health: stale ? undefined : health,
+    health: stale || borrowedKeyAtOwnUrl ? undefined : health,
   };
 }
 
@@ -1262,7 +1284,7 @@ export function isJevPrefilterActive(cfg: JevConfig): boolean {
  *  key + enabled + healthy → undefined → the orchestrator uses the bare provider
  *  (zero Jev calls, zero prompt change). */
 export async function resolveJevJudge(
-  repository: { getSetting(key: string): Promise<string | null> },
+  repository: JevSettingsSource,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<JevJudge | undefined> {
   const cfg = await getJevConfig(repository, env);

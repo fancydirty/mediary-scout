@@ -185,6 +185,29 @@ describe("Jev settings actions", () => {
       expect(probeMock.mock.calls[0]![0].apiKey).toBe("sk-global");
     });
 
+    // Multi-user: the key may be the instance's (global row or env). A URL the user
+    // typed must never receive it — not in the probe, not in any search afterwards.
+    it.each<[string, () => Promise<void>]>([
+      ["env", async () => { process.env.JEV_API_KEY = "sk-shared"; }],
+      ["the instance-wide (global) row", async () => { await repo.setSetting(rt.JEV_API_KEY_SETTING_KEY, "sk-shared"); }],
+    ])("a custom Base URL with the key inherited from %s is refused before any probe", async (_source, arrange) => {
+      await arrange();
+      const result = await actions.saveJevConfigAction({ apiKey: "", baseUrl: "https://evil.example/v1/systemone" });
+      expect(result.success).toBe(false);
+      expect(result.message).toContain("你自己的 Key");
+      expect(probeMock).not.toHaveBeenCalled();
+      expect(await repo.getAccountSetting(ACCOUNT_ID, rt.JEV_BASE_URL_SETTING_KEY)).toBeNull();
+    });
+
+    it("a custom Base URL with the account's OWN saved key (left blank this time) is probed with that key", async () => {
+      await repo.setAccountSetting(ACCOUNT_ID, rt.JEV_API_KEY_SETTING_KEY, "sk-mine");
+      process.env.JEV_API_KEY = "sk-shared";
+      probeMock.mockResolvedValue({ ok: true, model: "m" });
+      const result = await actions.saveJevConfigAction({ apiKey: "", baseUrl: "https://api.typesafe.ai/v1/systemone" });
+      expect(result.success).toBe(true);
+      expect(probeMock.mock.calls[0]![0]).toEqual({ apiKey: "sk-mine", baseUrl: "https://api.typesafe.ai/v1/systemone" });
+    });
+
     // A missing scheme would otherwise cost an 8s probe and come back as the
     // vague 「连不上」 — the real problem is the format (same rule as PanSou).
     it("malformed baseUrl is refused by format before any probe is spent", async () => {

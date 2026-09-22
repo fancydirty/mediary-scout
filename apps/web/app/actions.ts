@@ -744,6 +744,17 @@ export async function saveJevConfigAction(input: {
     const apiKey = typedKey || effective.apiKey || "";
     if (!apiKey) return { success: false, message: "需要 Jev API Key（OpenRouter 的 sk-or-… 或 TypeSafe 官方控制台的 Key 都可以）。" };
     const typedUrl = input.baseUrl.trim();
+    // 自定义地址只配**本账号自己的** Key。key 可能继承自实例(全局行或 env):允许
+    // 「只改地址」,等于让任一账号把共享 Key 发到它自己挑的服务器——探活发一次,之后
+    // 每次搜索都发(多用户)。读取端(getJevConfig)对这种状态同样视为未测、零调用。
+    const ownKey = typedKey || (await repository.getAccountSetting(accountId, JEV_API_KEY_SETTING_KEY))?.trim() || "";
+    if (typedUrl && !ownKey) {
+      return {
+        success: false,
+        message:
+          "自定义 Base URL 需要同时填你自己的 Key：当前用的是实例共享的 Jev Key，它只会发往实例配置的地址。清空 Base URL，或填上你自己的 Key 再保存。未保存。",
+      };
+    }
     // 留空的 URL 会存成 ""(=去掉 account 覆盖),保存后真正生效的是 全局 → env → 默认。
     // 探活必须打**那个**地址:沿用 effective.baseUrl 会打到即将被清掉的旧覆盖,
     // 于是一个从没测过的端点被记成 healthy + enabled。
@@ -755,9 +766,12 @@ export async function saveJevConfigAction(input: {
         })
       ).baseUrl;
     // 先跑便宜的格式校验:漏写 scheme 的地址否则要耗满 8s 探活,再换回一句
-    // 含糊的「连不上」,而真正的问题是格式(与 PanSou 同一条规则)。
-    const format = validateJevBaseUrlFormat(baseUrl);
-    if (!format.ok) return { success: false, message: format.message };
+    // 含糊的「连不上」,而真正的问题是格式(与 PanSou 同一条规则)。只校验用户这次
+    // 输入的地址:继承来的(全局/env)是运营方的配置,不拿 http 规则去拦它。
+    if (typedUrl) {
+      const format = validateJevBaseUrlFormat(typedUrl);
+      if (!format.ok) return { success: false, message: format.message };
+    }
     // 存之前真打一次:一个打不通的 key 被保存后,预筛会在每次搜索上静默 fail-open,
     // 用户以为开了其实从没生效 —— 与 PanSou 自建源「活了 6 天」是同一种病。
     const probe = await probeJev({ apiKey, baseUrl });

@@ -149,6 +149,28 @@ describe("validateJevBaseUrlFormat", () => {
     expect(validateJevBaseUrlFormat("ftp://x")).toMatchObject({ ok: false });
   });
 
+  // The key rides in the Authorization header: over a remote http:// it would cross
+  // the internet in clear. http:// stays available for this machine and the LAN (a
+  // relay in the same compose stack, a box on 192.168.x).
+  it("http:// only for this machine or the LAN", () => {
+    for (const url of ["http://evil.example.com/v1/systemone", "http://8.8.8.8/x", "http://172.32.0.1/x"]) {
+      expect(validateJevBaseUrlFormat(url), url).toMatchObject({ ok: false });
+    }
+    for (const url of [
+      "http://localhost:8080/x",
+      "http://127.0.0.1/x",
+      "http://[::1]:8080/x",
+      "http://10.0.0.5/x",
+      "http://172.20.0.3/x",
+      "http://192.168.1.10:8080/v1/systemone",
+      "http://jev-relay:8080/x",
+      "http://nas.local/x",
+    ]) {
+      expect(validateJevBaseUrlFormat(url), url).toEqual({ ok: true });
+    }
+    expect(validateJevBaseUrlFormat("https://any.example.com/v1/systemone")).toEqual({ ok: true });
+  });
+
   it("accepts http/https (whitespace tolerated, same as the probe)", () => {
     expect(validateJevBaseUrlFormat("https://openrouter.ai/api/alpha/decisions")).toEqual({ ok: true });
     expect(validateJevBaseUrlFormat("  http://localhost:8080/v1/systemone  ")).toEqual({ ok: true });

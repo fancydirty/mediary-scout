@@ -84,9 +84,36 @@ export async function probeJev(
 }
 
 /** 保存前的便宜格式校验（同 pansou-probe.validatePanSouBaseUrlFormat）。少了它，
- *  一个漏写 scheme 的地址要先花 8s 探活，再拿到含糊的「连不上」，而真正的问题是格式。 */
+ *  一个漏写 scheme 的地址要先花 8s 探活，再拿到含糊的「连不上」，而真正的问题是格式。
+ *  Key 放在 Authorization 头里：远程的 http:// 会让它明文穿过公网，所以 http:// 只留给
+ *  本机和局域网（同一 compose 里的中转、192.168.x 上的机器）。 */
 export function validateJevBaseUrlFormat(url: string): { ok: true } | { ok: false; message: string } {
-  return /^https?:\/\//.test(url.trim())
-    ? { ok: true }
-    : { ok: false, message: "Base URL 必须以 http:// 或 https:// 开头，未保存。" };
+  const trimmed = url.trim();
+  if (/^https:\/\//i.test(trimmed)) return { ok: true };
+  if (/^http:\/\//i.test(trimmed) && isLocalHost(hostnameOf(trimmed))) return { ok: true };
+  return {
+    ok: false,
+    message: "Base URL 必须以 https:// 开头（http:// 只能用于本机或局域网地址：Key 会随请求明文发出），未保存。",
+  };
+}
+
+function hostnameOf(url: string): string {
+  try {
+    return new URL(url).hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  } catch {
+    return "";
+  }
+}
+
+/** Loopback, RFC 1918 / link-local IPv4, and names that only resolve on a LAN (a
+ *  single-label compose service name, *.local / *.lan / *.internal / *.home.arpa). */
+function isLocalHost(host: string): boolean {
+  if (host === "") return false;
+  if (host === "localhost" || host.endsWith(".localhost") || host === "::1") return true;
+  if (!host.includes(".") && !host.includes(":")) return true;
+  if (/\.(local|lan|internal|home\.arpa)$/.test(host)) return true;
+  const ipv4 = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(host);
+  if (!ipv4) return false;
+  const [a, b] = [Number(ipv4[1]), Number(ipv4[2])];
+  return a === 127 || a === 10 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31) || (a === 169 && b === 254);
 }

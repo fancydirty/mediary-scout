@@ -38,7 +38,8 @@
 //   --dry                print the remote commands instead of running them
 //   --pre-arm-remote "<cmd>"   a command run ON the host before every arm (after the instance is
 //                        idle, before the reset) — e.g. purge the 115 offline-task records the
-//                        previous arm added, so 115's "任务已存在" refusal cannot bias the next arm
+//                        previous arm added, so 115's "任务已存在" refusal cannot bias the next arm.
+//                        A failing hook STOPS the run (exit 2): an arm it did not isolate is no verdict.
 //
 // ab-cids.json (on the router, produced by the setup script):
 //   { "A": { "root": "...", "movies": "...", "tv": "...", "anime": "..." }, "B": { ... } }
@@ -236,7 +237,13 @@ for (const [index, t] of titles.entries()) {
       if (PRE_ARM_REMOTE) {
         console.log(`    pre-arm: ${PRE_ARM_REMOTE}`);
         try { const out = ssh(PRE_ARM_REMOTE); if (out) console.log(out.split("\n").map((l) => `      ${l}`).join("\n")); }
-        catch (error) { console.log(`    pre-arm hook failed (continuing): ${String((error as { stderr?: unknown }).stderr ?? error).split("\n")[0]}`); }
+        catch (error) {
+          // The hook IS the isolation the operator asked for (clearing the other arm's
+          // leftover 115 tasks — the 「任务已存在」 order effect). An arm run without it is
+          // not isolated, yet its verdict would still print as a GO/REGRESSION gate: stop.
+          console.error(`    pre-arm hook failed — stopping (rows finished so far are in ${OUT}): ${String((error as { stderr?: unknown }).stderr ?? error).split("\n")[0]}`);
+          process.exit(2);
+        }
       }
       resetTracking();
       pointDriveAt(armCids);

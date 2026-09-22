@@ -6,6 +6,7 @@ import {
   getLlmConfig,
   getPanSouBaseUrl,
   getProwlarrConfig,
+  getAccountScopedSettings,
   getJevConfig,
   getJevBaseUrlOverride,
   jevConfigFingerprint,
@@ -731,6 +732,54 @@ describe("getJevConfig", () => {
     const cfg = await getJevConfig(repoWith(null), { JEV_API_KEY: "sk-env", JEV_BASE_URL: "https://env/" } as unknown as NodeJS.ProcessEnv);
     expect(cfg.apiKey).toBe("sk-env");
     expect(cfg.baseUrl).toBe("https://env/");
+  });
+});
+
+// Multi-user: an account that sets only a Base URL would otherwise send the instance's
+// global/env key to a host of its choosing on every search. A custom URL carries the
+// account's OWN key or nothing.
+describe("getJevConfig through the account → global facade: a custom URL never carries a borrowed key", () => {
+  const repoOf = (own: Record<string, string>, global: Record<string, string>) => ({
+    getAccountSetting: async (_accountId: string, key: string) => own[key] ?? null,
+    getSetting: async (key: string) => global[key] ?? null,
+  });
+  const on = { jev_prefilter_enabled: "1", jev_health: "ok" };
+  const sharedEnv = { JEV_API_KEY: "sk-shared" } as unknown as NodeJS.ProcessEnv;
+
+  it("the facade exposes the account's own row, without fallback, as getOwnSetting", async () => {
+    const scoped = getAccountScopedSettings("acct_a", repoOf({ x: "mine" }, { x: "global", y: "g" }));
+    expect(await scoped.getOwnSetting("x")).toBe("mine");
+    expect(await scoped.getOwnSetting("y")).toBeNull();
+    expect(await scoped.getSetting("y")).toBe("g");
+  });
+
+  it("account URL override + key inherited from env → inactive, and no judge is built", async () => {
+    const scoped = getAccountScopedSettings("acct_a", repoOf({ ...on, jev_base_url: "https://evil.example/" }, {}));
+    expect(isJevPrefilterActive(await getJevConfig(scoped, sharedEnv))).toBe(false);
+    expect(await resolveJevJudge(scoped, sharedEnv)).toBeUndefined();
+  });
+
+  it("account URL override + key inherited from the instance-wide (global) row → inactive", async () => {
+    const scoped = getAccountScopedSettings(
+      "acct_a",
+      repoOf({ ...on, jev_base_url: "https://evil.example/" }, { jev_api_key: "sk-shared" }),
+    );
+    expect(isJevPrefilterActive(await getJevConfig(scoped, noEnv))).toBe(false);
+  });
+
+  it("account URL override + the account's OWN key → active", async () => {
+    const scoped = getAccountScopedSettings(
+      "acct_a",
+      repoOf({ ...on, jev_api_key: "sk-mine", jev_base_url: "https://api.typesafe.ai/v1/systemone" }, {}),
+    );
+    const cfg = await getJevConfig(scoped, sharedEnv);
+    expect(cfg.apiKey).toBe("sk-mine");
+    expect(isJevPrefilterActive(cfg)).toBe(true);
+  });
+
+  it("no account URL override + inherited key → active (the env-only / operator-configured deployment)", async () => {
+    const scoped = getAccountScopedSettings("acct_a", repoOf({ ...on }, {}));
+    expect(isJevPrefilterActive(await getJevConfig(scoped, sharedEnv))).toBe(true);
   });
 });
 
