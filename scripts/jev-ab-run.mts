@@ -22,15 +22,17 @@
 //      codes, transfer attempts, per-search prefilter summary, ⚠ flag seen in agent log
 //
 // Go/no-go per title: ON obtained set ⊇ OFF obtained set (or equal) AND ON status not
-// worse. Any regression → NO-GO (exit 1). Efficiency (steps / searches / seconds) is
-// reported, not gated.
+// worse. Any regression → NO-GO (exit 1). GO needs every title compared on BOTH arms and
+// at least one conclusive title; otherwise NO VERDICT (exit 3). Bad arguments or a failed
+// --pre-arm-remote → exit 2. Efficiency (steps / searches / seconds) is reported, not gated.
 //
 // Usage:
 //   npx tsx scripts/jev-ab-run.mts --host media-router-tunnel \
 //     --project mediary-ab --port 3301 --token-file /path/on/router/.agent-token \
 //     --cids-file /path/on/router/ab-cids.json --out /tmp/jev-ab-results.json \
 //     tv:276161 tv:289761 movie:438631 ...
-//   --arms on,off        run only these arms (default off,on)
+//   --arms on,off        run only these arms (default off,on); a single arm is exploration
+//                        only — it ends in NO VERDICT, never GO
 //   --alternate          flip the arm order on every other title (title 0 off→on, title 1 on→off, …)
 //                        so a same-115-account order effect (a magnet the first arm queued is
 //                        refused as 任务已存在 for the second arm) cannot systematically favour one arm
@@ -83,6 +85,11 @@ const TOKEN_FILE = opt("token-file");
 const CIDS_FILE = opt("cids-file");
 const OUT = opt("out", "/tmp/jev-ab-results.json");
 const ARMS = opt("arms", "off,on").split(",").map((a) => a.trim()) as Array<"off" | "on">;
+// The cast above accepts anything; a typo ("of") would run an arm no verdict ever reads.
+if (ARMS.some((a) => a !== "off" && a !== "on") || new Set(ARMS).size !== ARMS.length) {
+  console.error(`--arms must list "off" and/or "on" once each (got "${ARMS.join(",")}")`);
+  process.exit(2);
+}
 const ALTERNATE = args.includes("--alternate");
 const TIMEOUT_MIN = Number(opt("timeout-min", "30"));
 const DRY = args.includes("--dry");
@@ -284,6 +291,18 @@ for (const r of results) {
 }
 const regressions = results.filter((r) => r.verdict === "REGRESSION");
 const inconclusive = results.filter((r) => r.verdict === "INCONCLUSIVE");
+// A row without a verdict never had both arms (a single-arm --arms run): nothing was
+// compared, so it can neither pass nor fail the gate.
+const uncompared = results.filter((r) => r.verdict === undefined);
 if (regressions.length > 0) { console.log(`\nNO-GO: ${regressions.map((r) => r.title).join(", ")}`); process.exit(1); }
 if (inconclusive.length > 0) console.log(`\nINCONCLUSIVE (LLM aborted both attempts of an arm): ${inconclusive.map((r) => r.title).join(", ")}`);
-console.log(`\nGO (${results.length - inconclusive.length} conclusive, ${inconclusive.length} inconclusive)`);
+const conclusive = results.length - inconclusive.length - uncompared.length;
+if (uncompared.length > 0 || conclusive === 0) {
+  // GO is a claim that Jev was measured against the bare run. Without both arms on
+  // every title, or with no conclusive title at all, that claim has no evidence.
+  console.log(
+    `\nNO VERDICT: ${uncompared.length > 0 ? `${uncompared.map((r) => r.title).join(", ")} ran only ${ARMS.join(",")} (both arms are needed)` : "no title produced a conclusive OFF/ON comparison"}`,
+  );
+  process.exit(3);
+}
+console.log(`\nGO (${conclusive} conclusive, ${inconclusive.length} inconclusive)`);

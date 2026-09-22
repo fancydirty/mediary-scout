@@ -240,6 +240,35 @@ describe("viewResourceSnapshot renders the Jev uncertainty flag", () => {
     const doc = sandbox.viewResourceSnapshot().document;
     expect(doc).toMatch(/7 个被系统按片名预筛剔除/);
   });
+
+  // The pre-warm's count only decides the prompt POINTER, and 0 → no pointer, exactly as
+  // for a pre-warm that found nothing (the prefilter never edits the system prompt). The
+  // warning is not lost: it rides on the empty result itself. Searching the bare title is
+  // the agent's normal first move without a pointer, it is answered from the pre-warm
+  // (dedup, no provider call, no budget) and carries the same warning.
+  it("an all-dropped pre-warm adds no prompt pointer; the agent's first search of the bare title gets the empty result WITH the warning (dedup)", async () => {
+    let providerCalls = 0;
+    const sandbox = new TaskSandbox({
+      provider: {
+        async search(keyword: string): Promise<ResourceSnapshotV2> {
+          providerCalls += 1;
+          return { id: "s", keyword, candidates: [], prefilterScores: {}, prefilterDropped: 7 };
+        },
+      },
+      searchBudget: 8,
+    });
+    await sandbox.primeRawSnapshot("交锋");
+    const { candidateCount } = sandbox.viewResourceSnapshot();
+
+    expect(candidateCount).toBe(0);
+    expect(buildTvAnimeSystemPrompt({ prefetchedCandidateCount: candidateCount })).toBe(buildTvAnimeSystemPrompt({}));
+
+    const result = await sandbox.searchResources("交锋");
+    expect(result.deduped).toBe(true);
+    expect(providerCalls).toBe(1); // the pre-warm only
+    expect(result.snapshot!.candidates).toEqual([]);
+    expect(result.warnings?.some((w) => /7 个被系统按片名预筛剔除/.test(w))).toBe(true);
+  });
 });
 
 /** The production chain, no hand-stamped V2 fields: a domain ResourceProvider →
