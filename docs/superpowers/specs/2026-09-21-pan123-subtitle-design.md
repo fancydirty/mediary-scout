@@ -116,6 +116,7 @@ orchestrator 门控、skill 文本（SUBTITLE 节品牌无关；123 的 dead-lin
    - 若已中止 → `failed` `SUBTITLE_NOT_SUBMITTED: <中止原因>`；
    - 若距批次开始已超过 `subtitleSubmitWindowMs`（默认 210 000，直链约 5 分钟有效，留余量；只拦**开始**，已开始的文件的 resolve+重试可略超窗口，余量覆盖）→ `failed` `SUBTITLE_NOT_SUBMITTED: 字幕直链约 5 分钟过期,整包太大,有效期内只提交了前 K 个;本文件未尝试`；K=0 且有过失败时改为 `…有效期内一个文件都没提交成功(最近一次失败: <原文>);本文件未尝试`（「整包太大」此时不成立，最近一次失败才是可行动的事实）；K=0 且一个文件都没来得及尝试（准备步骤就超了窗口）时为 `…开始提交前有效期已过;本文件未尝试`；
    - `resolveOffline(url)`；非鉴权失败 → `sleep(subtitleResolveRetryDelayMs=2000)` 后**重试一次**；仍失败 → 该文件 `failed`（provider 原文）；
+   - 提交前再核一次：距批次开始已超过 `subtitleLinkLifetimeMs`（默认 240 000，直链被观测到仍存活的最长时间）→ 不提交，`failed` `SUBTITLE_NOT_SUBMITTED: 字幕直链约 5 分钟过期,本文件解析完成时已超过 240 秒,提交也会落空;本文件未提交`（窗口只拦开始，两次 60 s 超时的 resolve 可能跨过直链寿命）；
    - 立即 `submitOffline({resourceId, fileIds, uploadDirId})`（单资源，磁力路径与探针 8 都验证过）；非鉴权失败 → `failed` `PAN123_OFFLINE_SUBMIT_FAILED: …`（client 消息已带此前缀时不重复加）；成功 → 记下 task。
    - **一个计数器管「没拿到任务的文件」**：resolve 死或 submit 被拒都 +1，满 3 → 中止（`aborted after 3 consecutive files failed to submit (last: …)`）；只有**建成任务**才清零（resolve 成功但 submit 被拒不清零）。审查补：非会员离线配额耗尽时每个 submit 都被拒，只数 resolve 失败的话整包会空跑满 210 s，agent 还被告知「整包太大」。
 6. **统一轮询**：`listOfflineTasks(未终态 taskIds)` 每轮 1 次，最多 `subtitleTaskPollMaxPolls` 轮、轮间 `sleep(subtitleTaskPollIntervalMs)`；status 2 → 待认领；status 1 → `failed` 固定文案 `PAN123_OFFLINE_FAILED: offline task failed at progress=N`（绝不插 task.name）；0/3/没找到 → 继续等。非鉴权轮询错误**容忍**：连续 3 次才停止轮询（不抛）。全部终态即停。轮询因错误提前放弃时，认领前补等到「最后一次 submit 后 15 s」（最多 15 s，墙钟回拨也不会放大）（每个文件在自己 submit 后 6–12 s 落盘；不补等的话尾巴会被判未落、随后被清理取消）。

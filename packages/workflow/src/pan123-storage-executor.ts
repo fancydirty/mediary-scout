@@ -85,13 +85,19 @@ export interface Pan123StorageExecutorOptions {
   subtitleTaskPollIntervalMs?: number;
   /** How long after a subtitle batch starts a file may still START (default
    *  210 000 ms); a file whose turn comes later is not attempted. The check gates the
-   *  start only: a file that began inside the window may submit a little after it
-   *  (its resolve + one retry). The margin to the ~5 min link life covers that.
+   *  start only: a file that began inside the window may finish resolving after it
+   *  (its resolve + one retry); subtitleLinkLifetimeMs re-checks right before the submit.
    *  assrt download links expire ~5 min after detail() and 123 fetches the url at
    *  SUBMIT time, not at resolve time (真机 2026-09-22: a link was HTTP 200 at 4 min
    *  and 402 at 6 min; a url resolved and then submitted 300 s later failed within
    *  6 s). */
   subtitleSubmitWindowMs?: number;
+  /** Re-checked right before each subtitle SUBMIT (default 240 000 ms = the longest
+   *  time after detail() a link was observed alive, 真机 2026-09-22): a file that
+   *  started inside subtitleSubmitWindowMs but whose resolve (worst case two 60 s
+   *  timeouts + the retry delay) ended later is not submitted — 123 would fetch a dead
+   *  link at submit time. */
+  subtitleLinkLifetimeMs?: number;
   /** Delay before the ONE retry of a failed (non-auth) subtitle resolve (default
    *  2000 ms): some err_code=3 are transient assrt 503s (assrt answers a burst of
    *  requests from one source with 503, 真机 2026-09-22). */
@@ -182,6 +188,7 @@ export class Pan123StorageExecutor implements StorageExecutor {
   private readonly subtitleTaskPollMaxPolls: number;
   private readonly subtitleTaskPollIntervalMs: number;
   private readonly subtitleSubmitWindowMs: number;
+  private readonly subtitleLinkLifetimeMs: number;
   private readonly subtitleResolveRetryDelayMs: number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly now: () => number;
@@ -207,6 +214,7 @@ export class Pan123StorageExecutor implements StorageExecutor {
     this.subtitleTaskPollMaxPolls = options.subtitleTaskPollMaxPolls ?? 16;
     this.subtitleTaskPollIntervalMs = options.subtitleTaskPollIntervalMs ?? 3000;
     this.subtitleSubmitWindowMs = options.subtitleSubmitWindowMs ?? 210_000;
+    this.subtitleLinkLifetimeMs = options.subtitleLinkLifetimeMs ?? 240_000;
     this.subtitleResolveRetryDelayMs = options.subtitleResolveRetryDelayMs ?? 2000;
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.now = options.now ?? (() => Date.now());
@@ -372,7 +380,8 @@ export class Pan123StorageExecutor implements StorageExecutor {
    *   - resolve → immediate single submit landed 23/23 in 139 s, each file 6–12 s
    *     after its own submit.
    *  Guards: a file not reached within `subtitleSubmitWindowMs` of the batch start is
-   *  not attempted (its link would be dead by submit time); a non-auth resolve
+   *  not attempted (its link would be dead by submit time), and one whose resolve ended
+   *  past `subtitleLinkLifetimeMs` is not submitted; a non-auth resolve
    *  failure is retried once after `subtitleResolveRetryDelayMs` (some err_code=3
    *  are transient assrt 503s); 3 consecutive files that got no task (resolve dead or
    *  submit refused) abort the rest — a dead mirror, an exhausted offline quota. Non-
@@ -477,6 +486,14 @@ export class Pan123StorageExecutor implements StorageExecutor {
             throw error;
           }
           failFile(attempt, errorMessageOf(error));
+          continue;
+        }
+        // The window gated the START; a slow resolve can still end past the link's life.
+        if (this.now() - batchStart > this.subtitleLinkLifetimeMs) {
+          failFile(
+            attempt,
+            `SUBTITLE_NOT_SUBMITTED: 字幕直链约 5 分钟过期,本文件解析完成时已超过 ${Math.round(this.subtitleLinkLifetimeMs / 1000)} 秒,提交也会落空;本文件未提交`,
+          );
           continue;
         }
         try {

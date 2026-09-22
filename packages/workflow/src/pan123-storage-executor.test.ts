@@ -846,6 +846,50 @@ describe("Pan123StorageExecutor.transferSubtitleUrl(s) — 逐文件 resolve→�
   // "Package too big" is only true when something WAS submitted. With nothing submitted
   // the window ran out on slow failures (e.g. resolves timing out twice each), and the
   // last one's text is the only actionable fact.
+  // The window only gates a file's START; its resolve (two 60 s timeouts + the retry
+  // delay, worst case) can still run past the link's life. Checked again right before
+  // the submit, against the longest time a link was observed alive (4 min).
+  it("a file that STARTED in the window but finished resolving past subtitleLinkLifetimeMs (default 240 s) is not submitted", async () => {
+    let clock = 0;
+    const { client, executor } = harness(
+      {
+        resolve: () => {
+          clock += 250_000; // one slow resolve: starts at 0, ends at 250 s
+          return undefined;
+        },
+      },
+      { now: () => clock },
+    );
+
+    const [a] = await run(executor, 1);
+
+    expect(client.submitOffline).not.toHaveBeenCalled();
+    expect(a).toMatchObject({
+      status: "failed",
+      providerMessage: "SUBTITLE_NOT_SUBMITTED: 字幕直链约 5 分钟过期,本文件解析完成时已超过 240 秒,提交也会落空;本文件未提交",
+    });
+    expect(client.listOfflineTasks).not.toHaveBeenCalled();
+    expect(client.deleteOfflineTasks).not.toHaveBeenCalled();
+  });
+
+  it("the link-lifetime check is exact: a resolve ending AT 240 000 ms still submits, one at 240 001 ms does not", async () => {
+    for (const [end, submits] of [[240_000, 1], [240_001, 0]] as const) {
+      let clock = 0;
+      const { client, executor } = harness(
+        {
+          after: [landed(1)],
+          resolve: () => {
+            clock = end;
+            return undefined;
+          },
+        },
+        { now: () => clock },
+      );
+      await run(executor, 1);
+      expect(client.submitOffline, `resolve ending at ${end}`).toHaveBeenCalledTimes(submits);
+    }
+  });
+
   it("when the window is gone before the FIRST file is even tried, the message says so — neither 整包太大 nor a null failure", async () => {
     // Every clock read is 1 ms later: the batch starts at 0 and the first window check
     // (after the BEFORE listing) already reads 1 > a zero window.
