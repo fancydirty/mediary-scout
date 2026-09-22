@@ -24,7 +24,9 @@
 // Go/no-go per title: ON obtained set ⊇ OFF obtained set (or equal) AND ON status not
 // worse. Any regression → NO-GO (exit 1). GO needs every title compared on BOTH arms and
 // at least one conclusive title; otherwise NO VERDICT (exit 3, also every --dry run). An
-// arm whose loop end is missing from the agent log is INCONCLUSIVE, so the stack must run
+// arm whose loop end is missing from the agent log, or an OFF baseline that did not end
+// succeeded/partial/no_coverage, is INCONCLUSIVE (ON failing where OFF did not stays a
+// REGRESSION), so the stack must run
 // with MEDIA_TRACK_AGENT_LOG=1 (checked up front). Bad arguments, that check, or a failed
 // --pre-arm-remote → exit 2. Efficiency (steps / searches / seconds) is reported, not gated.
 //
@@ -233,6 +235,12 @@ const isAborted = (x: RunFacts) => x.finish === "content-filter" || x.finish ===
 // "unknown" = no "[agent] loop done" line in the arm's log window: whether its loop
 // aborted cannot be told, so the arm cannot count as evidence either way (fail closed).
 const isUnobserved = (x: RunFacts) => x.finish === "unknown";
+// Terminal states that say something about coverage. Anything else (failed, cancelled,
+// a state this harness does not know) is not evidence: an OFF baseline in such a state
+// leaves nothing to compare against, and two failed arms "agreeing" on empty coverage
+// are not an OK.
+const COMPARABLE_STATUSES = new Set(["succeeded", "partial", "no_coverage"]);
+const isComparable = (x: RunFacts) => COMPARABLE_STATUSES.has(x.status);
 const cids = readCids();
 // Without MEDIA_TRACK_AGENT_LOG=1 the web container never prints that line, every arm
 // would be unobserved and the whole run INCONCLUSIVE — refuse before spending an hour.
@@ -292,10 +300,12 @@ for (const [index, t] of titles.entries()) {
     const superset = row.off.obtained.every((code) => row.on!.obtained.includes(code));
     const statusRank = (s: string) => (s === "succeeded" ? 3 : s === "partial" ? 2 : s === "no_coverage" ? 1 : 0);
     const notWorse = statusRank(row.on.status) >= statusRank(row.off.status);
+    // ON ending in a non-comparable state where OFF did not is kept a REGRESSION: the
+    // gate fails closed on it rather than hiding a run the prefilter may have broken.
     row.verdict =
-      isAborted(row.off) || isAborted(row.on) || isUnobserved(row.off) || isUnobserved(row.on)
+      isAborted(row.off) || isAborted(row.on) || isUnobserved(row.off) || isUnobserved(row.on) || !isComparable(row.off)
         ? "INCONCLUSIVE"
-        : superset && notWorse
+        : superset && notWorse && isComparable(row.on)
           ? "OK"
           : "REGRESSION";
     console.log(`    → quality ${row.verdict} (OFF ${offSet.size} eps ${row.off.status}/${row.off.finish} | ON ${row.on.obtained.length} eps ${row.on.status}/${row.on.finish})`);
@@ -317,7 +327,9 @@ const inconclusive = results.filter((r) => r.verdict === "INCONCLUSIVE");
 const uncompared = results.filter((r) => r.verdict === undefined);
 if (regressions.length > 0) { console.log(`\nNO-GO: ${regressions.map((r) => r.title).join(", ")}`); process.exit(1); }
 if (inconclusive.length > 0) {
-  console.log(`\nINCONCLUSIVE (an arm's loop aborted on both attempts, or its end was not in the agent log): ${inconclusive.map((r) => r.title).join(", ")}`);
+  console.log(
+    `\nINCONCLUSIVE (an arm's loop aborted on both attempts, its end was not in the agent log, or the OFF baseline did not end succeeded/partial/no_coverage): ${inconclusive.map((r) => r.title).join(", ")}`,
+  );
 }
 if (DRY) {
   // Nothing ran: the per-title rows above are the dry-run placeholders, not evidence.
