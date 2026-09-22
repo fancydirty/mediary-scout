@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * Bind-level tests for 夸克 cookie paste (C10). Real connectQuarkCookie against
@@ -51,6 +51,16 @@ const boot = async (opts: { failProvision?: boolean } = {}) => {
   return import("./workflow-runtime");
 };
 
+// Boot in the hook, not the test body: the first import of ./workflow-runtime in a
+// worker is cold (the whole @media-track/workflow graph) and would count against the
+// test's 5 s timeout. That import alone has taken up to ~8.5 s on a loaded dev machine
+// (load avg ~30), too close to the default 10 s hookTimeout, so the hook sets its own.
+const COLD_IMPORT_TIMEOUT_MS = 30_000;
+let rt: typeof import("./workflow-runtime");
+beforeEach(async () => {
+  rt = await boot();
+}, COLD_IMPORT_TIMEOUT_MS);
+
 afterEach(() => {
   vi.doUnmock("@media-track/workflow");
   delete process.env.MEDIA_TRACK_SQLITE_PATH;
@@ -61,14 +71,14 @@ afterEach(() => {
 
 describe("connectQuarkCookie (C10 live-check before bind)", () => {
   it("dead cookie → friendly error, nothing stored", async () => {
-    const rt = await boot();
     await expect(rt.connectQuarkCookie(DEAD_COOKIE)).rejects.toThrow(/无法用该 cookie 连接夸克/);
     expect(await rt.getWorkflowRepository().listConnectedStorages("acct_default")).toEqual([]);
     expect(quarkClientConstructions).toBeGreaterThan(0);
   });
 
   it("live cookie → binds with providerUid from __uid", async () => {
-    const rt = await boot({ failProvision: true });
+    // Re-boot with provision stubbed to throw; warm, since beforeEach already paid the cold import.
+    rt = await boot({ failProvision: true });
     const { providerUid } = await rt.connectQuarkCookie(`  ${LIVE_COOKIE}  `);
     expect(providerUid).toBe("quark_uid_live");
     const drives = await rt.getWorkflowRepository().listConnectedStorages("acct_default");
@@ -79,13 +89,11 @@ describe("connectQuarkCookie (C10 live-check before bind)", () => {
   });
 
   it("unparseable cookie → error without network probe", async () => {
-    const rt = await boot();
     await expect(rt.connectQuarkCookie("not-a-cookie")).rejects.toThrow(/无法从该 cookie 解析/);
     expect(quarkClientConstructions).toBe(0);
   });
 
   it("cross-account bind rejected", async () => {
-    const rt = await boot();
     const repo = rt.getWorkflowRepository();
     await repo.createAccount({
       id: "acct_other",

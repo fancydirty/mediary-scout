@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * Bind-level regression tests for the 光鸭 connect flow. Locks the behavior that
@@ -56,6 +56,16 @@ const boot = async () => {
   return import("./workflow-runtime");
 };
 
+// Boot in the hook, not the test body: the first import of ./workflow-runtime in a
+// worker is cold (the whole @media-track/workflow graph) and would count against the
+// test's 5 s timeout. That import alone has taken up to ~8.5 s on a loaded dev machine
+// (load avg ~30), too close to the default 10 s hookTimeout, so the hook sets its own.
+const COLD_IMPORT_TIMEOUT_MS = 30_000;
+let rt: typeof import("./workflow-runtime");
+beforeEach(async () => {
+  rt = await boot();
+}, COLD_IMPORT_TIMEOUT_MS);
+
 afterEach(() => {
   vi.doUnmock("@media-track/workflow");
   delete process.env.MEDIA_TRACK_SQLITE_PATH;
@@ -66,7 +76,6 @@ afterEach(() => {
 
 describe("connectGuangYa (bind)", () => {
   it("INSERT (fresh uid): stores cs_guangya_<uid> with trimmed tokens + a freshly-minted deviceId; provision threw → null CIDs, no throw", async () => {
-    const rt = await boot();
     const repository = rt.getWorkflowRepository();
 
     // Surrounding whitespace also locks connect-time trimming.
@@ -97,7 +106,6 @@ describe("connectGuangYa (bind)", () => {
   });
 
   it("REFRESH (same account, uid already connected): reuses the existing pinned deviceId + keeps resolved CIDs/createdAt", async () => {
-    const rt = await boot();
     const repository = rt.getWorkflowRepository();
     // Seed an existing 光鸭 drive owned by the current (default) account with a KNOWN
     // deviceId + resolved CIDs.
@@ -142,7 +150,6 @@ describe("connectGuangYa (bind)", () => {
   });
 
   it("cross-account: the 光鸭 account already belongs to another account → StorageOwnedByOtherAccountError, other row untouched", async () => {
-    const rt = await boot();
     const repository = rt.getWorkflowRepository();
     await repository.upsertConnectedStorage({
       id: "cs_guangya_other",
