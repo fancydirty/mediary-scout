@@ -709,7 +709,7 @@ describe("Pan123StorageExecutor.transferSubtitleUrl(s) — 逐文件 resolve→�
     expect(client.deleteOfflineTasks).not.toHaveBeenCalled();
   });
 
-  it("a successful resolve resets the consecutive-failure count (2 dead, 1 ok, 2 dead, 1 ok → no abort)", async () => {
+  it("a created task resets the consecutive-failure count (2 dead, 1 submitted, 2 dead, 1 submitted → no abort)", async () => {
     const dead = new Set([SUB_URL(1), SUB_URL(2), SUB_URL(4), SUB_URL(5)]);
     const { client, executor } = harness({
       after: [landed(3), landed(6)],
@@ -846,6 +846,20 @@ describe("Pan123StorageExecutor.transferSubtitleUrl(s) — 逐文件 resolve→�
   // "Package too big" is only true when something WAS submitted. With nothing submitted
   // the window ran out on slow failures (e.g. resolves timing out twice each), and the
   // last one's text is the only actionable fact.
+  it("when the window is gone before the FIRST file is even tried, the message says so — neither 整包太大 nor a null failure", async () => {
+    // Every clock read is 1 ms later: the batch starts at 0 and the first window check
+    // (after the BEFORE listing) already reads 1 > a zero window.
+    let clock = 0;
+    const { executor, log } = harness({}, { now: () => clock++, subtitleSubmitWindowMs: 0 });
+
+    const attempts = await run(executor, 2);
+
+    expect(log.filter((entry) => entry.startsWith("resolve:"))).toEqual([]);
+    for (const a of attempts) {
+      expect(a.providerMessage).toBe("SUBTITLE_NOT_SUBMITTED: 字幕直链约 5 分钟过期,开始提交前有效期已过;本文件未尝试");
+    }
+  });
+
   it("when the window runs out with NOTHING submitted, the message says so and carries the last real failure instead of 整包太大", async () => {
     let clock = 0;
     const { executor } = harness(
@@ -963,6 +977,33 @@ describe("Pan123StorageExecutor.transferSubtitleUrl(s) — 逐文件 resolve→�
     const [a] = await run(executor, 1);
 
     expect(a).toMatchObject({ status: "succeeded", materializedFileIds: ["TWIN"], providerMessage: "" });
+  });
+
+  it("only 123's numbered form counts as a twin: Show.S01E01(a).ass / Show.S01E01().ass are not claimed", async () => {
+    const stale = file("OLD", SUB_NAME(1), 1);
+    for (const name of ["Show.S01E01(a).ass", "Show.S01E01().ass", "Show.S01E01 (1).ass"]) {
+      const [a] = await run(harness({ before: [stale], after: [stale, file("X", name, 1)] }).executor, 1);
+      expect(a, name).toMatchObject({ status: "no_target_change", materializedFileIds: [] });
+    }
+  });
+
+  it("an exact assrt filename outranks another task's twin match (tiers run in order across all tasks)", async () => {
+    const { executor } = harness({
+      after: [file("F", "c(1).ass", 1)],
+      resolve: (url) => ({ resourceId: url, fileIds: ["f"], resolvedName: url === "http://x/1" ? "zzz.ass" : "c.ass" }),
+    });
+
+    const attempts = await executor.transferSubtitleUrls({
+      files: [
+        { url: "http://x/1", filename: "c(1).ass" }, // exact assrt filename match
+        { url: "http://x/2", filename: "other.ass" }, // lands as c.ass → its twin is c(1).ass
+      ],
+      directoryId: SCOPE,
+      workflowRunId: "run-1",
+    });
+
+    expect(attempts.map((a) => a.status)).toEqual(["succeeded", "no_target_change"]);
+    expect(attempts[0]!.materializedFileIds).toEqual(["F"]);
   });
 
   it("a twin claim never crosses stems: Show.S01E01(1).ass is not claimed for Show.S01E02.ass", async () => {
@@ -1088,6 +1129,46 @@ describe("Pan123StorageExecutor.transferSubtitleUrl(s) — 逐文件 resolve→�
     await run(executor, 1);
 
     expect(log.slice(-4)).toEqual(["poll:task-1", "sleep:15000", "list:claim", "delete:task-1"]);
+  });
+
+  it("the grace counts from the LAST submit, not the batch start: 6 s after it → sleeps the remaining 9 s", async () => {
+    let clock = 1_000_000;
+    const { executor, log } = harness(
+      {
+        after: [landed(1), landed(2)],
+        resolve: () => {
+          clock += 12_000; // each resolve takes 12 s → last submit at +24 s
+          return undefined;
+        },
+        poll: () => {
+          clock += 2_000; // three failed polls → +6 s after the last submit
+          throw new Error("PAN123_FAILED(/offline_download/task/list): code=500");
+        },
+      },
+      { now: () => clock, subtitleTaskPollMaxPolls: 8 },
+    );
+
+    await run(executor, 2);
+
+    expect(log.filter((entry) => entry.startsWith("sleep:") && entry !== "sleep:0")).toEqual(["sleep:9000"]);
+  });
+
+  it("a clock that steps BACK never stretches the grace past 15 s", async () => {
+    let clock = 5_000_000;
+    const { executor, log } = harness(
+      {
+        after: [landed(1)],
+        poll: (_ids, call) => {
+          if (call === 1) clock -= 3_600_000; // NTP step back by an hour
+          throw new Error("PAN123_FAILED(/offline_download/task/list): code=500");
+        },
+      },
+      { now: () => clock, subtitleTaskPollMaxPolls: 8 },
+    );
+
+    await run(executor, 1);
+
+    expect(log.filter((entry) => entry.startsWith("sleep:") && entry !== "sleep:0")).toEqual(["sleep:15000"]);
   });
 
   it("no extra wait when the grace has already passed while polling failed", async () => {

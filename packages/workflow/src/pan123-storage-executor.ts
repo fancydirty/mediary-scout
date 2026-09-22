@@ -438,8 +438,10 @@ export class Pan123StorageExecutor implements StorageExecutor {
       // ONE counter for files that got no task, whichever step refused them; only a
       // created task resets it (a resolve that succeeds into a refused submit does not).
       let consecutiveFailedFiles = 0;
-      let lastFailure: string | null = null;
-      let abortReason: string | null = null;
+      // Widened with `as`: they are assigned only inside failFile, and a plain
+      // `: string | null = null` would let TypeScript narrow them to null for good.
+      let lastFailure = null as string | null;
+      let abortReason = null as string | null;
       let lastSubmitAt = batchStart;
       const failFile = (attempt: TransferAttempt, message: string) => {
         attempt.providerMessage = message;
@@ -460,9 +462,11 @@ export class Pan123StorageExecutor implements StorageExecutor {
           // submitted the window ran out on slow failures, and the last one is the
           // actionable fact.
           attempt.providerMessage =
-            tasks.length === 0 && lastFailure !== null
-              ? `SUBTITLE_NOT_SUBMITTED: 字幕直链约 5 分钟过期,有效期内一个文件都没提交成功(最近一次失败: ${lastFailure});本文件未尝试`
-              : `SUBTITLE_NOT_SUBMITTED: 字幕直链约 5 分钟过期,整包太大,有效期内只提交了前 ${tasks.length} 个;本文件未尝试`;
+            tasks.length > 0
+              ? `SUBTITLE_NOT_SUBMITTED: 字幕直链约 5 分钟过期,整包太大,有效期内只提交了前 ${tasks.length} 个;本文件未尝试`
+              : lastFailure !== null
+                ? `SUBTITLE_NOT_SUBMITTED: 字幕直链约 5 分钟过期,有效期内一个文件都没提交成功(最近一次失败: ${lastFailure});本文件未尝试`
+                : "SUBTITLE_NOT_SUBMITTED: 字幕直链约 5 分钟过期,开始提交前有效期已过;本文件未尝试";
           continue;
         }
         let resource: Pan123OfflineResource;
@@ -550,7 +554,8 @@ export class Pan123StorageExecutor implements StorageExecutor {
       // waiting (or never seen in task/list) may well have landed.
       const claimable = tasks.filter((t) => t.state !== "failed");
       if (pollAbandoned && claimable.length > 0) {
-        const wait = SUBTITLE_LANDING_GRACE_MS - (this.now() - lastSubmitAt);
+        // Capped: a wall clock that steps back must not turn this into an hour-long sleep.
+        const wait = Math.min(SUBTITLE_LANDING_GRACE_MS, SUBTITLE_LANDING_GRACE_MS - (this.now() - lastSubmitAt));
         if (wait > 0) {
           await this.sleep(wait);
         }
