@@ -72,12 +72,18 @@ export class JevPrefilterProvider implements ResourceProvider {
 
   async search(input: { keyword: string; workflowRunId?: string }): Promise<ResourceSnapshot> {
     const snapshot = await this.inner.search(input);
-    if (snapshot.candidates.length === 0) return snapshot;
+    // Every search leaves one [jev-prefilter] line, these two included, so the audit
+    // trail can tell "the judge was not needed" from "nothing was logged".
+    if (snapshot.candidates.length === 0) {
+      this.log(`[jev-prefilter] ${JSON.stringify(input.keyword)} skipped: 0 candidates`);
+      return snapshot;
+    }
     const judgeable = snapshot.candidates.filter((c) => !isTitleless(c.title));
     const thresholds = JEV_THRESHOLDS;
     if (judgeable.length === 0) {
       // Nothing to judge (every candidate is title-less): not attempted, nothing dropped.
       // Outside the try: it cannot throw, so a "skipped" here is never a masked failure.
+      this.log(`[jev-prefilter] ${JSON.stringify(input.keyword)} skipped: no judgeable candidates (${snapshot.candidates.length} title-less)`);
       return { ...snapshot, prefilter: { provider: "jev", model: JEV_MODEL, status: "skipped", reason: "no judgeable candidates", scores: {}, dropped: [], thresholds, durationMs: 0 } };
     }
     // Circuit breaker. Checked after the "nothing judgeable" branch so that case keeps

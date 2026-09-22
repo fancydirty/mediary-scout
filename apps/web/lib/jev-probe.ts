@@ -110,8 +110,10 @@ function hostnameOf(url: string): string {
  *  addresses, not names: a name's resolution is not something this check can vouch for. */
 function isLocalHost(host: string): boolean {
   if (host === "localhost" || host === "::1") return true;
-  const ipv4 = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(host);
-  if (!ipv4) return false;
+  const ipv4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  // The WHATWG URL parser already refuses an out-of-range octet (ERR_INVALID_URL), but
+  // this check must not depend on its caller having parsed the host that way.
+  if (!ipv4 || ipv4.slice(1).some((octet) => Number(octet) > 255)) return false;
   const [a, b] = [Number(ipv4[1]), Number(ipv4[2])];
   return a === 127 || a === 10 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31) || (a === 169 && b === 254);
 }

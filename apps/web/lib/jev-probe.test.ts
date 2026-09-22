@@ -163,6 +163,11 @@ describe("validateJevBaseUrlFormat", () => {
       "http://nas.local/x",
       "http://relay.lan/x",
       "http://127.0.0.1.evil.example/x",
+      // out-of-range octets: the URL parser already refuses these, and the IP check
+      // refuses them on its own terms too
+      "http://127.999.999.999/x",
+      "http://10.999.999.999/x",
+      "http://192.168.1.300/x",
     ]) {
       expect(validateJevBaseUrlFormat(url), url).toMatchObject({ ok: false });
     }

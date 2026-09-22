@@ -123,6 +123,23 @@ describe("JevPrefilterProvider", () => {
     expect(lines.join("\n")).toContain("failedChunks=1");
   });
 
+  // Every search leaves exactly one [jev-prefilter] line — including the two that never
+  // reach the judge — so the audit trail can tell "not attempted" from "not logged".
+  it("logs one [jev-prefilter] line for a search with no candidates, and for one with nothing judgeable", async () => {
+    const lines: string[] = [];
+    const judgeCalls: JevJudgeInput[] = [];
+    const log = (line: string) => lines.push(line);
+
+    await new JevPrefilterProvider({ inner: inner(snapshot([])), target, judge: judge({}, judgeCalls), log }).search({ keyword: "交锋" });
+    await new JevPrefilterProvider({ inner: inner(snapshot(["📅 9月6日", "https://x.y/z"])), target, judge: judge({}, judgeCalls), log }).search({ keyword: "交锋 2026" });
+
+    expect(judgeCalls).toHaveLength(0);
+    expect(lines).toEqual([
+      '[jev-prefilter] "交锋" skipped: 0 candidates',
+      '[jev-prefilter] "交锋 2026" skipped: no judgeable candidates (2 title-less)',
+    ]);
+  });
+
   it("passes workflowRunId through to the inner provider", async () => {
     let seenRun: string | undefined;
     const innerSpy: ResourceProvider = { search: async (i) => { seenRun = i.workflowRunId; return snapshot([]); } };
