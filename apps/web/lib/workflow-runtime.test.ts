@@ -8,6 +8,8 @@ import {
   getProwlarrConfig,
   getJevConfig,
   getJevBaseUrlOverride,
+  jevConfigFingerprint,
+  JEV_PROBED_FOR_SETTING_KEY,
   resolveJevJudge,
   isJevPrefilterActive,
   getQualityPreference,
@@ -697,6 +699,32 @@ describe("getJevConfig", () => {
     );
     expect(cfg).toEqual({ apiKey: "sk-or-x", baseUrl: "https://x/y", enabled: true, health: "ok" });
     expect((await getJevConfig(repoMap({ jev_prefilter_enabled: "true" }), noEnv)).enabled).toBe(false);
+  });
+
+  // A health verdict is only as good as the config it was probed with: an env-only
+  // deployment that rotates JEV_API_KEY (or moves JEV_BASE_URL) must not stay "active"
+  // on the old probe while every real search fails open.
+  it("health is dropped when the effective key or URL no longer matches the probed fingerprint", async () => {
+    const probedFor = jevConfigFingerprint("sk-old", "https://env/");
+    const base = { jev_health: "ok", jev_prefilter_enabled: "1", [JEV_PROBED_FOR_SETTING_KEY]: probedFor };
+    const env = (key: string, url: string) => ({ JEV_API_KEY: key, JEV_BASE_URL: url }) as unknown as NodeJS.ProcessEnv;
+    expect((await getJevConfig(repoMap(base), env("sk-old", "https://env/"))).health).toBe("ok");
+    expect((await getJevConfig(repoMap(base), env("sk-rotated", "https://env/"))).health).toBeUndefined();
+    expect((await getJevConfig(repoMap(base), env("sk-old", "https://moved/"))).health).toBeUndefined();
+    expect(isJevPrefilterActive(await getJevConfig(repoMap(base), env("sk-rotated", "https://env/")))).toBe(false);
+  });
+
+  it("a legacy \"ok\" saved before fingerprints existed stays valid (no silent deactivation on upgrade)", async () => {
+    const cfg = await getJevConfig(repoMap({ jev_api_key: "k", jev_health: "ok", jev_prefilter_enabled: "1" }), noEnv);
+    expect(cfg.health).toBe("ok");
+  });
+
+  it("jevConfigFingerprint is stable, short, and never contains the key", () => {
+    const f = jevConfigFingerprint("sk-or-secret-value", "https://x/");
+    expect(f).toBe(jevConfigFingerprint("sk-or-secret-value", "https://x/"));
+    expect(f).toMatch(/^[0-9a-f]{16}$/);
+    expect(f).not.toContain("secret");
+    expect(jevConfigFingerprint("sk-or-secret-value", "https://y/")).not.toBe(f);
   });
 
   it("env JEV_API_KEY / JEV_BASE_URL fill in when DB is blank", async () => {

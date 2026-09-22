@@ -85,6 +85,17 @@ describe("probeJev", () => {
     expect(r).toMatchObject({ ok: false, reason: "not_jev" });
   });
 
+  // The client rejects any answer that is not a finite 0..1 number; a probe that
+  // accepted one would mark as healthy an endpoint every real search then fails on
+  // (silently, since the prefilter fails open).
+  it.each([2, -0.1, "0.5", null])("an answer the real client would reject (noul=%j) → not_jev", async (noul) => {
+    const r = await probeJev(
+      { apiKey: "k", baseUrl: "https://x" },
+      { fetchImpl: failWith(async () => new Response(JSON.stringify({ model: "m", answers: { probe: { noul } } }), { status: 200 })) },
+    );
+    expect(r).toMatchObject({ ok: false, reason: "not_jev" });
+  });
+
   // The client sends JEV_MODEL; a probe that asked for a different model would
   // validate an endpoint the real搜索 never exercises.
   it("asks for the same model constant the client sends", async () => {

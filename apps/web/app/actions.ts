@@ -728,6 +728,8 @@ export async function saveJevConfigAction(input: {
       JEV_BASE_URL_SETTING_KEY,
       JEV_HEALTH_SETTING_KEY,
       JEV_PREFILTER_ENABLED_SETTING_KEY,
+      JEV_PROBED_FOR_SETTING_KEY,
+      jevConfigFingerprint,
     } = await import("../lib/workflow-runtime");
     const { probeJev, validateJevBaseUrlFormat } = await import("../lib/jev-probe");
     const repository = getWorkflowRepository();
@@ -766,6 +768,9 @@ export async function saveJevConfigAction(input: {
     if (typedKey) await repository.setAccountSetting(accountId, JEV_API_KEY_SETTING_KEY, typedKey);
     await repository.setAccountSetting(accountId, JEV_BASE_URL_SETTING_KEY, typedUrl);
     await repository.setAccountSetting(accountId, JEV_HEALTH_SETTING_KEY, "ok");
+    // 记下这次探活的是哪套 key/URL:之后 env 换了 key 或端点挪了,读取端就把 "ok"
+    // 当成未测(见 getJevConfig),而不是顶着旧结论让每次搜索静默 fail-open。
+    await repository.setAccountSetting(accountId, JEV_PROBED_FOR_SETTING_KEY, jevConfigFingerprint(apiKey, baseUrl));
     await repository.setAccountSetting(accountId, JEV_PREFILTER_ENABLED_SETTING_KEY, "1");
     return { success: true, message: `已连通（${probe.model}）` };
   } catch (error) {
@@ -783,6 +788,7 @@ export async function clearJevConfigAction(): Promise<PushSettingsActionResult> 
       JEV_BASE_URL_SETTING_KEY,
       JEV_HEALTH_SETTING_KEY,
       JEV_PREFILTER_ENABLED_SETTING_KEY,
+      JEV_PROBED_FOR_SETTING_KEY,
     } = await import("../lib/workflow-runtime");
     const repository = getWorkflowRepository();
     const accountId = await getCurrentAccountId();
@@ -791,6 +797,7 @@ export async function clearJevConfigAction(): Promise<PushSettingsActionResult> 
       JEV_BASE_URL_SETTING_KEY,
       JEV_HEALTH_SETTING_KEY,
       JEV_PREFILTER_ENABLED_SETTING_KEY,
+      JEV_PROBED_FOR_SETTING_KEY,
     ]) {
       await repository.setAccountSetting(accountId, key, "");
     }

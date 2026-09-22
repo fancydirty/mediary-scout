@@ -53,7 +53,10 @@ export async function probeJev(
       | { model?: unknown; answers?: { probe?: { noul?: unknown } } }
       | null;
     const noul = body?.answers?.probe?.noul;
-    if (typeof noul !== "number") {
+    // Same acceptance rule as the real client (jev-client: finite, 0..1). An answer the
+    // client would reject must fail HERE, or the endpoint is saved healthy and every
+    // real search then fails open without a word.
+    if (typeof noul !== "number" || !Number.isFinite(noul) || noul < 0 || noul > 1) {
       return {
         ok: false,
         reason: "not_jev",

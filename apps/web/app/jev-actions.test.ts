@@ -131,6 +131,19 @@ describe("Jev settings actions", () => {
       expect(probeMock.mock.calls[0]![0].baseUrl).toBe("https://openrouter.ai/api/alpha/decisions");
     });
 
+    it("records the fingerprint of the EXACT config it probed; rotating the env key afterwards makes it inactive", async () => {
+      process.env.JEV_API_KEY = "sk-env-1";
+      probeMock.mockResolvedValue({ ok: true, model: "m" });
+      await actions.saveJevConfigAction({ apiKey: "", baseUrl: "" });
+      expect(await repo.getAccountSetting(ACCOUNT_ID, rt.JEV_PROBED_FOR_SETTING_KEY)).toBe(
+        rt.jevConfigFingerprint("sk-env-1", "https://openrouter.ai/api/alpha/decisions"),
+      );
+      const scoped = rt.getAccountScopedSettings(ACCOUNT_ID, repo);
+      expect(rt.isJevPrefilterActive(await rt.getJevConfig(scoped))).toBe(true);
+      process.env.JEV_API_KEY = "sk-env-2";
+      expect(rt.isJevPrefilterActive(await rt.getJevConfig(scoped))).toBe(false);
+    });
+
     it("reports the model the probe resolved, so the user sees WHAT answered", async () => {
       probeMock.mockResolvedValue({ ok: true, model: "typesafe/jev-1.13" });
       const result = await actions.saveJevConfigAction({ apiKey: "sk-or-1", baseUrl: "" });
@@ -220,9 +233,10 @@ describe("Jev settings actions", () => {
       rt.JEV_BASE_URL_SETTING_KEY,
       rt.JEV_HEALTH_SETTING_KEY,
       rt.JEV_PREFILTER_ENABLED_SETTING_KEY,
+      rt.JEV_PROBED_FOR_SETTING_KEY,
     ];
 
-    it("clear blanks all four keys", async () => {
+    it("clear blanks every Jev key (incl. the probed-config fingerprint)", async () => {
       for (const key of allKeys()) await repo.setAccountSetting(ACCOUNT_ID, key, "x");
       expect((await actions.clearJevConfigAction()).success).toBe(true);
       for (const key of allKeys()) expect(await repo.getAccountSetting(ACCOUNT_ID, key)).toBe("");

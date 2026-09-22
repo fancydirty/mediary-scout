@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { cache } from "react";
 import {
   checkLoginAllowed,
@@ -1190,6 +1190,15 @@ export const JEV_PREFILTER_ENABLED_SETTING_KEY = "jev_prefilter_enabled";
  *  "fail" is never written; runtime failures fail open per search (see
  *  SnapshotPrefilter.status) and are not recorded here (future: health badge). */
 export const JEV_HEALTH_SETTING_KEY = "jev_health";
+/** Which (key, base URL) the "ok" above was probed with — see jevConfigFingerprint.
+ *  Written together with health by 保存并测试, blanked by 清除. */
+export const JEV_PROBED_FOR_SETTING_KEY = "jev_probed_for";
+
+/** A short one-way fingerprint of the probed config. The raw key never goes into it
+ *  in a recoverable form; 64 bits is plenty to notice a rotation. */
+export function jevConfigFingerprint(apiKey: string, baseUrl: string): string {
+  return createHash("sha256").update(`${apiKey.trim()}\n${baseUrl.trim()}`).digest("hex").slice(0, 16);
+}
 
 export interface JevConfig {
   apiKey: string | undefined;
@@ -1213,11 +1222,22 @@ export async function getJevConfig(
     const envValue = env[envKey]?.trim();
     return envValue ? envValue : undefined;
   };
+  const apiKey = await read(JEV_API_KEY_SETTING_KEY, "JEV_API_KEY");
+  const baseUrl = (await read(JEV_BASE_URL_SETTING_KEY, "JEV_BASE_URL")) ?? DEFAULT_JEV_BASE_URL;
+  const health = (await repository.getSetting(JEV_HEALTH_SETTING_KEY))?.trim() || undefined;
+  // A verdict only covers the config it was probed with. When the effective key or URL
+  // has moved since (an env JEV_API_KEY rotated, an operator changed the global URL),
+  // "ok" would keep the prefilter "active" while every real search fails open without
+  // a word — so it reads as untested until the next 保存并测试. Rows saved before the
+  // fingerprint existed carry none and keep their verdict: an upgrade must not switch
+  // the prefilter off silently.
+  const probedFor = (await repository.getSetting(JEV_PROBED_FOR_SETTING_KEY))?.trim();
+  const stale = Boolean(probedFor) && probedFor !== jevConfigFingerprint(apiKey ?? "", baseUrl);
   return {
-    apiKey: await read(JEV_API_KEY_SETTING_KEY, "JEV_API_KEY"),
-    baseUrl: (await read(JEV_BASE_URL_SETTING_KEY, "JEV_BASE_URL")) ?? DEFAULT_JEV_BASE_URL,
+    apiKey,
+    baseUrl,
     enabled: ((await repository.getSetting(JEV_PREFILTER_ENABLED_SETTING_KEY))?.trim() ?? "") === "1",
-    health: (await repository.getSetting(JEV_HEALTH_SETTING_KEY))?.trim() || undefined,
+    health: stale ? undefined : health,
   };
 }
 
