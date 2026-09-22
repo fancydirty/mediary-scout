@@ -25,7 +25,8 @@
 // worse. Any regression → NO-GO (exit 1). GO needs every title compared on BOTH arms and
 // at least one conclusive title; otherwise NO VERDICT (exit 3, also every --dry run). An
 // arm whose loop end is missing from the agent log, or an OFF baseline that did not end
-// succeeded/partial/no_coverage, is INCONCLUSIVE (ON failing where OFF did not stays a
+// succeeded/partial/no_coverage, or an ON arm whose searches never had the prefilter
+// applied (or an OFF arm whose did), is INCONCLUSIVE (ON failing where OFF did not stays a
 // REGRESSION), so the stack must run
 // with MEDIA_TRACK_AGENT_LOG=1 (checked up front). Bad arguments, that check, or a failed
 // --pre-arm-remote → exit 2. Efficiency (steps / searches / seconds) is reported, not gated.
@@ -256,6 +257,10 @@ const isUnobserved = (x: RunFacts) => x.finish === "unknown";
 // are not an OK.
 const COMPARABLE_STATUSES = new Set(["succeeded", "partial", "no_coverage"]);
 const isComparable = (x: RunFacts) => COMPARABLE_STATUSES.has(x.status);
+// The arms must be what they claim: ON actually ran the judge at least once (an
+// unconfigured key or a judge that failed open on every search makes ON a copy of OFF,
+// and "no difference" would pass as GO without measuring Jev at all), and OFF never did.
+const armsAreReal = (off: RunFacts, on: RunFacts) => on.jevCalls > 0 && off.jevCalls === 0;
 const cids = readCids();
 // Without MEDIA_TRACK_AGENT_LOG=1 the web container never prints that line, every arm
 // would be unobserved and the whole run INCONCLUSIVE — refuse before spending an hour.
@@ -318,7 +323,12 @@ for (const [index, t] of titles.entries()) {
     // ON ending in a non-comparable state where OFF did not is kept a REGRESSION: the
     // gate fails closed on it rather than hiding a run the prefilter may have broken.
     row.verdict =
-      isAborted(row.off) || isAborted(row.on) || isUnobserved(row.off) || isUnobserved(row.on) || !isComparable(row.off)
+      isAborted(row.off) ||
+      isAborted(row.on) ||
+      isUnobserved(row.off) ||
+      isUnobserved(row.on) ||
+      !isComparable(row.off) ||
+      !armsAreReal(row.off, row.on)
         ? "INCONCLUSIVE"
         : superset && notWorse && isComparable(row.on)
           ? "OK"
@@ -343,7 +353,7 @@ const uncompared = results.filter((r) => r.verdict === undefined);
 if (regressions.length > 0) { console.log(`\nNO-GO: ${regressions.map((r) => r.title).join(", ")}`); process.exit(1); }
 if (inconclusive.length > 0) {
   console.log(
-    `\nINCONCLUSIVE (an arm's loop aborted on both attempts, its end was not in the agent log, or the OFF baseline did not end succeeded/partial/no_coverage): ${inconclusive.map((r) => r.title).join(", ")}`,
+    `\nINCONCLUSIVE (an arm's loop aborted on both attempts, its end was not in the agent log, the OFF baseline did not end succeeded/partial/no_coverage, or the arms were not really OFF/ON — ON applied the prefilter 0 times, or OFF applied it): ${inconclusive.map((r) => r.title).join(", ")}`,
   );
 }
 if (DRY) {

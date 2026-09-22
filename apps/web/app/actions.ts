@@ -801,15 +801,13 @@ export async function clearJevConfigAction(): Promise<PushSettingsActionResult> 
     } = await import("../lib/workflow-runtime");
     const repository = getWorkflowRepository();
     const accountId = await getCurrentAccountId();
-    for (const key of [
-      JEV_API_KEY_SETTING_KEY,
-      JEV_BASE_URL_SETTING_KEY,
-      JEV_HEALTH_SETTING_KEY,
-      JEV_PREFILTER_ENABLED_SETTING_KEY,
-      JEV_PROBED_FOR_SETTING_KEY,
-    ]) {
+    for (const key of [JEV_API_KEY_SETTING_KEY, JEV_BASE_URL_SETTING_KEY, JEV_HEALTH_SETTING_KEY, JEV_PROBED_FOR_SETTING_KEY]) {
       await repository.setAccountSetting(accountId, key, "");
     }
+    // A blank account row means "inherit" (account → global): blanking `enabled` too
+    // would hand this account back to an instance-wide config that the worker keeps
+    // using while the form says 未配置. 清除 means this account's prefilter is off.
+    await repository.setAccountSetting(accountId, JEV_PREFILTER_ENABLED_SETTING_KEY, "0");
     return { success: true };
   } catch (error) {
     return { success: false, message: `清除失败：${String(error)}` };

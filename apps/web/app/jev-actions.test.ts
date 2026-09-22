@@ -259,10 +259,28 @@ describe("Jev settings actions", () => {
       rt.JEV_PROBED_FOR_SETTING_KEY,
     ];
 
-    it("clear blanks every Jev key (incl. the probed-config fingerprint)", async () => {
+    it("clear blanks the account's own Jev config and records an explicit per-account OFF (enabled=\"0\")", async () => {
       for (const key of allKeys()) await repo.setAccountSetting(ACCOUNT_ID, key, "x");
       expect((await actions.clearJevConfigAction()).success).toBe(true);
-      for (const key of allKeys()) expect(await repo.getAccountSetting(ACCOUNT_ID, key)).toBe("");
+      for (const key of allKeys()) {
+        expect(await repo.getAccountSetting(ACCOUNT_ID, key)).toBe(key === rt.JEV_PREFILTER_ENABLED_SETTING_KEY ? "0" : "");
+      }
+    });
+
+    // A blank account row means "inherit" (account → global), so blanking alone would
+    // hand a cleared account back to an instance-wide config the worker then keeps using
+    // while the form says 未配置. Clear means: this account's prefilter is off.
+    it("after clear, an instance-wide (global) Jev config no longer runs for this account", async () => {
+      await repo.setSetting(rt.JEV_API_KEY_SETTING_KEY, "sk-global");
+      await repo.setSetting(rt.JEV_HEALTH_SETTING_KEY, "ok");
+      await repo.setSetting(rt.JEV_PREFILTER_ENABLED_SETTING_KEY, "1");
+      const scoped = rt.getAccountScopedSettings(ACCOUNT_ID, repo);
+      expect(rt.isJevPrefilterActive(await rt.getJevConfig(scoped))).toBe(true);
+
+      await actions.clearJevConfigAction();
+
+      expect(rt.isJevPrefilterActive(await rt.getJevConfig(scoped))).toBe(false);
+      expect(await rt.resolveJevJudge(scoped)).toBeUndefined();
     });
 
     it("toggle writes \"1\"/\"0\"", async () => {
