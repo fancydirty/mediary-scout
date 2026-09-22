@@ -463,7 +463,11 @@ async function ResourceProviderSection() {
             <Radio size={16} aria-hidden style={{ verticalAlign: "-2px", marginRight: 8 }} />
             资源提供商
           </h2>
-          <p className="panel-note">agent 搜资源的来源；网盘搜索为主，磁力可选加挂，结果合并</p>
+          <p className="panel-note">
+            {showProwlarr
+              ? "agent 搜资源的来源；网盘搜索为主，磁力可选加挂，结果合并"
+              : "agent 搜资源的来源；已连接的网盘都不支持磁力，Prowlarr 已隐藏"}
+          </p>
         </div>
       </div>
       <ServiceBlock
@@ -477,7 +481,7 @@ async function ResourceProviderSection() {
         })}
         summary={
           isDesktop
-            ? "桌面端未配置时用作者的公共实例（资源有限、偶尔不稳），建议自建一个配好频道的实例填在这里。"
+            ? "未配置时用作者的公共实例，建议自建。"
             : "默认内置、开箱即用；填地址可换成自建或公共实例。"
         }
         details={

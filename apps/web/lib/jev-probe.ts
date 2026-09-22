@@ -1,5 +1,5 @@
 /**
- * Save-time liveness probe for the Jev prefilter (Settings → 资源提供商). Mirrors
+ * Save-time liveness probe for the Jev prefilter (Settings → AI 模型). Mirrors
  * pansou-probe: one real request on SAVE only, never on the settings-page poll.
  * A key that fails here is refused, so the prefilter can never be "enabled but
  * silently failing" — that failure mode is exactly what fail-open would hide

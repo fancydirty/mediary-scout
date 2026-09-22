@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Check, LoaderCircle, Trash2 } from "lucide-react";
 import { saveJevConfigAction, clearJevConfigAction, setJevPrefilterEnabledAction } from "../app/actions";
@@ -34,6 +34,12 @@ export function JevPrefilterForm({
   const [hasKey, setHasKey] = useState(apiKeySet);
   const [isHealthy, setIsHealthy] = useState(healthy);
   const [enabled, setEnabled] = useState(initialEnabled);
+  // router.refresh() 会带着新 props 重渲染,但 useState 只吃一次初值 —— 三个本地镜像
+  // 必须跟上,否则表单会和块头胶囊打架(例:清掉账号 key 后全局/env key 仍生效,
+  // 胶囊是「待测试」,表单却藏起了「清除」)。输入框不同步,免得冲掉正在打的字。
+  useEffect(() => setHasKey(apiKeySet), [apiKeySet]);
+  useEffect(() => setIsHealthy(healthy), [healthy]);
+  useEffect(() => setEnabled(initialEnabled), [initialEnabled]);
   const [result, setResult] = useState<string | null>(null);
   const flash = (msg: string) => {
     setResult(msg);

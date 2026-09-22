@@ -1226,7 +1226,7 @@ export interface JevConfig {
   health: string | undefined;
 }
 
-/** Jev candidate prefilter settings (Settings → 资源提供商). DB wins over env;
+/** Jev candidate prefilter settings (Settings → AI 模型). DB wins over env;
  *  blank = unset. `enabled` is true only for the exact string "1".
  *  env JEV_API_KEY / JEV_BASE_URL only supply the key/url; activation still
  *  requires a successful 保存并测试 (which writes enabled/health) — an env-only
