@@ -124,7 +124,7 @@ orchestrator 门控、skill 文本（SUBTITLE 节品牌无关；123 的 dead-lin
 8. **清理放 finally**：`deleteOfflineTasks(本批创建的全部 taskId)`，非鉴权错误吞掉；鉴权错误只在主流程正常结束时抛出（不覆盖主流程已抛的错误）。
 9. 删除 `Pan123Client.submitOfflineResources` 及其测试（多资源 submit 在 20 条规模静默失败，留着是陷阱）；`listOfflineTasks` 保留（注释补「newest-first 实测」）。执行器选项 `subtitleResolveGapMs` 删除（resolve 本身 ~6 s，不需要额外间隔），新增 `subtitleSubmitWindowMs`、`subtitleResolveRetryDelayMs`、`now`（可注入时钟，测试用）。
 
-成本：before 1 + 每文件 resolve 1(+1 重试) + submit 1 + p 轮询 + 认领 1 + 删除 1 ≈ 2N + p + 3；耗时 ≈ N × 6 s + 尾部 ~10 s。窗口内大约能提交 35 个文件。
+成本：before 1 + 每文件 resolve 1(+1 重试) + submit 1 + p 轮询 + 认领 1 + 删除 1 ≈ 2N + p + 3（「1 次列目录」是 ⌈条目数/100⌉ 个请求——listFiles 按 100 分页，两次列目录都必须完整：before 不全会让同名旧文件被认领，新文件可能落在任一页）；耗时 ≈ N × 6 s + 尾部 ~10 s。窗口内大约能提交 35 个文件。
 
 ### 8.4 跨品牌遗留（不在本 PR）
 直链过期对所有品牌都成立：115 的 168 文件 smoke「120 落 / 48 超窗」很可能同因；光鸭逐文件落盘在大包上也会撞。根治要在 sandbox 层分块，并在分块间重新 detail() 续签直链（需跳过已落文件、别打乱 #261 的 115 预算账）——记入 backlog。

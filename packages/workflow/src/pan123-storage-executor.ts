@@ -392,8 +392,10 @@ export class Pan123StorageExecutor implements StorageExecutor {
    *  Still true from 真机 2026-09-21: ONE url per resolve; resolve reports the
    *  landing `name`; the task row carries NO file id; the file lands directly in
    *  upload_dir (no wrapper); deleting a finished task keeps the file.
-   *  Cost: 1 before-list + per file 1 resolve (+1 retry) + 1 submit + p polls +
-   *  1 claim-list + 1 delete. */
+   *  Cost: 1 before-listing + per file 1 resolve (+1 retry) + 1 submit + p polls +
+   *  1 claim-listing + 1 delete; a listing is ⌈entries/100⌉ requests (listFiles pages
+   *  by 100), and both must be COMPLETE — a partial before-snapshot would let a stale
+   *  same-named file be claimed, and new files can sit on any page. */
   async transferSubtitleUrls(input: {
     files: Array<{ url: string; filename: string }>;
     directoryId: string;
