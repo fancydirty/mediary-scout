@@ -13,12 +13,15 @@ import { runAction } from "../lib/run-action";
  */
 export function JevPrefilterForm({
   baseUrl: initialBaseUrl,
+  inheritedBaseUrl,
   apiKeySet,
   enabled: initialEnabled,
   healthy,
   active: initialActive,
 }: {
   baseUrl: string;
+  /** Where a blank field resolves (instance → env → OpenRouter); shown as the placeholder. */
+  inheritedBaseUrl: string;
   apiKeySet: boolean;
   enabled: boolean;
   healthy: boolean;
@@ -110,13 +113,13 @@ export function JevPrefilterForm({
         （官方 Key 需把 Base URL 填为 https://api.typesafe.ai/v1/systemone）
       </p>
       <div className="push-field">
-        <label className="push-label">Base URL（留空 = OpenRouter 的 decisions 端点；官方 Key 填 TypeSafe 的 /v1/systemone）</label>
+        <label className="push-label">Base URL（留空 = 沿用实例配置的地址，即框内灰字；官方 Key 填 TypeSafe 的 /v1/systemone）</label>
         <input
           type="text"
           className="setting-control"
           value={baseUrl}
           onChange={(event) => setBaseUrl(event.target.value)}
-          placeholder="https://openrouter.ai/api/alpha/decisions"
+          placeholder={inheritedBaseUrl}
           aria-label="Jev Base URL"
         />
       </div>

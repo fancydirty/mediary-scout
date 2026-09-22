@@ -9,6 +9,7 @@ import {
   getAccountScopedSettings,
   getJevConfig,
   getJevBaseUrlOverride,
+  getJevInheritedBaseUrl,
   jevConfigFingerprint,
   JEV_PROBED_FOR_SETTING_KEY,
   resolveJevJudge,
@@ -780,6 +781,32 @@ describe("getJevConfig through the account → global facade: a custom URL never
   it("no account URL override + inherited key → active (the env-only / operator-configured deployment)", async () => {
     const scoped = getAccountScopedSettings("acct_a", repoOf({ ...on }, {}));
     expect(isJevPrefilterActive(await getJevConfig(scoped, sharedEnv))).toBe(true);
+  });
+});
+
+// What a BLANK account Base URL resolves to — the save action probes it and the settings
+// input shows it as the placeholder, so the two can never tell different stories.
+describe("getJevInheritedBaseUrl (where a blank account Base URL goes)", () => {
+  const repo = (global: string | null) => ({
+    getSetting: async (key: string) => (key === JEV_BASE_URL_SETTING_KEY ? global : null),
+  });
+  const env = (url?: string) => (url === undefined ? noEnv : ({ JEV_BASE_URL: url } as unknown as NodeJS.ProcessEnv));
+
+  it("instance-wide (global) row first, trimmed", async () => {
+    expect(await getJevInheritedBaseUrl(repo(" https://global.example/v1/systemone "), env("https://env.example/"))).toBe(
+      "https://global.example/v1/systemone",
+    );
+  });
+
+  it("then env JEV_BASE_URL", async () => {
+    expect(await getJevInheritedBaseUrl(repo(null), env(" https://env.example/api/alpha/decisions "))).toBe(
+      "https://env.example/api/alpha/decisions",
+    );
+    expect(await getJevInheritedBaseUrl(repo("  "), env("https://env.example/"))).toBe("https://env.example/");
+  });
+
+  it("then the OpenRouter default", async () => {
+    expect(await getJevInheritedBaseUrl(repo(null), env())).toBe("https://openrouter.ai/api/alpha/decisions");
   });
 });
 

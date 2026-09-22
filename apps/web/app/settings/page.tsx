@@ -51,6 +51,7 @@ import {
   PROWLARR_API_KEY_SETTING_KEY,
   getJevConfig,
   getJevBaseUrlOverride,
+  getJevInheritedBaseUrl,
   isJevPrefilterActive,
   PANSOU_BASE_URL_SETTING_KEY,
   resolveGlobalWorkspace,
@@ -342,6 +343,8 @@ async function ResourceProviderSection() {
   // and shadowing later global / env JEV_BASE_URL changes; the placeholder already
   // tells the user what blank resolves to.
   const jevBaseUrlOverride = await getJevBaseUrlOverride(accountId);
+  // …and blank resolves to THIS (instance → env → OpenRouter), shown as the placeholder.
+  const jevInheritedBaseUrl = await getJevInheritedBaseUrl();
   // Prowlarr (磁力/PT) only works for brands that support magnet (115). Hide it
   // when every connected drive is 夸克 (no magnet API). Shown for legacy/env-only
   // setups (no connected_storages rows) so we never hide it from a working 115.
@@ -376,6 +379,7 @@ async function ResourceProviderSection() {
       <div style={{ height: 18 }} />
       <JevPrefilterForm
         baseUrl={jevBaseUrlOverride}
+        inheritedBaseUrl={jevInheritedBaseUrl}
         apiKeySet={Boolean(jev.apiKey)}
         enabled={jev.enabled}
         healthy={jev.health === "ok"}

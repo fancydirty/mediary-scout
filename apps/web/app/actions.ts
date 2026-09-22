@@ -724,6 +724,7 @@ export async function saveJevConfigAction(input: {
       getCurrentAccountId,
       getAccountScopedSettings,
       getJevConfig,
+      getJevInheritedBaseUrl,
       JEV_API_KEY_SETTING_KEY,
       JEV_BASE_URL_SETTING_KEY,
       JEV_HEALTH_SETTING_KEY,
@@ -758,13 +759,7 @@ export async function saveJevConfigAction(input: {
     // 留空的 URL 会存成 ""(=去掉 account 覆盖),保存后真正生效的是 全局 → env → 默认。
     // 探活必须打**那个**地址:沿用 effective.baseUrl 会打到即将被清掉的旧覆盖,
     // 于是一个从没测过的端点被记成 healthy + enabled。
-    const baseUrl =
-      typedUrl ||
-      (
-        await getJevConfig({
-          getSetting: (key) => (key === JEV_BASE_URL_SETTING_KEY ? repository.getSetting(key) : scoped.getSetting(key)),
-        })
-      ).baseUrl;
+    const baseUrl = typedUrl || (await getJevInheritedBaseUrl(repository));
     // 先跑便宜的格式校验:漏写 scheme 的地址否则要耗满 8s 探活,再换回一句
     // 含糊的「连不上」,而真正的问题是格式(与 PanSou 同一条规则)。只校验用户这次
     // 输入的地址:继承来的(全局/env)是运营方的配置,不拿 http 规则去拦它。

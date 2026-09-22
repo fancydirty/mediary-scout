@@ -24,6 +24,9 @@
 //       … --dump <file>           one JSON line per replayed snapshot (truncated at start)
 //       JEV_FAKE=1 …              stub judge, every score 0.95 — exercises the plumbing
 //                                 and the FAIL path without a network call or a key.
+//                                 Never a verdict: where a real run prints PASS, a fake
+//                                 run prints NO VERDICT and exits 3.
+// Exit codes: 0 PASS · 1 FAIL · 2 bad arguments · 3 NO VERDICT (JEV_FAKE).
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import {
   JevPrefilterProvider,
@@ -48,6 +51,12 @@ const USAGE =
 const args = process.argv.slice(2);
 const runSentinels = !args.includes("--replay-only");
 const runReplay = !args.includes("--sentinels-only");
+// Both "only" switches together would run nothing and fall through to PASS.
+if (!runSentinels && !runReplay) {
+  console.log(USAGE);
+  console.log("--sentinels-only and --replay-only are mutually exclusive.");
+  process.exit(2);
+}
 // --dump <file>: write one JSON line per replayed snapshot (target, scores, dropped,
 // floored) so the floor's cost can be broken down by title after the fact.
 const dumpIdx = args.indexOf("--dump");
@@ -285,4 +294,11 @@ if (runReplay) {
   if (total > 0 && dropped / total < 0.25) { console.log("WARN: drop rate below 25% (soft metric)"); }
 }
 
+// The stub scores everything 0.95, so it can only ever reach this line with the
+// sentinels skipped (--replay-only): nothing real was measured, and a PASS here would
+// read as the production go/no-go.
+if (fake) {
+  console.log("NO VERDICT: JEV_FAKE stub judge — plumbing only, no real Jev call");
+  process.exit(3);
+}
 console.log("PASS");

@@ -1274,6 +1274,19 @@ export async function getJevBaseUrlOverride(
   return (await repo.getAccountSetting(accountId, JEV_BASE_URL_SETTING_KEY))?.trim() ?? "";
 }
 
+/** Where a BLANK account Base URL resolves: the instance-wide (global) row → env
+ *  JEV_BASE_URL → the OpenRouter default. 保存并测试 probes this when the field is left
+ *  blank, and the settings input shows it as the placeholder — one rule, so the page
+ *  can never promise an endpoint other than the one that will be called. */
+export async function getJevInheritedBaseUrl(
+  repo: Pick<WorkflowRepository, "getSetting"> = getWorkflowRepository(),
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string> {
+  const global = (await repo.getSetting(JEV_BASE_URL_SETTING_KEY))?.trim();
+  if (global) return global;
+  return env.JEV_BASE_URL?.trim() || DEFAULT_JEV_BASE_URL;
+}
+
 /** The go/no-go, on an already-read config: key set AND enabled AND the last
  *  probe succeeded. The settings page and resolveJevJudge share this one rule. */
 export function isJevPrefilterActive(cfg: JevConfig): boolean {

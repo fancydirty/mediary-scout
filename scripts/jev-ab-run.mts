@@ -23,7 +23,9 @@
 //
 // Go/no-go per title: ON obtained set ⊇ OFF obtained set (or equal) AND ON status not
 // worse. Any regression → NO-GO (exit 1). GO needs every title compared on BOTH arms and
-// at least one conclusive title; otherwise NO VERDICT (exit 3). Bad arguments or a failed
+// at least one conclusive title; otherwise NO VERDICT (exit 3, also every --dry run). An
+// arm whose loop end is missing from the agent log is INCONCLUSIVE, so the stack must run
+// with MEDIA_TRACK_AGENT_LOG=1 (checked up front). Bad arguments, that check, or a failed
 // --pre-arm-remote → exit 2. Efficiency (steps / searches / seconds) is reported, not gated.
 //
 // Usage:
@@ -228,7 +230,21 @@ function collect(runId: string, tmdbId: number, window: { since: string; until: 
 }
 
 const isAborted = (x: RunFacts) => x.finish === "content-filter" || x.finish === "error";
+// "unknown" = no "[agent] loop done" line in the arm's log window: whether its loop
+// aborted cannot be told, so the arm cannot count as evidence either way (fail closed).
+const isUnobserved = (x: RunFacts) => x.finish === "unknown";
 const cids = readCids();
+// Without MEDIA_TRACK_AGENT_LOG=1 the web container never prints that line, every arm
+// would be unobserved and the whole run INCONCLUSIVE — refuse before spending an hour.
+if (!DRY) {
+  const agentLog = ssh(`docker exec ${WEB} printenv MEDIA_TRACK_AGENT_LOG || true`);
+  if (agentLog !== "1") {
+    console.error(
+      `MEDIA_TRACK_AGENT_LOG is not 1 in ${WEB} (got "${agentLog}"): no arm's loop end could be observed. Set it in the stack's .env and recreate the container.`,
+    );
+    process.exit(2);
+  }
+}
 const results: Array<{ title: string; type: string; tmdbId: number; order: string; off?: RunFacts; on?: RunFacts; verdict?: string }> = [];
 for (const [index, t] of titles.entries()) {
   const label = `${t.type}:${t.tmdbId}`;
@@ -276,7 +292,12 @@ for (const [index, t] of titles.entries()) {
     const superset = row.off.obtained.every((code) => row.on!.obtained.includes(code));
     const statusRank = (s: string) => (s === "succeeded" ? 3 : s === "partial" ? 2 : s === "no_coverage" ? 1 : 0);
     const notWorse = statusRank(row.on.status) >= statusRank(row.off.status);
-    row.verdict = isAborted(row.off) || isAborted(row.on) ? "INCONCLUSIVE" : superset && notWorse ? "OK" : "REGRESSION";
+    row.verdict =
+      isAborted(row.off) || isAborted(row.on) || isUnobserved(row.off) || isUnobserved(row.on)
+        ? "INCONCLUSIVE"
+        : superset && notWorse
+          ? "OK"
+          : "REGRESSION";
     console.log(`    → quality ${row.verdict} (OFF ${offSet.size} eps ${row.off.status}/${row.off.finish} | ON ${row.on.obtained.length} eps ${row.on.status}/${row.on.finish})`);
     writeFileSync(OUT, JSON.stringify(results, null, 2));
   }
@@ -295,7 +316,14 @@ const inconclusive = results.filter((r) => r.verdict === "INCONCLUSIVE");
 // compared, so it can neither pass nor fail the gate.
 const uncompared = results.filter((r) => r.verdict === undefined);
 if (regressions.length > 0) { console.log(`\nNO-GO: ${regressions.map((r) => r.title).join(", ")}`); process.exit(1); }
-if (inconclusive.length > 0) console.log(`\nINCONCLUSIVE (LLM aborted both attempts of an arm): ${inconclusive.map((r) => r.title).join(", ")}`);
+if (inconclusive.length > 0) {
+  console.log(`\nINCONCLUSIVE (an arm's loop aborted on both attempts, or its end was not in the agent log): ${inconclusive.map((r) => r.title).join(", ")}`);
+}
+if (DRY) {
+  // Nothing ran: the per-title rows above are the dry-run placeholders, not evidence.
+  console.log("\nNO VERDICT: dry run — nothing was executed");
+  process.exit(3);
+}
 const conclusive = results.length - inconclusive.length - uncompared.length;
 if (uncompared.length > 0 || conclusive === 0) {
   // GO is a claim that Jev was measured against the bare run. Without both arms on
