@@ -926,7 +926,12 @@ export class TaskSandbox {
     // land as unusable junk in staging (renameSubtitle rejects them, cleanup has
     // to sweep them) while burning real 115 API budget, and a zip-only landing
     // would report a misleading "succeeded".
-    const subtitleFiles = files.filter((file) => SUBTITLE_NAME_PATTERN.test(file.filename));
+    // macOS AppleDouble twins (`._name.ass`, a few hundred bytes of resource-fork
+    // metadata) ride inside zip-sourced assrt packages and pass the extension filter;
+    // they land as junk (真机 2026-09-21). Drop them here too.
+    const subtitleFiles = files.filter(
+      (file) => SUBTITLE_NAME_PATTERN.test(file.filename) && !file.filename.startsWith("._"),
+    );
     if (subtitleFiles.length === 0) {
       return {
         status: "failed",
