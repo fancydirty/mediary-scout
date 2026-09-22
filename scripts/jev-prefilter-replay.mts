@@ -9,82 +9,117 @@
 //      changing a filter's behaviour with no evidence.
 //   2. REPLAY — REAL production search snapshots through the REAL JevPrefilterProvider
 //      (fake inner provider returns the recorded snapshot; the judge is the real client).
-//      Hard assertion (go/no-go): no titled candidate the agent actually selected is
-//      dropped. Soft metric: drop rate. Input: /tmp/jev-eval/labels.json (exported from
-//      prod agent_decisions ⋈ resource_snapshots — see memory/jev-system-one-model.md).
-//      labels.json carries no aliases (the export predates them); production always
-//      passes TMDB aliases, so this replay is the HARSHER input: the containment floor
-//      and the judge see the title only. A pass here is conservative.
+//      Hard assertion (go/no-go): every titled candidate the agent actually selected was
+//      judged AND kept. Soft metric: drop rate. Input: --labels <file>, exported from prod
+//      agent_decisions ⋈ resource_snapshots (see memory/jev-system-one-model.md) — keep it
+//      where only you can write, since it decides the verdict. labels.json carries no
+//      aliases (the export predates them); production always passes TMDB aliases, so this
+//      replay is the HARSHER input: the containment floor and the judge see the title only.
+//      A pass here is conservative.
 //
-// Run:  JEV_API_KEY=… [JEV_BASE_URL=https://api.typesafe.ai/v1/systemone] npx tsx scripts/jev-prefilter-replay.mts [limit]
+// Run:  JEV_API_KEY=… [JEV_BASE_URL=https://api.typesafe.ai/v1/systemone] npx tsx scripts/jev-prefilter-replay.mts --labels <file> [limit]
 //       (OPENROUTER_API_KEY is still honoured as the key when JEV_API_KEY is unset; the
 //        default base URL is OpenRouter's decisions endpoint, same as production)
-//       … --sentinels-only        wording guard only (no labels.json needed)
-//       … --replay-only [limit]   replay only
-//       … --dump <file>           one JSON line per replayed snapshot (truncated at start)
-//       JEV_FAKE=1 …              stub judge, every score 0.95 — exercises the plumbing
-//                                 and the FAIL path without a network call or a key.
-//                                 Never a verdict: where a real run prints PASS, a fake
-//                                 run prints NO VERDICT and exits 3.
-// Exit codes: 0 PASS · 1 FAIL · 2 bad arguments · 3 NO VERDICT (JEV_FAKE, or no key —
-// nothing was checked, and 0 is reserved for a run that actually measured).
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
-import {
-  JevPrefilterProvider,
-  createJevJudge,
-  classifyJevScore,
-  isTitleless,
-  normalizedTargetNames,
-  titleContainsAny,
-} from "../packages/workflow/src/index.js";
-import type {
-  JevJudge,
-  JevJudgeTarget,
-  ResourceProvider,
-  ResourceSnapshot,
-} from "../packages/workflow/src/index.js";
+//       … --sentinels-only                wording guard only (no --labels)
+//       … --replay-only --labels <file>   replay only
+//       … --dump <file>                   one JSON line per replayed snapshot; emptied at the
+//                                         start, once the arguments, the input and the key
+//                                         have all checked out
+//       Options take their value as the next argument (--name value, never --name=value);
+//       an unknown or repeated option, or a second positional, is refused.
+//       JEV_FAKE=1 …                      stub judge, every score 0.95, no network call and no
+//                                         key: the drop sentinels FAIL (exit 1) — that is its
+//                                         self-check — and --replay-only ends in NO VERDICT.
+//                                         It never prints PASS.
+// Exit codes: 0 PASS — the sentinels held and every agent-selected titled candidate in the
+// replay was judged and kept · 1 FAIL — a sentinel broke, or the replay dropped a selected
+// candidate · 2 bad arguments or input · 3 NO VERDICT — the evidence is incomplete: no key,
+// JEV_FAKE, a partial mode (--sentinels-only / --replay-only), the judge unreachable during
+// the sentinels, nothing replayed, or a selected candidate the judge never scored (its
+// snapshot failed open, or its chunk failed). 0 is reserved for a run that measured.
+import { appendFileSync, existsSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { JevPrefilterProvider, createJevJudge, classifyJevScore, isTitleless } from "../packages/workflow/src/index.js";
+import type { JevJudge, JevJudgeTarget, ResourceProvider, ResourceSnapshot } from "../packages/workflow/src/index.js";
 
 const USAGE =
-  "usage: [JEV_API_KEY=… [JEV_BASE_URL=…] | OPENROUTER_API_KEY=… | JEV_FAKE=1] npx tsx scripts/jev-prefilter-replay.mts [limit] " +
-  "[--sentinels-only] [--replay-only] [--dump <file>]\n" +
-  "       limit must be a positive integer (number of snapshots to replay).";
-
-const args = process.argv.slice(2);
-const runSentinels = !args.includes("--replay-only");
-const runReplay = !args.includes("--sentinels-only");
-// Both "only" switches together would run nothing and fall through to PASS.
-if (!runSentinels && !runReplay) {
+  "usage: [JEV_API_KEY=… [JEV_BASE_URL=…] | OPENROUTER_API_KEY=… | JEV_FAKE=1] npx tsx scripts/jev-prefilter-replay.mts " +
+  "--labels <labels.json> [limit] [--dump <file>] [--sentinels-only | --replay-only]\n" +
+  "       limit must be a positive integer (number of snapshots to replay); --sentinels-only takes no --labels / limit / --dump.";
+function usageError(message: string): never {
   console.log(USAGE);
-  console.log("--sentinels-only and --replay-only are mutually exclusive.");
+  console.log(message);
   process.exit(2);
 }
+
+// A whitelist: an unknown option (a typo'd --replay-only, a --dump=file form) used to be
+// dropped silently, and any stray word became the limit.
+const VALUED = new Set(["labels", "dump"]);
+const SWITCHES = new Set(["sentinels-only", "replay-only"]);
+const values = new Map<string, string>();
+const switches = new Set<string>();
+const positional: string[] = [];
+const argv = process.argv.slice(2);
+for (let i = 0; i < argv.length; i++) {
+  const arg = argv[i]!;
+  if (!arg.startsWith("--")) { positional.push(arg); continue; }
+  const name = arg.slice(2);
+  if (values.has(name) || switches.has(name)) usageError(`${arg} given twice`);
+  if (SWITCHES.has(name)) { switches.add(name); continue; }
+  if (!VALUED.has(name)) usageError(`unknown option ${arg}${name.includes("=") ? " (write --name value, not --name=value)" : ""}`);
+  const value = argv[i + 1];
+  if (value === undefined || value.startsWith("--")) usageError(`${arg} needs a value`);
+  values.set(name, value);
+  i += 1;
+}
+const runSentinels = !switches.has("replay-only");
+const runReplay = !switches.has("sentinels-only");
+// Both "only" switches together would run nothing.
+if (!runSentinels && !runReplay) usageError("--sentinels-only and --replay-only are mutually exclusive.");
+if (positional.length > 1) usageError(`at most one positional argument (the limit), got: ${positional.join(" ")}`);
+const labelsPath = values.get("labels");
 // --dump <file>: write one JSON line per replayed snapshot (target, scores, dropped,
 // floored) so the floor's cost can be broken down by title after the fact.
-const dumpIdx = args.indexOf("--dump");
-const dumpPath = dumpIdx >= 0 ? args[dumpIdx + 1] : undefined;
-// A trailing --dump used to disable dumping silently, and `--dump --sentinels-only`
-// truncated a file named "--sentinels-only" before running.
-if (dumpIdx >= 0 && (dumpPath === undefined || dumpPath.startsWith("--"))) {
-  console.log(USAGE);
-  console.log("--dump needs a file path.");
-  process.exit(2);
-}
-// A positional is a non-flag argument that is not the VALUE of --dump, so `50 --dump f`
-// and `--dump f 50` parse identically. Matching the dump path by value (the old
-// `limitArg === dumpPath`) was wrong for `--dump 50 50`: both the path and the limit
-// are "50", the path wins the find(), and the limit is silently Infinity.
-const positional = args.filter((a, i) => !a.startsWith("--") && args[i - 1] !== "--dump");
+const dumpPath = values.get("dump");
 const limitArg = positional[0];
 const limit = limitArg === undefined ? Infinity : Number(limitArg);
 // A typo'd limit used to become NaN → slice(0, NaN) → zero rows → "PASS" on an empty
 // replay. Refuse it at the boundary instead: this script's whole job is a go/no-go.
-if (limitArg !== undefined && (!Number.isInteger(limit) || limit <= 0)) {
-  console.log(USAGE);
-  process.exit(2);
+if (limitArg !== undefined && (!Number.isInteger(limit) || limit <= 0)) usageError(`bad limit "${limitArg}"`);
+if (!runReplay && (labelsPath !== undefined || dumpPath !== undefined || limitArg !== undefined)) {
+  usageError("--sentinels-only runs no replay: --labels, --dump and a limit would be ignored.");
 }
-// Truncate up front so a re-run replaces the dump instead of appending to the last
-// one — a half-old, half-new JSONL silently double-counts every per-title analysis.
-if (dumpPath) writeFileSync(dumpPath, "");
+if (runReplay && labelsPath === undefined) usageError("the replay needs --labels <file> (the export described above).");
+if (dumpPath !== undefined) {
+  if (existsSync(dumpPath) && !statSync(dumpPath).isFile()) usageError(`--dump ${dumpPath} is not a regular file.`);
+  const same = (a: string, b: string) => {
+    if (resolve(a) === resolve(b)) return true;
+    try { return realpathSync(a) === realpathSync(b); } catch { return false; }
+  };
+  // The dump is emptied at the start: pointed at the input, it would wipe the labels.
+  if (labelsPath !== undefined && same(dumpPath, labelsPath)) usageError("--dump names the --labels input; it would be emptied.");
+}
+
+// ─── Production replay input ─────────────────────────────────────────────────
+type Row = {
+  run_id: string;
+  keyword: string;
+  selected: string[];
+  title: string | null;
+  title_type: string | null;
+  year: string | number | null;
+  candidates: Array<{ id: string; type: string; title: string; source: string }> | null;
+};
+let rows: Row[] = [];
+if (runReplay) {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(labelsPath!, "utf8"));
+    if (!Array.isArray(parsed)) throw new Error("not a JSON array");
+    rows = (parsed as Row[]).slice(0, limit);
+  } catch (error) {
+    usageError(`--labels ${labelsPath}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
 
 // The stub exists so the script itself can be exercised (and its exit codes proven)
 // without spending a call. It scores everything 0.95, so every "drop" sentinel FAILS
@@ -99,6 +134,16 @@ if (!fake && !key) {
   console.log("NO VERDICT: neither JEV_API_KEY nor OPENROUTER_API_KEY is set — nothing was checked");
   process.exit(3);
 }
+// Only now — arguments, input and key all checked — does the run touch a file. Emptied up
+// front so a re-run replaces the dump instead of appending to the last one: a half-old,
+// half-new JSONL silently double-counts every per-title analysis.
+if (dumpPath !== undefined) {
+  try {
+    writeFileSync(dumpPath, "");
+  } catch (error) {
+    usageError(`--dump ${dumpPath}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
 const judge: JevJudge = fake
   ? {
       judgeCandidates: async (input) => ({
@@ -110,8 +155,9 @@ const judge: JevJudge = fake
 
 // ─── 1. Wording sentinels ────────────────────────────────────────────────────
 // `keep` = score ≥ 0.7, `notdrop` = ≥ 0.3 (kept, possibly flagged), `drop` = < 0.3,
-// `floor` = the provider's containment floor must cover it; its score is printed for
-// information only and never decides the case.
+// `floor` = the provider's containment floor must cover it: checked THROUGH the provider
+// with the judge's answer forced to 0, so deleting the floor branch fails it. Its real
+// score is printed for information only and never decides the case.
 type Expectation = "drop" | "notdrop" | "keep" | "floor";
 interface Sentinel {
   target: JevJudgeTarget;
@@ -177,23 +223,43 @@ function sentinelHolds(score: number, expect: Exclude<Expectation, "floor">): bo
   return band !== "drop";
 }
 
+/** The floor is the provider's guarantee, so it is checked through the provider: the
+ *  judge's answer for the row is forced to 0 (the worst it could say), and the row must
+ *  come back kept AND recorded as floored. A check on the containment helper alone would
+ *  keep passing with the provider's floor branch deleted. */
+async function floorHolds(target: JevJudgeTarget, c: { id: string; title: string }): Promise<boolean> {
+  const snapshot: ResourceSnapshot = {
+    id: "floor-probe", provider: "sentinel", keyword: target.title, createdAt: new Date(0).toISOString(),
+    candidates: [{ id: c.id, snapshotId: "floor-probe", index: 0, title: c.title, type: "115", source: "sentinel", providerPayload: {} }],
+  };
+  const worst: JevJudge = {
+    judgeCandidates: async (input) => ({ scores: Object.fromEntries(input.candidates.map((x) => [x.id, 0])), model: "floor-probe" }),
+  };
+  const out = await new JevPrefilterProvider({ inner: { search: async () => snapshot }, target, judge: worst, log: () => {} }).search({ keyword: target.title });
+  return out.candidates.some((x) => x.id === c.id) && (out.prefilter?.floored ?? []).some((f) => f.id === c.id);
+}
+
 async function checkSentinels(): Promise<boolean> {
   let allOk = true;
   for (const sentinel of SENTINELS) {
-    const result = await judge.judgeCandidates({
-      target: sentinel.target,
-      candidates: sentinel.candidates.map((c) => ({ id: c.id, title: c.title })),
-    });
-    const targetNames = normalizedTargetNames(sentinel.target);
+    let result: Awaited<ReturnType<JevJudge["judgeCandidates"]>>;
+    try {
+      result = await judge.judgeCandidates({
+        target: sentinel.target,
+        candidates: sentinel.candidates.map((c) => ({ id: c.id, title: c.title })),
+      });
+    } catch (error) {
+      // No answer at all (HTTP error, timeout, network): the wording was not measured,
+      // which is not the same as the wording being wrong.
+      console.log(`NO VERDICT: the judge did not answer the «${sentinel.target.title}» sentinels (${error instanceof Error ? error.message : String(error)}) — nothing was measured`);
+      process.exit(3);
+    }
     for (const c of sentinel.candidates) {
       const score = result.scores[c.id];
       // classifyJevScore fails OPEN on a non-number, which would make a "keep"
       // sentinel pass on an unanswered question. An unanswered sentinel is a FAIL.
       const scored = typeof score === "number" && Number.isFinite(score);
-      const ok =
-        c.expect === "floor"
-          ? titleContainsAny(c.title, targetNames)
-          : scored && sentinelHolds(score, c.expect);
+      const ok = c.expect === "floor" ? await floorHolds(sentinel.target, c) : scored && sentinelHolds(score, c.expect);
       if (!ok) allOk = false;
       const p = scored ? score.toFixed(2) : "n/a";
       console.log(`SENTINEL ${ok ? "ok" : "FAIL"} «${sentinel.target.title}» ${c.title} p=${p} expected=${c.expect}`);
@@ -208,23 +274,14 @@ if (runSentinels) {
     console.log("FAIL: sentinel");
     process.exit(1);
   }
+  console.log("sentinels: all ok");
 }
 
 // ─── 2. Production replay ────────────────────────────────────────────────────
-type Row = {
-  run_id: string;
-  keyword: string;
-  selected: string[];
-  title: string | null;
-  title_type: string | null;
-  year: string | number | null;
-  candidates: Array<{ id: string; type: string; title: string; source: string }> | null;
-};
-
 if (runReplay) {
-  const rows: Row[] = JSON.parse(readFileSync("/tmp/jev-eval/labels.json", "utf8")).slice(0, limit);
-
-  let replayed = 0, total = 0, dropped = 0, floored = 0, selectedTitled = 0, selectedDropped = 0, skipped = 0, cost = 0;
+  let replayed = 0, total = 0, dropped = 0, floored = 0, failedOpen = 0, partial = 0, cost = 0;
+  // Agent-selected titled candidates: judged-and-kept, dropped, or never scored at all.
+  let selectedJudged = 0, selectedDropped = 0, selectedUnjudged = 0;
   const violations: string[] = [];
   for (const r of rows) {
     const cands = r.candidates ?? [];
@@ -248,50 +305,64 @@ if (runReplay) {
       target: { kind, title: r.title ?? r.keyword, aliases: [], ...(year === undefined ? {} : { year }) },
     });
     const out = await p.search({ keyword: r.keyword });
-    if (out.prefilter?.status !== "applied") { skipped += 1; continue; }
+    // Title-less rows (date headers, bare URLs) are never judged, so counting them here
+    // would dilute the only metric that can veto this filter. The provider's own
+    // predicate, not a copy: a divergence would measure a filter that is not the one
+    // production runs.
+    const selectedTitled = cands.filter((c) => r.selected.includes(c.id) && !isTitleless(c.title));
+    if (out.prefilter?.status !== "applied") {
+      // Failed open: every candidate went through unjudged. ("skipped" = nothing
+      // judgeable, so it holds no titled candidate and adds nothing below.)
+      if (out.prefilter?.status === "failed") failedOpen += 1;
+      selectedUnjudged += selectedTitled.length;
+      continue;
+    }
     replayed += 1;
+    if ((out.prefilter.failedChunks ?? 0) > 0) partial += 1;
     total += cands.length;
     dropped += out.prefilter.dropped.length;
     // Sub-threshold rows the containment floor kept: the cost side of the go/no-go
     // guarantee, so a wording change that quietly leans on the floor is visible here.
     floored += out.prefilter.floored?.length ?? 0;
     cost += out.prefilter.cost ?? 0;
-    if (dumpPath) {
+    if (dumpPath !== undefined) {
       appendFileSync(dumpPath, JSON.stringify({ run_id: r.run_id, title: r.title, title_type: r.title_type, year, keyword: r.keyword, selected: r.selected, candidates: cands.map((c) => c.title), scores: out.prefilter.scores, dropped: out.prefilter.dropped, floored: out.prefilter.floored ?? [] }) + "\n");
     }
     const kept = new Set(out.candidates.map((c) => c.id));
-    for (const c of cands) {
-      // Title-less rows (date headers, bare URLs) are never judged, so counting them
-      // here would dilute the only metric that can veto this filter. The provider's own
-      // predicate, not a copy: a divergence would measure a filter that is not the one
-      // production runs.
-      const titled = !isTitleless(c.title);
-      if (r.selected.includes(c.id) && titled) {
-        selectedTitled += 1;
-        if (!kept.has(c.id)) {
-          selectedDropped += 1;
-          violations.push(`«${r.title}» ${c.title} p=${out.prefilter.scores[c.id]}`);
-        }
+    for (const c of selectedTitled) {
+      if (!kept.has(c.id)) {
+        selectedDropped += 1;
+        violations.push(`«${r.title}» ${c.title} p=${out.prefilter.scores[c.id]}`);
+      } else if (typeof out.prefilter.scores[c.id] !== "number") {
+        // Kept only because nothing scored it (its chunk failed): it proves nothing.
+        selectedUnjudged += 1;
+      } else {
+        selectedJudged += 1;
       }
     }
   }
-  // A replay that measured nothing (empty/filtered labels.json, every snapshot
-  // fail-open) must never print PASS: this script is a go/no-go gate, and "no evidence"
-  // is not "no violations". Checked before the summary, which is why its percent guard
-  // below is moot — it stays anyway so the expression is safe on its own terms.
-  if (total === 0) {
-    console.log(`snapshots=0 skipped(fail-open)=${skipped} input-rows=${rows.length}`);
-    console.log("FAIL: nothing replayed");
-    process.exit(1);
-  }
-  // snapshots= counts what was REPLAYED, not what was read: rows.length included the
-  // candidate-less and fail-open ones, so a run that measured 3 of 195 claimed 195.
-  console.log(`snapshots=${replayed} skipped(fail-open)=${skipped} candidates=${total} dropped=${dropped} (${total === 0 ? "0.0" : ((100 * dropped) / total).toFixed(1)}%) floored=${floored} cost=$${cost.toFixed(3)}`);
-  console.log(`agent-selected titled=${selectedTitled} dropped=${selectedDropped}`);
+  // snapshots= counts what was REPLAYED, not what was read: rows.length includes the
+  // candidate-less and failed-open ones.
+  console.log(`snapshots=${replayed} failed-open=${failedOpen} partial=${partial} input-rows=${rows.length} candidates=${total} dropped=${dropped} (${total === 0 ? "0.0" : ((100 * dropped) / total).toFixed(1)}%) floored=${floored} cost=$${cost.toFixed(3)}`);
+  console.log(`agent-selected titled: judged+kept=${selectedJudged} dropped=${selectedDropped} never-scored=${selectedUnjudged}`);
   for (const v of violations) console.log("  VIOLATION", v);
   if (selectedDropped > 0) {
     console.log("FAIL: prefilter dropped an agent-selected titled candidate");
     process.exit(1);
+  }
+  // "No violations" is only a PASS when the hard check had something to hold: a replay
+  // that measured nothing (empty labels, ids that never match, every snapshot failed
+  // open) or skipped some of the agent's picks (a failed-open snapshot, a failed chunk)
+  // cannot vouch for the rows it never judged.
+  if (total === 0 || selectedJudged === 0 || selectedUnjudged > 0) {
+    const why =
+      total === 0
+        ? "nothing was replayed"
+        : selectedUnjudged > 0
+          ? `${selectedUnjudged} agent-selected candidate(s) were never scored (failed-open snapshot or failed chunk) — re-run`
+          : "no agent-selected titled candidate was judged (do the labels' selected ids match their candidate ids?)";
+    console.log(`NO VERDICT: ${why}`);
+    process.exit(3);
   }
   // Soft metric provenance: 48.4% batched without the containment floor (2026-09-20),
   // 32.2% with it — the floor keeps 1,604 sub-threshold rows whose title contains the
@@ -299,7 +370,8 @@ if (runReplay) {
   // the 权利交锋 mislabel at p=0.04 and the real 攻壳机动队 2026 E01 at p=0.29). Those rows
   // still reach the agent flagged ⚠ with their score, so the cleanup is larger than the
   // raw drop rate suggests. Below 25% would mean the wording or the floor regressed.
-  if (total > 0 && dropped / total < 0.25) { console.log("WARN: drop rate below 25% (soft metric)"); }
+  if (dropped / total < 0.25) console.log("WARN: drop rate below 25% (soft metric)");
+  if (partial > 0 || failedOpen > 0) console.log("WARN: the drop rate covers only the snapshots the judge answered in full");
 }
 
 // The stub scores everything 0.95, so it can only ever reach this line with the
@@ -307,6 +379,11 @@ if (runReplay) {
 // read as the production go/no-go.
 if (fake) {
   console.log("NO VERDICT: JEV_FAKE stub judge — plumbing only, no real Jev call");
+  process.exit(3);
+}
+// A partial mode checked one guard; PASS/exit 0 is the claim that both held.
+if (!runReplay || !runSentinels) {
+  console.log(`NO VERDICT: ${runReplay ? "--replay-only skipped the wording sentinels" : "--sentinels-only skipped the replay (the go/no-go check)"}`);
   process.exit(3);
 }
 console.log("PASS");

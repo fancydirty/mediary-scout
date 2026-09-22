@@ -48,10 +48,14 @@ export async function probeJev(
       return { ok: false, reason: "http_error", message: `Jev 端点返回 HTTP ${response.status}，未保存。` };
     }
     // A non-JSON body (an nginx page, a chat/completions error blob) lands as null
-    // and is judged not_jev below — a readable reason, not a swallowed error.
-    const body = (await response.json().catch(() => null)) as
-      | { model?: unknown; answers?: { probe?: { noul?: unknown } } }
-      | null;
+    // and is judged not_jev below — a readable reason, not a swallowed error. Only a
+    // parse failure means that: a body read that DIES (connection dropped → TypeError
+    // "terminated", the 8s signal firing mid-body → TimeoutError) says nothing about
+    // what the endpoint is, so it goes to the transport handler below like any other.
+    const body = (await response.json().catch((error: unknown) => {
+      if (error instanceof SyntaxError) return null;
+      throw error;
+    })) as { model?: unknown; answers?: { probe?: { noul?: unknown } } } | null;
     const noul = body?.answers?.probe?.noul;
     // Same acceptance rule as the real client (jev-client: finite, 0..1). An answer the
     // client would reject must fail HERE, or the endpoint is saved healthy and every

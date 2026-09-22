@@ -39,8 +39,8 @@ export function isTitleless(title: string): boolean {
  *  - after JEV_CIRCUIT_BREAKER_FAILURES consecutive judge failures the judge is not
  *    called again by this instance (same fail-open shape, reason "circuit-open: …");
  *  - nothing judgeable (all title-less) → judge not called, status "skipped";
- *  - inner.search() errors PROPAGATE (source health is classified one layer down;
- *    masking a provider outage here would hide real incidents);
+ *  - inner.search() errors PROPAGATE, logged by error name only (source health is
+ *    classified one layer down; masking a provider outage here would hide real incidents);
  *  - title-less candidates (empty / 📅 / http…) are never judged and never dropped,
  *    even if the judge returns a score for them;
  *  - a candidate whose title contains the target title/alias verbatim is never dropped,
@@ -71,9 +71,19 @@ export class JevPrefilterProvider implements ResourceProvider {
   }
 
   async search(input: { keyword: string; workflowRunId?: string }): Promise<ResourceSnapshot> {
-    const snapshot = await this.inner.search(input);
-    // Every search leaves one [jev-prefilter] line, these two included, so the audit
-    // trail can tell "the judge was not needed" from "nothing was logged".
+    let snapshot: ResourceSnapshot;
+    try {
+      snapshot = await this.inner.search(input);
+    } catch (error) {
+      // Rethrown untouched (see Guarantees), but not silently. The error's NAME only:
+      // undici quotes an invalid header VALUE in its message, and Prowlarr's key travels
+      // in the X-Api-Key header, so the message is not something to put in a log.
+      const name = error instanceof Error ? error.name : typeof error;
+      this.log(`[jev-prefilter] ${JSON.stringify(input.keyword)} source search failed (${name}) — judge not called, error rethrown`);
+      throw error;
+    }
+    // Every search leaves one [jev-prefilter] line — these two, and a source failure
+    // above — so the audit trail can tell "the judge was not needed" from "nothing was logged".
     if (snapshot.candidates.length === 0) {
       this.log(`[jev-prefilter] ${JSON.stringify(input.keyword)} skipped: 0 candidates`);
       return snapshot;

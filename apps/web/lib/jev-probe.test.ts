@@ -85,6 +85,47 @@ describe("probeJev", () => {
     expect(r).toMatchObject({ ok: false, reason: "not_jev" });
   });
 
+  it("200 with a body that is not JSON at all (an nginx page) → not_jev", async () => {
+    const r = await probeJev(
+      { apiKey: "k", baseUrl: "https://x" },
+      { fetchImpl: failWith(async () => new Response("<html>502 Bad Gateway</html>", { status: 200 })) },
+    );
+    expect(r).toMatchObject({ ok: false, reason: "not_jev" });
+  });
+
+  // The headers arrived, then the body read failed. What undici really rejects
+  // response.json() with (checked against a local server): a dropped connection →
+  // TypeError "terminated"; the 8s signal firing mid-body → DOMException TimeoutError.
+  // Neither says anything about what the endpoint IS, so neither may become not_jev.
+  const bodyFailsWith = (error: unknown) =>
+    failWith(
+      async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('{"answers":{"probe":'));
+              controller.error(error);
+            },
+          }),
+          { status: 200 },
+        ),
+    );
+
+  it("connection dropped while reading the body → unreachable (network), not not_jev", async () => {
+    const r = await probeJev({ apiKey: "k", baseUrl: "https://x" }, { fetchImpl: bodyFailsWith(new TypeError("terminated")) });
+    expect(r).toMatchObject({ ok: false, reason: "unreachable" });
+    if (!r.ok) expect(r.message).toMatch(/网络错误/);
+  });
+
+  it("the 8s budget running out while reading the body → unreachable (timeout), not not_jev", async () => {
+    const r = await probeJev(
+      { apiKey: "k", baseUrl: "https://x" },
+      { fetchImpl: bodyFailsWith(new DOMException("The operation was aborted due to timeout", "TimeoutError")) },
+    );
+    expect(r).toMatchObject({ ok: false, reason: "unreachable" });
+    if (!r.ok) expect(r.message).toMatch(/8 秒/);
+  });
+
   // The client rejects any answer that is not a finite 0..1 number; a probe that
   // accepted one would mark as healthy an endpoint every real search then fails on
   // (silently, since the prefilter fails open).

@@ -140,6 +140,23 @@ describe("JevPrefilterProvider", () => {
     ]);
   });
 
+  // The source failing is the third search that never reaches the judge. The error still
+  // propagates untouched (source health is classified one layer down), but the line says
+  // it happened — by error NAME only: undici quotes a bad header VALUE in its message, and
+  // Prowlarr's X-Api-Key is a header, so the message is not safe to put in a log.
+  it("logs one line (name only, never the message) when the source search throws, and rethrows the same error", async () => {
+    const lines: string[] = [];
+    const judgeCalls: JevJudgeInput[] = [];
+    const boom = new TypeError('Headers.append: "sk-PROWLARR-SECRET\\n" is an invalid header value.');
+    const failing: ResourceProvider = { search: async () => { throw boom; } };
+
+    const search = new JevPrefilterProvider({ inner: failing, target, judge: judge({}, judgeCalls), log: (l) => lines.push(l) }).search({ keyword: "交锋" });
+
+    await expect(search).rejects.toBe(boom);
+    expect(judgeCalls).toHaveLength(0);
+    expect(lines).toEqual(['[jev-prefilter] "交锋" source search failed (TypeError) — judge not called, error rethrown']);
+  });
+
   it("passes workflowRunId through to the inner provider", async () => {
     let seenRun: string | undefined;
     const innerSpy: ResourceProvider = { search: async (i) => { seenRun = i.workflowRunId; return snapshot([]); } };
