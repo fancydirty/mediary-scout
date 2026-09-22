@@ -104,8 +104,8 @@ export interface Pan123StorageExecutorOptions {
   subtitleResolveRetryDelayMs?: number;
   /** Sleep primitive — injected so tests can advance the poll without real waiting. */
   sleep?: (ms: number) => Promise<void>;
-  /** Clock for the subtitle submit window — injected so tests can advance time
-   *  (default Date.now). */
+  /** Clock for the subtitle deadlines (submit window, link lifetime, landing grace) —
+   *  injected so tests can advance time (default performance.now: monotonic). */
   now?: () => number;
 }
 
@@ -217,7 +217,9 @@ export class Pan123StorageExecutor implements StorageExecutor {
     this.subtitleLinkLifetimeMs = options.subtitleLinkLifetimeMs ?? 240_000;
     this.subtitleResolveRetryDelayMs = options.subtitleResolveRetryDelayMs ?? 2000;
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
-    this.now = options.now ?? (() => Date.now());
+    // Monotonic: the subtitle deadlines (window, link lifetime, landing grace) are
+    // durations, and a wall clock that steps (NTP) would stretch or cut them.
+    this.now = options.now ?? (() => performance.now());
   }
 
   async createDirectory(input: { name: string; parentId: string }): Promise<string> {

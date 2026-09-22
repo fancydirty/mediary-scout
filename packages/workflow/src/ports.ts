@@ -64,8 +64,9 @@ export interface StorageExecutor {
    *  and confirms the named file landed via listTree (NOT listVideoFiles —
    *  subtitle extensions are invisible to that path). Optional AND the
    *  capability gate: the orchestrator enables the whole subtitle flow iff this
-   *  method exists on the executor (today only 115 implements it; implementing
-   *  it on 光鸭/夸克 lights subtitles up there with zero other wiring). */
+   *  method exists on the executor (today 115 / 光鸭 / 123 implement it; 夸克 and
+   *  天翼 have no offline-download API — implementing it lights subtitles up with
+   *  zero other wiring). */
   transferSubtitleUrl?(input: {
     url: string;
     filename: string;

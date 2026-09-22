@@ -148,9 +148,10 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
   // the agent with subtitle tools on a natively-Chinese title. Requiring known
   // non-CN loses almost nothing and matches the UI copy (仅对非国产内容生效).
   // The third gate is a CAPABILITY probe (transferSubtitleUrl presence), not a
-  // brand string — the day the 光鸭/夸克 executor implements the method,
-  // subtitles light up there automatically, and the gate can never disagree
-  // with what the executor can actually do (today only 115 implements it).
+  // brand string — a brand's executor that implements the method lights
+  // subtitles up automatically, and the gate can never disagree with what the
+  // executor can actually do (today 115 / 光鸭 / 123 implement it; 夸克 and
+  // 天翼 have no offline-download API).
   // Soft-fail: a flaky assrt / empty search sets an empty snapshot, never
   // blocks the video task. When the gates don't pass, the subtitle tools are
   // simply not registered (the agent never knows subtitles were an option).
