@@ -50,8 +50,8 @@ import {
   PROWLARR_BASE_URL_SETTING_KEY,
   PROWLARR_API_KEY_SETTING_KEY,
   getJevConfig,
+  getJevBaseUrlOverride,
   isJevPrefilterActive,
-  JEV_BASE_URL_SETTING_KEY,
   PANSOU_BASE_URL_SETTING_KEY,
   resolveGlobalWorkspace,
   resolveIsDesktop,
@@ -327,7 +327,8 @@ async function TmdbApiKeySection() {
 
 async function ResourceProviderSection() {
   await connection();
-  const repository = getAccountScopedSettings(await getCurrentAccountId());
+  const accountId = await getCurrentAccountId();
+  const repository = getAccountScopedSettings(accountId);
   const pansouBaseURL = (await repository.getSetting(PANSOU_BASE_URL_SETTING_KEY)) ?? "";
   const prowlarrBaseURL = (await repository.getSetting(PROWLARR_BASE_URL_SETTING_KEY)) ?? "";
   const prowlarrApiKeySet = Boolean((await repository.getSetting(PROWLARR_API_KEY_SETTING_KEY))?.trim());
@@ -335,11 +336,12 @@ async function ResourceProviderSection() {
   // isJevPrefilterActive is the same go/no-go the worker uses, so the badge
   // cannot drift from what actually runs.
   const jev = await getJevConfig(repository);
-  // The input shows the stored OVERRIDE, not the resolved default (same as the two
-  // reads above). Prefilling the resolved default would be typed straight back on
-  // the next 保存, freezing today's endpoint into the DB and shadowing env
-  // JEV_BASE_URL — the placeholder already tells the user what blank resolves to.
-  const jevBaseUrlOverride = (await repository.getSetting(JEV_BASE_URL_SETTING_KEY)) ?? "";
+  // The input shows THIS account's own override — not the resolved default and not a
+  // global value (the facade above would fall back to it). Prefilling either would be
+  // typed straight back on the next 保存, freezing that endpoint into the account row
+  // and shadowing later global / env JEV_BASE_URL changes; the placeholder already
+  // tells the user what blank resolves to.
+  const jevBaseUrlOverride = await getJevBaseUrlOverride(accountId);
   // Prowlarr (磁力/PT) only works for brands that support magnet (115). Hide it
   // when every connected drive is 夸克 (no magnet API). Shown for legacy/env-only
   // setups (no connected_storages rows) so we never hide it from a working 115.

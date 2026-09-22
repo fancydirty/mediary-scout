@@ -103,6 +103,34 @@ describe("Jev settings actions", () => {
       expect(await repo.getAccountSetting(ACCOUNT_ID, rt.JEV_BASE_URL_SETTING_KEY)).toBe("");
     });
 
+    // Clearing the field REMOVES the account override (saved as ""), so what runs
+    // afterwards is global → env → default. The probe must hit THAT endpoint — probing
+    // the override that is about to be dropped would mark an untested endpoint healthy.
+    it("clearing an existing account override probes the env endpoint that will run, not the old override", async () => {
+      await repo.setAccountSetting(ACCOUNT_ID, rt.JEV_BASE_URL_SETTING_KEY, "https://api.typesafe.ai/v1/systemone");
+      process.env.JEV_BASE_URL = "https://env.example/api/alpha/decisions";
+      probeMock.mockResolvedValue({ ok: true, model: "m" });
+      const result = await actions.saveJevConfigAction({ apiKey: "sk-or-1", baseUrl: "" });
+      expect(result.success).toBe(true);
+      expect(probeMock.mock.calls[0]![0].baseUrl).toBe("https://env.example/api/alpha/decisions");
+      expect(await repo.getAccountSetting(ACCOUNT_ID, rt.JEV_BASE_URL_SETTING_KEY)).toBe("");
+    });
+
+    it("clearing an existing account override probes the instance-wide (global) endpoint when one is set", async () => {
+      await repo.setSetting(rt.JEV_BASE_URL_SETTING_KEY, "https://global.example/v1/systemone");
+      await repo.setAccountSetting(ACCOUNT_ID, rt.JEV_BASE_URL_SETTING_KEY, "https://api.typesafe.ai/v1/systemone");
+      probeMock.mockResolvedValue({ ok: true, model: "m" });
+      await actions.saveJevConfigAction({ apiKey: "sk-or-1", baseUrl: "" });
+      expect(probeMock.mock.calls[0]![0].baseUrl).toBe("https://global.example/v1/systemone");
+    });
+
+    it("clearing an existing account override with no env/global probes the default endpoint", async () => {
+      await repo.setAccountSetting(ACCOUNT_ID, rt.JEV_BASE_URL_SETTING_KEY, "https://api.typesafe.ai/v1/systemone");
+      probeMock.mockResolvedValue({ ok: true, model: "m" });
+      await actions.saveJevConfigAction({ apiKey: "sk-or-1", baseUrl: "" });
+      expect(probeMock.mock.calls[0]![0].baseUrl).toBe("https://openrouter.ai/api/alpha/decisions");
+    });
+
     it("reports the model the probe resolved, so the user sees WHAT answered", async () => {
       probeMock.mockResolvedValue({ ok: true, model: "typesafe/jev-1.13" });
       const result = await actions.saveJevConfigAction({ apiKey: "sk-or-1", baseUrl: "" });

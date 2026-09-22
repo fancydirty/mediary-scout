@@ -1,5 +1,5 @@
 // scripts/jev-ab-run.mts — the Jev prefilter delivery gate (spec §8.3): A/B on a REAL
-// instance, prefilter OFF vs ON, same titles, fresh state per arm, compared per run.
+// instance, prefilter OFF vs ON, same titles, fresh DB state per arm, compared per run.
 //
 // Runs from the operator's machine and drives an ISOLATED compose project on the home
 // router over short ssh calls (the CF tunnel kills long sessions, so every step is one
@@ -10,8 +10,11 @@
 //
 // Per title × arm:
 //   1. wipe tracking tables (accounts / settings / drive rows stay)
-//   2. point the drive's category CIDs at the arm's scratch dirs (A or B — so the second
-//      arm never sees the first arm's files and both start from an empty library)
+//   2. point the drive's category CIDs at the arm's scratch dirs (A or B — so the ON arm
+//      never sees the OFF arm's files). The dirs are NOT wiped: a retried arm (LLM abort,
+//      below) or a re-run with the same ab-cids.json sees what an earlier attempt landed
+//      for that title, and inspectTargetDir can count it. Empty them per arm with
+//      --pre-arm-remote, or give every harness run fresh dirs.
 //   3. set jev_prefilter_enabled = 0 | 1
 //   4. POST /api/agent/acquire { tmdbId, type } (Bearer MEDIA_TRACK_AGENT_TOKEN)
 //   5. poll workflow_runs until the run leaves queued/running (timeout)
@@ -249,6 +252,7 @@ for (const [index, t] of titles.entries()) {
       console.log(`    ${status} finish=${facts.finish} steps=${facts.steps} searches=${facts.searches} transfers=${facts.transfers} ${facts.durationS}s tokens=${facts.tokens} obtained=${facts.obtained.length} prefilter=${facts.prefilter}${arm === "on" ? ` flagSeen=${facts.flagSeen}` : ""}`);
       if (!isAborted(facts) || DRY) break;
       console.log(`    ↻ the LLM aborted the loop (finish=${facts.finish}) — not a prefilter effect; re-running this arm`);
+      if (!PRE_ARM_REMOTE) console.log("    ⚠ no --pre-arm-remote: the retry sees whatever the aborted attempt already landed in this arm's dirs");
     }
     row[arm] = facts!;
     writeFileSync(OUT, JSON.stringify(results, null, 2));

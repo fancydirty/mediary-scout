@@ -7,6 +7,7 @@ import {
   getPanSouBaseUrl,
   getProwlarrConfig,
   getJevConfig,
+  getJevBaseUrlOverride,
   resolveJevJudge,
   isJevPrefilterActive,
   getQualityPreference,
@@ -702,6 +703,26 @@ describe("getJevConfig", () => {
     const cfg = await getJevConfig(repoWith(null), { JEV_API_KEY: "sk-env", JEV_BASE_URL: "https://env/" } as unknown as NodeJS.ProcessEnv);
     expect(cfg.apiKey).toBe("sk-env");
     expect(cfg.baseUrl).toBe("https://env/");
+  });
+});
+
+describe("getJevBaseUrlOverride (the settings input shows the account's OWN override)", () => {
+  // The page reads through the account → global facade elsewhere; for THIS input a
+  // global value must not be prefilled — saving the form again would copy it into
+  // the account row and freeze it (later operator / env changes would stop applying).
+  const repo = (own: string | null, global: string | null) => ({
+    getAccountSetting: async (_accountId: string, key: string) => (key === JEV_BASE_URL_SETTING_KEY ? own : null),
+    getSetting: async (key: string) => (key === JEV_BASE_URL_SETTING_KEY ? global : null),
+  });
+
+  it("no account row → \"\" even when a global URL exists", async () => {
+    expect(await getJevBaseUrlOverride("acct_a", repo(null, "https://global.example/v1/systemone"))).toBe("");
+  });
+
+  it("account row → that value, trimmed", async () => {
+    expect(await getJevBaseUrlOverride("acct_a", repo(" https://mine.example/v1/systemone ", "https://global.example/"))).toBe(
+      "https://mine.example/v1/systemone",
+    );
   });
 });
 

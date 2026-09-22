@@ -1221,6 +1221,17 @@ export async function getJevConfig(
   };
 }
 
+/** The account's OWN Jev base-URL override, for the settings input. Deliberately NOT
+ *  read through the account → global facade: prefilling a global (or env) value would
+ *  be saved straight back into the account row on the next 保存, freezing today's
+ *  endpoint and shadowing later operator / env changes. Blank = no override. */
+export async function getJevBaseUrlOverride(
+  accountId: string,
+  repo: Pick<WorkflowRepository, "getAccountSetting"> = getWorkflowRepository(),
+): Promise<string> {
+  return (await repo.getAccountSetting(accountId, JEV_BASE_URL_SETTING_KEY))?.trim() ?? "";
+}
+
 /** The go/no-go, on an already-read config: key set AND enabled AND the last
  *  probe succeeded. The settings page and resolveJevJudge share this one rule. */
 export function isJevPrefilterActive(cfg: JevConfig): boolean {

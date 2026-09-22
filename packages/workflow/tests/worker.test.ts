@@ -291,6 +291,48 @@ describe("runQueuedType2Workflow — the Jev prefilter reaches the engine", () =
     expect(seen.length).toBeGreaterThan(0);
     expect(seen[0]!.target.kind).toBe("tv");
   });
+
+  it("an account the resolver gives NO judge never inherits a process-level one (Jev is per-account opt-in)", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const { title, season } = trackedFixture();
+    await queueTrackingInitialization({
+      title,
+      season,
+      keyword: "Show 4K",
+      repository,
+      createWorkflowRunId: () => "run_jev_type2_opted_out",
+      now: fixedNow,
+    });
+
+    const seen: JevJudgeInput[] = [];
+    const processLevelJudge: JevJudge = {
+      judgeCandidates: async (input) => {
+        seen.push(input);
+        return { scores: {}, model: "m" };
+      },
+    };
+
+    // A caller that shares one wider deps object (with a judge in it) across
+    // accounts — built as a variable, the way a real shared deps object would be.
+    const sharedDeps = {
+      repository,
+      resourceProvider: judgeableProvider(),
+      storage: new FakeStorageExecutor(),
+      model: noCoverageModel(),
+      storageParentDirectoryId: "library_root",
+      now: fixedNow,
+      jevJudge: processLevelJudge,
+      // This account never configured Jev (or switched it off): the resolver is
+      // authoritative, so the base deps' judge must not leak into its run.
+      resolveAccountContext: async () => ({
+        storage: new FakeStorageExecutor(),
+        storageParentDirectoryId: "library_root",
+      }),
+    };
+    await runQueuedType2Workflow(sharedDeps);
+
+    expect(seen).toHaveLength(0);
+  });
 });
 
 /** One titled candidate under both the pre-warm keyword (the bare title) and the

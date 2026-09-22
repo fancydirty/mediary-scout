@@ -103,7 +103,10 @@ async function resolveWorkerDeps(
     qualityPreference: ctx.qualityPreference ?? base.qualityPreference,
     storageProvider: ctx.storageProvider ?? base.storageProvider,
     assrtToken: ctx.assrtToken ?? base.assrtToken,
-    jevJudge: ctx.jevJudge ?? base.jevJudge,
+    // Jev is per-account opt-in: with a resolver, its answer is authoritative even
+    // when it has no judge — an account that never configured (or switched off) the
+    // prefilter must not inherit a judge that happens to ride in the base deps.
+    jevJudge: resolve ? ctx.jevJudge : base.jevJudge,
     storageParentDirectoryId:
       ctx.storageParentDirectoryId ?? base.storageParentDirectoryId,
     animeStorageParentDirectoryId:

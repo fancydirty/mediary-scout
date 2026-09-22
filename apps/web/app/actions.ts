@@ -736,13 +736,22 @@ export async function saveJevConfigAction(input: {
     // 占位符同一条规则。只读 account 行的话,一个存在于全局作用域或 env 的 key
     // 会在这里被判成「没有 key」;而 enabled/health 只有这个 action 会写,于是
     // 纯 env 部署永远激活不了。
-    const effective = await getJevConfig(getAccountScopedSettings(accountId, repository));
+    const scoped = getAccountScopedSettings(accountId, repository);
+    const effective = await getJevConfig(scoped);
     const typedKey = input.apiKey.trim();
     const apiKey = typedKey || effective.apiKey || "";
     if (!apiKey) return { success: false, message: "需要 Jev API Key（OpenRouter 的 sk-or-… 或 TypeSafe 官方控制台的 Key 都可以）。" };
     const typedUrl = input.baseUrl.trim();
-    // effective.baseUrl 已经兜到 env → DEFAULT_JEV_BASE_URL。
-    const baseUrl = typedUrl || effective.baseUrl;
+    // 留空的 URL 会存成 ""(=去掉 account 覆盖),保存后真正生效的是 全局 → env → 默认。
+    // 探活必须打**那个**地址:沿用 effective.baseUrl 会打到即将被清掉的旧覆盖,
+    // 于是一个从没测过的端点被记成 healthy + enabled。
+    const baseUrl =
+      typedUrl ||
+      (
+        await getJevConfig({
+          getSetting: (key) => (key === JEV_BASE_URL_SETTING_KEY ? repository.getSetting(key) : scoped.getSetting(key)),
+        })
+      ).baseUrl;
     // 先跑便宜的格式校验:漏写 scheme 的地址否则要耗满 8s 探活,再换回一句
     // 含糊的「连不上」,而真正的问题是格式(与 PanSou 同一条规则)。
     const format = validateJevBaseUrlFormat(baseUrl);
