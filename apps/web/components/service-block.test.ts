@@ -8,7 +8,7 @@ const render = (props: Parameters<typeof ServiceBlock>[0]) =>
   renderToStaticMarkup(createElement(ServiceBlock, props));
 
 describe("ServiceBlock", () => {
-  it("renders name as h3, pills with tone classes, summary, and children", () => {
+  it("renders name as h3, pills with tone classes + full label as title (CSS may ellipsize), summary, and children", () => {
     const html = render({
       name: "Jev 候选预筛",
       pills: [
@@ -19,20 +19,22 @@ describe("ServiceBlock", () => {
       children: createElement("input", { "aria-label": "X" }),
     });
     expect(html).toContain('<h3 class="service-block-name">Jev 候选预筛</h3>');
-    expect(html).toContain('<span class="service-pill is-on">生效中</span>');
-    expect(html).toContain('<span class="service-pill is-neutral">jev-1.13.0</span>');
+    expect(html).toContain('<span class="service-pill is-on" title="生效中">生效中</span>');
+    expect(html).toContain('<span class="service-pill is-neutral" title="jev-1.13.0">jev-1.13.0</span>');
     expect(html).toContain('<p class="service-block-summary">一句话。</p>');
     expect(html).toContain('aria-label="X"');
   });
 
-  it("renders a closed <details> labelled 说明 only when details are given", () => {
+  it("renders a closed <details> labelled 说明 only when details are given; summary's accessible name carries the service name", () => {
     const withDetails = render({
       name: "A",
       summary: "s",
       details: createElement("p", null, "长说明"),
       children: null,
     });
-    expect(withDetails).toContain('<details class="service-block-details"><summary>说明</summary>');
+    // Six blocks each have a 说明 disclosure — aria-label keeps them distinguishable
+    // for screen readers while the visible text stays 说明.
+    expect(withDetails).toContain('<details class="service-block-details"><summary aria-label="A 说明">说明</summary>');
     expect(withDetails).not.toContain(" open");
     expect(withDetails).toContain("长说明");
 

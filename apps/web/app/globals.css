@@ -4221,24 +4221,31 @@ select.setting-control {
   font-weight: 600;
   color: var(--text);
 }
+/* inline-block, not inline-flex: text-overflow needs a block container, and a
+ * user-typed model id (「已配置 · accounts/fireworks/models/…」) must ellipsize
+ * inside the panel instead of widening the page. Full text is in the title attr. */
 .service-pill {
-  display: inline-flex;
-  align-items: center;
+  display: inline-block;
+  max-width: 100%;
+  min-width: 0;
   height: 20px;
   padding: 0 9px;
   border-radius: var(--radius-pill);
   border: 1px solid rgba(255, 255, 255, 0.18);
   font-size: 11px;
-  line-height: 1;
+  line-height: 18px;
   color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+  vertical-align: middle;
 }
 .service-pill.is-on {
-  border-color: rgba(30, 215, 96, 0.5);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
   color: var(--accent);
 }
 .service-pill.is-warn {
-  border-color: rgba(255, 164, 43, 0.55);
+  border-color: color-mix(in srgb, var(--warning) 55%, transparent);
   color: var(--warning);
 }
 .service-pill.is-off {
@@ -4303,7 +4310,6 @@ select.setting-control {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  margin-left: 6px;
   font-size: 12.5px;
   color: var(--text-muted);
   cursor: pointer;

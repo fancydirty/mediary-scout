@@ -28,7 +28,8 @@ export function ServiceBlock({
       <div className="service-block-head">
         <h3 className="service-block-name">{name}</h3>
         {pills.map((pill) => (
-          <span key={`${pill.tone}:${pill.label}`} className={`service-pill is-${pill.tone}`}>
+          // title：胶囊超宽时 CSS 用省略号截断（用户填的模型名可以很长），全文靠悬停看。
+          <span key={`${pill.tone}:${pill.label}`} className={`service-pill is-${pill.tone}`} title={pill.label}>
             {pill.label}
           </span>
         ))}
@@ -36,7 +37,8 @@ export function ServiceBlock({
       <p className="service-block-summary">{summary}</p>
       {details ? (
         <details className="service-block-details">
-          <summary>说明</summary>
+          {/* 每个块都有一个「说明」：可访问名带上服务名，读屏时才分得清是谁的说明。 */}
+          <summary aria-label={`${name} 说明`}>说明</summary>
           <div className="service-block-details-body">{details}</div>
         </details>
       ) : null}
