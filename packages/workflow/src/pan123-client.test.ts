@@ -5,6 +5,8 @@ import {
   signPath,
   parsePan123Json,
   parsePan123Uid,
+  numericIdPlaceholder,
+  rawJsonWithNumericIds,
   isPan123AuthError,
   Pan123AuthError,
   Pan123Client,
@@ -60,6 +62,36 @@ describe("parsePan123Json (bigint-safe)", () => {
   });
   it("returns null for non-JSON", () => {
     expect(parsePan123Json("<html>error</html>")).toBeNull();
+  });
+});
+
+describe("rawJsonWithNumericIds (bigint-safe request serialiser)", () => {
+  it("splices each id in as a bare digit literal — 18-digit ids stay exact (Number() would round)", () => {
+    const raw = rawJsonWithNumericIds(
+      { a: numericIdPlaceholder("9007199254740993777"), b: [numericIdPlaceholder("42")], c: "keep" },
+      ["9007199254740993777", "42"],
+    );
+    expect(raw).toBe('{"a":9007199254740993777,"b":[42],"c":"keep"}');
+  });
+
+  it("rejects a non-numeric id up front instead of emitting invalid JSON", () => {
+    expect(() => numericIdPlaceholder("abc")).toThrow(/PAN123_BAD_ID/);
+    expect(() => numericIdPlaceholder("")).toThrow(/PAN123_BAD_ID/);
+    expect(() => numericIdPlaceholder("12 ")).toThrow(/PAN123_BAD_ID/);
+  });
+
+  it("rejects leading zeros (a bare `007` is not a valid JSON number) but accepts a lone `0`", () => {
+    // Copilot #260 r2: a digit-only check would splice `"FileId":007` into the body,
+    // which JSON forbids — 123 would reject or misparse it. Real ids never carry a
+    // leading zero, so refusing is safe; "0" (the root folder id) stays representable.
+    expect(() => numericIdPlaceholder("007")).toThrow(/PAN123_BAD_ID/);
+    expect(() => numericIdPlaceholder("0123456789")).toThrow(/PAN123_BAD_ID/);
+    expect(rawJsonWithNumericIds({ FileId: numericIdPlaceholder("0") }, ["0"])).toBe('{"FileId":0}');
+  });
+
+  it("leaves an unrelated string that merely contains digits untouched", () => {
+    const raw = rawJsonWithNumericIds({ FileName: "42.mkv", FileId: numericIdPlaceholder("42") }, ["42"]);
+    expect(raw).toBe('{"FileName":"42.mkv","FileId":42}');
   });
 });
 
@@ -411,18 +443,32 @@ describe("Pan123Client directory write ops", () => {
     expect(body).toMatchObject({ driveId: 0, etag: "", fileName: "Movies", parentFileId: "888", size: 0, type: 1 });
   });
 
-  it("trash posts fileTrashInfoList (FileId/FileName/Type) with event=intoRecycle", async () => {
-    let body: Record<string, unknown> = {};
+  it("trash posts fileTrashInfoList with FileId as a JSON NUMBER (a string id is silently ignored by 123)", async () => {
+    // LIVE-VERIFIED 2026-09-20 (probe inside the production container, real drive):
+    //   {"FileId":"57162650","Type":1}  → code:0, data.InfoList:[]          folder STILL THERE
+    //   {"FileId":57162650,"Type":1}    → code:0, data.InfoList:[{FileId}]  folder gone
+    // Every field combination was isolated: the ONLY discriminator is the JSON type
+    // of FileId. Our bigint-safe habit of sending ids as strings therefore made every
+    // 123 delete a silent no-op — 80 leaked staging dirs / ~1.4 TB on one drive.
+    let raw = "";
     const fetchImpl = fetchStub((url, init) => {
       expect(url).toContain("/file/trash");
-      body = JSON.parse(init.body ?? "{}");
-      return { status: 200, body: { code: 0 } };
+      raw = init.body ?? "";
+      return {
+        status: 200,
+        body: '{"code":0,"data":{"InfoList":[{"FileId":9007199254740993777},{"FileId":42}],"AbnormalFileIdList":null}}',
+      };
     });
     const c = new Pan123Client({ token: "TK", fetchImpl });
     await c.trash([
       { id: "9007199254740993777", name: "mediary-123-probe", isFolder: true },
       { id: "42", name: "ep.mkv", isFolder: false },
     ]);
+    // Inspect the RAW body: JSON.parse would round the 19-digit id and hide the point.
+    expect(raw).toContain('"FileId":9007199254740993777,'); // unquoted AND digit-exact
+    expect(raw).toContain('"FileId":42,');
+    expect(raw).not.toContain('"FileId":"');
+    const body = JSON.parse(raw.replace(/"FileId":(\d+)/g, '"FileId":"$1"')) as Record<string, unknown>;
     expect(body).toMatchObject({ driveId: 0, event: "intoRecycle", operation: true });
     expect(body.fileTrashInfoList).toEqual([
       { FileId: "9007199254740993777", FileName: "mediary-123-probe", Type: 1 },
@@ -438,17 +484,50 @@ describe("Pan123Client directory write ops", () => {
     const fetchImpl = fetchStub((url, init) => {
       expect(url).toContain("/file/trash");
       raw = init.body ?? "";
-      return { status: 200, body: { code: 0 } };
+      return {
+        status: 200,
+        body: '{"code":0,"data":{"InfoList":[{"FileId":9007199254740993777},{"FileId":42}],"AbnormalFileIdList":null}}',
+      };
     });
     const c = new Pan123Client({ token: "TK", fetchImpl });
     await c.trash([
       { id: "9007199254740993777", isFolder: true },
       { id: "42", name: "ep.mkv", isFolder: false },
     ]);
-    const list = (JSON.parse(raw).fileTrashInfoList ?? []) as Array<Record<string, unknown>>;
+    const list = (JSON.parse(raw.replace(/"FileId":(\d+)/g, '"FileId":"$1"')).fileTrashInfoList ?? []) as Array<
+      Record<string, unknown>
+    >;
     expect(Object.keys(list[0] ?? {}).sort()).toEqual(["FileId", "Type"]); // no FileName key at all
     expect(list[0]).toEqual({ FileId: "9007199254740993777", Type: 1 });
     expect(list[1]).toEqual({ FileId: "42", FileName: "ep.mkv", Type: 0 });
+  });
+
+  it("trash fails LOUD when 123 answers code:0 but does not echo the id in data.InfoList (silent no-op)", async () => {
+    // The exact production failure shape: HTTP 200, code 0, message "ok", InfoList []
+    // — and nothing deleted. Returning void here is how the leak stayed invisible for
+    // a month (the executor reported {removed:true} on top of it). The echo is the
+    // only success signal the endpoint gives; its absence must surface.
+    const fetchImpl = fetchStub(() => ({
+      status: 200,
+      body: '{"code":0,"data":{"InfoList":[],"AbnormalFileIdList":null},"message":"ok"}',
+    }));
+    const c = new Pan123Client({ token: "TK", fetchImpl });
+    await expect(c.trash([{ id: "57162650", isFolder: true }])).rejects.toThrow(/PAN123_TRASH_NOOP/);
+    await expect(c.trash([{ id: "57162650", isFolder: true }])).rejects.toThrow(/57162650/);
+  });
+
+  it("trash fails LOUD when only SOME requested ids are echoed back", async () => {
+    const fetchImpl = fetchStub(() => ({
+      status: 200,
+      body: '{"code":0,"data":{"InfoList":[{"FileId":1}],"AbnormalFileIdList":null}}',
+    }));
+    const c = new Pan123Client({ token: "TK", fetchImpl });
+    await expect(
+      c.trash([
+        { id: "1", isFolder: false },
+        { id: "2", isFolder: false },
+      ]),
+    ).rejects.toThrow(/PAN123_TRASH_NOOP.*\b2\b/);
   });
 
   it("trash is a no-op for an empty entry list (no network call)", async () => {

@@ -210,7 +210,7 @@ export function buildSandboxToolSet(
     };
     tools["transferSubtitle"] = {
       description:
-        "Land a chosen assrt subtitle package's files into staging. Pass the candidateId from viewSubtitleSnapshot. The system resolves the package's filelist (per-episode .ass/.srt with SxxExx filenames) and lands each via the drive's offline-task path. Returns the filenames that landed. Then RENAME each landed subtitle to match its video (same prefix, different extension) — subtitles are the ONLY files you may rename (a documented exception to the keep-original-name rule) so the scraper auto-loads them. Subtitle miss/empty filelist is a SOFT fail — it does NOT block video coverage; just proceed without subtitles.",
+        "Land a chosen assrt subtitle package's files into staging. Pass the candidateId from viewSubtitleSnapshot. The system resolves the package's filelist (per-episode .ass/.srt with SxxExx filenames) and lands them ALL in ONE batch via the drive's offline-task path (one call regardless of package size — do not split a package into multiple transferSubtitle calls). Returns the filenames that landed. Then RENAME each landed subtitle to match its video (same prefix, different extension) — subtitles are the ONLY files you may rename (a documented exception to the keep-original-name rule) so the scraper auto-loads them. Subtitle miss/empty filelist is a SOFT fail — it does NOT block video coverage; just proceed without subtitles.",
       inputSchema: z.object({ candidateId: z.number().int().positive() }),
       execute: (args: { candidateId: number }) =>
         asEvidence(() => sandbox.transferSubtitle({ candidateId: args.candidateId })),

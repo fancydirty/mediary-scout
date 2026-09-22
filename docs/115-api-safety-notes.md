@@ -47,10 +47,34 @@ guardrails and runtime configurability over hard-coded optimism.
 The guard provides:
 
 - minimum spacing between 115 API calls;
-- per-operation call budget;
+- per-operation call budget, tiered: transfer-class calls (`receiveShare` /
+  `addOfflineTask`) are refused once the count reaches the hard limit minus a
+  wrap-up reserve (`PAN115_TRANSFER_RESERVE_CALLS`, 40 → default 300 becomes 260
+  for transfers), while listing / moving / deleting / renaming run to the hard
+  limit so a run can always move landed files into place and discard staging;
+  `transfer()` checks the transfer line first, so a refused transfer spends no
+  preparatory calls;
 - max list response size;
 - risk-message detection;
 - circuit breaker behavior after a risk signal.
+
+Subtitle packages (assrt) land as ONE batch: `transferSubtitleUrls` refuses up
+front (zero calls) when the package cannot fit before the transfer line, then does
+one write-scope check, one depth-1 before-snapshot, N `addOfflineTask`
+submissions (stopping after 3 consecutive rejections), polls the staging dir once
+per round at depth 1 for every file (stop: all landed / `subtitleMaterializeAttempts`
+(default 8) idle rounds / attempts + N rounds / the transfer line), and cancels
+the unlanded tasks with a single `task_del`. Cost for N files: worst case = 2N + attempts + 4 (= 2N + 12 at the default
+8 attempts: scope check + snapshot + N submissions + at most attempts + N poll
+rounds + 2 cancel calls); typical ≈ N + 30 when the package lands within the
+idle window. The per-file predecessor cost 20–31 per file (260 calls for a
+22-file package on 2026-09-20).
+Measured live 2026-09-21 on the real drive: a 168-file package cost 197 calls
+(120 landed, 48 timed out and were cancelled), no guard events. Very large
+packages are still bounded by the wrap-up reserve, not cheap: budget ≈ N + 30
+calls per package when sizing `MEDIA_TRACK_115_MAX_API_CALLS` (do not set it
+below ~150 — the fixed 60-call soft headroom and 40-call reserve are subtracted
+from it).
 
 `Storage115Executor` also accepts `writeScopeDirectoryIds`.
 

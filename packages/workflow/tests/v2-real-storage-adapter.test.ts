@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { RealStorageV2 } from "../src/acquisition-v2/real-storage-adapter.js";
 import { CandidateRegistry } from "../src/acquisition-v2/candidate-registry.js";
+import { GuangYaAuthError } from "../src/guangya-client.js";
+import { Pan115AuthError } from "../src/pan115-cookie-client.js";
 import type { StorageExecutor, UnparsedVideoFile } from "../src/ports.js";
 import type { PackageTreeFile, ResourceCandidate, TransferAttempt, VerifiedFile } from "../src/domain.js";
 
@@ -21,7 +23,29 @@ class RecordingExecutor implements StorageExecutor {
   transfers: Array<{ workflowRunId: string; directoryId: string; candidateId: string }> = [];
   deletes: Array<{ directoryId: string; fileIds: string[] }> = [];
   removed: string[] = [];
-  constructor(private readonly opts: { status?: TransferAttempt["status"]; message?: string; tree?: PackageTreeFile[]; removeOk?: boolean } = {}) {}
+  subtitleSingleCalls: string[] = [];
+  subtitleBatchCalls: Array<{ files: string[]; directoryId: string; workflowRunId: string }> = [];
+  /** Present only when opts.subtitleBatch — TS optional METHODS can't be made
+   *  per-instance, so it's a property the constructor installs (115 has it, 光鸭 doesn't). */
+  transferSubtitleUrls?: (input: { files: Array<{ url: string; filename: string }>; directoryId: string; workflowRunId: string }) => Promise<TransferAttempt[]>;
+  constructor(private readonly opts: { status?: TransferAttempt["status"]; message?: string; tree?: PackageTreeFile[]; removeOk?: boolean; subtitleBatch?: boolean; subtitleFail?: (filename: string) => string | null } = {}) {
+    if (opts.subtitleBatch) {
+      this.transferSubtitleUrls = async (input) => {
+        this.subtitleBatchCalls.push({ files: input.files.map((f) => f.filename), directoryId: input.directoryId, workflowRunId: input.workflowRunId });
+        return input.files.map((file, index) => {
+          const failure = this.opts.subtitleFail?.(file.filename) ?? null;
+          return {
+            id: `${input.workflowRunId}_subtitle_${index + 1}`,
+            workflowRunId: input.workflowRunId,
+            candidateId: `subtitle:${file.filename}`,
+            status: failure === null ? ("succeeded" as const) : ("no_target_change" as const),
+            providerMessage: failure ?? "",
+            materializedFileIds: failure === null ? [`sub_${file.filename}`] : [],
+          };
+        });
+      };
+    }
+  }
 
   async createDirectory(input: { name: string; parentId: string }): Promise<string> {
     return `dir_${input.name}`;
@@ -65,13 +89,15 @@ class RecordingExecutor implements StorageExecutor {
   }
   async renameFile(): Promise<void> {}
   async transferSubtitleUrl(input: { url: string; filename: string; directoryId: string; workflowRunId: string }): Promise<TransferAttempt> {
+    this.subtitleSingleCalls.push(input.filename);
+    const failure = this.opts.subtitleFail?.(input.filename) ?? null;
     return {
-      id: `${input.workflowRunId}_subtitle_1`,
+      id: `${input.workflowRunId}_subtitle_${this.subtitleSingleCalls.length}`,
       workflowRunId: input.workflowRunId,
       candidateId: `subtitle:${input.filename}`,
-      status: "succeeded",
-      providerMessage: "",
-      materializedFileIds: ["sub_f1"],
+      status: failure === null ? "succeeded" : "failed",
+      providerMessage: failure ?? "",
+      materializedFileIds: failure === null ? [`sub_${input.filename}`] : [],
     };
   }
   async flattenDirectory(): Promise<{ moved: string[]; removed: string[] }> {
@@ -172,29 +198,6 @@ describe("RealStorageV2 — StorageExecutor → StorageV2 adapter", () => {
     expect(executor.deletes).toEqual([{ directoryId: "season", fileIds: ["f1"] }]);
   });
 
-  it("keeps subtitle transfers OUT of attempts() so they can't fail snapshot persistence validation", async () => {
-    // A subtitle transfer's synthetic `subtitle:<filename>` candidateId belongs to no
-    // resource snapshot; validateWorkflowRunSnapshot rejects any persisted transferAttempt
-    // whose candidateId is not in a snapshot. So subtitle attempts must NOT enter attempts()
-    // (the persisted video-candidate trace) — otherwise a subtitle would abort the whole
-    // run's save after the video already landed.
-    const executor = new RecordingExecutor();
-    const { storage, registry } = adapter(executor);
-    registry.record(candidate("cand"));
-
-    await storage.transferCandidate({ candidateId: "cand", intoDirectoryId: "staging" });
-    await storage.transferSubtitleUrl({
-      url: "http://file0.assrt.net/onthefly/1/Show.S01E01.ass",
-      filename: "Show.S01E01.ass",
-      intoDirectoryId: "staging",
-    });
-
-    const attempts = storage.attempts();
-    expect(attempts).toHaveLength(1); // only the video transfer, not the subtitle
-    expect(attempts[0]!.candidateId).toBe("cand");
-    expect(attempts.some((a) => a.candidateId.startsWith("subtitle:"))).toBe(false);
-  });
-
   it("classifies candidate link kind from the recorded url (fail-loud share brand / magnet / unknown)", async () => {
     const { storage, registry } = adapter(new RecordingExecutor());
     // every 转存分享 brand (fail-loud) → "share"
@@ -268,5 +271,189 @@ describe("RealStorageV2 — StorageExecutor → StorageV2 adapter", () => {
 
       expect(store.recorded).toEqual([]);
     });
+  });
+});
+
+describe("RealStorageV2.transferSubtitleUrls — batch-first, per-file fallback with the consecutive-failure abort", () => {
+  const files = (n: number) => Array.from({ length: n }, (_, i) => ({ url: `http://x/${i}.srt`, filename: `E${i}.srt` }));
+
+  it("uses the executor's batch method when present: ONE call with every file, results in order, run id from the adapter", async () => {
+    const executor = new RecordingExecutor({ subtitleBatch: true, subtitleFail: (name) => (name === "E1.srt" ? "did not materialize" : null) });
+    const { storage } = adapter(executor);
+
+    const results = await storage.transferSubtitleUrls({ files: files(3), intoDirectoryId: "staging" });
+
+    expect(executor.subtitleBatchCalls).toEqual([{ files: ["E0.srt", "E1.srt", "E2.srt"], directoryId: "staging", workflowRunId: "run-7" }]);
+    expect(executor.subtitleSingleCalls).toEqual([]);
+    expect(results.map((r) => [r.filename, r.status])).toEqual([["E0.srt", "succeeded"], ["E1.srt", "failed"], ["E2.srt", "succeeded"]]);
+    expect(results[1]!.providerMessage).toBe("did not materialize");
+    expect(results[0]!.materializedFileIds).toEqual(["sub_E0.srt"]);
+  });
+
+  it("fails loud when the executor's batch drops a file instead of marking it failed (arity contract)", async () => {
+    class DroppingBatch extends RecordingExecutor {
+      constructor() {
+        super({ subtitleBatch: true });
+        const batch = this.transferSubtitleUrls!;
+        this.transferSubtitleUrls = async (input) => (await batch(input)).slice(0, 1);
+      }
+    }
+    const { storage } = adapter(new DroppingBatch());
+
+    await expect(storage.transferSubtitleUrls({ files: files(3), intoDirectoryId: "staging" })).rejects.toThrow(
+      "REAL_STORAGE_SUBTITLE_BATCH_ARITY",
+    );
+  });
+
+  it("maps a batch-level THROW to every file failing softly (same shape as the per-file fallback's thrown error)", async () => {
+    class ThrowingBatch extends RecordingExecutor {
+      constructor() {
+        super({ subtitleBatch: true });
+        this.transferSubtitleUrls = async () => {
+          throw new Error("WRITE_SCOPE_VIOLATION: nope");
+        };
+      }
+    }
+    const { storage } = adapter(new ThrowingBatch());
+
+    const results = await storage.transferSubtitleUrls({ files: files(3), intoDirectoryId: "staging" });
+
+    expect(results.map((r) => [r.filename, r.status])).toEqual([
+      ["E0.srt", "failed"],
+      ["E1.srt", "failed"],
+      ["E2.srt", "failed"],
+    ]);
+    expect(results.every((r) => r.providerMessage === "WRITE_SCOPE_VIOLATION: nope")).toBe(true);
+    expect(results.every((r) => r.materializedFileIds.length === 0)).toBe(true);
+    expect(storage.attempts()).toEqual([]);
+  });
+
+  // The contrast with the WRITE_SCOPE_VIOLATION test above: a scope violation IS a
+  // landing problem (soften it), a dead cookie is NOT — it must reach the worker's
+  // drive-freeze path untouched instead of becoming N fake "failed" files.
+  it("brand auth errors are NOT softened on the batch path (dead cookie ≠ landing miss)", async () => {
+    class AuthFailingBatch extends RecordingExecutor {
+      constructor() {
+        super({ subtitleBatch: true });
+        this.transferSubtitleUrls = async () => {
+          throw new Pan115AuthError("PAN115_AUTH_FAILED: cookie dead", 990001);
+        };
+      }
+    }
+    const { storage } = adapter(new AuthFailingBatch());
+
+    await expect(storage.transferSubtitleUrls({ files: files(3), intoDirectoryId: "staging" })).rejects.toBeInstanceOf(
+      Pan115AuthError,
+    );
+  });
+
+  it("brand auth errors are NOT softened on the per-file fallback (and stop the loop at once)", async () => {
+    class AuthFailingSingle extends RecordingExecutor {
+      override async transferSubtitleUrl(input: { url: string; filename: string; directoryId: string; workflowRunId: string }) {
+        this.subtitleSingleCalls.push(input.filename);
+        if (this.subtitleSingleCalls.length >= 2) {
+          throw new GuangYaAuthError("GUANGYA_AUTH_FAILED: token dead");
+        }
+        return {
+          id: `${input.workflowRunId}_subtitle_${this.subtitleSingleCalls.length}`,
+          workflowRunId: input.workflowRunId,
+          candidateId: `subtitle:${input.filename}`,
+          status: "succeeded" as const,
+          providerMessage: "",
+          materializedFileIds: [`sub_${input.filename}`],
+        };
+      }
+    }
+    const executor = new AuthFailingSingle();
+    const { storage } = adapter(executor);
+
+    await expect(storage.transferSubtitleUrls({ files: files(3), intoDirectoryId: "staging" })).rejects.toBeInstanceOf(
+      GuangYaAuthError,
+    );
+    expect(executor.subtitleSingleCalls).toHaveLength(2); // no third attempt on a dead token
+  });
+
+  it("falls back to the per-file method when the executor has no batch (光鸭 today)", async () => {
+    const executor = new RecordingExecutor();
+    const { storage } = adapter(executor);
+
+    const results = await storage.transferSubtitleUrls({ files: files(2), intoDirectoryId: "staging" });
+
+    expect(executor.subtitleSingleCalls).toEqual(["E0.srt", "E1.srt"]);
+    expect(results.every((r) => r.status === "succeeded")).toBe(true);
+  });
+
+  it("per-file fallback aborts after 3 consecutive failures instead of hammering the whole filelist (每次失败都烧真 API)", async () => {
+    const executor = new RecordingExecutor({ subtitleFail: () => "dead link" });
+    const { storage } = adapter(executor);
+
+    const results = await storage.transferSubtitleUrls({ files: files(10), intoDirectoryId: "staging" });
+
+    expect(executor.subtitleSingleCalls).toHaveLength(3);
+    expect(results.slice(0, 3).map((r) => r.providerMessage)).toEqual(["dead link", "dead link", "dead link"]);
+    expect(results.slice(3).every((r) => r.status === "failed")).toBe(true);
+    expect(results[9]!.providerMessage).toMatch(/已连续 3 个字幕文件落盘失败,提前中止\(剩余 7 个未尝试\).*最后错误: dead link/);
+  });
+
+  it("per-file fallback: when the 3rd consecutive failure IS the last file nothing was skipped — its own message stands", async () => {
+    const executor = new RecordingExecutor({ subtitleFail: () => "dead link" });
+    const { storage } = adapter(executor);
+
+    const results = await storage.transferSubtitleUrls({ files: files(3), intoDirectoryId: "staging" });
+
+    expect(executor.subtitleSingleCalls).toHaveLength(3);
+    expect(results[2]!.providerMessage).toBe("dead link"); // no "剩余 0 个未尝试" lie
+  });
+
+  it("per-file fallback: a success in between resets the counter (mixed flakiness still lands everything)", async () => {
+    let n = 0;
+    const executor = new RecordingExecutor({ subtitleFail: () => (++n % 3 === 0 ? null : "flaky") });
+    const { storage } = adapter(executor);
+
+    const results = await storage.transferSubtitleUrls({ files: files(6), intoDirectoryId: "staging" });
+
+    expect(executor.subtitleSingleCalls).toHaveLength(6);
+    expect(results.filter((r) => r.status === "succeeded").map((r) => r.filename)).toEqual(["E2.srt", "E5.srt"]);
+  });
+
+  it("per-file fallback treats a thrown executor error as that file's failure (counts toward the abort)", async () => {
+    class Throwing extends RecordingExecutor {
+      override async transferSubtitleUrl(): Promise<TransferAttempt> {
+        throw new Error("PAN115_LIST_ITEMS_FAILED: boom");
+      }
+    }
+    const { storage } = adapter(new Throwing());
+
+    const results = await storage.transferSubtitleUrls({ files: files(4), intoDirectoryId: "staging" });
+
+    expect(results.slice(0, 3).every((r) => r.status === "failed" && r.providerMessage === "PAN115_LIST_ITEMS_FAILED: boom")).toBe(true);
+    expect(results[3]!.providerMessage).toMatch(/已连续 3 个/);
+  });
+
+  it("records the VIDEO attempt but never subtitle attempts into attempts() (snapshot-persistence invariant)", async () => {
+    for (const subtitleBatch of [true, false]) {
+      const { storage, registry } = adapter(new RecordingExecutor({ subtitleBatch }));
+      registry.record(candidate("cand"));
+      await storage.transferCandidate({ candidateId: "cand", intoDirectoryId: "staging" });
+
+      await storage.transferSubtitleUrls({ files: files(2), intoDirectoryId: "staging" });
+
+      const attempts = storage.attempts();
+      expect(attempts).toHaveLength(1);
+      expect(attempts[0]!.candidateId).toBe("cand");
+      expect(attempts.some((a) => a.candidateId.startsWith("subtitle:"))).toBe(false);
+    }
+  });
+
+  it("throws REAL_STORAGE_NO_SUBTITLE_SUPPORT when the executor has neither method", async () => {
+    class NoSubtitles extends RecordingExecutor {
+      constructor() {
+        super();
+        // @ts-expect-error — simulate a brand without the capability
+        this.transferSubtitleUrl = undefined;
+      }
+    }
+    const { storage } = adapter(new NoSubtitles());
+    await expect(storage.transferSubtitleUrls({ files: files(1), intoDirectoryId: "staging" })).rejects.toThrow("REAL_STORAGE_NO_SUBTITLE_SUPPORT");
   });
 });

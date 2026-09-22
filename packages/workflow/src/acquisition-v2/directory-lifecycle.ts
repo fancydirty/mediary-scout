@@ -1,4 +1,5 @@
 import { ensureMediaLibraryDirectory } from "../media-library-folder.js";
+import type { AuditEvent } from "../domain.js";
 import type { StorageExecutor } from "../ports.js";
 
 /**
@@ -70,19 +71,118 @@ export async function ensureSeasonAcquisitionDirectories(
  * removeDirectory is idempotent: if the agent already discarded, the "already gone"
  * error is swallowed so cleanup never masks the real result. It only ever touches
  * THIS run's ephemeral staging dir — never a Season/library dir.
+ *
+ * VERIFY THE LANDING POINT, DON'T TRUST THE CALL (2026-09-20 123网盘): file/trash
+ * answered code:0 to a string FileId and deleted nothing; removeDirectory dutifully
+ * returned {removed:true}; this finally swallowed the rest — 80 staging dirs /
+ * ~1.4 TB leaked over a month with zero signal. So when the caller hands over the
+ * parent dir, the cleanup READS BACK whether the staging dir is still listed under
+ * it and reports a leak through `onLeak` (audit trail + notification upstream).
+ * The read-back is best-effort: a failing listing never masks the run's outcome.
  */
+export interface StagingLeak {
+  stagingDirectoryId: string;
+  /** The show dir the staging dir was created under — where a hand cleanup has to
+   *  look. Carried on the leak itself because the failure persist path has no
+   *  `directories` object to look it up from (Copilot #260 r2). */
+  showDirectoryId: string;
+  /** The removeDirectory error when the cleanup threw; undefined when it "succeeded". */
+  error?: unknown;
+}
+
+/** Leaks detected on the THROW path ride on the thrown error itself: the body
+ *  failed, so no result object exists to carry them, and the only code that
+ *  persists such a run is the failure handler (worker.ts) — which reads them back
+ *  via `stagingLeaksOf`. Attached as a symbol-keyed property so the error's
+ *  identity (class, message, cause chain) is untouched: brand *AuthError freezes
+ *  and transient-error classification keep working (Copilot #260 r1). */
+const STAGING_LEAKS = Symbol.for("media-track.stagingLeaks");
+
+export function attachStagingLeaks<E>(error: E, leaks: StagingLeak[]): E {
+  if (leaks.length > 0 && typeof error === "object" && error !== null) {
+    const prior = stagingLeaksOf(error);
+    Object.defineProperty(error, STAGING_LEAKS, {
+      value: [...prior, ...leaks],
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return error;
+}
+
+export function stagingLeaksOf(error: unknown): StagingLeak[] {
+  if (typeof error !== "object" || error === null) {
+    return [];
+  }
+  const leaks = (error as Record<symbol, unknown>)[STAGING_LEAKS];
+  return Array.isArray(leaks) ? (leaks as StagingLeak[]) : [];
+}
+
+/** The ONE shape of the `staging_leaked` audit event, shared by the success path
+ *  (workflow-v2 result) and every failure persist site (worker). */
+export function stagingLeakAuditEvent(leak: StagingLeak): AuditEvent {
+  return {
+    type: "staging_leaked",
+    message: `staging 目录清理后仍在网盘上(${leak.stagingDirectoryId})——本次转存的临时文件没有被删除,请手动清理`,
+    data: {
+      stagingDirectoryId: leak.stagingDirectoryId,
+      showDirectoryId: leak.showDirectoryId,
+      ...(leak.error === undefined
+        ? {}
+        : { cleanupError: leak.error instanceof Error ? leak.error.message : String(leak.error) }),
+    },
+  };
+}
+
 export async function withStagingCleanup<T>(
-  args: { executor: Pick<StorageExecutor, "removeDirectory">; stagingDirectoryId: string },
+  args: {
+    executor: Pick<StorageExecutor, "removeDirectory"> & Partial<Pick<StorageExecutor, "listChildDirectories">>;
+    stagingDirectoryId: string;
+    /** The show dir the staging dir was created under. When given (together with a
+     *  listChildDirectories-capable executor) the cleanup verifies removal by reading
+     *  back the parent. Omit for the legacy fire-and-forget form. */
+    parentDirectoryId?: string;
+    onLeak?: (leak: StagingLeak) => void;
+  },
   run: () => Promise<T>,
 ): Promise<T> {
+  let bodyError: unknown;
+  let threw = false;
   try {
     return await run();
+  } catch (error) {
+    threw = true;
+    bodyError = error;
+    throw error;
   } finally {
+    let cleanupError: unknown;
     try {
       await args.executor.removeDirectory(args.stagingDirectoryId);
-    } catch {
+    } catch (error) {
       // Idempotent: staging may already be gone (agent discarded it). Never let
       // a cleanup failure throw over the real outcome.
+      cleanupError = error;
+    }
+    if (args.parentDirectoryId !== undefined && args.executor.listChildDirectories && args.onLeak) {
+      try {
+        const children = await args.executor.listChildDirectories(args.parentDirectoryId);
+        if (children.some((child) => child.id === args.stagingDirectoryId)) {
+          const leak: StagingLeak = {
+            stagingDirectoryId: args.stagingDirectoryId,
+            showDirectoryId: args.parentDirectoryId,
+            error: cleanupError,
+          };
+          args.onLeak(leak);
+          if (threw) {
+            // The rethrown body error is the only thing leaving this frame: make
+            // it carry the leak so the failure persist path can record it.
+            attachStagingLeaks(bodyError, [leak]);
+          }
+        }
+      } catch {
+        // Read-back is diagnostic only; a listing failure must not mask the result.
+      }
     }
   }
 }

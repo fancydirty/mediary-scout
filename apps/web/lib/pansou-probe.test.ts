@@ -54,9 +54,13 @@ describe("probePanSou", () => {
     expect(result).toMatchObject({ ok: false, reason: "not_pansou" });
   });
 
-  it("reports not_pansou when JSON parses but lacks data.results", async () => {
+  it("reports not_pansou when JSON parses but has neither data.results nor data.total", async () => {
+    // Was `{ data: { total: 0 } }` — but that IS PanSou's real zero-hit shape
+    // (`results,omitempty`); asserting it as foreign encoded the very bug that
+    // made every honest miss look like a broken source. A payload with no PanSou
+    // data field at all is the genuine "填成了别的服务" case.
     const result = await probePanSou("http://192.168.1.10:8899", {
-      fetchImpl: pansouResponse({ data: { total: 0 } }),
+      fetchImpl: pansouResponse({ data: { hello: "world" } }),
     });
     expect(result).toMatchObject({ ok: false, reason: "not_pansou" });
   });
@@ -128,5 +132,28 @@ describe("probePanSou timeout classification", () => {
     });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.message).toContain("无响应");
+  });
+});
+
+describe("probePanSou zero-hit response shape", () => {
+  it("accepts {code:0,data:{total:0}} — PanSou omits `results` when a search has no hits", async () => {
+    // Real shape (model/response.go `results,omitempty`), verified live 2026-09-19.
+    // The probe keyword `__probe__` legitimately hits nothing on a fresh instance,
+    // so rejecting this shape would refuse to save a perfectly good address.
+    const result = await probePanSou("http://192.168.1.10:8899", {
+      fetchImpl: pansouResponse({ code: 0, message: "success", data: { total: 0 } }),
+    });
+    expect(result).toEqual({ ok: true });
+  });
+
+  it("rejects a PRESENT but malformed results even when total is numeric", async () => {
+    // Copilot (#259 r1): the probe must share the provider's exact shape rule, or a
+    // save-time probe can persist an address the workflow provider then cannot consume.
+    for (const results of [{}, "garbage", 42]) {
+      const result = await probePanSou("http://192.168.1.10:8899", {
+        fetchImpl: pansouResponse({ code: 0, data: { total: 1, results } }),
+      });
+      expect(result).toMatchObject({ ok: false, reason: "not_pansou" });
+    }
   });
 });

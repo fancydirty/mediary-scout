@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Storage115Simulator } from "../src/acquisition-v2/storage-115-simulator.js";
+import { Storage115Simulator, type TransferAttemptResult } from "../src/acquisition-v2/storage-115-simulator.js";
 
 function fullSeasonPack(episodes: number) {
   return {
@@ -148,5 +148,40 @@ describe("Storage115Simulator — API budget (the 逆鳞)", () => {
     const dir = await sim.createDirectory({ name: "d", parentId: "root" });
     const attempt = await sim.transferCandidate({ candidateId: "ok", intoDirectoryId: dir });
     expect(attempt.status).toBe("succeeded");
+  });
+});
+
+describe("Storage115Simulator — transferSubtitleUrls (batch cost 1 + N, same 口径 as transferCandidate)", () => {
+  it("lands every file of the package, in order, and spends 1 + N budget", async () => {
+    const sim = new Storage115Simulator({ apiBudget: 5 });
+    const dir = await sim.createDirectory({ name: "staging", parentId: "root" }); // spent 1
+    const results = await sim.transferSubtitleUrls({
+      files: [
+        { url: "http://x/a.srt", filename: "a.srt" },
+        { url: "http://x/b.srt", filename: "b.srt" },
+        { url: "http://x/c.srt", filename: "c.srt" },
+      ],
+      intoDirectoryId: dir,
+    }); // 1 + 3 → spent 5 = budget, still fine
+    expect(results.map((r) => r.filename)).toEqual(["a.srt", "b.srt", "c.srt"]);
+    expect(results.every((r) => r.status === "succeeded" && r.materializedFileIds.length === 1)).toBe(true);
+    await expect(sim.listTree({ directoryId: dir })).rejects.toThrow("PAN115_RATE_LIMIT"); // the 6th call overruns
+  });
+
+  it("dispatches through the per-file seam so tests can script individual outcomes", async () => {
+    class Scripted extends Storage115Simulator {
+      override async transferSubtitleUrl(input: { url: string; filename: string; intoDirectoryId: string }): Promise<TransferAttemptResult> {
+        if (input.filename === "b.srt") return { status: "failed", materializedFileIds: [], providerMessage: "dead link" };
+        return super.transferSubtitleUrl(input);
+      }
+    }
+    const sim = new Scripted();
+    const dir = await sim.createDirectory({ name: "staging", parentId: "root" });
+    const results = await sim.transferSubtitleUrls({
+      files: [{ url: "http://x/a", filename: "a.srt" }, { url: "http://x/b", filename: "b.srt" }],
+      intoDirectoryId: dir,
+    });
+    expect(results.map((r) => r.status)).toEqual(["succeeded", "failed"]);
+    expect(results[1]!.providerMessage).toBe("dead link");
   });
 });

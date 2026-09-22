@@ -5,6 +5,8 @@
  *
  * 只在**保存**时打这一次网络。设置页徽章每 8s 轮询一次，绝不能在那条路径上探活。
  */
+import { isPanSouSearchData } from "@media-track/workflow";
+
 export type PanSouProbeFailure = "unreachable" | "not_pansou" | "http_error";
 
 export type PanSouProbeResult =
@@ -68,9 +70,13 @@ export async function probePanSou(
 
 function isPanSouShaped(payload: unknown): boolean {
   if (typeof payload !== "object" || payload === null) return false;
-  const data = (payload as { data?: unknown }).data;
-  if (typeof data !== "object" || data === null) return false;
-  return Array.isArray((data as { results?: unknown }).results);
+  // One rule, shared with the workflow provider (isPanSouSearchData): a present
+  // `results` must be an array; with it absent, PanSou's zero-hit reply is
+  // `{"data":{"total":0}}` (`results,omitempty`). The probe keyword is deliberately
+  // meaningless, so on a fresh instance THAT is the normal reply — rejecting it
+  // refuses a healthy address; diverging from the provider's rule could persist
+  // one the provider then cannot consume.
+  return isPanSouSearchData((payload as { data?: unknown }).data);
 }
 
 /** 保存前的便宜格式校验。抽出来是为了两个保存入口(设置页 action / agent API)共用

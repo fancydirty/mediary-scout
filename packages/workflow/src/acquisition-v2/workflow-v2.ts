@@ -3,7 +3,9 @@ import type { ResourceProvider, StorageExecutor } from "../ports.js";
 import type { AuditEvent } from "../domain.js";
 import {
   ensureSeasonAcquisitionDirectories,
+  stagingLeakAuditEvent,
   withStagingCleanup,
+  type StagingLeak,
   type AcquisitionDirectories,
 } from "./directory-lifecycle.js";
 import type { DeadLinkStore } from "./dead-links.js";
@@ -100,8 +102,17 @@ export async function runAcquisitionV2Workflow(
   // reportNoCoverage), the run's staging dir is discarded when this returns or
   // throws — the 斗破苍穹 335-file leak fix. The agent keeps its own discardStaging
   // (and normally calls it); this is the deterministic backstop.
-  return await withStagingCleanup(
-    { executor: request.executor, stagingDirectoryId: directories.stagingDirectoryId },
+  // The cleanup reads the show dir back afterwards: a delete the provider quietly
+  // ignored (123 file/trash + string FileId, 2026-09-20) must surface as a
+  // `staging_leaked` audit event instead of vanishing behind {removed:true}.
+  const leaks: StagingLeak[] = [];
+  const result = await withStagingCleanup(
+    {
+      executor: request.executor,
+      stagingDirectoryId: directories.stagingDirectoryId,
+      parentDirectoryId: directories.showDirectoryId,
+      onLeak: (leak) => leaks.push(leak),
+    },
     async () => {
   const seasonsForSync = request.seasons.map((season) => ({
     seasonNumber: season.seasonNumber,
@@ -185,4 +196,11 @@ export async function runAcquisitionV2Workflow(
   };
     },
   );
+  if (leaks.length === 0) {
+    return result;
+  }
+  return {
+    ...result,
+    auditEvents: [...result.auditEvents, ...leaks.map((leak) => stagingLeakAuditEvent(leak))],
+  };
 }

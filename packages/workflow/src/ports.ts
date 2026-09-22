@@ -72,4 +72,16 @@ export interface StorageExecutor {
     directoryId: string;
     workflowRunId: string;
   }): Promise<TransferAttempt>;
+  /** Batch subtitle landing — submits EVERY file up front and confirms landings
+   *  with ONE directory listing per poll round for all of them. Brands whose
+   *  per-file cost is dominated by the landing poll (115: the 2026-09-20 LIAR GAME
+   *  run spent 260 of 300 calls on one 22-file package) implement it; the V2
+   *  adapter uses it when present and otherwise loops transferSubtitleUrl. Returns
+   *  one attempt per input file, in input order. Optional: the capability gate stays
+   *  transferSubtitleUrl. */
+  transferSubtitleUrls?(input: {
+    files: Array<{ url: string; filename: string }>;
+    directoryId: string;
+    workflowRunId: string;
+  }): Promise<TransferAttempt[]>;
 }

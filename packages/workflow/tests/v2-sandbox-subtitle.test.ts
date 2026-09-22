@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { TaskSandbox } from "../src/acquisition-v2/sandbox.js";
 import { FakeResourceProviderV2 } from "../src/acquisition-v2/fake-provider.js";
 import { Storage115Simulator, type TransferAttemptResult } from "../src/acquisition-v2/storage-115-simulator.js";
+import { Pan115AuthError } from "../src/pan115-cookie-client.js";
 import type { AssrtCandidate, AssrtSubtitleFile } from "../src/subtitle-provider.js";
 import { buildSandboxToolSet } from "../src/acquisition-v2/agent-loop.js";
 
@@ -83,19 +84,52 @@ describe("subtitle snapshot pre-warming + view", () => {
 });
 
 describe("transferSubtitle", () => {
-  it("resolves the candidate's detail filelist and lands each file via storage.transferSubtitleUrl", async () => {
-    const { sandbox } = await createSubtitleSandbox();
-    const file = { filename: "Breaking.Bad.S02E01.ass", url: "http://file0.assrt.net/onthefly/713570/-/1/a.ass?api=1" };
-    const provider = makeAssrtProvider(
-      [{ id: 713570, title: "BB S02", lang: "英 简 双语" }],
-      { 713570: [file] },
-    );
-    await sandbox.primeSubtitleSnapshot("BB", provider);
+  it("resolves the candidate's detail filelist and hands the WHOLE package to storage.transferSubtitleUrls in ONE call", async () => {
+    const provider = new FakeResourceProviderV2({ results: { title: [] } });
+    class CountingBatch extends Storage115Simulator {
+      batches: string[][] = [];
+      override async transferSubtitleUrls(input: { files: Array<{ url: string; filename: string }>; intoDirectoryId: string }) {
+        this.batches.push(input.files.map((f) => f.filename));
+        return super.transferSubtitleUrls(input);
+      }
+    }
+    const storage = new CountingBatch({ packs: {} });
+    const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
+    const sandbox = new TaskSandbox({ provider, storage, stagingDirectoryId, targetSeasonDirectoryIds: {}, need: [] });
+    const files = [
+      { filename: "Breaking.Bad.S02E01.ass", url: "http://file0.assrt.net/onthefly/713570/-/1/a.ass?api=1" },
+      { filename: "Breaking.Bad.S02E02.ass", url: "http://file0.assrt.net/onthefly/713570/-/2/b.ass?api=1" },
+    ];
+    await sandbox.primeSubtitleSnapshot("BB", makeAssrtProvider([{ id: 713570, title: "BB S02", lang: "英 简 双语" }], { 713570: files }));
 
     const result = await sandbox.transferSubtitle({ candidateId: 713570 });
 
     expect(result.status).toBe("succeeded");
-    expect(result.landedFilenames).toEqual(["Breaking.Bad.S02E01.ass"]);
+    expect(result.landedFilenames).toEqual(["Breaking.Bad.S02E01.ass", "Breaking.Bad.S02E02.ass"]);
+    expect(storage.batches).toEqual([["Breaking.Bad.S02E01.ass", "Breaking.Bad.S02E02.ass"]]); // one call, whole package
+  });
+
+  // Storage owns soft-failing a LANDING; a dead credential is not one. It must ride
+  // out of transferSubtitle so the run fails loud (and the worker freezes the drive)
+  // instead of the agent being told the subtitles merely "didn't materialize".
+  it("a brand auth error propagates out of transferSubtitle untouched (dead credential ≠ subtitle miss)", async () => {
+    const provider = new FakeResourceProviderV2({ results: { title: [] } });
+    class AuthFailingStorage extends Storage115Simulator {
+      override async transferSubtitleUrls(_input: { files: Array<{ url: string; filename: string }>; intoDirectoryId: string }): Promise<never> {
+        throw new Pan115AuthError("PAN115_AUTH_FAILED: cookie dead", 990001);
+      }
+    }
+    const storage = new AuthFailingStorage({ packs: {} });
+    const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
+    const sandbox = new TaskSandbox({ provider, storage, stagingDirectoryId, targetSeasonDirectoryIds: {}, need: [] });
+    await sandbox.primeSubtitleSnapshot(
+      "BB",
+      makeAssrtProvider([{ id: 713570, title: "BB S02", lang: "简" }], {
+        713570: [{ filename: "Breaking.Bad.S02E01.ass", url: "http://file0.assrt.net/onthefly/713570/-/1/a.ass?api=1" }],
+      }),
+    );
+
+    await expect(sandbox.transferSubtitle({ candidateId: 713570 })).rejects.toBeInstanceOf(Pan115AuthError);
   });
 
   it("throws when the candidate was not in the pre-warmed snapshot (no stale ids)", async () => {
@@ -151,6 +185,46 @@ describe("transferSubtitle", () => {
     expect(result.status).toBe("succeeded"); // at least one landed
     expect(result.landedFilenames).toEqual(["Show.S01E01.ass"]); // only the one that landed
     expect(result.error).toBe("dead link"); // the failure's message surfaced
+  });
+
+  it("surfaces the LAST failed file's providerMessage as error (the adapter's abort message rides here)", async () => {
+    const provider = new FakeResourceProviderV2({ results: { title: [] } });
+    class Scripted extends Storage115Simulator {
+      override async transferSubtitleUrl(input: { url: string; filename: string; intoDirectoryId: string }): Promise<TransferAttemptResult> {
+        if (input.filename === "E0.ass") return { status: "failed", materializedFileIds: [], providerMessage: "first" };
+        if (input.filename === "E2.ass") return { status: "failed", materializedFileIds: [], providerMessage: "已连续 3 个字幕文件落盘失败,提前中止(剩余 0 个未尝试)。" };
+        return super.transferSubtitleUrl(input);
+      }
+    }
+    const storage = new Scripted({ packs: {} });
+    const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
+    const sandbox = new TaskSandbox({ provider, storage, stagingDirectoryId, targetSeasonDirectoryIds: {}, need: [] });
+    const files = Array.from({ length: 3 }, (_, i) => ({ filename: `E${i}.ass`, url: `http://x/${i}.ass` }));
+    await sandbox.primeSubtitleSnapshot("t", makeAssrtProvider([{ id: 7, title: "t", lang: "" }], { 7: files }));
+
+    const result = await sandbox.transferSubtitle({ candidateId: 7 });
+
+    expect(result.status).toBe("succeeded"); // E1 landed
+    expect(result.landedFilenames).toEqual(["E1.ass"]);
+    expect(result.error).toMatch(/连续/);
+  });
+
+  it("a landing problem never surfaces as a throw: storage reports per-file failures and the tool returns status failed", async () => {
+    const provider = new FakeResourceProviderV2({ results: { title: [] } });
+    class AllFailing extends Storage115Simulator {
+      override async transferSubtitleUrl(): Promise<TransferAttemptResult> {
+        return { status: "failed", materializedFileIds: [], providerMessage: "WRITE_SCOPE_VIOLATION: refusing to transfer subtitle outside configured write scope" };
+      }
+    }
+    const storage = new AllFailing({ packs: {} });
+    const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
+    const sandbox = new TaskSandbox({ provider, storage, stagingDirectoryId, targetSeasonDirectoryIds: {}, need: [] });
+    const files = [{ filename: "E1.ass", url: "http://x/1.ass" }, { filename: "E2.ass", url: "http://x/2.ass" }];
+    await sandbox.primeSubtitleSnapshot("t", makeAssrtProvider([{ id: 11, title: "t", lang: "" }], { 11: files }));
+
+    const result = await sandbox.transferSubtitle({ candidateId: 11 });
+
+    expect(result).toEqual({ status: "failed", landedFilenames: [], error: "WRITE_SCOPE_VIOLATION: refusing to transfer subtitle outside configured write scope" });
   });
 });
 
@@ -251,7 +325,7 @@ describe("buildSandboxToolSet subtitle tool registration", () => {
   });
 });
 
-describe("subtitle snapshot evidence + failure bounding", () => {
+describe("subtitle snapshot evidence", () => {
   it("viewSubtitleSnapshot renders vote score + release site so the agent can pick the community favorite", async () => {
     const { sandbox } = await createSubtitleSandbox();
     const provider = makeAssrtProvider(
@@ -262,54 +336,6 @@ describe("subtitle snapshot evidence + failure bounding", () => {
     const snap = sandbox.viewSubtitleSnapshot();
     expect(snap.document).toContain("★50");
     expect(snap.document).toContain("YYeTs");
-  });
-
-  it("aborts after 3 consecutive landing failures instead of hammering the whole filelist (115 budget guard)", async () => {
-    const provider = new FakeResourceProviderV2({ results: { title: [] } });
-    class AlwaysFailingStorage extends Storage115Simulator {
-      calls = 0;
-      override async transferSubtitleUrl(): Promise<TransferAttemptResult> {
-        this.calls += 1;
-        return { status: "failed", materializedFileIds: [], providerMessage: "dead link" };
-      }
-    }
-    const storage = new AlwaysFailingStorage({ packs: {} });
-    const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
-    const sandbox = new TaskSandbox({ provider, storage, stagingDirectoryId, targetSeasonDirectoryIds: {}, need: [] });
-    const files = Array.from({ length: 10 }, (_, i) => ({ filename: `E${i}.ass`, url: `http://x/${i}.ass` }));
-    const assrt = makeAssrtProvider([{ id: 7, title: "t", lang: "" }], { 7: files });
-    await sandbox.primeSubtitleSnapshot("t", assrt);
-
-    const result = await sandbox.transferSubtitle({ candidateId: 7 });
-
-    expect(result.status).toBe("failed");
-    expect(storage.calls).toBe(3);
-    expect(result.error).toMatch(/连续|consecutive/i);
-  });
-
-  it("a success in between resets the consecutive-failure counter", async () => {
-    const provider = new FakeResourceProviderV2({ results: { title: [] } });
-    class FlakyStorage extends Storage115Simulator {
-      calls = 0;
-      override async transferSubtitleUrl(input: { url: string; filename: string; intoDirectoryId: string }): Promise<TransferAttemptResult> {
-        this.calls += 1;
-        // fail, fail, succeed, fail, fail, succeed, ... — never 3 in a row
-        if (this.calls % 3 === 0) return super.transferSubtitleUrl(input);
-        return { status: "failed", materializedFileIds: [], providerMessage: "flaky" };
-      }
-    }
-    const storage = new FlakyStorage({ packs: {} });
-    const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
-    const sandbox = new TaskSandbox({ provider, storage, stagingDirectoryId, targetSeasonDirectoryIds: {}, need: [] });
-    const files = Array.from({ length: 6 }, (_, i) => ({ filename: `E${i}.ass`, url: `http://x/${i}.ass` }));
-    const assrt = makeAssrtProvider([{ id: 8, title: "t", lang: "" }], { 8: files });
-    await sandbox.primeSubtitleSnapshot("t", assrt);
-
-    const result = await sandbox.transferSubtitle({ candidateId: 8 });
-
-    expect(result.status).toBe("succeeded");
-    expect(storage.calls).toBe(6); // all 6 attempted — counter reset by the successes
-    expect(result.landedFilenames).toEqual(["E2.ass", "E5.ass"]);
   });
 });
 

@@ -16,6 +16,7 @@ import {
   hasSuccessfulNoCoverageReport,
   reflectionSystemOverride,
   toStepSignature,
+  PAN115_TRANSFER_RESERVE_CALLS,
 } from "../src/index.js";
 
 describe("toStepSignature", () => {
@@ -167,6 +168,11 @@ describe("budgetReflectionNudge (115 call-budget soft warning)", () => {
     expect(BUDGET_REMINDER).toContain("flattenMovie"); // movie path explicitly covered
     expect(BUDGET_REMINDER).toMatch(/电影.*不要再?\s*discardStaging|电影.*flattenMovie/);
   });
+
+  it("reminder tells the agent transfers get refused mechanically inside the reserve (so a refusal reads as 'wrap up', not 'retry')", () => {
+    expect(BUDGET_REMINDER).toMatch(/保留额/);
+    expect(BUDGET_REMINDER).toContain("transferSubtitle");
+  });
 });
 
 describe("budgetSoftThreshold (derive soft from configured hard)", () => {
@@ -178,6 +184,13 @@ describe("budgetSoftThreshold (derive soft from configured hard)", () => {
   });
   it("clamps to ≥1 for a tiny budget (never negative)", () => {
     expect(budgetSoftThreshold(10)).toBe(1);
+  });
+
+  it("soft nudge fires BELOW the mechanical transfer stop, which sits BELOW the hard limit (240 < 260 < 300)", () => {
+    const hard = 300;
+    const transferStop = hard - PAN115_TRANSFER_RESERVE_CALLS;
+    expect(budgetSoftThreshold(hard)).toBeLessThan(transferStop);
+    expect(transferStop).toBeLessThan(hard);
   });
 });
 

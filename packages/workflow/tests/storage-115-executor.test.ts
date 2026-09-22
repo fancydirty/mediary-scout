@@ -4,7 +4,9 @@ import {
   createProtectedStorage115Executor,
   infoHashFromMagnet,
   Pan115ApiGuard,
+  Pan115AuthError,
   Pan115RiskControlError,
+  PAN115_TRANSFER_RESERVE_CALLS,
   Storage115Executor,
   type Pan115ActionResult,
   type Pan115DirectoryInfo,
@@ -1030,6 +1032,81 @@ describe("Storage115Executor", () => {
   });
 });
 
+describe("115 factories wire the transfer reserve (收尾永远有额度)", () => {
+  it("createProtectedStorage115Executor: transfers stop at hard − PAN115_TRANSFER_RESERVE_CALLS, listings continue", async () => {
+    const api = new FakePan115Api({
+      directories: { season_1: [] },
+      directoryInfo: { season_1: seasonPathInfo("test_root", "season_1") },
+    });
+    const executor = createProtectedStorage115Executor({
+      api,
+      env: {
+        MEDIA_TRACK_115_TEST_ROOT_CID: "test_root",
+        MEDIA_TRACK_115_MAX_API_CALLS: "44", // transfer cutoff = 44 − 40 = 4
+        MEDIA_TRACK_115_MIN_DELAY_MS: "1",
+      },
+    });
+    expect(executor.apiCallBudget()).toBe(44);
+    expect(executor.apiTransferCallBudget()).toBe(4);
+    for (let i = 0; i < 4; i += 1) {
+      await executor.listVideoFiles("season_1");
+    }
+    // transfer(): the refusal lands on the transfer line BEFORE any preparatory call
+    // (no write-scope check, no before-listing) — nothing is received.
+    await expect(
+      executor.transfer({
+        workflowRunId: "run_1",
+        directoryId: "season_1",
+        candidate: candidateFixture({
+          type: "115",
+          providerPayload: { url: "https://115.com/s/abc123?password=pw", rawType: "115" },
+        }),
+      }),
+    ).rejects.toThrow(/transfer budget exhausted before receiveShare/);
+    expect(api.receivedShares).toHaveLength(0);
+    await executor.listVideoFiles("season_1"); // still allowed (wrap-up class)
+  });
+
+  it("createBootstrapPan115CookieStorageExecutor carries the same reserve (kept in sync)", () => {
+    const executor = createBootstrapPan115CookieStorageExecutor({ cookie: "UID=1_abc" });
+    expect(executor.apiCallBudget()).toBe(300);
+    expect(executor.apiTransferCallBudget()).toBe(300 - PAN115_TRANSFER_RESERVE_CALLS);
+  });
+
+  it("an explicit apiGuardOptions.transferReserveCalls overrides the factory default", () => {
+    const api = new FakePan115Api({ directories: { season_1: [] } });
+    const executor = createProtectedStorage115Executor({
+      api,
+      env: { MEDIA_TRACK_115_TEST_ROOT_CID: "test_root" },
+      apiGuardOptions: { minDelayMs: 0, transferReserveCalls: 0 },
+    });
+    expect(executor.apiTransferCallBudget()).toBe(executor.apiCallBudget());
+  });
+
+  it("transfer() fails fast ON the transfer line — no write-scope check, no before-snapshot listing is wasted", async () => {
+    const api = new FakePan115Api({ directories: { season_1: [] } });
+    const guard = new Pan115ApiGuard({ minDelayMs: 0, maxCallsPerOperation: 10, transferReserveCalls: 6 });
+    const executor = new Storage115Executor({ api, apiGuard: guard });
+    for (let i = 0; i < 4; i += 1) {
+      await executor.listVideoFiles("season_1"); // reaches the transfer line (10 − 6 = 4)
+    }
+
+    await expect(
+      executor.transfer({
+        workflowRunId: "run_1",
+        directoryId: "season_1",
+        candidate: candidateFixture({
+          type: "115",
+          providerPayload: { url: "https://115.com/s/abc123?password=pw", rawType: "115" },
+        }),
+      }),
+    ).rejects.toThrow(/transfer budget exhausted before receiveShare/);
+    expect(api.listCalls).toHaveLength(4); // the 4 listVideoFiles only — no before-snapshot
+    expect(api.receivedShares).toEqual([]);
+    expect(guard.callsSpent()).toBe(4); // the refusal itself costs nothing
+  });
+});
+
 describe("Storage115Executor.transferSubtitleUrl", () => {
   it("createProtectedStorage115Executor passes the subtitle window options through (tuning must not be silently ignored)", async () => {
     // Target a staging SUBDIR inside the write scope — the scope root itself is
@@ -1284,6 +1361,478 @@ describe("Storage115Executor.transferSubtitleUrl", () => {
     expect(first.status).toBe("succeeded");
     expect(second.status).toBe("failed");
     expect(first.id).not.toBe(second.id); // distinct ids — no PK collision
+  });
+});
+
+describe("Storage115Executor.transferSubtitleUrls (整包一次:1 校验 + 1 快照 + N 提交 + 每轮 1 次深 1 轮询 + 1 次批量取消)", () => {
+  function subtitleFiles(n: number): Array<{ url: string; filename: string }> {
+    return Array.from({ length: n }, (_, i) => ({
+      url: `http://file0.assrt.net/onthefly/1/Show.S01E${String(i + 1).padStart(2, "0")}.srt`,
+      filename: `Show.S01E${String(i + 1).padStart(2, "0")}.srt`,
+    }));
+  }
+
+  it("a 3-file package that lands on the first poll costs exactly 1 + 3 + 1 calls (was 3 × (1 + 1 + 1) per-file)", async () => {
+    const api = new FakePan115Api({ directories: { stage: [] } });
+    api.addOfflineTask = async (input) => {
+      const name = input.url.split("/").pop()!;
+      api.directories[input.directoryId] = [...(api.directories[input.directoryId] ?? []), { fid: `fid_${name}`, n: name, s: "40KB" }];
+      return { ok: true, message: "accepted" };
+    };
+    const guard = new Pan115ApiGuard({ minDelayMs: 0 });
+    const executor = new Storage115Executor({ api, apiGuard: guard, sleep: async () => {} });
+
+    const attempts = await executor.transferSubtitleUrls({ files: subtitleFiles(3), directoryId: "stage", workflowRunId: "run-b" });
+
+    expect(attempts.map((a) => a.status)).toEqual(["succeeded", "succeeded", "succeeded"]);
+    expect(attempts.map((a) => a.materializedFileIds)).toEqual([["fid_Show.S01E01.srt"], ["fid_Show.S01E02.srt"], ["fid_Show.S01E03.srt"]]);
+    expect(attempts.map((a) => a.candidateId)).toEqual(["subtitle:Show.S01E01.srt", "subtitle:Show.S01E02.srt", "subtitle:Show.S01E03.srt"]);
+    expect(new Set(attempts.map((a) => a.id)).size).toBe(3);
+    expect(guard.callsSpent()).toBe(5); // before-listing 1 + addOfflineTask 3 + one poll 1
+    expect(api.listCalls).toEqual(["stage", "stage"]); // depth 1: the staging dir only, never its subdirs
+  });
+
+  it("polls the staging dir at depth 1 — subdirectories (video packs) are never listed", async () => {
+    const api = new FakePan115Api({
+      directories: { stage: [{ isDirectory: true, cid: "pack_1", n: "Q-Show-2026" }], pack_1: [] },
+    });
+    api.addOfflineTask = async () => ({ ok: true, message: "accepted" });
+    const executor = new Storage115Executor({ api, subtitleMaterializeAttempts: 2, subtitleMaterializePollMs: 1, sleep: async () => {} });
+
+    await executor.transferSubtitleUrls({ files: subtitleFiles(1), directoryId: "stage", workflowRunId: "run-b" });
+
+    expect(api.listCalls.every((cid) => cid === "stage")).toBe(true);
+  });
+
+  it("keeps polling while files keep landing, and gives up after `subtitleMaterializeAttempts` idle polls", async () => {
+    const api = new FakePan115Api({ directories: { stage: [] } });
+    api.addOfflineTask = async () => ({ ok: true, message: "accepted" });
+    let listCalls = 0;
+    const orig = api.listItems.bind(api);
+    api.listItems = async (input) => {
+      listCalls += 1;
+      // listing 1 = before; E01 lands on poll 3 (listing 4), E02 on poll 5 (listing 6); E03–E06 never.
+      if (listCalls === 4) api.directories["stage"] = [{ fid: "f1", n: "Show.S01E01.srt", s: "1KB" }];
+      if (listCalls === 6) api.directories["stage"] = [...api.directories["stage"]!, { fid: "f2", n: "Show.S01E02.srt", s: "1KB" }];
+      return orig(input);
+    };
+    const guard = new Pan115ApiGuard({ minDelayMs: 0 });
+    const executor = new Storage115Executor({ api, apiGuard: guard, subtitleMaterializeAttempts: 3, subtitleMaterializePollMs: 1, sleep: async () => {} });
+
+    const attempts = await executor.transferSubtitleUrls({ files: subtitleFiles(6), directoryId: "stage", workflowRunId: "run-b" });
+
+    expect(attempts.filter((a) => a.status === "succeeded")).toHaveLength(2);
+    expect(attempts.filter((a) => a.status === "no_target_change")).toHaveLength(4);
+    // polls: 1,2 idle(2) → 3 lands (idle reset) → 4 idle → 5 lands (reset) → 6,7,8 idle(3) → stop.
+    // 6 files keep the cap (attempts 3 + files 6 = 9) OUT of reach, so ONLY the idle rule can end this loop.
+    expect(listCalls).toBe(1 + 8);
+    // before 1 + submit 6 + polls 8 + cancel listOfflineTasks 1 (no unambiguous match → no task_del)
+    expect(guard.callsSpent()).toBe(16);
+  });
+
+  it("caps total polls at attempts + files even when landings trickle forever", async () => {
+    const api = new FakePan115Api({ directories: { stage: [] } });
+    api.addOfflineTask = async () => ({ ok: true, message: "accepted" });
+    let listCalls = 0;
+    const orig = api.listItems.bind(api);
+    api.listItems = async (input) => {
+      listCalls += 1;
+      // One file lands on every ODD poll (1, 3, 5, …) — the idle counter never
+      // reaches 2, so ONLY the cap can stop this loop.
+      const poll = listCalls - 1; // listing 1 is the before-snapshot
+      if (poll >= 1 && poll % 2 === 1) {
+        const n = (poll + 1) / 2;
+        api.directories["stage"] = [...(api.directories["stage"] ?? []), { fid: `f${n}`, n: `Show.S01E${String(n).padStart(2, "0")}.srt`, s: "1KB" }];
+      }
+      return orig(input);
+    };
+    const executor = new Storage115Executor({ api, subtitleMaterializeAttempts: 2, subtitleMaterializePollMs: 1, sleep: async () => {} });
+
+    const attempts = await executor.transferSubtitleUrls({ files: subtitleFiles(10), directoryId: "stage", workflowRunId: "run-b" });
+
+    expect(listCalls).toBe(1 + 2 + 10); // before + (attempts + files) polls
+    expect(attempts.filter((a) => a.status === "succeeded")).toHaveLength(6); // polls 1,3,5,7,9,11 landed one each
+    expect(attempts.filter((a) => a.status === "no_target_change")).toHaveLength(4);
+  });
+
+  it("batch-cancels every unlanded file's queued task in ONE task_del (only unambiguous url matches), after ONE task_lists read", async () => {
+    const files = subtitleFiles(4);
+    const api = new FakePan115Api({
+      directories: { stage: [] },
+      offlineTaskList: [
+        { infoHash: "h1", name: "a", percentDone: 0, status: 1, statusText: "downloading", url: files[0]!.url },
+        { infoHash: "h2", name: "b", percentDone: 0, status: 1, statusText: "downloading", url: files[1]!.url },
+        { infoHash: "h2dup", name: "b-stale", percentDone: 0, status: 1, statusText: "downloading", url: files[1]!.url }, // ambiguous → skipped
+        // files[2] has no task row → skipped; files[3] lands → not cancelled
+      ],
+    });
+    api.addOfflineTask = async (input) => {
+      if (input.url === files[3]!.url) api.directories["stage"] = [{ fid: "f4", n: files[3]!.filename, s: "1KB" }];
+      return { ok: true, message: "accepted" };
+    };
+    const executor = new Storage115Executor({ api, subtitleMaterializeAttempts: 1, subtitleMaterializePollMs: 1, sleep: async () => {} });
+
+    const attempts = await executor.transferSubtitleUrls({ files, directoryId: "stage", workflowRunId: "run-b" });
+
+    expect(attempts.map((a) => a.status)).toEqual(["no_target_change", "no_target_change", "no_target_change", "succeeded"]);
+    expect(api.listOfflineTasksCalls).toBe(1);
+    expect(api.removedOfflineHashes).toEqual(["h1"]);
+    expect(attempts[0]!.providerMessage).toBe("subtitle offline task accepted but file did not materialize in window");
+  });
+
+  it("invalid (path-y) and duplicate filenames fail at the boundary without API calls and without disturbing the others", async () => {
+    const api = new FakePan115Api({ directories: { stage: [] } });
+    api.addOfflineTask = async (input) => {
+      api.offlineTasks.push({ ...input }); // the override replaces the fake's own bookkeeping
+      const name = input.url.split("/").pop()!;
+      api.directories[input.directoryId] = [...(api.directories[input.directoryId] ?? []), { fid: `fid_${name}`, n: name, s: "1KB" }];
+      return { ok: true, message: "accepted" };
+    };
+    const executor = new Storage115Executor({ api, sleep: async () => {} });
+
+    const attempts = await executor.transferSubtitleUrls({
+      files: [
+        { url: "http://x/evil.srt", filename: "sub/evil.srt" },
+        { url: "http://x/Show.S01E01.srt", filename: "Show.S01E01.srt" },
+        { url: "http://x/dup/Show.S01E01.srt", filename: "Show.S01E01.srt" },
+      ],
+      directoryId: "stage",
+      workflowRunId: "run-b",
+    });
+
+    expect(attempts[0]!.status).toBe("failed");
+    expect(attempts[0]!.providerMessage).toMatch(/SUBTITLE_INVALID_FILENAME/);
+    expect(attempts[0]!.candidateId).not.toContain("/");
+    expect(attempts[1]!.status).toBe("succeeded");
+    expect(attempts[2]!.status).toBe("failed");
+    expect(attempts[2]!.providerMessage).toMatch(/SUBTITLE_DUPLICATE_FILENAME/);
+    expect(api.offlineTasks.map((t) => t.url)).toEqual(["http://x/Show.S01E01.srt"]); // exactly one submission
+    expect(new Set(attempts.map((a) => a.id)).size).toBe(3);
+  });
+
+  it("an all-invalid package returns without touching the API at all", async () => {
+    const api = new FakePan115Api({ directories: { stage: [] } });
+    const guard = new Pan115ApiGuard({ minDelayMs: 0 });
+    const executor = new Storage115Executor({ api, apiGuard: guard });
+
+    const attempts = await executor.transferSubtitleUrls({ files: [{ url: "http://x/a", filename: "a/b.srt" }], directoryId: "stage", workflowRunId: "run-b" });
+
+    expect(attempts).toHaveLength(1);
+    expect(guard.callsSpent()).toBe(0);
+  });
+
+  it("stops submitting after 3 consecutive addOfflineTask rejections; the rest are failed as SUBTITLE_NOT_SUBMITTED", async () => {
+    const api = new FakePan115Api({ directories: { stage: [] } });
+    let submissions = 0;
+    api.addOfflineTask = async () => {
+      submissions += 1;
+      return { ok: false, message: "云下载配额不足" };
+    };
+    const executor = new Storage115Executor({ api, subtitleMaterializeAttempts: 1, subtitleMaterializePollMs: 1, sleep: async () => {} });
+
+    const attempts = await executor.transferSubtitleUrls({ files: subtitleFiles(6), directoryId: "stage", workflowRunId: "run-b" });
+
+    expect(submissions).toBe(3);
+    expect(attempts.slice(0, 3).map((a) => a.providerMessage)).toEqual(["云下载配额不足", "云下载配额不足", "云下载配额不足"]);
+    expect(attempts.slice(3).every((a) => a.status === "failed" && /SUBTITLE_NOT_SUBMITTED.*云下载配额不足/.test(a.providerMessage))).toBe(true);
+    expect(api.listOfflineTasksCalls).toBe(0); // nothing was submitted → nothing to cancel
+  });
+
+  it("a success resets the rejection counter (mixed flakiness still submits everything)", async () => {
+    const api = new FakePan115Api({ directories: { stage: [] } });
+    let submissions = 0;
+    api.addOfflineTask = async () => {
+      submissions += 1;
+      return submissions % 3 === 0 ? { ok: true, message: "accepted" } : { ok: false, message: "flaky" };
+    };
+    const executor = new Storage115Executor({ api, subtitleMaterializeAttempts: 1, subtitleMaterializePollMs: 1, sleep: async () => {} });
+
+    await executor.transferSubtitleUrls({ files: subtitleFiles(6), directoryId: "stage", workflowRunId: "run-b" });
+
+    expect(submissions).toBe(6);
+  });
+
+  it("refuses up front, with ZERO API calls, a package that cannot land before the transfer line (SUBTITLE_BUDGET_INSUFFICIENT)", async () => {
+    const api = new FakePan115Api({ directories: { stage: [] } });
+    // hard 20, reserve 10 → transfer line 10; 3 files with 8-poll patience need 2 + 3 + 8 = 13 > 10.
+    const guard = new Pan115ApiGuard({ minDelayMs: 0, maxCallsPerOperation: 20, transferReserveCalls: 10 });
+    const executor = new Storage115Executor({ api, apiGuard: guard, subtitleMaterializeAttempts: 8, subtitleMaterializePollMs: 1, sleep: async () => {} });
+
+    const attempts = await executor.transferSubtitleUrls({ files: subtitleFiles(3), directoryId: "stage", workflowRunId: "run-b" });
+
+    expect(attempts.map((a) => a.status)).toEqual(["failed", "failed", "failed"]);
+    expect(attempts[0]!.providerMessage).toMatch(/SUBTITLE_BUDGET_INSUFFICIENT.*3-file.*~13 115 calls.*only 10 remain/);
+    expect(guard.callsSpent()).toBe(0);
+    expect(api.listCalls).toEqual([]);
+    expect(api.offlineTasks).toEqual([]);
+    expect(new Set(attempts.map((a) => a.id)).size).toBe(3); // numbers still consumed
+  });
+
+  it("a circuit-breaker refusal (115 风控) mid-submission stops submitting at once; the rest are SUBTITLE_NOT_SUBMITTED and the landing poll fails closed", async () => {
+    const api = new FakePan115Api({ directories: { stage: [] } });
+    let submissions = 0;
+    api.addOfflineTask = async (input) => {
+      api.offlineTasks.push({ ...input });
+      submissions += 1;
+      // The 3rd submission answers with a risk-control signal → the guard opens its circuit and throws.
+      return submissions === 3 ? { ok: false, message: "请求过于频繁" } : { ok: true, message: "accepted" };
+    };
+    const guard = new Pan115ApiGuard({ minDelayMs: 0 });
+    const executor = new Storage115Executor({ api, apiGuard: guard, subtitleMaterializeAttempts: 2, subtitleMaterializePollMs: 1, sleep: async () => {} });
+
+    const attempts = await executor.transferSubtitleUrls({ files: subtitleFiles(5), directoryId: "stage", workflowRunId: "run-b" });
+
+    expect(submissions).toBe(3); // files 4 and 5 were never submitted
+    expect(attempts.map((a) => a.status)).toEqual(["no_target_change", "no_target_change", "failed", "failed", "failed"]);
+    expect(attempts.slice(2).every((a) => /^SUBTITLE_NOT_SUBMITTED: .*PAN115_RATE_LIMIT/.test(a.providerMessage))).toBe(true);
+    expect(attempts[0]!.providerMessage).toMatch(/subtitle landing poll failed: PAN115_RATE_LIMIT: circuit breaker open/);
+    expect(guard.callsSpent()).toBe(4); // before 1 + 3 submissions; polls and cleanup refused by the open circuit
+    expect(api.listOfflineTasksCalls).toBe(0);
+  });
+
+  it("polling stops at the transfer budget line instead of eating the wrap-up reserve (backstop: graceful miss, not a throw)", async () => {
+    const api = new FakePan115Api({ directories: { stage: [] } });
+    api.addOfflineTask = async () => ({ ok: true, message: "accepted" });
+    let listCalls = 0;
+    const orig = api.listItems.bind(api);
+    api.listItems = async (input) => {
+      listCalls += 1;
+      // listing 1 = before; E01 lands on poll 1 (listing 2), E02 on poll 3 (listing 4); E03 never.
+      if (listCalls === 2) api.directories["stage"] = [{ fid: "f1", n: "Show.S01E01.srt", s: "1KB" }];
+      if (listCalls === 4) api.directories["stage"] = [...api.directories["stage"]!, { fid: "f2", n: "Show.S01E02.srt", s: "1KB" }];
+      return orig(input);
+    };
+    // hard 12, reserve 4 → transfer line 8. Pre-flight: 2 + 3 + 2 = 7 ≤ 8 → proceeds.
+    // before (1) + submits (2..4) + polls 5,6,7,8 → the budget stop fires right after the
+    // 4th poll; idle patience (2) never fires because E01/E02 keep landing.
+    const guard = new Pan115ApiGuard({ minDelayMs: 0, maxCallsPerOperation: 12, transferReserveCalls: 4 });
+    let sleeps = 0;
+    const executor = new Storage115Executor({
+      api,
+      apiGuard: guard,
+      subtitleMaterializeAttempts: 2,
+      subtitleMaterializePollMs: 1,
+      sleep: async () => {
+        sleeps += 1;
+      },
+    });
+
+    const attempts = await executor.transferSubtitleUrls({ files: subtitleFiles(3), directoryId: "stage", workflowRunId: "run-b" });
+
+    expect(attempts.map((a) => a.status)).toEqual(["succeeded", "succeeded", "no_target_change"]);
+    expect(attempts[2]!.providerMessage).toMatch(/wrap-up reserve/);
+    expect(listCalls).toBe(1 + 4); // before + 4 polls, none in the reserve
+    expect(sleeps).toBe(3); // polls − 1: the loop never sleeps after the poll that hits the line
+    expect(guard.callsSpent()).toBe(9); // + the cleanup task_lists read (wrap-up class, allowed under hard 12)
+  });
+
+  it("the write-scope check is ONE getDirectoryInfo for the whole package, not one per file", async () => {
+    const api = new FakePan115Api({
+      directories: { sub_stage: [] },
+      directoryInfo: { sub_stage: seasonPathInfo("test_root", "sub_stage") },
+    });
+    let directoryInfoCalls = 0;
+    const origInfo = api.getDirectoryInfo.bind(api);
+    api.getDirectoryInfo = async (input) => {
+      directoryInfoCalls += 1;
+      return origInfo(input);
+    };
+    api.addOfflineTask = async (input) => {
+      api.offlineTasks.push({ ...input });
+      const name = input.url.split("/").pop()!;
+      api.directories[input.directoryId] = [...(api.directories[input.directoryId] ?? []), { fid: `fid_${name}`, n: name, s: "1KB" }];
+      return { ok: true, message: "accepted" };
+    };
+    const executor = createProtectedStorage115Executor({
+      api,
+      env: { MEDIA_TRACK_115_TEST_ROOT_CID: "test_root" },
+      apiGuardOptions: { minDelayMs: 0 },
+      subtitleMaterializeAttempts: 2,
+      subtitleMaterializePollMs: 1,
+      sleep: async () => {},
+    });
+
+    const attempts = await executor.transferSubtitleUrls({ files: subtitleFiles(4), directoryId: "sub_stage", workflowRunId: "run-b" });
+
+    expect(attempts.every((a) => a.status === "succeeded")).toBe(true);
+    expect(directoryInfoCalls).toBe(1); // the scope check, once — NOT once per file
+    expect(executor.apiCallCount()).toBe(7); // scope 1 + before 1 + submits 4 + one poll 1
+  });
+
+  it("clamps the reported headroom at 0 — a package asked for past the line never prints a negative remainder", async () => {
+    const api = new FakePan115Api({ directories: { stage: [] } });
+    // hard 10, reserve 6 → transfer line 4; 6 listings (wrap-up class) push callsSpent PAST it.
+    const guard = new Pan115ApiGuard({ minDelayMs: 0, maxCallsPerOperation: 10, transferReserveCalls: 6 });
+    const executor = new Storage115Executor({ api, apiGuard: guard, subtitleMaterializeAttempts: 1, subtitleMaterializePollMs: 1, sleep: async () => {} });
+    for (let i = 0; i < 6; i += 1) {
+      await executor.listVideoFiles("stage");
+    }
+
+    const attempts = await executor.transferSubtitleUrls({ files: subtitleFiles(1), directoryId: "stage", workflowRunId: "run-b" });
+
+    expect(attempts[0]!.status).toBe("failed");
+    expect(attempts[0]!.providerMessage).toMatch(/SUBTITLE_BUDGET_INSUFFICIENT/);
+    expect(attempts[0]!.providerMessage).toMatch(/only 0 remain/); // not "-2"
+    expect(guard.callsSpent()).toBe(6); // refused before any further call
+    expect(api.listCalls).toHaveLength(6);
+  });
+
+  it("cancels one task ONCE when several package files share a url (deduped infoHashes)", async () => {
+    const SHARED_URL = "http://file0.assrt.net/onthefly/1/pack.srt";
+    const api = new FakePan115Api({
+      directories: { stage: [] },
+      offlineTaskList: [
+        { infoHash: "h1", name: "pack", percentDone: 0, status: 1, statusText: "downloading", url: SHARED_URL },
+      ],
+    });
+    api.addOfflineTask = async () => ({ ok: true, message: "accepted" }); // lands nothing
+    const executor = new Storage115Executor({ api, subtitleMaterializeAttempts: 1, subtitleMaterializePollMs: 1, sleep: async () => {} });
+
+    const attempts = await executor.transferSubtitleUrls({
+      files: [
+        { url: SHARED_URL, filename: "Show.S01E01.srt" },
+        { url: SHARED_URL, filename: "Show.S01E02.srt" },
+      ],
+      directoryId: "stage",
+      workflowRunId: "run-b",
+    });
+
+    expect(attempts.map((a) => a.status)).toEqual(["no_target_change", "no_target_change"]);
+    expect(api.listOfflineTasksCalls).toBe(1);
+    expect(api.removedOfflineHashes).toEqual(["h1"]); // ONE hash, not ["h1","h1"]
+  });
+
+  it("acceptance: a 22-file package that lands promptly costs ≤ 40 calls (the per-file path spent 260)", async () => {
+    const files = subtitleFiles(22);
+    const api = new FakePan115Api({ directories: { stage: [] } });
+    api.addOfflineTask = async () => ({ ok: true, message: "accepted" });
+    let listCalls = 0;
+    const orig = api.listItems.bind(api);
+    api.listItems = async (input) => {
+      listCalls += 1;
+      const poll = listCalls - 1; // listing 1 is the before-snapshot
+      if (poll >= 1) {
+        // 8 files land per poll → all 22 are in by poll 3.
+        api.directories["stage"] = files
+          .slice(0, Math.min(8 * poll, files.length))
+          .map((file, index) => ({ fid: `fid_${index + 1}`, n: file.filename, s: "40KB" }));
+      }
+      return orig(input);
+    };
+    const guard = new Pan115ApiGuard({ minDelayMs: 0 });
+    const executor = new Storage115Executor({ api, apiGuard: guard, sleep: async () => {} });
+
+    const attempts = await executor.transferSubtitleUrls({ files, directoryId: "stage", workflowRunId: "run-b" });
+
+    expect(attempts.filter((a) => a.status === "succeeded")).toHaveLength(22);
+    expect(listCalls).toBe(1 + 3); // before + 3 polls (8 + 8 + 6 landings)
+    expect(guard.callsSpent()).toBe(26); // before 1 + submits 22 + polls 3; nothing left to cancel
+    expect(guard.callsSpent()).toBeLessThanOrEqual(40);
+  });
+
+  it("acceptance: a 22-file package where 12 files never land still costs ≤ 60 calls (full idle window + one batch cancel)", async () => {
+    const files = subtitleFiles(22);
+    const api = new FakePan115Api({ directories: { stage: [] }, offlineTaskList: [] });
+    api.addOfflineTask = async () => ({ ok: true, message: "accepted" });
+    let listCalls = 0;
+    const orig = api.listItems.bind(api);
+    api.listItems = async (input) => {
+      listCalls += 1;
+      // Only the FIRST poll lands anything: 10 of 22. The other 12 never appear.
+      if (listCalls === 2) {
+        api.directories["stage"] = files
+          .slice(0, 10)
+          .map((file, index) => ({ fid: `fid_${index + 1}`, n: file.filename, s: "40KB" }));
+      }
+      return orig(input);
+    };
+    const guard = new Pan115ApiGuard({ minDelayMs: 0 });
+    const executor = new Storage115Executor({ api, apiGuard: guard, subtitleMaterializeAttempts: 8, subtitleMaterializePollMs: 1, sleep: async () => {} });
+
+    const attempts = await executor.transferSubtitleUrls({ files, directoryId: "stage", workflowRunId: "run-b" });
+
+    expect(attempts.filter((a) => a.status === "succeeded")).toHaveLength(10);
+    expect(attempts.filter((a) => a.status === "no_target_change")).toHaveLength(12);
+    // poll 1 lands 10 (idle reset) → polls 2–9 idle → idle hits 8 at poll 9 → stop
+    // (the cap, attempts 8 + files 22 = 30, is never reached).
+    expect(listCalls).toBe(1 + 9);
+    expect(guard.callsSpent()).toBe(33); // before 1 + submits 22 + polls 9 + task_lists 1 (empty list → no task_del)
+    expect(guard.callsSpent()).toBeLessThanOrEqual(60);
+  });
+
+  it("transferSubtitleUrl (single) delegates to the batch — same attempt shape, one number per call", async () => {
+    const api = new FakePan115Api({ directories: { stage: [] } });
+    api.addOfflineTask = async (input) => {
+      api.directories[input.directoryId] = [{ fid: "sub_1", n: "Show.S01E01.srt", s: "1KB" }];
+      return { ok: true, message: "accepted" };
+    };
+    const executor = new Storage115Executor({ api, sleep: async () => {} });
+
+    const single = await executor.transferSubtitleUrl!({ url: "http://x/Show.S01E01.srt", filename: "Show.S01E01.srt", directoryId: "stage", workflowRunId: "run-s" });
+    const next = await executor.transferSubtitleUrls({ files: [{ url: "http://x/Show.S01E02.srt", filename: "Show.S01E02.srt" }], directoryId: "stage", workflowRunId: "run-s" });
+
+    expect(single).toMatchObject({ id: "run-s_subtitle_1", candidateId: "subtitle:Show.S01E01.srt", status: "succeeded", materializedFileIds: ["sub_1"] });
+    expect(next[0]!.id).toBe("run-s_subtitle_2");
+  });
+
+  // A dead cookie is NOT a landing miss: it must ride out of the package the same
+  // way transfer() lets it out, so the worker can freeze the drive instead of the
+  // agent reading 22 fake "did not materialize" lines and hunting another source.
+  it("a dead cookie during submission propagates as Pan115AuthError (not a per-file rejection)", async () => {
+    const api = new FakePan115Api({ directories: { stage: [] } });
+    let submits = 0;
+    api.addOfflineTask = async () => {
+      submits += 1;
+      if (submits >= 2) {
+        throw new Pan115AuthError("PAN115_AUTH_FAILED: cookie dead", 990001);
+      }
+      return { ok: true, message: "accepted" };
+    };
+    const executor = new Storage115Executor({ api, sleep: async () => {} });
+
+    await expect(
+      executor.transferSubtitleUrls({ files: subtitleFiles(3), directoryId: "stage", workflowRunId: "run-b" }),
+    ).rejects.toBeInstanceOf(Pan115AuthError);
+    // No cancel sweep either: the same dead cookie would refuse task_lists anyway.
+    expect(api.listOfflineTasksCalls).toBe(0);
+  });
+
+  it("a dead cookie during the landing poll propagates as Pan115AuthError (not no_target_change)", async () => {
+    const api = new FakePan115Api({ directories: { stage: [] } });
+    api.addOfflineTask = async () => ({ ok: true, message: "accepted" });
+    let listings = 0;
+    const orig = api.listItems.bind(api);
+    api.listItems = async (input) => {
+      listings += 1;
+      // listing 1 = the before-snapshot; the cookie dies on the first poll.
+      if (listings >= 2) {
+        throw new Pan115AuthError("PAN115_AUTH_FAILED: cookie dead", 990001);
+      }
+      return orig(input);
+    };
+    const executor = new Storage115Executor({ api, sleep: async () => {} });
+
+    await expect(
+      executor.transferSubtitleUrls({ files: subtitleFiles(2), directoryId: "stage", workflowRunId: "run-b" }),
+    ).rejects.toBeInstanceOf(Pan115AuthError);
+  });
+
+  it("a dead cookie during cleanup propagates too (best-effort cancel ≠ swallow a dead credential)", async () => {
+    const api = new FakePan115Api({ directories: { stage: [] } });
+    api.addOfflineTask = async () => ({ ok: true, message: "accepted" }); // accepted, never lands
+    api.listOfflineTasks = async () => {
+      throw new Pan115AuthError("PAN115_AUTH_FAILED: cookie dead", 990001);
+    };
+    const executor = new Storage115Executor({
+      api,
+      subtitleMaterializeAttempts: 1,
+      subtitleMaterializePollMs: 1,
+      sleep: async () => {},
+    });
+
+    await expect(
+      executor.transferSubtitleUrls({ files: subtitleFiles(1), directoryId: "stage", workflowRunId: "run-b" }),
+    ).rejects.toBeInstanceOf(Pan115AuthError);
   });
 });
 
