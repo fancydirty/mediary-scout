@@ -1,7 +1,7 @@
 # 123网盘外挂字幕落盘（待办②）— 设计
 
 日期：2026-09-21
-状态：设计已定，待实施（本 session 自主拍板；用户可在 PR 里否决任一决策）
+状态：2026-09-22 真盘 smoke 翻案，按 §8 重设计实施中（本 session 自主拍板；用户可在 PR 里否决任一决策）
 分支：`feat/pan123-subtitle`（从 `origin/main` 0a082cc 开）
 关联：待办②（记忆 `backlog-2026-09-20-subtitle-budget-and-brands`）、PR #261（定下的字幕端口契约）、`subtitle-completion-feature`（光鸭 #89 先例）
 
@@ -93,3 +93,36 @@ orchestrator 门控、skill 文本（SUBTITLE 节品牌无关；123 的 dead-lin
 - 删所有任务（含已完成）：磁力路径先例 + 探针 2 证明不删文件。
 - 不做 upload_name/重命名落地：123 http 任务不接受指定名（任务行的 upload_name 是目录名），落地名 = resolve name；改名交给 agent 的 renameSubtitle（现有流程）。
 - 不加 API 预算护栏：123 无 300 次一类的账号级预算模型；节奏用 1s resolve 间隔 + 3s 轮询。
+
+## 8. 2026-09-22 真盘 smoke 翻案 → 重设计（取代 §3.2 的 submitOfflineResources 与 §3.3 第 5–9 步）
+
+### 8.1 smoke 结果
+生产容器内用分支 dist 直打真 123 盘（隔离目录，跑完即删）：assrt 包 671164（老友记 S3 Netflix，75 个 srt）→ **0 落盘**。59 个 `no_target_change`（轮询窗口内未落盘）、3 个 resolve `err_code=3`、13 个因连续 3 次 resolve 失败被中止；81 次调用、360 s。多资源 submit 没抛错，回退路径没触发。
+
+### 8.2 三轮诊断探针（都自清理）坐实的事实
+| 事实 | 证据 |
+|---|---|
+| **assrt 下载直链约 5 分钟过期**：同一 URL 在 detail() 后 0/2/4 分钟 HTTP 200、6/8 分钟 HTTP 402（xml） | 探针 6 E；assrt 官方文档：「请不要保存下载地址，因为每次生成的下载地址都是唯一的而且具有一定的有效时间」 |
+| **123 在 submit 时才去下载**：resolve 后等 300 s 再 submit → 任务 6 s 内 status 1 | 探针 7 T |
+| **resolve 每条约 5–6 s**（123 服务端去抓 assrt），75 条逐条 resolve ≈ 6–7 分钟 → 一次性 submit 时直链早已过期 | 探针 7 M、探针 8 P |
+| **一次 submit 20 个资源：返回 20 个 task_id（result 全 0），任务却从未出现在 task/list，6 分钟零落盘**——静默失败；一次 5–6 个正常（6–12 s 落盘） | 探针 7 M vs 探针 6 B、探针 8 L6/L10 |
+| **逐文件 resolve → 立即单资源 submitOffline**：24 个里 23 个提交（1 个 resolve err_code=3），139 s 提交完，23/23 status 2、按名认领 23/23，每个在自己 submit 后 6–12 s 落盘 | 探针 8 P |
+| task/list **新任务排在第 1 页最前**（newest-first） | 探针 6 D |
+| resolve 的 err_code=3 有一部分是瞬时的（assrt 对来自同一方的突发请求回 503：同 IP 15 个并发 GET → 13 个 503） | 探针 4/5/7 S/8 L10 |
+
+### 8.3 新算法（N 个文件）
+1–4 不变（attempt 号、边界、写域、before 快照 1 次）。
+5. **逐文件流水线**（顺序）：对每个待处理文件——
+   - 若已中止 → `failed` `SUBTITLE_NOT_SUBMITTED: <中止原因>`；
+   - 若距批次开始已超过 `subtitleSubmitWindowMs`（默认 210 000，直链约 5 分钟有效，留余量）→ `failed` `SUBTITLE_NOT_SUBMITTED: 字幕直链约 5 分钟过期,整包太大,有效期内只提交了前 K 个;本文件未尝试`；
+   - `resolveOffline(url)`；非鉴权失败 → `sleep(subtitleResolveRetryDelayMs=2000)` 后**重试一次**；仍失败 → 该文件 `failed`（provider 原文），连续失败计数 +1，满 3 → 中止（`aborted after 3 consecutive resolve failures (last: …)`）；成功 → 计数清零；
+   - 立即 `submitOffline({resourceId, fileIds, uploadDirId})`（单资源，磁力路径与探针 8 都验证过）；非鉴权失败 → `failed` `PAN123_OFFLINE_SUBMIT_FAILED: …`（client 消息已带此前缀时不重复加）；成功 → 记下 task。
+6. **统一轮询**：`listOfflineTasks(未终态 taskIds)` 每轮 1 次，最多 `subtitleTaskPollMaxPolls` 轮、轮间 `sleep(subtitleTaskPollIntervalMs)`；status 2 → 待认领；status 1 → `failed` 固定文案 `PAN123_OFFLINE_FAILED: offline task failed at progress=N`（绝不插 task.name）；0/3/没找到 → 继续等。非鉴权轮询错误**容忍**：连续 3 次才停止轮询（不抛）。全部终态即停。
+7. **以目录为准认领（1 次 listFiles）**：凡提交成功且不是 status 1 的文件（含 status 2、仍在等、task/list 里找不到的）都参与认领：在 before 里没有的新文件中，先按 resolvedName、再按 assrt 文件名匹配，**一对一**（认领后从候选里移除）；找到 → `succeeded`（目录是事实，任务行不是）；找不到 → status 2 的写 `SUBTITLE_NOT_LANDED: 任务报告完成但文件不在目标目录`，其余写 `SUBTITLE_NOT_LANDED: 离线任务在轮询窗口内未落盘(任务已删除,不会再落)`。认领列目录非鉴权失败 → 这些文件 `no_target_change` 并带错误原文（不抛）。
+8. **清理放 finally**：`deleteOfflineTasks(本批创建的全部 taskId)`，非鉴权错误吞掉；鉴权错误只在主流程正常结束时抛出（不覆盖主流程已抛的错误）。
+9. 删除 `Pan123Client.submitOfflineResources` 及其测试（多资源 submit 在 20 条规模静默失败，留着是陷阱）；`listOfflineTasks` 保留（注释补「newest-first 实测」）。执行器选项 `subtitleResolveGapMs` 删除（resolve 本身 ~6 s，不需要额外间隔），新增 `subtitleSubmitWindowMs`、`subtitleResolveRetryDelayMs`、`now`（可注入时钟，测试用）。
+
+成本：before 1 + 每文件 resolve 1(+1 重试) + submit 1 + p 轮询 + 认领 1 + 删除 1 ≈ 2N + p + 3；耗时 ≈ N × 6 s + 尾部 ~10 s。窗口内大约能提交 35 个文件。
+
+### 8.4 跨品牌遗留（不在本 PR）
+直链过期对所有品牌都成立：115 的 168 文件 smoke「120 落 / 48 超窗」很可能同因；光鸭逐文件落盘在大包上也会撞。根治要在 sandbox 层分块，并在分块间重新 detail() 续签直链（需跳过已落文件、别打乱 #261 的 115 预算账）——记入 backlog。
