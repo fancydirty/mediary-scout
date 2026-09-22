@@ -150,10 +150,20 @@ describe("validateJevBaseUrlFormat", () => {
   });
 
   // The key rides in the Authorization header: over a remote http:// it would cross
-  // the internet in clear. http:// stays available for this machine and the LAN (a
-  // relay in the same compose stack, a box on 192.168.x).
-  it("http:// only for this machine or the LAN", () => {
-    for (const url of ["http://evil.example.com/v1/systemone", "http://8.8.8.8/x", "http://172.32.0.1/x"]) {
+  // the network in clear. A NAME proves nothing about where it resolves (search
+  // domains, NXDOMAIN-hijacking resolvers, mDNS spoofing), so http:// is only for
+  // localhost and literal loopback / private / link-local IPs.
+  it("http:// only for localhost or a literal loopback / private IP — never for a name", () => {
+    for (const url of [
+      "http://evil.example.com/v1/systemone",
+      "http://8.8.8.8/x",
+      "http://172.32.0.1/x",
+      "http://attacker/v1/systemone",
+      "http://jev-relay:8080/x",
+      "http://nas.local/x",
+      "http://relay.lan/x",
+      "http://127.0.0.1.evil.example/x",
+    ]) {
       expect(validateJevBaseUrlFormat(url), url).toMatchObject({ ok: false });
     }
     for (const url of [
@@ -163,8 +173,7 @@ describe("validateJevBaseUrlFormat", () => {
       "http://10.0.0.5/x",
       "http://172.20.0.3/x",
       "http://192.168.1.10:8080/v1/systemone",
-      "http://jev-relay:8080/x",
-      "http://nas.local/x",
+      "http://169.254.1.2/x",
     ]) {
       expect(validateJevBaseUrlFormat(url), url).toEqual({ ok: true });
     }

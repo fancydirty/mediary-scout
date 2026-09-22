@@ -85,15 +85,16 @@ export async function probeJev(
 
 /** 保存前的便宜格式校验（同 pansou-probe.validatePanSouBaseUrlFormat）。少了它，
  *  一个漏写 scheme 的地址要先花 8s 探活，再拿到含糊的「连不上」，而真正的问题是格式。
- *  Key 放在 Authorization 头里：远程的 http:// 会让它明文穿过公网，所以 http:// 只留给
- *  本机和局域网（同一 compose 里的中转、192.168.x 上的机器）。 */
+ *  Key 放在 Authorization 头里：http:// 会让它明文出去。主机名证明不了它解析到哪
+ *  （搜索域、会劫持 NXDOMAIN 的解析器、mDNS 伪造），所以 http:// 只认 localhost 和
+ *  字面的回环 / 私网 / 链路本地 IP；其余一律要 https://。 */
 export function validateJevBaseUrlFormat(url: string): { ok: true } | { ok: false; message: string } {
   const trimmed = url.trim();
   if (/^https:\/\//i.test(trimmed)) return { ok: true };
   if (/^http:\/\//i.test(trimmed) && isLocalHost(hostnameOf(trimmed))) return { ok: true };
   return {
     ok: false,
-    message: "Base URL 必须以 https:// 开头（http:// 只能用于本机或局域网地址：Key 会随请求明文发出），未保存。",
+    message: "Base URL 必须以 https:// 开头（http:// 只能用于 localhost 或局域网 IP 地址：Key 会随请求明文发出），未保存。",
   };
 }
 
@@ -105,13 +106,10 @@ function hostnameOf(url: string): string {
   }
 }
 
-/** Loopback, RFC 1918 / link-local IPv4, and names that only resolve on a LAN (a
- *  single-label compose service name, *.local / *.lan / *.internal / *.home.arpa). */
+/** localhost, IPv6 loopback, and literal loopback / RFC 1918 / link-local IPv4 —
+ *  addresses, not names: a name's resolution is not something this check can vouch for. */
 function isLocalHost(host: string): boolean {
-  if (host === "") return false;
-  if (host === "localhost" || host.endsWith(".localhost") || host === "::1") return true;
-  if (!host.includes(".") && !host.includes(":")) return true;
-  if (/\.(local|lan|internal|home\.arpa)$/.test(host)) return true;
+  if (host === "localhost" || host === "::1") return true;
   const ipv4 = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(host);
   if (!ipv4) return false;
   const [a, b] = [Number(ipv4[1]), Number(ipv4[2])];

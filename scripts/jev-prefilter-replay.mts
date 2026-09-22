@@ -26,7 +26,8 @@
 //                                 and the FAIL path without a network call or a key.
 //                                 Never a verdict: where a real run prints PASS, a fake
 //                                 run prints NO VERDICT and exits 3.
-// Exit codes: 0 PASS · 1 FAIL · 2 bad arguments · 3 NO VERDICT (JEV_FAKE).
+// Exit codes: 0 PASS · 1 FAIL · 2 bad arguments · 3 NO VERDICT (JEV_FAKE, or no key —
+// nothing was checked, and 0 is reserved for a run that actually measured).
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import {
   JevPrefilterProvider,
@@ -61,6 +62,13 @@ if (!runSentinels && !runReplay) {
 // floored) so the floor's cost can be broken down by title after the fact.
 const dumpIdx = args.indexOf("--dump");
 const dumpPath = dumpIdx >= 0 ? args[dumpIdx + 1] : undefined;
+// A trailing --dump used to disable dumping silently, and `--dump --sentinels-only`
+// truncated a file named "--sentinels-only" before running.
+if (dumpIdx >= 0 && (dumpPath === undefined || dumpPath.startsWith("--"))) {
+  console.log(USAGE);
+  console.log("--dump needs a file path.");
+  process.exit(2);
+}
 // A positional is a non-flag argument that is not the VALUE of --dump, so `50 --dump f`
 // and `--dump f 50` parse identically. Matching the dump path by value (the old
 // `limitArg === dumpPath`) was wrong for `--dump 50 50`: both the path and the limit
@@ -88,8 +96,8 @@ const fake = process.env.JEV_FAKE === "1";
 const key = process.env.JEV_API_KEY || process.env.OPENROUTER_API_KEY;
 const baseUrl = process.env.JEV_BASE_URL;
 if (!fake && !key) {
-  console.log("SKIP: neither JEV_API_KEY nor OPENROUTER_API_KEY is set");
-  process.exit(0);
+  console.log("NO VERDICT: neither JEV_API_KEY nor OPENROUTER_API_KEY is set — nothing was checked");
+  process.exit(3);
 }
 const judge: JevJudge = fake
   ? {
