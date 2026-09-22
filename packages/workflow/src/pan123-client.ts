@@ -528,61 +528,6 @@ export class Pan123Client {
     return taskId;
   }
 
-  /** One submit for MANY already-resolved resources (the subtitle batch: every file
-   *  is its own resource). The provider answers with a task_list keyed by
-   *  resource_id (order not guaranteed) — results are mapped back BY resource_id,
-   *  in the caller's order. Per-resource `result≠0` becomes that entry's `error`;
-   *  a resource missing from the echo is an error too (never a silent "submitted").
-   *  A top-level code≠0 still throws (signed()). Live 2026-09-21: single-resource
-   *  form verified; multi-resource form uses the same array body. */
-  async submitOfflineResources(input: {
-    resources: Array<{ resourceId: string; fileIds: string[] }>;
-    uploadDirId: string;
-  }): Promise<Array<{ resourceId: string; taskId: string | null; error: string | null }>> {
-    if (input.resources.length === 0) {
-      throw new Error("PAN123_OFFLINE_SUBMIT_FAILED: empty resources");
-    }
-    const num = (id: string): number | string => {
-      const n = Number(id);
-      return Number.isSafeInteger(n) ? n : id;
-    };
-    const resp = await this.signed("/v2/offline_download/task/submit", {
-      method: "POST",
-      body: {
-        resource_list: input.resources.map((r) => ({
-          resource_id: num(r.resourceId),
-          select_file_id: r.fileIds.map(num),
-        })),
-        upload_dir: num(input.uploadDirId),
-      },
-    });
-    const data = (resp["data"] ?? {}) as Record<string, unknown>;
-    const taskList = Array.isArray(data["task_list"]) ? (data["task_list"] as unknown[]) : [];
-    const byResource = new Map<string, Record<string, unknown>>();
-    for (const raw of taskList) {
-      const t = (raw ?? {}) as Record<string, unknown>;
-      const rid = strId(t["resource_id"]);
-      if (rid) {
-        byResource.set(rid, t);
-      }
-    }
-    return input.resources.map((r) => {
-      const t = byResource.get(r.resourceId);
-      if (!t) {
-        return { resourceId: r.resourceId, taskId: null, error: "PAN123_OFFLINE_SUBMIT_FAILED: resource not echoed in task_list" };
-      }
-      if (numOf(t["result"]) !== 0) {
-        const msg = strOf(t["err_msg"]) || "provider rejected submit";
-        const code = strOf(t["err_code"]);
-        return { resourceId: r.resourceId, taskId: null, error: `${msg}${code ? ` (err_code=${code})` : ""}` };
-      }
-      const taskId = strId(t["task_id"]);
-      return taskId
-        ? { resourceId: r.resourceId, taskId, error: null }
-        : { resourceId: r.resourceId, taskId: null, error: "PAN123_OFFLINE_SUBMIT_FAILED: empty task id" };
-    });
-  }
-
   /** Look up one offline task by id (pages status_arr 0/1/2/3). Null if not found. */
   async getOfflineTask(taskId: string): Promise<Pan123OfflineTask | null> {
     if (!taskId) {
@@ -620,7 +565,10 @@ export class Pan123Client {
    *  round of paging). Same endpoint/paging as getOfflineTask; stops as soon as
    *  every wanted id has been seen, and never reads more than `maxPages` pages
    *  (default 3 = 300 newest tasks — ours are the newest; a huge account queue
-   *  must not turn one poll into 50 requests). Missing ids are simply absent. */
+   *  must not turn one poll into 50 requests). Missing ids are simply absent.
+   *  task/list is newest-first (live 2026-09-22: tasks submitted seconds earlier
+   *  head page 1), so maxPages 3 covers a batch; the executor claims from the
+   *  directory anyway, so a task missing from these pages is not a lost landing. */
   async listOfflineTasks(taskIds: string[], opts?: { maxPages?: number }): Promise<Pan123OfflineTask[]> {
     const wanted = new Set(taskIds.filter((id) => id.length > 0));
     if (wanted.size === 0) {
