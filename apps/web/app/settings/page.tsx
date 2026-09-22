@@ -51,10 +51,13 @@ import {
   ASSRT_TOKEN_SETTING_KEY,
   PROWLARR_BASE_URL_SETTING_KEY,
   PROWLARR_API_KEY_SETTING_KEY,
+  getProwlarrConfig,
+  resolveAgentModelConfig,
   getJevConfig,
   getJevBaseUrlOverride,
   getJevInheritedBaseUrl,
   isJevPrefilterActive,
+  JEV_API_KEY_SETTING_KEY,
   JEV_MODEL_SETTING_KEY,
   PANSOU_BASE_URL_SETTING_KEY,
   PANSOU_HEALTH_SETTING_KEY,
@@ -291,11 +294,19 @@ async function LlmConfigSection() {
   const baseURL = (await repository.getSetting(LLM_BASE_URL_SETTING_KEY)) ?? "";
   const modelId = (await repository.getSetting(LLM_MODEL_ID_SETTING_KEY)) ?? "";
   const apiKeySet = Boolean((await repository.getSetting(LLM_API_KEY_SETTING_KEY))?.trim());
+  // The form shows the DB values; the pill shows what acquisitions will actually use —
+  // the worker's own resolver (DB → AGENT_MODEL_* → XIAOMI_MIMO_*). fromEnv: a
+  // non-blank effective value was filled in by env because its DB field is blank.
+  const effectiveLlm = await resolveAgentModelConfig(repository);
+  const llmFromEnv =
+    (!baseURL.trim() && Boolean(effectiveLlm.baseURL?.trim())) ||
+    (!modelId.trim() && Boolean(effectiveLlm.modelId?.trim()));
   // Jev lives here, not under 资源提供商: it is not a resource SOURCE, it is a second
   // AI service (with its own key) that assists the main model. One read, one rule:
   // getJevConfig applies DB→env fallback; isJevPrefilterActive is the same go/no-go
   // the worker uses, so the pill cannot drift from what actually runs.
   const jev = await getJevConfig(repository);
+  const jevKeyFromEnv = !(await repository.getSetting(JEV_API_KEY_SETTING_KEY))?.trim() && Boolean(jev.apiKey);
   // The input shows THIS account's own override — not the resolved default and not a
   // global value (the facade above would fall back to it). Prefilling either would be
   // typed straight back on the next 保存, freezing that endpoint into the account row
@@ -319,7 +330,11 @@ async function LlmConfigSection() {
       </div>
       <ServiceBlock
         name="主模型"
-        pills={llmPills({ baseURL, modelId })}
+        pills={llmPills({
+          baseURL: effectiveLlm.baseURL ?? "",
+          modelId: effectiveLlm.modelId ?? "",
+          fromEnv: llmFromEnv,
+        })}
         summary="任意 OpenAI 兼容服务，必填；Key 只存你本机。"
         details={
           <p>
@@ -336,6 +351,7 @@ async function LlmConfigSection() {
           healthy: jev.health === "ok",
           active: isJevPrefilterActive(jev),
           model: jevModel,
+          fromEnv: jevKeyFromEnv,
         })}
         summary="搜索结果进 agent 前先剔掉无关候选、标记存疑；每次搜索约 1–3 秒，成本可忽略。未配置时不产生任何调用。"
         details={
@@ -373,6 +389,8 @@ async function TmdbApiKeySection() {
   await connection();
   const repository = getAccountScopedSettings(await getCurrentAccountId());
   const apiKeySet = Boolean((await repository.getSetting(TMDB_API_KEY_SETTING_KEY))?.trim());
+  // Mirrors getTmdbAccesses' second layer: no DB key → env TMDB_READ_TOKEN goes direct.
+  const envKeySet = Boolean(process.env.TMDB_READ_TOKEN?.trim());
 
   return (
     <section className="panel" style={{ maxWidth: 720, marginTop: 24 }}>
@@ -387,7 +405,7 @@ async function TmdbApiKeySection() {
       </div>
       <ServiceBlock
         name="TMDB"
-        pills={tmdbPills({ apiKeySet })}
+        pills={tmdbPills({ userKeySet: apiKeySet, envKeySet })}
         summary="海报、简介、集数的来源；默认走作者代理兜底，填自己的 Token 可直连。"
         details={
           <>
@@ -424,6 +442,11 @@ async function ResourceProviderSection() {
   const pansouHealth = (await repository.getSetting(PANSOU_HEALTH_SETTING_KEY)) ?? "";
   const prowlarrBaseURL = (await repository.getSetting(PROWLARR_BASE_URL_SETTING_KEY)) ?? "";
   const prowlarrApiKeySet = Boolean((await repository.getSetting(PROWLARR_API_KEY_SETTING_KEY))?.trim());
+  // The form shows the DB values; the pill follows what the worker mounts
+  // (getProwlarrConfig: DB → env PROWLARR_BASE_URL / PROWLARR_API_KEY).
+  const prowlarr = await getProwlarrConfig(repository);
+  const prowlarrFromEnv =
+    (!prowlarrBaseURL.trim() && Boolean(prowlarr.baseURL)) || (!prowlarrApiKeySet && Boolean(prowlarr.apiKey));
   // Prowlarr (磁力/PT) only works for brands that support magnet. Hide it when no
   // connected drive supports it. Shown for legacy/env-only setups (no
   // connected_storages rows) so we never hide it from a working 115.
@@ -445,7 +468,13 @@ async function ResourceProviderSection() {
       </div>
       <ServiceBlock
         name="PanSou 网盘搜索"
-        pills={pansouPills({ baseURL: pansouBaseURL, isDesktop, health: pansouHealth })}
+        pills={pansouPills({
+          // The two layers of resolveUserPanSouBaseUrl (DB, then env PANSOU_BASE_URL);
+          // both blank → the runtime falls back to the public DEFAULT_PANSOU_BASE_URL.
+          dbBaseURL: pansouBaseURL,
+          envBaseURL: process.env.PANSOU_BASE_URL?.trim() ?? "",
+          health: pansouHealth,
+        })}
         summary={
           isDesktop
             ? "桌面端未配置时用作者的公共实例（资源有限、偶尔不稳），建议自建一个配好频道的实例填在这里。"
@@ -479,7 +508,11 @@ async function ResourceProviderSection() {
       {showProwlarr ? (
         <ServiceBlock
           name="Prowlarr 磁力 / PT"
-          pills={prowlarrPills({ baseURL: prowlarrBaseURL, apiKeySet: prowlarrApiKeySet })}
+          pills={prowlarrPills({
+            baseURL: prowlarr.baseURL ?? "",
+            apiKeySet: Boolean(prowlarr.apiKey),
+            fromEnv: prowlarrFromEnv,
+          })}
           summary={`把你的种子站聚合成一个 API，磁力靠秒传瞬时落盘；仅对支持磁力的盘生效（${magnetBrands}）。`}
           details={
             <>
