@@ -19,6 +19,11 @@ export interface ServicePill {
 
 const nonBlank = (value: string): boolean => value.trim().length > 0;
 
+/** True when the effective value is present but its account-scoped DB override is blank. */
+export function isEnvBackedValue(dbValue: string | null | undefined, effectiveValue: string | undefined): boolean {
+  return !dbValue?.trim() && Boolean(effectiveValue?.trim());
+}
+
 /** 生效值里有一层是 env 补上的（DB 那格留空）：输入框是空的，服务却在用这个值 ——
  *  标出来源，免得用户以为没配、或者找不到它从哪来。 */
 const ENV_SOURCE_PILL: ServicePill = { label: "来自环境变量", tone: "neutral" };

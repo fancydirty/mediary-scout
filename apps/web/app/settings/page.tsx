@@ -17,7 +17,7 @@ import { AssrtTokenForm } from "../../components/assrt-token-form";
 import { ProwlarrConfigForm } from "../../components/prowlarr-config-form";
 import { JevPrefilterForm } from "../../components/jev-prefilter-form";
 import { ServiceBlock } from "../../components/service-block";
-import { assrtPills, jevPills, llmPills, pansouPills, prowlarrPills, tmdbPills } from "../../lib/service-status";
+import { assrtPills, isEnvBackedValue, jevPills, llmPills, pansouPills, prowlarrPills, tmdbPills } from "../../lib/service-status";
 import { PanSouConfigForm } from "../../components/pansou-config-form";
 import { DailySweepForm } from "../../components/daily-sweep-form";
 import { PatrolNowButton } from "../../components/patrol-now-button";
@@ -299,8 +299,9 @@ async function LlmConfigSection() {
   // non-blank effective value was filled in by env because its DB field is blank.
   const effectiveLlm = await resolveAgentModelConfig(repository);
   const llmFromEnv =
-    (!baseURL.trim() && Boolean(effectiveLlm.baseURL?.trim())) ||
-    (!modelId.trim() && Boolean(effectiveLlm.modelId?.trim()));
+    isEnvBackedValue(baseURL, effectiveLlm.baseURL) ||
+    isEnvBackedValue(modelId, effectiveLlm.modelId) ||
+    (!apiKeySet && Boolean(effectiveLlm.apiKey?.trim()));
   // Jev lives here, not under 资源提供商: it is not a resource SOURCE, it is a second
   // AI service (with its own key) that assists the main model. One read, one rule:
   // getJevConfig applies DB→env fallback; isJevPrefilterActive is the same go/no-go

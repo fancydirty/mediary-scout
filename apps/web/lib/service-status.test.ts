@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assrtPills,
+  isEnvBackedValue,
   jevPills,
   llmPills,
   pansouPills,
@@ -19,6 +20,17 @@ type Case<F extends (...args: never[]) => ServicePill[]> = {
 
 /** 生效值里有一层来自环境变量（DB 留空、env 补位）时追加的中性胶囊。 */
 const ENV: ServicePill = { label: "来自环境变量", tone: "neutral" };
+
+describe("isEnvBackedValue", () => {
+  it.each([
+    { name: "blank DB + effective env value", db: "", effective: "env-value", want: true },
+    { name: "whitespace DB + effective env value", db: "  ", effective: "env-value", want: true },
+    { name: "DB value wins over env", db: "db-value", effective: "db-value", want: false },
+    { name: "no effective value", db: "", effective: undefined, want: false },
+  ])("$name", ({ db, effective, want }) => {
+    expect(isEnvBackedValue(db, effective)).toBe(want);
+  });
+});
 
 describe("llmPills（输入 = resolveAgentModelConfig 的生效值）", () => {
   it.each<Case<typeof llmPills>>([
