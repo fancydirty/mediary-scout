@@ -322,6 +322,8 @@ export async function runAcquisitionAgent(
 
   let result = await generateAgentTurn(request.system, request.prompt, tools, maxSteps);
   let steps = Math.max(result.steps?.length ?? 0, result.finishReason === "content-filter" ? 1 : 0);
+  let totalUsageTokens = result.totalUsage?.totalTokens;
+  let peakInputTokens = result.usage?.inputTokens;
   // A provider content filter can terminate a model response after it has already
   // transferred a resource and inspected the landing point (the Guangya movie
   // incident). One fresh turn gets the live sandbox state and a chance to perform
@@ -339,6 +341,7 @@ export async function runAcquisitionAgent(
         "moveToSeason",
         "deleteFiles",
         "flattenMovie",
+        "renameSubtitle",
         "markObtained",
         "finish",
         "reportNoCoverage",
@@ -346,22 +349,31 @@ export async function runAcquisitionAgent(
       const recoveryTools = Object.fromEntries(
         Object.entries(tools).filter(([name]) => recoveryToolNames.has(name)),
       ) as ToolSet;
-      result = await generateAgentTurn(
+      const recoveryResult = await generateAgentTurn(
         `${request.system}\n\n【恢复】上一次回答被模型内容过滤中断。请从当前 sandbox 的真实状态继续：只使用当前状态完成观察、整理、核对、markObtained 和 finish；不要重新搜索或重复转存。若没有可用落盘，按证据如实收尾。`,
         "Continue the interrupted acquisition from the current sandbox state and reach an honest terminal action.",
         recoveryTools,
         remainingSteps,
       );
-      steps += result.steps?.length ?? 0;
+      result = recoveryResult;
+      steps += recoveryResult.steps?.length ?? 0;
+      const recoveryTokens = recoveryResult.totalUsage?.totalTokens;
+      if (typeof recoveryTokens === "number") {
+        totalUsageTokens = (totalUsageTokens ?? 0) + recoveryTokens;
+      }
+      const recoveryPeak = recoveryResult.usage?.inputTokens;
+      if (typeof recoveryPeak === "number") {
+        peakInputTokens = Math.max(peakInputTokens ?? 0, recoveryPeak);
+      }
     }
   }
   if (process.env.MEDIA_TRACK_AGENT_LOG === "1") {
-    const total = result.totalUsage?.totalTokens;
+    const total = totalUsageTokens;
     const perStep = total ? ` ~${Math.round(total / Math.max(steps, 1))}/step` : "";
     // peakContext = the LAST step's input — the single-request window usage that
     // decides whether context condensation/compact is ever needed (vs the 1M
     // window). totalTokens above is the cumulative BILLED count, not window usage.
-    const peak = result.usage?.inputTokens;
+    const peak = peakInputTokens;
     const peakStr = peak ? ` peakContext=${peak}` : "";
     console.log(
       `[agent] loop done: steps=${steps} tokens=${total ?? "n/a"}${perStep}${peakStr} finish=${result.finishReason}`,
