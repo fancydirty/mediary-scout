@@ -375,9 +375,9 @@ export async function runAcquisitionAgent(
   if (process.env.MEDIA_TRACK_AGENT_LOG === "1") {
     const total = totalUsageTokens;
     const perStep = total ? ` ~${Math.round(total / Math.max(steps, 1))}/step` : "";
-    // peakContext = the LAST step's input — the single-request window usage that
-    // decides whether context condensation/compact is ever needed (vs the 1M
-    // window). totalTokens above is the cumulative BILLED count, not window usage.
+    // peakContext = the maximum observed step input — the largest single-request
+    // window usage that decides whether context condensation/compact is ever needed
+    // (vs the 1M window). totalTokens above is the cumulative BILLED count, not window usage.
     const peak = peakInputTokens;
     const peakStr = peak ? ` peakContext=${peak}` : "";
     console.log(
