@@ -30,6 +30,28 @@ async function asEvidence(run: () => Promise<unknown>): Promise<unknown> {
   }
 }
 
+/** Peak single-request input usage across every step in one generateText turn. */
+function peakInputTokensOf(turn: unknown): number | undefined {
+  if (!turn || typeof turn !== "object") return undefined;
+  const record = turn as {
+    usage?: { inputTokens?: unknown };
+    steps?: unknown;
+  };
+  const values: number[] = [];
+  const add = (value: unknown) => {
+    if (typeof value === "number" && Number.isFinite(value)) values.push(value);
+  };
+  add(record.usage?.inputTokens);
+  if (Array.isArray(record.steps)) {
+    for (const step of record.steps) {
+      if (step && typeof step === "object") {
+        add((step as { usage?: { inputTokens?: unknown } }).usage?.inputTokens);
+      }
+    }
+  }
+  return values.length > 0 ? Math.max(...values) : undefined;
+}
+
 /**
  * Opt-in observability (MEDIA_TRACK_AGENT_LOG=1): log every sandbox tool call the
  * agent makes — the keyword it searches, the candidate it transfers, what it
@@ -323,7 +345,7 @@ export async function runAcquisitionAgent(
   let result = await generateAgentTurn(request.system, request.prompt, tools, maxSteps);
   let steps = Math.max(result.steps?.length ?? 0, result.finishReason === "content-filter" ? 1 : 0);
   let totalUsageTokens = result.totalUsage?.totalTokens;
-  let peakInputTokens = result.usage?.inputTokens;
+  let peakInputTokens = peakInputTokensOf(result);
   // A provider content filter can terminate a model response after it has already
   // transferred a resource and inspected the landing point (the Guangya movie
   // incident). One fresh turn gets the live sandbox state and a chance to perform
@@ -366,7 +388,7 @@ export async function runAcquisitionAgent(
       if (typeof recoveryTokens === "number") {
         totalUsageTokens = (totalUsageTokens ?? 0) + recoveryTokens;
       }
-      const recoveryPeak = recoveryResult.usage?.inputTokens;
+      const recoveryPeak = peakInputTokensOf(recoveryResult);
       if (typeof recoveryPeak === "number") {
         peakInputTokens = Math.max(peakInputTokens ?? 0, recoveryPeak);
       }
