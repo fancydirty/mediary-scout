@@ -192,6 +192,16 @@ describe("pansouPills（dbBaseURL / envBaseURL = resolveUserPanSouBaseUrl 的两
       want: [{ label: "自定义实例", tone: "on" }, ENV],
     },
     {
+      name: "DB 显式填官方默认（带尾斜杠）→ 公共默认实例",
+      input: { dbBaseURL: "https://so.252035.xyz/", envBaseURL: "", health: null },
+      want: [{ label: "公共默认实例", tone: "neutral" }],
+    },
+    {
+      name: "env 指向官方默认 → 公共默认实例 + 来自环境变量",
+      input: { dbBaseURL: "", envBaseURL: "https://so.252035.xyz/", health: null },
+      want: [{ label: "公共默认实例", tone: "neutral" }, ENV],
+    },
+    {
       name: "env 值不是合法 URL（不抛）→ 按非内置处理",
       input: { dbBaseURL: "", envBaseURL: "pansou", health: null },
       want: [{ label: "自定义实例", tone: "on" }, ENV],

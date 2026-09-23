@@ -1,4 +1,6 @@
 // apps/web/lib/service-status.ts
+import { DEFAULT_PANSOU_BASE_URL, normalizePanSouBaseUrl } from "./pansou-chain";
+
 /**
  * 设置 → 资源与服务 每个「服务块」头部的状态胶囊。输入是各服务的**生效配置**：
  * 调用方用 runtime 同一套解析器读（DB 优先、再 env），所以胶囊说的就是真正在跑的
@@ -93,10 +95,20 @@ export function pansouPills(input: {
   health: string | null;
 }): ServicePill[] {
   const pills: ServicePill[] = [];
-  if (nonBlank(input.dbBaseURL)) pills.push({ label: "自定义实例", tone: "on" });
-  else if (!nonBlank(input.envBaseURL)) pills.push({ label: "公共默认实例", tone: "neutral" });
-  else if (isBundledPanSou(input.envBaseURL)) pills.push({ label: "内置实例", tone: "neutral" });
-  else pills.push({ label: "自定义实例", tone: "on" }, ENV_SOURCE_PILL);
+  const dbBaseURL = normalizePanSouBaseUrl(input.dbBaseURL);
+  const envBaseURL = normalizePanSouBaseUrl(input.envBaseURL);
+  const dbIsPublic = dbBaseURL === DEFAULT_PANSOU_BASE_URL;
+  const envIsPublic = !dbBaseURL && envBaseURL === DEFAULT_PANSOU_BASE_URL;
+  if (dbIsPublic || envIsPublic || (!dbBaseURL && !envBaseURL)) {
+    pills.push({ label: "公共默认实例", tone: "neutral" });
+    if (envIsPublic) pills.push(ENV_SOURCE_PILL);
+  } else if (dbBaseURL) {
+    pills.push({ label: "自定义实例", tone: "on" });
+  } else if (isBundledPanSou(envBaseURL)) {
+    pills.push({ label: "内置实例", tone: "neutral" });
+  } else {
+    pills.push({ label: "自定义实例", tone: "on" }, ENV_SOURCE_PILL);
+  }
   if (input.health === "unhealthy") pills.push({ label: "连不上", tone: "warn" });
   return pills;
 }
