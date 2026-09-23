@@ -336,6 +336,7 @@ export async function runAcquisitionAgent(
       // coverage. Search and transfer are deliberately absent: the current
       // sandbox is the evidence, and a retry must not duplicate side effects.
       const recoveryToolNames = new Set([
+        "readSkill",
         "inspectStaging",
         "inspectTargetDir",
         "moveToSeason",
@@ -352,7 +353,7 @@ export async function runAcquisitionAgent(
       ) as ToolSet;
       const recoveryResult = await generateAgentTurn(
         `${request.system}\n\n【恢复】上一次回答被模型内容过滤中断。请从当前 sandbox 的真实状态继续：只使用当前状态完成观察、整理、核对、markObtained 和 finish；不要重新搜索或重复转存。若没有可用落盘，按证据如实收尾。`,
-        "Continue the interrupted acquisition from the current sandbox state and reach an honest terminal action.",
+        `${request.prompt}\n\nContinue the interrupted acquisition from the current sandbox state and reach an honest terminal action. Read the relevant skill section first. Do not search or transfer again; use only the current sandbox evidence and the recovery tools to finish the original task.`,
         recoveryTools,
         remainingSteps,
       );
