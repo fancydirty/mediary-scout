@@ -64,6 +64,14 @@ describe("runAcquisitionAgent — the real AI SDK tool-loop over the sandbox", (
         calls += 1;
         if (calls === 1) {
           return {
+            content: [{ type: "tool-call" as const, toolCallId: "inspect-before-filter", toolName: "inspectStaging", input: "{}" }],
+            finishReason: { unified: "tool-calls" as const, raw: "tool-calls" as const },
+            usage: USAGE,
+            warnings: [],
+          };
+        }
+        if (calls === 2) {
+          return {
             content: [{ type: "text" as const, text: "" }],
             finishReason: { unified: "content-filter" as const, raw: "content-filter" as const },
             usage: USAGE,
@@ -75,7 +83,7 @@ describe("runAcquisitionAgent — the real AI SDK tool-loop over the sandbox", (
           { tool: "markObtained", input: { codes: ["MOVIE"] } },
           { tool: "finish", input: {} },
         ] as const;
-        const step = steps[calls - 2];
+        const step = steps[calls - 3];
         if (step) {
           return {
             content: [{ type: "tool-call" as const, toolCallId: `recovery-${calls}`, toolName: step.tool, input: JSON.stringify(step.input) }],
@@ -99,7 +107,61 @@ describe("runAcquisitionAgent — the real AI SDK tool-loop over the sandbox", (
 
     expect(result.coverage.coverageMet).toBe(true);
     expect((await storage.listTree({ directoryId: movieDirectoryId })).map((file) => file.path)).toEqual(["movie.mkv"]);
-    expect(calls).toBeGreaterThan(1);
+    expect(calls).toBe(5);
+  });
+
+  it("does not start recovery when the first turn consumed the whole step budget", async () => {
+    const { sandbox } = await setup(["S01E01"]);
+    let calls = 0;
+    const model = new MockLanguageModelV3({
+      doGenerate: async () => {
+        calls += 1;
+        return {
+          content: [{ type: "text" as const, text: "" }],
+          finishReason: { unified: "content-filter" as const, raw: "content-filter" as const },
+          usage: USAGE,
+          warnings: [],
+        };
+      },
+    });
+
+    const result = await runAcquisitionAgent({
+      sandbox,
+      model,
+      system: "You acquire media into the scoped sandbox.",
+      prompt: "Ensure S01E01 is obtained.",
+      maxSteps: 1,
+    });
+
+    expect(result.coverage.coverageMet).toBe(false);
+    expect(calls).toBe(1);
+  });
+
+  it("does not retry a second content-filter interruption", async () => {
+    const { sandbox } = await setup(["S01E01"]);
+    let calls = 0;
+    const model = new MockLanguageModelV3({
+      doGenerate: async () => {
+        calls += 1;
+        return {
+          content: [{ type: "text" as const, text: "" }],
+          finishReason: { unified: "content-filter" as const, raw: "content-filter" as const },
+          usage: USAGE,
+          warnings: [],
+        };
+      },
+    });
+
+    const result = await runAcquisitionAgent({
+      sandbox,
+      model,
+      system: "You acquire media into the scoped sandbox.",
+      prompt: "Ensure S01E01 is obtained.",
+      maxSteps: 4,
+    });
+
+    expect(result.coverage.coverageMet).toBe(false);
+    expect(calls).toBe(2);
   });
 
   it("drives a full search→transfer→extract→mark→finish loop and reads honest coverage", async () => {

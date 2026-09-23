@@ -286,12 +286,12 @@ export async function runAcquisitionAgent(
       : {}),
   });
   const maxSteps = request.maxSteps ?? DEFAULT_MAX_STEPS;
-  const generateAgentTurn = (system: string, prompt: string) =>
+  const generateAgentTurn = (system: string, prompt: string, toolSet: ToolSet, stepLimit: number) =>
     generateText({
       model: request.model,
       system,
       prompt,
-      tools,
+      tools: toolSet,
       // Five stops: step cap (cost/runaway), repetition (agent crazy), systemic
       // transfer block (account quota/auth — every candidate will fail, stop grinding),
       // successful reportNoCoverage (terminal declaration — no second report), and
@@ -299,7 +299,7 @@ export async function runAcquisitionAgent(
       // finish ×3 tail steps without a mechanical stop). The stops are independent
       // and OR'd — each fires under disjoint conditions, so ordering is not semantic.
       stopWhen: [
-        stepCountIs(maxSteps),
+        stepCountIs(stepLimit),
         buildRepetitionStop(),
         buildSystemicBlockStop(),
         buildNoCoverageStop(),
@@ -311,7 +311,7 @@ export async function runAcquisitionAgent(
         const spent = request.apiCallCount?.();
         const overriddenSystem = prepareStepSystemOverride({
           stepNumber,
-          maxSteps,
+          maxSteps: stepLimit,
           baseSystem: system,
           ...(typeof spent === "number" ? { apiCallsSpent: spent } : {}),
           ...(typeof request.budgetSoftAt === "number" ? { budgetSoftAt: request.budgetSoftAt } : {}),
@@ -320,19 +320,40 @@ export async function runAcquisitionAgent(
       },
     });
 
-  let result = await generateAgentTurn(request.system, request.prompt);
-  let steps = result.steps?.length ?? 0;
+  let result = await generateAgentTurn(request.system, request.prompt, tools, maxSteps);
+  let steps = Math.max(result.steps?.length ?? 0, result.finishReason === "content-filter" ? 1 : 0);
   // A provider content filter can terminate a model response after it has already
   // transferred a resource and inspected the landing point (the Guangya movie
   // incident). One fresh turn gets the live sandbox state and a chance to perform
   // the mandatory flatten/mark/finish sequence. Never loop this recovery: a second
   // content filter remains an honest incomplete run rather than burning calls.
   if (result.finishReason === "content-filter") {
-    result = await generateAgentTurn(
-      `${request.system}\n\n【恢复】上一次回答被模型内容过滤中断。请从当前 sandbox 的真实状态继续：先检查已经落盘的文件；若候选已落盘，完成对应的整理、核对、markObtained 和 finish；不要重新搜索或重复转存。若没有可用落盘，按证据如实收尾。`,
-      "Continue the interrupted acquisition from the current sandbox state and reach an honest terminal action.",
-    );
-    steps += result.steps?.length ?? 0;
+    const remainingSteps = maxSteps - steps;
+    if (remainingSteps > 0) {
+      // Recovery may inspect, organize, mark, finish, or honestly report no
+      // coverage. Search and transfer are deliberately absent: the current
+      // sandbox is the evidence, and a retry must not duplicate side effects.
+      const recoveryToolNames = new Set([
+        "inspectStaging",
+        "inspectTargetDir",
+        "moveToSeason",
+        "deleteFiles",
+        "flattenMovie",
+        "markObtained",
+        "finish",
+        "reportNoCoverage",
+      ]);
+      const recoveryTools = Object.fromEntries(
+        Object.entries(tools).filter(([name]) => recoveryToolNames.has(name)),
+      ) as ToolSet;
+      result = await generateAgentTurn(
+        `${request.system}\n\n【恢复】上一次回答被模型内容过滤中断。请从当前 sandbox 的真实状态继续：只使用当前状态完成观察、整理、核对、markObtained 和 finish；不要重新搜索或重复转存。若没有可用落盘，按证据如实收尾。`,
+        "Continue the interrupted acquisition from the current sandbox state and reach an honest terminal action.",
+        recoveryTools,
+        remainingSteps,
+      );
+      steps += result.steps?.length ?? 0;
+    }
   }
   if (process.env.MEDIA_TRACK_AGENT_LOG === "1") {
     const total = result.totalUsage?.totalTokens;
