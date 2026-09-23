@@ -162,6 +162,7 @@ describe("runAcquisitionAgent — the real AI SDK tool-loop over the sandbox", (
 
     expect(result.coverage.coverageMet).toBe(false);
     expect(calls).toBe(2);
+    expect(result.steps).toBe(2);
   });
 
   it("drives a full search→transfer→extract→mark→finish loop and reads honest coverage", async () => {

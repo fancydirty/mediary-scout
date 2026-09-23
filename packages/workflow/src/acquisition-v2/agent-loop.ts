@@ -346,6 +346,7 @@ export async function runAcquisitionAgent(
         "finish",
         "reportNoCoverage",
       ]);
+      if (!request.movie) recoveryToolNames.add("discardStaging");
       const recoveryTools = Object.fromEntries(
         Object.entries(tools).filter(([name]) => recoveryToolNames.has(name)),
       ) as ToolSet;
@@ -356,7 +357,10 @@ export async function runAcquisitionAgent(
         remainingSteps,
       );
       result = recoveryResult;
-      steps += recoveryResult.steps?.length ?? 0;
+      steps += Math.max(
+        recoveryResult.steps?.length ?? 0,
+        recoveryResult.finishReason === "content-filter" ? 1 : 0,
+      );
       const recoveryTokens = recoveryResult.totalUsage?.totalTokens;
       if (typeof recoveryTokens === "number") {
         totalUsageTokens = (totalUsageTokens ?? 0) + recoveryTokens;
