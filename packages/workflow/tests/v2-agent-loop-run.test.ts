@@ -188,6 +188,76 @@ describe("runAcquisitionAgent — the real AI SDK tool-loop over the sandbox", (
     expect((await storage.listTree({ directoryId: movieDirectoryId })).map((file) => file.path).sort()).toEqual(["movie.ass", "movie.mkv"]);
   });
 
+  it("recovers a TV run by moving the episode and discarding staging before finish", async () => {
+    const storage = new Storage115Simulator({
+      packs: { episode: { files: [{ path: "Wrapper/Show - 01.mkv", sizeBytes: 100 }] } },
+    });
+    const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
+    const seasonDirectoryId = await storage.createDirectory({ name: "Season 1", parentId: "root" });
+    await storage.transferCandidate({ candidateId: "episode", intoDirectoryId: stagingDirectoryId });
+    const stagingFileId = (await storage.listTree({ directoryId: stagingDirectoryId }))[0]!.id;
+    const sandbox = new TaskSandbox({
+      provider: new FakeResourceProviderV2({ results: {} }),
+      storage,
+      stagingDirectoryId,
+      targetSeasonDirectoryIds: { 1: seasonDirectoryId },
+      need: ["S01E01"],
+    });
+
+    let calls = 0;
+    const model = new MockLanguageModelV3({
+      doGenerate: async () => {
+        calls += 1;
+        if (calls === 1) {
+          return {
+            content: [{ type: "tool-call" as const, toolCallId: "inspect-before-filter", toolName: "inspectStaging", input: "{}" }],
+            finishReason: { unified: "tool-calls" as const, raw: "tool-calls" as const },
+            usage: USAGE,
+            warnings: [],
+          };
+        }
+        if (calls === 2) {
+          return {
+            content: [{ type: "text" as const, text: "" }],
+            finishReason: { unified: "content-filter" as const, raw: "content-filter" as const },
+            usage: USAGE,
+            warnings: [],
+          };
+        }
+        const steps = [
+          { tool: "readSkill", input: { section: "tv" } },
+          { tool: "inspectStaging", input: {} },
+          { tool: "moveToSeason", input: { moves: [{ season: 1, fileIds: [stagingFileId] }] } },
+          { tool: "markObtained", input: { codes: ["S01E01"] } },
+          { tool: "discardStaging", input: {} },
+          { tool: "finish", input: {} },
+        ] as const;
+        const step = steps[calls - 3];
+        if (step) {
+          return {
+            content: [{ type: "tool-call" as const, toolCallId: `recovery-tv-${calls}`, toolName: step.tool, input: JSON.stringify(step.input) }],
+            finishReason: { unified: "tool-calls" as const, raw: "tool-calls" as const },
+            usage: USAGE,
+            warnings: [],
+          };
+        }
+        return { content: [{ type: "text" as const, text: "done" }], finishReason: { unified: "stop" as const, raw: "stop" as const }, usage: USAGE, warnings: [] };
+      },
+    });
+
+    const result = await runAcquisitionAgent({
+      sandbox,
+      model,
+      system: "You acquire media into the scoped sandbox.",
+      prompt: "Acquire S01E01.",
+      maxSteps: 20,
+    });
+
+    expect(result.coverage.coverageMet).toBe(true);
+    expect((await storage.listTree({ directoryId: seasonDirectoryId })).map((file) => file.path)).toEqual(["Show - 01.mkv"]);
+    await expect(storage.listTree({ directoryId: stagingDirectoryId })).rejects.toThrow("SIM_DIR_NOT_FOUND");
+  });
+
   it("does not start recovery when the first turn consumed the whole step budget", async () => {
     const { sandbox } = await setup(["S01E01"]);
     let calls = 0;
