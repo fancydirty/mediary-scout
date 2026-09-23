@@ -44,6 +44,64 @@ async function setup(need: string[]) {
 }
 
 describe("runAcquisitionAgent — the real AI SDK tool-loop over the sandbox", () => {
+  it("resumes once after a content-filter interruption and lets a landed movie finish", async () => {
+    const storage = new Storage115Simulator({
+      packs: { movie: { files: [{ path: "Wrapper/movie.mkv", sizeBytes: 100 }] } },
+    });
+    const movieDirectoryId = await storage.createDirectory({ name: "Movie (2026)", parentId: "root" });
+    const sandbox = new TaskSandbox({
+      provider: new FakeResourceProviderV2({ results: {} }),
+      storage,
+      stagingDirectoryId: movieDirectoryId,
+      targetMovieDirectoryId: movieDirectoryId,
+      need: ["MOVIE"],
+    });
+    await storage.transferCandidate({ candidateId: "movie", intoDirectoryId: movieDirectoryId });
+
+    let calls = 0;
+    const model = new MockLanguageModelV3({
+      doGenerate: async () => {
+        calls += 1;
+        if (calls === 1) {
+          return {
+            content: [{ type: "text" as const, text: "" }],
+            finishReason: { unified: "content-filter" as const, raw: "content-filter" as const },
+            usage: USAGE,
+            warnings: [],
+          };
+        }
+        const steps = [
+          { tool: "flattenMovie", input: {} },
+          { tool: "markObtained", input: { codes: ["MOVIE"] } },
+          { tool: "finish", input: {} },
+        ] as const;
+        const step = steps[calls - 2];
+        if (step) {
+          return {
+            content: [{ type: "tool-call" as const, toolCallId: `recovery-${calls}`, toolName: step.tool, input: JSON.stringify(step.input) }],
+            finishReason: { unified: "tool-calls" as const, raw: "tool-calls" as const },
+            usage: USAGE,
+            warnings: [],
+          };
+        }
+        return { content: [{ type: "text" as const, text: "done" }], finishReason: { unified: "stop" as const, raw: "stop" as const }, usage: USAGE, warnings: [] };
+      },
+    });
+
+    const result = await runAcquisitionAgent({
+      sandbox,
+      model,
+      system: "You acquire media into the scoped sandbox.",
+      prompt: "Ensure MOVIE is obtained.",
+      movie: true,
+      maxSteps: 10,
+    });
+
+    expect(result.coverage.coverageMet).toBe(true);
+    expect((await storage.listTree({ directoryId: movieDirectoryId })).map((file) => file.path)).toEqual(["movie.mkv"]);
+    expect(calls).toBeGreaterThan(1);
+  });
+
   it("drives a full search→transfer→extract→mark→finish loop and reads honest coverage", async () => {
     const { sandbox, storage, targetSeasonDirectoryId } = await setup(["S01E01"]);
 
