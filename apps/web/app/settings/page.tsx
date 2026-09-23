@@ -58,6 +58,7 @@ import {
   getJevInheritedBaseUrl,
   isJevPrefilterActive,
   JEV_API_KEY_SETTING_KEY,
+  JEV_BASE_URL_SETTING_KEY,
   JEV_MODEL_SETTING_KEY,
   PANSOU_BASE_URL_SETTING_KEY,
   PANSOU_HEALTH_SETTING_KEY,
@@ -314,6 +315,10 @@ async function LlmConfigSection() {
   // and shadowing later global / env JEV_BASE_URL changes; the placeholder already
   // tells the user what blank resolves to.
   const jevBaseUrlOverride = await getJevBaseUrlOverride(accountId);
+  const jevGlobalBaseUrl = (await getWorkflowRepository().getSetting(JEV_BASE_URL_SETTING_KEY))?.trim() ?? "";
+  const jevBaseUrlFromEnv =
+    !jevBaseUrlOverride && isEnvBackedValue(jevGlobalBaseUrl, process.env.JEV_BASE_URL);
+  const jevFromEnv = jevKeyFromEnv || jevBaseUrlFromEnv;
   // …and blank resolves to THIS (instance → env → OpenRouter), shown as the placeholder.
   const jevInheritedBaseUrl = await getJevInheritedBaseUrl();
   const jevModel = (await repository.getSetting(JEV_MODEL_SETTING_KEY))?.trim() || null;
@@ -352,7 +357,7 @@ async function LlmConfigSection() {
           healthy: jev.health === "ok",
           active: isJevPrefilterActive(jev),
           model: jevModel,
-          fromEnv: jevKeyFromEnv,
+          fromEnv: jevFromEnv,
         })}
         summary="搜索结果进 agent 前先剔掉无关候选、标记存疑；每次搜索约 1–3 秒，成本可忽略。未配置时不产生任何调用。"
         details={
