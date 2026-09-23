@@ -33,9 +33,11 @@
 //                                         It never prints PASS.
 // Exit codes: 0 PASS — the sentinels held and every agent-selected titled candidate in the
 // replay was judged and kept · 1 FAIL — a sentinel broke, or the replay dropped a selected
-// candidate · 2 bad arguments or input · 3 NO VERDICT — the evidence is incomplete: no key,
-// JEV_FAKE, a partial mode (--sentinels-only / --replay-only), the judge unreachable during
-// the sentinels, nothing replayed, or a selected candidate the judge never scored (its
+// candidate · 2 bad arguments or input (every --labels row is checked against the export's
+// shape before any Jev call) · 3 NO VERDICT — the evidence is incomplete: no key, JEV_FAKE,
+// a partial mode (--sentinels-only / --replay-only), the judge unreachable during the
+// sentinels, nothing replayed, a selected id with no candidate in its row (no snapshot, or
+// the wrong one, in the export), or a selected candidate the judge never scored (its
 // snapshot failed open, or its chunk failed). 0 is reserved for a run that measured.
 import { appendFileSync, existsSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -105,16 +107,43 @@ type Row = {
   run_id: string;
   keyword: string;
   selected: string[];
-  title: string | null;
-  title_type: string | null;
-  year: string | number | null;
+  title?: string | null;
+  title_type?: string | null;
+  year?: string | number | null;
+  /** null: the export found no snapshot for this decision. */
   candidates: Array<{ id: string; type: string; title: string; source: string }> | null;
 };
+/** The export's shape, checked for EVERY row before any Jev call: a malformed row used to
+ *  crash mid-replay (exit 1, which reads as FAIL) or be skipped without a word. */
+function rowProblem(row: unknown): string | undefined {
+  if (typeof row !== "object" || row === null || Array.isArray(row)) return "not an object";
+  const r = row as Record<string, unknown>;
+  for (const key of ["run_id", "keyword"] as const) if (typeof r[key] !== "string") return `${key} must be a string`;
+  for (const key of ["title", "title_type"] as const) {
+    if (r[key] !== undefined && r[key] !== null && typeof r[key] !== "string") return `${key} must be a string or null`;
+  }
+  if (r.year !== undefined && r.year !== null && typeof r.year !== "string" && typeof r.year !== "number") return "year must be a number, a string or null";
+  if (!Array.isArray(r.selected) || r.selected.some((id) => typeof id !== "string")) return "selected must be an array of candidate ids";
+  if (r.candidates === null) return undefined;
+  if (!Array.isArray(r.candidates)) return "candidates must be an array (or null when the export has no snapshot)";
+  for (const [i, c] of r.candidates.entries()) {
+    if (typeof c !== "object" || c === null) return `candidates[${i}] is not an object`;
+    const candidate = c as Record<string, unknown>;
+    for (const key of ["id", "title", "type", "source"] as const) {
+      if (typeof candidate[key] !== "string") return `candidates[${i}].${key} must be a string`;
+    }
+  }
+  return undefined;
+}
 let rows: Row[] = [];
 if (runReplay) {
   try {
     const parsed: unknown = JSON.parse(readFileSync(labelsPath!, "utf8"));
     if (!Array.isArray(parsed)) throw new Error("not a JSON array");
+    parsed.forEach((row, i) => {
+      const problem = rowProblem(row);
+      if (problem !== undefined) throw new Error(`row ${i + 1}: ${problem}`);
+    });
     rows = (parsed as Row[]).slice(0, limit);
   } catch (error) {
     usageError(`--labels ${labelsPath}: ${error instanceof Error ? error.message : String(error)}`);
@@ -279,12 +308,17 @@ if (runSentinels) {
 
 // ─── 2. Production replay ────────────────────────────────────────────────────
 if (runReplay) {
-  let replayed = 0, total = 0, dropped = 0, floored = 0, failedOpen = 0, partial = 0, cost = 0;
-  // Agent-selected titled candidates: judged-and-kept, dropped, or never scored at all.
-  let selectedJudged = 0, selectedDropped = 0, selectedUnjudged = 0;
+  let replayed = 0, total = 0, dropped = 0, floored = 0, failedOpen = 0, partial = 0, noSnapshot = 0, cost = 0;
+  // Agent-selected titled candidates: judged-and-kept, dropped, or never scored at all; and
+  // picks with no candidate in their row at all, which nothing here can check.
+  let selectedJudged = 0, selectedDropped = 0, selectedUnjudged = 0, selectedMissing = 0;
   const violations: string[] = [];
   for (const r of rows) {
     const cands = r.candidates ?? [];
+    const selected = new Set(r.selected);
+    const candidateIds = new Set(cands.map((c) => c.id));
+    selectedMissing += [...selected].filter((id) => !candidateIds.has(id)).length;
+    if (r.candidates === null) noSnapshot += 1;
     if (cands.length === 0) continue;
     const snap: ResourceSnapshot = {
       id: r.run_id, provider: "replay", keyword: r.keyword, createdAt: new Date().toISOString(),
@@ -309,7 +343,7 @@ if (runReplay) {
     // would dilute the only metric that can veto this filter. The provider's own
     // predicate, not a copy: a divergence would measure a filter that is not the one
     // production runs.
-    const selectedTitled = cands.filter((c) => r.selected.includes(c.id) && !isTitleless(c.title));
+    const selectedTitled = cands.filter((c) => selected.has(c.id) && !isTitleless(c.title));
     if (out.prefilter?.status !== "applied") {
       // Failed open: every candidate went through unjudged. ("skipped" = nothing
       // judgeable, so it holds no titled candidate and adds nothing below.)
@@ -343,24 +377,26 @@ if (runReplay) {
   }
   // snapshots= counts what was REPLAYED, not what was read: rows.length includes the
   // candidate-less and failed-open ones.
-  console.log(`snapshots=${replayed} failed-open=${failedOpen} partial=${partial} input-rows=${rows.length} candidates=${total} dropped=${dropped} (${total === 0 ? "0.0" : ((100 * dropped) / total).toFixed(1)}%) floored=${floored} cost=$${cost.toFixed(3)}`);
-  console.log(`agent-selected titled: judged+kept=${selectedJudged} dropped=${selectedDropped} never-scored=${selectedUnjudged}`);
+  console.log(`snapshots=${replayed} failed-open=${failedOpen} partial=${partial} no-snapshot=${noSnapshot} input-rows=${rows.length} candidates=${total} dropped=${dropped} (${total === 0 ? "0.0" : ((100 * dropped) / total).toFixed(1)}%) floored=${floored} cost=$${cost.toFixed(3)}`);
+  console.log(`agent-selected titled: judged+kept=${selectedJudged} dropped=${selectedDropped} never-scored=${selectedUnjudged}; picks not in their row's candidates=${selectedMissing}`);
   for (const v of violations) console.log("  VIOLATION", v);
   if (selectedDropped > 0) {
     console.log("FAIL: prefilter dropped an agent-selected titled candidate");
     process.exit(1);
   }
   // "No violations" is only a PASS when the hard check had something to hold: a replay
-  // that measured nothing (empty labels, ids that never match, every snapshot failed
-  // open) or skipped some of the agent's picks (a failed-open snapshot, a failed chunk)
-  // cannot vouch for the rows it never judged.
-  if (total === 0 || selectedJudged === 0 || selectedUnjudged > 0) {
+  // that measured nothing (empty labels, every snapshot failed open), or that could not
+  // check some of the agent's picks (not in their row's candidates, a failed-open
+  // snapshot, a failed chunk), cannot vouch for the picks it never judged.
+  if (total === 0 || selectedMissing > 0 || selectedUnjudged > 0 || selectedJudged === 0) {
     const why =
       total === 0
         ? "nothing was replayed"
-        : selectedUnjudged > 0
-          ? `${selectedUnjudged} agent-selected candidate(s) were never scored (failed-open snapshot or failed chunk) — re-run`
-          : "no agent-selected titled candidate was judged (do the labels' selected ids match their candidate ids?)";
+        : selectedMissing > 0
+          ? `${selectedMissing} agent-selected id(s) are not among their row's candidates (the export has no snapshot, or the wrong one, for them) — fix the export`
+          : selectedUnjudged > 0
+            ? `${selectedUnjudged} agent-selected candidate(s) were never scored (failed-open snapshot or failed chunk) — re-run`
+            : "no agent-selected titled candidate was judged";
     console.log(`NO VERDICT: ${why}`);
     process.exit(3);
   }
