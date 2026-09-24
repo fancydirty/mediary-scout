@@ -279,6 +279,7 @@ describe("transferSubtitle", () => {
     expect(detailCalls).toBe(2);
     expect(result.unattemptedCount).toBe(1);
     expect(result.error).toMatch(/续签|刷新|refresh/i);
+    expect(result.chunkDiagnostics[1]).toMatchObject({ detailRefreshed: false });
   });
 
   it("resolves the candidate's detail filelist and hands the WHOLE package to storage.transferSubtitleUrls in ONE call", async () => {

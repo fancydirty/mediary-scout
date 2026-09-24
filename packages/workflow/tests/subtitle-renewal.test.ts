@@ -52,4 +52,18 @@ describe("subtitle renewal identity", () => {
     const second = selectSubtitleChunk(initial, initial, pending, 24);
     expect(second.selected.map((file) => file.filename)).toEqual(["Show.S01E24.ass"]);
   });
+
+  it("keeps hash-containing filenames distinct in their occurrence keys", () => {
+    const indexed = indexSubtitleFiles([
+      { filename: "a#0", url: "old/a" },
+      { filename: "a#0#0", url: "old/b" },
+    ]);
+    expect(new Set(indexed.map((file) => file.key)).size).toBe(2);
+    const refreshed = indexSubtitleFiles([
+      { filename: "a#0", url: "fresh/a" },
+      { filename: "a#0#0", url: "fresh/b" },
+    ]);
+    const selected = selectSubtitleChunk(indexed, refreshed, new Set(indexed.map((file) => file.key)), 2);
+    expect(selected.selected.map((file) => file.url)).toEqual(["fresh/a", "fresh/b"]);
+  });
 });

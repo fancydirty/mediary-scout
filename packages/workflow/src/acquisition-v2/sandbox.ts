@@ -1069,7 +1069,7 @@ export class TaskSandbox {
           chunkDiagnostics.push({
             chunkNumber,
             requestedCount: candidateCount,
-            detailRefreshed: true,
+            detailRefreshed: false,
             landedCount: 0,
             unlandedCount: candidateCount,
             error: lastError,

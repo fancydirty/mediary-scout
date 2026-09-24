@@ -49,7 +49,7 @@ it("selects the next pending chunk from a refreshed detail response", () => {
   const result = selectSubtitleChunk(initial, refreshed, new Set(initial.map((f) => f.key)), 2);
   expect(result.selected.map((file) => file.url)).toEqual([
     "https://assrt.test/fresh/1",
-    "https://assrt.test/fresh/1b",
+    "https://assrt.test/fresh/2",
   ]);
   expect(result.missing).toEqual([]);
 });
@@ -57,8 +57,8 @@ it("selects the next pending chunk from a refreshed detail response", () => {
 it("reports a pending file missing from a refreshed detail response", () => {
   const initial = indexSubtitleFiles(files("old"));
   const refreshed = indexSubtitleFiles([files("fresh")[0]!, files("fresh")[2]!]);
-  const result = selectSubtitleChunk(initial, refreshed, new Set(initial.map((f) => f.key)), 2);
-  expect(result.selected).toHaveLength(1);
+  const result = selectSubtitleChunk(initial, refreshed, new Set(["Show.S01E01.ass#1"]), 1);
+  expect(result.selected).toHaveLength(0);
   expect(result.missing).toEqual(["Show.S01E01.ass#1"]);
 });
 ```

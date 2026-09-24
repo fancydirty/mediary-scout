@@ -10,7 +10,7 @@ export function indexSubtitleFiles(files: Array<{ filename: string; url: string 
   return files.map((file) => {
     const occurrence = occurrences.get(file.filename) ?? 0;
     occurrences.set(file.filename, occurrence + 1);
-    return { ...file, key: `${file.filename}#${occurrence}` };
+    return { ...file, key: `${file.filename.replaceAll("#", "##")}#${occurrence}` };
   });
 }
 
