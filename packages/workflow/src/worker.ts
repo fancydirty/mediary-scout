@@ -260,6 +260,15 @@ export async function handleWorkflowRunFailure(input: {
     trigger: "user",
     report,
   };
+  // One stdout line per failure (console.log — stdout, beside the worker's other
+  // lines). Without it the only trace is the run row, which a user retry/cancel
+  // deletes — the 《出入平安》 timeout cause (2026-09-24) had to be dug out of dead
+  // Postgres heap tuples. Same redaction as the push line.
+  // Emitted BEFORE persistence: if the save below rejects, this line is the only record.
+  console.log(
+    `[workflow] run ${claimed.workflowRun.id} ${claimed.workflowRun.kind} ${willRetry ? "auto_requeued" : "failed"}` +
+      ` (storage ${claimed.connectedStorageId ?? "-"}): ${summarizeErrorForNotification(errorMessage)}`,
+  );
   // saveWorkflowRunSnapshot DELETES the season's episode bucket then re-inserts
   // only what we pass. The two branches need OPPOSITE handling:
   //  - auto-requeue: the run is going BACK to queued (still in flight) → preserve
@@ -288,14 +297,6 @@ export async function handleWorkflowRunFailure(input: {
     error,
     ...(input.onAuthErrorFreeze === undefined ? {} : { onAuthErrorFreeze: input.onAuthErrorFreeze }),
   });
-  // One stdout line per failure (console.log — stdout, beside the worker's other
-  // lines). Without it the only trace is the run row, which a user retry/cancel
-  // deletes — the 《出入平安》 timeout cause (2026-09-24) had to be dug out of dead
-  // Postgres heap tuples. Same redaction as the push line.
-  console.log(
-    `[workflow] run ${claimed.workflowRun.id} ${claimed.workflowRun.kind} ${willRetry ? "auto_requeued" : "failed"}` +
-      ` (storage ${claimed.connectedStorageId ?? "-"}): ${summarizeErrorForNotification(errorMessage)}`,
-  );
   return {
     status: willRetry ? "auto_requeued" : "failed",
     workflowRunId: claimed.workflowRun.id,

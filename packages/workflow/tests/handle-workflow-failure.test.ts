@@ -335,6 +335,21 @@ describe("handleWorkflowRunFailure — stdout trail", () => {
   });
 });
 
+describe("handleWorkflowRunFailure — log survives a failing save", () => {
+  it("writes the stdout line even when persistence rejects", async () => {
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const save = vi.fn(async () => { throw new Error("db down"); });
+      await expect(
+        handleWorkflowRunFailure({ claimed: snapshot(), error: new Error("boom"), repository: { saveWorkflowRunSnapshot: save }, now }),
+      ).rejects.toThrow("db down");
+      expect(spy.mock.calls.map((c) => String(c[0])).some((l) => l.startsWith("[workflow] run r1") && l.includes("boom"))).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
 describe("handleWorkflowRunFailure — terminal failure push is redacted", () => {
   it("a non-retried failure never pushes a raw token, but the run row keeps the raw message", async () => {
     const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
