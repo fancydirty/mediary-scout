@@ -1113,7 +1113,7 @@ export class TaskSandbox {
       });
       chunksProcessed += 1;
       let landedInChunk = 0;
-      let chunkError: string | undefined;
+      let chunkError: string | undefined = missing.length > 0 ? lastError : undefined;
       for (const result of results) {
         if (result.status === "succeeded") {
           landedFilenames.push(result.landedFilename ?? result.filename);
@@ -1132,10 +1132,10 @@ export class TaskSandbox {
       }
       chunkDiagnostics.push({
         chunkNumber,
-        requestedCount: selected.length,
+        requestedCount: selected.length + missing.length,
         detailRefreshed,
         landedCount: landedInChunk,
-        unlandedCount: selected.length - landedInChunk,
+        unlandedCount: selected.length - landedInChunk + missing.length,
         ...(chunkError ? { error: chunkError } : {}),
       });
       if (circuitTripped) {
@@ -1152,7 +1152,7 @@ export class TaskSandbox {
       status: landedFilenames.length > 0 ? "succeeded" : "failed",
       landedFilenames,
       chunksProcessed,
-      chunksTotal,
+      chunksTotal: Math.max(chunksTotal, chunksProcessed + pending.size),
       unattemptedCount: unattemptedCount + pending.size,
       chunkDiagnostics,
       ...(lastError ? { error: lastError } : {}),

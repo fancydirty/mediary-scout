@@ -198,6 +198,7 @@ describe("transferSubtitle", () => {
     expect(batches).toHaveLength(2);
     expect(batches[1]).toHaveLength(1);
     expect(result.unattemptedCount).toBe(1);
+    expect(result.chunksProcessed).toBeLessThanOrEqual(result.chunksTotal);
     expect(result.error).toContain("temporary landing failure");
   });
 
@@ -236,6 +237,11 @@ describe("transferSubtitle", () => {
     expect(detailCalls).toBe(2);
     expect(result.unattemptedCount).toBe(1);
     expect(result.error).toMatch(/续签|刷新|refresh|未匹配|missing/i);
+    expect(result.chunkDiagnostics[1]).toMatchObject({
+      requestedCount: 1,
+      landedCount: 0,
+      unlandedCount: 1,
+    });
   });
 
   it("keeps earlier landings when a later detail refresh throws", async () => {
