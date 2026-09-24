@@ -1193,8 +1193,32 @@ describe("Storage115Executor.transferSubtitleUrl", () => {
       workflowRunId: "run-test",
     });
 
-    expect(attempt.status).toBe("no_target_change");
+    expect(attempt.status).toBe("failed");
+    expect(attempt.providerMessage).toMatch(/SUBTITLE_DUPLICATE_FILENAME/);
     expect(attempt.materializedFileIds).toEqual([]);
+  });
+
+  it("rejects a same-named file already present before a later chunk without submitting another task", async () => {
+    const api = new FakePan115Api({ directories: { stage: [] } });
+    let offlineCalls = 0;
+    api.addOfflineTask = async (input) => {
+      offlineCalls += 1;
+      api.directories[input.directoryId] = [
+        ...(api.directories[input.directoryId] ?? []),
+        { fid: `sub-${offlineCalls}`, n: "Twin.ass", s: "1KB" },
+      ];
+      return { ok: true, message: "accepted" };
+    };
+    const executor = new Storage115Executor({ api, subtitleMaterializeAttempts: 1, subtitleMaterializePollMs: 1, sleep: async () => {} });
+    const file = { url: "http://file0.assrt.net/1/Twin.ass", filename: "Twin.ass" };
+
+    const first = await executor.transferSubtitleUrls({ files: [file], directoryId: "stage", workflowRunId: "run-test" });
+    const second = await executor.transferSubtitleUrls({ files: [file], directoryId: "stage", workflowRunId: "run-test" });
+
+    expect(first[0]!.status).toBe("succeeded");
+    expect(second[0]!.status).toBe("failed");
+    expect(second[0]!.providerMessage).toMatch(/SUBTITLE_DUPLICATE_FILENAME/);
+    expect(offlineCalls).toBe(1);
   });
 
   it("guard-rejected invalid filenames consume attempt numbers — ids never collide", async () => {

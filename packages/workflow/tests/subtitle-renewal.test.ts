@@ -22,7 +22,7 @@ describe("subtitle renewal identity", () => {
     const result = selectSubtitleChunk(initial, refreshed, new Set(initial.map((file) => file.key)), 2);
     expect(result.selected.map((file) => file.url)).toEqual([
       "https://assrt.test/fresh/1",
-      "https://assrt.test/fresh/1b",
+      "https://assrt.test/fresh/2",
     ]);
     expect(result.missing).toEqual([]);
   });
@@ -30,12 +30,13 @@ describe("subtitle renewal identity", () => {
   it("reports a pending file missing from a refreshed detail response", () => {
     const initial = indexSubtitleFiles(files("old"));
     const refreshed = indexSubtitleFiles([files("fresh")[0]!, files("fresh")[2]!]);
-    const result = selectSubtitleChunk(initial, refreshed, new Set(initial.map((file) => file.key)), 2);
-    expect(result.selected).toHaveLength(1);
+    const result = selectSubtitleChunk(initial, refreshed, new Set(["Show.S01E01.ass#1"]), 1);
+    expect(result.selected).toHaveLength(0);
+    expect(result.selected).toEqual([]);
     expect(result.missing).toEqual(["Show.S01E01.ass#1"]);
   });
 
-  it("keeps duplicate filenames together when a chunk boundary would split them", () => {
+  it("keeps duplicate filenames in separate adapter calls across a chunk boundary", () => {
     const packageFiles = [
       ...Array.from({ length: 23 }, (_, index) => ({ filename: `Show.S01E${index + 1}.ass`, url: `old/${index}` })),
       { filename: "Show.S01E24.ass", url: "old/24a" },
@@ -44,10 +45,11 @@ describe("subtitle renewal identity", () => {
     const initial = indexSubtitleFiles(packageFiles);
     const pending = new Set(initial.map((file) => file.key));
     const first = selectSubtitleChunk(initial, initial, pending, 24);
-    expect(first.selected).toHaveLength(23);
-    expect(first.selected.at(-1)?.filename).toBe("Show.S01E23.ass");
+    expect(first.selected).toHaveLength(24);
+    expect(first.selected.at(-1)?.filename).toBe("Show.S01E24.ass");
+    expect(new Set(first.selected.map((file) => file.filename)).size).toBe(first.selected.length);
     for (const file of first.selected) pending.delete(file.key);
     const second = selectSubtitleChunk(initial, initial, pending, 24);
-    expect(second.selected.map((file) => file.filename)).toEqual(["Show.S01E24.ass", "Show.S01E24.ass"]);
+    expect(second.selected.map((file) => file.filename)).toEqual(["Show.S01E24.ass"]);
   });
 });

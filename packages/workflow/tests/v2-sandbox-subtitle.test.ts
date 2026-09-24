@@ -132,7 +132,7 @@ describe("transferSubtitle", () => {
     ]);
   });
 
-  it("keeps duplicate names in one adapter call when they straddle a chunk boundary", async () => {
+  it("keeps duplicate names in separate adapter calls when they straddle a chunk boundary", async () => {
     const provider = new FakeResourceProviderV2({ results: { title: [] } });
     const storage = new Storage115Simulator({ packs: {} });
     const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
@@ -165,8 +165,10 @@ describe("transferSubtitle", () => {
     await sandbox.transferSubtitle({ candidateId: 24 });
 
     expect(batches).toHaveLength(2);
-    expect(batches[0]).toHaveLength(SUBTITLE_RENEWAL_CHUNK_SIZE - 1);
-    expect(batches[1]).toEqual(["Show.S01E24.ass", "Show.S01E24.ass"]);
+    expect(batches[0]).toHaveLength(SUBTITLE_RENEWAL_CHUNK_SIZE);
+    expect(batches[1]).toEqual(["Show.S01E24.ass"]);
+    expect(new Set(batches[0]).size).toBe(batches[0]!.length);
+    expect(batches[1]![0]).toBe("Show.S01E24.ass");
   });
 
   it("preserves the three-failure circuit across chunk boundaries", async () => {

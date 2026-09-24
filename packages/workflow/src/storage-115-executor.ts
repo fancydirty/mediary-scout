@@ -723,11 +723,25 @@ export class Storage115Executor implements StorageExecutor {
     // If such a leftover IS there, the new copy lands as "name (1).srt", which no
     // longer matches by basename — the file is reported as a miss and its finished
     // task is cancelled, leaving a stray copy in staging for discardStaging to sweep.
+    const beforeTree = await this.listTree({ directoryId: safeDirectoryId, maxDepth: SUBTITLE_LANDING_DEPTH });
+    const beforeNames = new Set(beforeTree.map((file) => basenameOf(file.path)));
     const beforeIds = new Set(
-      (await this.listTree({ directoryId: safeDirectoryId, maxDepth: SUBTITLE_LANDING_DEPTH }))
-        .filter((file) => packageNames.has(basenameOf(file.path)))
-        .map((file) => file.providerFileId),
+      beforeTree.filter((file) => packageNames.has(basenameOf(file.path))).map((file) => file.providerFileId),
     );
+    // A later renewal chunk may contain the same basename as an earlier chunk.
+    // 115 never overwrites and would create an unclaimable `name (1).ext`; reject
+    // it before submitting a second task. Pan123 handles its own numbered landing
+    // names, so this guard stays in the 115 adapter where the invariant applies.
+    for (const [index, file] of pending) {
+      if (beforeNames.has(file.filename)) {
+        attempts[index]!.providerMessage =
+          "SUBTITLE_DUPLICATE_FILENAME: a same-named file is already in the target directory";
+        pending.delete(index);
+      }
+    }
+    if (pending.size === 0) {
+      return attempts;
+    }
 
     // Submit everything up front. A rejection (ok:false or a thrown provider error)
     // is per-file; after SUBTITLE_MAX_CONSECUTIVE_REJECTIONS in a row the rest is
