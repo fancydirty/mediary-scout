@@ -237,6 +237,9 @@ export class TaskSandbox {
   private pendingDigest: { keyword: string; count: number } | null = null;
   /** 病4: 本任务的审计事件（no_coverage 上报/dedup 重复/禁忌词警告）。runner 持久化到 workflowRun.auditEvents。 */
   private readonly auditEvents: AuditEvent[] = [];
+  /** Set the moment a video/subtitle transfer is ATTEMPTED (before the provider call,
+   *  so a transfer that threw still counts). Read by hasTransferEvidence. */
+  private transferAttempted = false;
 
   constructor(options: TaskSandboxOptions) {
     this.provider = options.provider;
@@ -520,6 +523,7 @@ export class TaskSandbox {
     if (!snapshot.candidates.some((candidate) => candidate.id === input.candidateId)) {
       throw new Error(`SANDBOX_CANDIDATE_NOT_IN_SNAPSHOT: ${input.candidateId} is not in ${input.snapshotId}`);
     }
+    this.transferAttempted = true;
     const attempt = await this.storage.transferCandidate({
       candidateId: input.candidateId,
       intoDirectoryId: this.stagingDirectoryId,
@@ -591,6 +595,7 @@ export class TaskSandbox {
     let transferredCandidateId: string | null = null;
     let systemicBlock: { reason: string } | undefined;
     for (const candidateId of input.candidateIds) {
+      this.transferAttempted = true;
       const attempt = await this.storage.transferCandidate({
         candidateId,
         intoDirectoryId: this.stagingDirectoryId,
@@ -857,6 +862,23 @@ export class TaskSandbox {
     return { reason, searchesPerformed: evidenceKeywords.size };
   }
 
+  /** Whether there is anything a finish-only recovery could act on: a transfer was
+   *  attempted in this task, or staging already holds files (a movie's staging IS its
+   *  directory, so a prior run's landed file counts). False = the task has not moved
+   *  anything yet — the content-filter recovery (agent-loop) then fails loud instead of
+   *  running a turn that can only end in a false no-coverage. */
+  async hasTransferEvidence(): Promise<boolean> {
+    if (this.transferAttempted) return true;
+    if (!this.storage || !this.stagingDirectoryId) return false;
+    try {
+      return (await this.storage.listTree({ directoryId: this.stagingDirectoryId })).length > 0;
+    } catch {
+      // Unreadable staging: do not claim "nothing happened" on missing evidence —
+      // let the recovery turn look for itself (its inspect tools report the error).
+      return true;
+    }
+  }
+
   auditTrail(): AuditEvent[] {
     return [...this.auditEvents];
   }
@@ -985,6 +1007,7 @@ export class TaskSandbox {
         `SANDBOX_SUBTITLE_NOT_IN_SNAPSHOT: candidate ${input.candidateId} was not in the pre-warmed subtitle snapshot`,
       );
     }
+    this.transferAttempted = true;
     let files: AssrtSubtitleFile[];
     try {
       files = await this.subtitleProvider.detail(input.candidateId);

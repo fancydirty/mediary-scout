@@ -1,3 +1,4 @@
+import { AgentContentFilterError } from "../agent-error.js";
 import { generateText, stepCountIs, type LanguageModel, type ToolSet } from "ai";
 import { z } from "zod";
 import type { TaskSandbox } from "./sandbox.js";
@@ -352,6 +353,12 @@ export async function runAcquisitionAgent(
   // the mandatory flatten/mark/finish sequence. Never loop this recovery: a second
   // content filter remains an honest incomplete run rather than burning calls.
   if (result.finishReason === "content-filter") {
+    // The finish-only recovery below can only tidy up what already landed. With no
+    // transfer attempted at all it has nothing to finish and could only end in a
+    // false no-coverage (《出入平安》) — so fail loud and name the model instead.
+    if (!(await request.sandbox.hasTransferEvidence())) {
+      throw new AgentContentFilterError();
+    }
     const remainingSteps = maxSteps - steps;
     if (remainingSteps > 0) {
       // Recovery may inspect, organize, mark, finish, or honestly report no

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { MockLanguageModelV3 } from "ai/test";
 import { runAcquisitionAgent } from "../src/acquisition-v2/agent-loop.js";
+import { AgentContentFilterError } from "../src/agent-error.js";
+import { isTransientAcquisitionError } from "../src/acquisition-v2/transient-error.js";
 import { TaskSandbox } from "../src/acquisition-v2/sandbox.js";
 import { FakeResourceProviderV2 } from "../src/acquisition-v2/fake-provider.js";
 import { Storage115Simulator } from "../src/acquisition-v2/storage-115-simulator.js";
@@ -259,7 +261,9 @@ describe("runAcquisitionAgent — the real AI SDK tool-loop over the sandbox", (
   });
 
   it("does not start recovery when the first turn consumed the whole step budget", async () => {
-    const { sandbox } = await setup(["S01E01"]);
+    const { sandbox, storage } = await setup(["S01E01"]);
+    // Something already landed in staging → the finish-only recovery path applies.
+    await storage.transferCandidate({ candidateId: "full_pack", intoDirectoryId: (sandbox as any).stagingDirectoryId });
     let calls = 0;
     const model = new MockLanguageModelV3({
       doGenerate: async () => {
@@ -286,7 +290,8 @@ describe("runAcquisitionAgent — the real AI SDK tool-loop over the sandbox", (
   });
 
   it("does not retry a second content-filter interruption", async () => {
-    const { sandbox } = await setup(["S01E01"]);
+    const { sandbox, storage } = await setup(["S01E01"]);
+    await storage.transferCandidate({ candidateId: "full_pack", intoDirectoryId: (sandbox as any).stagingDirectoryId });
     let calls = 0;
     const model = new MockLanguageModelV3({
       doGenerate: async () => {
@@ -311,6 +316,86 @@ describe("runAcquisitionAgent — the real AI SDK tool-loop over the sandbox", (
     expect(result.coverage.coverageMet).toBe(false);
     expect(calls).toBe(2);
     expect(result.steps).toBe(2);
+  });
+
+  it("a content-filter stop before anything was transferred fails loud as a model interruption, not no-coverage (《出入平安》)", async () => {
+    const { sandbox } = await setup(["S01E01"]);
+    let calls = 0;
+    const model = new MockLanguageModelV3({
+      doGenerate: async () => {
+        calls += 1;
+        if (calls === 1) {
+          return {
+            content: [{ type: "tool-call" as const, toolCallId: "look", toolName: "inspectStaging", input: "{}" }],
+            finishReason: { unified: "tool-calls" as const, raw: "tool-calls" as const },
+            usage: USAGE,
+            warnings: [],
+          };
+        }
+        return {
+          content: [{ type: "text" as const, text: "" }],
+          finishReason: { unified: "content-filter" as const, raw: "content-filter" as const },
+          usage: USAGE,
+          warnings: [],
+        };
+      },
+    });
+    const run = runAcquisitionAgent({
+      sandbox,
+      model,
+      system: "You acquire media into the scoped sandbox.",
+      prompt: "Ensure S01E01 is obtained.",
+      maxSteps: 10,
+    });
+    await expect(run).rejects.toBeInstanceOf(AgentContentFilterError);
+    await expect(run).rejects.toThrow(/内容审查/);
+    // No finish-only recovery turn was spent: the model was called exactly twice.
+    expect(calls).toBe(2);
+    // Not a network blip: the queue must not auto-retry the same censoring model.
+    const err = await run.catch((e: unknown) => e);
+    expect(isTransientAcquisitionError(err)).toBe(false);
+  });
+
+  it("a transfer attempt counts as evidence even if staging is empty afterwards → recovery still runs", async () => {
+    const { sandbox, storage } = await setup(["S01E01"]);
+    const snap = await sandbox.searchResources("lycoris recoil");
+    let calls = 0;
+    const model = new MockLanguageModelV3({
+      doGenerate: async () => {
+        calls += 1;
+        if (calls === 1) {
+          return {
+            content: [{ type: "tool-call" as const, toolCallId: "t", toolName: "deleteFiles", input: JSON.stringify({ fileIds: ["nope"] }) }],
+            finishReason: { unified: "tool-calls" as const, raw: "tool-calls" as const },
+            usage: USAGE,
+            warnings: [],
+          };
+        }
+        if (calls === 2) {
+          return {
+            content: [{ type: "text" as const, text: "" }],
+            finishReason: { unified: "content-filter" as const, raw: "content-filter" as const },
+            usage: USAGE,
+            warnings: [],
+          };
+        }
+        return { content: [{ type: "text" as const, text: "done" }], finishReason: { unified: "stop" as const, raw: "stop" as const }, usage: USAGE, warnings: [] };
+      },
+    });
+    await sandbox.transferCandidate({ snapshotId: snap.snapshot!.id, candidateId: snap.snapshot!.candidates[0]!.id });
+    // Empty staging again: the ONLY remaining evidence is that a transfer was attempted.
+    const staging = (sandbox as any).stagingDirectoryId as string;
+    await storage.deleteFiles({ directoryId: staging, fileIds: (await storage.listTree({ directoryId: staging })).map((f) => f.id) });
+    expect(await storage.listTree({ directoryId: staging })).toEqual([]);
+    const result = await runAcquisitionAgent({
+      sandbox,
+      model,
+      system: "s",
+      prompt: "Ensure S01E01 is obtained.",
+      maxSteps: 10,
+    });
+    expect(calls).toBe(3); // recovery turn ran
+    expect(result.coverage.coverageMet).toBe(false);
   });
 
   it("drives a full search→transfer→extract→mark→finish loop and reads honest coverage", async () => {

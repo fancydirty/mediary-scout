@@ -14,6 +14,28 @@
  * original error — logs keep the raw detail.
  */
 
+/**
+ * The model's own content moderation cut the reply before anything was transferred.
+ *
+ * 《出入平安》(2026-09-24): a porn title in the candidate list made MiMo stop the reply
+ * right after viewResourceSnapshot. The content-filter recovery turn (#267) only
+ * finishes what already landed — it has no search/transfer tools by design — so with
+ * nothing transferred it could only reportNoCoverage, and the user read 「暂未找到可用
+ * 资源」 while a 2160p candidate sat in the document. Nothing was searched-and-missed:
+ * the model refused to continue. So the run fails LOUD with this, naming the model as
+ * the cause. Deliberately NOT a transient error (no "timeout"/"network" words): the
+ * same model re-reading the same candidates will be cut again, so auto-retry would only
+ * burn attempts.
+ */
+export class AgentContentFilterError extends Error {
+  constructor() {
+    super(
+      "AI 模型的内容审查中断了回答(content-filter),本次还没有转存任何资源 —— 这不是没有资源。可以稍后重试,或到 设置 → AI 模型 换一个审查较宽松的模型渠道。",
+    );
+    this.name = "AgentContentFilterError";
+  }
+}
+
 /** The actionable, model-agnostic message shown when the agent's LLM call fails auth. */
 export const LLM_AUTH_GUIDANCE =
   "AI 模型鉴权失败(401):请到 设置 → AI 模型 检查 API Key 是否有效、模型是否有权限(任意 OpenAI 兼容服务,自带 key)。";

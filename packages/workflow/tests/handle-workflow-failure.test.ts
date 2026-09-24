@@ -292,3 +292,23 @@ describe("handleWorkflowRunFailure", () => {
     expect(onAuthErrorFreeze).not.toHaveBeenCalled();
   });
 });
+
+describe("handleWorkflowRunFailure — model content-filter before any transfer", () => {
+  it("terminal failure naming the model, not a retry and not no-coverage (《出入平安》)", async () => {
+    const { AgentContentFilterError } = await import("../src/agent-error.js");
+    const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
+    const out = await handleWorkflowRunFailure({
+      claimed: snapshot(),
+      error: new AgentContentFilterError(),
+      repository: { saveWorkflowRunSnapshot: save },
+      now,
+    });
+    expect(out.status).toBe("failed");
+    const saved = save.mock.calls[0]![0];
+    expect(saved.workflowRun.status).toBe("failed");
+    const report = saved.notifications[0]?.report;
+    expect(report?.status).toBe("failed");
+    expect(report?.lines.join("\n")).toContain("内容审查");
+    expect(report?.lines.join("\n")).toContain("不是没有资源");
+  });
+});
