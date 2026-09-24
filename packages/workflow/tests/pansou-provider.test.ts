@@ -230,6 +230,8 @@ describe("PanSouResourceProvider", () => {
               { type: "others", url: "https://www.guangyapan.com/s/1946057909719502939_amDq", password: "ab12" },
               // The site root is not a share.
               { type: "others", url: "https://www.guangyapan.com/" },
+              // A lookalike host is not 光鸭 even if PanSou calls it guangya (Copilot #271 r3).
+              { type: "guangya", url: "https://evilguangyapan.com/s/1947864096514232347_x" },
               { type: "quark", url: "https://pan.quark.cn/s/abc" },
             ],
           },

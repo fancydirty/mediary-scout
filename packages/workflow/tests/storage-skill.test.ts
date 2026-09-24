@@ -29,6 +29,8 @@ describe("brand-aware storage skill", () => {
     expect(guangya).toContain("GUANGYA_SHARE_EMPTY");
     expect(guangya).toContain("GUANGYA_UNSUPPORTED_LINK");
     expect(guangya).not.toContain("GUANGYA_ONLY_MAGNET");
+    // the pending timeout is taught as "inspect first", not as a dead share (Copilot #271 r3)
+    expect(guangya).toMatch(/GUANGYA_RESTORE_TIMEOUT[\s\S]*no_target_change[\s\S]*inspectStaging/);
     // must NOT carry quark fail-loud codes
     expect(guangya).not.toContain("41006");
   });

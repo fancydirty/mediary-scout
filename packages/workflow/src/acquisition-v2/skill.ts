@@ -154,11 +154,14 @@ const DEAD_LINKS_BLACK_BOX_GUANGYA = `# Dead links, offline tasks, and black-box
 When a transparent 光鸭分享 covers the need, prefer it over a magnet (instant and certain once it lands). Another brand's share link (夸克/115/123/天翼) CANNOT land on 光鸭 — it fails loud with "GUANGYA_UNSUPPORTED_LINK"; skip it.
 
 ## Dead shares fail LOUD (move on at once)
-A 光鸭分享 is unusable more often than not, and every way fails loud as a failed attempt:
+A 光鸭分享 is unusable more often than not. These are PROVEN dead and come back as a failed attempt — switch to the next covering candidate at once:
 - 分享已失效 / 分享链接错误 / 参数错误 — dead, cancelled or malformed link.
 - GUANGYA_SHARE_EMPTY — the share OPENS but lists no files. About half of the 光鸭分享 on PanSou look like this (the sharer restricted it, or the content is under review). It is NOT "the share is empty but maybe fine" — treat it as dead.
-- GUANGYA_RESTORE_TIMEOUT / GUANGYA_RESTORE_FAILED — the 转存 task did not finish.
-Switch to the next covering candidate. Because shares fail loud, a movie can hand a ranked list of same-film 光鸭分享 to transferUntilLanded.
+- GUANGYA_RESTORE_FAILED — the 转存 task reported failure.
+Because these fail loud, a movie can hand a ranked list of same-film 光鸭分享 to transferUntilLanded.
+
+## A slow 转存 is PENDING, not dead
+GUANGYA_RESTORE_TIMEOUT comes back as no_target_change: the 转存 was still RUNNING when the poll window ended, and it may still land. transferUntilLanded STOPS there on purpose. Do NOT immediately transfer another candidate (that is how a film lands twice) — inspectStaging first; if it has landed, continue from there; only if nothing arrived after a re-read, move on.
 
 ## Dead magnets fail QUIETLY (trust the reread)
 A magnet can be dead: resolve_res returns nothing, or the offline task never materializes (no seeds / removed). When nothing lands, treat the magnet as dead and switch to the NEXT covering candidate. A dead link is the NORM, never a reason to give up.
