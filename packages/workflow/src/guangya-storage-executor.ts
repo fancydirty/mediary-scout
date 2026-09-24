@@ -305,7 +305,10 @@ export class GuangYaStorageExecutor implements StorageExecutor {
         if (status !== 1) {
           throw new Error(`GUANGYA_RESTORE_FAILED: task ${taskId} status=${status}`);
         }
-        await new Promise((resolve) => setTimeout(resolve, this.taskPollIntervalMs));
+        // No sleep after the LAST poll — the window ends at the last answer, not later.
+        if (poll < this.taskPollMaxPolls - 1) {
+          await new Promise((resolve) => setTimeout(resolve, this.taskPollIntervalMs));
+        }
       }
       if (!done) {
         // Still running, not dead: there is no cancel call, so it may land later.
@@ -363,6 +366,9 @@ export class GuangYaStorageExecutor implements StorageExecutor {
       workflowRunId: input.workflowRunId,
       candidateId: input.candidate.id,
       status,
+      // A PARTIAL landing of a still-running restore is "succeeded" (so no second share
+      // is tried) but keeps the pending note: more files may still arrive — the agent
+      // should reread staging before it moves / marks.
       providerMessage: providerMessage || pendingMessage,
       materializedFileIds,
     };

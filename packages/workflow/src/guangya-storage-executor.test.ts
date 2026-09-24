@@ -784,6 +784,22 @@ describe("GuangYaStorageExecutor.transfer — 光鸭分享链转存", () => {
     expect(attempt.providerMessage).toMatch(/GUANGYA_RESTORE_PENDING.*回读/);
   });
 
+  it("a PARTIAL landing of a still-running restore is succeeded but keeps the pending note", async () => {
+    const client = shareClient({ statuses: [1, 1, 1], after: [{ fileId: "e1", parentId: SCOPE, fileName: "S01E01.mkv", fileSize: 5e8, resType: 1 }] });
+    const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [SCOPE], taskPollIntervalMs: 0, taskPollMaxPolls: 3 });
+    const attempt = await executor.transfer({ workflowRunId: "run-1", directoryId: SCOPE, candidate: share() });
+    expect(attempt.status).toBe("succeeded");
+    expect(attempt.materializedFileIds).toEqual(["e1"]);
+    expect(attempt.providerMessage).toMatch(/GUANGYA_RESTORE_TIMEOUT.*inspectStaging/);
+  });
+
+  it("polls exactly taskPollMaxPolls times and does not sleep after the last one", async () => {
+    const client = shareClient({ statuses: [1, 1, 1, 1], after: [] });
+    const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [SCOPE], taskPollIntervalMs: 0, taskPollMaxPolls: 3 });
+    await executor.transfer({ workflowRunId: "run-1", directoryId: SCOPE, candidate: share() });
+    expect(client.getTaskStatus).toHaveBeenCalledTimes(3);
+  });
+
   it("an explicit terminal task status after acceptance is still a real failure", async () => {
     const client = shareClient({ statuses: [3], after: [] });
     const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [SCOPE], taskPollIntervalMs: 0 });
