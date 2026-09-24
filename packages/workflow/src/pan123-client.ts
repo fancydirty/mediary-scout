@@ -228,7 +228,13 @@ export class Pan123Client {
       // classifier matches on it) and the cause. The URL's query (signature) and the
       // token header are never included.
       const name = error instanceof Error ? error.name : "Error";
-      const message = error instanceof Error ? error.message : String(error);
+      // undici quotes an invalid header VALUE in its message ('"Bearer <token>" is an
+      // invalid header value'), and this message is persisted and pushed — so the
+      // token is removed before it can travel. The cause keeps the raw error in-process.
+      let message = error instanceof Error ? error.message : String(error);
+      // Length floor: a real token is a long JWT; masking a 1–7 char stub would shred
+      // ordinary words in the message instead of protecting anything.
+      if (this.token.length >= 8) message = message.split(this.token).join("***");
       throw new Error(`PAN123_REQUEST_FAILED(${u.host} ${u.pathname}): ${name} ${message}`, { cause: error });
     }
     const parsed = parsePan123Json(res.text);

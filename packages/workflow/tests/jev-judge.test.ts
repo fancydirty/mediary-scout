@@ -216,5 +216,8 @@ describe("isNsfwDrop", () => {
     expect(isNsfwDrop(undefined, 0)).toBe(false);
     expect(isNsfwDrop(Number.NaN, 0)).toBe(false);
     expect(isNsfwDrop(null as unknown as number, 0)).toBe(false);
+    // Out of the 0..1 contract is not evidence either (Copilot #269 r3).
+    expect(isNsfwDrop(1.5, 0)).toBe(false);
+    expect(isNsfwDrop(-0.2, 0)).toBe(false);
   });
 });

@@ -84,7 +84,8 @@ export const JEV_NSFW_SUSPECT_AT = 0.6;
  *  classifyJevScore: a missing/NaN nsfw score never drops; a missing identity score
  *  counts as "not confident" (the nsfw evidence is then all there is). */
 export function isNsfwDrop(nsfw: number | undefined, identity: number | undefined): boolean {
-  if (typeof nsfw !== "number" || !Number.isFinite(nsfw)) return false;
+  // Outside 0..1 is a contract violation (a bad judge / a corrupted row), not evidence.
+  if (typeof nsfw !== "number" || !Number.isFinite(nsfw) || nsfw < 0 || nsfw > 1) return false;
   if (nsfw >= JEV_NSFW_DROP_AT) return true;
   if (nsfw < JEV_NSFW_SUSPECT_AT) return false;
   return !(typeof identity === "number" && Number.isFinite(identity) && identity >= JEV_UNCERTAIN_BELOW);
