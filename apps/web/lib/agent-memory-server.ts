@@ -4,6 +4,7 @@
  * unit-tested against a plain repository.
  */
 import {
+  AGENT_MEMORY_LIMITS,
   memoryTitleKey,
   validateMemoryInput,
   type AgentMemory,
@@ -53,6 +54,12 @@ export async function saveMemoryFromUi(
   const entry = { scope: address.scope, name: input.name.trim(), description: input.description.trim(), kind: input.kind, body: input.body.trim() };
   const invalid = validateMemoryInput(entry);
   if (invalid) return { success: false, message: invalid };
+  // Same caps the agent's tool enforces; overwriting an existing name is always fine.
+  const existing = await store.listAgentMemories({ accountId, scope: address.scope, titleKey });
+  const cap = address.scope === "title" ? AGENT_MEMORY_LIMITS.titleEntriesMax : AGENT_MEMORY_LIMITS.globalEntriesMax;
+  if (!existing.some((m) => m.name === entry.name) && existing.length >= cap) {
+    return { success: false, message: `已达上限（${cap} 条），请先删除或编辑一条旧记忆` };
+  }
   await store.upsertAgentMemory({ accountId, titleKey, entry, now: now() });
   return { success: true };
 }

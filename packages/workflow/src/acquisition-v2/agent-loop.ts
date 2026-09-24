@@ -224,6 +224,18 @@ export function buildSandboxToolSet(
       execute: (args: { candidateIds: string[] }) => asEvidence(() => sandbox.transferUntilLanded(args)),
     };
   }
+  // Read-only memory access DURING acquisition: the prompt shows the global memory as
+  // an index, so the agent needs a way to read a body. Writes/deletes stay in the
+  // post-run reflection turn only.
+  // `?.` so a partial sandbox (test doubles typed as TaskSandbox) builds a tool set too.
+  if (sandbox.hasMemory?.()) {
+    tools["readMemory"] = {
+      description:
+        'Read the full body of one agent-memory entry (a lesson an earlier run wrote down). scope "title" = this work, "global" = shared lessons listed in GLOBAL MEMORY INDEX. Read-only; memory is a snapshot of the past — the live tool evidence wins when they disagree.',
+      inputSchema: z.object({ scope: z.enum(["title", "global"]), name: z.string() }),
+      execute: (args: { scope: "title" | "global"; name: string }) => asEvidence(() => sandbox.readMemory(args)),
+    };
+  }
   if (options.subtitle) {
     tools["viewSubtitleSnapshot"] = {
       description:

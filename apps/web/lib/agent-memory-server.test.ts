@@ -54,3 +54,16 @@ describe("agent memory settings + UI server logic", () => {
     expect(await saveMemoryFromUi(repo, "acct_1", { scope: "title", mediaType: "tv", tmdbId: -1 }, entry, now)).toMatchObject({ success: false });
   });
 });
+
+describe("UI writes respect the same caps as the agent", () => {
+  it("a new name at the per-work cap is refused; editing an existing one still works", async () => {
+    const { AGENT_MEMORY_LIMITS } = await import("@media-track/workflow");
+    const repo = new InMemoryWorkflowRepository();
+    const addr = { scope: "title" as const, mediaType: "tv" as const, tmdbId: 9 };
+    for (let i = 0; i < AGENT_MEMORY_LIMITS.titleEntriesMax; i += 1) {
+      expect(await saveMemoryFromUi(repo, "acct_1", addr, { ...entry, name: `m-${i}` }, now)).toMatchObject({ success: true });
+    }
+    expect(await saveMemoryFromUi(repo, "acct_1", addr, { ...entry, name: "one-more" }, now)).toMatchObject({ success: false });
+    expect(await saveMemoryFromUi(repo, "acct_1", addr, { ...entry, name: "m-0", body: "改" }, now)).toMatchObject({ success: true });
+  });
+});

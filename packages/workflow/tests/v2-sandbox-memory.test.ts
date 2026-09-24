@@ -68,3 +68,23 @@ describe("TaskSandbox memory tools", () => {
     await expect(sandbox.writeMemory(e())).rejects.toThrow(/MEMORY_UNAVAILABLE/);
   });
 });
+
+describe("memory tools exposed to the models", () => {
+  it("readMemory returns a narrow projection — no ids, account, bound key or run id", async () => {
+    const { sandbox } = sandboxWith();
+    await sandbox.writeMemory(e({ scope: "global", name: "g1", kind: "drive" }));
+    const view = await sandbox.readMemory({ scope: "global", name: "g1" });
+    expect(Object.keys(view).sort()).toEqual(["body", "description", "kind", "name", "provider", "scope", "updatedAt"]);
+  });
+
+  it("the main acquisition tool set has readMemory (read-only) when memory is bound, and no write/delete", async () => {
+    const { buildSandboxToolSet } = await import("../src/acquisition-v2/agent-loop.js");
+    const { sandbox } = sandboxWith();
+    const names = Object.keys(buildSandboxToolSet(sandbox, {}));
+    expect(names).toContain("readMemory");
+    expect(names).not.toContain("writeMemory");
+    expect(names).not.toContain("deleteMemory");
+    const bare = new TaskSandbox({ provider: new FakeResourceProviderV2({ results: {} }), need: [] });
+    expect(Object.keys(buildSandboxToolSet(bare, {}))).not.toContain("readMemory");
+  });
+});

@@ -181,6 +181,9 @@ export interface TaskSandboxOptions {
   };
 }
 
+/** What the models see of a memory entry (no persistence identifiers). */
+export type AgentMemoryView = Pick<AgentMemory, "scope" | "name" | "kind" | "description" | "body" | "provider" | "updatedAt">;
+
 export interface SearchToolResult {
   /** Present on a fresh search and on a dedup (the prior snapshot). */
   snapshot?: ResourceSnapshotV2;
@@ -921,8 +924,9 @@ export class TaskSandbox {
     return scope === "title" ? this.requireMemory().titleKey : null;
   }
 
-  /** Read one entry's body. Title scope = THIS work only. */
-  async readMemory(input: { scope: AgentMemoryScope; name: string }): Promise<AgentMemory> {
+  /** Read one entry's body. Title scope = THIS work only. Returns the agent-facing
+   *  projection — never the row's id / account / bound key / run id. */
+  async readMemory(input: { scope: AgentMemoryScope; name: string }): Promise<AgentMemoryView> {
     const memory = this.requireMemory();
     const rows = await memory.store.listAgentMemories({
       accountId: memory.accountId,
@@ -931,7 +935,15 @@ export class TaskSandbox {
     });
     const hit = rows.find((row) => row.name === input.name);
     if (!hit) throw new Error(`MEMORY_NOT_FOUND: no ${input.scope} memory named "${input.name}"`);
-    return hit;
+    return {
+      scope: hit.scope,
+      name: hit.name,
+      kind: hit.kind,
+      description: hit.description,
+      body: hit.body,
+      provider: hit.provider,
+      updatedAt: hit.updatedAt,
+    };
   }
 
   /** Upsert by name. The title key is the BOUND one — any titleKey the agent passes
