@@ -129,8 +129,8 @@ export const STORAGE_BRANDS: StorageBrand[] = [
 
 /**
  * Map a brand's resource-provider kinds to the PanSou link types its acquisitions
- * may transfer. A 夸克 drive can only save 夸克 share links; a 光鸭(磁力) drive can
- * only offline-download magnets; a 115 drive takes both 115 links and magnets.
+ * may transfer. A 夸克 drive can only save 夸克 share links; 光鸭 / 123 / 115 take
+ * their OWN share links plus magnets (光鸭: restore_share + offline download).
  * Pure + brand-table-driven so the resource assembly stays testable.
  */
 export function allowedResourceTypesForKinds(kinds: readonly string[]): ResourceType[] {

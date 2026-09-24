@@ -274,6 +274,7 @@ export class GuangYaStorageExecutor implements StorageExecutor {
     const before = new Set((await this.listVideoFiles(input.directoryId)).map((f) => f.id));
     let providerMessage = "";
     let pendingMessage = "";
+    let acceptedTaskId = "";
     try {
       if (!client.getShareAccessToken || !client.listShareFiles || !client.restoreShare || !client.getTaskStatus) {
         throw new Error("GUANGYA_SHARE_UNSUPPORTED: client has no share-transfer methods");
@@ -287,6 +288,9 @@ export class GuangYaStorageExecutor implements StorageExecutor {
         throw new Error("GUANGYA_SHARE_EMPTY: 分享可打开但列不出任何文件(可能被分享者限制或内容审核中),无法转存,请换候选");
       }
       const taskId = await client.restoreShare({ accessToken, fileIds, parentId: input.directoryId });
+      // From here the server-side task EXISTS and may land whatever happens next, so
+      // a polling error is not proof of failure — it is pending, like a timeout.
+      acceptedTaskId = taskId;
       let done = false;
       for (let poll = 0; poll < this.taskPollMaxPolls; poll += 1) {
         const { status } = await client.getTaskStatus(taskId);
@@ -310,7 +314,14 @@ export class GuangYaStorageExecutor implements StorageExecutor {
       if (isGuangYaAuthError(error)) {
         throw error;
       }
-      providerMessage = error instanceof Error ? error.message : String(error);
+      const message = error instanceof Error ? error.message : String(error);
+      // An explicit terminal status is a real failure; any OTHER error after the task
+      // was accepted (network blip while polling) leaves it possibly still running.
+      if (acceptedTaskId && !message.startsWith("GUANGYA_RESTORE_FAILED")) {
+        pendingMessage = `GUANGYA_RESTORE_PENDING: 转存任务 ${acceptedTaskId} 已提交,轮询出错(${message.slice(0, 120)}),任务可能仍在进行;先 inspectStaging 再决定`;
+      } else {
+        providerMessage = message;
+      }
     }
 
     const after = await this.listVideoFiles(input.directoryId);

@@ -162,7 +162,7 @@ A 光鸭分享 is unusable more often than not. These are PROVEN dead and come b
 Because these fail loud, a movie can hand a ranked list of same-film 光鸭分享 to transferUntilLanded.
 
 ## A slow 转存 is PENDING, not dead
-GUANGYA_RESTORE_TIMEOUT comes back as no_target_change: the 转存 was still RUNNING when the poll window ended, and it may still land. transferUntilLanded STOPS there on purpose. Do NOT immediately transfer another candidate (that is how a film lands twice) — inspectStaging first; if it has landed, continue from there; only if nothing arrived after a re-read, move on.
+GUANGYA_RESTORE_TIMEOUT / GUANGYA_RESTORE_PENDING come back as no_target_change: the 转存 was accepted and may still be RUNNING (the window ended, or polling it hit a network error), so it may still land. transferUntilLanded STOPS there on purpose. Do NOT immediately transfer another candidate (that is how a film lands twice) — inspectStaging first; if it has landed, continue from there; only if nothing arrived after a re-read, move on.
 
 ## Dead magnets fail QUIETLY (trust the reread)
 A magnet can be dead: resolve_res returns nothing, or the offline task never materializes (no seeds / removed). When nothing lands, treat the magnet as dead and switch to the NEXT covering candidate. A dead link is the NORM, never a reason to give up.

@@ -126,7 +126,9 @@ export function parseGuangYaUid(accessToken: string): string | null {
  */
 export function parseGuangYaShareUrl(url: string): { shareId: string; code: string } | null {
   const noFragment = url.split("#")[0] ?? url;
-  const m = /^https?:\/\/(?:www\.)?guangyapan\.com\/s\/([0-9A-Za-z_-]+)/.exec(noFragment);
+  // The id must be the WHOLE segment: it ends at the url end, "?" or a single
+  // trailing "/" — never "/s/abc/other" or "/s/abc.evil".
+  const m = /^https?:\/\/(?:www\.)?guangyapan\.com\/s\/([0-9A-Za-z_-]+)\/?(?:\?|$)/.exec(noFragment);
   if (!m?.[1]) {
     return null;
   }

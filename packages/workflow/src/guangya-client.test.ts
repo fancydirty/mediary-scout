@@ -437,6 +437,10 @@ describe("parseGuangYaShareUrl", () => {
     expect(parseGuangYaShareUrl("magnet:?xt=urn:btih:abc")).toBeNull();
     expect(parseGuangYaShareUrl("https://pan.quark.cn/s/abc")).toBeNull();
     expect(parseGuangYaShareUrl("https://www.guangyapan.com/")).toBeNull();
+    // Only the complete segment is a share id (Copilot #271 r5).
+    expect(parseGuangYaShareUrl("https://www.guangyapan.com/s/abc/other")).toBeNull();
+    expect(parseGuangYaShareUrl("https://www.guangyapan.com/s/abc.evil")).toBeNull();
+    expect(parseGuangYaShareUrl("https://www.guangyapan.com/s/abc/")).toEqual({ shareId: "abc", code: "" });
   });
 });
 

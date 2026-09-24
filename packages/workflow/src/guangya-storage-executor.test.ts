@@ -749,6 +749,23 @@ describe("GuangYaStorageExecutor.transfer — 光鸭分享链转存", () => {
     expect(attempt.providerMessage).toMatch(/GUANGYA_SHARE_NO_VIDEO/);
   });
 
+  it("a polling error AFTER the restore was accepted is pending (no_target_change), not a dead share", async () => {
+    const client = shareClient({ after: [] });
+    client.getTaskStatus = vi.fn(async () => { throw new Error("fetch failed: ECONNRESET"); });
+    const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [SCOPE], taskPollIntervalMs: 0 });
+    const attempt = await executor.transfer({ workflowRunId: "run-1", directoryId: SCOPE, candidate: share() });
+    expect(attempt.status).toBe("no_target_change");
+    expect(attempt.providerMessage).toMatch(/GUANGYA_RESTORE_PENDING.*inspectStaging/);
+  });
+
+  it("an explicit terminal task status after acceptance is still a real failure", async () => {
+    const client = shareClient({ statuses: [3], after: [] });
+    const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [SCOPE], taskPollIntervalMs: 0 });
+    const attempt = await executor.transfer({ workflowRunId: "run-1", directoryId: SCOPE, candidate: share() });
+    expect(attempt.status).toBe("failed");
+    expect(attempt.providerMessage).toMatch(/GUANGYA_RESTORE_FAILED/);
+  });
+
   it("an auth error is rethrown (freeze the drive), never absorbed into a failed attempt", async () => {
     const client = shareClient({ token: async () => { throw new GuangYaAuthError("GUANGYA_AUTH_FAILED: 401 after refresh"); } });
     const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [SCOPE], taskPollIntervalMs: 0 });
