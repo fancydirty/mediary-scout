@@ -1148,11 +1148,20 @@ export class TaskSandbox {
     if (landedFilenames.length === 0 && lastError === undefined) {
       lastError = "subtitle transfer failed (no files landed, no provider message)";
     }
+    const remainingChunkSize = consecutiveFailures > 0 ? 1 : SUBTITLE_RENEWAL_CHUNK_SIZE;
+    const remainingForCount = new Set(pending);
+    let remainingChunks = 0;
+    while (remainingForCount.size > 0) {
+      const chunk = selectSubtitleChunk(initial, initial, remainingForCount, remainingChunkSize);
+      if (chunk.selected.length === 0) break;
+      remainingChunks += 1;
+      for (const file of chunk.selected) remainingForCount.delete(file.key);
+    }
     return {
       status: landedFilenames.length > 0 ? "succeeded" : "failed",
       landedFilenames,
       chunksProcessed,
-      chunksTotal: Math.max(chunksTotal, chunksProcessed + pending.size),
+      chunksTotal: Math.max(chunksTotal, chunksProcessed + remainingChunks),
       unattemptedCount: unattemptedCount + pending.size,
       chunkDiagnostics,
       ...(lastError ? { error: lastError } : {}),
