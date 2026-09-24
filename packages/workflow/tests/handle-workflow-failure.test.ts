@@ -310,6 +310,8 @@ describe("handleWorkflowRunFailure — model content-filter before any transfer"
     expect(report?.status).toBe("failed");
     expect(report?.lines.join("\n")).toContain("内容审查");
     expect(report?.lines.join("\n")).toContain("不是没有资源");
+  });
+});
 
 describe("handleWorkflowRunFailure — stdout trail", () => {
   it("logs one secret-safe line per failure (the 出入平安 cause was only recoverable from dead heap tuples)", async () => {
