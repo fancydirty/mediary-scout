@@ -256,9 +256,13 @@ export class GuangYaStorageExecutor implements StorageExecutor {
 
   /** 光鸭分享链 → our directory: token → list the share root → restore EVERY root
    *  item (a folder restores whole) → poll the restore task → reread the target.
-   *  Every way a share can be unusable fails LOUD as a `failed` attempt so the agent
+   *  A share that is PROVEN unusable fails LOUD as a `failed` attempt so the agent
    *  switches candidates at once (dead 201, malformed 112/200, unlistable — the empty
-   *  list half the real PanSou links return — or a task that never finishes). Auth
+   *  list half the real PanSou links return — or a task that reports a non-running
+   *  failure status). A restore still RUNNING when the poll window ends is NOT dead:
+   *  there is no cancel call and it may land later, so it comes back as
+   *  `no_target_change` (GUANGYA_RESTORE_TIMEOUT) — transferUntilLanded stops on
+   *  that instead of restoring the next share and double-landing the film. Auth
    *  errors are rethrown so the worker freezes the drive. */
   private async transferShare(input: {
     workflowRunId: string;
