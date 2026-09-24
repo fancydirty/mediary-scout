@@ -365,7 +365,9 @@ describe("runAcquisitionAgent — the real AI SDK tool-loop over the sandbox", (
         calls += 1;
         if (calls === 1) {
           return {
-            content: [{ type: "tool-call" as const, toolCallId: "t", toolName: "deleteFiles", input: JSON.stringify({ fileIds: ["nope"] }) }],
+            // A harmless observation step before the interruption (the test is about the
+            // transfer evidence, not about what this first step does).
+            content: [{ type: "tool-call" as const, toolCallId: "t", toolName: "inspectStaging", input: "{}" }],
             finishReason: { unified: "tool-calls" as const, raw: "tool-calls" as const },
             usage: USAGE,
             warnings: [],
