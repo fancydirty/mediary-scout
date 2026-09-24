@@ -314,7 +314,7 @@ describe("handleWorkflowRunFailure — model content-filter before any transfer"
 describe("handleWorkflowRunFailure — stdout trail", () => {
   it("logs one secret-safe line per failure (the 出入平安 cause was only recoverable from dead heap tuples)", async () => {
     const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
-    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       await handleWorkflowRunFailure({
         claimed: snapshot(),
@@ -332,6 +332,23 @@ describe("handleWorkflowRunFailure — stdout trail", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe("handleWorkflowRunFailure — terminal failure push is redacted", () => {
+  it("a non-retried failure never pushes a raw token, but the run row keeps the raw message", async () => {
+    const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
+    await handleWorkflowRunFailure({
+      claimed: snapshot(),
+      error: new Error("PAN123_FAILED(/x): code=5 bad cookie=UID_abcdefghijkl"),
+      repository: { saveWorkflowRunSnapshot: save },
+      now,
+    });
+    const saved = save.mock.calls[0]![0];
+    expect(saved.workflowRun.status).toBe("failed");
+    const push = [saved.notifications[0]!.body, ...(saved.notifications[0]!.report?.lines ?? [])].join("\n");
+    expect(push).not.toContain("UID_abcdefghijkl");
+    expect(push).toContain("PAN123_FAILED");
   });
 });
 

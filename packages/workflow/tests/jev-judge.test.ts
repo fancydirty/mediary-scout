@@ -132,6 +132,9 @@ describe("prefilter legend and all-dropped warning", () => {
     expect(w).not.toContain("全部剔除");
     expect(w).toContain("不是搜索源故障");
     expect(w).toContain("reportNoCoverage");
+    // The count includes adult-content removals (real-provider-adapter adds nsfwDropped),
+    // so the stated reason must cover them too — an all-porn result is not "wrong work".
+    expect(w).toContain("色情/成人内容");
   });
 });
 

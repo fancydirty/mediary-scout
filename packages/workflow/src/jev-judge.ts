@@ -222,5 +222,5 @@ export const JEV_UNCERTAIN_LEGEND =
  *  result: dead-link filtering runs after the prefilter and can remove the rest, so
  *  「全部剔除」 would be an assertion the caller cannot actually make. */
 export function jevAllDroppedWarning(dropped: number): string {
-  return `本次搜索的候选中有 ${dropped} 个被系统按片名预筛剔除(同名/近名的其它作品或无关资源),剩余为空。这不是搜索源故障;可换 繁体/英文/原名 关键词再搜,若确认没有再 reportNoCoverage。`;
+  return `本次搜索的候选中有 ${dropped} 个被系统按片名预筛剔除(同名/近名的其它作品、无关资源或色情/成人内容),剩余为空。这不是搜索源故障;可换 繁体/英文/原名 关键词再搜,若确认没有再 reportNoCoverage。`;
 }

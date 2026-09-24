@@ -245,7 +245,9 @@ export async function handleWorkflowRunFailure(input: {
     workflowRun = failWorkflowRun(claimedRun, errorMessage, nowIso);
     report = failureReport(claimed, "failed", [
       transient ? `网络中断,已自动重试 ${priorCount} 次仍失败` : "获取失败",
-      errorMessage,
+      // Pushed verbatim by formatReportPushText, so the same redaction as the retry
+      // line; the raw message stays in the run row (failWorkflowRun) for forensics.
+      summarizeErrorForNotification(errorMessage),
     ]);
   }
   const notification: NotificationEvent = {
@@ -286,10 +288,11 @@ export async function handleWorkflowRunFailure(input: {
     error,
     ...(input.onAuthErrorFreeze === undefined ? {} : { onAuthErrorFreeze: input.onAuthErrorFreeze }),
   });
-  // One stdout line per failure. Without it the only trace is the run row, which a
-  // user retry/cancel deletes — the 《出入平安》 timeout cause (2026-09-24) had to be
-  // dug out of dead Postgres heap tuples. Same redaction as the push line.
-  console.error(
+  // One stdout line per failure (console.log — stdout, beside the worker's other
+  // lines). Without it the only trace is the run row, which a user retry/cancel
+  // deletes — the 《出入平安》 timeout cause (2026-09-24) had to be dug out of dead
+  // Postgres heap tuples. Same redaction as the push line.
+  console.log(
     `[workflow] run ${claimed.workflowRun.id} ${claimed.workflowRun.kind} ${willRetry ? "auto_requeued" : "failed"}` +
       ` (storage ${claimed.connectedStorageId ?? "-"}): ${summarizeErrorForNotification(errorMessage)}`,
   );
