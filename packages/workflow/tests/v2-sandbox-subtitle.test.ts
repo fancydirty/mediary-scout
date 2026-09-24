@@ -165,6 +165,43 @@ describe("transferSubtitle", () => {
     expect(result.error).toMatch(/续签|刷新|refresh|未匹配|missing/i);
   });
 
+  it("keeps earlier landings when a later detail refresh throws", async () => {
+    const provider = new FakeResourceProviderV2({ results: { title: [] } });
+    const storage = new Storage115Simulator({ packs: {} });
+    const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
+    const files = Array.from({ length: SUBTITLE_RENEWAL_CHUNK_SIZE + 1 }, (_, index) => ({
+      filename: `Show.S01E${String(index + 1).padStart(2, "0")}.ass`,
+      url: `https://assrt.test/old/${index}`,
+    }));
+    let detailCalls = 0;
+    const batches: string[][] = [];
+    storage.transferSubtitleUrls = async (input) => {
+      batches.push(input.files.map((file) => file.filename));
+      return input.files.map((file, index) => ({
+        filename: file.filename,
+        status: "succeeded" as const,
+        materializedFileIds: [`f-${index}`],
+      }));
+    };
+    const assrt = makeAssrtProvider([{ id: 23, title: "Show", lang: "简" }], {});
+    assrt.detail = async () => {
+      detailCalls += 1;
+      if (detailCalls > 1) throw new Error("temporary assrt outage");
+      return files;
+    };
+    const sandbox = new TaskSandbox({ provider, storage, stagingDirectoryId, targetSeasonDirectoryIds: {}, need: [] });
+    await sandbox.primeSubtitleSnapshot("Show", assrt);
+
+    const result = await sandbox.transferSubtitle({ candidateId: 23 });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.landedFilenames).toHaveLength(SUBTITLE_RENEWAL_CHUNK_SIZE);
+    expect(batches).toHaveLength(1);
+    expect(detailCalls).toBe(2);
+    expect(result.unattemptedCount).toBe(1);
+    expect(result.error).toMatch(/续签|刷新|refresh/i);
+  });
+
   it("resolves the candidate's detail filelist and hands the WHOLE package to storage.transferSubtitleUrls in ONE call", async () => {
     const provider = new FakeResourceProviderV2({ results: { title: [] } });
     class CountingBatch extends Storage115Simulator {
