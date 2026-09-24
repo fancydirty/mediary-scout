@@ -14,6 +14,7 @@ import { animeSearchTabooWarnings, type SearchProfile } from "./search-profile.j
 import type { AuditEvent } from "../domain.js";
 import { isMergedSourceEvidenceUsable, type MergedSourceHealth } from "../resource-source-health.js";
 import { JEV_UNCERTAIN_LEGEND, jevAllDroppedWarning, jevUncertaintyFlag } from "../jev-judge.js";
+import { indexSubtitleFiles, selectSubtitleChunk } from "./subtitle-renewal.js";
 
 /** Quality / subtitle / source tokens that PanSou share titles almost never carry,
  *  so appending them collapses recall (实测归零). Case-insensitive; word-ish so
@@ -23,6 +24,8 @@ const QUALITY_SUBTITLE_TOKEN =
   /\b(?:4k|2160p|1080p|720p|hdr|dv|remux|web-?dl|bluray|bdrip)\b|蓝光|中字|国语|双语|字幕/gi;
 
 const SUBTITLE_NAME_PATTERN = /\.(srt|ass|ssa|sub|idx|vtt|sup|smi)$/i;
+
+export const SUBTITLE_RENEWAL_CHUNK_SIZE = 24;
 
 const STRIP_NOTICE =
   "已从关键词移除画质/字幕词(如 4K/1080p/蓝光/中字/字幕):PanSou 是通配符匹配,加这些只会把召回打成子集或归零,raw 裸标题召回最全。已改用裸标题搜索。";
@@ -947,13 +950,19 @@ export class TaskSandbox {
   }
 
   /** Land a chosen subtitle package's files into staging via the 115 offline-task
-   *  path. Resolves the package's filelist via detail(), hands the whole package
-   *  to storage.transferSubtitleUrls, returns the filenames that actually landed. The
-   *  agent then renames them (moveToSeason/flattenMovie) to ride beside the video.
-   *  Soft-fails: empty filelist → {status:"failed", landedFilenames:[]}. */
+   *  path. Refreshes assrt detail() before each bounded chunk so short-lived URLs
+   *  are never reused after they age out. The agent then renames landed files
+   *  (moveToSeason/flattenMovie) to ride beside the video. */
   async transferSubtitle(input: {
     candidateId: number;
-  }): Promise<{ status: "succeeded" | "failed"; landedFilenames: string[]; error?: string }> {
+  }): Promise<{
+    status: "succeeded" | "failed";
+    landedFilenames: string[];
+    error?: string;
+    chunksProcessed: number;
+    chunksTotal: number;
+    unattemptedCount: number;
+  }> {
     if (!this.storage || !this.stagingDirectoryId) {
       throw new Error("SANDBOX: no storage/staging handle configured for subtitle transfer");
     }
@@ -969,10 +978,10 @@ export class TaskSandbox {
     try {
       files = await this.subtitleProvider.detail(input.candidateId);
     } catch {
-      return { status: "failed", landedFilenames: [] };
+      return { status: "failed", landedFilenames: [], chunksProcessed: 0, chunksTotal: 0, unattemptedCount: 0 };
     }
     if (files.length === 0) {
-      return { status: "failed", landedFilenames: [] };
+      return { status: "failed", landedFilenames: [], chunksProcessed: 0, chunksTotal: 0, unattemptedCount: 0 };
     }
     // Boundary guard (same class as the rename guard): only subtitle-extension
     // files may ride the landing pipeline. assrt's detail() can return a
@@ -990,38 +999,77 @@ export class TaskSandbox {
       return {
         status: "failed",
         landedFilenames: [],
+        chunksProcessed: 0,
+        chunksTotal: 0,
+        unattemptedCount: 0,
         error:
           "该字幕包没有可直接落盘的字幕文件(整包压缩包 zip/rar 落盘也无法使用)——换一个候选,或放弃字幕(软目标,不阻塞视频)。",
       };
     }
-    // The WHOLE package goes to storage in one call: the storage layer knows what a
-    // landing costs on its brand (115 submits everything then polls the dir once per
-    // round; a per-file brand loops under its own consecutive-failure abort), the
-    // sandbox only reads back per-file outcomes. The 2026-09-20 LIAR GAME run spent
-    // 260 of its 300 115 calls looping this per file — the wrap-up then hit the hard
-    // limit with 15 episodes still in staging. Storage OWNS soft-failing (a landing
-    // problem comes back as status "failed" per file); a throw out of
-    // transferSubtitleUrls is a contract violation (batch arity / no subtitle
-    // support), not a landing failure, and is deliberately left to surface.
-    const results = await this.storage.transferSubtitleUrls({
-      files: subtitleFiles.map((file) => ({ url: file.url, filename: file.filename })),
-      intoDirectoryId: this.stagingDirectoryId,
-    });
-    // The name each file REALLY landed under when storage knows it (123 lands a taken name
-    // as name(1).ext) — the agent reads staging by these names; the package name would
-    // point it at a file this call did not produce.
-    const landedFilenames = results
-      .filter((result) => result.status === "succeeded")
-      .map((result) => result.landedFilename ?? result.filename);
-    // Surface WHY (the last failure's message — for a per-file abort that is the
-    // "已连续 N 个失败,提前中止" notice) so the agent can decide, never retry blindly.
-    let lastError = [...results].reverse().find((result) => result.status !== "succeeded" && result.providerMessage)?.providerMessage;
+    const initial = indexSubtitleFiles(subtitleFiles);
+    const pending = new Set(initial.map((file) => file.key));
+    const chunksTotal = Math.ceil(initial.length / SUBTITLE_RENEWAL_CHUNK_SIZE);
+    let chunksProcessed = 0;
+    let unattemptedCount = 0;
+    const landedFilenames: string[] = [];
+    let lastError: string | undefined;
+
+    while (pending.size > 0) {
+      let selected: ReturnType<typeof selectSubtitleChunk>["selected"];
+      let missing: string[];
+      if (chunksProcessed === 0) {
+        ({ selected, missing } = selectSubtitleChunk(initial, initial, pending, SUBTITLE_RENEWAL_CHUNK_SIZE));
+      } else {
+        let refreshedFiles: AssrtSubtitleFile[];
+        try {
+          refreshedFiles = await this.subtitleProvider.detail(input.candidateId);
+        } catch {
+          lastError = "字幕链接续签失败：无法刷新 assrt detail，已停止后续字幕块。";
+          break;
+        }
+        const refreshed = indexSubtitleFiles(
+          refreshedFiles.filter(
+            (file) => SUBTITLE_NAME_PATTERN.test(file.filename) && !file.filename.startsWith("._"),
+          ),
+        );
+        ({ selected, missing } = selectSubtitleChunk(initial, refreshed, pending, SUBTITLE_RENEWAL_CHUNK_SIZE));
+        if (selected.length === 0) {
+          lastError = "字幕链接续签后没有匹配的文件，已停止后续字幕块。";
+          break;
+        }
+      }
+
+      if (missing.length > 0) {
+        unattemptedCount += missing.length;
+        lastError = `字幕链接续签后 ${missing.length} 个文件不再存在，未复用旧链接。`;
+      }
+      for (const key of [...missing, ...selected.map((file) => file.key)]) pending.delete(key);
+
+      // Storage owns brand-specific soft failure, budget, and auth semantics. A
+      // throw remains loud; the sandbox only renews links and aggregates results.
+      const results = await this.storage.transferSubtitleUrls({
+        files: selected.map((file) => ({ url: file.url, filename: file.filename })),
+        intoDirectoryId: this.stagingDirectoryId,
+      });
+      chunksProcessed += 1;
+      for (const result of results) {
+        if (result.status === "succeeded") landedFilenames.push(result.landedFilename ?? result.filename);
+      }
+      const providerError = [...results]
+        .reverse()
+        .find((result) => result.status !== "succeeded" && result.providerMessage)?.providerMessage;
+      if (providerError !== undefined) lastError = providerError;
+    }
+
     if (landedFilenames.length === 0 && lastError === undefined) {
       lastError = "subtitle transfer failed (no files landed, no provider message)";
     }
     return {
       status: landedFilenames.length > 0 ? "succeeded" : "failed",
       landedFilenames,
+      chunksProcessed,
+      chunksTotal,
+      unattemptedCount: unattemptedCount + pending.size,
       ...(lastError ? { error: lastError } : {}),
     };
   }

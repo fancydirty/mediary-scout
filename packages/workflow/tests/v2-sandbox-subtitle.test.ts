@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { TaskSandbox } from "../src/acquisition-v2/sandbox.js";
+import { SUBTITLE_RENEWAL_CHUNK_SIZE, TaskSandbox } from "../src/acquisition-v2/sandbox.js";
 import { FakeResourceProviderV2 } from "../src/acquisition-v2/fake-provider.js";
 import { Storage115Simulator, type TransferAttemptResult } from "../src/acquisition-v2/storage-115-simulator.js";
 import { Pan115AuthError } from "../src/pan115-cookie-client.js";
@@ -84,6 +84,87 @@ describe("subtitle snapshot pre-warming + view", () => {
 });
 
 describe("transferSubtitle", () => {
+  it("renews detail before each later chunk and never reuses the old URLs", async () => {
+    const provider = new FakeResourceProviderV2({ results: { title: [] } });
+    const storage = new Storage115Simulator({ packs: {} });
+    const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
+    const files = Array.from({ length: SUBTITLE_RENEWAL_CHUNK_SIZE + 1 }, (_, index) => ({
+      filename: `Show.S01E${String(index + 1).padStart(2, "0")}.ass`,
+      url: `https://assrt.test/old/${index}`,
+    }));
+    const freshFiles = files.map((file, index) => ({ ...file, url: `https://assrt.test/fresh/${index}` }));
+    let detailCalls = 0;
+    const batches: Array<Array<{ filename: string; url: string }>> = [];
+    storage.transferSubtitleUrls = async (input) => {
+      batches.push(input.files);
+      return input.files.map((file, index) => ({
+        filename: file.filename,
+        status: "succeeded" as const,
+        materializedFileIds: [`f-${batches.length}-${index}`],
+      }));
+    };
+    const assrt = makeAssrtProvider(
+      [{ id: 713570, title: "Show", lang: "简" }],
+      {},
+    );
+    assrt.detail = async () => {
+      detailCalls += 1;
+      return detailCalls === 1 ? files : freshFiles;
+    };
+    const sandbox = new TaskSandbox({ provider, storage, stagingDirectoryId, targetSeasonDirectoryIds: {}, need: [] });
+    await sandbox.primeSubtitleSnapshot("Show", assrt);
+
+    const result = await sandbox.transferSubtitle({ candidateId: 713570 });
+
+    expect(result.status).toBe("succeeded");
+    expect(detailCalls).toBe(2);
+    expect(batches).toHaveLength(2);
+    expect(batches[0]).toHaveLength(SUBTITLE_RENEWAL_CHUNK_SIZE);
+    expect(batches[1]).toHaveLength(1);
+    expect(batches[0]!.every((file) => file.url.includes("/old/"))).toBe(true);
+    expect(batches[1]![0]!.url).toBe("https://assrt.test/fresh/24");
+    expect(JSON.stringify(result)).not.toContain("https://assrt.test/");
+    expect(result.chunksProcessed).toBe(2);
+    expect(result.chunksTotal).toBe(2);
+  });
+
+  it("stops after a refresh has no matching pending file and keeps earlier landings", async () => {
+    const provider = new FakeResourceProviderV2({ results: { title: [] } });
+    const storage = new Storage115Simulator({ packs: {} });
+    const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
+    const files = Array.from({ length: SUBTITLE_RENEWAL_CHUNK_SIZE + 1 }, (_, index) => ({
+      filename: `Show.S01E${String(index + 1).padStart(2, "0")}.ass`,
+      url: `https://assrt.test/old/${index}`,
+    }));
+    let detailCalls = 0;
+    const batches: string[][] = [];
+    storage.transferSubtitleUrls = async (input) => {
+      batches.push(input.files.map((file) => file.filename));
+      return input.files.map((file, index) => ({
+        filename: file.filename,
+        status: "succeeded" as const,
+        materializedFileIds: [`f-${index}`],
+        landedFilename: `landed-${file.filename}`,
+      }));
+    };
+    const assrt = makeAssrtProvider([{ id: 22, title: "Show", lang: "简" }], {});
+    assrt.detail = async () => {
+      detailCalls += 1;
+      return detailCalls === 1 ? files : files.slice(0, SUBTITLE_RENEWAL_CHUNK_SIZE);
+    };
+    const sandbox = new TaskSandbox({ provider, storage, stagingDirectoryId, targetSeasonDirectoryIds: {}, need: [] });
+    await sandbox.primeSubtitleSnapshot("Show", assrt);
+
+    const result = await sandbox.transferSubtitle({ candidateId: 22 });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.landedFilenames).toHaveLength(SUBTITLE_RENEWAL_CHUNK_SIZE);
+    expect(batches).toHaveLength(1);
+    expect(detailCalls).toBe(2);
+    expect(result.unattemptedCount).toBe(1);
+    expect(result.error).toMatch(/续签|刷新|refresh|未匹配|missing/i);
+  });
+
   it("resolves the candidate's detail filelist and hands the WHOLE package to storage.transferSubtitleUrls in ONE call", async () => {
     const provider = new FakeResourceProviderV2({ results: { title: [] } });
     class CountingBatch extends Storage115Simulator {
@@ -247,7 +328,14 @@ describe("transferSubtitle", () => {
 
     const result = await sandbox.transferSubtitle({ candidateId: 11 });
 
-    expect(result).toEqual({ status: "failed", landedFilenames: [], error: "WRITE_SCOPE_VIOLATION: refusing to transfer subtitle outside configured write scope" });
+    expect(result).toEqual({
+      status: "failed",
+      landedFilenames: [],
+      error: "WRITE_SCOPE_VIOLATION: refusing to transfer subtitle outside configured write scope",
+      chunksProcessed: 1,
+      chunksTotal: 1,
+      unattemptedCount: 0,
+    });
   });
 });
 
