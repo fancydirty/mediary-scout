@@ -208,11 +208,13 @@ describe("RealStorageV2 — StorageExecutor → StorageV2 adapter", () => {
     registry.record({ ...candidate("stianyi_web"), type: "tianyi", providerPayload: { url: "https://cloud.189.cn/web/share?code=AbCd12&pwd=1234" } });
     registry.record({ ...candidate("s123"), type: "123", providerPayload: { url: "https://www.123pan.com/s/abc-1?pwd=x8fd" } });
     registry.record({ ...candidate("s123_mirror"), type: "123", providerPayload: { url: "https://123684.com/s/Kd9-TvBq?password=1234" } });
+    // 光鸭分享链 fails loud too (201 分享已失效 / GUANGYA_SHARE_EMPTY come back at once).
+    registry.record({ ...candidate("sguangya"), type: "guangya", providerPayload: { url: "https://www.guangyapan.com/s/1947864096514232347_amtV6IXLP9l33m6z" } });
     // silent-fail magnet and unrecognized hosts stay out
     registry.record({ ...candidate("mag"), type: "magnet", providerPayload: { url: "magnet:?xt=urn:btih:deadbeef" } });
     registry.record({ ...candidate("weird"), providerPayload: { url: "https://pan.baidu.com/s/1abcDEF" } });
 
-    for (const id of ["s115", "s115b", "squark", "stianyi", "stianyi_web", "s123", "s123_mirror"]) {
+    for (const id of ["s115", "s115b", "squark", "stianyi", "stianyi_web", "s123", "s123_mirror", "sguangya"]) {
       expect(storage.candidateLinkKind(id)).toBe("share");
     }
     expect(storage.candidateLinkKind("mag")).toBe("magnet");

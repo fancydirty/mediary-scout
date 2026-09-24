@@ -10,8 +10,12 @@ describe("allowedResourceTypesForKinds", () => {
     expect(allowedResourceTypesForKinds(getStorageBrand("quark").resourceProviderKinds)).toEqual(["quark"]);
   });
 
-  it("maps a 光鸭(magnet) brand's kinds to magnet-only links", () => {
-    expect(allowedResourceTypesForKinds(getStorageBrand("guangya").resourceProviderKinds)).toEqual(["magnet"]);
+  it("maps a 光鸭 brand's kinds to its own share links + magnet (dual path since 2026-09)", () => {
+    expect(allowedResourceTypesForKinds(getStorageBrand("guangya").resourceProviderKinds)).toEqual(["guangya", "magnet"]);
+    // A custom kind set with only the share source stays share-only.
+    expect(allowedResourceTypesForKinds(["pansou-guangya"])).toEqual(["guangya"]);
+    // The legacy magnet-only kind set (pre-share installs) keeps working.
+    expect(allowedResourceTypesForKinds(["pansou-magnet", "prowlarr"])).toEqual(["magnet"]);
   });
 
   it("maps a 115 brand's kinds to 115 + magnet", () => {

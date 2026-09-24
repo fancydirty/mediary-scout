@@ -118,6 +118,22 @@ export function parseGuangYaUid(accessToken: string): string | null {
   }
 }
 
+/**
+ * Parse a 光鸭 share link. The shareId is the WHOLE path segment after /s/
+ * (`1947864096514232347_amtV6IXLP9l33m6z` — splitting on "_" is rejected with 112
+ * 参数错误, real probe 2026-09-24). The 提取码 rides in `?pwd=` / `?code=`.
+ * Returns null for anything that is not a 光鸭 share URL.
+ */
+export function parseGuangYaShareUrl(url: string): { shareId: string; code: string } | null {
+  const noFragment = url.split("#")[0] ?? url;
+  const m = /^https?:\/\/(?:www\.)?guangyapan\.com\/s\/([0-9A-Za-z_-]+)/.exec(noFragment);
+  if (!m?.[1]) {
+    return null;
+  }
+  const params = new URLSearchParams(noFragment.split("?")[1] ?? "");
+  return { shareId: m[1], code: params.get("pwd") ?? params.get("code") ?? params.get("password") ?? "" };
+}
+
 export class GuangYaClient {
   private accessToken: string;
   private refreshToken: string;
@@ -237,6 +253,73 @@ export class GuangYaClient {
       throw new Error("GUANGYA_CREATE_TASK_FAILED: response missing data.taskId");
     }
     return taskId;
+  }
+
+  // ── 分享链转存 ──────────────────────────────────────────────────────────────
+  // Protocol from github.com/BugGeeker/guangyaclient-go (2026-09-20) + the official
+  // web bundle, verified against the real drive 2026-09-24 (docs/claude-memory/
+  // guangya-share-transfer-api.md). All calls ride postAPI (Bearer + Did + Dt:4,
+  // 401 → refresh once) — the share endpoints accept the logged-in headers.
+
+  /** Exchange (shareId, 提取码) for a share accessToken. A dead share comes back as
+   *  a business code (201 分享已失效 / 200 分享链接错误 / 112 参数错误) with HTTP 200,
+   *  which postAPI already turns into a loud GUANGYA_API_FAILED carrying the msg. */
+  async getShareAccessToken(shareId: string, code: string): Promise<string> {
+    const data = await this.postAPI("/userres/v1/get_share_access_token", { shareId, code });
+    const token = stringValue(recordValue(data, "accessToken"));
+    if (!token) {
+      throw new Error("GUANGYA_SHARE_TOKEN_FAILED: response missing data.accessToken");
+    }
+    return token;
+  }
+
+  /** List one directory of a share (parentId "" = share root). Cursor mode, exactly
+   *  the web client's body; `cursor` MUST be a number (a string is rejected with a
+   *  bind error). A response with no `list` is an empty page — seen on half of the
+   *  real shares probed, where summary and token succeed but nothing is listable. */
+  async listShareFiles(
+    accessToken: string,
+    parentId: string,
+    options: { pageSize?: number; maxPages?: number } = {},
+  ): Promise<GuangYaItem[]> {
+    const pageSize = options.pageSize ?? DEFAULT_LIST_PAGE_SIZE;
+    const maxPages = options.maxPages ?? 20;
+    const items: GuangYaItem[] = [];
+    let cursor: number | undefined;
+    for (let page = 0; page < maxPages; page += 1) {
+      const body: Record<string, unknown> = { pageSize, accessToken, orderBy: 0, sortType: 0, parentId };
+      if (cursor !== undefined) body.cursor = cursor;
+      const data = await this.postAPI("/userres/v1/get_share_page_files_list", body);
+      const list = arrayValue(recordValue(data, "list")).filter(isRecord);
+      for (const raw of list) items.push(toItem(raw));
+      const next = numberValue(recordValue(data, "cursor"));
+      const total = numberValue(recordValue(data, "total"));
+      const hasMore = recordValue(data, "hasMore") === true || (total > 0 && items.length < total);
+      if (list.length === 0 || !hasMore || next <= 0 || next === cursor) break;
+      cursor = next;
+    }
+    return items;
+  }
+
+  /** Save share files into our `parentId`; returns the restore taskId. Folder ids are
+   *  restored whole (a folder share landed its 92GB file in ~4s on the real drive). */
+  async restoreShare(input: { accessToken: string; fileIds: string[]; parentId: string }): Promise<string> {
+    const data = await this.postAPI("/userres/v1/restore_share", {
+      accessToken: input.accessToken,
+      fileIds: input.fileIds,
+      parentId: input.parentId,
+    });
+    const taskId = stringValue(recordValue(data, "taskId"));
+    if (!taskId) {
+      throw new Error("GUANGYA_RESTORE_SHARE_FAILED: response missing data.taskId");
+    }
+    return taskId;
+  }
+
+  /** Status of a file task (restore/copy/move/delete): 1 = running, 2 = done. */
+  async getTaskStatus(taskId: string): Promise<{ status: number }> {
+    const data = await this.postAPI("/userres/v1/get_task_status", { taskId });
+    return { status: numberValue(recordValue(data, "status")) };
   }
 
   /** Poll the status/progress of offline tasks. */

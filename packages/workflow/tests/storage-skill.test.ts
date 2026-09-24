@@ -18,17 +18,17 @@ describe("brand-aware storage skill", () => {
     expect(pan115).not.toContain("41006"); // 115 has no quark codes
   });
 
-  it("getStorageSkill('guangya') teaches the magnet/offline-task model and does NOT throw", () => {
+  it("getStorageSkill('guangya') teaches the dual 光鸭分享 + 磁力/离线 model and does NOT throw", () => {
     const guangya = getStorageSkill("guangya");
     expect(guangya).toBeTruthy();
-    expect(guangya.length).toBeGreaterThan(0);
-    // magnet/offline drive: candidates are magnets resolved → offline task → poll
-    expect(guangya).toMatch(/磁力|magnet/i);
     expect(guangya).toMatch(/光鸭/);
-    // a 115/quark/光鸭 SHARE link is rejected loud on this magnet-only drive
-    expect(guangya).toContain("GUANGYA_ONLY_MAGNET");
-    // must NOT mislead with 115-only 秒传 wording
-    expect(guangya).not.toMatch(/秒传/);
+    // two paths: its own share links (restore_share) and magnets (offline task)
+    expect(guangya).toContain("guangyapan.com/s/");
+    expect(guangya).toMatch(/磁力|magnet/i);
+    // the loud share failures + other brands' shares cannot land
+    expect(guangya).toContain("GUANGYA_SHARE_EMPTY");
+    expect(guangya).toContain("GUANGYA_UNSUPPORTED_LINK");
+    expect(guangya).not.toContain("GUANGYA_ONLY_MAGNET");
     // must NOT carry quark fail-loud codes
     expect(guangya).not.toContain("41006");
   });

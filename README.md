@@ -102,7 +102,7 @@ Five Chinese cloud drives, each a first-class workspace — ordered by how many 
 - **Quark / 夸克** (`quark`) — share-link transfer (no magnet web API). The largest share pool on PanSou by far.
 - **123网盘** (`pan123`) — **dual-path like 115**: share-link transfer (`123pan.com/s/…`) **and** magnets via its native offline-download API (resolve → submit → poll). A magnet is a magnet — whether it came from PanSou or a Prowlarr indexer. QR login (~90-day token) or paste a token. Free accounts can transfer (server-side copy costs no download quota). **[Setup guide](docs/deploy.md#123网盘连接)**
 - **115** (`pan115`) — full support: 115 share links **and** magnets (built-in offline path, plus Prowlarr).
-- **GuangYaPan / 光鸭云盘** (`guangya`) — Xunlei-family drive; **magnet / offline-download only** (transfers magnet/ed2k/BT via its offline-task API — it does **not** transfer share links in v1). Token auth. Pairs well with Prowlarr. **[Setup guide](docs/deploy.md#光鸭云盘guangyapan连接)**
+- **GuangYaPan / 光鸭云盘** (`guangya`) — Xunlei-family drive; dual path like 115/123: its own share links (`guangyapan.com/s/…`, saved server-side) and magnet/ed2k/BT via its offline-task API. Token auth. Many PanSou 光鸭 shares open but list no files, so Prowlarr still helps. **[Setup guide](docs/deploy.md#光鸭云盘guangyapan连接)**
 - **Tianyi / 天翼云盘** (`tianyi`) — share-link transfer (`cloud.189.cn/t/…`); QR login or paste an SSON cookie. Smallest share pool on PanSou today (weak for movies, workable for shows/anime). **[Setup guide](docs/deploy.md#天翼云盘连接)**
 
 Measured share volume per drive (2026-07 point-in-time sample: six popular titles across movie / drama / anime, one PanSou instance with curated channels — your channels will vary):

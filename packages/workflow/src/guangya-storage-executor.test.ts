@@ -75,7 +75,7 @@ describe("GuangYaStorageExecutor.transfer", () => {
     expect(attempt.id).toBe("run-1_transfer_1");
   });
 
-  it("fails LOUD on a non-magnet share link (GUANGYA_ONLY_MAGNET)", async () => {
+  it("fails LOUD on a share link of ANOTHER brand (夸克/115 cannot land on 光鸭)", async () => {
     const client = fakeClient();
     const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [SCOPE] });
     await expect(
@@ -84,11 +84,10 @@ describe("GuangYaStorageExecutor.transfer", () => {
         directoryId: SCOPE,
         candidate: candidate({
           type: "quark" as ResourceType,
-          providerPayload: { url: "https://www.guangyapan.com/s/abc" },
+          providerPayload: { url: "https://pan.quark.cn/s/abc" },
         }),
       }),
-    ).rejects.toThrow(/GUANGYA_ONLY_MAGNET/);
-    expect(client.createTask).not.toHaveBeenCalled();
+    ).rejects.toThrow(/GUANGYA_UNSUPPORTED_LINK/);
   });
 
   it("returns failed (not throw) when resolveRes throws on a dead magnet", async () => {
@@ -665,5 +664,100 @@ describe("GuangYaStorageExecutor.transferSubtitleUrl poll window (真机 2026-07
     await executor.transfer({ workflowRunId: "run-1", directoryId: SCOPE, candidate: candidate() });
 
     expect(listTask).toHaveBeenCalledTimes(5);
+  });
+});
+
+describe("GuangYaStorageExecutor.transfer — 光鸭分享链转存", () => {
+  const SHARE = "https://www.guangyapan.com/s/1947711943535464528_adyMyMAqF4UM3vSl";
+  const share = (url = SHARE) => candidate({ type: "guangya" as ResourceType, providerPayload: { url } });
+  function shareClient(opts: {
+    list?: GuangYaStorageItem[];
+    token?: () => Promise<string>;
+    statuses?: number[];
+    after?: GuangYaStorageItem[];
+  } = {}) {
+    const statuses = [...(opts.statuses ?? [2])];
+    const listFiles = vi
+      .fn<GuangYaStorageClient["listFiles"]>()
+      .mockResolvedValueOnce([])
+      .mockResolvedValue(opts.after ?? [{ fileId: "landed-dir", parentId: SCOPE, fileName: "[沙]丘 (2021)", fileSize: 0, resType: 2 }]);
+    const client = fakeClient({
+      listFiles,
+      getShareAccessToken: vi.fn(opts.token ?? (async () => "sat")),
+      listShareFiles: vi.fn(async () => opts.list ?? [{ fileId: "sf1", parentId: "p", fileName: "[沙]丘 (2021)", fileSize: 0, resType: 2 }]),
+      restoreShare: vi.fn(async () => "rt1"),
+      getTaskStatus: vi.fn(async () => ({ status: statuses.shift() ?? 2 })),
+    });
+    return client as GuangYaStorageClient & Required<Pick<GuangYaStorageClient, "getShareAccessToken" | "listShareFiles" | "restoreShare" | "getTaskStatus">>;
+  }
+
+  it("token → list root → restore every root item into the staging dir → poll → succeeded with landed video ids", async () => {
+    const client = shareClient({
+      after: [{ fileId: "v9", parentId: SCOPE, fileName: "Dune.2021.2160p.mkv", fileSize: 92 * 1024 ** 3, resType: 1 }],
+    });
+    const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [SCOPE], taskPollIntervalMs: 0 });
+    const attempt = await executor.transfer({ workflowRunId: "run-1", directoryId: SCOPE, candidate: share(`${SHARE}?pwd=ab`) });
+    expect(client.getShareAccessToken).toHaveBeenCalledWith("1947711943535464528_adyMyMAqF4UM3vSl", "ab");
+    expect(client.listShareFiles).toHaveBeenCalledWith("sat", "");
+    expect(client.restoreShare).toHaveBeenCalledWith({ accessToken: "sat", fileIds: ["sf1"], parentId: SCOPE });
+    expect(client.createTask).not.toHaveBeenCalled();
+    expect(attempt.status).toBe("succeeded");
+    expect(attempt.materializedFileIds).toEqual(["v9"]);
+  });
+
+  it("an unlistable share (summary+token ok, list empty — half the real PanSou links) is a LOUD failed attempt, no restore", async () => {
+    const client = shareClient({ list: [] });
+    const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [SCOPE], taskPollIntervalMs: 0 });
+    const attempt = await executor.transfer({ workflowRunId: "run-1", directoryId: SCOPE, candidate: share() });
+    expect(client.restoreShare).not.toHaveBeenCalled();
+    expect(attempt.status).toBe("failed");
+    expect(attempt.providerMessage).toMatch(/GUANGYA_SHARE_EMPTY/);
+  });
+
+  it("PanSou's password field wins over a code in the url", async () => {
+    const client = shareClient({ after: [{ fileId: "v1", parentId: SCOPE, fileName: "a.mkv", fileSize: 5e8, resType: 1 }] });
+    const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [SCOPE], taskPollIntervalMs: 0 });
+    await executor.transfer({
+      workflowRunId: "run-1",
+      directoryId: SCOPE,
+      candidate: candidate({ type: "guangya" as ResourceType, providerPayload: { url: `${SHARE}?pwd=old`, password: "fresh" } }),
+    });
+    expect(client.getShareAccessToken).toHaveBeenCalledWith("1947711943535464528_adyMyMAqF4UM3vSl", "fresh");
+  });
+
+  it("a dead share (token call rejects with the server msg) is a failed attempt carrying that msg", async () => {
+    const client = shareClient({ token: async () => { throw new Error("GUANGYA_API_FAILED: /userres/v1/get_share_access_token status=200 msg=分享已失效"); } });
+    const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [SCOPE], taskPollIntervalMs: 0 });
+    const attempt = await executor.transfer({ workflowRunId: "run-1", directoryId: SCOPE, candidate: share() });
+    expect(attempt.status).toBe("failed");
+    expect(attempt.providerMessage).toContain("分享已失效");
+  });
+
+  it("a restore task that never finishes in the window is a loud failure, not a silent success", async () => {
+    const client = shareClient({ statuses: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1] });
+    const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [SCOPE], taskPollIntervalMs: 0, taskPollMaxPolls: 3 });
+    const attempt = await executor.transfer({ workflowRunId: "run-1", directoryId: SCOPE, candidate: share() });
+    expect(attempt.status).toBe("failed");
+    expect(attempt.providerMessage).toMatch(/GUANGYA_RESTORE_TIMEOUT/);
+  });
+
+  it("restore finished but no new video in the target is no_target_change (e.g. a share of only zips)", async () => {
+    const client = shareClient({ after: [{ fileId: "z", parentId: SCOPE, fileName: "game.zip", fileSize: 5e8, resType: 1 }] });
+    const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [SCOPE], taskPollIntervalMs: 0 });
+    const attempt = await executor.transfer({ workflowRunId: "run-1", directoryId: SCOPE, candidate: share() });
+    expect(attempt.status).toBe("no_target_change");
+  });
+
+  it("an auth error is rethrown (freeze the drive), never absorbed into a failed attempt", async () => {
+    const client = shareClient({ token: async () => { throw new GuangYaAuthError("GUANGYA_AUTH_FAILED: 401 after refresh"); } });
+    const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [SCOPE], taskPollIntervalMs: 0 });
+    await expect(executor.transfer({ workflowRunId: "run-1", directoryId: SCOPE, candidate: share() })).rejects.toBeInstanceOf(GuangYaAuthError);
+  });
+
+  it("the write-scope guard still applies to share transfers", async () => {
+    const client = shareClient();
+    const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [SCOPE], taskPollIntervalMs: 0 });
+    await expect(executor.transfer({ workflowRunId: "run-1", directoryId: "elsewhere", candidate: share() })).rejects.toThrow(/WRITE_SCOPE|scope/i);
+    expect(client.restoreShare).not.toHaveBeenCalled();
   });
 });

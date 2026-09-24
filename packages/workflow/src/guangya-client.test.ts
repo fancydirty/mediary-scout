@@ -421,3 +421,82 @@ describe("GuangYaClient deviceId", () => {
     expect(did.Did).toMatch(/^[0-9a-f]{32}$/);
   });
 });
+
+describe("parseGuangYaShareUrl", () => {
+  it("keeps the WHOLE path segment as shareId (splitting on _ → 112 参数错误, probe 2026-09-24)", async () => {
+    const { parseGuangYaShareUrl } = await import("./guangya-client.js");
+    expect(parseGuangYaShareUrl("https://www.guangyapan.com/s/1947864096514232347_amtV6IXLP9l33m6z")).toEqual({
+      shareId: "1947864096514232347_amtV6IXLP9l33m6z",
+      code: "",
+    });
+    expect(parseGuangYaShareUrl("https://guangyapan.com/s/1946057909719502939_amDq-Gb?pwd=ab12#x")).toEqual({
+      shareId: "1946057909719502939_amDq-Gb",
+      code: "ab12",
+    });
+    expect(parseGuangYaShareUrl("https://www.guangyapan.com/s/abc?code=zz")).toEqual({ shareId: "abc", code: "zz" });
+    expect(parseGuangYaShareUrl("magnet:?xt=urn:btih:abc")).toBeNull();
+    expect(parseGuangYaShareUrl("https://pan.quark.cn/s/abc")).toBeNull();
+    expect(parseGuangYaShareUrl("https://www.guangyapan.com/")).toBeNull();
+  });
+});
+
+describe("GuangYaClient share chain (get_share_access_token → page_files_list → restore_share → get_task_status)", () => {
+  function client(respond: (path: string, body: any) => unknown) {
+    const calls: Array<{ path: string; body: any; headers: Record<string, string> }> = [];
+    const fetchImpl = mockFetch(async (url, init) => {
+      const path = String(url).replace(API_HOST, "");
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      calls.push({ path, body, headers: init?.headers as Record<string, string> });
+      return jsonResponse(200, respond(path, body));
+    });
+    return { c: new GuangYaClient({ accessToken: ACCESS, refreshToken: REFRESH, deviceId: "did0", fetchImpl }), calls };
+  }
+
+  it("getShareAccessToken sends {shareId, code} and returns data.accessToken", async () => {
+    const { c, calls } = client(() => ({ msg: "success", data: { accessToken: "sat" } }));
+    expect(await c.getShareAccessToken("s_1", "pw")).toBe("sat");
+    expect(calls[0]).toMatchObject({ path: "/userres/v1/get_share_access_token", body: { shareId: "s_1", code: "pw" } });
+    expect(calls[0]!.headers.Authorization).toBe(`Bearer ${ACCESS}`);
+  });
+
+  it("a dead share surfaces the server msg loudly (201 分享已失效 is a code, not an HTTP error)", async () => {
+    const { c } = client(() => ({ code: 201, msg: "分享已失效" }));
+    await expect(c.getShareAccessToken("s_1", "")).rejects.toThrow(/GUANGYA_API_FAILED.*分享已失效/);
+  });
+
+  it("listShareFiles uses the official cursor-mode body (cursor as int, never a string) and walks pages", async () => {
+    let n = 0;
+    const { c, calls } = client(() => {
+      n += 1;
+      if (n === 1) return { msg: "success", data: { total: 3, list: [{ fileId: "a", fileName: "A.mkv", fileSize: 5, resType: 1 }, { fileId: "d", fileName: "Dir", resType: 2 }], cursor: 2, hasMore: true } };
+      return { msg: "success", data: { total: 3, list: [{ fileId: "b", fileName: "B.mkv", fileSize: 7, resType: 1 }], cursor: 3 } };
+    });
+    const items = await c.listShareFiles("sat", "", { pageSize: 2 });
+    expect(items.map((i) => i.fileId)).toEqual(["a", "d", "b"]);
+    expect(calls[0]!.body).toEqual({ pageSize: 2, accessToken: "sat", orderBy: 0, sortType: 0, parentId: "" });
+    expect(calls[1]!.body).toEqual({ pageSize: 2, accessToken: "sat", orderBy: 0, sortType: 0, parentId: "", cursor: 2 });
+    expect(typeof calls[1]!.body.cursor).toBe("number");
+  });
+
+  it("a data object with no list (the '{cursor:N}' shape seen on 9/18 real shares) is an empty listing", async () => {
+    const { c } = client(() => ({ msg: "success", data: { cursor: 100 } }));
+    expect(await c.listShareFiles("sat", "")).toEqual([]);
+  });
+
+  it("restoreShare posts {accessToken, fileIds, parentId} and returns the taskId", async () => {
+    const { c, calls } = client(() => ({ msg: "success", data: { taskId: "t1" } }));
+    expect(await c.restoreShare({ accessToken: "sat", fileIds: ["a", "b"], parentId: "dir" })).toBe("t1");
+    expect(calls[0]).toMatchObject({ path: "/userres/v1/restore_share", body: { accessToken: "sat", fileIds: ["a", "b"], parentId: "dir" } });
+  });
+
+  it("restoreShare without a taskId fails loud", async () => {
+    const { c } = client(() => ({ msg: "success", data: {} }));
+    await expect(c.restoreShare({ accessToken: "sat", fileIds: ["a"], parentId: "dir" })).rejects.toThrow(/GUANGYA_RESTORE_SHARE_FAILED/);
+  });
+
+  it("getTaskStatus maps status (1 running / 2 done)", async () => {
+    const { c, calls } = client(() => ({ msg: "success", data: { status: 2, detail: { parentId: "dir" } } }));
+    expect(await c.getTaskStatus("t1")).toEqual({ status: 2 });
+    expect(calls[0]).toMatchObject({ path: "/userres/v1/get_task_status", body: { taskId: "t1" } });
+  });
+});

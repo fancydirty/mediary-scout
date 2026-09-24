@@ -296,6 +296,10 @@ function normalizeResourceType(rawType: string, url: string): ResourceType | nul
   ) {
     return "tianyi";
   }
+  // 光鸭 share shape mirrors parseGuangYaShareUrl (guangya-client): guangyapan.com/s/<id>.
+  if (rawType === "guangya" || /guangyapan\.com\/s\/[0-9A-Za-z_-]+/.test(url)) {
+    return "guangya";
+  }
   if (url.startsWith("magnet:")) {
     return "magnet";
   }

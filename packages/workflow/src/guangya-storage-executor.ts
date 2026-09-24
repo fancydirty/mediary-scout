@@ -5,9 +5,11 @@
  * only the brand-specific bits differ.
  *
  * Differences from quark:
- *  - 转存 is OFFLINE/磁力 (resolve_res → create_task → poll). This is the OPPOSITE
- *    of quark: a MAGNET works, a share link fails LOUD (GUANGYA_ONLY_MAGNET).
- *    Share-link 转存 is a phase-2 feature.
+ *  - 转存 is DUAL-path (like 123): a 磁力/ed2k goes OFFLINE (resolve_res →
+ *    create_task → poll); a 光鸭分享链 (guangyapan.com/s/<id>) is saved server-side
+ *    (get_share_access_token → get_share_page_files_list → restore_share → poll
+ *    get_task_status, real-drive verified 2026-09-24). Any other brand's share link
+ *    fails LOUD (GUANGYA_UNSUPPORTED_LINK).
  *  - 光鸭 has NO parent-walk / breadcrumb API, so the write-scope guard CANNOT walk
  *    a target's parents the way quark does (quark hops up via getFileInfo). Instead
  *    the guard is DERIVED-SCOPE: the workflow always provisions the directory chain
@@ -23,7 +25,7 @@
  */
 import type { PackageTreeFile, ResourceCandidate, TransferAttempt, TransferStatus, VerifiedFile } from "./domain.js";
 import { episodeCodeFromFileName } from "./episode-code.js";
-import { isGuangYaAuthError } from "./guangya-client.js";
+import { isGuangYaAuthError, parseGuangYaShareUrl } from "./guangya-client.js";
 import type { GuangYaResolvedRes, GuangYaTaskStatus } from "./guangya-client.js";
 import type { StorageExecutor, UnparsedVideoFile } from "./ports.js";
 
@@ -74,6 +76,13 @@ export interface GuangYaStorageClient {
     fileIndexes?: number[];
   }): Promise<string>;
   listTask(taskIds: string[]): Promise<GuangYaTaskStatus[]>;
+  /** 分享链转存 (optional so a magnet-only fake still type-checks; the real
+   *  GuangYaClient implements all four). A share candidate on a client without them
+   *  fails loud rather than silently falling back to offline. */
+  getShareAccessToken?(shareId: string, code: string): Promise<string>;
+  listShareFiles?(accessToken: string, parentId: string): Promise<GuangYaStorageItem[]>;
+  restoreShare?(input: { accessToken: string; fileIds: string[]; parentId: string }): Promise<string>;
+  getTaskStatus?(taskId: string): Promise<{ status: number }>;
 }
 
 export interface GuangYaStorageExecutorOptions {
@@ -180,15 +189,19 @@ export class GuangYaStorageExecutor implements StorageExecutor {
     candidate: ResourceCandidate;
   }): Promise<TransferAttempt> {
     const url = stringValue(input.candidate.providerPayload["url"]);
+    const share = parseGuangYaShareUrl(url);
     const isMagnet =
-      input.candidate.type === "magnet" || url.startsWith("magnet:") || url.startsWith("ed2k:");
-    if (!isMagnet) {
+      !share && (input.candidate.type === "magnet" || url.startsWith("magnet:") || url.startsWith("ed2k:"));
+    if (!share && !isMagnet) {
       throw new Error(
-        "GUANGYA_ONLY_MAGNET: 光鸭 v1 仅支持磁力/离线候选(分享链转存留 phase 2);请改用磁力候选",
+        "GUANGYA_UNSUPPORTED_LINK: 光鸭只能转存光鸭分享链(guangyapan.com/s/…)或磁力/ed2k;其它网盘的分享链无法落到光鸭,请换候选",
       );
     }
 
     const safe = this.assertWithinWriteScope(input.directoryId, "transfer");
+    if (share) {
+      return this.transferShare({ ...input, directoryId: safe, share });
+    }
     const before = new Set((await this.listVideoFiles(safe)).map((f) => f.id));
 
     let providerMessage = "";
@@ -235,6 +248,76 @@ export class GuangYaStorageExecutor implements StorageExecutor {
       providerMessage:
         providerMessage ||
         (status === "no_target_change" ? "离线任务完成但目标目录未出现新视频" : ""),
+      materializedFileIds,
+    };
+    this.nextTransferNumber += 1;
+    return attempt;
+  }
+
+  /** 光鸭分享链 → our directory: token → list the share root → restore EVERY root
+   *  item (a folder restores whole) → poll the restore task → reread the target.
+   *  Every way a share can be unusable fails LOUD as a `failed` attempt so the agent
+   *  switches candidates at once (dead 201, malformed 112/200, unlistable — the empty
+   *  list half the real PanSou links return — or a task that never finishes). Auth
+   *  errors are rethrown so the worker freezes the drive. */
+  private async transferShare(input: {
+    workflowRunId: string;
+    directoryId: string;
+    candidate: ResourceCandidate;
+    share: { shareId: string; code: string };
+  }): Promise<TransferAttempt> {
+    const { client } = this;
+    const before = new Set((await this.listVideoFiles(input.directoryId)).map((f) => f.id));
+    let providerMessage = "";
+    try {
+      if (!client.getShareAccessToken || !client.listShareFiles || !client.restoreShare || !client.getTaskStatus) {
+        throw new Error("GUANGYA_SHARE_UNSUPPORTED: client has no share-transfer methods");
+      }
+      // PanSou's password field wins over one embedded in the url (same as 夸克/天翼/123).
+      const code = stringValue(input.candidate.providerPayload["password"]) || input.share.code;
+      const accessToken = await client.getShareAccessToken(input.share.shareId, code);
+      const rootItems = await client.listShareFiles(accessToken, "");
+      const fileIds = rootItems.map((item) => idOf(item)).filter((id): id is string => Boolean(id));
+      if (fileIds.length === 0) {
+        throw new Error("GUANGYA_SHARE_EMPTY: 分享可打开但列不出任何文件(可能被分享者限制或内容审核中),无法转存,请换候选");
+      }
+      const taskId = await client.restoreShare({ accessToken, fileIds, parentId: input.directoryId });
+      let done = false;
+      for (let poll = 0; poll < this.taskPollMaxPolls; poll += 1) {
+        const { status } = await client.getTaskStatus(taskId);
+        if (status === 2) {
+          done = true;
+          break;
+        }
+        if (status !== 1) {
+          throw new Error(`GUANGYA_RESTORE_FAILED: task ${taskId} status=${status}`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, this.taskPollIntervalMs));
+      }
+      if (!done) {
+        throw new Error(`GUANGYA_RESTORE_TIMEOUT: 转存任务 ${taskId} 在 ${this.taskPollMaxPolls} 次轮询内未完成`);
+      }
+    } catch (error) {
+      if (isGuangYaAuthError(error)) {
+        throw error;
+      }
+      providerMessage = error instanceof Error ? error.message : String(error);
+    }
+
+    const after = await this.listVideoFiles(input.directoryId);
+    const materializedFileIds = after.filter((f) => !before.has(f.id)).map((f) => f.id);
+    const status: TransferStatus = providerMessage
+      ? "failed"
+      : materializedFileIds.length > 0
+        ? "succeeded"
+        : "no_target_change";
+    const attempt: TransferAttempt = {
+      id: `${input.workflowRunId}_transfer_${this.nextTransferNumber}`,
+      workflowRunId: input.workflowRunId,
+      candidateId: input.candidate.id,
+      status,
+      providerMessage:
+        providerMessage || (status === "no_target_change" ? "分享转存完成但目标目录未出现新视频(分享里可能没有视频)" : ""),
       materializedFileIds,
     };
     this.nextTransferNumber += 1;

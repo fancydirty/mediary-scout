@@ -1882,7 +1882,7 @@ async function getWorkerResourceProvider(
     const kinds: readonly string[] = isRegisteredStorageProvider(provider)
       ? getStorageBrand(provider).resourceProviderKinds
       : ["pansou-115", "prowlarr"];
-    // 夸克 → quark-only links; 光鸭(磁力) → magnet-only; 115 → 115 + magnet.
+    // 夸克 → quark-only links; 光鸭 → guangya + magnet; 115 → 115 + magnet.
     const allowedTypes: ResourceType[] = allowedResourceTypesForKinds(kinds);
     const providers: Array<{ name: string; provider: ResourceProvider }> = [
       {

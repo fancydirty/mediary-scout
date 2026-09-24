@@ -1,4 +1,5 @@
 import type { TransferAttempt } from "../domain.js";
+import { parseGuangYaShareUrl } from "../guangya-client.js";
 import { parsePan123ShareUrl } from "../pan123-storage-executor.js";
 import type { StorageExecutor } from "../ports.js";
 import { parseQuarkShareUrl } from "../quark-storage-executor.js";
@@ -55,7 +56,7 @@ export class RealStorageV2 implements StorageV2 {
   }
 
   /** Classify a candidate's link from its recorded payload url: a fail-loud
-   *  转存分享 (115/夸克/天翼/123 — a dead share errors back immediately) vs a
+   *  转存分享 (115/夸克/天翼/123/光鸭 — a dead share errors back immediately) vs a
    *  magnet (silent — success only via the landing point) vs unknown.
    *  transferUntilLanded iterates ONLY "share" candidates (its loop is sound only
    *  when death is loud). Brand share shapes are delegated to each brand's OWN
@@ -67,7 +68,8 @@ export class RealStorageV2 implements StorageV2 {
       PAN115_SHARE_URL.test(url) ||
       parseQuarkShareUrl(url) !== null ||
       parseTianyiShareUrl(url) !== null ||
-      parsePan123ShareUrl(url) !== null
+      parsePan123ShareUrl(url) !== null ||
+      parseGuangYaShareUrl(url) !== null
     ) {
       return "share";
     }

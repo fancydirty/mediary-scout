@@ -143,18 +143,25 @@ When a 123 transfer fails with a SYSTEMIC message — "配额不足" / "额度�
   - Does not cover → deleteFiles residue, try the next.
 - For an ongoing show's just-aired episode, a black-box resource whose publish time predates that episode's air time almost certainly does NOT contain it — do not bet on it.`;
 
-const DEAD_LINKS_BLACK_BOX_GUANGYA = `# Dead magnets, offline tasks, and black-box resources (光鸭云盘)
+const DEAD_LINKS_BLACK_BOX_GUANGYA = `# Dead links, offline tasks, and black-box resources (光鸭云盘)
 
 > 提醒:raw 候选已预搜好,先 viewResourceSnapshot() 通读活期文档再动手;searchResources 只用于繁体/英文升级,别拿画质/字幕词搜。
 
-## How transfer works on THIS drive (光鸭)
-The drive is 光鸭云盘 — a MAGNET / OFFLINE-DOWNLOAD drive (like 115's offline-task path, NOT a share-link/instant-save drive). Every candidate is a 磁力/离线链接 (磁力 / ed2k / BT). transferCandidate runs resolve_res → create_task → polls the offline task until it lands, then returns the TRUE materialized files (the system rereads for you). Trust THAT, not your prediction.
+## How transfer works on THIS drive (光鸭) — two paths
+1. **光鸭分享链** (guangyapan.com/s/<id>): transferCandidate does a server-side 转存 (restore_share) of the whole share root into staging — folders land whole, in seconds, no seeding. Then the system rereads staging and returns the TRUE materialized files. Trust THAT, not your prediction.
+2. **磁力 / ed2k / BT**: transferCandidate runs resolve_res → create_task → polls the offline task until it lands, then rereads staging the same way.
 
-## 仅磁力 (this is the key difference from 115/夸克)
-光鸭 saves ONLY magnet/offline links — it has NO instant-save and NO share-link 转存. So a 115/夸克/光鸭 分享链 (share link) is NOT supported here: forcing one fails LOUD with "GUANGYA_ONLY_MAGNET". The resource provider only surfaces 磁力 candidates for this drive, so you should never see a share link — but if a candidate is a share rather than a magnet, skip it; it cannot land on 光鸭.
+When a transparent 光鸭分享 covers the need, prefer it over a magnet (instant and certain once it lands). Another brand's share link (夸克/115/123/天翼) CANNOT land on 光鸭 — it fails loud with "GUANGYA_UNSUPPORTED_LINK"; skip it.
 
-## Dead magnets fail (move on)
-A magnet can be dead: resolve_res returns nothing, or the offline task never materializes (no seeds / removed). 光鸭 surfaces this — when nothing lands, treat the magnet as dead and switch to the NEXT covering 磁力 candidate. A dead magnet is the NORM, never a reason to give up — try the next magnet that covers the need (the system burns through dead ones the same way the 115 offline path does).
+## Dead shares fail LOUD (move on at once)
+A 光鸭分享 is unusable more often than not, and every way fails loud as a failed attempt:
+- 分享已失效 / 分享链接错误 / 参数错误 — dead, cancelled or malformed link.
+- GUANGYA_SHARE_EMPTY — the share OPENS but lists no files. About half of the 光鸭分享 on PanSou look like this (the sharer restricted it, or the content is under review). It is NOT "the share is empty but maybe fine" — treat it as dead.
+- GUANGYA_RESTORE_TIMEOUT / GUANGYA_RESTORE_FAILED — the 转存 task did not finish.
+Switch to the next covering candidate. Because shares fail loud, a movie can hand a ranked list of same-film 光鸭分享 to transferUntilLanded.
+
+## Dead magnets fail QUIETLY (trust the reread)
+A magnet can be dead: resolve_res returns nothing, or the offline task never materializes (no seeds / removed). When nothing lands, treat the magnet as dead and switch to the NEXT covering candidate. A dead link is the NORM, never a reason to give up.
 
 ## SYSTEMIC BLOCK (别甩锅)
 When a 光鸭 transfer fails with a SYSTEMIC message — "配额不足" / "额度已用完" / "VIP会员" / "登录" / "鉴权" / 离线下载被限 — the resource EXISTS but the ACCOUNT is blocked (quota / auth / VIP). The tool result carries \`systemicBlock: { reason: "..." }\`. **立即停 — DO NOT keep transferring.** Every candidate will fail the same way. Report honestly: the resource was found, the account cannot transfer it (not "no resource"). This is actionable (top up / re-login), never blame the resource.
@@ -192,7 +199,7 @@ Reject packs / collections / box sets / multi-part / anything structured like se
 
 ## Two transfer tools — pick by the situation
 - transferCandidate(snapshotId, candidateId): ONE candidate at a time. Use it for a single obvious share, or for a MAGNET (a magnet does NOT fail loud — only the landing point in inspectStaging tells you whether it 秒传'd; so transfer, then inspect).
-- transferUntilLanded({candidateIds:[...]}): MOVIE-ONLY. You RANK several share candidates that are all the SAME film (best resource first) and hand the ordered list over; the system tries them in your order and STOPS at the first that 秒传-lands, abandoning the rest. FAIL-LOUD SHARE LINKS ONLY — every 转存分享 brand (115/夸克/天翼/123) qualifies (it relies on the share's loud failure); magnets are rejected. Why it exists: many shares are dead (链接已过期 / 分享已取消 / 错误的链接 — you will see these constantly), so this burns through the dead ones for you without spending a turn per link. If an attempt reports no_target_change with nothing landed (a large share's async server-side copy can outlast the settle window — a possible FALSE miss), the tool STOPS and hands judgment back: re-read via inspectStaging first, then decide (do NOT immediately re-transfer or write the candidate off).
+- transferUntilLanded({candidateIds:[...]}): MOVIE-ONLY. You RANK several share candidates that are all the SAME film (best resource first) and hand the ordered list over; the system tries them in your order and STOPS at the first that 秒传-lands, abandoning the rest. FAIL-LOUD SHARE LINKS ONLY — every 转存分享 brand (115/夸克/天翼/123/光鸭) qualifies (it relies on the share's loud failure); magnets are rejected. Why it exists: many shares are dead (链接已过期 / 分享已取消 / 错误的链接 — you will see these constantly), so this burns through the dead ones for you without spending a turn per link. If an attempt reports no_target_change with nothing landed (a large share's async server-side copy can outlast the settle window — a possible FALSE miss), the tool STOPS and hands judgment back: re-read via inspectStaging first, then decide (do NOT immediately re-transfer or write the candidate off).
   - The SET is YOUR semantic choice. A keyword search is a WILDCARD — it mixes in same-named DIFFERENT works (e.g. under "抓娃娃" the movie sits among a 综艺/variety show "姐姐妹妹抓娃娃" and even an unrelated cartoon). NEVER hand it the raw result list — first read every title and include ONLY the ones that are genuinely this film+year. Handing it everything = transferring a wrong work.
 
 ## The collapsed loop

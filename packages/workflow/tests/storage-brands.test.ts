@@ -93,7 +93,7 @@ describe("storage brand registry", () => {
     // 115 and quark are Chinese-world drives → assume Chinese subs from Chinese titles
     expect(getStorageBrand("pan115").assumeChineseSubsFromChineseTitle).toBe(true);
     expect(getStorageBrand("quark").assumeChineseSubsFromChineseTitle).toBe(true);
-    // guangya is magnet-only, more strict
+    // guangya stays conservative (its magnets are often scene releases, not 中文圈 packs)
     expect(getStorageBrand("guangya").assumeChineseSubsFromChineseTitle).toBe(false);
   });
 });

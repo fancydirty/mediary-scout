@@ -93,17 +93,21 @@ describe("both prompts carry the systemic-block STOP rule (别甩锅: account bl
 });
 
 describe("transferModelLine — brand transfer model in the prompt", () => {
-  it("guangya: magnet/offline model, NOT the default 115 秒传/share model", () => {
+  it("guangya: DUAL model — 光鸭分享链 转存 + 磁力/离线, distinct from other brands", () => {
     const line = transferModelLine({ storageProvider: "guangya" });
     expect(line).toBeTruthy();
-    expect(line.length).toBeGreaterThan(0);
-    expect(line).toMatch(/磁力|magnet/i);
     expect(line).toMatch(/光鸭/);
-    expect(line).toContain("GUANGYA_ONLY_MAGNET");
-    // it is a magnet-only drive: must NOT inherit 115's 秒传 / 115/share wording
-    expect(line).not.toMatch(/秒传/);
-    // distinct from the quark line and from the default (115) empty line
+    expect(line).toMatch(/DUAL/);
+    expect(line).toContain("guangyapan.com/s/");
+    expect(line).toMatch(/磁力|magnet/i);
+    // the loud share failures the executor actually surfaces
+    expect(line).toContain("GUANGYA_SHARE_EMPTY");
+    expect(line).toContain("分享已失效");
+    // other brands' shares cannot land here
+    expect(line).toContain("GUANGYA_UNSUPPORTED_LINK");
+    expect(line).not.toContain("GUANGYA_ONLY_MAGNET");
     expect(line).not.toBe(transferModelLine({ storageProvider: "quark" }));
+    expect(line).not.toBe(transferModelLine({ storageProvider: "pan123" }));
     expect(line).not.toBe(transferModelLine({}));
   });
 
@@ -165,9 +169,10 @@ describe("guangya system prompts carry the magnet transfer model", () => {
   it.each([
     ["tv", buildTvAnimeSystemPrompt({ storageProvider: "guangya" })],
     ["movie", buildMovieSystemPrompt({ storageProvider: "guangya" })],
-  ])("%s prompt names the magnet/offline model and GUANGYA_ONLY_MAGNET", (_name, prompt) => {
+  ])("%s prompt names the dual share + magnet model", (_name, prompt) => {
     expect(prompt).toMatch(/磁力|magnet/i);
-    expect(prompt).toContain("GUANGYA_ONLY_MAGNET");
+    expect(prompt).toContain("guangyapan.com/s/");
+    expect(prompt).not.toContain("GUANGYA_ONLY_MAGNET");
   });
 });
 

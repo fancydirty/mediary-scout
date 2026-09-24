@@ -72,7 +72,7 @@ const SUBTITLE_EXTENSIONS = /\.(srt|ass|ssa|sub|idx|vtt|sup|smi)$/i;
 export interface StorageV2 {
   createDirectory(input: { name: string; parentId: string }): Promise<string>;
   transferCandidate(input: { candidateId: string; intoDirectoryId: string }): Promise<TransferAttemptResult>;
-  /** A candidate's link kind. Every 转存分享 brand (115/夸克/天翼/123) fails LOUD
+  /** A candidate's link kind. Every 转存分享 brand (115/夸克/天翼/123/光鸭) fails LOUD
    *  on a dead link (链接已过期/分享已取消/分享不存在 come back immediately); a
    *  magnet's success is only knowable by the landing point appearing. So
    *  `transferUntilLanded` (which iterates on failure) accepts only "share"

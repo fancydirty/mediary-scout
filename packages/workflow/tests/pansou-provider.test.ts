@@ -217,6 +217,39 @@ describe("PanSouResourceProvider", () => {
     ]);
   });
 
+  it("recognizes 光鸭 share links by rawType and by guangyapan.com/s/ shape, and keeps the password", async () => {
+    const fetchJson = async () => ({
+      code: 0,
+      data: {
+        results: [
+          {
+            title: "出入平安 (2024)",
+            channel: "c",
+            links: [
+              { type: "guangya", url: "https://www.guangyapan.com/s/1947864096514232347_amtV6IXLP9l33m6z", password: "" },
+              { type: "others", url: "https://www.guangyapan.com/s/1946057909719502939_amDq", password: "ab12" },
+              // The site root is not a share.
+              { type: "others", url: "https://www.guangyapan.com/" },
+              { type: "quark", url: "https://pan.quark.cn/s/abc" },
+            ],
+          },
+        ],
+      },
+    });
+    const guangyaOnly = new PanSouResourceProvider({
+      baseURL: "https://pansou.example",
+      maxSearchAttempts: 1,
+      allowedTypes: ["guangya"],
+      fetchJson,
+    });
+    const snapshot = await guangyaOnly.search({ keyword: "k" });
+    expect(snapshot.candidates.map((c) => c.type)).toEqual(["guangya", "guangya"]);
+    expect(snapshot.candidates.map((c) => c.providerPayload.url)).toEqual([
+      "https://www.guangyapan.com/s/1947864096514232347_amtV6IXLP9l33m6z",
+      "https://www.guangyapan.com/s/1946057909719502939_amDq",
+    ]);
+  });
+
   it("returns an empty snapshot when PanSou reports a non-zero code", async () => {
     const provider = new PanSouResourceProvider({
       baseURL: "https://pansou.example",
