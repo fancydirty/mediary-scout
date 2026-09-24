@@ -60,7 +60,16 @@ export async function saveMemoryFromUi(
   if (!existing.some((m) => m.name === entry.name) && existing.length >= cap) {
     return { success: false, message: `已达上限（${cap} 条），请先删除或编辑一条旧记忆` };
   }
-  await store.upsertAgentMemory({ accountId, titleKey, entry, now: now() });
+  try {
+    // maxEntries makes the store the authority (atomic with the insert); the check above
+    // is only the friendly early message.
+    await store.upsertAgentMemory({ accountId, titleKey, entry, now: now(), maxEntries: cap });
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("MEMORY_FULL")) {
+      return { success: false, message: `已达上限（${cap} 条），请先删除或编辑一条旧记忆` };
+    }
+    throw error;
+  }
   return { success: true };
 }
 

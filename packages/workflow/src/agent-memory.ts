@@ -49,13 +49,17 @@ export interface AgentMemoryWrite {
 export interface AgentMemoryStore {
   /** Entries of one scope, newest update first. `titleKey` is required for "title". */
   listAgentMemories(input: { accountId: string; scope: AgentMemoryScope; titleKey?: string | null }): Promise<AgentMemory[]>;
-  /** Insert or overwrite by (account, scope, titleKey, name). Returns the stored row. */
+  /** Insert or overwrite by (account, scope, titleKey, name). Returns the stored row.
+   *  `maxEntries`: refuse a NEW name when the scope already holds that many — checked
+   *  atomically with the insert (throws MEMORY_FULL), so concurrent writers cannot
+   *  overshoot. Overwriting an existing name is always allowed. */
   upsertAgentMemory(input: {
     accountId: string;
     titleKey: string | null;
     entry: AgentMemoryWrite;
     sourceRunId?: string | null;
     now: string;
+    maxEntries?: number;
   }): Promise<AgentMemory>;
   /** Delete by (account, scope, titleKey, name). Returns whether a row was removed. */
   deleteAgentMemory(input: { accountId: string; scope: AgentMemoryScope; titleKey: string | null; name: string }): Promise<boolean>;
@@ -139,4 +143,8 @@ export function agentMemoryFromRow(row: AgentMemoryRow): AgentMemory {
 /** Column value for title_key: '' for global (so the unique key has no NULLs). */
 export function agentMemoryTitleKeyColumn(scope: AgentMemoryScope, titleKey: string | null | undefined): string {
   return scope === "title" ? (titleKey ?? "") : "";
+}
+
+export function memoryFullError(scope: AgentMemoryScope, count: number, cap: number): Error {
+  return new Error(`MEMORY_FULL: ${scope} memory already has ${count}/${cap} entries — delete or overwrite a stale one first`);
 }

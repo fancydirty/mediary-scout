@@ -970,12 +970,15 @@ export class TaskSandbox {
     if (!updated && existing.length >= cap) {
       throw new Error(`MEMORY_FULL: ${entry.scope} memory already has ${existing.length}/${cap} entries — delete or overwrite a stale one first`);
     }
+    // The store enforces the cap atomically (concurrent reflections cannot overshoot);
+    // the check above only turns the common case into an early, friendly error.
     await memory.store.upsertAgentMemory({
       accountId: memory.accountId,
       titleKey,
       entry,
       sourceRunId: memory.runId,
       now: (memory.now ?? (() => new Date().toISOString()))(),
+      maxEntries: cap,
     });
     this.memoryChanges += 1;
     this.auditEvents.push({

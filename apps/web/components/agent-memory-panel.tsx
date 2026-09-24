@@ -164,6 +164,11 @@ export function AgentMemoryPanel({
           <X size={14} aria-hidden />
           取消
         </button>
+        {result ? (
+          <span className="panel-note" role="status">
+            {result}
+          </span>
+        ) : null}
       </div>
     </div>
   );

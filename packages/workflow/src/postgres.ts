@@ -48,6 +48,7 @@ import { MAGNET_DEAD_LINK_TTL_MS, type DeadLink } from "./acquisition-v2/dead-li
 import {
   agentMemoryFromRow,
   agentMemoryTitleKeyColumn,
+  memoryFullError,
   type AgentMemory,
   type AgentMemoryRow,
   type AgentMemoryStore,
@@ -1285,8 +1286,28 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
   }
 
   async upsertAgentMemory(input: Parameters<AgentMemoryStore["upsertAgentMemory"]>[0]): Promise<AgentMemory> {
-    await this.ensureSchema();
-    const result = await this.pool.query<AgentMemoryRow>(
+    const titleKey = agentMemoryTitleKeyColumn(input.entry.scope, input.titleKey);
+    return this.withTransaction(async (client) => {
+    if (input.maxEntries !== undefined) {
+      // Serialize writers of THIS scope for the rest of the transaction, so the count
+      // below and the insert cannot interleave with another writer (no overshoot).
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+        `agent_memories:${input.accountId}:${input.entry.scope}:${titleKey}`,
+      ]);
+      const exists = await client.query(
+        "SELECT 1 FROM agent_memories WHERE account_id = $1 AND scope = $2 AND title_key = $3 AND name = $4",
+        [input.accountId, input.entry.scope, titleKey, input.entry.name],
+      );
+      if (exists.rowCount === 0) {
+        const count = await client.query<{ n: string }>(
+          "SELECT count(*) AS n FROM agent_memories WHERE account_id = $1 AND scope = $2 AND title_key = $3",
+          [input.accountId, input.entry.scope, titleKey],
+        );
+        const n = Number(count.rows[0]?.n ?? 0);
+        if (n >= input.maxEntries) throw memoryFullError(input.entry.scope, n, input.maxEntries);
+      }
+    }
+    const result = await client.query<AgentMemoryRow>(
       "INSERT INTO agent_memories (id, account_id, scope, title_key, name, description, kind, body, provider, created_at, updated_at, last_used_at, source_run_id) " +
         "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, NULL, $11) " +
         "ON CONFLICT (account_id, scope, title_key, name) DO UPDATE SET description = EXCLUDED.description, kind = EXCLUDED.kind, " +
@@ -1296,7 +1317,7 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
         `mem_${globalThis.crypto.randomUUID()}`,
         input.accountId,
         input.entry.scope,
-        agentMemoryTitleKeyColumn(input.entry.scope, input.titleKey),
+        titleKey,
         input.entry.name,
         input.entry.description,
         input.entry.kind,
@@ -1307,6 +1328,7 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
       ],
     );
     return agentMemoryFromRow(result.rows[0]!);
+    });
   }
 
   async deleteAgentMemory(input: Parameters<AgentMemoryStore["deleteAgentMemory"]>[0]): Promise<boolean> {

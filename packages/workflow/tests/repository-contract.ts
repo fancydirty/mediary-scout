@@ -101,6 +101,29 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
         expect(await repo.listAgentMemories({ accountId: "acct_1", scope: "title", titleKey: "tmdb_tv_2" })).toHaveLength(1);
       });
 
+      it("enforces maxEntries atomically in the store: a new name at the cap is refused, an overwrite is not", async () => {
+        const repo = await fresh();
+        for (let i = 0; i < 3; i += 1) {
+          await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_tv_1", entry: entry({ name: `m-${i}` }), now, maxEntries: 3 });
+        }
+        await expect(
+          repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_tv_1", entry: entry({ name: "m-extra" }), now, maxEntries: 3 }),
+        ).rejects.toThrow(/MEMORY_FULL/);
+        await expect(
+          repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_tv_1", entry: entry({ name: "m-0", body: "overwrite" }), now, maxEntries: 3 }),
+        ).resolves.toMatchObject({ body: "overwrite" });
+        // Concurrent distinct inserts at the edge: never more than the cap.
+        const repo2 = await fresh();
+        await repo2.upsertAgentMemory({ accountId: "acct_1", titleKey: null, entry: entry({ scope: "global", name: "g-0" }), now, maxEntries: 2 });
+        const results = await Promise.allSettled(
+          ["g-1", "g-2", "g-3", "g-4"].map((name) =>
+            repo2.upsertAgentMemory({ accountId: "acct_1", titleKey: null, entry: entry({ scope: "global", name }), now, maxEntries: 2 }),
+          ),
+        );
+        expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+        expect(await repo2.listAgentMemories({ accountId: "acct_1", scope: "global" })).toHaveLength(2);
+      });
+
       it("touch refreshes lastUsedAt only for this account's ids", async () => {
         const repo = await fresh();
         const a = await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: null, entry: entry({ scope: "global" }), now });

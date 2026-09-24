@@ -18,6 +18,7 @@ import type { DeadLink } from "./acquisition-v2/dead-links.js";
 import {
   agentMemoryFromRow,
   agentMemoryTitleKeyColumn,
+  memoryFullError,
   type AgentMemory,
   type AgentMemoryRow,
   type AgentMemoryStore,
@@ -1500,6 +1501,18 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
 
   async upsertAgentMemory(input: Parameters<AgentMemoryStore["upsertAgentMemory"]>[0]): Promise<AgentMemory> {
     const titleKey = agentMemoryTitleKeyColumn(input.entry.scope, input.titleKey);
+    return this.db.transaction((): AgentMemory => {
+    if (input.maxEntries !== undefined) {
+      const exists = this.db
+        .prepare("SELECT 1 FROM agent_memories WHERE account_id = ? AND scope = ? AND title_key = ? AND name = ?")
+        .get(input.accountId, input.entry.scope, titleKey, input.entry.name);
+      if (!exists) {
+        const { n } = this.db
+          .prepare("SELECT count(*) AS n FROM agent_memories WHERE account_id = ? AND scope = ? AND title_key = ?")
+          .get(input.accountId, input.entry.scope, titleKey) as { n: number };
+        if (n >= input.maxEntries) throw memoryFullError(input.entry.scope, n, input.maxEntries);
+      }
+    }
     this.db
       .prepare(
         "INSERT INTO agent_memories (id, account_id, scope, title_key, name, description, kind, body, provider, created_at, updated_at, last_used_at, source_run_id) " +
@@ -1526,6 +1539,7 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
       .prepare("SELECT * FROM agent_memories WHERE account_id = ? AND scope = ? AND title_key = ? AND name = ?")
       .get(input.accountId, input.entry.scope, titleKey, input.entry.name) as AgentMemoryRow;
     return agentMemoryFromRow(row);
+    })();
   }
 
   async deleteAgentMemory(input: Parameters<AgentMemoryStore["deleteAgentMemory"]>[0]): Promise<boolean> {
