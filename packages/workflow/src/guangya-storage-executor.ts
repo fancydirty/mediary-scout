@@ -275,6 +275,7 @@ export class GuangYaStorageExecutor implements StorageExecutor {
     let providerMessage = "";
     let pendingMessage = "";
     let acceptedTaskId = "";
+    let submitted = false;
     try {
       if (!client.getShareAccessToken || !client.listShareFiles || !client.restoreShare || !client.getTaskStatus) {
         throw new Error("GUANGYA_SHARE_UNSUPPORTED: client has no share-transfer methods");
@@ -287,6 +288,9 @@ export class GuangYaStorageExecutor implements StorageExecutor {
       if (fileIds.length === 0) {
         throw new Error("GUANGYA_SHARE_EMPTY: 分享可打开但列不出任何文件(可能被分享者限制或内容审核中),无法转存,请换候选");
       }
+      // The submit itself can fail in TRANSIT (timeout / reset) after the server took it:
+      // from that moment on the outcome is unknown, so it is treated like an accepted task.
+      submitted = true;
       const taskId = await client.restoreShare({ accessToken, fileIds, parentId: input.directoryId });
       // From here the server-side task EXISTS and may land whatever happens next, so
       // a polling error is not proof of failure — it is pending, like a timeout.
@@ -315,16 +319,32 @@ export class GuangYaStorageExecutor implements StorageExecutor {
         throw error;
       }
       const message = error instanceof Error ? error.message : String(error);
-      // An explicit terminal status is a real failure; any OTHER error after the task
-      // was accepted (network blip while polling) leaves it possibly still running.
-      if (acceptedTaskId && !message.startsWith("GUANGYA_RESTORE_FAILED")) {
-        pendingMessage = `GUANGYA_RESTORE_PENDING: 转存任务 ${acceptedTaskId} 已提交,轮询出错(${message.slice(0, 120)}),任务可能仍在进行;先 inspectStaging 再决定`;
+      // A real server answer (GUANGYA_API_FAILED = a business code; RESTORE_FAILED = a
+      // terminal task status) is a settled failure. Anything else once the restore was
+      // SUBMITTED — a transport error on the submit or while polling — leaves a task
+      // that may still land: pending, so transferUntilLanded stops.
+      const settled = message.startsWith("GUANGYA_RESTORE_FAILED") || message.startsWith("GUANGYA_API_FAILED");
+      if (submitted && !settled) {
+        pendingMessage = `GUANGYA_RESTORE_PENDING: 转存${acceptedTaskId ? `任务 ${acceptedTaskId} ` : ""}已提交,之后出错(${message.slice(0, 120)}),可能仍在进行;先 inspectStaging 再决定`;
       } else {
         providerMessage = message;
       }
     }
 
-    const after = await this.listVideoFiles(input.directoryId);
+    // The landing reread must not throw past a restore that may have landed: an
+    // unreadable target after a submit is pending (reread next), not a crash.
+    let after: VerifiedFile[];
+    try {
+      after = await this.listVideoFiles(input.directoryId);
+    } catch (error) {
+      if (isGuangYaAuthError(error)) throw error;
+      after = [];
+      if (submitted && !providerMessage) {
+        pendingMessage ||= `GUANGYA_RESTORE_PENDING: 转存已提交,但回读目标目录失败(${error instanceof Error ? error.message.slice(0, 120) : String(error)});先 inspectStaging 再决定`;
+      } else if (!providerMessage) {
+        providerMessage = error instanceof Error ? error.message : String(error);
+      }
+    }
     const materializedFileIds = after.filter((f) => !before.has(f.id)).map((f) => f.id);
     // Only a still-RUNNING restore is pending (no_target_change → transferUntilLanded
     // stops and the agent rereads). A restore that COMPLETED without a new video is

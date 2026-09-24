@@ -758,6 +758,32 @@ describe("GuangYaStorageExecutor.transfer — 光鸭分享链转存", () => {
     expect(attempt.providerMessage).toMatch(/GUANGYA_RESTORE_PENDING.*inspectStaging/);
   });
 
+  it("a TRANSPORT error on the restore submit itself is pending (the server may have taken it)", async () => {
+    const client = shareClient({ after: [] });
+    client.restoreShare = vi.fn(async () => { throw Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" }); });
+    const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [SCOPE], taskPollIntervalMs: 0 });
+    const attempt = await executor.transfer({ workflowRunId: "run-1", directoryId: SCOPE, candidate: share() });
+    expect(attempt.status).toBe("no_target_change");
+    expect(attempt.providerMessage).toMatch(/GUANGYA_RESTORE_PENDING/);
+  });
+
+  it("a business rejection of the submit (server answered) is a settled failure", async () => {
+    const client = shareClient({ after: [] });
+    client.restoreShare = vi.fn(async () => { throw new Error("GUANGYA_API_FAILED: /userres/v1/restore_share status=200 msg=参数错误"); });
+    const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [SCOPE], taskPollIntervalMs: 0 });
+    const attempt = await executor.transfer({ workflowRunId: "run-1", directoryId: SCOPE, candidate: share() });
+    expect(attempt.status).toBe("failed");
+  });
+
+  it("a failing landing reread after a submit is pending, never an exception", async () => {
+    const client = shareClient();
+    client.listFiles = vi.fn<GuangYaStorageClient["listFiles"]>().mockResolvedValueOnce([]).mockRejectedValue(new Error("fetch failed"));
+    const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [SCOPE], taskPollIntervalMs: 0 });
+    const attempt = await executor.transfer({ workflowRunId: "run-1", directoryId: SCOPE, candidate: share() });
+    expect(attempt.status).toBe("no_target_change");
+    expect(attempt.providerMessage).toMatch(/GUANGYA_RESTORE_PENDING.*回读/);
+  });
+
   it("an explicit terminal task status after acceptance is still a real failure", async () => {
     const client = shareClient({ statuses: [3], after: [] });
     const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [SCOPE], taskPollIntervalMs: 0 });
