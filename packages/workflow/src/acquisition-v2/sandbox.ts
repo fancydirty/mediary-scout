@@ -1060,16 +1060,18 @@ export class TaskSandbox {
         ({ selected, missing } = selectSubtitleChunk(initial, initial, pending, SUBTITLE_RENEWAL_CHUNK_SIZE));
       } else {
         let refreshedFiles: AssrtSubtitleFile[];
+        const candidateChunk = selectSubtitleChunk(initial, initial, pending, chunkSize);
+        const candidateCount = candidateChunk.selected.length + candidateChunk.missing.length;
         try {
           refreshedFiles = await this.subtitleProvider.detail(input.candidateId);
         } catch {
           lastError = "字幕链接续签失败：无法刷新 assrt detail，已停止后续字幕块。";
           chunkDiagnostics.push({
             chunkNumber,
-            requestedCount: Math.min(pending.size, chunkSize),
+            requestedCount: candidateCount,
             detailRefreshed: true,
             landedCount: 0,
-            unlandedCount: Math.min(pending.size, chunkSize),
+            unlandedCount: candidateCount,
             error: lastError,
           });
           break;
@@ -1086,7 +1088,7 @@ export class TaskSandbox {
         }
         if (selected.length === 0) {
           lastError = "字幕链接续签后没有匹配的文件，已停止后续字幕块。";
-          const requestedCount = Math.min(pending.size, chunkSize);
+          const requestedCount = selected.length + missing.length;
           chunkDiagnostics.push({
             chunkNumber,
             requestedCount,

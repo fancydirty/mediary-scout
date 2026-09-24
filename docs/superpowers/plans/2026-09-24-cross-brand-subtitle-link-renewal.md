@@ -153,7 +153,7 @@ Inside `transferSubtitle`:
    - accumulate `landedFilename` values and the last provider error;
 4. return the existing `status/landedFilenames/error` plus non-sensitive diagnostics: `chunksProcessed`, `chunksTotal`, `unattemptedCount`.
 
-For a package at or below the chunk size, the initial detail response is also the first chunk response; do not make a redundant second detail call. Preserve all existing soft-failure and auth-error behavior.
+For a package at or below the chunk size with unique basenames, the initial detail response is also the first chunk response; do not make a redundant second detail call. Duplicate basenames stay in separate adapter calls to honor each brand's filename contract. Preserve all existing soft-failure and auth-error behavior.
 
 - [ ] **Step 4: Run focused tests and mutate the renewal**
 
