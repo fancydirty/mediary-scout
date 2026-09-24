@@ -1,3 +1,4 @@
+import type { AgentMemoryStore } from "./agent-memory.js";
 import type { LanguageModel } from "ai";
 import {
   createEpisodeStates,
@@ -55,6 +56,8 @@ export interface RunMovieAcquisitionV2Request {
   /** Optional Jev candidate prefilter (see orchestrator.jevJudge). */
   jevJudge?: JevJudge;
   deadLinkStore?: DeadLinkStore;
+  /** Agent memory (see orchestrator.memory). */
+  memory?: { store: AgentMemoryStore; accountId: string };
   onProgress?: (event: AgentToolEvent) => void;
   now?: () => string;
 }
@@ -88,6 +91,7 @@ export async function runMovieAcquisitionV2(
       aliases: request.title.aliases,
       year: request.title.year ?? 0,
       qualityPreference: "4K",
+      tmdbId: request.title.tmdbId,
     },
     stagingDirectoryId: movieDirectoryId,
     targetMovieDirectoryId: movieDirectoryId,
@@ -105,6 +109,7 @@ export async function runMovieAcquisitionV2(
     ...(request.assrtToken === undefined ? {} : { assrtToken: request.assrtToken }),
     ...(request.jevJudge === undefined ? {} : { jevJudge: request.jevJudge }),
     ...(request.deadLinkStore ? { deadLinkStore: request.deadLinkStore } : {}),
+    ...(request.memory ? { memory: request.memory } : {}),
     ...(request.onProgress ? { onProgress: request.onProgress } : {}),
   });
 

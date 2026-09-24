@@ -1,0 +1,56 @@
+import { describe, expect, it } from "vitest";
+import { InMemoryWorkflowRepository } from "@media-track/workflow";
+import {
+  AGENT_MEMORY_ENABLED_SETTING_KEY,
+  isAgentMemoryEnabled,
+  listMemoriesForUi,
+  saveMemoryFromUi,
+  deleteMemoryFromUi,
+} from "./agent-memory-server";
+
+const now = () => "2026-09-25T00:00:00.000Z";
+const entry = { name: "no-2025-year", description: "2026 首播", kind: "search" as const, body: "搜「X 2025」0 命中" };
+
+describe("agent memory settings + UI server logic", () => {
+  it("memory is ON by default and only an explicit '0' turns it off", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    expect(await isAgentMemoryEnabled(repo, "acct_1")).toBe(true);
+    await repo.setAccountSetting("acct_1", AGENT_MEMORY_ENABLED_SETTING_KEY, "0");
+    expect(await isAgentMemoryEnabled(repo, "acct_1")).toBe(false);
+    await repo.setAccountSetting("acct_1", AGENT_MEMORY_ENABLED_SETTING_KEY, "1");
+    expect(await isAgentMemoryEnabled(repo, "acct_1")).toBe(true);
+  });
+
+  it("lists a work's memory by (mediaType, tmdbId) and the global memory, scoped to the account", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_tv_7", entry: { scope: "title", ...entry }, now: now() });
+    await repo.upsertAgentMemory({ accountId: "acct_2", titleKey: "tmdb_tv_7", entry: { scope: "title", ...entry }, now: now() });
+    await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: null, entry: { scope: "global", ...entry }, now: now() });
+    expect(await listMemoriesForUi(repo, "acct_1", { scope: "title", mediaType: "tv", tmdbId: 7 })).toHaveLength(1);
+    expect(await listMemoriesForUi(repo, "acct_1", { scope: "global" })).toHaveLength(1);
+    expect(await listMemoriesForUi(repo, "acct_2", { scope: "global" })).toHaveLength(0);
+  });
+
+  it("save validates like the agent tool, and edits keep the same row", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    expect(await saveMemoryFromUi(repo, "acct_1", { scope: "title", mediaType: "movie", tmdbId: 1 }, { ...entry, name: "Bad Name" }, now)).toMatchObject({ success: false });
+    expect(await saveMemoryFromUi(repo, "acct_1", { scope: "title", mediaType: "movie", tmdbId: 1 }, entry, now)).toMatchObject({ success: true });
+    await saveMemoryFromUi(repo, "acct_1", { scope: "title", mediaType: "movie", tmdbId: 1 }, { ...entry, body: "用户改过" }, now);
+    const rows = await listMemoriesForUi(repo, "acct_1", { scope: "title", mediaType: "movie", tmdbId: 1 });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.body).toBe("用户改过");
+  });
+
+  it("delete removes only the addressed entry", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    await saveMemoryFromUi(repo, "acct_1", { scope: "global" }, entry, now);
+    await saveMemoryFromUi(repo, "acct_1", { scope: "global" }, { ...entry, name: "keep-me" }, now);
+    expect(await deleteMemoryFromUi(repo, "acct_1", { scope: "global" }, "no-2025-year")).toMatchObject({ success: true });
+    expect((await listMemoriesForUi(repo, "acct_1", { scope: "global" })).map((m) => m.name)).toEqual(["keep-me"]);
+  });
+
+  it("a bad tmdbId in a title address is refused", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    expect(await saveMemoryFromUi(repo, "acct_1", { scope: "title", mediaType: "tv", tmdbId: -1 }, entry, now)).toMatchObject({ success: false });
+  });
+});

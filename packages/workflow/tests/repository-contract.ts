@@ -55,6 +55,62 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
       });
     });
 
+    describe("agent memories", () => {
+      const now = "2026-09-25T00:00:00.000Z";
+      const entry = (over: Record<string, unknown> = {}) => ({
+        scope: "title" as const,
+        name: "no-2025-year",
+        description: "2026 首播,带 2025 搜不到",
+        kind: "search" as const,
+        body: "搜「黄泉的使者 2025」0 命中。",
+        ...over,
+      });
+
+      it("upserts by (account, scope, titleKey, name) and lists newest update first", async () => {
+        const repo = await fresh();
+        const a = await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_tv_1", entry: entry(), sourceRunId: "r1", now });
+        expect(a).toMatchObject({ accountId: "acct_1", scope: "title", titleKey: "tmdb_tv_1", name: "no-2025-year", sourceRunId: "r1", createdAt: now, updatedAt: now, lastUsedAt: null, provider: null });
+        await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_tv_1", entry: entry({ name: "good-group", kind: "resource" }), now: "2026-09-25T01:00:00.000Z" });
+        const b = await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_tv_1", entry: entry({ body: "改过的正文", provider: "pan123" }), now: "2026-09-25T02:00:00.000Z" });
+        expect(b.id).toBe(a.id); // same row, overwritten
+        expect(b).toMatchObject({ body: "改过的正文", provider: "pan123", createdAt: now, updatedAt: "2026-09-25T02:00:00.000Z" });
+        const list = await repo.listAgentMemories({ accountId: "acct_1", scope: "title", titleKey: "tmdb_tv_1" });
+        expect(list.map((m) => m.name)).toEqual(["no-2025-year", "good-group"]);
+      });
+
+      it("isolates by titleKey, scope and account", async () => {
+        const repo = await fresh();
+        await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_tv_1", entry: entry(), now });
+        await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_movie_1", entry: entry(), now });
+        await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: null, entry: entry({ scope: "global" }), now });
+        await repo.upsertAgentMemory({ accountId: "acct_2", titleKey: "tmdb_tv_1", entry: entry(), now });
+        expect(await repo.listAgentMemories({ accountId: "acct_1", scope: "title", titleKey: "tmdb_tv_1" })).toHaveLength(1);
+        expect(await repo.listAgentMemories({ accountId: "acct_1", scope: "title", titleKey: "tmdb_movie_1" })).toHaveLength(1);
+        const global = await repo.listAgentMemories({ accountId: "acct_1", scope: "global" });
+        expect(global).toHaveLength(1);
+        expect(global[0]).toMatchObject({ scope: "global", titleKey: null });
+        expect(await repo.listAgentMemories({ accountId: "acct_2", scope: "global" })).toHaveLength(0);
+      });
+
+      it("deletes only the addressed row, and reports whether one was removed", async () => {
+        const repo = await fresh();
+        await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_tv_1", entry: entry(), now });
+        await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_tv_2", entry: entry(), now });
+        expect(await repo.deleteAgentMemory({ accountId: "acct_1", scope: "title", titleKey: "tmdb_tv_1", name: "no-2025-year" })).toBe(true);
+        expect(await repo.deleteAgentMemory({ accountId: "acct_1", scope: "title", titleKey: "tmdb_tv_1", name: "no-2025-year" })).toBe(false);
+        expect(await repo.listAgentMemories({ accountId: "acct_1", scope: "title", titleKey: "tmdb_tv_2" })).toHaveLength(1);
+      });
+
+      it("touch refreshes lastUsedAt only for this account's ids", async () => {
+        const repo = await fresh();
+        const a = await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: null, entry: entry({ scope: "global" }), now });
+        const b = await repo.upsertAgentMemory({ accountId: "acct_2", titleKey: null, entry: entry({ scope: "global" }), now });
+        await repo.touchAgentMemories({ accountId: "acct_1", ids: [a.id, b.id], now: "2026-09-26T00:00:00.000Z" });
+        expect((await repo.listAgentMemories({ accountId: "acct_1", scope: "global" }))[0]!.lastUsedAt).toBe("2026-09-26T00:00:00.000Z");
+        expect((await repo.listAgentMemories({ accountId: "acct_2", scope: "global" }))[0]!.lastUsedAt).toBeNull();
+      });
+    });
+
     describe("accounts + sessions", () => {
       const account = (over: Partial<Account> = {}): Account => ({
         id: "acct_1",

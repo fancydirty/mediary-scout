@@ -62,6 +62,7 @@ const TABLES = [
   "sessions",
   "connected_storages",
   "account_settings",
+  "agent_memories",
 ];
 
 async function postgresReachable(): Promise<boolean> {

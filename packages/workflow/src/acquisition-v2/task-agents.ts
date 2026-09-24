@@ -4,6 +4,7 @@ import type { AgentToolEvent } from "./activity.js";
 import type { TaskSandbox } from "./sandbox.js";
 import { skillIndexForAgent } from "./skill.js";
 import { getStorageBrand } from "../storage-brands.js";
+import type { AgentMemory } from "../agent-memory.js";
 
 /**
  * The 字字泣血 mandate: the agent MUST read its skill manual before acting and
@@ -79,6 +80,12 @@ export interface TaskAgentPromptOptions {
   /** Count of pre-warmed raw candidates (system pre-searched the raw keyword).
    *  When present, prompt includes a pointer to viewResourceSnapshot. */
   prefetchedCandidateCount?: number;
+  /** Agent memory loaded before the run: this work's entries in full, the global
+   *  entries as a one-line index (bodies via readMemory). Absent/empty = no block. */
+  memory?: {
+    title: Array<Pick<AgentMemory, "name" | "kind" | "description" | "body" | "updatedAt">>;
+    globalIndex: Array<Pick<AgentMemory, "name" | "kind" | "description">>;
+  };
 }
 
 /** A brand-specific transfer-model note. 夸克/天翼 = 转存分享链 only; 光鸭 and
@@ -156,6 +163,29 @@ function qualityGuidanceBlock(options: TaskAgentPromptOptions): string {
     : `\nQUALITY PREFERENCE (召回后选片优先级,不影响搜索词):\n${options.qualityGuidance}\n`;
 }
 
+/** Past-run experience for this work (in full) and the account's shared lessons (index
+ *  only). Framed as a SNAPSHOT: when it disagrees with what the tools return now, the
+ *  tools win — and the post-run reflection should fix or delete the stale entry. */
+export function memoryBlock(options: TaskAgentPromptOptions): string {
+  const title = options.memory?.title ?? [];
+  const globalIndex = options.memory?.globalIndex ?? [];
+  if (title.length === 0 && globalIndex.length === 0) return "";
+  const parts: string[] = [
+    "\n🧠 AGENT MEMORY — lessons earlier runs wrote down. They are snapshots of the past: when one disagrees with the current evidence (what the tools return now), the current evidence wins.",
+  ];
+  if (title.length > 0) {
+    parts.push("TITLE MEMORY (this work — read before you search):");
+    for (const m of title) {
+      parts.push(`- [${m.kind}] ${m.name} — ${m.description} (updated ${m.updatedAt.slice(0, 10)})\n  ${m.body.replace(/\n/g, "\n  ")}`);
+    }
+  }
+  if (globalIndex.length > 0) {
+    parts.push('GLOBAL MEMORY INDEX (shared lessons; read a body with readMemory({ scope: "global", name })):');
+    for (const m of globalIndex) parts.push(`- [${m.kind}] ${m.name} — ${m.description}`);
+  }
+  return `${parts.join("\n")}\n`;
+}
+
 function rawSnapshotPointer(options: TaskAgentPromptOptions): string {
   if (options.prefetchedCandidateCount === undefined || options.prefetchedCandidateCount === 0) {
     return "";
@@ -178,7 +208,7 @@ export function buildTvAnimeSystemPrompt(options: TaskAgentPromptOptions): strin
   return `${SANDBOX_BOUNDARY}
 
 ${skillMandate("tv")}
-${rawSnapshotPointer(options)}${subtitleSnapshotPointer(options)}
+${memoryBlock(options)}${rawSnapshotPointer(options)}${subtitleSnapshotPointer(options)}
 You own the COMPLETE acquisition judgment for one OR MORE seasons of a TV/anime title in scope: keyword strategy, target matching, season/episode coverage, package recognition + normalization, provider-ahead reasoning, staging→season extraction, residue classification, same-episode dedup grouping, and marking. It is ONE deliberation, not separate filters. The need is simply "应有 vs 实有 = which episodes are still missing"; it may span several seasons.
 
 Target matching:
@@ -210,7 +240,7 @@ export function buildMovieSystemPrompt(options: TaskAgentPromptOptions): string 
   return `${SANDBOX_BOUNDARY}
 
 ${skillMandate("movie")}
-${rawSnapshotPointer(options)}${subtitleSnapshotPointer(options)}
+${memoryBlock(options)}${rawSnapshotPointer(options)}${subtitleSnapshotPointer(options)}
 You own the COMPLETE acquisition judgment for ONE movie: target正片 identification (guard against remakes/wrong films — cross-check BOTH title AND year), main-file selection, quality tradeoff, rejection of extras/trailers/foreign works, import cleanup, and marking. A movie is a SINGLE video file — there are no seasons or episodes; its one synthetic coverage token is "MOVIE".
 
 Identity (the hard part): the candidate must be THIS film, not a remake, sequel, prequel, or same-IP different film. Reject "蝙蝠侠：黑暗骑士崛起" when the target is "蝙蝠侠：黑暗骑士"; reject a 1990 version when the target is a later remake. When identity is unclear, do not transfer speculatively.
@@ -252,6 +282,8 @@ export interface TvAnimeTarget {
   year?: number;
   /** The season number(s) this task covers — one, several, or all (multi-season pack). */
   seasons: number[];
+  /** TMDB id — keys this work's agent memory (absent = no title memory). */
+  tmdbId?: number;
   /** Missing episode codes, which MAY span the seasons above (e.g. ["S01E07","S02E13"]). */
   missingEpisodes: string[];
   qualityPreference: string;
@@ -262,6 +294,8 @@ export interface MovieTarget {
   aliases: string[];
   year: number;
   qualityPreference: string;
+  /** TMDB id — keys this work's agent memory (absent = no title memory). */
+  tmdbId?: number;
 }
 
 export interface RunTvAnimeRequest extends TaskAgentPromptOptions {

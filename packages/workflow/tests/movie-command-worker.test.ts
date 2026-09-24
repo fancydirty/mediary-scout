@@ -177,3 +177,80 @@ describe("runQueuedMovieAcquisition — the Jev prefilter reaches the engine", (
     expect(seen[0]!.target.title).toBe("奥本海默");
   });
 });
+
+/** Same chain guard for agent memory: enter at the WORKER so every hop is covered
+ *  (TS does not excess-property-check spreads — the jevJudge 2026-09-20 lesson). The
+ *  memory store is the repository itself; nothing extra is passed in. */
+describe("runQueuedMovieAcquisition — agent memory reaches the engine", () => {
+  it("the film's title memory is injected and read under its tmdb key (worker → runner-v2 → movie workflow)", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const title = movieTitle();
+    await repository.upsertAgentMemory({
+      accountId: "acct_default",
+      titleKey: `tmdb_movie_${title.tmdbId}`,
+      entry: { scope: "title", name: "prior-lesson", description: "上次的经验", kind: "search", body: "MEMORY-SENTINEL" },
+      now: fixedNow(),
+    });
+    await queueMovieAcquisition({ title, keyword: "奥本海默 4K", repository, createWorkflowRunId: () => "run_mem_movie", now: fixedNow });
+    const storage = new FakeStorageExecutor();
+    const movieDir = await storage.createDirectory({ name: `${title.title} (${title.year})`, parentId: "movies_root" });
+    storage.seedDirectoryFiles(movieDir, [
+      { id: "oppen_v", storageDirectoryId: movieDir, name: "Oppenheimer.2023.mkv", sizeBytes: 8_000_000_000, episodeCode: null, providerFileId: "oppen_v" },
+    ]);
+    const systems: string[] = [];
+    const inner = inspectAndMarkModel();
+    const model = new MockLanguageModelV3({
+      doGenerate: async (options) => {
+        systems.push(JSON.stringify(options.prompt.find((m) => m.role === "system") ?? ""));
+        return inner.doGenerate(options);
+      },
+    });
+    await runQueuedMovieAcquisition({
+      repository,
+      resourceProvider: new FakeResourceProvider({ keywordResults: { [title.title]: [{ title: "奥本海默.Oppenheimer.2023.2160p.mkv" }] } }),
+      storage,
+      model,
+      moviesParentDirectoryId: "movies_root",
+      now: fixedNow,
+    });
+    expect(systems[0]).toContain("MEMORY-SENTINEL");
+  });
+});
+
+describe("runQueuedMovieAcquisition — agent memory off switch", () => {
+  it("an account that turned memory off gets no memory block and no reflection", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const title = movieTitle();
+    await repository.upsertAgentMemory({
+      accountId: "acct_default",
+      titleKey: `tmdb_movie_${title.tmdbId}`,
+      entry: { scope: "title", name: "prior-lesson", description: "d", kind: "search", body: "OFF-SENTINEL" },
+      now: fixedNow(),
+    });
+    await queueMovieAcquisition({ title, keyword: "奥本海默 4K", repository, createWorkflowRunId: () => "run_mem_off", now: fixedNow });
+    const storage = new FakeStorageExecutor();
+    const movieDir = await storage.createDirectory({ name: `${title.title} (${title.year})`, parentId: "movies_root" });
+    storage.seedDirectoryFiles(movieDir, [
+      { id: "oppen_v", storageDirectoryId: movieDir, name: "Oppenheimer.2023.mkv", sizeBytes: 8_000_000_000, episodeCode: null, providerFileId: "oppen_v" },
+    ]);
+    const systems: string[] = [];
+    const inner = inspectAndMarkModel();
+    const model = new MockLanguageModelV3({
+      doGenerate: async (options) => {
+        systems.push(JSON.stringify(options.prompt.find((m) => m.role === "system") ?? ""));
+        return inner.doGenerate(options);
+      },
+    });
+    await runQueuedMovieAcquisition({
+      repository,
+      resourceProvider: new FakeResourceProvider({ keywordResults: { [title.title]: [{ title: "奥本海默.Oppenheimer.2023.2160p.mkv" }] } }),
+      storage,
+      model,
+      moviesParentDirectoryId: "movies_root",
+      now: fixedNow,
+      resolveAccountContext: async () => ({ agentMemory: false }),
+    });
+    expect(systems.some((s) => s.includes("OFF-SENTINEL"))).toBe(false);
+    expect(systems.some((s) => s.includes("reviewing an acquisition run"))).toBe(false);
+  });
+});

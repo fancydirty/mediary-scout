@@ -15,6 +15,13 @@ import type {
   WorkflowRunProgress,
 } from "./domain.js";
 import type { DeadLink } from "./acquisition-v2/dead-links.js";
+import {
+  agentMemoryFromRow,
+  agentMemoryTitleKeyColumn,
+  type AgentMemory,
+  type AgentMemoryRow,
+  type AgentMemoryStore,
+} from "./agent-memory.js";
 import { MAGNET_DEAD_LINK_TTL_MS } from "./acquisition-v2/dead-links.js";
 import type {
   Account,
@@ -136,6 +143,22 @@ export const SQLITE_SCHEMA = `
     permanent integer NOT NULL DEFAULT 1,
     expires_at text,
     recorded_at text NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS agent_memories (
+    id text PRIMARY KEY,
+    account_id text NOT NULL,
+    scope text NOT NULL,
+    title_key text NOT NULL DEFAULT '',
+    name text NOT NULL,
+    description text NOT NULL,
+    kind text NOT NULL,
+    body text NOT NULL,
+    provider text,
+    created_at text NOT NULL,
+    updated_at text NOT NULL,
+    last_used_at text,
+    source_run_id text,
+    UNIQUE (account_id, scope, title_key, name)
   );
   CREATE TABLE IF NOT EXISTS accounts (
     id text PRIMARY KEY,
@@ -1464,6 +1487,57 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
         "INSERT INTO dead_links (key, kind, reason, permanent, expires_at, recorded_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (key) DO NOTHING",
       )
       .run(input.key, input.kind, input.reason, input.permanent ? 1 : 0, expiresAt, recordedAt);
+  }
+
+  async listAgentMemories(input: Parameters<AgentMemoryStore["listAgentMemories"]>[0]): Promise<AgentMemory[]> {
+    const rows = this.db
+      .prepare(
+        "SELECT * FROM agent_memories WHERE account_id = ? AND scope = ? AND title_key = ? ORDER BY updated_at DESC, name ASC",
+      )
+      .all(input.accountId, input.scope, agentMemoryTitleKeyColumn(input.scope, input.titleKey)) as AgentMemoryRow[];
+    return rows.map(agentMemoryFromRow);
+  }
+
+  async upsertAgentMemory(input: Parameters<AgentMemoryStore["upsertAgentMemory"]>[0]): Promise<AgentMemory> {
+    const titleKey = agentMemoryTitleKeyColumn(input.entry.scope, input.titleKey);
+    this.db
+      .prepare(
+        "INSERT INTO agent_memories (id, account_id, scope, title_key, name, description, kind, body, provider, created_at, updated_at, last_used_at, source_run_id) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?) " +
+          "ON CONFLICT (account_id, scope, title_key, name) DO UPDATE SET description = excluded.description, kind = excluded.kind, " +
+          "body = excluded.body, provider = excluded.provider, updated_at = excluded.updated_at, " +
+          "source_run_id = COALESCE(excluded.source_run_id, agent_memories.source_run_id)",
+      )
+      .run(
+        `mem_${globalThis.crypto.randomUUID()}`,
+        input.accountId,
+        input.entry.scope,
+        titleKey,
+        input.entry.name,
+        input.entry.description,
+        input.entry.kind,
+        input.entry.body,
+        input.entry.provider ?? null,
+        input.now,
+        input.now,
+        input.sourceRunId ?? null,
+      );
+    const row = this.db
+      .prepare("SELECT * FROM agent_memories WHERE account_id = ? AND scope = ? AND title_key = ? AND name = ?")
+      .get(input.accountId, input.entry.scope, titleKey, input.entry.name) as AgentMemoryRow;
+    return agentMemoryFromRow(row);
+  }
+
+  async deleteAgentMemory(input: Parameters<AgentMemoryStore["deleteAgentMemory"]>[0]): Promise<boolean> {
+    const result = this.db
+      .prepare("DELETE FROM agent_memories WHERE account_id = ? AND scope = ? AND title_key = ? AND name = ?")
+      .run(input.accountId, input.scope, agentMemoryTitleKeyColumn(input.scope, input.titleKey), input.name);
+    return result.changes > 0;
+  }
+
+  async touchAgentMemories(input: Parameters<AgentMemoryStore["touchAgentMemories"]>[0]): Promise<void> {
+    const stmt = this.db.prepare("UPDATE agent_memories SET last_used_at = ? WHERE account_id = ? AND id = ?");
+    for (const id of input.ids) stmt.run(input.now, input.accountId, id);
   }
 
   async listDeadLinkKeys(options?: { now?: string }): Promise<string[]> {

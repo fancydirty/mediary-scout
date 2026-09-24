@@ -1,3 +1,5 @@
+import { memoryTitleKey, type AgentMemory, type AgentMemoryStore } from "../agent-memory.js";
+import { buildReflectionDigest, runMemoryReflection } from "./agent-loop.js";
 import type { LanguageModel } from "ai";
 import type { AgentDecision, AuditEvent, ResourceSnapshot, TransferAttempt } from "../domain.js";
 import type { ResourceProvider, StorageExecutor } from "../ports.js";
@@ -79,6 +81,11 @@ export interface RunAcquisitionV2Request {
   jevJudge?: JevJudge;
   /** Per-tool-call live progress for the activity page (best-effort). */
   onProgress?: (event: AgentToolEvent) => void;
+  /** Agent memory (design: docs/superpowers/specs/2026-09-25-agent-memory-design.md).
+   *  Present + target.tmdbId known → this work's memory is injected into the prompt
+   *  and a post-run reflection turn may write/update/delete it. Every memory step is
+   *  best-effort: a failing store never affects the acquisition. */
+  memory?: { store: AgentMemoryStore; accountId: string; now?: () => string };
 }
 
 /** The persistable trace of a V2 run, in the same shape the old serial path
@@ -114,6 +121,18 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     ...(request.deadLinkStore ? { deadLinkStore: request.deadLinkStore } : {}),
   });
   const need = request.target.kind === "tv" ? needForTvTarget(request.target) : needForMovie();
+  // The title key is computed HERE from the target — the agent never supplies it.
+  const memoryNow = request.memory?.now ?? (() => new Date().toISOString());
+  const memoryBinding =
+    request.memory && typeof request.target.tmdbId === "number" && request.target.tmdbId > 0
+      ? {
+          store: request.memory.store,
+          accountId: request.memory.accountId,
+          titleKey: memoryTitleKey({ kind: request.target.kind, tmdbId: request.target.tmdbId }),
+          runId: request.workflowRunId,
+          now: memoryNow,
+        }
+      : undefined;
   const sandbox = new TaskSandbox({
     provider,
     storage,
@@ -133,7 +152,9 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     titleTerms: [request.target.title, ...request.target.aliases],
     ...(request.searchBudget === undefined ? {} : { searchBudget: request.searchBudget }),
     ...(request.searchProfile === undefined ? {} : { searchProfile: request.searchProfile }),
+    ...(memoryBinding ? { memory: memoryBinding } : {}),
   });
+  const loadedMemory = await loadMemoryForRun(request, memoryBinding);
 
   // Pre-warm the raw snapshot (bare title) BEFORE building the system prompt, so the
   // prefetchedCandidateCount pointer can be injected. If the provider fails (network
@@ -214,6 +235,7 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
       : {}),
     // Inject the prefetched candidate count into the prompt so the pointer renders.
     ...(prefetchedCandidateCount === undefined ? {} : { prefetchedCandidateCount }),
+    ...(loadedMemory ? { memory: loadedMemory } : {}),
   };
 
   const result =
@@ -228,6 +250,26 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
   // fileId↔episode map.
   const transferAttempts = storage.attempts();
   const resourceSnapshots = provider.snapshots();
+
+  // Post-run reflection: best-effort, never changes the outcome.
+  if (memoryBinding) {
+    const digest = buildReflectionDigest({
+      snapshots: resourceSnapshots,
+      attempts: transferAttempts,
+      candidateTitle: (id) => registry.get(id)?.title,
+      coverage: result.coverage,
+      auditEvents: sandbox.auditTrail(),
+    });
+    const reflection = await runMemoryReflection({
+      sandbox,
+      model: request.model,
+      digest,
+      memory: loadedMemory ?? { title: [], globalIndex: [] },
+    });
+    console.log(
+      `[memory] run ${request.workflowRunId} title=${memoryBinding.titleKey} ${reflection.ran ? `changes=${reflection.changes}` : `skipped=${reflection.skipped ?? "-"}`}`,
+    );
+  }
   const decisions = buildAgentDecisions({
     transferAttempts,
     resourceSnapshots,
@@ -311,5 +353,28 @@ function jevTargetOf(target: AcquisitionV2Target): JevJudgeTarget {
       const never: never = target;
       throw new Error(`unknown target kind: ${String((never as { kind?: unknown }).kind)}`);
     }
+  }
+}
+
+/** Load this work's memory (full) and the global index for the prompt, and mark the
+ *  injected entries as used. Any store failure → no memory for this run. */
+async function loadMemoryForRun(
+  request: RunAcquisitionV2Request,
+  binding: { store: AgentMemoryStore; accountId: string; titleKey: string; now: () => string } | undefined,
+): Promise<{ title: AgentMemory[]; globalIndex: AgentMemory[] } | undefined> {
+  if (!binding) return undefined;
+  try {
+    const [title, global] = await Promise.all([
+      binding.store.listAgentMemories({ accountId: binding.accountId, scope: "title", titleKey: binding.titleKey }),
+      binding.store.listAgentMemories({ accountId: binding.accountId, scope: "global" }),
+    ]);
+    const ids = [...title, ...global].map((m) => m.id);
+    if (ids.length > 0) {
+      await binding.store.touchAgentMemories({ accountId: binding.accountId, ids, now: binding.now() }).catch(() => undefined);
+    }
+    return { title, globalIndex: global };
+  } catch (error) {
+    console.log(`[memory] run ${request.workflowRunId} load failed (no memory this run): ${error instanceof Error ? error.message : String(error)}`);
+    return undefined;
   }
 }

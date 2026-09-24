@@ -977,3 +977,46 @@ export async function testRemoteAccessConnectionAction(): Promise<TestRemoteAcce
   const { probeRemoteAccess } = await import("../lib/remote-access-probe");
   return await probeRemoteAccess(hostname);
 }
+
+// ── Agent memory (work detail page + Settings → AI 模型) ──────────────────────
+type MemoryAddressInput = import("../lib/agent-memory-server").MemoryAddress;
+type MemoryKindInput = import("@media-track/workflow").AgentMemoryKind;
+
+export async function setAgentMemoryEnabledAction(enabled: boolean): Promise<PushSettingsActionResult> {
+  assertNotDemo();
+  try {
+    const { getWorkflowRepository, getCurrentAccountId } = await import("../lib/workflow-runtime");
+    const { AGENT_MEMORY_ENABLED_SETTING_KEY } = await import("../lib/agent-memory-server");
+    await getWorkflowRepository().setAccountSetting(await getCurrentAccountId(), AGENT_MEMORY_ENABLED_SETTING_KEY, enabled ? "1" : "0");
+    return { success: true };
+  } catch (error) {
+    return { success: false, message: `保存失败：${String(error)}` };
+  }
+}
+
+export async function saveAgentMemoryAction(
+  address: MemoryAddressInput,
+  input: { name: string; description: string; kind: MemoryKindInput; body: string },
+): Promise<PushSettingsActionResult> {
+  assertNotDemo();
+  try {
+    const { getWorkflowRepository, getCurrentAccountId } = await import("../lib/workflow-runtime");
+    const { saveMemoryFromUi } = await import("../lib/agent-memory-server");
+    const result = await saveMemoryFromUi(getWorkflowRepository(), await getCurrentAccountId(), address, input);
+    return result.success ? { success: true } : { success: false, message: result.message };
+  } catch (error) {
+    return { success: false, message: `保存失败：${String(error)}` };
+  }
+}
+
+export async function deleteAgentMemoryAction(address: MemoryAddressInput, name: string): Promise<PushSettingsActionResult> {
+  assertNotDemo();
+  try {
+    const { getWorkflowRepository, getCurrentAccountId } = await import("../lib/workflow-runtime");
+    const { deleteMemoryFromUi } = await import("../lib/agent-memory-server");
+    const result = await deleteMemoryFromUi(getWorkflowRepository(), await getCurrentAccountId(), address, name);
+    return result.success ? { success: true } : { success: false, message: result.message };
+  } catch (error) {
+    return { success: false, message: `删除失败：${String(error)}` };
+  }
+}

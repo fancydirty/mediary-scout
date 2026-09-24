@@ -1,3 +1,4 @@
+import type { AgentMemoryStore } from "../agent-memory.js";
 import type { LanguageModel } from "ai";
 import type { MediaTitle } from "../domain.js";
 import type { ResourceProvider, StorageExecutor } from "../ports.js";
@@ -49,6 +50,8 @@ export interface RunTvAcquisitionV2Request {
   /** Optional Jev candidate prefilter (Settings); resolved per account by the worker. */
   jevJudge?: JevJudge;
   deadLinkStore?: DeadLinkStore;
+  /** Agent memory (see orchestrator.memory). */
+  memory?: { store: AgentMemoryStore; accountId: string };
   onProgress?: (event: AgentToolEvent) => void;
   now?: () => string;
 }
@@ -93,6 +96,7 @@ export async function runTvAcquisitionV2(request: RunTvAcquisitionV2Request): Pr
     ...(request.assrtToken === undefined ? {} : { assrtToken: request.assrtToken }),
     ...(request.jevJudge === undefined ? {} : { jevJudge: request.jevJudge }),
     ...(request.deadLinkStore ? { deadLinkStore: request.deadLinkStore } : {}),
+    ...(request.memory ? { memory: request.memory } : {}),
     ...(request.onProgress ? { onProgress: request.onProgress } : {}),
   });
 

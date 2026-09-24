@@ -24,6 +24,7 @@ export * from "./prowlarr-provider.js";
 export * from "./composite-provider.js";
 export * from "./fallback-provider.js";
 export * from "./jev-judge.js";
+export * from "./agent-memory.js";
 export * from "./jev-client.js";
 export * from "./jev-prefilter-provider.js";
 export * from "./tmdb-provider.js";

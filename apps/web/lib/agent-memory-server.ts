@@ -1,0 +1,82 @@
+/**
+ * Server-side logic behind the agent-memory UI (work detail page + Settings → AI 模型)
+ * and the per-account on/off switch. Kept apart from the server actions so it can be
+ * unit-tested against a plain repository.
+ */
+import {
+  memoryTitleKey,
+  validateMemoryInput,
+  type AgentMemory,
+  type AgentMemoryKind,
+  type AgentMemoryStore,
+} from "@media-track/workflow";
+
+/** Account setting: "0" = agent memory off. Absent / anything else = on (default). */
+export const AGENT_MEMORY_ENABLED_SETTING_KEY = "agent_memory_enabled";
+
+export type MemoryAddress =
+  | { scope: "global" }
+  | { scope: "title"; mediaType: "movie" | "tv"; tmdbId: number };
+
+export async function isAgentMemoryEnabled(
+  repository: { getAccountSetting(accountId: string, key: string): Promise<string | null> },
+  accountId: string,
+): Promise<boolean> {
+  return (await repository.getAccountSetting(accountId, AGENT_MEMORY_ENABLED_SETTING_KEY)) !== "0";
+}
+
+function titleKeyOf(address: MemoryAddress): string | null | "invalid" {
+  if (address.scope === "global") return null;
+  if (!Number.isInteger(address.tmdbId) || address.tmdbId <= 0) return "invalid";
+  return memoryTitleKey({ kind: address.mediaType, tmdbId: address.tmdbId });
+}
+
+export async function listMemoriesForUi(
+  store: AgentMemoryStore,
+  accountId: string,
+  address: MemoryAddress,
+): Promise<AgentMemory[]> {
+  const titleKey = titleKeyOf(address);
+  if (titleKey === "invalid") return [];
+  return store.listAgentMemories({ accountId, scope: address.scope, titleKey });
+}
+
+export async function saveMemoryFromUi(
+  store: AgentMemoryStore,
+  accountId: string,
+  address: MemoryAddress,
+  input: { name: string; description: string; kind: AgentMemoryKind; body: string },
+  now: () => string = () => new Date().toISOString(),
+): Promise<{ success: true } | { success: false; message: string }> {
+  const titleKey = titleKeyOf(address);
+  if (titleKey === "invalid") return { success: false, message: "作品编号无效" };
+  const entry = { scope: address.scope, name: input.name.trim(), description: input.description.trim(), kind: input.kind, body: input.body.trim() };
+  const invalid = validateMemoryInput(entry);
+  if (invalid) return { success: false, message: invalid };
+  await store.upsertAgentMemory({ accountId, titleKey, entry, now: now() });
+  return { success: true };
+}
+
+export async function deleteMemoryFromUi(
+  store: AgentMemoryStore,
+  accountId: string,
+  address: MemoryAddress,
+  name: string,
+): Promise<{ success: true } | { success: false; message: string }> {
+  const titleKey = titleKeyOf(address);
+  if (titleKey === "invalid") return { success: false, message: "作品编号无效" };
+  const deleted = await store.deleteAgentMemory({ accountId, scope: address.scope, titleKey, name });
+  return deleted ? { success: true } : { success: false, message: "这条记忆已不存在" };
+}
+
+/** The serializable slice the client panel renders (no ids / account). */
+export function toMemoryItem(m: AgentMemory): {
+  name: string;
+  description: string;
+  kind: AgentMemoryKind;
+  body: string;
+  updatedAt: string;
+  lastUsedAt: string | null;
+} {
+  return { name: m.name, description: m.description, kind: m.kind, body: m.body, updatedAt: m.updatedAt, lastUsedAt: m.lastUsedAt };
+}

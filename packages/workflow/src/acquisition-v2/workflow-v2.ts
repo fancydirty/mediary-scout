@@ -1,3 +1,4 @@
+import type { AgentMemoryStore } from "../agent-memory.js";
 import type { LanguageModel } from "ai";
 import type { ResourceProvider, StorageExecutor } from "../ports.js";
 import type { AuditEvent } from "../domain.js";
@@ -62,6 +63,8 @@ export interface RunAcquisitionV2WorkflowRequest {
   /** Optional Jev candidate prefilter (see orchestrator.jevJudge). */
   jevJudge?: JevJudge;
   deadLinkStore?: DeadLinkStore;
+  /** Agent memory (see orchestrator.memory). */
+  memory?: { store: AgentMemoryStore; accountId: string };
   onProgress?: (event: AgentToolEvent) => void;
 }
 
@@ -150,6 +153,7 @@ export async function runAcquisitionV2Workflow(
       seasons: request.seasons.map((season) => season.seasonNumber),
       missingEpisodes: before.missing,
       qualityPreference: request.qualityPreference,
+      ...(request.title.tmdbId ? { tmdbId: request.title.tmdbId } : {}),
     },
     stagingDirectoryId: directories.stagingDirectoryId,
     targetSeasonDirectoryIds: directories.seasonDirectoryIds,
@@ -164,6 +168,7 @@ export async function runAcquisitionV2Workflow(
     ...(request.assrtToken === undefined ? {} : { assrtToken: request.assrtToken }),
     ...(request.jevJudge === undefined ? {} : { jevJudge: request.jevJudge }),
     ...(request.deadLinkStore ? { deadLinkStore: request.deadLinkStore } : {}),
+    ...(request.memory ? { memory: request.memory } : {}),
     ...(request.onProgress ? { onProgress: request.onProgress } : {}),
   });
 

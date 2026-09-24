@@ -14,6 +14,14 @@ import { animeSearchTabooWarnings, type SearchProfile } from "./search-profile.j
 import type { AuditEvent } from "../domain.js";
 import { isMergedSourceEvidenceUsable, type MergedSourceHealth } from "../resource-source-health.js";
 import { JEV_UNCERTAIN_LEGEND, jevAllDroppedWarning, jevUncertaintyFlag } from "../jev-judge.js";
+import {
+  AGENT_MEMORY_LIMITS,
+  validateMemoryInput,
+  type AgentMemory,
+  type AgentMemoryScope,
+  type AgentMemoryStore,
+  type AgentMemoryWrite,
+} from "../agent-memory.js";
 import { indexSubtitleFiles, selectSubtitleChunk } from "./subtitle-renewal.js";
 
 /** Quality / subtitle / source tokens that PanSou share titles almost never carry,
@@ -161,6 +169,16 @@ export interface TaskSandboxOptions {
   /** The task's fine-grained search profile — enables the anime taboo-keyword
    *  validator (warnings only, never blocking). 病2b。 */
   searchProfile?: SearchProfile;
+  /** Agent memory binding. `titleKey` is computed by the system from the task target
+   *  (memoryTitleKey) — the memory tools never take it from the agent, which is what
+   *  confines a run to the memory of its own work. Absent = memory tools refuse. */
+  memory?: {
+    store: AgentMemoryStore;
+    accountId: string;
+    titleKey: string;
+    runId: string;
+    now?: () => string;
+  };
 }
 
 export interface SearchToolResult {
@@ -237,6 +255,9 @@ export class TaskSandbox {
   private pendingDigest: { keyword: string; count: number } | null = null;
   /** 病4: 本任务的审计事件（no_coverage 上报/dedup 重复/禁忌词警告）。runner 持久化到 workflowRun.auditEvents。 */
   private readonly auditEvents: AuditEvent[] = [];
+  private readonly memory: TaskSandboxOptions["memory"];
+  /** Writes + deletes made by this task (capped at AGENT_MEMORY_LIMITS.changesPerRunMax). */
+  private memoryChanges = 0;
   /** Set the moment a video/subtitle transfer is ATTEMPTED (before the provider call,
    *  so a transfer that threw still counts). Read by hasTransferEvidence. */
   private transferAttempted = false;
@@ -259,6 +280,7 @@ export class TaskSandbox {
     this.need = options.need ?? [];
     this.titleTerms = options.titleTerms ?? [];
     this.subtitleProvider = options.subtitleProvider;
+    this.memory = options.memory;
   }
 
   /** Every scoped target directory (all seasons + the movie) — the union used for
@@ -877,6 +899,101 @@ export class TaskSandbox {
       // let the recovery turn look for itself (its inspect tools report the error).
       return true;
     }
+  }
+
+  // ── Agent memory tools ────────────────────────────────────────────────────
+  /** Whether this run has a memory binding (reflection runs only when it does). */
+  hasMemory(): boolean {
+    return this.memory !== undefined;
+  }
+
+  /** Writes + deletes made so far this run (for the reflection summary log). */
+  memoryChangeCount(): number {
+    return this.memoryChanges;
+  }
+
+  private requireMemory(): NonNullable<TaskSandboxOptions["memory"]> {
+    if (!this.memory) throw new Error("MEMORY_UNAVAILABLE: agent memory is not enabled for this run");
+    return this.memory;
+  }
+
+  private memoryTitleKeyFor(scope: AgentMemoryScope): string | null {
+    return scope === "title" ? this.requireMemory().titleKey : null;
+  }
+
+  /** Read one entry's body. Title scope = THIS work only. */
+  async readMemory(input: { scope: AgentMemoryScope; name: string }): Promise<AgentMemory> {
+    const memory = this.requireMemory();
+    const rows = await memory.store.listAgentMemories({
+      accountId: memory.accountId,
+      scope: input.scope,
+      titleKey: this.memoryTitleKeyFor(input.scope),
+    });
+    const hit = rows.find((row) => row.name === input.name);
+    if (!hit) throw new Error(`MEMORY_NOT_FOUND: no ${input.scope} memory named "${input.name}"`);
+    return hit;
+  }
+
+  /** Upsert by name. The title key is the BOUND one — any titleKey the agent passes
+   *  is ignored (the input type does not even carry it). */
+  async writeMemory(input: AgentMemoryWrite): Promise<{ name: string; scope: AgentMemoryScope; updated: boolean }> {
+    const memory = this.requireMemory();
+    const entry: AgentMemoryWrite = {
+      scope: input.scope,
+      name: input.name,
+      description: input.description,
+      kind: input.kind,
+      body: input.body,
+      ...(input.provider ? { provider: input.provider } : {}),
+    };
+    const invalid = validateMemoryInput(entry);
+    if (invalid) throw new Error(`MEMORY_INVALID: ${invalid}`);
+    if (this.memoryChanges >= AGENT_MEMORY_LIMITS.changesPerRunMax) {
+      throw new Error(`MEMORY_RUN_LIMIT: at most ${AGENT_MEMORY_LIMITS.changesPerRunMax} memory writes/deletes per run`);
+    }
+    const titleKey = this.memoryTitleKeyFor(entry.scope);
+    const existing = await memory.store.listAgentMemories({ accountId: memory.accountId, scope: entry.scope, titleKey });
+    const updated = existing.some((row) => row.name === entry.name);
+    const cap = entry.scope === "title" ? AGENT_MEMORY_LIMITS.titleEntriesMax : AGENT_MEMORY_LIMITS.globalEntriesMax;
+    if (!updated && existing.length >= cap) {
+      throw new Error(`MEMORY_FULL: ${entry.scope} memory already has ${existing.length}/${cap} entries — delete or overwrite a stale one first`);
+    }
+    await memory.store.upsertAgentMemory({
+      accountId: memory.accountId,
+      titleKey,
+      entry,
+      sourceRunId: memory.runId,
+      now: (memory.now ?? (() => new Date().toISOString()))(),
+    });
+    this.memoryChanges += 1;
+    this.auditEvents.push({
+      type: "memory_written",
+      message: `agent 记忆${updated ? "更新" : "新增"}:${entry.scope}/${entry.name}`,
+      data: { scope: entry.scope, name: entry.name, updated },
+    });
+    return { name: entry.name, scope: entry.scope, updated };
+  }
+
+  async deleteMemory(input: { scope: AgentMemoryScope; name: string }): Promise<{ deleted: boolean }> {
+    const memory = this.requireMemory();
+    if (this.memoryChanges >= AGENT_MEMORY_LIMITS.changesPerRunMax) {
+      throw new Error(`MEMORY_RUN_LIMIT: at most ${AGENT_MEMORY_LIMITS.changesPerRunMax} memory writes/deletes per run`);
+    }
+    const deleted = await memory.store.deleteAgentMemory({
+      accountId: memory.accountId,
+      scope: input.scope,
+      titleKey: this.memoryTitleKeyFor(input.scope),
+      name: input.name,
+    });
+    if (deleted) {
+      this.memoryChanges += 1;
+      this.auditEvents.push({
+        type: "memory_deleted",
+        message: `agent 记忆删除:${input.scope}/${input.name}`,
+        data: { scope: input.scope, name: input.name },
+      });
+    }
+    return { deleted };
   }
 
   auditTrail(): AuditEvent[] {

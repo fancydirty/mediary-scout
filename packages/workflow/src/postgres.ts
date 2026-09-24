@@ -45,6 +45,13 @@ import type {
 } from "./account-credentials.js";
 import { normalizeScope, scopeMatches, type ScopeArg, type WorkflowScope } from "./workflow-scope.js";
 import { MAGNET_DEAD_LINK_TTL_MS, type DeadLink } from "./acquisition-v2/dead-links.js";
+import {
+  agentMemoryFromRow,
+  agentMemoryTitleKeyColumn,
+  type AgentMemory,
+  type AgentMemoryRow,
+  type AgentMemoryStore,
+} from "./agent-memory.js";
 
 type Queryable = Pool | PoolClient;
 
@@ -145,6 +152,22 @@ const SCHEMA = `
     anime_cid text,
     created_at text NOT NULL,
     UNIQUE (provider, provider_uid)
+  );
+  CREATE TABLE IF NOT EXISTS agent_memories (
+    id text PRIMARY KEY,
+    account_id text NOT NULL,
+    scope text NOT NULL,
+    title_key text NOT NULL DEFAULT '',
+    name text NOT NULL,
+    description text NOT NULL,
+    kind text NOT NULL,
+    body text NOT NULL,
+    provider text,
+    created_at text NOT NULL,
+    updated_at text NOT NULL,
+    last_used_at text,
+    source_run_id text,
+    UNIQUE (account_id, scope, title_key, name)
   );
   CREATE TABLE IF NOT EXISTS account_settings (
     account_id text NOT NULL,
@@ -1250,6 +1273,59 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
       [now],
     );
     return result.rows.map((row) => String(row.key));
+  }
+
+  async listAgentMemories(input: Parameters<AgentMemoryStore["listAgentMemories"]>[0]): Promise<AgentMemory[]> {
+    await this.ensureSchema();
+    const result = await this.pool.query<AgentMemoryRow>(
+      "SELECT * FROM agent_memories WHERE account_id = $1 AND scope = $2 AND title_key = $3 ORDER BY updated_at DESC, name ASC",
+      [input.accountId, input.scope, agentMemoryTitleKeyColumn(input.scope, input.titleKey)],
+    );
+    return result.rows.map(agentMemoryFromRow);
+  }
+
+  async upsertAgentMemory(input: Parameters<AgentMemoryStore["upsertAgentMemory"]>[0]): Promise<AgentMemory> {
+    await this.ensureSchema();
+    const result = await this.pool.query<AgentMemoryRow>(
+      "INSERT INTO agent_memories (id, account_id, scope, title_key, name, description, kind, body, provider, created_at, updated_at, last_used_at, source_run_id) " +
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, NULL, $11) " +
+        "ON CONFLICT (account_id, scope, title_key, name) DO UPDATE SET description = EXCLUDED.description, kind = EXCLUDED.kind, " +
+        "body = EXCLUDED.body, provider = EXCLUDED.provider, updated_at = EXCLUDED.updated_at, " +
+        "source_run_id = COALESCE(EXCLUDED.source_run_id, agent_memories.source_run_id) RETURNING *",
+      [
+        `mem_${globalThis.crypto.randomUUID()}`,
+        input.accountId,
+        input.entry.scope,
+        agentMemoryTitleKeyColumn(input.entry.scope, input.titleKey),
+        input.entry.name,
+        input.entry.description,
+        input.entry.kind,
+        input.entry.body,
+        input.entry.provider ?? null,
+        input.now,
+        input.sourceRunId ?? null,
+      ],
+    );
+    return agentMemoryFromRow(result.rows[0]!);
+  }
+
+  async deleteAgentMemory(input: Parameters<AgentMemoryStore["deleteAgentMemory"]>[0]): Promise<boolean> {
+    await this.ensureSchema();
+    const result = await this.pool.query(
+      "DELETE FROM agent_memories WHERE account_id = $1 AND scope = $2 AND title_key = $3 AND name = $4",
+      [input.accountId, input.scope, agentMemoryTitleKeyColumn(input.scope, input.titleKey), input.name],
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async touchAgentMemories(input: Parameters<AgentMemoryStore["touchAgentMemories"]>[0]): Promise<void> {
+    await this.ensureSchema();
+    if (input.ids.length === 0) return;
+    await this.pool.query("UPDATE agent_memories SET last_used_at = $1 WHERE account_id = $2 AND id = ANY($3::text[])", [
+      input.now,
+      input.accountId,
+      input.ids,
+    ]);
   }
 
   // ---- private ----

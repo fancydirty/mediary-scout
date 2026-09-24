@@ -1,3 +1,5 @@
+import { DEFAULT_ACCOUNT_ID } from "./domain.js";
+import type { AgentMemoryStore } from "./agent-memory.js";
 import type { LanguageModel } from "ai";
 import type {
   AcquisitionSeasonScope,
@@ -51,6 +53,9 @@ interface TvV2Common {
   assrtToken?: string;
   /** Optional Jev candidate prefilter (Settings); resolved per account by the worker. */
   jevJudge?: JevJudge;
+  /** Agent memory on/off (Settings → AI 模型, default on). When on, the repository
+   *  itself is the memory store, scoped to `accountId`. */
+  agentMemory?: boolean;
   /**
    * Wall clock for the run. Drives the engine's timestamps (including the
    * terminal notification's `createdAt`) AND the persisted `finishedAt`, which
@@ -75,8 +80,10 @@ function passthrough(input: TvV2Common): {
   storageProvider?: string;
   assrtToken?: string;
   jevJudge?: JevJudge;
+  memory?: { store: AgentMemoryStore; accountId: string };
 } {
   return {
+    ...memoryOption(input),
     ...(input.searchBudget === undefined ? {} : { searchBudget: input.searchBudget }),
     ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
     ...(input.preferredLanguage === undefined ? {} : { preferredLanguage: input.preferredLanguage }),
@@ -85,6 +92,15 @@ function passthrough(input: TvV2Common): {
     ...(input.assrtToken === undefined ? {} : { assrtToken: input.assrtToken }),
     ...(input.jevJudge === undefined ? {} : { jevJudge: input.jevJudge }),
   };
+}
+
+/** The repository IS the memory store; memory is on unless the account turned it off. */
+function memoryOption(input: { repository: WorkflowRepository; accountId?: string; agentMemory?: boolean }): {
+  memory?: { store: AgentMemoryStore; accountId: string };
+} {
+  return input.agentMemory === false
+    ? {}
+    : { memory: { store: input.repository, accountId: input.accountId ?? DEFAULT_ACCOUNT_ID } };
 }
 
 /** The run's onProgress: live activity progress (for the activity page) AND the
@@ -337,6 +353,8 @@ export async function runMovieAcquisitionV2AndPersist(input: {
   assrtToken?: string;
   /** Optional Jev candidate prefilter (Settings); resolved per account by the worker. */
   jevJudge?: JevJudge;
+  /** See TvV2Common.agentMemory. */
+  agentMemory?: boolean;
   /** See TvV2Common.now — finishedAt is stamped post-run from this clock. */
   now?: () => string;
 }): Promise<MovieWorkflowResult> {
@@ -363,6 +381,7 @@ export async function runMovieAcquisitionV2AndPersist(input: {
     ...(input.storageProvider === undefined ? {} : { storageProvider: input.storageProvider }),
     ...(input.assrtToken === undefined ? {} : { assrtToken: input.assrtToken }),
     ...(input.jevJudge === undefined ? {} : { jevJudge: input.jevJudge }),
+    ...memoryOption(input),
   });
 
   await input.repository.saveWorkflowRunSnapshot({

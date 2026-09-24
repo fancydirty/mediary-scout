@@ -17,6 +17,8 @@ import { AssrtTokenForm } from "../../components/assrt-token-form";
 import { ProwlarrConfigForm } from "../../components/prowlarr-config-form";
 import { JevPrefilterForm } from "../../components/jev-prefilter-form";
 import { ServiceBlock } from "../../components/service-block";
+import { AgentMemoryPanel } from "../../components/agent-memory-panel";
+import { isAgentMemoryEnabled, listMemoriesForUi, toMemoryItem } from "../../lib/agent-memory-server";
 import { assrtPills, isEnvBackedValue, jevPills, llmPills, pansouPills, prowlarrPills, tmdbPills } from "../../lib/service-status";
 import { PanSouConfigForm } from "../../components/pansou-config-form";
 import { DailySweepForm } from "../../components/daily-sweep-form";
@@ -322,6 +324,8 @@ async function LlmConfigSection() {
   // …and blank resolves to THIS (instance → env → OpenRouter), shown as the placeholder.
   const jevInheritedBaseUrl = await getJevInheritedBaseUrl();
   const jevModel = (await repository.getSetting(JEV_MODEL_SETTING_KEY))?.trim() || null;
+  const memoryEnabled = await isAgentMemoryEnabled(getWorkflowRepository(), accountId);
+  const globalMemories = await listMemoriesForUi(getWorkflowRepository(), accountId, { scope: "global" });
 
   return (
     <section className="panel" style={{ maxWidth: 720, marginTop: 24 }}>
@@ -385,6 +389,26 @@ async function LlmConfigSection() {
           apiKeySet={Boolean(jev.apiKey)}
           enabled={jev.enabled}
           healthy={jev.health === "ok"}
+        />
+      </ServiceBlock>
+      <ServiceBlock
+        name="Agent 记忆"
+        pills={[
+          memoryEnabled ? { label: "开启", tone: "on" } : { label: "已关闭", tone: "off" },
+          { label: `全局 ${globalMemories.length} 条`, tone: "neutral" },
+        ]}
+        summary="agent 每次获取前读取这部作品和全局的经验，结束后把值得记的写下来；你可以在这里改或删全局记忆，作品记忆在各作品详情页。"
+        details={
+          <p>
+            每次获取都是一个全新的 agent。记忆让它把踩过的坑（例如「这部是 2026 年的，带 2025 搜不到」「某个字幕组的包最准」）留给下一次。作品记忆只会被这部作品的获取读写；全局记忆所有获取共享。记忆写入后直接生效，你随时可以编辑或删除。
+          </p>
+        }
+      >
+        <AgentMemoryPanel
+          address={{ scope: "global" }}
+          items={globalMemories.map(toMemoryItem)}
+          enabled={memoryEnabled}
+          showToggle
         />
       </ServiceBlock>
     </section>

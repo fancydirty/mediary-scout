@@ -599,3 +599,37 @@ describe("runScheduledType3Monitoring — the Jev prefilter reaches the engine",
     expect(seen[0]!.target.kind).toBe("tv");
   });
 });
+
+describe("runScheduledType3Monitoring — agent memory reaches the engine", () => {
+  it("injects the show's title memory under tmdb_tv_<id> (worker → runner-v2 → run-tv-v2 → workflow)", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const { title, season } = trackedFixture();
+    await seedTrackedSeason({ repository, title, season, obtainedCodes: ["S01E01"] });
+    await repository.upsertAgentMemory({
+      accountId: "acct_default",
+      titleKey: `tmdb_tv_${title.tmdbId}`,
+      entry: { scope: "title", name: "prior-lesson", description: "上次的经验", kind: "search", body: "TV-MEMORY-SENTINEL" },
+      now: fixedNow(),
+    });
+    const storage = new FakeStorageExecutor();
+    await seedV2Season(storage, title, season, ["S01E01"]);
+    const systems: string[] = [];
+    const inner = noCoverageModel();
+    const model = new MockLanguageModelV3({
+      doGenerate: async (options) => {
+        systems.push(JSON.stringify(options.prompt.find((m) => m.role === "system") ?? ""));
+        return inner.doGenerate(options);
+      },
+    });
+    await runScheduledType3Monitoring({
+      repository,
+      resourceProvider: new FakeResourceProvider({ keywordResults: { [title.title]: [{ title: `${title.title} S01 2160p WEB-DL` }] } }),
+      storage,
+      model,
+      storageParentDirectoryId: "library_root",
+      now: fixedNow,
+      createWorkflowRunId: () => "run_mem_type3",
+    });
+    expect(systems[0]).toContain("TV-MEMORY-SENTINEL");
+  });
+});

@@ -419,3 +419,122 @@ export async function runAcquisitionAgent(
     coverage: await request.sandbox.finish(),
   };
 }
+
+// ── Agent memory reflection ─────────────────────────────────────────────────
+// After the acquisition loop, one short turn lets the agent write down what is worth
+// keeping for next time (design: docs/superpowers/specs/2026-09-25-agent-memory-design.md).
+// It gets a digest of FACTS built by code (not the model's recollection) and ONLY the
+// three memory tools — no drive, no search — so it has no side effects beyond memory.
+
+const REFLECTION_MAX_STEPS = 6;
+
+const REFLECTION_SYSTEM = `You are reviewing an acquisition run that just ended, to leave notes for the NEXT run of yourself. Each run starts with no memory except these notes.
+
+Tools: readMemory, writeMemory (upsert by name), deleteMemory. scope "title" = THIS work only (the system binds which work — you cannot address another); scope "global" = lessons useful for ANY work.
+
+WRITE a note only when it would change what the next run does. Every note MUST cite its evidence from the facts below (the keyword and its hit count, the candidate title and its outcome, the error text):
+- search: a keyword that returned 0 hits or only wrong works (with the count); an alias / original / 繁体 name that worked; the correct year when a year-tagged search failed (e.g. "首播 2026 — 带 2025 搜不到").
+- resource: a 字幕组 / source / pack that landed correctly (its title); the release rhythm; "no 中字 release exists — do not spend budget hunting one".
+- pitfall: a lookalike / near-name work that keeps appearing for this title; a pack structure trap (SP bundled as an episode, etc.).
+- drive (usually global): a drive / source quirk you observed with evidence.
+
+DO NOT write: episode / file state the database already records, one-off numbers of this run (budget spent, ids), guesses without evidence, or restatements of your manual.
+FIX the existing notes shown below: overwrite (same name) one that the facts now contradict or refine; delete one that proved wrong. Prefer updating over adding near-duplicates.
+If there is nothing worth keeping, write nothing and just reply "nothing worth keeping". Be brief: at most a few tool calls.`;
+
+export interface ReflectionMemoryView {
+  title: Array<{ name: string; kind: string; description: string; body: string; updatedAt: string }>;
+  globalIndex: Array<{ name: string; kind: string; description: string }>;
+}
+
+/** Facts of the run for the reflection turn — built from what the system recorded,
+ *  so the notes are grounded in real hit counts and outcomes. */
+export function buildReflectionDigest(input: {
+  snapshots: Array<{
+    keyword: string;
+    candidates: Array<{ title: string }>;
+    prefilter?: { dropped?: unknown[]; nsfwDropped?: unknown[] };
+  }>;
+  attempts: Array<{ candidateId: string; status: string; providerMessage?: string; materializedFileIds?: string[] }>;
+  candidateTitle: (candidateId: string) => string | undefined;
+  coverage: { coverageMet: boolean; obtained: string[]; missing: string[] };
+  auditEvents: Array<{ type: string; message: string }>;
+}): string {
+  const lines: string[] = ["SEARCHES (keyword → candidates the agent saw):"];
+  if (input.snapshots.length === 0) lines.push("- (none)");
+  for (const s of input.snapshots) {
+    const dropped = s.prefilter?.dropped?.length ?? 0;
+    const nsfw = s.prefilter?.nsfwDropped?.length ?? 0;
+    const pre = dropped || nsfw ? ` (prefilter dropped ${dropped} lookalike, nsfw ${nsfw})` : "";
+    const sample = s.candidates.slice(0, 3).map((c) => c.title.slice(0, 60)).join(" | ");
+    lines.push(`- "${s.keyword}" → ${s.candidates.length} candidates${pre}${sample ? `: ${sample}` : ""}`);
+  }
+  lines.push("TRANSFERS:");
+  if (input.attempts.length === 0) lines.push("- (none)");
+  for (const a of input.attempts) {
+    const title = (input.candidateTitle(a.candidateId) ?? a.candidateId).slice(0, 80);
+    const msg = a.providerMessage ? ` — ${a.providerMessage.slice(0, 120)}` : "";
+    lines.push(`- ${title} → ${a.status}${a.materializedFileIds?.length ? ` (${a.materializedFileIds.length} files)` : ""}${msg}`);
+  }
+  const noCoverage = input.auditEvents.find((e) => e.type === "no_coverage_reported");
+  lines.push(
+    `COVERAGE: ${input.coverage.coverageMet ? "met" : "NOT met"}; obtained=${input.coverage.obtained.join(",") || "-"}; missing=${input.coverage.missing.join(",") || "-"}${noCoverage ? `; reported: ${noCoverage.message.slice(0, 160)}` : ""}`,
+  );
+  return lines.join("\n");
+}
+
+/** The reflection turn. Never throws — memory is a bonus, never a reason a run fails. */
+export async function runMemoryReflection(input: {
+  sandbox: TaskSandbox;
+  model: LanguageModel;
+  digest: string;
+  memory: ReflectionMemoryView;
+}): Promise<{ ran: boolean; changes: number; skipped?: string }> {
+  if (!input.sandbox.hasMemory()) return { ran: false, changes: 0, skipped: "memory disabled" };
+  const { sandbox } = input;
+  const scope = z.enum(["title", "global"]);
+  const tools: ToolSet = {
+    readMemory: {
+      description: "Read the full body of one memory entry.",
+      inputSchema: z.object({ scope, name: z.string() }),
+      execute: (args: { scope: "title" | "global"; name: string }) => asEvidence(() => sandbox.readMemory(args)),
+    },
+    writeMemory: {
+      description:
+        'Create or overwrite (same name) a memory entry. scope "title" = this work (bound by the system), "global" = shared. name: kebab-case. body: the lesson WITH its evidence.',
+      inputSchema: z.object({
+        scope,
+        name: z.string(),
+        description: z.string(),
+        kind: z.enum(["search", "resource", "drive", "pitfall", "other"]),
+        body: z.string(),
+        provider: z.string().optional(),
+      }),
+      execute: (args: Parameters<TaskSandbox["writeMemory"]>[0]) => asEvidence(() => sandbox.writeMemory(args)),
+    },
+    deleteMemory: {
+      description: "Delete a memory entry that proved wrong or stale.",
+      inputSchema: z.object({ scope, name: z.string() }),
+      execute: (args: { scope: "title" | "global"; name: string }) => asEvidence(() => sandbox.deleteMemory(args)),
+    },
+  };
+  const existing = [
+    "EXISTING TITLE MEMORY:",
+    ...(input.memory.title.length ? input.memory.title.map((m) => `- [${m.kind}] ${m.name} — ${m.description}\n  ${m.body}`) : ["- (none)"]),
+    "EXISTING GLOBAL MEMORY INDEX:",
+    ...(input.memory.globalIndex.length ? input.memory.globalIndex.map((m) => `- [${m.kind}] ${m.name} — ${m.description}`) : ["- (none)"]),
+  ].join("\n");
+  const before = sandbox.memoryChangeCount();
+  try {
+    await generateText({
+      model: input.model,
+      system: REFLECTION_SYSTEM,
+      prompt: `FACTS OF THIS RUN:\n${input.digest}\n\n${existing}`,
+      tools,
+      stopWhen: [stepCountIs(REFLECTION_MAX_STEPS)],
+    });
+    return { ran: true, changes: sandbox.memoryChangeCount() - before };
+  } catch (error) {
+    return { ran: false, changes: sandbox.memoryChangeCount() - before, skipped: error instanceof Error ? error.message : String(error) };
+  }
+}

@@ -1053,7 +1053,7 @@ p {
   width: 180px;
   min-width: 180px;
   aspect-ratio: 2 / 3;
-  border-radius: 10px;
+  border-radius: var(--radius-card);
 }
 
 .skeleton-hub-titleblock {
@@ -1186,7 +1186,7 @@ p {
     justify-content: center;
     white-space: nowrap;
     position: relative;
-    border-radius: 10px;
+    border-radius: var(--radius-card);
   }
 
   /* Count badge overlays the icon (top-right) instead of dropping below the label
@@ -1256,7 +1256,7 @@ p {
     min-width: 180px;
     background: var(--bg-surface);
     border: 1px solid var(--border, #2a2a2a);
-    border-radius: 10px;
+    border-radius: var(--radius-card);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
     padding: 4px;
     z-index: 60;
@@ -1892,7 +1892,7 @@ p {
   display: block;
   width: 100%;
   padding-bottom: 150%;
-  border-radius: 10px;
+  border-radius: var(--radius-card);
   overflow: hidden;
   background: linear-gradient(160deg, #2a2a2a 0%, #1c1c1c 100%);
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
@@ -2022,7 +2022,7 @@ p {
 .skeleton-poster {
   width: 100%;
   padding-bottom: 150%;
-  border-radius: 10px;
+  border-radius: var(--radius-card);
 }
 
 /* Title hub */
@@ -2178,7 +2178,7 @@ p {
   width: 180px;
   min-width: 180px;
   aspect-ratio: 2 / 3;
-  border-radius: 10px;
+  border-radius: var(--radius-card);
   overflow: hidden;
   background: linear-gradient(160deg, #2a2a2a 0%, #1c1c1c 100%);
   box-shadow: var(--shadow-heavy);
@@ -2705,7 +2705,7 @@ select.setting-control {
   overflow-y: auto;
   background: var(--bg-raised);
   border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 10px;
+  border-radius: var(--radius-card);
   box-shadow: var(--shadow-heavy);
 }
 
@@ -3317,7 +3317,7 @@ select.setting-control {
   align-items: center;
   gap: 8px;
   padding: 9px 10px;
-  border-radius: 10px;
+  border-radius: var(--radius-card);
   cursor: pointer;
   list-style: none;
   background: var(--bg-raised);
@@ -3342,7 +3342,7 @@ select.setting-control {
   gap: 2px;
   margin-top: 4px;
   padding: 4px;
-  border-radius: 10px;
+  border-radius: var(--radius-card);
   background: var(--bg-surface);
   border: 1px solid rgba(255, 255, 255, 0.06);
 }
@@ -3628,7 +3628,7 @@ select.setting-control {
   align-items: center;
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 10px;
+  border-radius: var(--radius-card);
   padding: 12px 12px 12px 16px;
 }
 .attention-item::before {
@@ -3893,7 +3893,7 @@ select.setting-control {
 .trending-poster {
   position: relative;
   aspect-ratio: 2 / 3;
-  border-radius: 10px;
+  border-radius: var(--radius-card);
   overflow: hidden;
   background: var(--surface-1, #17171a);
   border: 0.5px solid var(--border, #2a2a2e);
@@ -4313,4 +4313,78 @@ select.setting-control {
   font-size: 12.5px;
   color: var(--text-muted);
   cursor: pointer;
+}
+/* Agent 记忆面板（详情页 + 设置 → AI 模型） */
+.agent-memory {
+  display: grid;
+  gap: 12px;
+}
+.agent-memory-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.agent-memory-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--bg-raised);
+  padding: 12px 14px;
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.agent-memory-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.agent-memory-kind {
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-soft);
+  color: var(--text-muted);
+}
+.agent-memory-name {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.agent-memory-body {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-soft);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.agent-memory-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.agent-memory-foot .panel-note {
+  margin-right: auto;
+}
+.agent-memory-editor {
+  border: 1px dashed var(--border-soft);
+  border-radius: var(--radius-card);
+  padding: 12px;
+}
+.hub-memory {
+  margin: 24px 0 8px;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--bg-surface);
+  display: grid;
+  gap: 10px;
+}
+.hub-memory > summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 14px;
 }

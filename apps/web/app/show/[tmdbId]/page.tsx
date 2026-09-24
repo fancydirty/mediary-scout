@@ -14,6 +14,7 @@ import {
   RequestSeasonButton,
 } from "../../../components/title-action-buttons";
 import { UntrackButton } from "../../../components/untrack-button";
+import { AgentMemoryPanel } from "../../../components/agent-memory-panel";
 import type { DemoAcquisitionEntry } from "../../../lib/demo-session";
 import {
   getDetailView,
@@ -269,6 +270,7 @@ function TvHub({
           ))}
         </ul>
       </section>
+      {view.aggregate !== "untracked" ? <TitleMemorySection mediaType="tv" tmdbId={view.tmdbId} /> : null}
     </section>
     </AcquisitionLockProvider>
   );
@@ -375,6 +377,7 @@ function MovieHub({
             </div>
           ) : null}
         </div>
+        {view.state !== "untracked" ? <TitleMemorySection mediaType="movie" tmdbId={view.tmdbId} /> : null}
       </section>
     </AcquisitionLockProvider>
   );
@@ -518,3 +521,18 @@ function SeasonRow({
   );
 }
 
+
+/** This work's agent memory (read/edit/delete). Server-rendered per request; the
+ *  panel refreshes the route after each change. Hidden for untracked works. */
+async function TitleMemorySection({ mediaType, tmdbId }: { mediaType: "movie" | "tv"; tmdbId: number }) {
+  const { getWorkflowRepository, getCurrentAccountId } = await import("../../../lib/workflow-runtime");
+  const { listMemoriesForUi, toMemoryItem } = await import("../../../lib/agent-memory-server");
+  const items = await listMemoriesForUi(getWorkflowRepository(), await getCurrentAccountId(), { scope: "title", mediaType, tmdbId });
+  return (
+    <details className="hub-memory">
+      <summary>Agent 记忆（{items.length}）</summary>
+      <p className="panel-note">agent 在获取这部作品时记下的经验，下次获取前会先读。可以编辑或删除。</p>
+      <AgentMemoryPanel address={{ scope: "title", mediaType, tmdbId }} items={items.map(toMemoryItem)} />
+    </details>
+  );
+}
