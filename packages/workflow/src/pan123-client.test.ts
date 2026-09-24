@@ -647,6 +647,14 @@ describe("Pan123Client transport errors name the brand and host", () => {
     expect(err.message).toContain("***");
   });
 
+  it("masks a SHORT token too, without shredding words that merely contain its letters", async () => {
+    const bad = new TypeError('Headers.append: "Bearer abc12" is an invalid header value (abc12x stays)');
+    const client = new Pan123Client({ token: "abc12", fetchImpl: (async () => { throw bad; }) as Pan123Fetch });
+    const err = (await client.listFiles("0").then(() => new Error("expected a rejection"), (e: unknown) => e)) as Error;
+    expect(err.message).toContain('"Bearer ***"');
+    expect(err.message).toContain("abc12x stays");
+  });
+
   it("an auth error from the envelope is untouched (still Pan123AuthError, still freezes)", async () => {
     const client = new Pan123Client({ token: "t", fetchImpl: (async () => ({ status: 200, text: '{"code":401,"message":"token expired"}' })) as Pan123Fetch });
     await expect(client.listFiles("0")).rejects.toBeInstanceOf(Pan123AuthError);

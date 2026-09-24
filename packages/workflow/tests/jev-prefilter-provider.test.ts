@@ -370,6 +370,14 @@ describe("JevPrefilterProvider — adult-content (nsfw) gate", () => {
     expect(out.prefilter?.nsfw).toBeUndefined();
   });
 
+  it("an empty nsfw map (question unanswered) is recorded as absent, not as answered", async () => {
+    const p = new JevPrefilterProvider({ inner: inner(snapshot(["a"])), target: movie, judge: judgeWith({ c1: 0.9 }, {}) });
+    const out = await p.search({ keyword: "x" });
+    expect(out.prefilter?.status).toBe("applied");
+    expect(out.prefilter?.nsfw).toBeUndefined();
+    expect("nsfw" in (out.prefilter ?? {})).toBe(false);
+  });
+
   it("never nsfw-drops a title-less candidate even if the judge scores it", async () => {
     const p = new JevPrefilterProvider({ inner: inner(snapshot(["📅 9月6日", "a"])), target: movie, judge: judgeWith({ c1: 0.9, c2: 0.9 }, { c1: 0.99, c2: 0.01 }) });
     const out = await p.search({ keyword: "x" });

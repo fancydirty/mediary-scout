@@ -232,9 +232,13 @@ export class Pan123Client {
       // invalid header value'), and this message is persisted and pushed — so the
       // token is removed before it can travel. The cause keeps the raw error in-process.
       let message = error instanceof Error ? error.message : String(error);
-      // Length floor: a real token is a long JWT; masking a 1–7 char stub would shred
-      // ordinary words in the message instead of protecting anything.
-      if (this.token.length >= 8) message = message.split(this.token).join("***");
+      // Masked wherever it appears as a whole token-shaped run (bounded by characters
+      // that cannot be part of a JWT/base64url token), so any length is covered and a
+      // short token never shreds ordinary words ("t" inside "timeout" is not a match).
+      if (this.token) {
+        const escaped = this.token.replace(/[.*+?^\${}()|[\]\\]/g, "\\$&");
+        message = message.replace(new RegExp(`(?<![A-Za-z0-9._~+/=-])${escaped}(?![A-Za-z0-9._~+/=-])`, "g"), "***");
+      }
       throw new Error(`PAN123_REQUEST_FAILED(${u.host} ${u.pathname}): ${name} ${message}`, { cause: error });
     }
     const parsed = parsePan123Json(res.text);

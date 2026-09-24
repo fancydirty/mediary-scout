@@ -153,7 +153,10 @@ export class JevPrefilterProvider implements ResourceProvider {
       });
       // Audit trail mirrors what was applied: scores for ids we actually asked about.
       const scores = Object.fromEntries(Object.entries(result.scores).filter(([id]) => judgeableIds.has(id)));
-      const nsfw = nsfwScores === undefined ? undefined : Object.fromEntries(Object.entries(nsfwScores).filter(([id]) => judgeableIds.has(id)));
+      // An EMPTY map means the nsfw question went unanswered (the client drops malformed
+      // n<i> answers); recording `nsfw: {}` would read as "asked and all clean".
+      const nsfwFiltered = nsfwScores === undefined ? {} : Object.fromEntries(Object.entries(nsfwScores).filter(([id]) => judgeableIds.has(id)));
+      const nsfw = Object.keys(nsfwFiltered).length === 0 ? undefined : nsfwFiltered;
       const failedChunks = typeof result.failedChunks === "number" && result.failedChunks > 0 ? result.failedChunks : 0;
       prefilter = {
         provider: "jev", model: result.model, status: "applied", scores, dropped, thresholds,
