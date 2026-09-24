@@ -733,12 +733,12 @@ describe("GuangYaStorageExecutor.transfer — 光鸭分享链转存", () => {
     expect(attempt.providerMessage).toContain("分享已失效");
   });
 
-  it("a restore task that never finishes in the window is a loud failure, not a silent success", async () => {
-    const client = shareClient({ statuses: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1] });
+  it("a restore still running at the window's end is PENDING (no_target_change), not dead — so until-landed stops", async () => {
+    const client = shareClient({ statuses: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1], after: [] });
     const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [SCOPE], taskPollIntervalMs: 0, taskPollMaxPolls: 3 });
     const attempt = await executor.transfer({ workflowRunId: "run-1", directoryId: SCOPE, candidate: share() });
-    expect(attempt.status).toBe("failed");
-    expect(attempt.providerMessage).toMatch(/GUANGYA_RESTORE_TIMEOUT/);
+    expect(attempt.status).toBe("no_target_change");
+    expect(attempt.providerMessage).toMatch(/GUANGYA_RESTORE_TIMEOUT.*inspectStaging/);
   });
 
   it("restore finished but no new video in the target is no_target_change (e.g. a share of only zips)", async () => {

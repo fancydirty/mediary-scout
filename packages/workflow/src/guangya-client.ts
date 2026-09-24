@@ -265,8 +265,11 @@ export class GuangYaClient {
    *  a business code (201 分享已失效 / 200 分享链接错误 / 112 参数错误) with HTTP 200,
    *  which postAPI already turns into a loud GUANGYA_API_FAILED carrying the msg. */
   async getShareAccessToken(shareId: string, code: string): Promise<string> {
-    const data = await this.postAPI("/userres/v1/get_share_access_token", { shareId, code });
-    const token = stringValue(recordValue(data, "accessToken"));
+    const envelope: { top?: unknown } = {};
+    const data = await this.postAPI("/userres/v1/get_share_access_token", { shareId, code }, false, envelope);
+    // Real responses carry data.accessToken (probe 2026-09-24); guangyaclient-go also
+    // models a top-level access_token, so accept either rather than call a live share dead.
+    const token = stringValue(recordValue(data, "accessToken")) || stringValue(recordValue(envelope.top, "access_token"));
     if (!token) {
       throw new Error("GUANGYA_SHARE_TOKEN_FAILED: response missing data.accessToken");
     }
@@ -283,7 +286,10 @@ export class GuangYaClient {
     options: { pageSize?: number; maxPages?: number } = {},
   ): Promise<GuangYaItem[]> {
     const pageSize = options.pageSize ?? DEFAULT_LIST_PAGE_SIZE;
-    const maxPages = options.maxPages ?? 20;
+    // Pagination is by RESPONSE cursor echoed back (real-drive walk 2026-09-24: cursor
+    // 1→2→end enumerates; `page` repeats page 0). The cap is a runaway guard, and
+    // hitting it FAILS LOUD — restoring a silently partial root would be a lie.
+    const maxPages = options.maxPages ?? 50;
     const items: GuangYaItem[] = [];
     let cursor: number | undefined;
     for (let page = 0; page < maxPages; page += 1) {
@@ -295,10 +301,10 @@ export class GuangYaClient {
       const next = numberValue(recordValue(data, "cursor"));
       const total = numberValue(recordValue(data, "total"));
       const hasMore = recordValue(data, "hasMore") === true || (total > 0 && items.length < total);
-      if (list.length === 0 || !hasMore || next <= 0 || next === cursor) break;
+      if (list.length === 0 || !hasMore || next <= 0 || next === cursor) return items;
       cursor = next;
     }
-    return items;
+    throw new Error(`GUANGYA_SHARE_TOO_LARGE: 分享目录超过 ${maxPages} 页仍未列完,拒绝只转存一部分`);
   }
 
   /** Save share files into our `parentId`; returns the restore taskId. Folder ids are
@@ -333,7 +339,7 @@ export class GuangYaClient {
    * retry. Success = `msg===""||msg==="success"`; otherwise throw (GuangYaAuthError
    * on 401, plain Error otherwise) carrying the server msg.
    */
-  private async postAPI(path: string, body: unknown, retried = false): Promise<unknown> {
+  private async postAPI(path: string, body: unknown, retried = false, envelope?: { top?: unknown }): Promise<unknown> {
     const response = await this.fetchImpl(`${API_HOST}${path}`, {
       method: "POST",
       headers: this.apiHeaders(),
@@ -344,9 +350,10 @@ export class GuangYaClient {
         throw new GuangYaAuthError(`GUANGYA_AUTH_FAILED: 401 after refresh (${path})`);
       }
       await this.refreshTokens();
-      return this.postAPI(path, body, true);
+      return this.postAPI(path, body, true, envelope);
     }
     const json = (await response.json().catch(() => ({}))) as unknown;
+    if (envelope) envelope.top = json;
     const msg = stringValue(recordValue(json, "msg"));
     if (response.ok && (msg === "" || msg.toLowerCase() === "success")) {
       return recordValue(json, "data");

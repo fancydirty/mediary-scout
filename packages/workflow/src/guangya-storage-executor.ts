@@ -269,6 +269,7 @@ export class GuangYaStorageExecutor implements StorageExecutor {
     const { client } = this;
     const before = new Set((await this.listVideoFiles(input.directoryId)).map((f) => f.id));
     let providerMessage = "";
+    let pendingMessage = "";
     try {
       if (!client.getShareAccessToken || !client.listShareFiles || !client.restoreShare || !client.getTaskStatus) {
         throw new Error("GUANGYA_SHARE_UNSUPPORTED: client has no share-transfer methods");
@@ -295,7 +296,11 @@ export class GuangYaStorageExecutor implements StorageExecutor {
         await new Promise((resolve) => setTimeout(resolve, this.taskPollIntervalMs));
       }
       if (!done) {
-        throw new Error(`GUANGYA_RESTORE_TIMEOUT: 转存任务 ${taskId} 在 ${this.taskPollMaxPolls} 次轮询内未完成`);
+        // Still running, not dead: there is no cancel call, so it may land later.
+        // Reported as no_target_change (below) so transferUntilLanded STOPS here and
+        // the agent rereads staging, instead of restoring the next share and
+        // double-landing the film when this one finishes.
+        pendingMessage = `GUANGYA_RESTORE_TIMEOUT: 转存任务 ${taskId} 在 ${this.taskPollMaxPolls} 次轮询内未完成(仍在进行,可能稍后落盘;先 inspectStaging 再决定)`;
       }
     } catch (error) {
       if (isGuangYaAuthError(error)) {
@@ -317,7 +322,9 @@ export class GuangYaStorageExecutor implements StorageExecutor {
       candidateId: input.candidate.id,
       status,
       providerMessage:
-        providerMessage || (status === "no_target_change" ? "分享转存完成但目标目录未出现新视频(分享里可能没有视频)" : ""),
+        providerMessage ||
+        pendingMessage ||
+        (status === "no_target_change" ? "分享转存完成但目标目录未出现新视频(分享里可能没有视频)" : ""),
       materializedFileIds,
     };
     this.nextTransferNumber += 1;

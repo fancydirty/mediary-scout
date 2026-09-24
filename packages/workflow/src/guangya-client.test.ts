@@ -459,6 +459,11 @@ describe("GuangYaClient share chain (get_share_access_token → page_files_list 
     expect(calls[0]!.headers.Authorization).toBe(`Bearer ${ACCESS}`);
   });
 
+  it("accepts a top-level access_token too (guangyaclient-go models both locations)", async () => {
+    const { c } = client(() => ({ msg: "success", data: {}, access_token: "top-sat" }));
+    expect(await c.getShareAccessToken("s_1", "")).toBe("top-sat");
+  });
+
   it("a dead share surfaces the server msg loudly (201 分享已失效 is a code, not an HTTP error)", async () => {
     const { c } = client(() => ({ code: 201, msg: "分享已失效" }));
     await expect(c.getShareAccessToken("s_1", "")).rejects.toThrow(/GUANGYA_API_FAILED.*分享已失效/);
@@ -476,6 +481,25 @@ describe("GuangYaClient share chain (get_share_access_token → page_files_list 
     expect(calls[0]!.body).toEqual({ pageSize: 2, accessToken: "sat", orderBy: 0, sortType: 0, parentId: "" });
     expect(calls[1]!.body).toEqual({ pageSize: 2, accessToken: "sat", orderBy: 0, sortType: 0, parentId: "", cursor: 2 });
     expect(typeof calls[1]!.body.cursor).toBe("number");
+  });
+
+  it("walks the echoed response cursor exactly like the real drive (1 → 2 → end), never `page`", async () => {
+    // Real-drive walk 2026-09-24 (pageSize 1): cursor -→1 高画质, 1→2 中画质, 2→2 ∅. `page` repeats page 0.
+    const pages: Record<string, unknown> = {
+      none: { msg: "success", data: { total: 2, list: [{ fileId: "h", fileName: "高画质", resType: 2 }], cursor: 1, hasMore: true } },
+      "1": { msg: "success", data: { total: 2, list: [{ fileId: "m", fileName: "中画质", resType: 2 }], cursor: 2, hasMore: true } },
+      "2": { msg: "success", data: { cursor: 2 } },
+    };
+    const { c, calls } = client((_p, body) => pages[body.cursor === undefined ? "none" : String(body.cursor)]);
+    expect((await c.listShareFiles("sat", "folder", { pageSize: 1 })).map((i) => i.fileName)).toEqual(["高画质", "中画质"]);
+    expect(calls.map((x) => x.body.cursor)).toEqual([undefined, 1, 2]);
+    expect(calls.every((x) => !("page" in x.body))).toBe(true);
+  });
+
+  it("hitting the page cap FAILS LOUD instead of returning a partial root", async () => {
+    let n = 0;
+    const { c } = client(() => { n += 1; return { msg: "success", data: { list: [{ fileId: `f${n}`, fileName: `F${n}`, resType: 1 }], cursor: n, hasMore: true } }; });
+    await expect(c.listShareFiles("sat", "", { pageSize: 1, maxPages: 3 })).rejects.toThrow(/GUANGYA_SHARE_TOO_LARGE/);
   });
 
   it("a data object with no list (the '{cursor:N}' shape seen on 9/18 real shares) is an empty listing", async () => {
