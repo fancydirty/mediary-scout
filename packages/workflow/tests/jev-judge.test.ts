@@ -209,7 +209,10 @@ describe("isNsfwDrop", () => {
   it("suspect band drops only when identity is not confident", () => {
     expect(isNsfwDrop(JEV_NSFW_SUSPECT_AT, 0.69)).toBe(true);
     expect(isNsfwDrop(0.75, JEV_UNCERTAIN_BELOW)).toBe(false); // 色戒 未删减版 for 色戒
-    expect(isNsfwDrop(0.75, undefined)).toBe(true);
+    // Suspect band needs a REAL "not the target" answer; missing/invalid identity fails open (#269 r5).
+    expect(isNsfwDrop(0.75, undefined)).toBe(false);
+    expect(isNsfwDrop(0.75, Number.NaN)).toBe(false);
+    expect(isNsfwDrop(0.75, 0.2)).toBe(true);
   });
   it("below suspect never drops; bad data fails open", () => {
     expect(isNsfwDrop(JEV_NSFW_SUSPECT_AT - 0.01, 0)).toBe(false);

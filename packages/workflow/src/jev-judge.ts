@@ -81,14 +81,16 @@ export const JEV_NSFW_DROP_AT = 0.95;
 export const JEV_NSFW_SUSPECT_AT = 0.6;
 
 /** True when the candidate must be removed as adult content. Fails OPEN like
- *  classifyJevScore: a missing/NaN nsfw score never drops; a missing identity score
- *  counts as "not confident" (the nsfw evidence is then all there is). */
+ *  classifyJevScore: a missing/NaN/out-of-range nsfw score never drops, and in the
+ *  suspect band so does a missing/invalid identity score — the band only drops on a
+ *  REAL "not the target" answer. (The real client returns both answers in one
+ *  response, so this is a contract guard, not a path production takes.) */
 export function isNsfwDrop(nsfw: number | undefined, identity: number | undefined): boolean {
   // Outside 0..1 is a contract violation (a bad judge / a corrupted row), not evidence.
   if (typeof nsfw !== "number" || !Number.isFinite(nsfw) || nsfw < 0 || nsfw > 1) return false;
   if (nsfw >= JEV_NSFW_DROP_AT) return true;
   if (nsfw < JEV_NSFW_SUSPECT_AT) return false;
-  return !(typeof identity === "number" && Number.isFinite(identity) && identity >= JEV_UNCERTAIN_BELOW);
+  return typeof identity === "number" && Number.isFinite(identity) && identity >= 0 && identity < JEV_UNCERTAIN_BELOW;
 }
 
 /** The adult-content question, asked per candidate beside the identity one. Wording
