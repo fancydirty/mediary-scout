@@ -237,7 +237,9 @@ export class Pan123Client {
       // short token never shreds ordinary words ("t" inside "timeout" is not a match).
       if (this.token) {
         const escaped = this.token.replace(/[.*+?^\${}()|[\]\\]/g, "\\$&");
-        message = message.replace(new RegExp(`(?<![A-Za-z0-9._~+/=-])${escaped}(?![A-Za-z0-9._~+/=-])`, "g"), "***");
+        // "=" can only TRAIL a base64 value (padding), never lead one — so it is a
+        // boundary on the left (token=<t> must still be masked) but not on the right.
+        message = message.replace(new RegExp(`(?<![A-Za-z0-9._~+/-])${escaped}(?![A-Za-z0-9._~+/=-])`, "g"), "***");
       }
       throw new Error(`PAN123_REQUEST_FAILED(${u.host} ${u.pathname}): ${name} ${message}`, { cause: error });
     }
