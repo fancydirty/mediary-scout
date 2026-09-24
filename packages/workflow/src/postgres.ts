@@ -44,7 +44,7 @@ import type {
   UpsertConnectedStorageInput,
 } from "./account-credentials.js";
 import { normalizeScope, scopeMatches, type ScopeArg, type WorkflowScope } from "./workflow-scope.js";
-import { MAGNET_DEAD_LINK_TTL_MS } from "./acquisition-v2/dead-links.js";
+import { MAGNET_DEAD_LINK_TTL_MS, type DeadLink } from "./acquisition-v2/dead-links.js";
 
 type Queryable = Pool | PoolClient;
 
@@ -1222,7 +1222,7 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
 
   async recordDeadLink(input: {
     key: string;
-    kind: "pan115" | "magnet";
+    kind: DeadLink["kind"];
     reason: string;
     permanent: boolean;
     ttlMs?: number;

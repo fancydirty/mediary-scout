@@ -24,6 +24,15 @@ describe("deadLinkKey — the stable identity for a resource link", () => {
     });
   });
 
+  it("keys a 光鸭 share by its whole shareId (the same identity the executor transfers with)", () => {
+    expect(deadLinkKey("https://www.guangyapan.com/s/1945376531793305622_aeWnPia0Twth-NLu?pwd=x")).toEqual({
+      key: "guangya:1945376531793305622_aeWnPia0Twth-NLu",
+      kind: "guangya",
+    });
+    // A lookalike host is not 光鸭.
+    expect(deadLinkKey("https://evilguangyapan.com/s/1945376531793305622_x")).toBeNull();
+  });
+
   it("returns null for a url it cannot identify (never key the unknown)", () => {
     expect(deadLinkKey("https://example.com/whatever")).toBeNull();
     expect(deadLinkKey("")).toBeNull();
@@ -62,6 +71,19 @@ describe("deadLinkReason — conservative dead detection (a false positive hides
     // a non-death message (e.g. a network blip) must not poison the link forever
     expect(dead("failed", "网络超时，请重试", "pan115")).toBeNull();
     expect(dead("failed", "", "pan115")).toBeNull();
+  });
+
+  it("records a 光鸭 share only on PROVEN death: 分享已失效 / 链接错误 / GUANGYA_SHARE_EMPTY", () => {
+    const g = (status: string, message: string) => deadLinkReason({ status: status as never, providerMessage: message }, "guangya");
+    expect(g("failed", "GUANGYA_API_FAILED: /userres/v1/get_share_access_token status=200 msg=分享已失效")).toMatch(/分享已失效/);
+    expect(g("failed", "GUANGYA_API_FAILED: ... msg=分享链接错误")).toMatch(/分享链接错误/);
+    expect(g("failed", "GUANGYA_SHARE_EMPTY: 分享可打开但列不出任何文件")).toMatch(/GUANGYA_SHARE_EMPTY/);
+    // Pending / transient / ambiguous outcomes never poison a share.
+    expect(g("no_target_change", "GUANGYA_RESTORE_TIMEOUT: 转存任务 t 在 60 次轮询内未完成")).toBeNull();
+    expect(g("failed", "GUANGYA_RESTORE_FAILED: task t status=3")).toBeNull();
+    expect(g("failed", "fetch failed: ECONNRESET")).toBeNull();
+    expect(g("failed", "GUANGYA_API_FAILED: ... msg=参数错误")).toBeNull();
+    expect(g("failed", "GUANGYA_SHARE_NO_VIDEO: 转存完成但分享里没有视频")).toBeNull();
   });
 
   it("does NOT record a succeeded transfer", () => {
@@ -110,5 +132,14 @@ describe("WorkflowRepository dead-link store", () => {
     expect(await repo.listDeadLinkKeys({ now: "2026-07-16T00:00:00.000Z" })).toEqual(["magnet:fake"]);
     // +120 days: even the long-TTL fake finally resurrects (never permanent)
     expect(await repo.listDeadLinkKeys({ now: "2026-10-14T00:00:00.000Z" })).toEqual([]);
+  });
+});
+
+describe("光鸭 share dead-links are soft (a restricted/under-review share can come back)", () => {
+  it("records with a TTL and resurrects after it", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    await repo.recordDeadLink({ key: "guangya:s1_u", kind: "guangya", reason: "GUANGYA_SHARE_EMPTY", permanent: false, now: "2026-09-25T00:00:00.000Z" });
+    expect(await repo.listDeadLinkKeys({ now: "2026-09-26T00:00:00.000Z" })).toEqual(["guangya:s1_u"]);
+    expect(await repo.listDeadLinkKeys({ now: "2026-10-30T00:00:00.000Z" })).toEqual([]);
   });
 });

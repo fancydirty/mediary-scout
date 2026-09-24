@@ -6,7 +6,13 @@ import { parseQuarkShareUrl } from "../quark-storage-executor.js";
 import { isBrandStorageAuthError } from "../storage-auth-error.js";
 import { parseTianyiShareUrl } from "../tianyi-storage-executor.js";
 import type { CandidateRegistry } from "./candidate-registry.js";
-import { deadLinkKey, deadLinkReason, UNRESOLVED_MAGNET_DEAD_LINK_TTL_MS, type DeadLinkStore } from "./dead-links.js";
+import {
+  deadLinkKey,
+  deadLinkReason,
+  GUANGYA_DEAD_LINK_TTL_MS,
+  UNRESOLVED_MAGNET_DEAD_LINK_TTL_MS,
+  type DeadLinkStore,
+} from "./dead-links.js";
 import type { SimTreeFile, StorageV2, SubtitleLandingResult, TransferAttemptResult } from "./storage-115-simulator.js";
 
 /**
@@ -97,7 +103,12 @@ export class RealStorageV2 implements StorageV2 {
     // An unresolvable magnet (115 showed the infohash as the name → no metadata, a
     // fake/dead torrent) gets a much longer soft TTL so we don't re-transfer junk.
     const permanent = identity.kind === "pan115";
-    const ttlMs = !permanent && /name == infohash/.test(reason) ? UNRESOLVED_MAGNET_DEAD_LINK_TTL_MS : undefined;
+    const ttlMs =
+      identity.kind === "guangya"
+        ? GUANGYA_DEAD_LINK_TTL_MS
+        : !permanent && /name == infohash/.test(reason)
+          ? UNRESOLVED_MAGNET_DEAD_LINK_TTL_MS
+          : undefined;
     await this.deadLinkStore.recordDeadLink({
       key: identity.key,
       kind: identity.kind,

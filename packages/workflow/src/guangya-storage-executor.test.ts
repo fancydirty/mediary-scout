@@ -741,11 +741,12 @@ describe("GuangYaStorageExecutor.transfer — 光鸭分享链转存", () => {
     expect(attempt.providerMessage).toMatch(/GUANGYA_RESTORE_TIMEOUT.*inspectStaging/);
   });
 
-  it("restore finished but no new video in the target is no_target_change (e.g. a share of only zips)", async () => {
+  it("restore COMPLETED but no new video (a zip-only share) is a settled failure — the next share gets tried", async () => {
     const client = shareClient({ after: [{ fileId: "z", parentId: SCOPE, fileName: "game.zip", fileSize: 5e8, resType: 1 }] });
     const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [SCOPE], taskPollIntervalMs: 0 });
     const attempt = await executor.transfer({ workflowRunId: "run-1", directoryId: SCOPE, candidate: share() });
-    expect(attempt.status).toBe("no_target_change");
+    expect(attempt.status).toBe("failed");
+    expect(attempt.providerMessage).toMatch(/GUANGYA_SHARE_NO_VIDEO/);
   });
 
   it("an auth error is rethrown (freeze the drive), never absorbed into a failed attempt", async () => {

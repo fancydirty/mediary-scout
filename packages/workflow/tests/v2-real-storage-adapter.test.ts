@@ -472,3 +472,31 @@ describe("RealStorageV2.transferSubtitleUrls — batch-first, per-file fallback 
     await expect(storage.transferSubtitleUrls({ files: files(1), intoDirectoryId: "staging" })).rejects.toThrow("REAL_STORAGE_NO_SUBTITLE_SUPPORT");
   });
 });
+
+describe("RealStorageV2 — 光鸭 share dead-links are recorded softly", () => {
+  it("a proven-dead 光鸭 share is recorded with the 14-day soft TTL; a pending timeout is not", async () => {
+    const recorded: Array<Record<string, unknown>> = [];
+    const deadLinkStore = { recordDeadLink: async (input: Record<string, unknown>) => { recorded.push(input); }, listDeadLinkKeys: async () => [] };
+    const { CandidateRegistry } = await import("../src/acquisition-v2/candidate-registry.js");
+    const { RealStorageV2 } = await import("../src/acquisition-v2/real-storage-adapter.js");
+    const { GUANGYA_DEAD_LINK_TTL_MS } = await import("../src/acquisition-v2/dead-links.js");
+    const registry = new CandidateRegistry();
+    const url = "https://www.guangyapan.com/s/1945376531793305622_aeWnPia0Twth-NLu";
+    registry.record({ id: "dead", snapshotId: "s", index: 0, title: "t", type: "guangya", source: "pansou", providerPayload: { url } });
+    registry.record({ id: "slow", snapshotId: "s", index: 1, title: "t", type: "guangya", source: "pansou", providerPayload: { url: `${url}2` } });
+    const outcomes: Record<string, { status: string; providerMessage: string }> = {
+      dead: { status: "failed", providerMessage: "GUANGYA_API_FAILED: /userres/v1/get_share_access_token status=200 msg=分享已失效" },
+      slow: { status: "no_target_change", providerMessage: "GUANGYA_RESTORE_TIMEOUT: 转存任务 t 在 60 次轮询内未完成" },
+    };
+    const executor = {
+      transfer: async ({ candidate }: { candidate: { id: string } }) => ({ id: "a", workflowRunId: "r", candidateId: candidate.id, materializedFileIds: [], ...outcomes[candidate.id]! }),
+      listTree: async () => [],
+    } as never;
+    const storage = new RealStorageV2({ executor, registry, workflowRunId: "r", deadLinkStore: deadLinkStore as never });
+    await storage.transferCandidate({ candidateId: "dead", intoDirectoryId: "d" });
+    await storage.transferCandidate({ candidateId: "slow", intoDirectoryId: "d" });
+    expect(recorded).toEqual([
+      expect.objectContaining({ key: "guangya:1945376531793305622_aeWnPia0Twth-NLu", kind: "guangya", permanent: false, ttlMs: GUANGYA_DEAD_LINK_TTL_MS }),
+    ]);
+  });
+});

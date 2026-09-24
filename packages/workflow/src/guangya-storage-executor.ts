@@ -315,6 +315,13 @@ export class GuangYaStorageExecutor implements StorageExecutor {
 
     const after = await this.listVideoFiles(input.directoryId);
     const materializedFileIds = after.filter((f) => !before.has(f.id)).map((f) => f.id);
+    // Only a still-RUNNING restore is pending (no_target_change → transferUntilLanded
+    // stops and the agent rereads). A restore that COMPLETED without a new video is
+    // settled: the share is alive but holds no film (zip / images) — a failed attempt
+    // so the next ranked share is tried. Not a dead link (see deadLinkReason).
+    if (!providerMessage && !pendingMessage && materializedFileIds.length === 0) {
+      providerMessage = "GUANGYA_SHARE_NO_VIDEO: 分享转存完成,但目标目录没有新视频(分享里可能只有压缩包/图片)";
+    }
     const status: TransferStatus = providerMessage
       ? "failed"
       : materializedFileIds.length > 0
@@ -325,10 +332,7 @@ export class GuangYaStorageExecutor implements StorageExecutor {
       workflowRunId: input.workflowRunId,
       candidateId: input.candidate.id,
       status,
-      providerMessage:
-        providerMessage ||
-        pendingMessage ||
-        (status === "no_target_change" ? "分享转存完成但目标目录未出现新视频(分享里可能没有视频)" : ""),
+      providerMessage: providerMessage || pendingMessage,
       materializedFileIds,
     };
     this.nextTransferNumber += 1;

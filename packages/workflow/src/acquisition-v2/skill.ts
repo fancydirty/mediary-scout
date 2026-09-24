@@ -158,6 +158,7 @@ A 光鸭分享 is unusable more often than not. These are PROVEN dead and come b
 - 分享已失效 / 分享链接错误 / 参数错误 — dead, cancelled or malformed link.
 - GUANGYA_SHARE_EMPTY — the share OPENS but lists no files. About half of the 光鸭分享 on PanSou look like this (the sharer restricted it, or the content is under review). It is NOT "the share is empty but maybe fine" — treat it as dead.
 - GUANGYA_RESTORE_FAILED — the 转存 task reported failure.
+- GUANGYA_SHARE_NO_VIDEO — the 转存 finished but brought no video (the share holds only zips / images); not the film.
 Because these fail loud, a movie can hand a ranked list of same-film 光鸭分享 to transferUntilLanded.
 
 ## A slow 转存 is PENDING, not dead
