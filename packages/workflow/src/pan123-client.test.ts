@@ -623,3 +623,22 @@ describe("Pan123Client.listOfflineTasks (rows for a set of task ids)", () => {
     expect(calls).toBe(3);
   });
 });
+
+describe("Pan123Client transport errors name the brand and host", () => {
+  it("a fetch-layer timeout reads as 123 (not the model) and stays transient-classifiable", async () => {
+    const timeout = Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+    const client = new Pan123Client({ token: "t", fetchImpl: (async () => { throw timeout; }) as Pan123Fetch });
+    const err = (await client.listFiles("0").then(() => new Error("expected a rejection"), (e: unknown) => e)) as Error;
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toMatch(/^PAN123_REQUEST_FAILED\(yun\.123pan\.com \/b\/api\/file\/list\/new\): TimeoutError/);
+    expect(err.message).toContain("aborted due to timeout");
+    expect((err as Error & { cause?: unknown }).cause).toBe(timeout);
+    const { isTransientAcquisitionError } = await import("./acquisition-v2/transient-error.js");
+    expect(isTransientAcquisitionError(err)).toBe(true);
+  });
+
+  it("an auth error from the envelope is untouched (still Pan123AuthError, still freezes)", async () => {
+    const client = new Pan123Client({ token: "t", fetchImpl: (async () => ({ status: 200, text: '{"code":401,"message":"token expired"}' })) as Pan123Fetch });
+    await expect(client.listFiles("0")).rejects.toBeInstanceOf(Pan123AuthError);
+  });
+});

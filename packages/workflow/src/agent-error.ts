@@ -257,7 +257,8 @@ export function summarizeErrorForNotification(raw: string): string {
   // key/token/cookie/password style assignments: name=<value> → name=***
   // (covers cookie=, token=, api_key=, access_token=, pwd=, stoken=, __puus=, sid=…)
   s = s.replace(
-    /([A-Za-z_][A-Za-z0-9_-]*(?:key|token|cookie|secret|pass(?:word|wd)?|sign|stoken|puus|sid))\s*[=:]\s*[^\s,;&"']{6,}/gi,
+    // The name prefix is optional: a bare `token=…` / `cookie=…` must redact too.
+    /((?:[A-Za-z_][A-Za-z0-9_-]*)?(?:key|token|cookie|secret|pass(?:word|wd)?|sign|stoken|puus|sid))\s*[=:]\s*[^\s,;&"']{6,}/gi,
     "$1=***",
   );
   // Bare long opaque secrets (>=32 chars of base64url/hex-ish, no spaces) → ***

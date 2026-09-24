@@ -322,3 +322,58 @@ describe("JevPrefilterProvider circuit breaker", () => {
     expect(second.prefilter?.reason).toMatch(/circuit-open/);
   });
 });
+
+describe("JevPrefilterProvider — adult-content (nsfw) gate", () => {
+  const judgeWith = (scores: Record<string, number>, nsfw: Record<string, number>): JevJudge => ({
+    judgeCandidates: async () => ({ scores, nsfw, model: "m" }),
+  });
+  const movie = { kind: "movie" as const, title: "出入平安", aliases: [], year: 2024 };
+
+  it("drops a porn title the containment floor would otherwise keep (《出入平安》 2026-09-24)", async () => {
+    const logs: string[] = [];
+    const p = new JevPrefilterProvider({
+      inner: inner(snapshot(["出入平安 - 2160p.HD国语中字无水印.mp4", "出入平安的白虎小骚逼激情大秀6小时"])),
+      target: movie,
+      judge: judgeWith({ c1: 0.97, c2: 0.06 }, { c1: 0.05, c2: 0.99 }),
+      log: (l) => logs.push(l),
+    });
+    const out = await p.search({ keyword: "出入平安" });
+    expect(out.candidates.map((c) => c.id)).toEqual(["c1"]);
+    expect(out.prefilter?.nsfwDropped).toEqual([{ id: "c2", title: "出入平安的白虎小骚逼激情大秀6小时", score: 0.99 }]);
+    // Not a floor entry and not an identity drop: its own bucket, so audits can tell them apart.
+    expect(out.prefilter?.floored).toBeUndefined();
+    expect(out.prefilter?.dropped).toEqual([]);
+    expect(out.prefilter?.nsfw).toEqual({ c1: 0.05, c2: 0.99 });
+    expect(logs.at(-1)).toMatch(/nsfwDropped=1/);
+  });
+
+  it("≥ drop threshold removes even a confident identity match; the suspect band spares one", async () => {
+    const p = new JevPrefilterProvider({
+      inner: inner(snapshot(["a", "b", "c", "d"])),
+      target: movie,
+      // a: nsfw 0.97 + identity 0.95 → drop (hard line)
+      // b: nsfw 0.87 + identity 0.95 → keep (《寻爱交配季》 when it IS the target)
+      // c: nsfw 0.7 + identity 0.4  → drop (suspect and not the target)
+      // d: nsfw 0.59 + identity 0.4 → keep (below suspect)
+      judge: judgeWith({ c1: 0.95, c2: 0.95, c3: 0.4, c4: 0.4 }, { c1: 0.97, c2: 0.87, c3: 0.7, c4: 0.59 }),
+    });
+    const out = await p.search({ keyword: "x" });
+    expect(out.candidates.map((c) => c.id)).toEqual(["c2", "c4"]);
+    expect(out.prefilter?.nsfwDropped?.map((d) => d.id)).toEqual(["c1", "c3"]);
+  });
+
+  it("a judge that returns no nsfw map drops nothing for nsfw (fail-open), and the field stays absent", async () => {
+    const p = new JevPrefilterProvider({ inner: inner(snapshot(["a"])), target: movie, judge: judge({ c1: 0.9 }) });
+    const out = await p.search({ keyword: "x" });
+    expect(out.candidates.map((c) => c.id)).toEqual(["c1"]);
+    expect(out.prefilter?.nsfwDropped).toBeUndefined();
+    expect(out.prefilter?.nsfw).toBeUndefined();
+  });
+
+  it("never nsfw-drops a title-less candidate even if the judge scores it", async () => {
+    const p = new JevPrefilterProvider({ inner: inner(snapshot(["📅 9月6日", "a"])), target: movie, judge: judgeWith({ c1: 0.9, c2: 0.9 }, { c1: 0.99, c2: 0.01 }) });
+    const out = await p.search({ keyword: "x" });
+    expect(out.candidates.map((c) => c.id)).toEqual(["c1", "c2"]);
+    expect(out.prefilter?.nsfw).toEqual({ c2: 0.01 });
+  });
+});

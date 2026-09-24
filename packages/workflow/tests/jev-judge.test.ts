@@ -6,7 +6,10 @@ import {
   JEV_THRESHOLDS,
   JEV_UNCERTAIN_BELOW,
   JEV_UNCERTAIN_LEGEND,
+  JEV_NSFW_DROP_AT,
+  JEV_NSFW_SUSPECT_AT,
   classifyJevScore,
+  isNsfwDrop,
   jevAllDroppedWarning,
   jevUncertaintyFlag,
   normalizeTitleForContainment,
@@ -192,5 +195,23 @@ describe("normalizedTargetNames + titleContainsAny", () => {
     expect(normalizedTargetNames({ title: "《》", aliases: ["  "] })).toEqual([]);
     expect(titleContainsAny("权利交锋 S01E08", [])).toBe(false);
     expect(titleContainsAny("   ", ["交锋"])).toBe(false);
+  });
+});
+
+describe("isNsfwDrop", () => {
+  it("hard line: ≥ JEV_NSFW_DROP_AT drops whatever the identity score", () => {
+    expect(isNsfwDrop(JEV_NSFW_DROP_AT, 0.99)).toBe(true);
+    expect(isNsfwDrop(0.99, undefined)).toBe(true);
+  });
+  it("suspect band drops only when identity is not confident", () => {
+    expect(isNsfwDrop(JEV_NSFW_SUSPECT_AT, 0.69)).toBe(true);
+    expect(isNsfwDrop(0.75, JEV_UNCERTAIN_BELOW)).toBe(false); // 色戒 未删减版 for 色戒
+    expect(isNsfwDrop(0.75, undefined)).toBe(true);
+  });
+  it("below suspect never drops; bad data fails open", () => {
+    expect(isNsfwDrop(JEV_NSFW_SUSPECT_AT - 0.01, 0)).toBe(false);
+    expect(isNsfwDrop(undefined, 0)).toBe(false);
+    expect(isNsfwDrop(Number.NaN, 0)).toBe(false);
+    expect(isNsfwDrop(null as unknown as number, 0)).toBe(false);
   });
 });

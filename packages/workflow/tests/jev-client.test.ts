@@ -270,3 +270,42 @@ describe("createJevJudge", () => {
     ).rejects.toThrow(/merge invariant/);
   });
 });
+
+describe("createJevJudge — nsfw question", () => {
+  it("asks n<i> beside c<i> in the same request and maps both back to candidate ids", async () => {
+    const captured: Captured[] = [];
+    const judge = createJevJudge({ apiKey: "k", fetchImpl: fetchReturning(() => ({ c0: 0.9, c1: 0.1, n0: 0.02, n1: 0.99 }), captured) });
+    const res = await judge.judgeCandidates({
+      target: { kind: "movie", title: "出入平安", aliases: [], year: 2024 },
+      candidates: [{ id: "a", title: "出入平安 2160p" }, { id: "b", title: "出入平安的白虎…" }],
+    });
+    expect(captured).toHaveLength(1);
+    expect(Object.keys(captured[0]!.body.questions).sort()).toEqual(["c0", "c1", "n0", "n1"]);
+    expect(captured[0]!.body.questions.n1.instructions).toContain("`candidates.c1`");
+    expect(res.scores).toEqual({ a: 0.9, b: 0.1 });
+    expect(res.nsfw).toEqual({ a: 0.02, b: 0.99 });
+  });
+
+  it("a missing or malformed nsfw answer leaves that candidate unscored but keeps identity", async () => {
+    const judge = createJevJudge({ apiKey: "k", fetchImpl: fetchReturning(() => ({ c0: 0.9, c1: 0.8, n1: 7 })) });
+    const res = await judge.judgeCandidates({
+      target: { kind: "movie", title: "t", aliases: [] },
+      candidates: [{ id: "a", title: "x" }, { id: "b", title: "y" }],
+    });
+    expect(res.scores).toEqual({ a: 0.9, b: 0.8 });
+    expect(res.nsfw).toEqual({});
+  });
+
+  it("merges nsfw across chunks", async () => {
+    const n = JEV_CHUNK_SIZE + 3;
+    const judge = createJevJudge({
+      apiKey: "k",
+      fetchImpl: fetchReturning((b) => Object.fromEntries(Object.keys(b.state.candidates).flatMap((k) => [[k, 0.9], [`n${k.slice(1)}`, 0.01]]))),
+    });
+    const res = await judge.judgeCandidates({
+      target: { kind: "tv", title: "t", aliases: [] },
+      candidates: Array.from({ length: n }, (_, i) => ({ id: `id${i}`, title: `t${i}` })),
+    });
+    expect(Object.keys(res.nsfw!)).toHaveLength(n);
+  });
+});

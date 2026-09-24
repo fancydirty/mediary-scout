@@ -310,5 +310,36 @@ describe("handleWorkflowRunFailure — model content-filter before any transfer"
     expect(report?.status).toBe("failed");
     expect(report?.lines.join("\n")).toContain("内容审查");
     expect(report?.lines.join("\n")).toContain("不是没有资源");
+
+describe("handleWorkflowRunFailure — stdout trail", () => {
+  it("logs one secret-safe line per failure (the 出入平安 cause was only recoverable from dead heap tuples)", async () => {
+    const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await handleWorkflowRunFailure({
+        claimed: snapshot(),
+        error: new Error("PAN123_REQUEST_FAILED(yun.123pan.com /file/list): TimeoutError token=abcdefghijklmnop"),
+        repository: { saveWorkflowRunSnapshot: save },
+        now,
+      });
+      const lines = spy.mock.calls.map((c) => String(c[0]));
+      const line = lines.find((l) => l.startsWith("[workflow] run r1"));
+      expect(line).toBeDefined();
+      expect(line).toContain("movie_init");
+      expect(line).toContain("auto_requeued");
+      expect(line).toContain("yun.123pan.com");
+      expect(line).not.toContain("abcdefghijklmnop");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("summarizeErrorForNotification — bare secret names", () => {
+  it("redacts token=/cookie= with no name prefix, and keeps a short harmless value", async () => {
+    const { summarizeErrorForNotification } = await import("../src/agent-error.js");
+    expect(summarizeErrorForNotification("x token=abcdefghijkl y")).toBe("x token=*** y");
+    expect(summarizeErrorForNotification("cookie: UID=12345678_abc")).not.toContain("12345678_abc");
+    expect(summarizeErrorForNotification("key=ab")).toBe("key=ab");
   });
 });

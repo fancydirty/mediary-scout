@@ -78,7 +78,9 @@ export class RealResourceProviderV2 implements ResourceProviderV2 {
       ...(snapshot.prefilter?.status === "applied"
         ? {
             prefilterScores: { ...snapshot.prefilter.scores },
-            prefilterDropped: snapshot.prefilter.dropped.length,
+            // Adult-content drops count too: an all-porn result must still read as
+            // "the system removed some", never as an empty search.
+            prefilterDropped: snapshot.prefilter.dropped.length + (snapshot.prefilter.nsfwDropped?.length ?? 0),
           }
         : {}),
     };

@@ -1,7 +1,7 @@
 // packages/workflow/src/jev-prefilter-provider.ts
 import type { ResourceCandidate, ResourceSnapshot, SnapshotPrefilter } from "./domain.js";
 import type { ResourceProvider } from "./ports.js";
-import { JEV_MODEL, JEV_THRESHOLDS, classifyJevScore, normalizedTargetNames, titleContainsAny, type JevJudge, type JevJudgeTarget } from "./jev-judge.js";
+import { JEV_MODEL, JEV_THRESHOLDS, classifyJevScore, isNsfwDrop, normalizedTargetNames, titleContainsAny, type JevJudge, type JevJudgeTarget } from "./jev-judge.js";
 
 export interface JevPrefilterProviderOptions {
   inner: ResourceProvider;
@@ -43,8 +43,11 @@ export function isTitleless(title: string): boolean {
  *    classified one layer down; masking a provider outage here would hide real incidents);
  *  - title-less candidates (empty / 📅 / http…) are never judged and never dropped,
  *    even if the judge returns a score for them;
- *  - a candidate whose title contains the target title/alias verbatim is never dropped,
- *    only flagged (see titleContainsAny) — recorded in prefilter.floored;
+ *  - a candidate whose title contains the target title/alias verbatim is never dropped
+ *    for IDENTITY, only flagged (see titleContainsAny) — recorded in prefilter.floored;
+ *  - an adult-content title (isNsfwDrop) is dropped before anything else, floor or not —
+ *    recorded in prefilter.nsfwDropped. A porn title in the agent's context gets the
+ *    reply cut by moderated models, and that run then reports a false no-coverage;
  *  - ids, index, order, sourceHealth, keyword and snapshot id are untouched.
  */
 export class JevPrefilterProvider implements ResourceProvider {
@@ -119,11 +122,20 @@ export class JevPrefilterProvider implements ResourceProvider {
       this.consecutiveFailures = 0;
       const dropped: SnapshotPrefilter["dropped"] = [];
       const floored: NonNullable<SnapshotPrefilter["floored"]> = [];
+      const nsfwDropped: NonNullable<SnapshotPrefilter["nsfwDropped"]> = [];
+      const nsfwScores = result.nsfw;
       // Named for what the agent sees (a ⚠ on the row), not for one band: it counts the
       // uncertain band AND the sub-threshold rows the containment floor kept.
       let flagged = 0;
       kept = snapshot.candidates.filter((c) => {
         const score = judgeableIds.has(c.id) ? result.scores[c.id] : undefined;
+        // Adult content first: the containment floor below must not be a way in (it is
+        // exactly how 「出入平安的白虎…」 reached the agent). Title-less rows never qualify.
+        const nsfw = judgeableIds.has(c.id) ? nsfwScores?.[c.id] : undefined;
+        if (nsfw !== undefined && isNsfwDrop(nsfw, score)) {
+          nsfwDropped.push({ id: c.id, title: c.title, score: nsfw });
+          return false;
+        }
         if (score === undefined) return true; // unjudged (title-less or missing) → keep
         const band = classifyJevScore(score);
         if (band === "drop") {
@@ -141,11 +153,14 @@ export class JevPrefilterProvider implements ResourceProvider {
       });
       // Audit trail mirrors what was applied: scores for ids we actually asked about.
       const scores = Object.fromEntries(Object.entries(result.scores).filter(([id]) => judgeableIds.has(id)));
+      const nsfw = nsfwScores === undefined ? undefined : Object.fromEntries(Object.entries(nsfwScores).filter(([id]) => judgeableIds.has(id)));
       const failedChunks = typeof result.failedChunks === "number" && result.failedChunks > 0 ? result.failedChunks : 0;
       prefilter = {
         provider: "jev", model: result.model, status: "applied", scores, dropped, thresholds,
         durationMs: this.now() - t0,
         ...(floored.length === 0 ? {} : { floored }),
+        ...(nsfw === undefined ? {} : { nsfw }),
+        ...(nsfwDropped.length === 0 ? {} : { nsfwDropped }),
         // Still "applied" — the chunks that answered were applied — but a dedicated
         // field records that the filter saw less than everything, so a thin drop list is
         // explainable later without overloading `reason` (which means "why not applied").
@@ -158,7 +173,7 @@ export class JevPrefilterProvider implements ResourceProvider {
       // it. The drop rate alone cannot show that, so it is spelled out when it happens.
       // judgeable.length > 0 here: the empty case returned "skipped" above.
       const floorRate = floored.length / judgeable.length;
-      this.log(`[jev-prefilter] ${JSON.stringify(input.keyword)} kept=${kept.length} dropped=${dropped.length} flagged=${flagged} ms=${prefilter.durationMs}${result.inputTokens === undefined ? "" : ` tok=${result.inputTokens}`}${floored.length === 0 ? "" : ` floored=${floored.length}`}${failedChunks === 0 ? "" : ` failedChunks=${failedChunks}`}${floorRate < 0.5 ? "" : ` floorRate=${Math.round(floorRate * 100)}%`}`);
+      this.log(`[jev-prefilter] ${JSON.stringify(input.keyword)} kept=${kept.length} dropped=${dropped.length} flagged=${flagged} ms=${prefilter.durationMs}${result.inputTokens === undefined ? "" : ` tok=${result.inputTokens}`}${floored.length === 0 ? "" : ` floored=${floored.length}`}${nsfwDropped.length === 0 ? "" : ` nsfwDropped=${nsfwDropped.length}`}${failedChunks === 0 ? "" : ` failedChunks=${failedChunks}`}${floorRate < 0.5 ? "" : ` floorRate=${Math.round(floorRate * 100)}%`}`);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       this.consecutiveFailures += 1;

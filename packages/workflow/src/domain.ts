@@ -166,6 +166,13 @@ export interface SnapshotPrefilter {
   /** Chunks the judge could not answer (their candidates were kept unjudged). Only
    *  present when > 0; status stays "applied". */
   failedChunks?: number;
+  /** candidateId → P(adult content) for every judged candidate. Only present when the
+   *  judge answered the nsfw question. */
+  nsfw?: Record<string, number>;
+  /** Candidates removed as adult content (see isNsfwDrop) — a separate bucket from
+   *  `dropped` (identity) so an audit can tell "wrong work" from "porn". `score` is the
+   *  nsfw probability. Wins over the containment floor. Only present when non-empty. */
+  nsfwDropped?: Array<{ id: string; title: string; score: number }>;
 }
 
 export interface AgentDecision {

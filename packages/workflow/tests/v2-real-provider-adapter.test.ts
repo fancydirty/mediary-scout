@@ -216,6 +216,23 @@ describe("RealResourceProviderV2 — pansou → ResourceProviderV2 adapter", () 
     expect(view.prefilterDropped).toBe(1);
   });
 
+  it("counts adult-content drops in prefilterDropped so an all-porn result is not an empty search", async () => {
+    const provider: ResourceProvider = {
+      search: async () => ({
+        ...realSnapshot(),
+        prefilter: prefilterOf({
+          status: "applied",
+          scores: {},
+          dropped: [{ id: "x", title: "y", score: 0.1 }],
+          nsfwDropped: [{ id: "p1", title: "porn", score: 0.99 }, { id: "p2", title: "porn2", score: 0.97 }],
+        }),
+      }),
+    };
+    const adapter = new RealResourceProviderV2({ provider, registry: new CandidateRegistry(), workflowRunId: "run-1" });
+    const view = await adapter.search("出入平安");
+    expect(view.prefilterDropped).toBe(3);
+  });
+
   it("omits both prefilter fields when the prefilter failed (fail-open, nothing dropped)", async () => {
     const provider: ResourceProvider = {
       search: async () => ({

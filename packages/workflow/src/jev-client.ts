@@ -1,5 +1,5 @@
 // packages/workflow/src/jev-client.ts
-import { buildJevQuestions, JEV_MODEL, type JevJudge, type JevJudgeInput, type JevJudgeResult } from "./jev-judge.js";
+import { buildJevNsfwInstruction, buildJevQuestions, JEV_MODEL, type JevJudge, type JevJudgeInput, type JevJudgeResult } from "./jev-judge.js";
 
 /** OpenRouter's decisions router for TypeSafe Jev. The chat/completions endpoint
  *  rejects this model (400 "decisions model"); this alpha route speaks the native
@@ -54,7 +54,12 @@ export function createJevJudge(config: JevClientConfig): JevJudge {
         },
         candidates: Object.fromEntries(input.candidates.map((c, i) => [keys[i]!, c.title])),
       },
-      questions: buildJevQuestions(input.target, keys),
+      // Identity (c<i>) and adult-content (n<i>) questions ride ONE request: same state,
+      // same latency, one bill.
+      questions: {
+        ...buildJevQuestions(input.target, keys),
+        ...Object.fromEntries(keys.map((k, i) => [`n${i}`, { type: "noul" as const, instructions: buildJevNsfwInstruction(k) }])),
+      },
     };
     let response: Response;
     try {
@@ -91,17 +96,26 @@ export function createJevJudge(config: JevClientConfig): JevJudge {
     const answers = parsed?.answers;
     if (!answers || typeof answers !== "object") throw new Error("Jev response invalid: no answers");
     const scores: Record<string, number> = {};
-    input.candidates.forEach((candidate, i) => {
-      const value = answers[keys[i]!]?.noul;
+    const nsfw: Record<string, number> = {};
+    const read = (key: string): number => {
+      const value = answers[key]?.noul;
       if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
-        throw new Error(`Jev response invalid: answer ${keys[i]} is not a 0..1 number`);
+        throw new Error(`Jev response invalid: answer ${key} is not a 0..1 number`);
       }
-      scores[candidate.id] = value;
+      return value;
+    };
+    input.candidates.forEach((candidate, i) => {
+      scores[candidate.id] = read(keys[i]!);
+      // The nsfw answer is optional evidence: a missing/malformed one leaves that
+      // candidate unscored (kept) instead of discarding the chunk's identity answers.
+      const n = answers[`n${i}`]?.noul;
+      if (typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 1) nsfw[candidate.id] = n;
     });
     const inputTokens = typeof parsed.usage?.input_tokens === "number" ? parsed.usage.input_tokens : undefined;
     const cost = typeof parsed.usage?.cost === "number" ? parsed.usage.cost : undefined;
     return {
       scores,
+      nsfw,
       model: typeof parsed.model === "string" ? parsed.model : JEV_MODEL,
       ...(inputTokens === undefined ? {} : { inputTokens }),
       ...(cost === undefined ? {} : { cost }),
@@ -128,10 +142,11 @@ export function createJevJudge(config: JevClientConfig): JevJudge {
         (sum, s, i) => (s.status === "rejected" ? sum + chunks[i]!.candidates.length : sum),
         0,
       );
-      const merged: JevJudgeResult = { scores: {}, model: fulfilled[0]!.value.model };
+      const merged: JevJudgeResult = { scores: {}, nsfw: {}, model: fulfilled[0]!.value.model };
       let tokens = 0, cost = 0, sawTokens = false, sawCost = false;
       for (const { value: r } of fulfilled) {
         Object.assign(merged.scores, r.scores);
+        Object.assign(merged.nsfw!, r.nsfw ?? {});
         if (r.inputTokens !== undefined) { tokens += r.inputTokens; sawTokens = true; }
         if (r.cost !== undefined) { cost += r.cost; sawCost = true; }
       }

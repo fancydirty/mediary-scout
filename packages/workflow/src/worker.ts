@@ -286,6 +286,13 @@ export async function handleWorkflowRunFailure(input: {
     error,
     ...(input.onAuthErrorFreeze === undefined ? {} : { onAuthErrorFreeze: input.onAuthErrorFreeze }),
   });
+  // One stdout line per failure. Without it the only trace is the run row, which a
+  // user retry/cancel deletes — the 《出入平安》 timeout cause (2026-09-24) had to be
+  // dug out of dead Postgres heap tuples. Same redaction as the push line.
+  console.error(
+    `[workflow] run ${claimed.workflowRun.id} ${claimed.workflowRun.kind} ${willRetry ? "auto_requeued" : "failed"}` +
+      ` (storage ${claimed.connectedStorageId ?? "-"}): ${summarizeErrorForNotification(errorMessage)}`,
+  );
   return {
     status: willRetry ? "auto_requeued" : "failed",
     workflowRunId: claimed.workflowRun.id,
