@@ -775,6 +775,15 @@ describe("GuangYaStorageExecutor.transfer — 光鸭分享链转存", () => {
     expect(attempt.status).toBe("failed");
   });
 
+  it("a successful submit answer WITHOUT a taskId is a settled failure (nothing was accepted to land)", async () => {
+    const client = shareClient({ after: [] });
+    client.restoreShare = vi.fn(async () => { throw new Error("GUANGYA_RESTORE_SHARE_FAILED: response missing data.taskId"); });
+    const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [SCOPE], taskPollIntervalMs: 0 });
+    const attempt = await executor.transfer({ workflowRunId: "run-1", directoryId: SCOPE, candidate: share() });
+    expect(attempt.status).toBe("failed");
+    expect(attempt.providerMessage).toMatch(/GUANGYA_RESTORE_SHARE_FAILED/);
+  });
+
   it("a failing landing reread after a submit is pending, never an exception", async () => {
     const client = shareClient();
     client.listFiles = vi.fn<GuangYaStorageClient["listFiles"]>().mockResolvedValueOnce([]).mockRejectedValue(new Error("fetch failed"));

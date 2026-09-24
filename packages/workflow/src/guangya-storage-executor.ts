@@ -323,10 +323,13 @@ export class GuangYaStorageExecutor implements StorageExecutor {
       }
       const message = error instanceof Error ? error.message : String(error);
       // A real server answer (GUANGYA_API_FAILED = a business code; RESTORE_FAILED = a
-      // terminal task status) is a settled failure. Anything else once the restore was
+      // terminal task status; RESTORE_SHARE_FAILED = a success envelope with no taskId,
+      // so no task exists to land) is a settled failure. Anything else once the restore was
       // SUBMITTED — a transport error on the submit or while polling — leaves a task
       // that may still land: pending, so transferUntilLanded stops.
-      const settled = message.startsWith("GUANGYA_RESTORE_FAILED") || message.startsWith("GUANGYA_API_FAILED");
+      const settled = ["GUANGYA_RESTORE_FAILED", "GUANGYA_RESTORE_SHARE_FAILED", "GUANGYA_API_FAILED"].some((prefix) =>
+        message.startsWith(prefix),
+      );
       if (submitted && !settled) {
         pendingMessage = `GUANGYA_RESTORE_PENDING: 转存${acceptedTaskId ? `任务 ${acceptedTaskId} ` : ""}已提交,之后出错(${message.slice(0, 120)}),可能仍在进行;先 inspectStaging 再决定`;
       } else {
