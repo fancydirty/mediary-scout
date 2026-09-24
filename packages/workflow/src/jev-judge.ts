@@ -75,7 +75,8 @@ export type JevBand = "drop" | "uncertain" | "keep";
  *  JEV_NSFW_SUSPECT_AT and JEV_NSFW_DROP_AT a title is dropped only when the identity
  *  judge is NOT confident it is the target (< JEV_UNCERTAIN_BELOW) — the film the user is
  *  after keeps its explicit-sounding release — and only ≥ JEV_NSFW_DROP_AT (no legit
- *  title in the eval came near) drops regardless. That run: 52 dropped, 0 selections lost.
+ *  title in the eval came near) drops regardless. Final run at these thresholds: 51
+ *  dropped, 0 selections lost.
  *  Eval harness: scratchpad/jev-nsfw-eval.mts + jev-nsfw-live.mts. */
 export const JEV_NSFW_DROP_AT = 0.95;
 export const JEV_NSFW_SUSPECT_AT = 0.6;
