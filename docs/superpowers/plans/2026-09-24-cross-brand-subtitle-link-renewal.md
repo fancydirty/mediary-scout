@@ -144,8 +144,7 @@ Inside `transferSubtitle`:
 
 1. call `detail()` once and filter the package exactly as today;
 2. index the initial list and create a pending key set;
-3. while pending keys remain:
-   - call `detail(candidateId)` again for the current chunk;
+3. use the initial response for the first chunk; while pending keys remain after that first chunk, call `detail(candidateId)` again before each subsequent chunk:
    - reconcile refreshed files against pending keys;
    - if no selected file exists, append a soft error and stop;
    - call the unchanged `storage.transferSubtitleUrls` with selected `url/filename` pairs;
@@ -248,4 +247,3 @@ gh pr create --base main --head feat/cross-brand-subtitle-renewal   --title "fea
 ```
 
 Then attach the PR artifact, trigger the Copilot review loop, resolve every materialized thread, and squash-merge only when the current HEAD review and CI are clean.
-
