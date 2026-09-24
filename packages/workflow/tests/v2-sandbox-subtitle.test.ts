@@ -126,6 +126,77 @@ describe("transferSubtitle", () => {
     expect(JSON.stringify(result)).not.toContain("https://assrt.test/");
     expect(result.chunksProcessed).toBe(2);
     expect(result.chunksTotal).toBe(2);
+    expect(result.chunkDiagnostics).toEqual([
+      expect.objectContaining({ chunkNumber: 1, requestedCount: SUBTITLE_RENEWAL_CHUNK_SIZE, detailRefreshed: false }),
+      expect.objectContaining({ chunkNumber: 2, requestedCount: 1, detailRefreshed: true }),
+    ]);
+  });
+
+  it("keeps duplicate names in one adapter call when they straddle a chunk boundary", async () => {
+    const provider = new FakeResourceProviderV2({ results: { title: [] } });
+    const storage = new Storage115Simulator({ packs: {} });
+    const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
+    const files = [
+      ...Array.from({ length: SUBTITLE_RENEWAL_CHUNK_SIZE - 1 }, (_, index) => ({
+        filename: `Show.S01E${String(index + 1).padStart(2, "0")}.ass`,
+        url: `https://assrt.test/old/${index}`,
+      })),
+      { filename: "Show.S01E24.ass", url: "https://assrt.test/old/twin-a" },
+      { filename: "Show.S01E24.ass", url: "https://assrt.test/old/twin-b" },
+    ];
+    const batches: string[][] = [];
+    storage.transferSubtitleUrls = async (input) => {
+      batches.push(input.files.map((file) => file.filename));
+      return input.files.map((file, index) => ({
+        filename: file.filename,
+        status: "succeeded" as const,
+        materializedFileIds: [`f-${batches.length}-${index}`],
+      }));
+    };
+    let detailCalls = 0;
+    const assrt = makeAssrtProvider([{ id: 24, title: "Show", lang: "简" }], {});
+    assrt.detail = async () => {
+      detailCalls += 1;
+      return files.map((file, index) => ({ ...file, url: `https://assrt.test/${detailCalls}/${index}` }));
+    };
+    const sandbox = new TaskSandbox({ provider, storage, stagingDirectoryId, targetSeasonDirectoryIds: {}, need: [] });
+    await sandbox.primeSubtitleSnapshot("Show", assrt);
+
+    await sandbox.transferSubtitle({ candidateId: 24 });
+
+    expect(batches).toHaveLength(2);
+    expect(batches[0]).toHaveLength(SUBTITLE_RENEWAL_CHUNK_SIZE - 1);
+    expect(batches[1]).toEqual(["Show.S01E24.ass", "Show.S01E24.ass"]);
+  });
+
+  it("preserves the three-failure circuit across chunk boundaries", async () => {
+    const provider = new FakeResourceProviderV2({ results: { title: [] } });
+    const storage = new Storage115Simulator({ packs: {} });
+    const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
+    const files = Array.from({ length: SUBTITLE_RENEWAL_CHUNK_SIZE + 2 }, (_, index) => ({
+      filename: `Show.S01E${String(index + 1).padStart(2, "0")}.ass`,
+      url: `https://assrt.test/old/${index}`,
+    }));
+    const batches: string[][] = [];
+    storage.transferSubtitleUrls = async (input) => {
+      batches.push(input.files.map((file) => file.filename));
+      return input.files.map((file, index) => ({
+        filename: file.filename,
+        status: batches.length === 1 && index < input.files.length - 2 ? ("succeeded" as const) : ("failed" as const),
+        materializedFileIds: [],
+        providerMessage: "temporary landing failure",
+      }));
+    };
+    const assrt = makeAssrtProvider([{ id: 25, title: "Show", lang: "简" }], { 25: files });
+    const sandbox = new TaskSandbox({ provider, storage, stagingDirectoryId, targetSeasonDirectoryIds: {}, need: [] });
+    await sandbox.primeSubtitleSnapshot("Show", assrt);
+
+    const result = await sandbox.transferSubtitle({ candidateId: 25 });
+
+    expect(batches).toHaveLength(2);
+    expect(batches[1]).toHaveLength(1);
+    expect(result.unattemptedCount).toBe(1);
+    expect(result.error).toContain("temporary landing failure");
   });
 
   it("stops after a refresh has no matching pending file and keeps earlier landings", async () => {
@@ -372,6 +443,16 @@ describe("transferSubtitle", () => {
       chunksProcessed: 1,
       chunksTotal: 1,
       unattemptedCount: 0,
+      chunkDiagnostics: [
+        {
+          chunkNumber: 1,
+          requestedCount: 2,
+          detailRefreshed: false,
+          landedCount: 0,
+          unlandedCount: 2,
+          error: "WRITE_SCOPE_VIOLATION: refusing to transfer subtitle outside configured write scope",
+        },
+      ],
     });
   });
 });

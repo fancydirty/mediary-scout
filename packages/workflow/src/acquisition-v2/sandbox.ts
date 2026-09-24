@@ -26,6 +26,16 @@ const QUALITY_SUBTITLE_TOKEN =
 const SUBTITLE_NAME_PATTERN = /\.(srt|ass|ssa|sub|idx|vtt|sup|smi)$/i;
 
 export const SUBTITLE_RENEWAL_CHUNK_SIZE = 24;
+const SUBTITLE_MAX_CONSECUTIVE_FAILURES = 3;
+
+export interface SubtitleChunkDiagnostic {
+  chunkNumber: number;
+  requestedCount: number;
+  detailRefreshed: boolean;
+  landedCount: number;
+  unlandedCount: number;
+  error?: string;
+}
 
 const STRIP_NOTICE =
   "已从关键词移除画质/字幕词(如 4K/1080p/蓝光/中字/字幕):PanSou 是通配符匹配,加这些只会把召回打成子集或归零,raw 裸标题召回最全。已改用裸标题搜索。";
@@ -962,6 +972,7 @@ export class TaskSandbox {
     chunksProcessed: number;
     chunksTotal: number;
     unattemptedCount: number;
+    chunkDiagnostics: SubtitleChunkDiagnostic[];
   }> {
     if (!this.storage || !this.stagingDirectoryId) {
       throw new Error("SANDBOX: no storage/staging handle configured for subtitle transfer");
@@ -978,10 +989,24 @@ export class TaskSandbox {
     try {
       files = await this.subtitleProvider.detail(input.candidateId);
     } catch {
-      return { status: "failed", landedFilenames: [], chunksProcessed: 0, chunksTotal: 0, unattemptedCount: 0 };
+      return {
+        status: "failed",
+        landedFilenames: [],
+        chunksProcessed: 0,
+        chunksTotal: 0,
+        unattemptedCount: 0,
+        chunkDiagnostics: [],
+      };
     }
     if (files.length === 0) {
-      return { status: "failed", landedFilenames: [], chunksProcessed: 0, chunksTotal: 0, unattemptedCount: 0 };
+      return {
+        status: "failed",
+        landedFilenames: [],
+        chunksProcessed: 0,
+        chunksTotal: 0,
+        unattemptedCount: 0,
+        chunkDiagnostics: [],
+      };
     }
     // Boundary guard (same class as the rename guard): only subtitle-extension
     // files may ride the landing pipeline. assrt's detail() can return a
@@ -1002,22 +1027,36 @@ export class TaskSandbox {
         chunksProcessed: 0,
         chunksTotal: 0,
         unattemptedCount: 0,
+        chunkDiagnostics: [],
         error:
           "该字幕包没有可直接落盘的字幕文件(整包压缩包 zip/rar 落盘也无法使用)——换一个候选,或放弃字幕(软目标,不阻塞视频)。",
       };
     }
     const initial = indexSubtitleFiles(subtitleFiles);
     const pending = new Set(initial.map((file) => file.key));
-    const chunksTotal = Math.ceil(initial.length / SUBTITLE_RENEWAL_CHUNK_SIZE);
+    const chunksTotalPending = new Set(pending);
+    let chunksTotal = 0;
+    while (chunksTotalPending.size > 0) {
+      const chunk = selectSubtitleChunk(initial, initial, chunksTotalPending, SUBTITLE_RENEWAL_CHUNK_SIZE);
+      if (chunk.selected.length === 0) break;
+      chunksTotal += 1;
+      for (const file of chunk.selected) chunksTotalPending.delete(file.key);
+    }
     let chunksProcessed = 0;
     let unattemptedCount = 0;
+    let consecutiveFailures = 0;
+    let circuitTripped = false;
     const landedFilenames: string[] = [];
+    const chunkDiagnostics: SubtitleChunkDiagnostic[] = [];
     let lastError: string | undefined;
 
-    while (pending.size > 0) {
+    while (pending.size > 0 && !circuitTripped) {
+      const detailRefreshed = chunksProcessed > 0;
+      const chunkNumber = chunksProcessed + 1;
+      const chunkSize = consecutiveFailures > 0 ? 1 : SUBTITLE_RENEWAL_CHUNK_SIZE;
       let selected: ReturnType<typeof selectSubtitleChunk>["selected"];
       let missing: string[];
-      if (chunksProcessed === 0) {
+      if (!detailRefreshed) {
         ({ selected, missing } = selectSubtitleChunk(initial, initial, pending, SUBTITLE_RENEWAL_CHUNK_SIZE));
       } else {
         let refreshedFiles: AssrtSubtitleFile[];
@@ -1025,6 +1064,14 @@ export class TaskSandbox {
           refreshedFiles = await this.subtitleProvider.detail(input.candidateId);
         } catch {
           lastError = "字幕链接续签失败：无法刷新 assrt detail，已停止后续字幕块。";
+          chunkDiagnostics.push({
+            chunkNumber,
+            requestedCount: Math.min(pending.size, chunkSize),
+            detailRefreshed: true,
+            landedCount: 0,
+            unlandedCount: Math.min(pending.size, chunkSize),
+            error: lastError,
+          });
           break;
         }
         const refreshed = indexSubtitleFiles(
@@ -1032,9 +1079,22 @@ export class TaskSandbox {
             (file) => SUBTITLE_NAME_PATTERN.test(file.filename) && !file.filename.startsWith("._"),
           ),
         );
-        ({ selected, missing } = selectSubtitleChunk(initial, refreshed, pending, SUBTITLE_RENEWAL_CHUNK_SIZE));
+        ({ selected, missing } = selectSubtitleChunk(initial, refreshed, pending, chunkSize));
+        if (consecutiveFailures > 0 && selected.length > 1) {
+          selected = [selected[0]!];
+          missing = [];
+        }
         if (selected.length === 0) {
           lastError = "字幕链接续签后没有匹配的文件，已停止后续字幕块。";
+          const requestedCount = Math.min(pending.size, chunkSize);
+          chunkDiagnostics.push({
+            chunkNumber,
+            requestedCount,
+            detailRefreshed: true,
+            landedCount: 0,
+            unlandedCount: requestedCount,
+            error: lastError,
+          });
           break;
         }
       }
@@ -1052,13 +1112,37 @@ export class TaskSandbox {
         intoDirectoryId: this.stagingDirectoryId,
       });
       chunksProcessed += 1;
+      let landedInChunk = 0;
+      let chunkError: string | undefined;
       for (const result of results) {
-        if (result.status === "succeeded") landedFilenames.push(result.landedFilename ?? result.filename);
+        if (result.status === "succeeded") {
+          landedFilenames.push(result.landedFilename ?? result.filename);
+          landedInChunk += 1;
+          if (!circuitTripped) consecutiveFailures = 0;
+        } else {
+          consecutiveFailures += 1;
+          if (result.providerMessage) {
+            lastError = result.providerMessage;
+            chunkError = result.providerMessage;
+          }
+          if (consecutiveFailures >= SUBTITLE_MAX_CONSECUTIVE_FAILURES) {
+            circuitTripped = true;
+          }
+        }
       }
-      const providerError = [...results]
-        .reverse()
-        .find((result) => result.status !== "succeeded" && result.providerMessage)?.providerMessage;
-      if (providerError !== undefined) lastError = providerError;
+      chunkDiagnostics.push({
+        chunkNumber,
+        requestedCount: selected.length,
+        detailRefreshed,
+        landedCount: landedInChunk,
+        unlandedCount: selected.length - landedInChunk,
+        ...(chunkError ? { error: chunkError } : {}),
+      });
+      if (circuitTripped) {
+        if (lastError === undefined) {
+          lastError = `已连续 ${SUBTITLE_MAX_CONSECUTIVE_FAILURES} 个字幕文件落盘失败，已停止后续字幕块。`;
+        }
+      }
     }
 
     if (landedFilenames.length === 0 && lastError === undefined) {
@@ -1070,6 +1154,7 @@ export class TaskSandbox {
       chunksProcessed,
       chunksTotal,
       unattemptedCount: unattemptedCount + pending.size,
+      chunkDiagnostics,
       ...(lastError ? { error: lastError } : {}),
     };
   }

@@ -34,4 +34,20 @@ describe("subtitle renewal identity", () => {
     expect(result.selected).toHaveLength(1);
     expect(result.missing).toEqual(["Show.S01E01.ass#1"]);
   });
+
+  it("keeps duplicate filenames together when a chunk boundary would split them", () => {
+    const packageFiles = [
+      ...Array.from({ length: 23 }, (_, index) => ({ filename: `Show.S01E${index + 1}.ass`, url: `old/${index}` })),
+      { filename: "Show.S01E24.ass", url: "old/24a" },
+      { filename: "Show.S01E24.ass", url: "old/24b" },
+    ];
+    const initial = indexSubtitleFiles(packageFiles);
+    const pending = new Set(initial.map((file) => file.key));
+    const first = selectSubtitleChunk(initial, initial, pending, 24);
+    expect(first.selected).toHaveLength(23);
+    expect(first.selected.at(-1)?.filename).toBe("Show.S01E23.ass");
+    for (const file of first.selected) pending.delete(file.key);
+    const second = selectSubtitleChunk(initial, initial, pending, 24);
+    expect(second.selected.map((file) => file.filename)).toEqual(["Show.S01E24.ass", "Show.S01E24.ass"]);
+  });
 });

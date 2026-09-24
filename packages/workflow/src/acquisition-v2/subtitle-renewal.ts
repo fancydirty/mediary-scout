@@ -23,13 +23,21 @@ export function selectSubtitleChunk(
 ): { selected: IndexedSubtitleFile[]; missing: string[] } {
   const size = Math.max(1, Math.floor(chunkSize));
   const refreshedByKey = new Map(refreshed.map((file) => [file.key, file]));
+  const pendingFiles = initial.filter((file) => pending.has(file.key));
+  const selectedKeys = new Set<string>();
+  let selectedCount = 0;
+  for (const original of pendingFiles) {
+    if (selectedKeys.has(original.key)) continue;
+    const sameName = pendingFiles.filter((file) => file.filename === original.filename);
+    if (selectedCount > 0 && selectedCount + sameName.length > size) break;
+    for (const file of sameName) selectedKeys.add(file.key);
+    selectedCount += sameName.length;
+    if (selectedCount >= size) break;
+  }
   const selected: IndexedSubtitleFile[] = [];
   const missing: string[] = [];
-  let considered = 0;
-  for (const original of initial) {
-    if (!pending.has(original.key)) continue;
-    if (considered >= size) break;
-    considered += 1;
+  for (const original of pendingFiles) {
+    if (!selectedKeys.has(original.key)) continue;
     const fresh = refreshedByKey.get(original.key);
     if (fresh) selected.push(fresh);
     else missing.push(original.key);
