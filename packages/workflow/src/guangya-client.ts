@@ -301,9 +301,12 @@ export class GuangYaClient {
       const list = arrayValue(recordValue(data, "list")).filter(isRecord);
       for (const raw of list) items.push(toItem(raw));
       const next = numberValue(recordValue(data, "cursor"));
-      const total = numberValue(recordValue(data, "total"));
-      const hasMore = recordValue(data, "hasMore") === true || (total > 0 && items.length < total);
-      if (list.length === 0 || !hasMore || next <= 0 || next === cursor) return items;
+      // The CURSOR drives pagination. Stop only on a definite end: an empty page, no /
+      // repeated cursor, or an explicit hasMore:false. `total` is NOT trusted as a stop
+      // — the real probes could not tell a directory total from a page count, and
+      // stopping on a page count would restore a partial root. (Real walk 2026-09-24:
+      // cursor 1 → 2 → {cursor:2} empty.)
+      if (list.length === 0 || next <= 0 || next === cursor || recordValue(data, "hasMore") === false) return items;
       cursor = next;
     }
     throw new Error(`GUANGYA_SHARE_TOO_LARGE: 分享目录超过 ${maxPages} 页仍未列完,拒绝只转存一部分`);

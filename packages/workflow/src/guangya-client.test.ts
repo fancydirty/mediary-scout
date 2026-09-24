@@ -478,7 +478,9 @@ describe("GuangYaClient share chain (get_share_access_token → page_files_list 
     const { c, calls } = client(() => {
       n += 1;
       if (n === 1) return { msg: "success", data: { total: 3, list: [{ fileId: "a", fileName: "A.mkv", fileSize: 5, resType: 1 }, { fileId: "d", fileName: "Dir", resType: 2 }], cursor: 2, hasMore: true } };
-      return { msg: "success", data: { total: 3, list: [{ fileId: "b", fileName: "B.mkv", fileSize: 7, resType: 1 }], cursor: 3 } };
+      if (n === 2) return { msg: "success", data: { total: 3, list: [{ fileId: "b", fileName: "B.mkv", fileSize: 7, resType: 1 }], cursor: 3 } };
+      // The real end-of-list shape: no list, cursor unchanged.
+      return { msg: "success", data: { cursor: 3 } };
     });
     const items = await c.listShareFiles("sat", "", { pageSize: 2 });
     expect(items.map((i) => i.fileId)).toEqual(["a", "d", "b"]);
@@ -498,6 +500,22 @@ describe("GuangYaClient share chain (get_share_access_token → page_files_list 
     expect((await c.listShareFiles("sat", "folder", { pageSize: 1 })).map((i) => i.fileName)).toEqual(["高画质", "中画质"]);
     expect(calls.map((x) => x.body.cursor)).toEqual([undefined, 1, 2]);
     expect(calls.every((x) => !("page" in x.body))).toBe(true);
+  });
+
+  it("keeps following the cursor when a page omits the optional hasMore/total hints", async () => {
+    const pages: Record<string, unknown> = {
+      none: { msg: "success", data: { list: [{ fileId: "a", fileName: "A", resType: 1 }], cursor: 1 } },
+      "1": { msg: "success", data: { list: [{ fileId: "b", fileName: "B", resType: 1 }], cursor: 2 } },
+      "2": { msg: "success", data: { cursor: 2 } },
+    };
+    const { c } = client((_p, body) => pages[body.cursor === undefined ? "none" : String(body.cursor)]);
+    expect((await c.listShareFiles("sat", "", { pageSize: 1 })).map((i) => i.fileId)).toEqual(["a", "b"]);
+  });
+
+  it("stops on an explicit hasMore:false even with a new cursor", async () => {
+    let n = 0;
+    const { c } = client(() => { n += 1; return { msg: "success", data: { list: [{ fileId: `f${n}`, fileName: "F", resType: 1 }], cursor: n, hasMore: false } }; });
+    expect(await c.listShareFiles("sat", "", { pageSize: 1 })).toHaveLength(1);
   });
 
   it("hitting the page cap FAILS LOUD instead of returning a partial root", async () => {
