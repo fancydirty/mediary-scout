@@ -80,7 +80,7 @@ function passthrough(input: TvV2Common): {
   storageProvider?: string;
   assrtToken?: string;
   jevJudge?: JevJudge;
-  memory?: { store: AgentMemoryStore; accountId: string };
+  memory?: { store: AgentMemoryStore; accountId: string; drive?: string };
 } {
   return {
     ...memoryOption(input),
@@ -95,12 +95,20 @@ function passthrough(input: TvV2Common): {
 }
 
 /** The repository IS the memory store; memory is on unless the account turned it off. */
-function memoryOption(input: { repository: WorkflowRepository; accountId?: string; agentMemory?: boolean }): {
-  memory?: { store: AgentMemoryStore; accountId: string };
+function memoryOption(input: {
+  repository: WorkflowRepository;
+  accountId?: string;
+  agentMemory?: boolean;
+  connectedStorageId?: string | null;
+  storageProvider?: string;
+}): {
+  memory?: { store: AgentMemoryStore; accountId: string; drive?: string };
 } {
-  return input.agentMemory === false
-    ? {}
-    : { memory: { store: input.repository, accountId: input.accountId ?? DEFAULT_ACCOUNT_ID } };
+  if (input.agentMemory === false) return {};
+  // The concrete drive (two 115 accounts are two drives); the brand only when the
+  // run carries no connected storage (legacy single-drive setups).
+  const drive = input.connectedStorageId ?? input.storageProvider;
+  return { memory: { store: input.repository, accountId: input.accountId ?? DEFAULT_ACCOUNT_ID, ...(drive ? { drive } : {}) } };
 }
 
 /** The run's onProgress: live activity progress (for the activity page) AND the

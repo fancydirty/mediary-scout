@@ -81,6 +81,16 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
         await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_movie_1", entry: entry({ name: "u", body: "补", provider: "pan115" }), now, onlyDrive: "pan115" });
         expect(await repo.deleteAgentMemory({ accountId: "acct_1", scope: "title", titleKey: "tmdb_movie_1", name: "u", onlyDrive: "pan115" })).toBe(true);
         expect(await repo.deleteAgentMemory({ accountId: "acct_1", scope: "title", titleKey: "tmdb_movie_1", name: "missing", onlyDrive: "pan115" })).toBe(false);
+        // Concurrent FIRST writes of the same new name from two drives: exactly one
+        // lands, the other is refused — the winner's tag is never flipped.
+        const race = await Promise.allSettled([
+          repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_movie_1", entry: entry({ name: "race", provider: "guangya" }), now, onlyDrive: "guangya" }),
+          repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_movie_1", entry: entry({ name: "race", provider: "pan115" }), now, onlyDrive: "pan115" }),
+        ]);
+        expect(race.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+        const winner = (race.find((r) => r.status === "fulfilled") as PromiseFulfilledResult<{ provider: string | null }>).value.provider;
+        const raced = (await repo.listAgentMemories({ accountId: "acct_1", scope: "title", titleKey: "tmdb_movie_1" })).find((m) => m.name === "race");
+        expect(raced!.provider).toBe(winner);
         // Without onlyDrive (UI path) the user can still edit/delete anything.
         expect(await repo.deleteAgentMemory({ accountId: "acct_1", scope: "title", titleKey: "tmdb_movie_1", name: "g" })).toBe(true);
       });

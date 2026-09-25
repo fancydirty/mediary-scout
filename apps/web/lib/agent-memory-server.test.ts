@@ -98,3 +98,16 @@ describe("drive label for the UI", () => {
     expect(toMemoryItem({ ...base, provider: null }).driveLabel).toBeNull();
   });
 });
+
+describe("drive labels resolve concrete drives", () => {
+  it("storage id → its label, else brand + uid tail; bare brand → brand label", async () => {
+    const { makeDriveLabeler } = await import("./agent-memory-server");
+    const label = makeDriveLabeler([
+      { id: "cs_1", provider: "pan115", providerUid: "103164004", label: null },
+      { id: "cs_2", provider: "pan115", providerUid: "555500001", label: "朋友的 115" },
+    ]);
+    expect(label("cs_1")).toBe("115 网盘 …4004");
+    expect(label("cs_2")).toBe("朋友的 115");
+    expect(label("guangya")).toBe("光鸭云盘");
+  });
+});

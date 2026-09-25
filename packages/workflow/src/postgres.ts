@@ -1289,18 +1289,6 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
   async upsertAgentMemory(input: Parameters<AgentMemoryStore["upsertAgentMemory"]>[0]): Promise<AgentMemory> {
     const titleKey = agentMemoryTitleKeyColumn(input.entry.scope, input.titleKey);
     return this.withTransaction(async (client) => {
-    if (input.onlyDrive) {
-      // Row lock for the rest of the transaction: a concurrent re-tag cannot slip in
-      // between this check and the upsert below.
-      const current = await client.query<{ provider: string | null }>(
-        "SELECT provider FROM agent_memories WHERE account_id = $1 AND scope = $2 AND title_key = $3 AND name = $4 FOR UPDATE",
-        [input.accountId, input.entry.scope, titleKey, input.entry.name],
-      );
-      const stored = current.rows[0]?.provider;
-      if (stored && stored !== input.onlyDrive) {
-        throw memoryOtherDriveError(input.entry.scope, input.entry.name, stored, input.onlyDrive);
-      }
-    }
     if (input.maxEntries !== undefined) {
       // Serialize writers of THIS scope for the rest of the transaction, so the count
       // below and the insert cannot interleave with another writer (no overshoot).
@@ -1325,7 +1313,11 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
         "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, NULL, $11) " +
         "ON CONFLICT (account_id, scope, title_key, name) DO UPDATE SET description = EXCLUDED.description, kind = EXCLUDED.kind, " +
         "body = EXCLUDED.body, provider = EXCLUDED.provider, updated_at = EXCLUDED.updated_at, " +
-        "source_run_id = COALESCE(EXCLUDED.source_run_id, agent_memories.source_run_id) RETURNING *",
+        "source_run_id = COALESCE(EXCLUDED.source_run_id, agent_memories.source_run_id) " +
+        // The drive guard is part of the conflict update itself: it holds even when two
+        // first writes race (no row to lock yet) — the loser hits the conflict and the
+        // WHERE, and gets no row back.
+        "WHERE $12::text IS NULL OR agent_memories.provider IS NULL OR agent_memories.provider = $12::text RETURNING *",
       [
         `mem_${globalThis.crypto.randomUUID()}`,
         input.accountId,
@@ -1338,8 +1330,16 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
         input.entry.provider ?? null,
         input.now,
         input.sourceRunId ?? null,
+        input.onlyDrive ?? null,
       ],
     );
+    if (result.rows.length === 0) {
+      const stored = await client.query<{ provider: string | null }>(
+        "SELECT provider FROM agent_memories WHERE account_id = $1 AND scope = $2 AND title_key = $3 AND name = $4",
+        [input.accountId, input.entry.scope, titleKey, input.entry.name],
+      );
+      throw memoryOtherDriveError(input.entry.scope, input.entry.name, stored.rows[0]?.provider ?? "another drive", input.onlyDrive ?? "");
+    }
     return agentMemoryFromRow(result.rows[0]!);
     });
   }
@@ -1347,28 +1347,23 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
   async deleteAgentMemory(input: Parameters<AgentMemoryStore["deleteAgentMemory"]>[0]): Promise<boolean> {
     await this.ensureSchema();
     const titleKey = agentMemoryTitleKeyColumn(input.scope, input.titleKey);
-    if (!input.onlyDrive) {
-      const result = await this.pool.query(
-        "DELETE FROM agent_memories WHERE account_id = $1 AND scope = $2 AND title_key = $3 AND name = $4",
-        [input.accountId, input.scope, titleKey, input.name],
-      );
-      return (result.rowCount ?? 0) > 0;
-    }
-    const onlyDrive = input.onlyDrive;
-    return this.withTransaction(async (client) => {
-      const current = await client.query<{ provider: string | null }>(
-        "SELECT provider FROM agent_memories WHERE account_id = $1 AND scope = $2 AND title_key = $3 AND name = $4 FOR UPDATE",
-        [input.accountId, input.scope, titleKey, input.name],
-      );
-      if (current.rowCount === 0) return false;
-      const stored = current.rows[0]!.provider;
-      if (stored && stored !== onlyDrive) throw memoryOtherDriveError(input.scope, input.name, stored, onlyDrive);
-      const result = await client.query(
-        "DELETE FROM agent_memories WHERE account_id = $1 AND scope = $2 AND title_key = $3 AND name = $4",
-        [input.accountId, input.scope, titleKey, input.name],
-      );
-      return (result.rowCount ?? 0) > 0;
-    });
+    // One conditional statement: a note of another drive is never matched, whatever
+    // was inserted or re-tagged concurrently.
+    const result = await this.pool.query(
+      "DELETE FROM agent_memories WHERE account_id = $1 AND scope = $2 AND title_key = $3 AND name = $4 " +
+        "AND ($5::text IS NULL OR provider IS NULL OR provider = $5::text)",
+      [input.accountId, input.scope, titleKey, input.name, input.onlyDrive ?? null],
+    );
+    if ((result.rowCount ?? 0) > 0) return true;
+    if (!input.onlyDrive) return false;
+    // Nothing deleted: tell "absent" apart from "another drive's note".
+    const stored = await this.pool.query<{ provider: string | null }>(
+      "SELECT provider FROM agent_memories WHERE account_id = $1 AND scope = $2 AND title_key = $3 AND name = $4",
+      [input.accountId, input.scope, titleKey, input.name],
+    );
+    const provider = stored.rows[0]?.provider;
+    if (provider && provider !== input.onlyDrive) throw memoryOtherDriveError(input.scope, input.name, provider, input.onlyDrive);
+    return false;
   }
 
   async touchAgentMemories(input: Parameters<AgentMemoryStore["touchAgentMemories"]>[0]): Promise<void> {

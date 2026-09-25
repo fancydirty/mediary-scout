@@ -92,8 +92,34 @@ export async function deleteMemoryFromUi(
   return deleted ? { success: true } : { success: false, message: "这条记忆已不存在" };
 }
 
+/** Drive tags are connected-storage ids (or a bare brand for legacy runs). Resolves
+ *  them to what the user recognizes: the drive's label, else brand + uid tail. */
+export type DriveLabeler = (drive: string) => string;
+
+export function makeDriveLabeler(
+  storages: Array<{ id: string; provider: string; providerUid: string; label: string | null }>,
+): DriveLabeler {
+  const byId = new Map(storages.map((s) => [s.id, s]));
+  return (drive) => {
+    const storage = byId.get(drive);
+    if (!storage) return brandLabelOf(drive);
+    return storage.label?.trim() || `${brandLabelOf(storage.provider)} …${storage.providerUid.slice(-4)}`;
+  };
+}
+
+export async function driveLabelerFor(
+  repository: { listConnectedStorages(accountId: string): Promise<Array<{ id: string; provider: string; providerUid: string; label: string | null }>> },
+  accountId: string,
+): Promise<DriveLabeler> {
+  try {
+    return makeDriveLabeler(await repository.listConnectedStorages(accountId));
+  } catch {
+    return brandLabelOf;
+  }
+}
+
 /** The serializable slice the client panel renders (no ids / account). */
-export function toMemoryItem(m: AgentMemory): {
+export function toMemoryItem(m: AgentMemory, driveLabel: DriveLabeler = brandLabelOf): {
   name: string;
   description: string;
   kind: AgentMemoryKind;
@@ -109,11 +135,11 @@ export function toMemoryItem(m: AgentMemory): {
     body: m.body,
     updatedAt: m.updatedAt,
     lastUsedAt: m.lastUsedAt,
-    driveLabel: m.provider ? driveLabelOf(m.provider) : null,
+    driveLabel: m.provider ? driveLabel(m.provider) : null,
   };
 }
 
-function driveLabelOf(provider: string): string {
+function brandLabelOf(provider: string): string {
   try {
     return getStorageBrand(provider).label;
   } catch {

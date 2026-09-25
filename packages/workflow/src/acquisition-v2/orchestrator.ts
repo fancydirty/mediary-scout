@@ -85,7 +85,15 @@ export interface RunAcquisitionV2Request {
    *  Present + target.tmdbId known → this work's memory is injected into the prompt
    *  and a post-run reflection turn may write/update/delete it. Every memory step is
    *  best-effort: a failing store never affects the acquisition. */
-  memory?: { store: AgentMemoryStore; accountId: string; now?: () => string };
+  memory?: {
+    store: AgentMemoryStore;
+    accountId: string;
+    /** The concrete drive this run lands on (connected-storage id; the brand when the
+     *  run has none). Notes are tagged with it and other drives' notes are read-only
+     *  to this run — two 115 accounts are two drives. */
+    drive?: string;
+    now?: () => string;
+  };
 }
 
 /** The persistable trace of a V2 run, in the same shape the old serial path
@@ -123,6 +131,7 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
   const need = request.target.kind === "tv" ? needForTvTarget(request.target) : needForMovie();
   // The title key is computed HERE from the target — the agent never supplies it.
   const memoryNow = request.memory?.now ?? (() => new Date().toISOString());
+  const memoryDrive = request.memory?.drive ?? request.storageProvider;
   const memoryBinding =
     request.memory && typeof request.target.tmdbId === "number" && request.target.tmdbId > 0
       ? {
@@ -130,7 +139,7 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
           accountId: request.memory.accountId,
           titleKey: memoryTitleKey({ kind: request.target.kind, tmdbId: request.target.tmdbId }),
           runId: request.workflowRunId,
-          ...(request.storageProvider ? { provider: request.storageProvider } : {}),
+          ...(memoryDrive ? { provider: memoryDrive } : {}),
           now: memoryNow,
         }
       : undefined;
@@ -261,7 +270,8 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     try {
       digest = buildReflectionDigest({
         searches: sandbox.searchHistory(),
-        ...(request.storageProvider ? { drive: request.storageProvider } : {}),
+        ...(memoryDrive ? { drive: memoryDrive } : {}),
+        ...(request.storageProvider ? { driveBrand: request.storageProvider } : {}),
         attempts: transferAttempts,
         candidateTitle: (id) => registry.get(id)?.title,
         coverage: result.coverage,

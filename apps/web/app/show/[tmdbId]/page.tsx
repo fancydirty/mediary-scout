@@ -526,13 +526,15 @@ function SeasonRow({
  *  panel refreshes the route after each change. Hidden for untracked works. */
 async function TitleMemorySection({ mediaType, tmdbId }: { mediaType: "movie" | "tv"; tmdbId: number }) {
   const { getWorkflowRepository, getCurrentAccountId } = await import("../../../lib/workflow-runtime");
-  const { listMemoriesForUi, toMemoryItem } = await import("../../../lib/agent-memory-server");
-  const items = await listMemoriesForUi(getWorkflowRepository(), await getCurrentAccountId(), { scope: "title", mediaType, tmdbId });
+  const { driveLabelerFor, listMemoriesForUi, toMemoryItem } = await import("../../../lib/agent-memory-server");
+  const accountId = await getCurrentAccountId();
+  const items = await listMemoriesForUi(getWorkflowRepository(), accountId, { scope: "title", mediaType, tmdbId });
+  const driveLabel = await driveLabelerFor(getWorkflowRepository(), accountId);
   return (
     <details className="hub-memory">
       <summary>Agent 记忆（{items.length}）</summary>
       <p className="panel-note">agent 在获取这部作品时记下的经验，下次获取前会先读。可以编辑或删除。</p>
-      <AgentMemoryPanel address={{ scope: "title", mediaType, tmdbId }} items={items.map(toMemoryItem)} />
+      <AgentMemoryPanel address={{ scope: "title", mediaType, tmdbId }} items={items.map((m) => toMemoryItem(m, driveLabel))} />
     </details>
   );
 }

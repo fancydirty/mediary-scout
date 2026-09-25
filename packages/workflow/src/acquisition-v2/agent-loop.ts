@@ -473,13 +473,15 @@ export function buildReflectionDigest(input: {
   searches: SearchHistoryEntry[];
   /** The drive this run landed on — transfers/failures below are facts about IT. */
   drive?: string;
+  /** Its brand (pan115 / guangya / …), shown next to the opaque drive id. */
+  driveBrand?: string;
   attempts: Array<{ candidateId: string; status: string; providerMessage?: string; materializedFileIds?: string[] }>;
   candidateTitle: (candidateId: string) => string | undefined;
   coverage: { coverageMet: boolean; obtained: string[]; missing: string[] };
   auditEvents: Array<{ type: string; message: string }>;
 }): string {
   const lines: string[] = [
-    `DRIVE OF THIS RUN: ${input.drive ?? "unknown"} (every transfer outcome below happened on this drive)`,
+    `DRIVE OF THIS RUN: ${input.drive ?? "unknown"}${input.driveBrand && input.driveBrand !== input.drive ? ` (${input.driveBrand})` : ""} (every transfer outcome below happened on this drive)`,
     "SEARCHES (every keyword tried, in order → outcome):",
   ];
   if (input.searches.length === 0) lines.push("- (none)");

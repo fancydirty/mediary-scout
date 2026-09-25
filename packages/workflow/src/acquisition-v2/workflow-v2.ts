@@ -64,7 +64,7 @@ export interface RunAcquisitionV2WorkflowRequest {
   jevJudge?: JevJudge;
   deadLinkStore?: DeadLinkStore;
   /** Agent memory (see orchestrator.memory). */
-  memory?: { store: AgentMemoryStore; accountId: string };
+  memory?: { store: AgentMemoryStore; accountId: string; drive?: string };
   onProgress?: (event: AgentToolEvent) => void;
 }
 

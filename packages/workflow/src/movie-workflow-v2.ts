@@ -57,7 +57,7 @@ export interface RunMovieAcquisitionV2Request {
   jevJudge?: JevJudge;
   deadLinkStore?: DeadLinkStore;
   /** Agent memory (see orchestrator.memory). */
-  memory?: { store: AgentMemoryStore; accountId: string };
+  memory?: { store: AgentMemoryStore; accountId: string; drive?: string };
   onProgress?: (event: AgentToolEvent) => void;
   now?: () => string;
 }

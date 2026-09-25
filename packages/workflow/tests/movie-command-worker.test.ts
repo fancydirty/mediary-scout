@@ -217,6 +217,47 @@ describe("runQueuedMovieAcquisition — agent memory reaches the engine", () => 
   });
 });
 
+describe("runQueuedMovieAcquisition — memory is tagged with the run's concrete drive", () => {
+  it("a note written by the reflection carries the run's connectedStorageId (worker → runner-v2 → orchestrator)", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const title = movieTitle();
+    await queueMovieAcquisition({ title, keyword: "奥本海默 4K", repository, createWorkflowRunId: () => "run_mem_drive", now: fixedNow, connectedStorageId: "cs_drive_A" });
+    const storage = new FakeStorageExecutor();
+    const movieDir = await storage.createDirectory({ name: `${title.title} (${title.year})`, parentId: "movies_root" });
+    storage.seedDirectoryFiles(movieDir, [
+      { id: "oppen_v", storageDirectoryId: movieDir, name: "Oppenheimer.2023.mkv", sizeBytes: 8_000_000_000, episodeCode: null, providerFileId: "oppen_v" },
+    ]);
+    const inner = inspectAndMarkModel();
+    let wrote = false;
+    const model = new MockLanguageModelV3({
+      doGenerate: async (options) => {
+        const sys = JSON.stringify(options.prompt.find((m) => m.role === "system") ?? "");
+        if (sys.includes("reviewing an acquisition run")) {
+          if (wrote) return { content: [{ type: "text" as const, text: "done" }], finishReason: { unified: "stop" as const, raw: "stop" as const }, usage: { inputTokens: { total: undefined, noCache: undefined, cacheRead: undefined, cacheWrite: undefined }, outputTokens: { total: undefined, text: undefined, reasoning: undefined } }, warnings: [] };
+          wrote = true;
+          return {
+            content: [{ type: "tool-call" as const, toolCallId: "r1", toolName: "writeMemory", input: JSON.stringify({ scope: "title", name: "drive-note", description: "d", kind: "resource", body: "证据" }) }],
+            finishReason: { unified: "tool-calls" as const, raw: "tool-calls" as const },
+            usage: { inputTokens: { total: undefined, noCache: undefined, cacheRead: undefined, cacheWrite: undefined }, outputTokens: { total: undefined, text: undefined, reasoning: undefined } },
+            warnings: [],
+          };
+        }
+        return inner.doGenerate(options);
+      },
+    });
+    await runQueuedMovieAcquisition({
+      repository,
+      resourceProvider: new FakeResourceProvider({ keywordResults: { [title.title]: [{ title: "奥本海默.Oppenheimer.2023.2160p.mkv" }] } }),
+      storage,
+      model,
+      moviesParentDirectoryId: "movies_root",
+      now: fixedNow,
+    });
+    const rows = await repository.listAgentMemories({ accountId: "acct_default", scope: "title", titleKey: `tmdb_movie_${title.tmdbId}` });
+    expect(rows).toMatchObject([{ name: "drive-note", provider: "cs_drive_A" }]);
+  });
+});
+
 describe("runQueuedMovieAcquisition — agent memory off switch", () => {
   it("an account that turned memory off gets no memory block and no reflection", async () => {
     const repository = new InMemoryWorkflowRepository();

@@ -18,7 +18,7 @@ import { ProwlarrConfigForm } from "../../components/prowlarr-config-form";
 import { JevPrefilterForm } from "../../components/jev-prefilter-form";
 import { ServiceBlock } from "../../components/service-block";
 import { AgentMemoryPanel } from "../../components/agent-memory-panel";
-import { isAgentMemoryEnabled, listMemoriesForUi, toMemoryItem } from "../../lib/agent-memory-server";
+import { driveLabelerFor, isAgentMemoryEnabled, listMemoriesForUi, toMemoryItem } from "../../lib/agent-memory-server";
 import { assrtPills, isEnvBackedValue, jevPills, llmPills, pansouPills, prowlarrPills, tmdbPills } from "../../lib/service-status";
 import { PanSouConfigForm } from "../../components/pansou-config-form";
 import { DailySweepForm } from "../../components/daily-sweep-form";
@@ -326,6 +326,7 @@ async function LlmConfigSection() {
   const jevModel = (await repository.getSetting(JEV_MODEL_SETTING_KEY))?.trim() || null;
   const memoryEnabled = await isAgentMemoryEnabled(getWorkflowRepository(), accountId);
   const globalMemories = await listMemoriesForUi(getWorkflowRepository(), accountId, { scope: "global" });
+  const memoryDriveLabel = await driveLabelerFor(getWorkflowRepository(), accountId);
 
   return (
     <section className="panel" style={{ maxWidth: 720, marginTop: 24 }}>
@@ -406,7 +407,7 @@ async function LlmConfigSection() {
       >
         <AgentMemoryPanel
           address={{ scope: "global" }}
-          items={globalMemories.map(toMemoryItem)}
+          items={globalMemories.map((m) => toMemoryItem(m, memoryDriveLabel))}
           enabled={memoryEnabled}
           showToggle
         />
