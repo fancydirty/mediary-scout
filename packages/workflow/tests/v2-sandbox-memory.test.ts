@@ -161,3 +161,36 @@ describe("notes are tagged with the run's drive (production e2e 2026-09-25)", ()
     expect(rows.map((r) => [r.name, r.provider]).sort()).toEqual([["a", "pan115"], ["b", "pan115"]]);
   });
 });
+
+describe("a drive cannot change another drive's notes (Copilot #273 r1)", () => {
+  const bound = (store: InMemoryWorkflowRepository, provider: string) =>
+    new TaskSandbox({
+      provider: new FakeResourceProviderV2({ results: {} }),
+      need: ["MOVIE"],
+      memory: { store, accountId: "acct_1", titleKey: "tmdb_movie_1", runId: `run-${provider}`, provider, now: () => "2026-09-25T00:00:00.000Z" },
+    });
+
+  it("overwrite and delete of a note tagged with another drive are refused, and the slot is given back", async () => {
+    const store = new InMemoryWorkflowRepository();
+    await bound(store, "guangya").writeMemory(e({ name: "src", body: "SONYHD 落盘成功" }));
+    await bound(store, "guangya").writeMemory(e({ scope: "global", name: "g", kind: "drive", body: "光鸭经验" }));
+    const on115 = bound(store, "pan115");
+    await expect(on115.writeMemory(e({ name: "src", body: "SONYHD 是假的" }))).rejects.toThrow(/MEMORY_OTHER_DRIVE/);
+    await expect(on115.deleteMemory({ scope: "title", name: "src" })).rejects.toThrow(/MEMORY_OTHER_DRIVE/);
+    await expect(on115.deleteMemory({ scope: "global", name: "g" })).rejects.toThrow(/MEMORY_OTHER_DRIVE/);
+    expect(on115.memoryChangeCount()).toBe(0);
+    const [row] = await store.listAgentMemories({ accountId: "acct_1", scope: "title", titleKey: "tmdb_movie_1" });
+    expect(row).toMatchObject({ body: "SONYHD 落盘成功", provider: "guangya" });
+    expect(await store.listAgentMemories({ accountId: "acct_1", scope: "global" })).toHaveLength(1);
+  });
+
+  it("the same drive and untagged notes stay editable", async () => {
+    const store = new InMemoryWorkflowRepository();
+    await store.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_movie_1", entry: { ...(e({ name: "untagged" }) as object) } as never, now: "t" });
+    const on115 = bound(store, "pan115");
+    await on115.writeMemory(e({ name: "untagged", body: "115 补充" }));
+    await on115.writeMemory(e({ name: "mine" }));
+    await on115.writeMemory(e({ name: "mine", body: "改" }));
+    expect(await on115.deleteMemory({ scope: "title", name: "mine" })).toEqual({ deleted: true });
+  });
+});

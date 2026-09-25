@@ -1000,6 +1000,7 @@ export class TaskSandbox {
       const titleKey = this.memoryTitleKeyFor(entry.scope);
       const existing = await memory.store.listAgentMemories({ accountId: memory.accountId, scope: entry.scope, titleKey });
       const previous = existing.find((row) => row.name === entry.name);
+      this.assertSameDrive(previous, entry.scope, entry.name);
       updated = previous !== undefined;
       const cap = entry.scope === "title" ? AGENT_MEMORY_LIMITS.titleEntriesMax : AGENT_MEMORY_LIMITS.globalEntriesMax;
       if (!updated && existing.length >= cap) {
@@ -1032,6 +1033,18 @@ export class TaskSandbox {
     return { name: entry.name, scope: entry.scope, updated };
   }
 
+  /** A run bound to a drive may not overwrite or delete a note tagged with ANOTHER
+   *  drive: a source that failed here (a magnet the drive had no cache for) may be
+   *  exactly what worked there. Untagged notes stay editable by any drive. */
+  private assertSameDrive(row: { provider: string | null } | undefined, scope: AgentMemoryScope, name: string): void {
+    const bound = this.memory?.provider;
+    if (bound && row?.provider && row.provider !== bound) {
+      throw new Error(
+        `MEMORY_OTHER_DRIVE: ${scope}/${name} was learned on drive ${row.provider}; this run is on ${bound} and cannot change it — write a separate note (another name) for ${bound}`,
+      );
+    }
+  }
+
   /** Take a per-run change slot BEFORE the first await: the model may issue several
    *  tool calls in one step and AI SDK runs them concurrently, so check-then-increment
    *  after the store call would let them all pass. Callers release it on failure. */
@@ -1047,6 +1060,11 @@ export class TaskSandbox {
     this.reserveMemoryChange();
     let deleted: boolean;
     try {
+      if (memory.provider) {
+        const titleKey = this.memoryTitleKeyFor(input.scope);
+        const rows = await memory.store.listAgentMemories({ accountId: memory.accountId, scope: input.scope, titleKey });
+        this.assertSameDrive(rows.find((row) => row.name === input.name), input.scope, input.name);
+      }
       deleted = await memory.store.deleteAgentMemory({
         accountId: memory.accountId,
         scope: input.scope,
