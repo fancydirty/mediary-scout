@@ -48,7 +48,9 @@ export function AgentMemoryNotes({
   const [showAll, setShowAll] = useState(false);
   const [removed, setRemoved] = useState<{ item: MemoryItem; index: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const pending = useRef<{ name: string; timer: ReturnType<typeof setTimeout> } | null>(null);
+  // The address is snapshotted per delete: the App Router can reuse this component
+  // across /show pages, and a waiting delete must never land on the next work.
+  const pending = useRef<{ name: string; address: Address; timer: ReturnType<typeof setTimeout> } | null>(null);
   // Every note the user deleted whose server delete has not resolved yet — waiting out
   // the undo window OR in flight. The page refreshes on its own (AcquiringPoller,
   // router.refresh) and fresh props still contain those rows; keep them hidden, or a
@@ -57,15 +59,10 @@ export function AgentMemoryNotes({
   useEffect(() => {
     setItems(visibleAfterRefresh(initialItems, deleting.current));
   }, [initialItems]);
-  // A ref, not a dep: the page re-renders on its own (AcquiringPoller refreshes) and a
-  // new address object must not tear down the listener and flush the undo window.
-  const addressRef = useRef(address);
-  addressRef.current = address;
-
-  const commit = (name: string, item: MemoryItem, index: number) => {
+  const commit = (target: Address, name: string, item: MemoryItem, index: number) => {
     pending.current = null;
     startTransition(async () => {
-      const r = await runAction(() => deleteAgentMemoryAction(addressRef.current, name), (msg) => setError(msg));
+      const r = await runAction(() => deleteAgentMemoryAction(target, name), (msg) => setError(msg));
       // Resolved either way: from now on the server's answer is the truth.
       deleting.current.delete(name);
       const failed = !r.ok ? true : !r.value.success;
@@ -79,14 +76,16 @@ export function AgentMemoryNotes({
     });
   };
 
-  // Leaving the page must not drop a delete the user asked for.
+  // Leaving the page — or this component moving to another work — must not drop a
+  // delete the user asked for; it is sent right away, against its own work.
+  const addressKey = JSON.stringify(address);
   useEffect(() => {
     const flush = () => {
       const p = pending.current;
       if (!p) return;
       clearTimeout(p.timer);
       pending.current = null;
-      void deleteAgentMemoryAction(addressRef.current, p.name)
+      void deleteAgentMemoryAction(p.address, p.name)
         .catch(() => undefined)
         .finally(() => deleting.current.delete(p.name));
     };
@@ -95,7 +94,7 @@ export function AgentMemoryNotes({
       window.removeEventListener("pagehide", flush);
       flush();
     };
-  }, []);
+  }, [addressKey]);
 
   if (items.length === 0 && !removed) return null;
 
@@ -108,13 +107,14 @@ export function AgentMemoryNotes({
     // One undo at a time: a second delete commits the first right away.
     if (pending.current && removed) {
       clearTimeout(pending.current.timer);
-      commit(pending.current.name, removed.item, removed.index);
+      commit(pending.current.address, pending.current.name, removed.item, removed.index);
     }
     const index = items.findIndex((i) => i.name === item.name);
     deleting.current.add(item.name);
     setItems((prev) => prev.filter((i) => i.name !== item.name));
     setRemoved({ item, index });
-    pending.current = { name: item.name, timer: setTimeout(() => commit(item.name, item, index), UNDO_MS) };
+    const target = address;
+    pending.current = { name: item.name, address: target, timer: setTimeout(() => commit(target, item.name, item, index), UNDO_MS) };
   };
 
   const handleUndo = () => {
