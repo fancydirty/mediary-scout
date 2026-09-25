@@ -67,3 +67,25 @@ describe("UI writes respect the same caps as the agent", () => {
     expect(await saveMemoryFromUi(repo, "acct_1", addr, { ...entry, name: "m-0", body: "改" }, now)).toMatchObject({ success: true });
   });
 });
+
+describe("UI edits and runtime address checks (Copilot #272 r5)", () => {
+  const now = () => "2026-09-25T00:00:00.000Z";
+  const entry = { name: "drive-tip", description: "一行摘要", kind: "drive" as const, body: "证据：run x" };
+
+  it("editing an agent-written entry keeps its provider", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: null, entry: { scope: "global", ...entry, provider: "guangya" }, now: now() });
+    expect(await saveMemoryFromUi(repo, "acct_1", { scope: "global" }, { ...entry, body: "用户改过" }, now)).toMatchObject({ success: true });
+    const [row] = await listMemoriesForUi(repo, "acct_1", { scope: "global" });
+    expect(row!.body).toBe("用户改过");
+    expect(row!.provider).toBe("guangya");
+  });
+
+  it("rejects a forged mediaType instead of building a free-form title key", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    const forged = { scope: "title", mediaType: "x_1_global", tmdbId: 1 } as unknown as Parameters<typeof saveMemoryFromUi>[2];
+    expect(await saveMemoryFromUi(repo, "acct_1", forged, entry, now)).toMatchObject({ success: false });
+    expect(await listMemoriesForUi(repo, "acct_1", forged)).toEqual([]);
+    expect(await deleteMemoryFromUi(repo, "acct_1", forged, "drive-tip")).toMatchObject({ success: false });
+  });
+});

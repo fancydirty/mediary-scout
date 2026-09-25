@@ -28,6 +28,8 @@ export async function isAgentMemoryEnabled(
 
 function titleKeyOf(address: MemoryAddress): string | null | "invalid" {
   if (address.scope === "global") return null;
+  // Server actions receive whatever the client sent — the type alone guarantees nothing.
+  if (address.scope !== "title" || (address.mediaType !== "movie" && address.mediaType !== "tv")) return "invalid";
   if (!Number.isInteger(address.tmdbId) || address.tmdbId <= 0) return "invalid";
   return memoryTitleKey({ kind: address.mediaType, tmdbId: address.tmdbId });
 }
@@ -57,13 +59,17 @@ export async function saveMemoryFromUi(
   // Same caps the agent's tool enforces; overwriting an existing name is always fine.
   const existing = await store.listAgentMemories({ accountId, scope: address.scope, titleKey });
   const cap = address.scope === "title" ? AGENT_MEMORY_LIMITS.titleEntriesMax : AGENT_MEMORY_LIMITS.globalEntriesMax;
-  if (!existing.some((m) => m.name === entry.name) && existing.length >= cap) {
+  const previous = existing.find((m) => m.name === entry.name);
+  if (!previous && existing.length >= cap) {
     return { success: false, message: `已达上限（${cap} 条），请先删除或编辑一条旧记忆` };
   }
   try {
     // maxEntries makes the store the authority (atomic with the insert); the check above
     // is only the friendly early message.
-    await store.upsertAgentMemory({ accountId, titleKey, entry, now: now(), maxEntries: cap });
+    // The UI has no provider field: an edit keeps the drive the agent tied the entry to
+    // (the upsert would otherwise overwrite it with null).
+    const withProvider = previous?.provider ? { ...entry, provider: previous.provider } : entry;
+    await store.upsertAgentMemory({ accountId, titleKey, entry: withProvider, now: now(), maxEntries: cap });
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("MEMORY_FULL")) {
       return { success: false, message: `已达上限（${cap} 条），请先删除或编辑一条旧记忆` };
