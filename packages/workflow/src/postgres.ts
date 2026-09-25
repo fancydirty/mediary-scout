@@ -1371,6 +1371,12 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     return false;
   }
 
+  async getMediaTitleName(titleKey: string): Promise<string | null> {
+    await this.ensureSchema();
+    const result = await this.pool.query<{ title: string | null }>("SELECT payload->>'title' AS title FROM media_titles WHERE id = $1", [titleKey]);
+    return result.rows[0]?.title ?? null;
+  }
+
   async summarizeAgentMemories(input: { accountId: string; since: string }): Promise<AgentMemorySummary> {
     await this.ensureSchema();
     const counts = await this.pool.query<{ title_entries: string; title_works: string; global_entries: string; created_since: string }>(

@@ -117,15 +117,10 @@ export interface MemoryStats {
   latest: { updatedAt: string; workTitle: string | null } | null;
 }
 
-export async function memoryStatsForUi(
-  store: AgentMemoryStore,
-  accountId: string,
-  now: Date,
-  titleName: (titleKey: string) => Promise<string | null>,
-): Promise<MemoryStats> {
+export async function memoryStatsForUi(store: AgentMemoryStore, accountId: string, now: Date): Promise<MemoryStats> {
   const since = new Date(now.getTime() - MEMORY_RECENT_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const s = await store.summarizeAgentMemories({ accountId, since });
-  const latestTitle = s.latest?.titleKey ? await titleName(s.latest.titleKey).catch(() => null) : null;
+  const latestTitle = s.latest?.titleKey ? await store.getMediaTitleName(s.latest.titleKey).catch(() => null) : null;
   return {
     titleEntries: s.titleEntries,
     titleWorks: s.titleWorks,
@@ -135,20 +130,6 @@ export async function memoryStatsForUi(
   };
 }
 
-/** "tmdb_tv_123" → that work's display title, from the account's tracked works. */
-export async function titleNameLookup(
-  repository: { listTrackedSeasonStates(scope?: string): Promise<Array<{ title: { id: string; title: string } }>> },
-  accountId: string,
-): Promise<(titleKey: string) => Promise<string | null>> {
-  let names: Map<string, string> | null = null;
-  return async (titleKey) => {
-    if (!names) {
-      const states = await repository.listTrackedSeasonStates(accountId);
-      names = new Map(states.map((st) => [st.title.id, st.title.title]));
-    }
-    return names.get(titleKey) ?? null;
-  };
-}
 
 function brandLabelOf(provider: string): string {
   try {

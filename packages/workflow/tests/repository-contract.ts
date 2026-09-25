@@ -104,6 +104,14 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
         expect(await repo.deleteAgentMemory({ accountId: "acct_1", scope: "title", titleKey: "tmdb_movie_1", name: "g" })).toBe(true);
       });
 
+      it("getMediaTitleName reads one title's display name by its id (the memory title key)", async () => {
+        const repo = await fresh();
+        expect(await repo.getMediaTitleName("title_1")).toBeNull();
+        await repo.saveWorkflowRunSnapshot(workflowPersistenceFixture());
+        expect(await repo.getMediaTitleName("title_1")).toBe("Show");
+        expect(await repo.getMediaTitleName("tmdb_tv_404")).toBeNull();
+      });
+
       it("summarizes counts across works and scopes for one account (settings page numbers)", async () => {
         const repo = await fresh();
         expect(await repo.summarizeAgentMemories({ accountId: "acct_1", since: "2026-09-01T00:00:00.000Z" })).toEqual({

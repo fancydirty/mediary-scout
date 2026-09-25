@@ -23,7 +23,6 @@ import {
   isAgentMemoryEnabled,
   listMemoriesForUi,
   memoryStatsForUi,
-  titleNameLookup,
   toMemoryItem,
 } from "../../lib/agent-memory-server";
 import { assrtPills, isEnvBackedValue, jevPills, llmPills, pansouPills, prowlarrPills, tmdbPills } from "../../lib/service-status";
@@ -335,12 +334,7 @@ async function LlmConfigSection() {
   const globalMemories = await listMemoriesForUi(getWorkflowRepository(), accountId, { scope: "global" });
   const memoryDriveLabel = await driveLabelerFor(getWorkflowRepository(), accountId);
   const memoryNow = new Date();
-  const memoryStats = await memoryStatsForUi(
-    getWorkflowRepository(),
-    accountId,
-    memoryNow,
-    await titleNameLookup(getWorkflowRepository(), accountId),
-  );
+  const memoryStats = await memoryStatsForUi(getWorkflowRepository(), accountId, memoryNow);
 
   return (
     <section className="panel" style={{ maxWidth: 720, marginTop: 24 }}>

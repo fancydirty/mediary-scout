@@ -11,6 +11,7 @@ import { deleteAgentMemoryAction, setAgentMemoryEnabledAction } from "../app/act
 import { runAction } from "../lib/run-action";
 import { relativeDayLabel } from "../lib/relative-day";
 import type { MemoryItem, MemoryStats } from "../lib/agent-memory-server";
+import { restoreNote, visibleAfterRefresh } from "../lib/memory-notes-state";
 
 type Address = { scope: "global" } | { scope: "title"; mediaType: "movie" | "tv"; tmdbId: number };
 
@@ -44,11 +45,16 @@ export function AgentMemoryNotes({
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [items, setItems] = useState(initialItems);
-  useEffect(() => setItems(initialItems), [initialItems]);
   const [showAll, setShowAll] = useState(false);
   const [removed, setRemoved] = useState<{ item: MemoryItem; index: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const pending = useRef<{ name: string; timer: ReturnType<typeof setTimeout> } | null>(null);
+  // The page refreshes on its own (AcquiringPoller, router.refresh). Fresh server
+  // props still contain a note whose delete is waiting out the undo window — keep it
+  // hidden, or it would reappear and 撤销 would then insert a duplicate.
+  useEffect(() => {
+    setItems(visibleAfterRefresh(initialItems, pending.current?.name ?? null));
+  }, [initialItems]);
   // A ref, not a dep: the page re-renders on its own (AcquiringPoller refreshes) and a
   // new address object must not tear down the listener and flush the undo window.
   const addressRef = useRef(address);
@@ -62,7 +68,7 @@ export function AgentMemoryNotes({
       if (failed) {
         // Put it back where it was: the note still exists.
         if (r.ok) setError(r.value.message ?? "删除没成功，再试一次");
-        setItems((prev) => (prev.some((i) => i.name === name) ? prev : insertAt(prev, item, index)));
+        setItems((prev) => restoreNote(prev, item, index));
       }
       setRemoved((cur) => (cur?.item.name === name ? null : cur));
       router.refresh();
@@ -109,7 +115,7 @@ export function AgentMemoryNotes({
     clearTimeout(pending.current.timer);
     pending.current = null;
     const { item, index } = removed;
-    setItems((prev) => insertAt(prev, item, index));
+    setItems((prev) => restoreNote(prev, item, index));
     setRemoved(null);
   };
 
@@ -242,10 +248,4 @@ export function AgentMemoryStats({
       ) : null}
     </div>
   );
-}
-
-function insertAt(list: MemoryItem[], item: MemoryItem, index: number): MemoryItem[] {
-  const next = [...list];
-  next.splice(Math.max(0, Math.min(index, next.length)), 0, item);
-  return next;
 }

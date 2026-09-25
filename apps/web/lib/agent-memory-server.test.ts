@@ -86,7 +86,8 @@ describe("memoryStatsForUi — settings page numbers", () => {
     await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_tv_1", entry: { scope: "title", ...entry, name: "old" }, now: at("2026-09-01T00:00:00.000Z") });
     await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_tv_1", entry: { scope: "title", ...entry, name: "a" }, now: at("2026-09-24T00:00:00.000Z") });
     await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_tv_2", entry: { scope: "title", ...entry, name: "b" }, now: at("2026-09-25T03:00:00.000Z") });
-    const stats = await memoryStatsForUi(repo, "acct_1", new Date("2026-09-25T04:00:00.000Z"), async (key) => (key === "tmdb_tv_2" ? "冰之城墙" : null));
+    repo.getMediaTitleName = async (key) => (key === "tmdb_tv_2" ? "冰之城墙" : null);
+    const stats = await memoryStatsForUi(repo, "acct_1", new Date("2026-09-25T04:00:00.000Z"));
     expect(stats).toEqual({
       titleEntries: 3,
       titleWorks: 2,
@@ -98,11 +99,12 @@ describe("memoryStatsForUi — settings page numbers", () => {
 
   it("empty account → zeros and no latest; a failing name lookup does not break the numbers", async () => {
     const repo = new InMemoryWorkflowRepository();
-    expect(await memoryStatsForUi(repo, "acct_1", new Date(), async () => null)).toEqual({
+    expect(await memoryStatsForUi(repo, "acct_1", new Date())).toEqual({
       titleEntries: 0, titleWorks: 0, globalEntries: 0, recentAdded: 0, latest: null,
     });
     await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_tv_2", entry: { scope: "title", ...entry }, now: at("2026-09-25T03:00:00.000Z") });
-    const stats = await memoryStatsForUi(repo, "acct_1", new Date("2026-09-25T04:00:00.000Z"), async () => { throw new Error("db down"); });
+    repo.getMediaTitleName = async () => { throw new Error("db down"); };
+    const stats = await memoryStatsForUi(repo, "acct_1", new Date("2026-09-25T04:00:00.000Z"));
     expect(stats.latest).toEqual({ updatedAt: "2026-09-25T03:00:00.000Z", workTitle: null });
   });
 });

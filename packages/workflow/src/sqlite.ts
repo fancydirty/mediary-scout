@@ -1572,6 +1572,13 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     })();
   }
 
+  async getMediaTitleName(titleKey: string): Promise<string | null> {
+    const row = this.db.prepare("SELECT payload FROM media_titles WHERE id = ?").get(titleKey) as { payload: string } | undefined;
+    if (!row) return null;
+    const title = (JSON.parse(row.payload) as { title?: unknown }).title;
+    return typeof title === "string" ? title : null;
+  }
+
   async summarizeAgentMemories(input: { accountId: string; since: string }): Promise<AgentMemorySummary> {
     const counts = this.db
       .prepare(

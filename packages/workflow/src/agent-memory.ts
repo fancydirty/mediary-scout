@@ -97,6 +97,9 @@ export interface AgentMemoryStore {
   }): Promise<boolean>;
   /** Counts across the whole account (both scopes, every work). */
   summarizeAgentMemories(input: { accountId: string; since: string }): Promise<AgentMemorySummary>;
+  /** Display title of one work by its title key (= media title id), or null. One
+   *  row read — the settings page names the latest work without loading the library. */
+  getMediaTitleName(titleKey: string): Promise<string | null>;
   /** Refresh lastUsedAt for the given ids (best-effort bookkeeping). */
   touchAgentMemories(input: { accountId: string; ids: string[]; now: string }): Promise<void>;
 }
