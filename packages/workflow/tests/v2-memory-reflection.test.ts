@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MockLanguageModelV3 } from "ai/test";
-import { runMemoryReflection, buildReflectionDigest } from "../src/acquisition-v2/agent-loop.js";
+import { REFLECTION_SYSTEM, runMemoryReflection, buildReflectionDigest } from "../src/acquisition-v2/agent-loop.js";
 import { TaskSandbox } from "../src/acquisition-v2/sandbox.js";
 import { FakeResourceProviderV2 } from "../src/acquisition-v2/fake-provider.js";
 import { InMemoryWorkflowRepository } from "../src/repository.js";
@@ -212,5 +212,29 @@ describe("reflection writes verdict notes in Chinese (2026-09-25 UI redesign)", 
     expect(kindEnum).toEqual(["avoid", "works", "other"]);
     expect(system).toMatch(/ONE sentence in Chinese, the conclusion itself/);
     expect(system).toMatch(/Not a label like/);
+  });
+});
+
+describe("reflection never writes give-up notes (2026-09-25 replay of 202 production runs)", () => {
+  it("the prompt forbids giving up on a season/episode/drive, 'today' conclusions and avoiding the bare title, with no real titles as examples", () => {
+    expect(REFLECTION_SYSTEM).toMatch(/NEVER GIVE UP IN A NOTE/);
+    expect(REFLECTION_SYSTEM).toMatch(/TMDB, which you must take as given/);
+    expect(REFLECTION_SYSTEM).toMatch(/no "今天\/今日" conclusions, no drive quota/);
+    expect(REFLECTION_SYSTEM).toMatch(/NEVER tell the next run to avoid the bare title/);
+    // Real production titles as examples leaked into notes about those same works.
+    expect(REFLECTION_SYSTEM).not.toMatch(/冰之城墙|氷の城壁|阳光电影/);
+  });
+
+  it("production runs pass no system override (the constant is what ships)", async () => {
+    const { sandbox } = sandboxWith();
+    let system = "";
+    const model = new MockLanguageModelV3({
+      doGenerate: async (options) => {
+        system = String((options.prompt.find((m) => m.role === "system") as { content: string }).content);
+        return { content: [{ type: "text" as const, text: "nothing" }], finishReason: { unified: "stop" as const, raw: "stop" as const }, usage: USAGE, warnings: [] };
+      },
+    });
+    await runMemoryReflection({ sandbox, model, digest: "x", memory: { title: [], globalIndex: [] } });
+    expect(system).toBe(REFLECTION_SYSTEM);
   });
 });
