@@ -91,6 +91,15 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
         const winner = (race.find((r) => r.status === "fulfilled") as PromiseFulfilledResult<{ provider: string | null }>).value.provider;
         const raced = (await repo.listAgentMemories({ accountId: "acct_1", scope: "title", titleKey: "tmdb_movie_1" })).find((m) => m.name === "race");
         expect(raced!.provider).toBe(winner);
+        // Legacy brand tag: accepted (and retagged) only when the caller names that brand.
+        await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_movie_1", entry: entry({ name: "legacy", provider: "pan115" }), now });
+        await expect(
+          repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_movie_1", entry: entry({ name: "legacy", provider: "cs_115" }), now, onlyDrive: "cs_115" }),
+        ).rejects.toThrow(/MEMORY_OTHER_DRIVE/);
+        const retagged = await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_movie_1", entry: entry({ name: "legacy", provider: "cs_115" }), now, onlyDrive: "cs_115", legacyDrive: "pan115" });
+        expect(retagged.provider).toBe("cs_115");
+        await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_movie_1", entry: entry({ name: "legacy2", provider: "pan115" }), now });
+        expect(await repo.deleteAgentMemory({ accountId: "acct_1", scope: "title", titleKey: "tmdb_movie_1", name: "legacy2", onlyDrive: "cs_115", legacyDrive: "pan115" })).toBe(true);
         // Without onlyDrive (UI path) the user can still edit/delete anything.
         expect(await repo.deleteAgentMemory({ accountId: "acct_1", scope: "title", titleKey: "tmdb_movie_1", name: "g" })).toBe(true);
       });

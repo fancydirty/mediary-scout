@@ -18,6 +18,7 @@ import type { DeadLink } from "./acquisition-v2/dead-links.js";
 import {
   agentMemoryFromRow,
   agentMemoryTitleKeyColumn,
+  memoryDriveAllows,
   memoryFullError,
   memoryOtherDriveError,
   type AgentMemory,
@@ -1507,8 +1508,8 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
       const current = this.db
         .prepare("SELECT provider FROM agent_memories WHERE account_id = ? AND scope = ? AND title_key = ? AND name = ?")
         .get(input.accountId, input.entry.scope, titleKey, input.entry.name) as { provider: string | null } | undefined;
-      if (current?.provider && current.provider !== input.onlyDrive) {
-        throw memoryOtherDriveError(input.entry.scope, input.entry.name, current.provider, input.onlyDrive);
+      if (current && !memoryDriveAllows(current.provider, input.onlyDrive, input.legacyDrive)) {
+        throw memoryOtherDriveError(input.entry.scope, input.entry.name, current.provider!, input.onlyDrive);
       }
     }
     if (input.maxEntries !== undefined) {
@@ -1558,8 +1559,8 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
         const current = this.db
           .prepare("SELECT provider FROM agent_memories WHERE account_id = ? AND scope = ? AND title_key = ? AND name = ?")
           .get(input.accountId, input.scope, titleKey, input.name) as { provider: string | null } | undefined;
-        if (current?.provider && current.provider !== input.onlyDrive) {
-          throw memoryOtherDriveError(input.scope, input.name, current.provider, input.onlyDrive);
+        if (current && !memoryDriveAllows(current.provider, input.onlyDrive, input.legacyDrive)) {
+          throw memoryOtherDriveError(input.scope, input.name, current.provider!, input.onlyDrive);
         }
       }
       const result = this.db

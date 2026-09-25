@@ -140,6 +140,9 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
           titleKey: memoryTitleKey({ kind: request.target.kind, tmdbId: request.target.tmdbId }),
           runId: request.workflowRunId,
           ...(memoryDrive ? { provider: memoryDrive } : {}),
+          ...(memoryDrive && request.storageProvider && request.storageProvider !== memoryDrive
+            ? { legacyProvider: request.storageProvider }
+            : {}),
           now: memoryNow,
         }
       : undefined;

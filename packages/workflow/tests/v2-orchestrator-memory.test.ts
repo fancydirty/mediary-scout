@@ -195,3 +195,41 @@ describe("runAcquisitionV2 — the prompt says which drive this run is on (Copil
     expect(system).toContain("[drive: cs_guangya_x]");
   });
 });
+
+describe("runAcquisitionV2 — upgrade: brand-tagged notes stay editable by that brand's drive (Copilot #273 r5)", () => {
+  it("a reflection on drive cs_115_y can refine a note tagged pan115 (retagged), but not one tagged guangya", async () => {
+    const store = new InMemoryWorkflowRepository();
+    await store.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_movie_1241918", entry: { scope: "title", name: "old-115", description: "d", kind: "resource", body: "旧", provider: "pan115" }, now: "2026-09-20T00:00:00.000Z" });
+    await store.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_movie_1241918", entry: { scope: "title", name: "old-gy", description: "d", kind: "resource", body: "光鸭", provider: "guangya" }, now: "2026-09-20T00:00:00.000Z" });
+    let i = 0;
+    let r = 0;
+    const model = new MockLanguageModelV3({
+      doGenerate: async (options) => {
+        const sys = JSON.stringify(options.prompt.find((m) => m.role === "system") ?? "");
+        i += 1;
+        if (sys.includes("reviewing an acquisition run")) {
+          r += 1;
+          if (r === 1) return tool("writeMemory", { scope: "title", name: "old-115", description: "d", kind: "resource", body: "新" }, i);
+          if (r === 2) return tool("writeMemory", { scope: "title", name: "old-gy", description: "d", kind: "resource", body: "115 覆盖" }, i);
+          return text("done");
+        }
+        if (i === 1) return tool("reportNoCoverage", { reason: "none" }, i);
+        return text("done");
+      },
+    });
+    await runAcquisitionV2({
+      provider,
+      executor: new FakeStorageExecutor({ directories: { staging: [], movie: [] } }),
+      model,
+      workflowRunId: "run-upgrade",
+      target: { kind: "movie", title: "出入平安", aliases: [], year: 2024, qualityPreference: "4K", tmdbId: 1241918 },
+      stagingDirectoryId: "staging",
+      targetMovieDirectoryId: "movie",
+      storageProvider: "pan115",
+      memory: { store, accountId: "acct_1", drive: "cs_115_y", now: () => "2026-09-25T00:00:00.000Z" },
+    });
+    const rows = await store.listAgentMemories({ accountId: "acct_1", scope: "title", titleKey: "tmdb_movie_1241918" });
+    expect(rows.find((m) => m.name === "old-115")).toMatchObject({ body: "新", provider: "cs_115_y" });
+    expect(rows.find((m) => m.name === "old-gy")).toMatchObject({ body: "光鸭", provider: "guangya" });
+  });
+});

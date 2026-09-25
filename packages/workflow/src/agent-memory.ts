@@ -63,6 +63,9 @@ export interface AgentMemoryStore {
     /** Drive guard, checked atomically with the write: an existing row tagged with a
      *  DIFFERENT provider is not overwritten (throws MEMORY_OTHER_DRIVE). */
     onlyDrive?: string;
+    /** Also accept (and retag) a row carrying this legacy tag — the run's BRAND, which
+     *  notes were tagged with before tags became concrete drive ids. */
+    legacyDrive?: string;
   }): Promise<AgentMemory>;
   /** Delete by (account, scope, titleKey, name). Returns whether a row was removed.
    *  With onlyDrive, a row tagged with a different provider is left alone and
@@ -73,6 +76,7 @@ export interface AgentMemoryStore {
     titleKey: string | null;
     name: string;
     onlyDrive?: string;
+    legacyDrive?: string;
   }): Promise<boolean>;
   /** Refresh lastUsedAt for the given ids (best-effort bookkeeping). */
   touchAgentMemories(input: { accountId: string; ids: string[]; now: string }): Promise<void>;
@@ -169,6 +173,12 @@ export function requireMemoryTitleKey(titleKey: string | null | undefined): stri
     throw new Error("MEMORY_TITLE_KEY_REQUIRED: title-scoped memory needs a non-empty titleKey");
   }
   return titleKey;
+}
+
+/** The drive guard every engine applies: untagged, the bound drive, or its legacy
+ *  brand tag may be changed; anything else belongs to another drive. */
+export function memoryDriveAllows(stored: string | null | undefined, onlyDrive?: string, legacyDrive?: string): boolean {
+  return !onlyDrive || !stored || stored === onlyDrive || (legacyDrive !== undefined && stored === legacyDrive);
 }
 
 export function memoryOtherDriveError(scope: AgentMemoryScope, name: string, stored: string, bound: string): Error {

@@ -48,6 +48,7 @@ import { MAGNET_DEAD_LINK_TTL_MS, type DeadLink } from "./acquisition-v2/dead-li
 import {
   agentMemoryFromRow,
   agentMemoryTitleKeyColumn,
+  memoryDriveAllows,
   memoryFullError,
   memoryOtherDriveError,
   type AgentMemory,
@@ -1317,7 +1318,8 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
         // The drive guard is part of the conflict update itself: it holds even when two
         // first writes race (no row to lock yet) — the loser hits the conflict and the
         // WHERE, and gets no row back.
-        "WHERE $12::text IS NULL OR agent_memories.provider IS NULL OR agent_memories.provider = $12::text RETURNING *",
+        "WHERE $12::text IS NULL OR agent_memories.provider IS NULL OR agent_memories.provider = $12::text " +
+        "OR agent_memories.provider = $13::text RETURNING *",
       [
         `mem_${globalThis.crypto.randomUUID()}`,
         input.accountId,
@@ -1331,6 +1333,7 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
         input.now,
         input.sourceRunId ?? null,
         input.onlyDrive ?? null,
+        input.legacyDrive ?? null,
       ],
     );
     if (result.rows.length === 0) {
@@ -1351,8 +1354,8 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     // was inserted or re-tagged concurrently.
     const result = await this.pool.query(
       "DELETE FROM agent_memories WHERE account_id = $1 AND scope = $2 AND title_key = $3 AND name = $4 " +
-        "AND ($5::text IS NULL OR provider IS NULL OR provider = $5::text)",
-      [input.accountId, input.scope, titleKey, input.name, input.onlyDrive ?? null],
+        "AND ($5::text IS NULL OR provider IS NULL OR provider = $5::text OR provider = $6::text)",
+      [input.accountId, input.scope, titleKey, input.name, input.onlyDrive ?? null, input.legacyDrive ?? null],
     );
     if ((result.rowCount ?? 0) > 0) return true;
     if (!input.onlyDrive) return false;
@@ -1362,7 +1365,7 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
       [input.accountId, input.scope, titleKey, input.name],
     );
     const provider = stored.rows[0]?.provider;
-    if (provider && provider !== input.onlyDrive) throw memoryOtherDriveError(input.scope, input.name, provider, input.onlyDrive);
+    if (provider && !memoryDriveAllows(provider, input.onlyDrive, input.legacyDrive)) throw memoryOtherDriveError(input.scope, input.name, provider, input.onlyDrive);
     return false;
   }
 

@@ -16,6 +16,7 @@ import { isMergedSourceEvidenceUsable, type MergedSourceHealth } from "../resour
 import { JEV_UNCERTAIN_LEGEND, jevAllDroppedWarning, jevUncertaintyFlag } from "../jev-judge.js";
 import {
   AGENT_MEMORY_LIMITS,
+  memoryDriveAllows,
   memoryOtherDriveError,
   validateMemoryInput,
   type AgentMemory,
@@ -178,10 +179,13 @@ export interface TaskSandboxOptions {
     accountId: string;
     titleKey: string;
     runId: string;
-    /** The drive this run lands on (brand id). Bound by the system like titleKey:
-     *  every note this run writes is tagged with it, so a lesson learned on one drive
-     *  (a source that failed on 115) is never mistaken for one about another. */
+    /** The drive this run lands on (connected-storage id). Bound by the system like
+     *  titleKey: every note this run writes is tagged with it, so a lesson learned on
+     *  one drive (a source that failed on 115) is never mistaken for one about another. */
     provider?: string;
+    /** The run's brand: notes tagged with it predate concrete drive ids and are
+     *  treated as this drive's (and retagged on write). */
+    legacyProvider?: string;
     now?: () => string;
   };
 }
@@ -1020,6 +1024,7 @@ export class TaskSandbox {
         entry: stored,
         // Atomic twin of assertSameDrive above (which only gives the early message).
         ...(memory.provider ? { onlyDrive: memory.provider } : {}),
+        ...(memory.provider && memory.legacyProvider ? { legacyDrive: memory.legacyProvider } : {}),
         sourceRunId: memory.runId,
         now: (memory.now ?? (() => new Date().toISOString()))(),
         maxEntries: cap,
@@ -1041,7 +1046,9 @@ export class TaskSandbox {
    *  exactly what worked there. Untagged notes stay editable by any drive. */
   private assertSameDrive(row: { provider: string | null } | undefined, scope: AgentMemoryScope, name: string): void {
     const bound = this.memory?.provider;
-    if (bound && row?.provider && row.provider !== bound) throw memoryOtherDriveError(scope, name, row.provider, bound);
+    if (bound && row && !memoryDriveAllows(row.provider, bound, this.memory?.legacyProvider)) {
+      throw memoryOtherDriveError(scope, name, row.provider!, bound);
+    }
   }
 
   /** Take a per-run change slot BEFORE the first await: the model may issue several
@@ -1067,6 +1074,7 @@ export class TaskSandbox {
         titleKey: this.memoryTitleKeyFor(input.scope),
         name: input.name,
         ...(memory.provider ? { onlyDrive: memory.provider } : {}),
+        ...(memory.provider && memory.legacyProvider ? { legacyDrive: memory.legacyProvider } : {}),
       });
     } catch (error) {
       this.memoryChanges -= 1;
