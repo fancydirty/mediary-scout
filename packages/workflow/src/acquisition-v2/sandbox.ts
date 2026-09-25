@@ -960,27 +960,30 @@ export class TaskSandbox {
     };
     const invalid = validateMemoryInput(entry);
     if (invalid) throw new Error(`MEMORY_INVALID: ${invalid}`);
-    if (this.memoryChanges >= AGENT_MEMORY_LIMITS.changesPerRunMax) {
-      throw new Error(`MEMORY_RUN_LIMIT: at most ${AGENT_MEMORY_LIMITS.changesPerRunMax} memory writes/deletes per run`);
+    this.reserveMemoryChange();
+    let updated: boolean;
+    try {
+      const titleKey = this.memoryTitleKeyFor(entry.scope);
+      const existing = await memory.store.listAgentMemories({ accountId: memory.accountId, scope: entry.scope, titleKey });
+      updated = existing.some((row) => row.name === entry.name);
+      const cap = entry.scope === "title" ? AGENT_MEMORY_LIMITS.titleEntriesMax : AGENT_MEMORY_LIMITS.globalEntriesMax;
+      if (!updated && existing.length >= cap) {
+        throw new Error(`MEMORY_FULL: ${entry.scope} memory already has ${existing.length}/${cap} entries — delete or overwrite a stale one first`);
+      }
+      // The store enforces the cap atomically (concurrent reflections cannot overshoot);
+      // the check above only turns the common case into an early, friendly error.
+      await memory.store.upsertAgentMemory({
+        accountId: memory.accountId,
+        titleKey,
+        entry,
+        sourceRunId: memory.runId,
+        now: (memory.now ?? (() => new Date().toISOString()))(),
+        maxEntries: cap,
+      });
+    } catch (error) {
+      this.memoryChanges -= 1;
+      throw error;
     }
-    const titleKey = this.memoryTitleKeyFor(entry.scope);
-    const existing = await memory.store.listAgentMemories({ accountId: memory.accountId, scope: entry.scope, titleKey });
-    const updated = existing.some((row) => row.name === entry.name);
-    const cap = entry.scope === "title" ? AGENT_MEMORY_LIMITS.titleEntriesMax : AGENT_MEMORY_LIMITS.globalEntriesMax;
-    if (!updated && existing.length >= cap) {
-      throw new Error(`MEMORY_FULL: ${entry.scope} memory already has ${existing.length}/${cap} entries — delete or overwrite a stale one first`);
-    }
-    // The store enforces the cap atomically (concurrent reflections cannot overshoot);
-    // the check above only turns the common case into an early, friendly error.
-    await memory.store.upsertAgentMemory({
-      accountId: memory.accountId,
-      titleKey,
-      entry,
-      sourceRunId: memory.runId,
-      now: (memory.now ?? (() => new Date().toISOString()))(),
-      maxEntries: cap,
-    });
-    this.memoryChanges += 1;
     this.auditEvents.push({
       type: "memory_written",
       message: `agent 记忆${updated ? "更新" : "新增"}:${entry.scope}/${entry.name}`,
@@ -989,19 +992,33 @@ export class TaskSandbox {
     return { name: entry.name, scope: entry.scope, updated };
   }
 
-  async deleteMemory(input: { scope: AgentMemoryScope; name: string }): Promise<{ deleted: boolean }> {
-    const memory = this.requireMemory();
+  /** Take a per-run change slot BEFORE the first await: the model may issue several
+   *  tool calls in one step and AI SDK runs them concurrently, so check-then-increment
+   *  after the store call would let them all pass. Callers release it on failure. */
+  private reserveMemoryChange(): void {
     if (this.memoryChanges >= AGENT_MEMORY_LIMITS.changesPerRunMax) {
       throw new Error(`MEMORY_RUN_LIMIT: at most ${AGENT_MEMORY_LIMITS.changesPerRunMax} memory writes/deletes per run`);
     }
-    const deleted = await memory.store.deleteAgentMemory({
-      accountId: memory.accountId,
-      scope: input.scope,
-      titleKey: this.memoryTitleKeyFor(input.scope),
-      name: input.name,
-    });
+    this.memoryChanges += 1;
+  }
+
+  async deleteMemory(input: { scope: AgentMemoryScope; name: string }): Promise<{ deleted: boolean }> {
+    const memory = this.requireMemory();
+    this.reserveMemoryChange();
+    let deleted: boolean;
+    try {
+      deleted = await memory.store.deleteAgentMemory({
+        accountId: memory.accountId,
+        scope: input.scope,
+        titleKey: this.memoryTitleKeyFor(input.scope),
+        name: input.name,
+      });
+    } catch (error) {
+      this.memoryChanges -= 1;
+      throw error;
+    }
+    if (!deleted) this.memoryChanges -= 1;
     if (deleted) {
-      this.memoryChanges += 1;
       this.auditEvents.push({
         type: "memory_deleted",
         message: `agent 记忆删除:${input.scope}/${input.name}`,

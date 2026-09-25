@@ -88,3 +88,23 @@ describe("memory tools exposed to the models", () => {
     expect(Object.keys(buildSandboxToolSet(bare, {}))).not.toContain("readMemory");
   });
 });
+
+describe("per-run memory quota under concurrent tool calls (Copilot #272 r6)", () => {
+  it("parallel writes cannot exceed changesPerRunMax", async () => {
+    const { sandbox, store } = sandboxWith();
+    const n = AGENT_MEMORY_LIMITS.changesPerRunMax + 3;
+    const results = await Promise.allSettled(
+      Array.from({ length: n }, (_, i) => sandbox.writeMemory(e({ name: `m-${i}` }))),
+    );
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(AGENT_MEMORY_LIMITS.changesPerRunMax);
+    expect(await store.listAgentMemories({ accountId: "acct_1", scope: "title", titleKey: "tmdb_tv_1" })).toHaveLength(AGENT_MEMORY_LIMITS.changesPerRunMax);
+    expect(sandbox.memoryChangeCount()).toBe(AGENT_MEMORY_LIMITS.changesPerRunMax);
+  });
+
+  it("a failed write or a delete of nothing gives the slot back", async () => {
+    const { sandbox } = sandboxWith();
+    await expect(sandbox.writeMemory(e({ name: "Bad Name" }))).rejects.toThrow(/MEMORY_INVALID/);
+    expect(await sandbox.deleteMemory({ scope: "title", name: "absent" })).toEqual({ deleted: false });
+    expect(sandbox.memoryChangeCount()).toBe(0);
+  });
+});
