@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MockLanguageModelV3 } from "ai/test";
-import { REFLECTION_SYSTEM, runMemoryReflection, buildReflectionDigest } from "../src/acquisition-v2/agent-loop.js";
+import { REFLECTION_SYSTEM, runMemoryReflection, runMemoryReflectionForEval, buildReflectionDigest } from "../src/acquisition-v2/agent-loop.js";
 import { TaskSandbox } from "../src/acquisition-v2/sandbox.js";
 import { FakeResourceProviderV2 } from "../src/acquisition-v2/fake-provider.js";
 import { InMemoryWorkflowRepository } from "../src/repository.js";
@@ -242,5 +242,32 @@ describe("reflection never writes give-up notes (2026-09-25 replay of 202 produc
     });
     await runMemoryReflection({ sandbox, model, digest: "x", memory: { title: [], globalIndex: [] } });
     expect(system).toBe(REFLECTION_SYSTEM);
+  });
+});
+
+describe("runMemoryReflectionForEval (offline prompt A/B only)", () => {
+  it("sends the given system prompt and still writes through the sandbox guards", async () => {
+    const { sandbox, store } = sandboxWith();
+    let system = "";
+    let turn = 0;
+    const model = new MockLanguageModelV3({
+      doGenerate: async (options) => {
+        system = String((options.prompt.find((m) => m.role === "system") as { content: string }).content);
+        turn += 1;
+        if (turn === 1) {
+          return {
+            content: [{ type: "tool-call" as const, toolCallId: "w", toolName: "writeMemory", input: JSON.stringify({ scope: "title", name: "n", description: "一句结论", kind: "avoid", body: "证据" }) }],
+            finishReason: { unified: "tool-calls" as const, raw: "tool-calls" as const },
+            usage: USAGE,
+            warnings: [],
+          };
+        }
+        return { content: [{ type: "text" as const, text: "done" }], finishReason: { unified: "stop" as const, raw: "stop" as const }, usage: USAGE, warnings: [] };
+      },
+    });
+    const r = await runMemoryReflectionForEval({ sandbox, model, digest: "x", memory: { title: [], globalIndex: [] }, system: "EVAL PROMPT B" });
+    expect(system).toBe("EVAL PROMPT B");
+    expect(r).toMatchObject({ ran: true, changes: 1 });
+    expect(await store.listAgentMemories({ accountId: "acct_1", scope: "title", titleKey: "tmdb_movie_1" })).toHaveLength(1);
   });
 });
