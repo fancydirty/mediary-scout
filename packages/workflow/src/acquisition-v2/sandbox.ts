@@ -16,6 +16,7 @@ import { isMergedSourceEvidenceUsable, type MergedSourceHealth } from "../resour
 import { JEV_UNCERTAIN_LEGEND, jevAllDroppedWarning, jevUncertaintyFlag } from "../jev-judge.js";
 import {
   AGENT_MEMORY_LIMITS,
+  memoryOtherDriveError,
   validateMemoryInput,
   type AgentMemory,
   type AgentMemoryScope,
@@ -1017,6 +1018,8 @@ export class TaskSandbox {
         accountId: memory.accountId,
         titleKey,
         entry: stored,
+        // Atomic twin of assertSameDrive above (which only gives the early message).
+        ...(memory.provider ? { onlyDrive: memory.provider } : {}),
         sourceRunId: memory.runId,
         now: (memory.now ?? (() => new Date().toISOString()))(),
         maxEntries: cap,
@@ -1038,11 +1041,7 @@ export class TaskSandbox {
    *  exactly what worked there. Untagged notes stay editable by any drive. */
   private assertSameDrive(row: { provider: string | null } | undefined, scope: AgentMemoryScope, name: string): void {
     const bound = this.memory?.provider;
-    if (bound && row?.provider && row.provider !== bound) {
-      throw new Error(
-        `MEMORY_OTHER_DRIVE: ${scope}/${name} was learned on drive ${row.provider}; this run is on ${bound} and cannot change it — write a separate note (another name) for ${bound}`,
-      );
-    }
+    if (bound && row?.provider && row.provider !== bound) throw memoryOtherDriveError(scope, name, row.provider, bound);
   }
 
   /** Take a per-run change slot BEFORE the first await: the model may issue several
@@ -1060,16 +1059,14 @@ export class TaskSandbox {
     this.reserveMemoryChange();
     let deleted: boolean;
     try {
-      if (memory.provider) {
-        const titleKey = this.memoryTitleKeyFor(input.scope);
-        const rows = await memory.store.listAgentMemories({ accountId: memory.accountId, scope: input.scope, titleKey });
-        this.assertSameDrive(rows.find((row) => row.name === input.name), input.scope, input.name);
-      }
+      // The drive guard runs INSIDE the store's delete (atomic): a check here followed
+      // by a plain delete could remove a note another drive tagged in between.
       deleted = await memory.store.deleteAgentMemory({
         accountId: memory.accountId,
         scope: input.scope,
         titleKey: this.memoryTitleKeyFor(input.scope),
         name: input.name,
+        ...(memory.provider ? { onlyDrive: memory.provider } : {}),
       });
     } catch (error) {
       this.memoryChanges -= 1;

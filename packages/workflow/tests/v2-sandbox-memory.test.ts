@@ -194,3 +194,26 @@ describe("a drive cannot change another drive's notes (Copilot #273 r1)", () => 
     expect(await on115.deleteMemory({ scope: "title", name: "mine" })).toEqual({ deleted: true });
   });
 });
+
+describe("drive guard is enforced by the store, not only the pre-check (Copilot #273 r2)", () => {
+  it("a note re-tagged by another drive AFTER the sandbox read is still not deleted or overwritten", async () => {
+    const store = new InMemoryWorkflowRepository();
+    await store.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_movie_1", entry: e({ name: "n" }), now: "t" });
+    // Another run (guangya) tags the row right after this run lists it.
+    const realList = store.listAgentMemories.bind(store);
+    store.listAgentMemories = async (input) => {
+      const rows = await realList(input);
+      await store.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_movie_1", entry: e({ name: "n", body: "光鸭经验", provider: "guangya" }), now: "t2" });
+      return rows;
+    };
+    const sandbox = new TaskSandbox({
+      provider: new FakeResourceProviderV2({ results: {} }),
+      need: ["MOVIE"],
+      memory: { store, accountId: "acct_1", titleKey: "tmdb_movie_1", runId: "r", provider: "pan115", now: () => "t3" },
+    });
+    await expect(sandbox.writeMemory(e({ name: "n", body: "115 覆盖" }))).rejects.toThrow(/MEMORY_OTHER_DRIVE/);
+    await expect(sandbox.deleteMemory({ scope: "title", name: "n" })).rejects.toThrow(/MEMORY_OTHER_DRIVE/);
+    const [row] = await realList({ accountId: "acct_1", scope: "title", titleKey: "tmdb_movie_1" });
+    expect(row).toMatchObject({ body: "光鸭经验", provider: "guangya" });
+  });
+});

@@ -19,6 +19,7 @@ import {
   agentMemoryFromRow,
   agentMemoryTitleKeyColumn,
   memoryFullError,
+  memoryOtherDriveError,
   type AgentMemory,
   type AgentMemoryRow,
   type AgentMemoryStore,
@@ -1502,6 +1503,14 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
   async upsertAgentMemory(input: Parameters<AgentMemoryStore["upsertAgentMemory"]>[0]): Promise<AgentMemory> {
     const titleKey = agentMemoryTitleKeyColumn(input.entry.scope, input.titleKey);
     return this.db.transaction((): AgentMemory => {
+    if (input.onlyDrive) {
+      const current = this.db
+        .prepare("SELECT provider FROM agent_memories WHERE account_id = ? AND scope = ? AND title_key = ? AND name = ?")
+        .get(input.accountId, input.entry.scope, titleKey, input.entry.name) as { provider: string | null } | undefined;
+      if (current?.provider && current.provider !== input.onlyDrive) {
+        throw memoryOtherDriveError(input.entry.scope, input.entry.name, current.provider, input.onlyDrive);
+      }
+    }
     if (input.maxEntries !== undefined) {
       const exists = this.db
         .prepare("SELECT 1 FROM agent_memories WHERE account_id = ? AND scope = ? AND title_key = ? AND name = ?")
@@ -1543,10 +1552,21 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
   }
 
   async deleteAgentMemory(input: Parameters<AgentMemoryStore["deleteAgentMemory"]>[0]): Promise<boolean> {
-    const result = this.db
-      .prepare("DELETE FROM agent_memories WHERE account_id = ? AND scope = ? AND title_key = ? AND name = ?")
-      .run(input.accountId, input.scope, agentMemoryTitleKeyColumn(input.scope, input.titleKey), input.name);
-    return result.changes > 0;
+    const titleKey = agentMemoryTitleKeyColumn(input.scope, input.titleKey);
+    return this.db.transaction((): boolean => {
+      if (input.onlyDrive) {
+        const current = this.db
+          .prepare("SELECT provider FROM agent_memories WHERE account_id = ? AND scope = ? AND title_key = ? AND name = ?")
+          .get(input.accountId, input.scope, titleKey, input.name) as { provider: string | null } | undefined;
+        if (current?.provider && current.provider !== input.onlyDrive) {
+          throw memoryOtherDriveError(input.scope, input.name, current.provider, input.onlyDrive);
+        }
+      }
+      const result = this.db
+        .prepare("DELETE FROM agent_memories WHERE account_id = ? AND scope = ? AND title_key = ? AND name = ?")
+        .run(input.accountId, input.scope, titleKey, input.name);
+      return result.changes > 0;
+    })();
   }
 
   async touchAgentMemories(input: Parameters<AgentMemoryStore["touchAgentMemories"]>[0]): Promise<void> {
