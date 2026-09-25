@@ -29,19 +29,28 @@ const VERDICT_LABEL = { works: "管用", avoid: "别再用" } as const;
  * needs no restore path that would let the client write note content). Leaving the
  * page flushes a pending delete immediately.
  */
-export function AgentMemoryNotes({
+export function AgentMemoryNotes(props: NotesProps) {
+  // One instance per work: the App Router reuses components across /show pages, and
+  // no list/pending-delete state may carry from one work to the next. The old
+  // instance's unmount flushes its waiting delete against its own work.
+  return <NotesForOneWork key={JSON.stringify(props.address)} {...props} />;
+}
+
+interface NotesProps {
+  address: Address;
+  items: MemoryItem[];
+  /** The collapsed line, e.g. 「agent 补缺集时记了 {n} 条笔记」. */
+  summaryLabel: string;
+  /** Server "now" so relative days match between server and client render. */
+  now: string;
+}
+
+function NotesForOneWork({
   address,
   items: initialItems,
   summaryLabel,
   now,
-}: {
-  address: Address;
-  items: MemoryItem[];
-  /** The collapsed line, e.g. 「agent 补缺集时记了 4 条笔记」. */
-  summaryLabel: string;
-  /** Server "now" so relative days match between server and client render. */
-  now: string;
-}) {
+}: NotesProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [items, setItems] = useState(initialItems);
@@ -76,9 +85,8 @@ export function AgentMemoryNotes({
     });
   };
 
-  // Leaving the page — or this component moving to another work — must not drop a
-  // delete the user asked for; it is sent right away, against its own work.
-  const addressKey = JSON.stringify(address);
+  // Leaving the page (or this instance unmounting) must not drop a delete the user
+  // asked for; it is sent right away, against the work it was made on.
   useEffect(() => {
     const flush = () => {
       const p = pending.current;
@@ -94,7 +102,7 @@ export function AgentMemoryNotes({
       window.removeEventListener("pagehide", flush);
       flush();
     };
-  }, [addressKey]);
+  }, []);
 
   if (items.length === 0 && !removed) return null;
 
