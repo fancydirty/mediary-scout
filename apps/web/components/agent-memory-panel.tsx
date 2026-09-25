@@ -15,6 +15,8 @@ export interface AgentMemoryItem {
   body: string;
   updatedAt: string;
   lastUsedAt: string | null;
+  /** Display name of the drive the note was learned on (null = not drive-specific). */
+  driveLabel: string | null;
 }
 
 type Address = { scope: "global" } | { scope: "title"; mediaType: "movie" | "tv"; tmdbId: number };
@@ -198,6 +200,7 @@ export function AgentMemoryPanel({
             <li key={item.name} className="agent-memory-item">
               <div className="agent-memory-head">
                 <span className="agent-memory-kind">{KIND_LABEL[item.kind] ?? item.kind}</span>
+                {item.driveLabel ? <span className="agent-memory-kind">{item.driveLabel}</span> : null}
                 <strong className="agent-memory-name">{item.name}</strong>
                 <span className="panel-note">{item.description}</span>
               </div>

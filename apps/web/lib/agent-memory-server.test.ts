@@ -89,3 +89,12 @@ describe("UI edits and runtime address checks (Copilot #272 r5)", () => {
     expect(await deleteMemoryFromUi(repo, "acct_1", forged, "drive-tip")).toMatchObject({ success: false });
   });
 });
+
+describe("drive label for the UI", () => {
+  it("maps a drive-tagged note to its brand label; untagged → null", async () => {
+    const { toMemoryItem } = await import("./agent-memory-server");
+    const base = { id: "m", accountId: "a", scope: "global", titleKey: null, name: "n", description: "d", kind: "drive", body: "b", createdAt: "t", updatedAt: "2026-09-25T00:00:00.000Z", lastUsedAt: null, sourceRunId: null } as const;
+    expect(toMemoryItem({ ...base, provider: "guangya" }).driveLabel).toBe("光鸭云盘");
+    expect(toMemoryItem({ ...base, provider: null }).driveLabel).toBeNull();
+  });
+});

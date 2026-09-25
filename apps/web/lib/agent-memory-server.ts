@@ -5,6 +5,7 @@
  */
 import {
   AGENT_MEMORY_LIMITS,
+  getStorageBrand,
   memoryTitleKey,
   validateMemoryInput,
   type AgentMemory,
@@ -99,6 +100,23 @@ export function toMemoryItem(m: AgentMemory): {
   body: string;
   updatedAt: string;
   lastUsedAt: string | null;
+  driveLabel: string | null;
 } {
-  return { name: m.name, description: m.description, kind: m.kind, body: m.body, updatedAt: m.updatedAt, lastUsedAt: m.lastUsedAt };
+  return {
+    name: m.name,
+    description: m.description,
+    kind: m.kind,
+    body: m.body,
+    updatedAt: m.updatedAt,
+    lastUsedAt: m.lastUsedAt,
+    driveLabel: m.provider ? driveLabelOf(m.provider) : null,
+  };
+}
+
+function driveLabelOf(provider: string): string {
+  try {
+    return getStorageBrand(provider).label;
+  } catch {
+    return provider;
+  }
 }

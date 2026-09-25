@@ -130,6 +130,7 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
           accountId: request.memory.accountId,
           titleKey: memoryTitleKey({ kind: request.target.kind, tmdbId: request.target.tmdbId }),
           runId: request.workflowRunId,
+          ...(request.storageProvider ? { provider: request.storageProvider } : {}),
           now: memoryNow,
         }
       : undefined;
@@ -260,6 +261,7 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     try {
       digest = buildReflectionDigest({
         searches: sandbox.searchHistory(),
+        ...(request.storageProvider ? { drive: request.storageProvider } : {}),
         attempts: transferAttempts,
         candidateTitle: (id) => registry.get(id)?.title,
         coverage: result.coverage,

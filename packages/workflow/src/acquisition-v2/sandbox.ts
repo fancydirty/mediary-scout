@@ -177,6 +177,10 @@ export interface TaskSandboxOptions {
     accountId: string;
     titleKey: string;
     runId: string;
+    /** The drive this run lands on (brand id). Bound by the system like titleKey:
+     *  every note this run writes is tagged with it, so a lesson learned on one drive
+     *  (a source that failed on 115) is never mistaken for one about another. */
+    provider?: string;
     now?: () => string;
   };
 }
@@ -1003,9 +1007,11 @@ export class TaskSandbox {
       }
       // The store enforces the cap atomically (concurrent reflections cannot overshoot);
       // the check above only turns the common case into an early, friendly error.
-      // A revision that omits provider keeps the drive the entry was tied to (the
+      // The bound drive wins (the model cannot tag a note with another drive). Without
+      // one, a revision that omits provider keeps the drive the entry was tied to (the
       // upsert would otherwise overwrite it with null).
-      const stored = !entry.provider && previous?.provider ? { ...entry, provider: previous.provider } : entry;
+      const provider = memory.provider ?? entry.provider ?? previous?.provider;
+      const stored: AgentMemoryWrite = provider ? { ...entry, provider } : entry;
       await memory.store.upsertAgentMemory({
         accountId: memory.accountId,
         titleKey,

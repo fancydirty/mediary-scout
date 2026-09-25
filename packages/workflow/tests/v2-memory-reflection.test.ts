@@ -174,3 +174,23 @@ describe("run facts and memory metadata are fenced too (Copilot #272 r4)", () =>
     expect(String(out.content)).toMatch(/<agent_memory[\s\S]*IGNORE-RULES[\s\S]*<\/agent_memory>/);
   });
 });
+
+describe("drive awareness in the reflection (production e2e 2026-09-25)", () => {
+  it("the digest names the run's drive and the prompt shows each note's drive tag", async () => {
+    const digest = buildReflectionDigest({ searches: [], drive: "pan115", attempts: [], candidateTitle: () => undefined, coverage: { coverageMet: true, obtained: ["MOVIE"], missing: [] }, auditEvents: [] });
+    expect(digest).toMatch(/DRIVE OF THIS RUN: pan115/);
+    const { sandbox } = sandboxWith();
+    let prompt = "";
+    let system = "";
+    const model = new MockLanguageModelV3({
+      doGenerate: async (options) => {
+        prompt = JSON.stringify(options.prompt.filter((m) => m.role === "user"));
+        system = JSON.stringify(options.prompt.find((m) => m.role === "system"));
+        return { content: [{ type: "text" as const, text: "nothing" }], finishReason: { unified: "stop" as const, raw: "stop" as const }, usage: USAGE, warnings: [] };
+      },
+    });
+    await runMemoryReflection({ sandbox, model, digest, memory: { title: [{ name: "src", kind: "resource", description: "d", body: "b", updatedAt: "2026-09-25", provider: "guangya" }], globalIndex: [] } });
+    expect(prompt).toContain("[drive: guangya]");
+    expect(system).toMatch(/DIFFERENT drive/);
+  });
+});

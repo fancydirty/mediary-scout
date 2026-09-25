@@ -146,3 +146,18 @@ describe("revisions keep the drive association (Copilot #272 r9)", () => {
     expect(row!.provider).toBe("pan123");
   });
 });
+
+describe("notes are tagged with the run's drive (production e2e 2026-09-25)", () => {
+  it("the bound drive tags every write and the model cannot override it", async () => {
+    const store = new InMemoryWorkflowRepository();
+    const sandbox = new TaskSandbox({
+      provider: new FakeResourceProviderV2({ results: {} }),
+      need: ["MOVIE"],
+      memory: { store, accountId: "acct_1", titleKey: "tmdb_movie_1", runId: "run-1", provider: "pan115", now: () => "2026-09-25T00:00:00.000Z" },
+    });
+    await sandbox.writeMemory(e({ name: "a", provider: "guangya" }));
+    await sandbox.writeMemory(e({ name: "b" }));
+    const rows = await store.listAgentMemories({ accountId: "acct_1", scope: "title", titleKey: "tmdb_movie_1" });
+    expect(rows.map((r) => [r.name, r.provider]).sort()).toEqual([["a", "pan115"], ["b", "pan115"]]);
+  });
+});
