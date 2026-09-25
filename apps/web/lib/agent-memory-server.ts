@@ -102,7 +102,11 @@ export function makeDriveLabeler(
   const byId = new Map(storages.map((s) => [s.id, s]));
   return (drive) => {
     const storage = byId.get(drive);
-    if (!storage) return brandLabelOf(drive);
+    if (!storage) {
+      // A bare brand (runs without a connected storage) or a drive since unbound.
+      const brand = brandLabelOf(drive);
+      return brand !== drive ? brand : "已解绑的网盘";
+    }
     return storage.label?.trim() || `${brandLabelOf(storage.provider)} …${storage.providerUid.slice(-4)}`;
   };
 }

@@ -164,3 +164,34 @@ describe("runAcquisitionV2 — reflection digest is best-effort (Copilot #272 r7
     expect(reflectionPrompt).toMatch(/details unavailable/);
   });
 });
+
+describe("runAcquisitionV2 — the prompt says which drive this run is on (Copilot #273 r4)", () => {
+  it("renders the current drive next to the drive-tagged notes", async () => {
+    const store = new InMemoryWorkflowRepository();
+    await store.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_movie_1241918", entry: { scope: "title", name: "src", description: "d", kind: "resource", body: "b", provider: "cs_guangya_x" }, now: "2026-09-20T00:00:00.000Z" });
+    let system = "";
+    let i = 0;
+    const model = new MockLanguageModelV3({
+      doGenerate: async (options) => {
+        const sys = JSON.stringify(options.prompt.find((m) => m.role === "system") ?? "");
+        i += 1;
+        if (!sys.includes("reviewing an acquisition run") && !system) system = sys;
+        if (i === 1) return tool("reportNoCoverage", { reason: "none" }, i);
+        return text("done");
+      },
+    });
+    await runAcquisitionV2({
+      provider,
+      executor: new FakeStorageExecutor({ directories: { staging: [], movie: [] } }),
+      model,
+      workflowRunId: "run-drive",
+      target: { kind: "movie", title: "出入平安", aliases: [], year: 2024, qualityPreference: "4K", tmdbId: 1241918 },
+      stagingDirectoryId: "staging",
+      targetMovieDirectoryId: "movie",
+      storageProvider: "pan115",
+      memory: { store, accountId: "acct_1", drive: "cs_115_y", now: () => "2026-09-25T00:00:00.000Z" },
+    });
+    expect(system).toContain("You are on drive cs_115_y");
+    expect(system).toContain("[drive: cs_guangya_x]");
+  });
+});

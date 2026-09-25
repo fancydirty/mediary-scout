@@ -109,5 +109,6 @@ describe("drive labels resolve concrete drives", () => {
     expect(label("cs_1")).toBe("115 网盘 …4004");
     expect(label("cs_2")).toBe("朋友的 115");
     expect(label("guangya")).toBe("光鸭云盘");
+    expect(label("cs_gone_123")).toBe("已解绑的网盘");
   });
 });
