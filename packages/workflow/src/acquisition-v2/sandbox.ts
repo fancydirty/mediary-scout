@@ -220,6 +220,21 @@ export interface TransferToolResult {
   systemicBlock?: { reason: string };
 }
 
+/** One keyword in the run's search history (see TaskSandbox.searchHistory). */
+export interface SearchHistoryEntry {
+  keyword: string;
+  /** How many times the agent (or the system pre-search) asked for it. */
+  calls: number;
+  /** The LAST call's outcome. */
+  outcome: "ok" | "refused" | "error";
+  candidateCount: number;
+  sampleTitles: string[];
+  /** Candidates the Jev prefilter removed (lookalike + NSFW), when it ran. */
+  prefilterDropped?: number;
+  /** Refusal / error text for a non-ok outcome. */
+  note?: string;
+}
+
 export class TaskSandbox {
   private readonly provider: ResourceProviderV2;
   private readonly searchBudget: number;
@@ -258,6 +273,11 @@ export class TaskSandbox {
   private pendingDigest: { keyword: string; count: number } | null = null;
   /** 病4: 本任务的审计事件（no_coverage 上报/dedup 重复/禁忌词警告）。runner 持久化到 workflowRun.auditEvents。 */
   private readonly auditEvents: AuditEvent[] = [];
+  /** Every search call in order — one entry per distinct keyword (repeats counted),
+   *  including refused and failed ones. The reflection digest reads this, NOT the
+   *  provider's persisted snapshots: those are deduped by content id, so two keywords
+   *  returning the same result collapse and a search that threw leaves no trace. */
+  private readonly searchLog: SearchHistoryEntry[] = [];
   private readonly memory: TaskSandboxOptions["memory"];
   /** Writes + deletes made by this task (capped at AGENT_MEMORY_LIMITS.changesPerRunMax). */
   private memoryChanges = 0;
@@ -331,6 +351,7 @@ export class TaskSandbox {
     // budget/provider so it costs nothing and the agent must re-keyword with the
     // real title. (asEvidence turns this throw into the {error} the agent reads.)
     if (!keywordReferencesTitle(effectiveKeyword, this.titleTerms)) {
+      this.logSearch(keyword, { outcome: "refused", note: "keyword names no title term" });
       throw new Error(
         `搜索关键词必须包含片名(片名/原名/别名)。"${keyword}" 不含片名,只会返回噪音,已拒绝。请用包含片名的关键词(裸标题召回最全;繁体/英文/原名 可作升级。注意:画质/字幕词会被自动移除,年份/季 等词虽不移除但同样会减召回,别加),不要用纯类型或纯年份(如 "电影"、"2026 电影")。`,
       );
@@ -368,6 +389,7 @@ export class TaskSandbox {
     if (cachedSnapshot) {
       const count = (this.searchCountByKeyword.get(normalized) ?? 1) + 1;
       this.searchCountByKeyword.set(normalized, count);
+      this.logSearch(effectiveKeyword, { outcome: "ok", snapshot: cachedSnapshot });
       this.auditEvents.push({
         type: "search_dedup",
         message: `重复搜索「${effectiveKeyword}」第 ${count} 次`,
@@ -406,12 +428,20 @@ export class TaskSandbox {
       return { deduped: true, ...(notice ? { notice } : {}) };
     }
     if (decision === "exhausted") {
+      this.logSearch(effectiveKeyword, { outcome: "refused", note: "search budget exhausted" });
       return { refused: this.budgetExhaustedMessage() };
     }
     // "fresh" and "reserve" both perform the search; "reserve" (movie 8+2) attaches
     // the note that flips the agent into last-resort subtitle-fallback mode.
     this.seenKeywords.add(normalized);
-    const snapshot = await this.provider.search(effectiveKeyword);
+    let snapshot: ResourceSnapshotV2;
+    try {
+      snapshot = await this.provider.search(effectiveKeyword);
+    } catch (error) {
+      this.logSearch(effectiveKeyword, { outcome: "error", note: error instanceof Error ? error.message : String(error) });
+      throw error;
+    }
+    this.logSearch(effectiveKeyword, { outcome: "ok", snapshot });
     this.snapshotByKeyword.set(normalized, snapshot);
     this.searchCountByKeyword.set(normalized, 1);
     this.observedSnapshots.set(snapshot.id, snapshot);
@@ -1028,6 +1058,35 @@ export class TaskSandbox {
     return { deleted };
   }
 
+  /** Per-keyword search history for the reflection digest (copies; order = first call). */
+  searchHistory(): SearchHistoryEntry[] {
+    return this.searchLog.map((entry) => ({ ...entry, sampleTitles: [...entry.sampleTitles] }));
+  }
+
+  private logSearch(
+    keyword: string,
+    result:
+      | { outcome: "ok"; snapshot: ResourceSnapshotV2 }
+      | { outcome: "refused" | "error"; note: string },
+  ): void {
+    const normalized = normalizeSearchKeyword(keyword);
+    let entry = this.searchLog.find((e) => normalizeSearchKeyword(e.keyword) === normalized);
+    if (!entry) {
+      entry = { keyword, calls: 0, outcome: result.outcome, candidateCount: 0, sampleTitles: [] };
+      this.searchLog.push(entry);
+    }
+    entry.calls += 1;
+    entry.outcome = result.outcome;
+    if (result.outcome === "ok") {
+      entry.candidateCount = result.snapshot.candidates.length;
+      entry.sampleTitles = result.snapshot.candidates.slice(0, 3).map((c) => c.title);
+      if (result.snapshot.prefilterDropped) entry.prefilterDropped = result.snapshot.prefilterDropped;
+      delete entry.note;
+    } else {
+      entry.note = result.note.slice(0, 160);
+    }
+  }
+
   auditTrail(): AuditEvent[] {
     return [...this.auditEvents];
   }
@@ -1040,7 +1099,14 @@ export class TaskSandbox {
     const normalized = normalizeSearchKeyword(keyword);
     // Perform the search WITHOUT marking it as seen by the agent (don't add to
     // seenKeywords) — so it doesn't consume the distinct search budget.
-    const snapshot = await this.provider.search(keyword);
+    let snapshot: ResourceSnapshotV2;
+    try {
+      snapshot = await this.provider.search(keyword);
+    } catch (error) {
+      this.logSearch(keyword, { outcome: "error", note: error instanceof Error ? error.message : String(error) });
+      throw error;
+    }
+    this.logSearch(keyword, { outcome: "ok", snapshot });
 
     // Record in dedup map so agent re-searching this keyword hits dedup
     this.snapshotByKeyword.set(normalized, snapshot);

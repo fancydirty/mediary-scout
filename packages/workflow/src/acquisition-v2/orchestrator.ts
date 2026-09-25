@@ -253,13 +253,21 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
 
   // Post-run reflection: best-effort, never changes the outcome.
   if (memoryBinding) {
-    const digest = buildReflectionDigest({
-      snapshots: resourceSnapshots,
-      attempts: transferAttempts,
-      candidateTitle: (id) => registry.get(id)?.title,
-      coverage: result.coverage,
-      auditEvents: sandbox.auditTrail(),
-    });
+    // Built from outside data (candidate titles, provider messages) — inside the
+    // best-effort boundary: a digest that cannot be built falls back to the coverage
+    // line; it never turns a finished acquisition into a failed run.
+    let digest: string;
+    try {
+      digest = buildReflectionDigest({
+        searches: sandbox.searchHistory(),
+        attempts: transferAttempts,
+        candidateTitle: (id) => registry.get(id)?.title,
+        coverage: result.coverage,
+        auditEvents: sandbox.auditTrail(),
+      });
+    } catch (error) {
+      digest = `COVERAGE: ${result.coverage.coverageMet ? "met" : "NOT met"} (details unavailable: ${error instanceof Error ? error.message.slice(0, 120) : "unknown"})`;
+    }
     const reflection = await runMemoryReflection({
       sandbox,
       model: request.model,

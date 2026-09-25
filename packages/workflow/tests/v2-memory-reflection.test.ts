@@ -84,12 +84,14 @@ describe("runMemoryReflection", () => {
 });
 
 describe("buildReflectionDigest", () => {
-  it("summarizes keywords with hit counts, transfers with outcome, and the final coverage", () => {
+  it("summarizes every keyword (repeats, refusals, errors), transfers with outcome, and the final coverage", () => {
     const digest = buildReflectionDigest({
-      snapshots: [
-        { keyword: "出入平安", candidates: [{ title: "a" }, { title: "b" }], prefilter: { dropped: [{}], nsfwDropped: [{}, {}] } },
-        { keyword: "出入平安 2025", candidates: [] },
-      ] as never,
+      searches: [
+        { keyword: "出入平安", calls: 2, outcome: "ok", candidateCount: 2, sampleTitles: ["a", "b"], prefilterDropped: 3 },
+        { keyword: "出入平安 2025", calls: 1, outcome: "ok", candidateCount: 0, sampleTitles: [] },
+        { keyword: "Safe Journey", calls: 1, outcome: "error", candidateCount: 0, sampleTitles: [], note: "PanSou timeout" },
+        { keyword: "出入平安 4K", calls: 1, outcome: "refused", candidateCount: 0, sampleTitles: [], note: "search budget exhausted" },
+      ],
       attempts: [
         { candidateId: "c1", status: "failed", providerMessage: "分享已失效" },
         { candidateId: "c2", status: "succeeded", providerMessage: "", materializedFileIds: ["f"] },
@@ -98,12 +100,13 @@ describe("buildReflectionDigest", () => {
       coverage: { coverageMet: true, obtained: ["MOVIE"], missing: [] },
       auditEvents: [],
     });
-    expect(digest).toContain("出入平安 2025");
-    expect(digest).toMatch(/出入平安 2025.*0/);
+    expect(digest).toMatch(/"出入平安" ×2 → 2 candidates \(prefilter dropped 3\)/);
+    expect(digest).toMatch(/出入平安 2025.*→ 0 candidates/);
+    expect(digest).toMatch(/Safe Journey.*error: PanSou timeout/);
+    expect(digest).toMatch(/出入平安 4K.*refused: search budget exhausted/);
     expect(digest).toMatch(/出入平安 2160p.*succeeded/);
     expect(digest).toContain("分享已失效");
     expect(digest).toMatch(/coverage.*MOVIE/i);
-    expect(digest).toMatch(/prefilter dropped 1 .*nsfw 2/);
   });
 });
 

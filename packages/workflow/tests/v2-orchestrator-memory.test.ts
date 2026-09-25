@@ -122,3 +122,45 @@ describe("runAcquisitionV2 — agent memory", () => {
     expect(result.coverage.missing).toEqual(["MOVIE"]);
   });
 });
+
+describe("runAcquisitionV2 — reflection digest is best-effort (Copilot #272 r7)", () => {
+  it("a digest that throws (malformed outside data) never fails the run; reflection still gets a minimal digest", async () => {
+    const store = new InMemoryWorkflowRepository();
+    const badProvider: ResourceProvider = {
+      // A candidate whose title is not a string — the digest's .slice() would throw.
+      search: async ({ keyword }) => ({
+        id: `snap_${keyword}`,
+        provider: "pansou",
+        keyword,
+        candidates: [{ id: "x", provider: "pansou", title: 42 as unknown as string, sizeBytes: 1, providerPayload: {} } as never],
+        createdAt: "2026-09-25T00:00:00.000Z",
+      }),
+    };
+    let reflectionPrompt = "";
+    let i = 0;
+    const model = new MockLanguageModelV3({
+      doGenerate: async (options) => {
+        const sys = JSON.stringify(options.prompt.find((m) => m.role === "system") ?? "");
+        i += 1;
+        if (sys.includes("reviewing an acquisition run")) {
+          reflectionPrompt = JSON.stringify(options.prompt.filter((m) => m.role === "user"));
+          return text("nothing");
+        }
+        if (i === 1) return tool("reportNoCoverage", { reason: "none" }, i);
+        return text("done");
+      },
+    });
+    const result = await runAcquisitionV2({
+      provider: badProvider,
+      executor: new FakeStorageExecutor({ directories: { staging: [], movie: [] } }),
+      model,
+      workflowRunId: "run-bad",
+      target: { kind: "movie", title: "出入平安", aliases: [], year: 2024, qualityPreference: "4K", tmdbId: 1241918 },
+      stagingDirectoryId: "staging",
+      targetMovieDirectoryId: "movie",
+      memory: { store, accountId: "acct_1", now: () => "2026-09-25T00:00:00.000Z" },
+    });
+    expect(result.coverage.coverageMet).toBe(false);
+    expect(reflectionPrompt).toMatch(/details unavailable/);
+  });
+});

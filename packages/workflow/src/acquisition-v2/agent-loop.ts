@@ -2,7 +2,7 @@ import { fenceMemory, stripMemoryFence } from "../agent-memory.js";
 import { AgentContentFilterError } from "../agent-error.js";
 import { generateText, stepCountIs, type LanguageModel, type ToolSet } from "ai";
 import { z } from "zod";
-import type { TaskSandbox } from "./sandbox.js";
+import type { SearchHistoryEntry, TaskSandbox } from "./sandbox.js";
 import { readSkillSection, SKILL_SECTION_NAMES } from "./skill.js";
 import {
   DEFAULT_MAX_STEPS,
@@ -463,24 +463,23 @@ export interface ReflectionMemoryView {
 /** Facts of the run for the reflection turn — built from what the system recorded,
  *  so the notes are grounded in real hit counts and outcomes. */
 export function buildReflectionDigest(input: {
-  snapshots: Array<{
-    keyword: string;
-    candidates: Array<{ title: string }>;
-    prefilter?: { dropped?: unknown[]; nsfwDropped?: unknown[] };
-  }>;
+  searches: SearchHistoryEntry[];
   attempts: Array<{ candidateId: string; status: string; providerMessage?: string; materializedFileIds?: string[] }>;
   candidateTitle: (candidateId: string) => string | undefined;
   coverage: { coverageMet: boolean; obtained: string[]; missing: string[] };
   auditEvents: Array<{ type: string; message: string }>;
 }): string {
-  const lines: string[] = ["SEARCHES (keyword → candidates the agent saw):"];
-  if (input.snapshots.length === 0) lines.push("- (none)");
-  for (const s of input.snapshots) {
-    const dropped = s.prefilter?.dropped?.length ?? 0;
-    const nsfw = s.prefilter?.nsfwDropped?.length ?? 0;
-    const pre = dropped || nsfw ? ` (prefilter dropped ${dropped} lookalike, nsfw ${nsfw})` : "";
-    const sample = s.candidates.slice(0, 3).map((c) => c.title.slice(0, 60)).join(" | ");
-    lines.push(`- "${s.keyword}" → ${s.candidates.length} candidates${pre}${sample ? `: ${sample}` : ""}`);
+  const lines: string[] = ["SEARCHES (every keyword tried, in order → outcome):"];
+  if (input.searches.length === 0) lines.push("- (none)");
+  for (const s of input.searches) {
+    const times = s.calls > 1 ? ` ×${s.calls}` : "";
+    if (s.outcome !== "ok") {
+      lines.push(`- "${s.keyword}"${times} → ${s.outcome}${s.note ? `: ${s.note}` : ""}`);
+      continue;
+    }
+    const pre = s.prefilterDropped ? ` (prefilter dropped ${s.prefilterDropped})` : "";
+    const sample = s.sampleTitles.map((t) => t.slice(0, 60)).join(" | ");
+    lines.push(`- "${s.keyword}"${times} → ${s.candidateCount} candidates${pre}${sample ? `: ${sample}` : ""}`);
   }
   lines.push("TRANSFERS:");
   if (input.attempts.length === 0) lines.push("- (none)");
