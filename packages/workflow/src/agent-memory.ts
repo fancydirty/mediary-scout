@@ -147,7 +147,17 @@ export function agentMemoryFromRow(row: AgentMemoryRow): AgentMemory {
 
 /** Column value for title_key: '' for global (so the unique key has no NULLs). */
 export function agentMemoryTitleKeyColumn(scope: AgentMemoryScope, titleKey: string | null | undefined): string {
-  return scope === "title" ? (titleKey ?? "") : "";
+  return scope === "title" ? requireMemoryTitleKey(titleKey) : "";
+}
+
+/** A title-scoped call MUST name its work. A missing/blank key would otherwise become
+ *  one shared "" (SQL) / null (in-memory) bucket that every keyless caller reads and
+ *  writes — silently breaking per-work isolation. Every engine calls this. */
+export function requireMemoryTitleKey(titleKey: string | null | undefined): string {
+  if (typeof titleKey !== "string" || titleKey.trim() === "") {
+    throw new Error("MEMORY_TITLE_KEY_REQUIRED: title-scoped memory needs a non-empty titleKey");
+  }
+  return titleKey;
 }
 
 export function memoryFullError(scope: AgentMemoryScope, count: number, cap: number): Error {

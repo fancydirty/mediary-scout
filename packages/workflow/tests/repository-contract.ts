@@ -66,6 +66,18 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
         ...over,
       });
 
+      it("title scope refuses a missing or blank titleKey on every operation (no shared keyless bucket)", async () => {
+        const repo = await fresh();
+        for (const titleKey of [undefined, null, "", "  "] as unknown as string[]) {
+          await expect(repo.upsertAgentMemory({ accountId: "acct_1", titleKey, entry: entry(), now })).rejects.toThrow(/MEMORY_TITLE_KEY_REQUIRED/);
+          await expect(repo.listAgentMemories({ accountId: "acct_1", scope: "title", titleKey })).rejects.toThrow(/MEMORY_TITLE_KEY_REQUIRED/);
+          await expect(repo.deleteAgentMemory({ accountId: "acct_1", scope: "title", titleKey, name: "no-2025-year" })).rejects.toThrow(/MEMORY_TITLE_KEY_REQUIRED/);
+        }
+        // Global scope needs no key.
+        await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: null, entry: entry({ scope: "global" }), now });
+        expect(await repo.listAgentMemories({ accountId: "acct_1", scope: "global" })).toHaveLength(1);
+      });
+
       it("upserts by (account, scope, titleKey, name) and lists newest update first", async () => {
         const repo = await fresh();
         const a = await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_tv_1", entry: entry(), sourceRunId: "r1", now });
