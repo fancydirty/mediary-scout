@@ -32,7 +32,7 @@ describe("runMemoryReflection", () => {
         call += 1;
         if (call === 1) {
           return {
-            content: [{ type: "tool-call" as const, toolCallId: "w", toolName: "writeMemory", input: JSON.stringify({ scope: "title", name: "no-2025-year", description: "2026 首播", kind: "search", body: "搜「X 2025」0 命中" }) }],
+            content: [{ type: "tool-call" as const, toolCallId: "w", toolName: "writeMemory", input: JSON.stringify({ scope: "title", name: "no-2025-year", description: "2026 首播", kind: "avoid", body: "搜「X 2025」0 命中" }) }],
             finishReason: { unified: "tool-calls" as const, raw: "tool-calls" as const }, usage: USAGE, warnings: [],
           };
         }
@@ -192,5 +192,25 @@ describe("drive awareness in the reflection (production e2e 2026-09-25)", () => 
     await runMemoryReflection({ sandbox, model, digest, memory: { title: [{ name: "src", kind: "resource", description: "d", body: "b", updatedAt: "2026-09-25", provider: "guangya" }], globalIndex: [] } });
     expect(prompt).toContain("[drive: guangya]");
     expect(system).toMatch(/DIFFERENT drive/);
+  });
+});
+
+describe("reflection writes verdict notes in Chinese (2026-09-25 UI redesign)", () => {
+  it("the tool only accepts avoid / works / other and the prompt asks for a one-sentence Chinese conclusion", async () => {
+    const { sandbox } = sandboxWith();
+    let system = "";
+    let kindEnum: unknown;
+    const model = new MockLanguageModelV3({
+      doGenerate: async (options) => {
+        system = JSON.stringify(options.prompt.find((m) => m.role === "system"));
+        const write = (options.tools ?? []).find((t) => t.name === "writeMemory") as { inputSchema?: { properties?: { kind?: { enum?: unknown } } } } | undefined;
+        kindEnum = write?.inputSchema?.properties?.kind?.enum;
+        return { content: [{ type: "text" as const, text: "nothing" }], finishReason: { unified: "stop" as const, raw: "stop" as const }, usage: USAGE, warnings: [] };
+      },
+    });
+    await runMemoryReflection({ sandbox, model, digest: "SEARCHES:\n- (none)", memory: { title: [], globalIndex: [] } });
+    expect(kindEnum).toEqual(["avoid", "works", "other"]);
+    expect(system).toMatch(/ONE sentence in Chinese, the conclusion itself/);
+    expect(system).toMatch(/Not a label like/);
   });
 });

@@ -13,9 +13,14 @@
  */
 
 export type AgentMemoryScope = "title" | "global";
-export type AgentMemoryKind = "search" | "resource" | "drive" | "pitfall" | "other";
+/** "works" / "avoid" carry the verdict the UI shows (管用 / 别再用); the older topic
+ *  kinds stay valid for notes written before 2026-09-25. */
+export type AgentMemoryKind = "works" | "avoid" | "search" | "resource" | "drive" | "pitfall" | "other";
 
-export const AGENT_MEMORY_KINDS: readonly AgentMemoryKind[] = ["search", "resource", "drive", "pitfall", "other"];
+export const AGENT_MEMORY_KINDS: readonly AgentMemoryKind[] = ["works", "avoid", "search", "resource", "drive", "pitfall", "other"];
+
+/** The kinds the reflection may write from now on. */
+export const AGENT_MEMORY_WRITE_KINDS = ["avoid", "works", "other"] as const;
 
 export interface AgentMemory {
   id: string;
@@ -42,6 +47,18 @@ export interface AgentMemoryWrite {
   kind: AgentMemoryKind;
   body: string;
   provider?: string | null;
+}
+
+/** Account-wide counts for the settings page (numbers only — no entry is listed there). */
+export interface AgentMemorySummary {
+  titleEntries: number;
+  /** Distinct works that have at least one note. */
+  titleWorks: number;
+  globalEntries: number;
+  /** Entries (either scope) created at or after `since`. */
+  createdSince: number;
+  /** The most recently updated entry, either scope. */
+  latest: { scope: AgentMemoryScope; titleKey: string | null; updatedAt: string } | null;
 }
 
 /** The persistence port. Every method is scoped by account; "title" operations are
@@ -78,6 +95,8 @@ export interface AgentMemoryStore {
     onlyDrive?: string;
     legacyDrive?: string;
   }): Promise<boolean>;
+  /** Counts across the whole account (both scopes, every work). */
+  summarizeAgentMemories(input: { accountId: string; since: string }): Promise<AgentMemorySummary>;
   /** Refresh lastUsedAt for the given ids (best-effort bookkeeping). */
   touchAgentMemories(input: { accountId: string; ids: string[]; now: string }): Promise<void>;
 }

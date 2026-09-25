@@ -54,6 +54,8 @@ import {
   type AgentMemory,
   type AgentMemoryRow,
   type AgentMemoryStore,
+  type AgentMemorySummary,
+  type AgentMemoryScope,
 } from "./agent-memory.js";
 
 type Queryable = Pool | PoolClient;
@@ -1367,6 +1369,32 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     const provider = stored.rows[0]?.provider;
     if (provider && !memoryDriveAllows(provider, input.onlyDrive, input.legacyDrive)) throw memoryOtherDriveError(input.scope, input.name, provider, input.onlyDrive);
     return false;
+  }
+
+  async summarizeAgentMemories(input: { accountId: string; since: string }): Promise<AgentMemorySummary> {
+    await this.ensureSchema();
+    const counts = await this.pool.query<{ title_entries: string; title_works: string; global_entries: string; created_since: string }>(
+      "SELECT " +
+        "COUNT(*) FILTER (WHERE scope = 'title') AS title_entries, " +
+        "COUNT(DISTINCT title_key) FILTER (WHERE scope = 'title') AS title_works, " +
+        "COUNT(*) FILTER (WHERE scope = 'global') AS global_entries, " +
+        "COUNT(*) FILTER (WHERE created_at >= $2) AS created_since " +
+        "FROM agent_memories WHERE account_id = $1",
+      [input.accountId, input.since],
+    );
+    const latest = await this.pool.query<{ scope: AgentMemoryScope; title_key: string; updated_at: string }>(
+      "SELECT scope, title_key, updated_at FROM agent_memories WHERE account_id = $1 ORDER BY updated_at DESC LIMIT 1",
+      [input.accountId],
+    );
+    const c = counts.rows[0]!;
+    const l = latest.rows[0];
+    return {
+      titleEntries: Number(c.title_entries),
+      titleWorks: Number(c.title_works),
+      globalEntries: Number(c.global_entries),
+      createdSince: Number(c.created_since),
+      latest: l ? { scope: l.scope, titleKey: l.title_key || null, updatedAt: l.updated_at } : null,
+    };
   }
 
   async touchAgentMemories(input: Parameters<AgentMemoryStore["touchAgentMemories"]>[0]): Promise<void> {

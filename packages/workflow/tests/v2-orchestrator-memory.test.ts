@@ -42,7 +42,7 @@ describe("runAcquisitionV2 — agent memory", () => {
           return text("done");
         }
         if (!systems.slice(0, -1).some((s) => s.includes("reviewing an acquisition run"))) {
-          return tool("writeMemory", { scope: "title", name: "no-2025-year", description: "2024 年的片", kind: "search", body: "搜「出入平安 2025」0 命中" }, i);
+          return tool("writeMemory", { scope: "title", name: "no-2025-year", description: "2024 年的片", kind: "avoid", body: "搜「出入平安 2025」0 命中" }, i);
         }
         return text("nothing more");
       },
@@ -210,8 +210,8 @@ describe("runAcquisitionV2 — upgrade: brand-tagged notes stay editable by that
         i += 1;
         if (sys.includes("reviewing an acquisition run")) {
           r += 1;
-          if (r === 1) return tool("writeMemory", { scope: "title", name: "old-115", description: "d", kind: "resource", body: "新" }, i);
-          if (r === 2) return tool("writeMemory", { scope: "title", name: "old-gy", description: "d", kind: "resource", body: "115 覆盖" }, i);
+          if (r === 1) return tool("writeMemory", { scope: "title", name: "old-115", description: "d", kind: "works", body: "新" }, i);
+          if (r === 2) return tool("writeMemory", { scope: "title", name: "old-gy", description: "d", kind: "works", body: "115 覆盖" }, i);
           return text("done");
         }
         if (i === 1) return tool("reportNoCoverage", { reason: "none" }, i);

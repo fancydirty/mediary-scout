@@ -104,6 +104,27 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
         expect(await repo.deleteAgentMemory({ accountId: "acct_1", scope: "title", titleKey: "tmdb_movie_1", name: "g" })).toBe(true);
       });
 
+      it("summarizes counts across works and scopes for one account (settings page numbers)", async () => {
+        const repo = await fresh();
+        expect(await repo.summarizeAgentMemories({ accountId: "acct_1", since: "2026-09-01T00:00:00.000Z" })).toEqual({
+          titleEntries: 0, titleWorks: 0, globalEntries: 0, createdSince: 0, latest: null,
+        });
+        await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_tv_1", entry: entry({ name: "a" }), now: "2026-08-01T00:00:00.000Z" });
+        await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_tv_1", entry: entry({ name: "b" }), now: "2026-09-20T00:00:00.000Z" });
+        await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_movie_2", entry: entry({ name: "c" }), now: "2026-09-21T00:00:00.000Z" });
+        await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: null, entry: entry({ scope: "global", name: "g" }), now: "2026-09-22T00:00:00.000Z" });
+        await repo.upsertAgentMemory({ accountId: "acct_2", titleKey: "tmdb_tv_9", entry: entry({ name: "other" }), now: "2026-09-23T00:00:00.000Z" });
+        // An overwrite moves updatedAt, not createdAt.
+        await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_tv_1", entry: entry({ name: "a", body: "改" }), now: "2026-09-24T00:00:00.000Z" });
+        expect(await repo.summarizeAgentMemories({ accountId: "acct_1", since: "2026-09-18T00:00:00.000Z" })).toEqual({
+          titleEntries: 3,
+          titleWorks: 2,
+          globalEntries: 1,
+          createdSince: 3,
+          latest: { scope: "title", titleKey: "tmdb_tv_1", updatedAt: "2026-09-24T00:00:00.000Z" },
+        });
+      });
+
       it("title scope refuses a missing or blank titleKey on every operation (no shared keyless bucket)", async () => {
         const repo = await fresh();
         for (const titleKey of [undefined, null, "", "  "] as unknown as string[]) {

@@ -14,7 +14,7 @@ import {
   RequestSeasonButton,
 } from "../../../components/title-action-buttons";
 import { UntrackButton } from "../../../components/untrack-button";
-import { AgentMemoryPanel } from "../../../components/agent-memory-panel";
+import { AgentMemoryNotes } from "../../../components/agent-memory-panel";
 import type { DemoAcquisitionEntry } from "../../../lib/demo-session";
 import {
   getDetailView,
@@ -522,19 +522,23 @@ function SeasonRow({
 }
 
 
-/** This work's agent memory (read/edit/delete). Server-rendered per request; the
- *  panel refreshes the route after each change. Hidden for untracked works. */
+/** This work's agent notes, collapsed to one line under the episode progress (TV) or
+ *  the synopsis (movie). Absent when the agent has written nothing for this work. */
 async function TitleMemorySection({ mediaType, tmdbId }: { mediaType: "movie" | "tv"; tmdbId: number }) {
   const { getWorkflowRepository, getCurrentAccountId } = await import("../../../lib/workflow-runtime");
   const { driveLabelerFor, listMemoriesForUi, toMemoryItem } = await import("../../../lib/agent-memory-server");
   const accountId = await getCurrentAccountId();
   const items = await listMemoriesForUi(getWorkflowRepository(), accountId, { scope: "title", mediaType, tmdbId });
+  if (items.length === 0) return null;
   const driveLabel = await driveLabelerFor(getWorkflowRepository(), accountId);
   return (
-    <details className="hub-memory">
-      <summary>Agent 记忆（{items.length}）</summary>
-      <p className="panel-note">agent 在获取这部作品时记下的经验，下次获取前会先读。可以编辑或删除。</p>
-      <AgentMemoryPanel address={{ scope: "title", mediaType, tmdbId }} items={items.map((m) => toMemoryItem(m, driveLabel))} />
-    </details>
+    <div className="hub-memory">
+      <AgentMemoryNotes
+        address={{ scope: "title", mediaType, tmdbId }}
+        items={items.map((m) => toMemoryItem(m, driveLabel))}
+        summaryLabel={mediaType === "tv" ? "agent 补缺集时记了 {n} 条笔记" : "agent 获取时记了 {n} 条笔记"}
+        now={new Date().toISOString()}
+      />
+    </div>
   );
 }

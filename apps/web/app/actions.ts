@@ -984,7 +984,6 @@ export async function testRemoteAccessConnectionAction(): Promise<TestRemoteAcce
 // able to change memory state for it. The throw lands in each action's catch → a
 // failed result, nothing written.
 type MemoryAddressInput = import("../lib/agent-memory-server").MemoryAddress;
-type MemoryKindInput = import("@media-track/workflow").AgentMemoryKind;
 
 export async function setAgentMemoryEnabledAction(enabled: boolean): Promise<PushSettingsActionResult> {
   assertNotDemo();
@@ -998,21 +997,6 @@ export async function setAgentMemoryEnabledAction(enabled: boolean): Promise<Pus
   }
 }
 
-export async function saveAgentMemoryAction(
-  address: MemoryAddressInput,
-  input: { name: string; description: string; kind: MemoryKindInput; body: string },
-): Promise<PushSettingsActionResult> {
-  assertNotDemo();
-  try {
-    const { getWorkflowRepository, requireAuthenticatedAccountId } = await import("../lib/workflow-runtime");
-    const { saveMemoryFromUi } = await import("../lib/agent-memory-server");
-    const result = await saveMemoryFromUi(getWorkflowRepository(), await requireAuthenticatedAccountId(), address, input);
-    return result.success ? { success: true } : { success: false, message: result.message };
-  } catch (error) {
-    return { success: false, message: `保存失败：${String(error)}` };
-  }
-}
-
 export async function deleteAgentMemoryAction(address: MemoryAddressInput, name: string): Promise<PushSettingsActionResult> {
   assertNotDemo();
   try {
@@ -1021,6 +1005,6 @@ export async function deleteAgentMemoryAction(address: MemoryAddressInput, name:
     const result = await deleteMemoryFromUi(getWorkflowRepository(), await requireAuthenticatedAccountId(), address, name);
     return result.success ? { success: true } : { success: false, message: result.message };
   } catch (error) {
-    return { success: false, message: `删除失败：${String(error)}` };
+    return { success: false, message: `删除没成功：${String(error)}` };
   }
 }

@@ -24,6 +24,8 @@ import {
   type AgentMemory,
   type AgentMemoryRow,
   type AgentMemoryStore,
+  type AgentMemorySummary,
+  type AgentMemoryScope,
 } from "./agent-memory.js";
 import { MAGNET_DEAD_LINK_TTL_MS } from "./acquisition-v2/dead-links.js";
 import type {
@@ -1568,6 +1570,29 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
         .run(input.accountId, input.scope, titleKey, input.name);
       return result.changes > 0;
     })();
+  }
+
+  async summarizeAgentMemories(input: { accountId: string; since: string }): Promise<AgentMemorySummary> {
+    const counts = this.db
+      .prepare(
+        "SELECT " +
+          "COALESCE(SUM(CASE WHEN scope = 'title' THEN 1 ELSE 0 END), 0) AS title_entries, " +
+          "COUNT(DISTINCT CASE WHEN scope = 'title' THEN title_key END) AS title_works, " +
+          "COALESCE(SUM(CASE WHEN scope = 'global' THEN 1 ELSE 0 END), 0) AS global_entries, " +
+          "COALESCE(SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END), 0) AS created_since " +
+          "FROM agent_memories WHERE account_id = ?",
+      )
+      .get(input.since, input.accountId) as { title_entries: number; title_works: number; global_entries: number; created_since: number };
+    const latest = this.db
+      .prepare("SELECT scope, title_key, updated_at FROM agent_memories WHERE account_id = ? ORDER BY updated_at DESC LIMIT 1")
+      .get(input.accountId) as { scope: AgentMemoryScope; title_key: string; updated_at: string } | undefined;
+    return {
+      titleEntries: Number(counts.title_entries),
+      titleWorks: Number(counts.title_works),
+      globalEntries: Number(counts.global_entries),
+      createdSince: Number(counts.created_since),
+      latest: latest ? { scope: latest.scope, titleKey: latest.title_key || null, updatedAt: latest.updated_at } : null,
+    };
   }
 
   async touchAgentMemories(input: Parameters<AgentMemoryStore["touchAgentMemories"]>[0]): Promise<void> {

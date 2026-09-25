@@ -1,4 +1,4 @@
-import { fenceMemory, stripMemoryFence } from "../agent-memory.js";
+import { AGENT_MEMORY_WRITE_KINDS, fenceMemory, stripMemoryFence } from "../agent-memory.js";
 import { AgentContentFilterError } from "../agent-error.js";
 import { generateText, stepCountIs, type LanguageModel, type ToolSet } from "ai";
 import { z } from "zod";
@@ -441,19 +441,19 @@ export async function runAcquisitionAgent(
 
 const REFLECTION_MAX_STEPS = 6;
 
-const REFLECTION_SYSTEM = `You are reviewing an acquisition run that just ended, to leave notes for the NEXT run of yourself. Each run starts with no memory except these notes.
+const REFLECTION_SYSTEM = `You are reviewing an acquisition run that just ended, to leave notes for the NEXT run of yourself. Each run starts with no memory except these notes. Most runs are the daily patrol re-trying the SAME show's missing episodes — so the notes that matter most are what to search, what to skip, and which source to take next time.
 
 Tools: readMemory, writeMemory (upsert by name), deleteMemory. scope "title" = THIS work only (the system binds which work — you cannot address another); scope "global" = lessons useful for ANY work.
 
-WRITE a note only when it would change what the next run does. Every note MUST cite its evidence from the facts below (the keyword and its hit count, the candidate title and its outcome, the error text):
-- search: a keyword that returned 0 hits or only wrong works (with the count); an alias / original / 繁体 name that worked; the correct year when a year-tagged search failed (e.g. "首播 2026 — 带 2025 搜不到").
-- resource: a 字幕组 / source / pack that landed correctly (its title); the release rhythm; "no 中字 release exists — do not spend budget hunting one".
-- pitfall: a lookalike / near-name work that keeps appearing for this title; a pack structure trap (SP bundled as an episode, etc.).
-- drive (usually global): a drive / source quirk you observed with evidence.
+WRITE a note only when it would change what the next run does, and only from the facts below (a keyword and what it returned, a candidate and its outcome, an error text). A note has:
+- kind: "avoid" = next time do NOT do this (a keyword that returns nothing or the wrong show, a fake/dead source, a lookalike that keeps showing up); "works" = next time DO this (an alias/original name that finds it, the pack or release group that landed the right episodes); "other" only if neither fits.
+- description: ONE sentence in Chinese, the conclusion itself, specific enough to act on without reading the body — e.g. "「冰之城墙 2025」连续 0 结果，这部 2026 年才开播" / "日文原名「氷の城壁」能搜到第 10 集以后的更新" / "阳光电影 dygod 那个磁力是假的，别再转". Not a label like "search note for X".
+- body: in Chinese, the evidence (quote the keyword / candidate title / error text), one or two lines.
+- name: a short kebab-case ASCII id (e.g. "no-2025-year"), never shown to the user.
 
 DRIVES: the facts are from ONE drive (see "DRIVE OF THIS RUN"; a note tagged with its brand in parentheses is an older note of this same drive); the system tags every note you write with it. A source that failed on this drive (a magnet that never materialized, a share it cannot save) may work fine on another — notes tagged with a DIFFERENT drive cannot be overwritten or deleted from this run (the tool refuses) — write a separate note (its own name) for this drive instead.
 
-DO NOT write: episode / file state the database already records, one-off numbers of this run (budget spent, ids), guesses without evidence, or restatements of your manual.
+DO NOT write: episode / file state the database already records, counts of this run ("搜到 42 个候选", budget spent, ids), a plain record that something landed with nothing to learn from it, guesses without evidence, or restatements of your manual.
 FIX the existing notes shown below: overwrite (same name) one that the facts now contradict or refine; delete one that proved wrong. Prefer updating over adding near-duplicates.
 If there is nothing worth keeping, write nothing and just reply "nothing worth keeping". Be brief: at most a few tool calls.`;
 
@@ -527,12 +527,12 @@ export async function runMemoryReflection(input: {
     },
     writeMemory: {
       description:
-        'Create or overwrite (same name) a memory entry. scope "title" = this work (bound by the system), "global" = shared. name: kebab-case. body: the lesson WITH its evidence.',
+        'Create or overwrite (same name) a memory entry. scope "title" = this work (bound by the system), "global" = shared. kind: avoid / works / other. description: one Chinese sentence stating the conclusion. body: the Chinese evidence. name: short kebab-case id.',
       inputSchema: z.object({
         scope,
         name: z.string(),
         description: z.string(),
-        kind: z.enum(["search", "resource", "drive", "pitfall", "other"]),
+        kind: z.enum(AGENT_MEMORY_WRITE_KINDS),
         body: z.string(),
       }),
       execute: (args: Parameters<TaskSandbox["writeMemory"]>[0]) => asEvidence(() => sandbox.writeMemory(args)),

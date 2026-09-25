@@ -4315,76 +4315,240 @@ select.setting-control {
   cursor: pointer;
 }
 /* Agent 记忆面板（详情页 + 设置 → AI 模型） */
-.agent-memory {
-  display: grid;
-  gap: 12px;
-}
-.agent-memory-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 10px;
-}
-.agent-memory-item {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  background: var(--bg-raised);
-  padding: 12px 14px;
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-}
-.agent-memory-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 8px;
-  min-width: 0;
-}
-.agent-memory-kind {
-  font-size: 11px;
-  padding: 1px 8px;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--border-soft);
-  color: var(--text-muted);
-}
-.agent-memory-name {
-  font-size: 13px;
-  overflow-wrap: anywhere;
-}
-.agent-memory-body {
-  margin: 0;
-  font-size: 13px;
-  color: var(--text-soft);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.agent-memory-foot {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-.agent-memory-foot .panel-note {
-  margin-right: auto;
-}
-.agent-memory-editor {
-  border: 1px dashed var(--border-soft);
-  border-radius: var(--radius-card);
-  padding: 12px;
-}
+/* Hallmark · component: agent-memory (work notes + settings numbers) · genre: modern-minimal
+ * theme: project (apps/web/DESIGN.md, Spotify) · states: collapsed · expanded · show-more · row hover
+ * · delete :focus-visible · disabled · deleted + undo toast · error */
+/* Same gutter as .hub-seasons / .hub-body (32px desktop, 16px ≤860px), so the notes
+ * line sits flush under the season rows. */
 .hub-memory {
-  margin: 24px 0 8px;
+  position: relative;
+  z-index: 1;
+  margin: 12px 32px 8px;
   padding: 12px 16px;
-  border: 1px solid var(--border);
   border-radius: var(--radius-card);
   background: var(--bg-surface);
+}
+@media (max-width: 860px) {
+  .hub-memory {
+    margin: 12px 16px 8px;
+  }
+}
+.memory-notes > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+.memory-notes > summary::-webkit-details-marker {
+  display: none;
+}
+.memory-notes > summary::after {
+  content: "▸";
+  margin-left: auto;
+  color: var(--text-faint);
+}
+.memory-notes[open] > summary::after {
+  content: "▾";
+}
+.memory-notes > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+.memory-notes-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: none;
+}
+.memory-notes-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+}
+.memory-note {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 8px;
+  border-radius: 6px;
+}
+.memory-note + .memory-note {
+  border-top: 1px solid var(--divider);
+}
+.memory-note:hover {
+  background: var(--bg-raised);
+}
+.memory-note-text {
+  margin: 0;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.memory-note-text small {
+  display: block;
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+.memory-note-verdict {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  line-height: 16px;
+  vertical-align: 1px;
+}
+.memory-note-verdict.is-works {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.memory-note-verdict.is-avoid {
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+}
+.memory-note-delete {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 140ms ease-out, background-color 140ms ease-out;
+}
+.memory-note:hover .memory-note-delete,
+.memory-note-delete:hover {
+  opacity: 1;
+  background: var(--bg-card);
+  color: var(--text);
+}
+.memory-note-delete:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.memory-note-delete:disabled {
+  cursor: default;
+  opacity: 0.3;
+}
+@media (hover: none) {
+  .memory-note-delete {
+    opacity: 1;
+  }
+}
+.memory-notes-more {
+  margin: 6px 0 0 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.memory-notes-more::after {
+  content: " ▾";
+}
+.memory-notes-more:hover {
+  color: var(--text);
+}
+.memory-notes-more:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.memory-notes-toast {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  padding: 9px 12px;
+  border-radius: var(--radius-card);
+  background: var(--bg-card);
+  font-size: 12.5px;
+  color: var(--text);
+}
+.memory-notes-toast button {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font: inherit;
+  font-weight: 700;
+  color: var(--accent);
+  cursor: pointer;
+}
+.memory-notes-toast button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.memory-notes-error {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--negative);
+}
+.memory-stats {
+  display: grid;
+  gap: 8px;
+}
+.memory-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
-.hub-memory > summary {
-  cursor: pointer;
-  font-weight: 600;
-  font-size: 14px;
+.memory-stat {
+  min-width: 0;
+  padding: 12px 14px;
+  border-radius: var(--radius-card);
+  background: var(--bg-raised);
+}
+.memory-stat b {
+  display: block;
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.memory-stat span {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.memory-stats-recent {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.memory-stats-recent strong {
+  color: var(--accent);
+}
+.memory-stats + .memory-notes {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--divider);
+}
+@media (max-width: 420px) {
+  .memory-stats-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .memory-note-delete {
+    transition: none;
+  }
 }

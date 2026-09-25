@@ -1,15 +1,13 @@
 /**
- * Server-side logic behind the agent-memory UI (work detail page + Settings → AI 模型)
- * and the per-account on/off switch. Kept apart from the server actions so it can be
+ * Server-side logic behind the agent-memory UI: the settings page shows numbers only,
+ * a work's detail page lists that work's notes (delete only — the agent writes them,
+ * the user never has to), plus the per-account on/off switch. Kept apart from the server actions so it can be
  * unit-tested against a plain repository.
  */
 import {
-  AGENT_MEMORY_LIMITS,
   getStorageBrand,
   memoryTitleKey,
-  validateMemoryInput,
   type AgentMemory,
-  type AgentMemoryKind,
   type AgentMemoryStore,
 } from "@media-track/workflow";
 
@@ -43,41 +41,6 @@ export async function listMemoriesForUi(
   const titleKey = titleKeyOf(address);
   if (titleKey === "invalid") return [];
   return store.listAgentMemories({ accountId, scope: address.scope, titleKey });
-}
-
-export async function saveMemoryFromUi(
-  store: AgentMemoryStore,
-  accountId: string,
-  address: MemoryAddress,
-  input: { name: string; description: string; kind: AgentMemoryKind; body: string },
-  now: () => string = () => new Date().toISOString(),
-): Promise<{ success: true } | { success: false; message: string }> {
-  const titleKey = titleKeyOf(address);
-  if (titleKey === "invalid") return { success: false, message: "作品编号无效" };
-  const entry = { scope: address.scope, name: input.name.trim(), description: input.description.trim(), kind: input.kind, body: input.body.trim() };
-  const invalid = validateMemoryInput(entry);
-  if (invalid) return { success: false, message: invalid };
-  // Same caps the agent's tool enforces; overwriting an existing name is always fine.
-  const existing = await store.listAgentMemories({ accountId, scope: address.scope, titleKey });
-  const cap = address.scope === "title" ? AGENT_MEMORY_LIMITS.titleEntriesMax : AGENT_MEMORY_LIMITS.globalEntriesMax;
-  const previous = existing.find((m) => m.name === entry.name);
-  if (!previous && existing.length >= cap) {
-    return { success: false, message: `已达上限（${cap} 条），请先删除或编辑一条旧记忆` };
-  }
-  try {
-    // maxEntries makes the store the authority (atomic with the insert); the check above
-    // is only the friendly early message.
-    // The UI has no provider field: an edit keeps the drive the agent tied the entry to
-    // (the upsert would otherwise overwrite it with null).
-    const withProvider = previous?.provider ? { ...entry, provider: previous.provider } : entry;
-    await store.upsertAgentMemory({ accountId, titleKey, entry: withProvider, now: now(), maxEntries: cap });
-  } catch (error) {
-    if (error instanceof Error && error.message.startsWith("MEMORY_FULL")) {
-      return { success: false, message: `已达上限（${cap} 条），请先删除或编辑一条旧记忆` };
-    }
-    throw error;
-  }
-  return { success: true };
 }
 
 export async function deleteMemoryFromUi(
@@ -122,24 +85,68 @@ export async function driveLabelerFor(
   }
 }
 
-/** The serializable slice the client panel renders (no ids / account). */
-export function toMemoryItem(m: AgentMemory, driveLabel: DriveLabeler = brandLabelOf): {
+/** What the detail page shows per note: the agent's one-sentence conclusion, a
+ *  verdict, which drive it was learned on and when. Name is the delete handle only. */
+export interface MemoryItem {
   name: string;
-  description: string;
-  kind: AgentMemoryKind;
-  body: string;
-  updatedAt: string;
-  lastUsedAt: string | null;
+  text: string;
+  verdict: "works" | "avoid" | null;
   driveLabel: string | null;
-} {
+  updatedAt: string;
+}
+
+export function toMemoryItem(m: AgentMemory, driveLabel: DriveLabeler = brandLabelOf): MemoryItem {
   return {
     name: m.name,
-    description: m.description,
-    kind: m.kind,
-    body: m.body,
-    updatedAt: m.updatedAt,
-    lastUsedAt: m.lastUsedAt,
+    text: m.description,
+    // Pre-redesign notes carried topic kinds; pitfall was always a "don't".
+    verdict: m.kind === "works" ? "works" : m.kind === "avoid" || m.kind === "pitfall" ? "avoid" : null,
     driveLabel: m.provider ? driveLabel(m.provider) : null,
+    updatedAt: m.updatedAt,
+  };
+}
+
+export const MEMORY_RECENT_DAYS = 7;
+
+/** The settings page numbers: how much the agent has written, and that it is still at it. */
+export interface MemoryStats {
+  titleEntries: number;
+  titleWorks: number;
+  globalEntries: number;
+  recentAdded: number;
+  latest: { updatedAt: string; workTitle: string | null } | null;
+}
+
+export async function memoryStatsForUi(
+  store: AgentMemoryStore,
+  accountId: string,
+  now: Date,
+  titleName: (titleKey: string) => Promise<string | null>,
+): Promise<MemoryStats> {
+  const since = new Date(now.getTime() - MEMORY_RECENT_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const s = await store.summarizeAgentMemories({ accountId, since });
+  const latestTitle = s.latest?.titleKey ? await titleName(s.latest.titleKey).catch(() => null) : null;
+  return {
+    titleEntries: s.titleEntries,
+    titleWorks: s.titleWorks,
+    globalEntries: s.globalEntries,
+    recentAdded: s.createdSince,
+    latest: s.latest ? { updatedAt: s.latest.updatedAt, workTitle: latestTitle } : null,
+  };
+}
+
+/** "tmdb_tv_123" → that work's display title, from the account's tracked works. */
+export async function titleNameLookup(
+  repository: { listTrackedSeasonStates(scope?: string): Promise<Array<{ title: { id: string; title: string } }>> },
+  accountId: string,
+): Promise<(titleKey: string) => Promise<string | null>> {
+  let names: Map<string, string> | null = null;
+  return async (titleKey) => {
+    if (!names) {
+      const states = await repository.listTrackedSeasonStates(accountId);
+      names = new Map(states.map((st) => [st.title.id, st.title.title]));
+    }
+    return names.get(titleKey) ?? null;
   };
 }
 

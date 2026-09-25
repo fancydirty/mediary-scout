@@ -17,8 +17,15 @@ import { AssrtTokenForm } from "../../components/assrt-token-form";
 import { ProwlarrConfigForm } from "../../components/prowlarr-config-form";
 import { JevPrefilterForm } from "../../components/jev-prefilter-form";
 import { ServiceBlock } from "../../components/service-block";
-import { AgentMemoryPanel } from "../../components/agent-memory-panel";
-import { driveLabelerFor, isAgentMemoryEnabled, listMemoriesForUi, toMemoryItem } from "../../lib/agent-memory-server";
+import { AgentMemoryNotes, AgentMemoryStats } from "../../components/agent-memory-panel";
+import {
+  driveLabelerFor,
+  isAgentMemoryEnabled,
+  listMemoriesForUi,
+  memoryStatsForUi,
+  titleNameLookup,
+  toMemoryItem,
+} from "../../lib/agent-memory-server";
 import { assrtPills, isEnvBackedValue, jevPills, llmPills, pansouPills, prowlarrPills, tmdbPills } from "../../lib/service-status";
 import { PanSouConfigForm } from "../../components/pansou-config-form";
 import { DailySweepForm } from "../../components/daily-sweep-form";
@@ -327,6 +334,13 @@ async function LlmConfigSection() {
   const memoryEnabled = await isAgentMemoryEnabled(getWorkflowRepository(), accountId);
   const globalMemories = await listMemoriesForUi(getWorkflowRepository(), accountId, { scope: "global" });
   const memoryDriveLabel = await driveLabelerFor(getWorkflowRepository(), accountId);
+  const memoryNow = new Date();
+  const memoryStats = await memoryStatsForUi(
+    getWorkflowRepository(),
+    accountId,
+    memoryNow,
+    await titleNameLookup(getWorkflowRepository(), accountId),
+  );
 
   return (
     <section className="panel" style={{ maxWidth: 720, marginTop: 24 }}>
@@ -394,22 +408,20 @@ async function LlmConfigSection() {
       </ServiceBlock>
       <ServiceBlock
         name="Agent 记忆"
-        pills={[
-          memoryEnabled ? { label: "开启", tone: "on" } : { label: "已关闭", tone: "off" },
-          { label: `全局 ${globalMemories.length} 条`, tone: "neutral" },
-        ]}
-        summary="agent 每次获取前读取这部作品和全局的经验，结束后把值得记的写下来；你可以在这里改或删全局记忆，作品记忆在各作品详情页。"
+        pills={[memoryEnabled ? { label: "开启", tone: "on" } : { label: "已关闭", tone: "off" }]}
+        summary="agent 每次获取或补缺集前先读这部作品的笔记，结束后把搜不到的词、假资源、好用的字幕组记下来。"
         details={
           <p>
-            每次获取都是一个全新的 agent。记忆让它把踩过的坑（例如「这部是 2026 年的，带 2025 搜不到」「某个字幕组的包最准」）留给下一次。作品记忆只会被这部作品的获取读写；全局记忆所有获取共享。记忆写入后直接生效，你随时可以编辑或删除。
+            每次获取都从零开始，不记得上一次发生过什么，所以 agent 会把教训写成笔记，比如「带 2025 搜不到，这部 2026 年才开播」。每部作品的笔记在它的详情页，缺集进度下面，记错了可以删。对所有作品都有用的通用经验列在这里。
           </p>
         }
       >
-        <AgentMemoryPanel
+        <AgentMemoryStats stats={memoryStats} enabled={memoryEnabled} now={memoryNow.toISOString()} />
+        <AgentMemoryNotes
           address={{ scope: "global" }}
           items={globalMemories.map((m) => toMemoryItem(m, memoryDriveLabel))}
-          enabled={memoryEnabled}
-          showToggle
+          summaryLabel="查看通用经验（{n} 条）"
+          now={memoryNow.toISOString()}
         />
       </ServiceBlock>
     </section>

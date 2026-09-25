@@ -236,7 +236,7 @@ describe("runQueuedMovieAcquisition — memory is tagged with the run's concrete
           if (wrote) return { content: [{ type: "text" as const, text: "done" }], finishReason: { unified: "stop" as const, raw: "stop" as const }, usage: { inputTokens: { total: undefined, noCache: undefined, cacheRead: undefined, cacheWrite: undefined }, outputTokens: { total: undefined, text: undefined, reasoning: undefined } }, warnings: [] };
           wrote = true;
           return {
-            content: [{ type: "tool-call" as const, toolCallId: "r1", toolName: "writeMemory", input: JSON.stringify({ scope: "title", name: "drive-note", description: "d", kind: "resource", body: "证据" }) }],
+            content: [{ type: "tool-call" as const, toolCallId: "r1", toolName: "writeMemory", input: JSON.stringify({ scope: "title", name: "drive-note", description: "d", kind: "works", body: "证据" }) }],
             finishReason: { unified: "tool-calls" as const, raw: "tool-calls" as const },
             usage: { inputTokens: { total: undefined, noCache: undefined, cacheRead: undefined, cacheWrite: undefined }, outputTokens: { total: undefined, text: undefined, reasoning: undefined } },
             warnings: [],
