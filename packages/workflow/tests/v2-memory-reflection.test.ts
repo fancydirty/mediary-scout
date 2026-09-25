@@ -225,7 +225,13 @@ describe("reflection never writes give-up notes (2026-09-25 replay of 202 produc
     expect(REFLECTION_SYSTEM).not.toMatch(/冰之城墙|氷の城壁|阳光电影/);
   });
 
-  it("production runs pass no system override (the constant is what ships)", async () => {
+  it("production reflection takes no prompt override (only the eval entry point does)", async () => {
+    // @ts-expect-error — runMemoryReflection has no `system` parameter.
+    const _typeCheck: Parameters<typeof runMemoryReflection>[0] = { sandbox: null as never, model: null as never, digest: "", memory: { title: [], globalIndex: [] }, system: "x" };
+    void _typeCheck;
+  });
+
+  it("the shipped prompt is the constant", async () => {
     const { sandbox } = sandboxWith();
     let system = "";
     const model = new MockLanguageModelV3({
