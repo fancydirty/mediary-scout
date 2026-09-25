@@ -93,7 +93,7 @@ describe("memoryStatsForUi — settings page numbers", () => {
       titleWorks: 2,
       globalEntries: 0,
       recentAdded: 2,
-      latest: { updatedAt: "2026-09-25T03:00:00.000Z", workTitle: "冰之城墙" },
+      latest: { scope: "title", updatedAt: "2026-09-25T03:00:00.000Z", workTitle: "冰之城墙" },
     });
   });
 
@@ -105,6 +105,6 @@ describe("memoryStatsForUi — settings page numbers", () => {
     await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_tv_2", entry: { scope: "title", ...entry }, now: at("2026-09-25T03:00:00.000Z") });
     repo.getMediaTitleName = async () => { throw new Error("db down"); };
     const stats = await memoryStatsForUi(repo, "acct_1", new Date("2026-09-25T04:00:00.000Z"));
-    expect(stats.latest).toEqual({ updatedAt: "2026-09-25T03:00:00.000Z", workTitle: null });
+    expect(stats.latest).toEqual({ scope: "title", updatedAt: "2026-09-25T03:00:00.000Z", workTitle: null });
   });
 });

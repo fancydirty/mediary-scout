@@ -237,13 +237,8 @@ export function AgentMemoryStats({
       </div>
       {stats.latest ? (
         <p className="memory-stats-recent">
-          {stats.recentAdded > 0 ? (
-            <>
-              近 7 天新增 <strong>+{stats.recentAdded}</strong> ·{" "}
-            </>
-          ) : null}
-          最近一次 {relativeDayLabel(stats.latest.updatedAt, now)}
-          {stats.latest.workTitle ? `《${stats.latest.workTitle}》` : ""}
+          近 7 天新增 <strong>+{stats.recentAdded}</strong> · 最近一次 {relativeDayLabel(stats.latest.updatedAt, now)}
+          {stats.latest.scope === "global" ? " · 通用经验" : stats.latest.workTitle ? `《${stats.latest.workTitle}》` : ""}
         </p>
       ) : (
         <p className="memory-stats-recent">还没有笔记。agent 获取或补缺集后，觉得值得记的会自己写下来。</p>

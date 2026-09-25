@@ -114,7 +114,7 @@ export interface MemoryStats {
   titleWorks: number;
   globalEntries: number;
   recentAdded: number;
-  latest: { updatedAt: string; workTitle: string | null } | null;
+  latest: { scope: "title" | "global"; updatedAt: string; workTitle: string | null } | null;
 }
 
 export async function memoryStatsForUi(store: AgentMemoryStore, accountId: string, now: Date): Promise<MemoryStats> {
@@ -126,7 +126,7 @@ export async function memoryStatsForUi(store: AgentMemoryStore, accountId: strin
     titleWorks: s.titleWorks,
     globalEntries: s.globalEntries,
     recentAdded: s.createdSince,
-    latest: s.latest ? { updatedAt: s.latest.updatedAt, workTitle: latestTitle } : null,
+    latest: s.latest ? { scope: s.latest.scope, updatedAt: s.latest.updatedAt, workTitle: latestTitle } : null,
   };
 }
 
