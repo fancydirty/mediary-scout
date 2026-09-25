@@ -133,3 +133,16 @@ describe("search history for the reflection digest (Copilot #272 r7)", () => {
     expect(sandbox.searchHistory()).toMatchObject([{ keyword: "Show", outcome: "error", note: "PanSou timeout" }]);
   });
 });
+
+describe("revisions keep the drive association (Copilot #272 r9)", () => {
+  it("an update that omits provider keeps the stored one; an explicit provider still wins", async () => {
+    const { sandbox, store } = sandboxWith();
+    await sandbox.writeMemory(e({ scope: "global", name: "g", kind: "drive", provider: "guangya" }));
+    await sandbox.writeMemory(e({ scope: "global", name: "g", kind: "drive", body: "改过" }));
+    let [row] = await store.listAgentMemories({ accountId: "acct_1", scope: "global" });
+    expect(row).toMatchObject({ body: "改过", provider: "guangya" });
+    await sandbox.writeMemory(e({ scope: "global", name: "g", kind: "drive", provider: "pan123" }));
+    [row] = await store.listAgentMemories({ accountId: "acct_1", scope: "global" });
+    expect(row!.provider).toBe("pan123");
+  });
+});

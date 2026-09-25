@@ -995,17 +995,21 @@ export class TaskSandbox {
     try {
       const titleKey = this.memoryTitleKeyFor(entry.scope);
       const existing = await memory.store.listAgentMemories({ accountId: memory.accountId, scope: entry.scope, titleKey });
-      updated = existing.some((row) => row.name === entry.name);
+      const previous = existing.find((row) => row.name === entry.name);
+      updated = previous !== undefined;
       const cap = entry.scope === "title" ? AGENT_MEMORY_LIMITS.titleEntriesMax : AGENT_MEMORY_LIMITS.globalEntriesMax;
       if (!updated && existing.length >= cap) {
         throw new Error(`MEMORY_FULL: ${entry.scope} memory already has ${existing.length}/${cap} entries — delete or overwrite a stale one first`);
       }
       // The store enforces the cap atomically (concurrent reflections cannot overshoot);
       // the check above only turns the common case into an early, friendly error.
+      // A revision that omits provider keeps the drive the entry was tied to (the
+      // upsert would otherwise overwrite it with null).
+      const stored = !entry.provider && previous?.provider ? { ...entry, provider: previous.provider } : entry;
       await memory.store.upsertAgentMemory({
         accountId: memory.accountId,
         titleKey,
-        entry,
+        entry: stored,
         sourceRunId: memory.runId,
         now: (memory.now ?? (() => new Date().toISOString()))(),
         maxEntries: cap,
