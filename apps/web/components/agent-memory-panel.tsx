@@ -49,11 +49,13 @@ export function AgentMemoryNotes({
   const [removed, setRemoved] = useState<{ item: MemoryItem; index: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const pending = useRef<{ name: string; timer: ReturnType<typeof setTimeout> } | null>(null);
-  // The page refreshes on its own (AcquiringPoller, router.refresh). Fresh server
-  // props still contain a note whose delete is waiting out the undo window — keep it
-  // hidden, or it would reappear and 撤销 would then insert a duplicate.
+  // Every note the user deleted whose server delete has not resolved yet — waiting out
+  // the undo window OR in flight. The page refreshes on its own (AcquiringPoller,
+  // router.refresh) and fresh props still contain those rows; keep them hidden, or a
+  // deleted note would reappear (and 撤销 would then insert a duplicate).
+  const deleting = useRef(new Set<string>());
   useEffect(() => {
-    setItems(visibleAfterRefresh(initialItems, pending.current?.name ?? null));
+    setItems(visibleAfterRefresh(initialItems, deleting.current));
   }, [initialItems]);
   // A ref, not a dep: the page re-renders on its own (AcquiringPoller refreshes) and a
   // new address object must not tear down the listener and flush the undo window.
@@ -64,6 +66,8 @@ export function AgentMemoryNotes({
     pending.current = null;
     startTransition(async () => {
       const r = await runAction(() => deleteAgentMemoryAction(addressRef.current, name), (msg) => setError(msg));
+      // Resolved either way: from now on the server's answer is the truth.
+      deleting.current.delete(name);
       const failed = !r.ok ? true : !r.value.success;
       if (failed) {
         // Put it back where it was: the note still exists.
@@ -82,7 +86,9 @@ export function AgentMemoryNotes({
       if (!p) return;
       clearTimeout(p.timer);
       pending.current = null;
-      void deleteAgentMemoryAction(addressRef.current, p.name).catch(() => undefined);
+      void deleteAgentMemoryAction(addressRef.current, p.name)
+        .catch(() => undefined)
+        .finally(() => deleting.current.delete(p.name));
     };
     window.addEventListener("pagehide", flush);
     return () => {
@@ -105,6 +111,7 @@ export function AgentMemoryNotes({
       commit(pending.current.name, removed.item, removed.index);
     }
     const index = items.findIndex((i) => i.name === item.name);
+    deleting.current.add(item.name);
     setItems((prev) => prev.filter((i) => i.name !== item.name));
     setRemoved({ item, index });
     pending.current = { name: item.name, timer: setTimeout(() => commit(item.name, item, index), UNDO_MS) };
@@ -115,6 +122,7 @@ export function AgentMemoryNotes({
     clearTimeout(pending.current.timer);
     pending.current = null;
     const { item, index } = removed;
+    deleting.current.delete(item.name);
     setItems((prev) => restoreNote(prev, item, index));
     setRemoved(null);
   };
