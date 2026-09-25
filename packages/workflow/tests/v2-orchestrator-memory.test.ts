@@ -192,6 +192,7 @@ describe("runAcquisitionV2 — the prompt says which drive this run is on (Copil
       memory: { store, accountId: "acct_1", drive: "cs_115_y", now: () => "2026-09-25T00:00:00.000Z" },
     });
     expect(system).toContain("You are on drive cs_115_y");
+    expect(system).toContain("[drive: cs_115_y] or [drive: pan115]");
     expect(system).toContain("[drive: cs_guangya_x]");
   });
 });

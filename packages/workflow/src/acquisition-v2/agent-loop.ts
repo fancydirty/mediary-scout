@@ -451,7 +451,7 @@ WRITE a note only when it would change what the next run does. Every note MUST c
 - pitfall: a lookalike / near-name work that keeps appearing for this title; a pack structure trap (SP bundled as an episode, etc.).
 - drive (usually global): a drive / source quirk you observed with evidence.
 
-DRIVES: the facts are from ONE drive (see "DRIVE OF THIS RUN"); the system tags every note you write with it. A source that failed on this drive (a magnet that never materialized, a share it cannot save) may work fine on another — notes tagged with a DIFFERENT drive cannot be overwritten or deleted from this run (the tool refuses) — write a separate note (its own name) for this drive instead.
+DRIVES: the facts are from ONE drive (see "DRIVE OF THIS RUN"; a note tagged with its brand in parentheses is an older note of this same drive); the system tags every note you write with it. A source that failed on this drive (a magnet that never materialized, a share it cannot save) may work fine on another — notes tagged with a DIFFERENT drive cannot be overwritten or deleted from this run (the tool refuses) — write a separate note (its own name) for this drive instead.
 
 DO NOT write: episode / file state the database already records, one-off numbers of this run (budget spent, ids), guesses without evidence, or restatements of your manual.
 FIX the existing notes shown below: overwrite (same name) one that the facts now contradict or refine; delete one that proved wrong. Prefer updating over adding near-duplicates.

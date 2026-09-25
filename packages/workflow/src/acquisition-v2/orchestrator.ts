@@ -248,7 +248,15 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
       : {}),
     // Inject the prefetched candidate count into the prompt so the pointer renders.
     ...(prefetchedCandidateCount === undefined ? {} : { prefetchedCandidateCount }),
-    ...(loadedMemory ? { memory: { ...loadedMemory, ...(memoryDrive ? { currentDrive: memoryDrive } : {}) } } : {}),
+    ...(loadedMemory
+      ? {
+          memory: {
+            ...loadedMemory,
+            ...(memoryDrive ? { currentDrive: memoryDrive } : {}),
+            ...(request.storageProvider ? { currentBrand: request.storageProvider } : {}),
+          },
+        }
+      : {}),
   };
 
   const result =

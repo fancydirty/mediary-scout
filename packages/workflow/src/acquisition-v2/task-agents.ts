@@ -87,6 +87,8 @@ export interface TaskAgentPromptOptions {
     globalIndex: Array<Pick<AgentMemory, "name" | "kind" | "description"> & { provider?: string | null }>;
     /** The drive THIS run is on (same id the notes are tagged with). */
     currentDrive?: string;
+    /** Its brand: older notes were tagged with the brand and count as this drive's. */
+    currentBrand?: string;
   };
 }
 
@@ -183,7 +185,11 @@ export function memoryBlock(options: TaskAgentPromptOptions): string {
     "<agent_memory>",
   ];
   const currentDrive = options.memory?.currentDrive;
-  if (currentDrive) parts.push(`You are on drive ${fence(currentDrive)} now: notes tagged [drive: ${fence(currentDrive)}] (or untagged) are from this drive; any other tag is another drive.`);
+  const currentBrand = options.memory?.currentBrand;
+  if (currentDrive) {
+    const same = [`[drive: ${fence(currentDrive)}]`, ...(currentBrand && currentBrand !== currentDrive ? [`[drive: ${fence(currentBrand)}]`] : [])].join(" or ");
+    parts.push(`You are on drive ${fence(currentDrive)} now: notes tagged ${same} (or untagged) are from this drive; any other tag is another drive.`);
+  }
   if (title.length > 0) {
     parts.push("TITLE MEMORY (this work — read before you search):");
     for (const m of title) {
