@@ -161,6 +161,34 @@ describe("TaskSandbox — searchResources (system-budgeted, dedup, snapshot-boun
   });
 });
 
+describe("searchResources — empty keyword", () => {
+  it("refuses a keyword that is nothing but quality/subtitle words, without spending budget or calling the provider", async () => {
+    let calls = 0;
+    const sandbox = new TaskSandbox({
+      provider: { async search(keyword) { calls += 1; return { id: `s_${keyword}`, keyword, candidates: [] }; } },
+      searchBudget: 1,
+    });
+    const refused = await sandbox.searchResources("1080p 中字");
+    expect(refused.refused).toMatch(/空/);
+    expect(calls).toBe(0);
+    // The one budgeted search is still available.
+    expect((await sandbox.searchResources("Some Title")).snapshot).toBeDefined();
+    expect(calls).toBe(1);
+  });
+
+  it("accepts a 繁体 or English keyword that names none of the known title terms", async () => {
+    const seen: string[] = [];
+    const sandbox = new TaskSandbox({
+      provider: { async search(keyword) { seen.push(keyword); return { id: `s_${keyword}`, keyword, candidates: [] }; } },
+      searchBudget: 8,
+      titleTerms: ["黄泉的使者"],
+    });
+    await sandbox.searchResources("黃泉的使者");
+    await sandbox.searchResources("Daemons of the Shadow Realm");
+    expect(seen).toEqual(["黃泉的使者", "Daemons of the Shadow Realm"]);
+  });
+});
+
 describe("searchResources dedup 强提示（病2a）", () => {
   function makeSandbox() {
     const provider = new FakeResourceProviderV2({

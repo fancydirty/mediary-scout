@@ -172,9 +172,10 @@ export interface TaskSandboxOptions {
    *  has a markObtained-confirmed entry. Drives the §3 "no more side effects once
    *  satisfied" gate. The need is just "what's still missing"; sync computes it. */
   need?: string[];
-  /** Title + aliases + original title. A search keyword that references NONE of
-   *  these is rejected at the tool boundary (the agent's "2026 电影" genre/year
-   *  fallback only returns noise). Empty/omitted → no title check (fail open). */
+  /** Title + aliases + original title. Context for the anime taboo-keyword
+   *  warnings only (a year that is part of the title is not a taboo year). Search
+   *  keywords are NOT checked against them: the agent may search any name,
+   *  繁体/英文 included. */
   titleTerms?: string[];
   /** Movie-only "中文字幕软兜底": when true, the search budget becomes 8+2 (a
    *  RESERVE the agent is told about), and on budget exhaustion the agent is
@@ -372,6 +373,14 @@ export class TaskSandbox {
     // does not second-guess the agent's title choice, only removes proven-dead noise.
     const stripped = stripQualitySubtitleTokens(keyword);
     const effectiveKeyword = stripped.keyword;
+    // Nothing left to search ("1080p 中字" is all quality/subtitle words). Refused
+    // before the budget and the provider, like the budget-exhausted case.
+    if (effectiveKeyword === "") {
+      this.logSearch(keyword, { outcome: "refused", note: "empty keyword after stripping quality/subtitle words" });
+      return {
+        refused: `关键词「${keyword}」去掉画质/字幕词后是空的,没有可搜的内容。请用片名搜(裸片名召回最全)。`,
+      };
+    }
 
     const normalized = normalizeSearchKeyword(effectiveKeyword);
     const notice = stripped.stripped ? STRIP_NOTICE : undefined;

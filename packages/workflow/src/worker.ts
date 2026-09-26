@@ -470,13 +470,21 @@ export async function runScheduledType3Monitoring(input: {
   // one of its own. Without a resolver, every unbound state of an account shares
   // one key.
   const concurrency = input.maxConcurrentRuns ?? 1;
+  // One lookup per account, not per show.
+  const defaultDrives = new Map<string, Promise<string | null>>();
+  const defaultDriveOf = (accountId: string) => {
+    let drive = defaultDrives.get(accountId);
+    if (!drive) {
+      drive = input.resolveDriveId ? input.resolveDriveId(accountId) : Promise.resolve(null);
+      defaultDrives.set(accountId, drive);
+    }
+    return drive;
+  };
   const driveKeys =
     concurrency > 1
       ? await Promise.all(
           trackedStates.map(async (state) => {
-            const drive =
-              state.connectedStorageId ??
-              (input.resolveDriveId ? await input.resolveDriveId(state.accountId) : null);
+            const drive = state.connectedStorageId ?? (await defaultDriveOf(state.accountId));
             return drive ?? `account:${state.accountId}`;
           }),
         )
