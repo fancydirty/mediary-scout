@@ -106,8 +106,10 @@ function presentSnapshotForAgent(snapshot: ResourceSnapshotV2, limit?: number): 
   // line tells the agent nothing and costs tokens on every read. Past that point the
   // flags are dropped and one line says why.
   const flags = snapshot.candidates.map((c) => jevUncertaintyFlag(scores[c.id]));
-  const flaggedTotal = flags.filter((flag) => flag !== "").length;
-  if (snapshot.candidates.length >= JEV_FLAG_NOISE_MIN_ROWS && flaggedTotal > snapshot.candidates.length / 2) {
+  // Judged on the rows the agent will actually see (viewResourceSnapshot cuts at `limit`).
+  const shown = limit === undefined ? flags : flags.slice(0, limit);
+  const shownFlagged = shown.filter((flag) => flag !== "").length;
+  if (shown.length >= JEV_FLAG_NOISE_MIN_ROWS && shownFlagged > shown.length / 2) {
     const { prefilterScores: _scores, prefilterDropped: _dropped, ...rest } = snapshot;
     return { snapshot: rest, legend: JEV_FLAGS_SUPPRESSED_NOTE, allDroppedWarning: undefined };
   }

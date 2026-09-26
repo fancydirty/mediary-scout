@@ -223,6 +223,18 @@ describe("viewResourceSnapshot renders the Jev uncertainty flag", () => {
     expect(result.warnings?.some((w) => w.includes("没有逐条标 ⚠"))).toBe(true);
   });
 
+  it("decides on the rows the document shows, not on rows past the 120 cut", async () => {
+    // 200 rows; only rows 121-200 are doubted. The visible 120 are clean → no
+    // suppression note, and no ⚠ either (none of the shown rows carries one).
+    const titles = Array.from({ length: 200 }, (_, i) => `Candidate ${i + 1}`);
+    const scores = Object.fromEntries(titles.map((_, i) => [`c${i}`, i >= 120 ? 0.5 : 0.9]));
+    const sandbox = await createTestSandbox(titles, "title", { scores });
+    await sandbox.primeRawSnapshot("title");
+    const doc = sandbox.viewResourceSnapshot().document;
+    expect(doc).not.toContain("没有逐条标 ⚠");
+    expect(doc).not.toContain(JEV_UNCERTAIN_LEGEND);
+  });
+
   it("keeps the flags when only a minority of a long list is doubted", async () => {
     const titles = Array.from({ length: 12 }, (_, i) => `交锋 ${i + 1}`);
     const scores = Object.fromEntries(titles.map((_, i) => [`c${i}`, i < 6 ? 0.5 : 0.9]));
