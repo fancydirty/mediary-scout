@@ -648,6 +648,24 @@ describe("runScheduledType3Monitoring — maxConcurrentRuns", () => {
     expect([...seen.pairs].some((pair) => pair.includes("b1"))).toBe(true);
   });
 
+  it("accounts with no drive at all share the one fallback drive", async () => {
+    const { repository, storage, shows } = await threeShowsOnTwoDrives([null, null, "drive_B"]);
+    // Move a2 to a second account; both a1 and a2 have no drive anywhere.
+    const listAll = repository.listAllTrackedSeasonStates.bind(repository);
+    repository.listAllTrackedSeasonStates = async () =>
+      (await listAll()).map((state) => (state.title.id === shows[1]!.title.id ? { ...state, accountId: "acct_other" } : state));
+    const { model, seen } = slowFailingModel();
+    let counter = 0;
+    await runScheduledType3Monitoring({
+      repository, resourceProvider: emptyProvider(), storage, model,
+      storageParentDirectoryId: "library_root", now: fixedNow,
+      createWorkflowRunId: () => `run_nod_${(counter += 1)}`,
+      maxConcurrentRuns: 3,
+      resolveDriveId: async () => null,
+    });
+    expect(seen.pairs.has("a1+a2")).toBe(false);
+  });
+
   it("defaults to one show at a time", async () => {
     const { repository, storage } = await threeShowsOnTwoDrives();
     const { model, seen } = slowFailingModel();

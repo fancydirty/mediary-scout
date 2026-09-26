@@ -52,7 +52,7 @@ async function withServerSlot<T>(baseURL: string, call: () => Promise<T>): Promi
     // Hand the slot straight to the next waiter (inFlight unchanged), or free it.
     const next = slot.waiters.shift();
     if (next) next();
-    else slot.inFlight -= 1;
+    else if ((slot.inFlight -= 1) === 0) serverSlots.delete(baseURL);
   }
 }
 

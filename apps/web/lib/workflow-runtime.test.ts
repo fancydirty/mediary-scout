@@ -487,6 +487,19 @@ describe("customDirNamesFromEnv (brand-agnostic 自定义媒体库目录名)", (
   });
 })
 
+describe("getPatrolConcurrency", () => {
+  const repo = (value: string | null) => ({ getSetting: async () => value });
+
+  it("读 1~5 的整数，其余一律回默认 1", async () => {
+    const { getPatrolConcurrency } = await import("./workflow-runtime");
+    expect(await getPatrolConcurrency(repo("3"))).toBe(3);
+    expect(await getPatrolConcurrency(repo(" 5 "))).toBe(5);
+    for (const bad of [null, "", "0", "6", "2.5", "-1", "abc"]) {
+      expect(await getPatrolConcurrency(repo(bad)), String(bad)).toBe(1);
+    }
+  });
+});
+
 describe("getDailySweepTimes（多时间点 + 迁移回退）", () => {
   const repo = (settings: Record<string, string>) => ({
     getSetting: async (key: string) => settings[key] ?? null,

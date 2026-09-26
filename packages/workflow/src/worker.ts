@@ -467,8 +467,7 @@ export async function runScheduledType3Monitoring(input: {
   // One drive at a time, several drives side by side (see runKeyedPool). The key
   // is the drive the run will actually land on: a state with no bound drive runs
   // on its account's default drive, so it must share that drive's key, not get
-  // one of its own. Without a resolver, every unbound state of an account shares
-  // one key.
+  // one of its own.
   const concurrency = input.maxConcurrentRuns ?? 1;
   // One lookup per account, not per show.
   const defaultDrives = new Map<string, Promise<string | null>>();
@@ -485,7 +484,9 @@ export async function runScheduledType3Monitoring(input: {
       ? await Promise.all(
           trackedStates.map(async (state) => {
             const drive = state.connectedStorageId ?? (await defaultDriveOf(state.accountId));
-            return drive ?? `account:${state.accountId}`;
+            // No drive at all → the process-wide fallback executor (env cookie / fake),
+            // which every such account shares: one key for all of them.
+            return drive ?? "no-connected-drive";
           }),
         )
       : [];
