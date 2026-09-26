@@ -455,20 +455,39 @@ export async function runScheduledType3Monitoring(input: {
   /** How many shows the sweep works on at once (default 1 = one after another).
    *  Never two on the same drive — see runKeyedPool. */
   maxConcurrentRuns?: number;
+  /** The drive an account's unbound shows land on (its default drive). Used only
+   *  to keep those shows off the same drive as its bound ones when running in
+   *  parallel; null when the account has no drive. */
+  resolveDriveId?: (accountId: string) => Promise<string | null>;
 }): Promise<ScheduledType3Outcome[]> {
   const now = input.now ?? (() => new Date().toISOString());
   // Cross-account: patrol EVERY user's tracked shows, each under its owner's creds.
   const trackedStates = await input.repository.listAllTrackedSeasonStates();
 
-  // One drive at a time, several drives side by side (see runKeyedPool). A state
-  // with no bound drive falls back to its account's default drive, so it shares
-  // that account's key.
+  // One drive at a time, several drives side by side (see runKeyedPool). The key
+  // is the drive the run will actually land on: a state with no bound drive runs
+  // on its account's default drive, so it must share that drive's key, not get
+  // one of its own. Without a resolver, every unbound state of an account shares
+  // one key.
+  const concurrency = input.maxConcurrentRuns ?? 1;
+  const driveKeys =
+    concurrency > 1
+      ? await Promise.all(
+          trackedStates.map(async (state) => {
+            const drive =
+              state.connectedStorageId ??
+              (input.resolveDriveId ? await input.resolveDriveId(state.accountId) : null);
+            return drive ?? `account:${state.accountId}`;
+          }),
+        )
+      : [];
+  const keyByState = new Map(trackedStates.map((state, index) => [state, driveKeys[index] ?? ""]));
+  // A throw from one state's setup (drive client, DB reservation) is an infra
+  // failure: it aborts the sweep as the serial loop did, so the caller can release
+  // today's claimed slots and retry. Failures inside a run are outcomes, not throws.
   const perState = await runKeyedPool(
     trackedStates,
-    {
-      concurrency: input.maxConcurrentRuns ?? 1,
-      keyOf: (state) => state.connectedStorageId ?? `account:${state.accountId}`,
-    },
+    { concurrency, keyOf: (state) => keyByState.get(state)! },
     (state) => patrolTrackedState({ input, state, now }),
   );
   return perState.filter((outcome): outcome is ScheduledType3Outcome => outcome !== null);

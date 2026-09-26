@@ -1745,6 +1745,7 @@ export async function runScheduledType3(options?: {
       moviesParentDirectoryId: parents.movies,
       staleActiveRunTimeoutMs: 30 * 60 * 1000,
       maxConcurrentRuns: await getPatrolConcurrency(repository),
+      resolveDriveId: defaultDriveIdOf,
       resolveAccountContext: buildAccountContextResolver(),
       onAuthErrorFreeze: (id, reason) => freezeConnectedStorage(id, reason),
       ...(sync ? { syncSeasonMetadata: sync } : {}),
@@ -2112,6 +2113,14 @@ function makeTokenPersister(
       console.error(`[media-track] token refresh persist failed for ${storageId}: ${String(error)}`);
     }
   };
+}
+
+/** The drive an unbound run of this account lands on — the same pick as
+ *  getAccountStorageCredentials(accountId, null), without its credential checks
+ *  or directory provisioning. Used only as the patrol's per-drive key. */
+async function defaultDriveIdOf(accountId: string): Promise<string | null> {
+  const storages = await getWorkflowRepository().listConnectedStorages(accountId);
+  return storages.find((storage) => isRegisteredStorageProvider(storage.provider))?.id ?? null;
 }
 
 async function getAccountStorageCredentials(

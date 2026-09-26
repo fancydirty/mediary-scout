@@ -558,17 +558,17 @@ describe("runScheduledType3Monitoring (V2 engine)", () => {
 describe("runScheduledType3Monitoring — maxConcurrentRuns", () => {
   /** Three gapped shows: two on drive A, one on drive B. The model holds every call
    *  until the test counts who is in flight, so overlap is observed, not inferred. */
-  async function threeShowsOnTwoDrives() {
+  async function threeShowsOnTwoDrives(drives: Array<string | null> = ["drive_A", "drive_A", "drive_B"]) {
     const repository = new InMemoryWorkflowRepository();
     const storage = new FakeStorageExecutor();
     const shows = [
-      { ...trackedFixture("a1"), drive: "drive_A" },
-      { ...trackedFixture("a2"), drive: "drive_A" },
-      { ...trackedFixture("b1"), drive: "drive_B" },
+      { ...trackedFixture("a1"), drive: drives[0]! },
+      { ...trackedFixture("a2"), drive: drives[1]! },
+      { ...trackedFixture("b1"), drive: drives[2]! },
     ];
     for (const show of shows) {
       await repository.saveWorkflowRunSnapshot({
-        connectedStorageId: show.drive,
+        ...(show.drive === null ? {} : { connectedStorageId: show.drive }),
         title: show.title,
         season: show.season,
         workflowRun: {
@@ -627,6 +627,23 @@ describe("runScheduledType3Monitoring — maxConcurrentRuns", () => {
     expect(outcomes.map((o) => o.status)).toEqual(["failed", "failed", "failed"]);
     // Limit 3, but a1 and a2 share drive A: at most two shows at once, and a1/a2 never together.
     expect(seen.peak).toBe(2);
+    expect(seen.pairs.has("a1+a2")).toBe(false);
+    expect([...seen.pairs].some((pair) => pair.includes("b1"))).toBe(true);
+  });
+
+  it("an unbound show shares its account's default drive with shows bound to that drive", async () => {
+    // a1 has no drive and lands on the account default (drive_A) — it must not run
+    // beside a2, which is bound to drive_A explicitly.
+    const { repository, storage } = await threeShowsOnTwoDrives([null, "drive_A", "drive_B"]);
+    const { model, seen } = slowFailingModel();
+    let counter = 0;
+    await runScheduledType3Monitoring({
+      repository, resourceProvider: emptyProvider(), storage, model,
+      storageParentDirectoryId: "library_root", now: fixedNow,
+      createWorkflowRunId: () => `run_def_${(counter += 1)}`,
+      maxConcurrentRuns: 3,
+      resolveDriveId: async () => "drive_A",
+    });
     expect(seen.pairs.has("a1+a2")).toBe(false);
     expect([...seen.pairs].some((pair) => pair.includes("b1"))).toBe(true);
   });
