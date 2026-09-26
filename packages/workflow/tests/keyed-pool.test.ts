@@ -72,6 +72,21 @@ describe("runKeyedPool", () => {
     expect(slowFinished).toBe(true);
   });
 
+  it("handles a task that throws synchronously the same way as one that rejects", async () => {
+    let slowFinished = false;
+    const run = runKeyedPool(["slow", "bad"], { concurrency: 2, keyOf: (i) => i }, (i) => {
+      if (i === "bad") throw new Error("sync boom");
+      return new Promise<string>((resolve) =>
+        setTimeout(() => {
+          slowFinished = true;
+          resolve(i);
+        }, 5),
+      );
+    });
+    await expect(run).rejects.toThrow("sync boom");
+    expect(slowFinished).toBe(true);
+  });
+
   it("treats a non-positive limit as 1 and handles an empty list", async () => {
     expect(await runKeyedPool([], { concurrency: 3, keyOf: String }, async () => 1)).toEqual([]);
     expect(await runKeyedPool([1, 2], { concurrency: 0, keyOf: String }, async (n) => n * 2)).toEqual([2, 4]);

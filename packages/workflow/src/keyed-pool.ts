@@ -32,7 +32,10 @@ export async function runKeyedPool<T, R>(
       if (index === undefined) break;
       const key = options.keyOf(items[index]!);
       busyKeys.add(key);
-      const job: Promise<void> = task(items[index]!)
+      // Started inside a promise so a task that throws synchronously fails like one
+      // that rejects: its key is released and the running work still drains.
+      const job: Promise<void> = Promise.resolve()
+        .then(() => task(items[index]!))
         .then(
           (result) => {
             results[index] = result;
