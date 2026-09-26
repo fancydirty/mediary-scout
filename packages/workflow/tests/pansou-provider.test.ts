@@ -30,6 +30,32 @@ describe("PanSouResourceProvider", () => {
     expect(peak).toBe(4);
   });
 
+  it("holds the slot across a search's polls, not just each request", async () => {
+    // Each search polls 3 times with waits in between. From each keyword's first
+    // request start to its last request end, at most two keywords overlap.
+    const spans = new Map<string, { start: number; end: number }>();
+    let clock = 0;
+    const provider = new PanSouResourceProvider({
+      baseURL: "https://polls.example",
+      maxSearchAttempts: 3,
+      searchPollMs: 2,
+      fetchJson: async (_url, init) => {
+        const kw = JSON.parse(String(init?.body)).kw as string;
+        const span = spans.get(kw) ?? { start: (clock += 1), end: 0 };
+        spans.set(kw, span);
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        span.end = clock += 1;
+        // A new link on every poll keeps the provider polling all 3 attempts.
+        const links = Array.from({ length: clock }, (_, i) => ({ type: "magnet", url: `magnet:?xt=urn:btih:${kw}${i}` }));
+        return { code: 0, data: { results: [{ title: kw, links }] } };
+      },
+    });
+    await Promise.all(["a", "b", "c", "d"].map((kw) => provider.search({ keyword: kw })));
+    const all = [...spans.values()];
+    const peak = Math.max(...all.map((s) => all.filter((o) => o.start <= s.start && s.start < o.end).length));
+    expect(peak).toBe(2);
+  });
+
   it("frees the slot when a search throws", async () => {
     let calls = 0;
     const provider = new PanSouResourceProvider({
