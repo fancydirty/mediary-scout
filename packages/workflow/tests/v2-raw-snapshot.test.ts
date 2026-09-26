@@ -207,6 +207,32 @@ describe("viewResourceSnapshot renders the Jev uncertainty flag", () => {
     expect(doc).toContain(JEV_UNCERTAIN_LEGEND);
   });
 
+  it("drops the flags and says why when most rows of a long list would carry one", async () => {
+    // Re:从零 patrol: the judge doubted 150 of 155 rows (fansub 第四季 vs TMDB's one
+    // season). A ⚠ on nearly every line is noise; one sentence replaces them.
+    const titles = Array.from({ length: 12 }, (_, i) => `Re:从零 第四季 ${i + 1}`);
+    const scores = Object.fromEntries(titles.map((_, i) => [`c${i}`, i < 7 ? 0.5 : 0.9]));
+    const sandbox = await createTestSandbox(titles, "Re:从零", { scores });
+    await sandbox.primeRawSnapshot("Re:从零");
+    const doc = sandbox.viewResourceSnapshot().document;
+    expect(doc).not.toContain("⚠ 相关度存疑");
+    expect(doc).not.toContain(JEV_UNCERTAIN_LEGEND);
+    expect(doc).toContain("没有逐条标 ⚠");
+    const result = await sandbox.searchResources("Re:从零");
+    expect(result.snapshot!.candidates.every((c) => !c.title.includes("⚠"))).toBe(true);
+    expect(result.warnings?.some((w) => w.includes("没有逐条标 ⚠"))).toBe(true);
+  });
+
+  it("keeps the flags when only a minority of a long list is doubted", async () => {
+    const titles = Array.from({ length: 12 }, (_, i) => `交锋 ${i + 1}`);
+    const scores = Object.fromEntries(titles.map((_, i) => [`c${i}`, i < 6 ? 0.5 : 0.9]));
+    const sandbox = await createTestSandbox(titles, "交锋", { scores });
+    await sandbox.primeRawSnapshot("交锋");
+    const doc = sandbox.viewResourceSnapshot().document;
+    expect(doc).toContain("[c0] 交锋 1 ⚠ 相关度存疑(0.50)\n");
+    expect(doc).toContain(JEV_UNCERTAIN_LEGEND);
+  });
+
   it("renders no flag and no legend when nothing is in the uncertain band", async () => {
     const sandbox = await createTestSandbox(["交锋 全24集"], "交锋", { scores: { c0: 0.9 } });
     await sandbox.primeRawSnapshot("交锋");
@@ -326,8 +352,8 @@ describe("prefilter → adapter → sandbox seam (real classes, no hand-stamped 
 
     await sandbox.primeRawSnapshot("交锋");
     const doc = sandbox.viewResourceSnapshot().document;
-    expect(doc).toContain("[c1] 交锋 全24集\n");
-    expect(doc).toContain("[c2] 权利交锋 S01E08 ⚠ 相关度存疑(0.52)\n");
+    expect(doc).toContain("[s1-1] 交锋 全24集\n");
+    expect(doc).toContain("[s1-2] 权利交锋 S01E08 ⚠ 相关度存疑(0.52)\n");
     expect(doc).not.toContain("无敌少侠"); // 0.05 → dropped before the agent ever sees it
     expect(doc).toContain(JEV_UNCERTAIN_LEGEND);
 
@@ -348,12 +374,12 @@ describe("prefilter → adapter → sandbox seam (real classes, no hand-stamped 
 
     await sandbox.primeRawSnapshot("交锋");
     const doc = sandbox.viewResourceSnapshot().document;
-    expect(doc).toContain("[c1] 交锋 全24集\n");
-    expect(doc).toContain("[c2] 权利交锋 S01E08 ⚠ 相关度存疑(0.04)\n");
+    expect(doc).toContain("[s1-1] 交锋 全24集\n");
+    expect(doc).toContain("[s1-2] 权利交锋 S01E08 ⚠ 相关度存疑(0.04)\n");
     expect(doc).toContain(JEV_UNCERTAIN_LEGEND);
 
     const result = await sandbox.searchResources("交锋");
-    expect(result.snapshot!.candidates.map((c) => c.id)).toEqual(["c1", "c2"]);
+    expect(result.snapshot!.candidates.map((c) => c.id)).toEqual(["s1-1", "s1-2"]);
     expect(result.snapshot!.candidates[1]!.title).toBe("权利交锋 S01E08 ⚠ 相关度存疑(0.04)");
   });
 });

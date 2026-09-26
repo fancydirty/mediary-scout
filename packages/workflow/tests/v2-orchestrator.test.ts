@@ -342,9 +342,8 @@ describe("runAcquisitionV2 — Jev prefilter wiring", () => {
       stagingDirectoryId: "staging", targetMovieDirectoryId: "movie",
       jevJudge,
     });
-    // The agent's 铁拳教育 keyword is rejected by the title guard, so only the pre-warm reaches the judge.
-    expect(seen).toHaveLength(1);
-    expect(seen[0]!.target).toEqual({ kind: "movie", title: "沙丘", aliases: ["Dune"], year: 2021 });
+    expect(seen).toHaveLength(2); // pre-warm + agent search
+    for (const call of seen) expect(call.target).toEqual({ kind: "movie", title: "沙丘", aliases: ["Dune"], year: 2021 });
   });
 
   it("a year of 0 (unknown release year) never reaches the judge", async () => {
@@ -360,8 +359,10 @@ describe("runAcquisitionV2 — Jev prefilter wiring", () => {
     // year 0 would trip the year rule against every dated candidate. Pin the call
     // count too: without it, seen[0] could be an unrelated call and the ! would hide
     // an empty array entirely.
-    expect(seen).toHaveLength(1);
-    expect(seen[0]!.target).toEqual({ kind: "movie", title: "沙丘", aliases: ["Dune"] });
-    expect("year" in seen[0]!.target).toBe(false);
+    expect(seen).toHaveLength(2);
+    for (const call of seen) {
+      expect(call.target).toEqual({ kind: "movie", title: "沙丘", aliases: ["Dune"] });
+      expect("year" in call.target).toBe(false);
+    }
   });
 });

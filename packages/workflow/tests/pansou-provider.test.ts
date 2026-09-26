@@ -4,6 +4,47 @@ import { afterEach, describe, expect, it } from "vitest";
 import { PanSouResourceProvider } from "../src/index.js";
 
 describe("PanSouResourceProvider", () => {
+  it("never has more than two searches in flight against one server, even across providers", async () => {
+    // Parallel patrol runs each build their own provider over the same PanSou,
+    // which answers 502 from about four simultaneous searches.
+    let inFlight = 0;
+    let peak = 0;
+    const fetchJson = async () => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight -= 1;
+      return { code: 0, data: { total: 0 } };
+    };
+    const make = (baseURL: string) => new PanSouResourceProvider({ baseURL, maxSearchAttempts: 1, fetchJson });
+    const a = make("https://slots.example");
+    const b = make("https://slots.example/");
+    await Promise.all(["k1", "k2", "k3", "k4", "k5"].map((kw, i) => (i % 2 ? a : b).search({ keyword: kw })));
+    expect(peak).toBe(2);
+
+    // A different server has its own slots.
+    peak = 0;
+    const c = make("https://other-a.example");
+    const d = make("https://other-b.example");
+    await Promise.all([c.search({ keyword: "x" }), c.search({ keyword: "y" }), d.search({ keyword: "z" }), d.search({ keyword: "w" })]);
+    expect(peak).toBe(4);
+  });
+
+  it("frees the slot when a search throws", async () => {
+    let calls = 0;
+    const provider = new PanSouResourceProvider({
+      baseURL: "https://throws.example",
+      maxSearchAttempts: 1,
+      fetchJson: async () => {
+        calls += 1;
+        throw new Error("boom");
+      },
+    });
+    const results = await Promise.all([1, 2, 3, 4].map((n) => provider.search({ keyword: `k${n}` })));
+    expect(calls).toBe(4);
+    expect(results.every((r) => r.sourceHealth?.status === "unreachable" || r.candidates.length === 0)).toBe(true);
+  });
+
   it("maps PanSou 115 and magnet links into a resource snapshot", async () => {
     const provider = new PanSouResourceProvider({
       baseURL: "https://pansou.example",

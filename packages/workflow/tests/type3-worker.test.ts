@@ -555,6 +555,95 @@ describe("runScheduledType3Monitoring (V2 engine)", () => {
   });
 });
 
+describe("runScheduledType3Monitoring — maxConcurrentRuns", () => {
+  /** Three gapped shows: two on drive A, one on drive B. The model holds every call
+   *  until the test counts who is in flight, so overlap is observed, not inferred. */
+  async function threeShowsOnTwoDrives() {
+    const repository = new InMemoryWorkflowRepository();
+    const storage = new FakeStorageExecutor();
+    const shows = [
+      { ...trackedFixture("a1"), drive: "drive_A" },
+      { ...trackedFixture("a2"), drive: "drive_A" },
+      { ...trackedFixture("b1"), drive: "drive_B" },
+    ];
+    for (const show of shows) {
+      await repository.saveWorkflowRunSnapshot({
+        connectedStorageId: show.drive,
+        title: show.title,
+        season: show.season,
+        workflowRun: {
+          id: `seed_${show.season.id}`,
+          kind: "type2_init",
+          status: "succeeded",
+          trackedSeasonId: show.season.id,
+          startedAt: fixedNow(),
+          finishedAt: fixedNow(),
+          auditEvents: [],
+        },
+        episodes: createEpisodeStates({ trackedSeasonId: show.season.id, seasonNumber: 1, totalEpisodes: 2, latestAiredEpisode: 2 }),
+        resourceSnapshots: [],
+        decisions: [],
+        transferAttempts: [],
+        notifications: [],
+      });
+      await seedV2Season(storage, show.title, show.season, []);
+    }
+    return { repository, storage, shows };
+  }
+
+  /** Every call fails after a short wait; records the peak number of calls in flight
+   *  and which titles overlapped. */
+  function slowFailingModel() {
+    let inFlight = 0;
+    const seen = { peak: 0, pairs: new Set<string>() };
+    const active = new Set<string>();
+    const model = new MockLanguageModelV3({
+      doGenerate: async (options) => {
+        const prompt = JSON.stringify(options.prompt);
+        const title = /Show (a1|a2|b1)/.exec(prompt)?.[1] ?? "?";
+        inFlight += 1;
+        active.add(title);
+        seen.peak = Math.max(seen.peak, inFlight);
+        for (const other of active) if (other !== title) seen.pairs.add([title, other].sort().join("+"));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        active.delete(title);
+        inFlight -= 1;
+        throw new Error("agent model unavailable");
+      },
+    });
+    return { model, seen };
+  }
+
+  it("runs different drives side by side but keeps one drive's shows one after another", async () => {
+    const { repository, storage } = await threeShowsOnTwoDrives();
+    const { model, seen } = slowFailingModel();
+    let counter = 0;
+    const outcomes = await runScheduledType3Monitoring({
+      repository, resourceProvider: emptyProvider(), storage, model,
+      storageParentDirectoryId: "library_root", now: fixedNow,
+      createWorkflowRunId: () => `run_par_${(counter += 1)}`,
+      maxConcurrentRuns: 3,
+    });
+    expect(outcomes.map((o) => o.status)).toEqual(["failed", "failed", "failed"]);
+    // Limit 3, but a1 and a2 share drive A: at most two shows at once, and a1/a2 never together.
+    expect(seen.peak).toBe(2);
+    expect(seen.pairs.has("a1+a2")).toBe(false);
+    expect([...seen.pairs].some((pair) => pair.includes("b1"))).toBe(true);
+  });
+
+  it("defaults to one show at a time", async () => {
+    const { repository, storage } = await threeShowsOnTwoDrives();
+    const { model, seen } = slowFailingModel();
+    let counter = 0;
+    await runScheduledType3Monitoring({
+      repository, resourceProvider: emptyProvider(), storage, model,
+      storageParentDirectoryId: "library_root", now: fixedNow,
+      createWorkflowRunId: () => `run_ser_${(counter += 1)}`,
+    });
+    expect(seen.peak).toBe(1);
+  });
+});
+
 /**
  * Chain guard (2026-09-20). The live A/B ran with the prefilter ON and still
  * persisted `prefilter: null`: worker.ts spreads `jevJudge` into runner-v2's

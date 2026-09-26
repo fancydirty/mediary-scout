@@ -51,16 +51,49 @@ describe("RealResourceProviderV2 — pansou → ResourceProviderV2 adapter", () 
     const snapshot = await adapter.search("莉可丽丝 全集");
 
     // V2 shape: id/keyword/candidates with only the fields the agent judges from.
-    expect(snapshot.id).toBe("snap_real_1");
+    // Short run-local aliases, not the provider's long ids.
+    expect(snapshot.id).toBe("s1");
     expect(snapshot.candidates).toEqual([
-      { id: "cand_a", title: "莉可丽丝 全集 1080p" },
+      { id: "s1-1", title: "莉可丽丝 全集 1080p" },
     ]);
     // The run id is threaded so content-addressed snapshots don't collide across runs.
     expect(calls[0]).toEqual({ keyword: "莉可丽丝 全集", workflowRunId: "run-1" });
     // The real candidate (with its share payload) is recorded so the storage
     // adapter can transfer it later by id — the agent never sees the raw url.
-    const recorded = registry.get("cand_a");
-    expect(recorded?.providerPayload).toEqual({ url: "https://115.com/s/abc", receiveCode: "x1" });
+    // Resolvable by both the alias the agent was shown and the real id.
+    expect(registry.get("s1-1")?.providerPayload).toEqual({ url: "https://115.com/s/abc", receiveCode: "x1" });
+    expect(registry.get("cand_a")).toBe(registry.get("s1-1"));
+    // Persisted snapshots keep the real ids.
+    expect(adapter.snapshots()[0]!.id).toBe("snap_real_1");
+    expect(adapter.snapshots()[0]!.candidates[0]!.id).toBe("cand_a");
+  });
+
+  it("gives each new snapshot the next alias and a repeated snapshot the same one", async () => {
+    const other: ResourceSnapshot = { ...realSnapshot(), id: "snap_real_2", candidates: realSnapshot().candidates.map((c) => ({ ...c, id: "cand_b", snapshotId: "snap_real_2" })) };
+    let n = 0;
+    const provider: ResourceProvider = { search: async () => (n++ === 1 ? other : realSnapshot()) };
+    const adapter = new RealResourceProviderV2({ provider, registry: new CandidateRegistry(), workflowRunId: "run-1" });
+    expect((await adapter.search("a")).id).toBe("s1");
+    expect((await adapter.search("b")).id).toBe("s2");
+    expect((await adapter.search("c")).candidates[0]!.id).toBe("s1-1");
+  });
+
+  it("keeps a candidate's alias when dead-link filtering removes an earlier neighbour", async () => {
+    const base = realSnapshot().candidates[0]!;
+    const snapshot: ResourceSnapshot = {
+      ...realSnapshot(),
+      candidates: [
+        { ...base, id: "dead", providerPayload: { url: "https://115.com/s/deadcode" } },
+        { ...base, id: "live", index: 1, providerPayload: { url: "https://115.com/s/livecode" } },
+      ],
+    };
+    const adapter = new RealResourceProviderV2({
+      provider: { search: async () => snapshot },
+      registry: new CandidateRegistry(),
+      workflowRunId: "run-1",
+      deadLinkStore: { recordDeadLink: async () => {}, listDeadLinkKeys: async () => ["115:deadcode"] },
+    });
+    expect((await adapter.search("k")).candidates.map((c) => c.id)).toEqual(["s1-2"]);
   });
 
   it("records every candidate across multiple searches (registry accumulates)", async () => {
@@ -93,8 +126,8 @@ describe("RealResourceProviderV2 — pansou → ResourceProviderV2 adapter", () 
 
     const view = await adapter.search("k1");
 
-    // The agent only ever sees the live candidate.
-    expect(view.candidates.map((c) => c.id)).toEqual(["live"]);
+    // The agent only ever sees the live candidate, under its position alias.
+    expect(view.candidates.map((c) => c.id)).toEqual(["s1-1"]);
     // The persisted snapshot reflects the filtered view (no dead candidates), and
     // the dead ones are never recorded in the registry (the agent can't transfer them).
     expect(adapter.snapshots()[0]!.candidates.map((c) => c.id)).toEqual(["live"]);
@@ -175,7 +208,7 @@ describe("RealResourceProviderV2 — pansou → ResourceProviderV2 adapter", () 
 
     const view = await adapter.search("k1");
 
-    expect(view.candidates.map((c) => c.id)).toEqual(["live"]);
+    expect(view.candidates.map((c) => c.id)).toEqual(["s1-1"]);
     expect(view.sourceHealth).toEqual({ status: "degraded", unhealthySources: ["prowlarr"] });
     expect(adapter.snapshots()[0]!.candidates.map((c) => c.id)).toEqual(["live"]);
     expect(registry.get("dead_share")).toBeUndefined();
@@ -190,7 +223,7 @@ describe("RealResourceProviderV2 — pansou → ResourceProviderV2 adapter", () 
 
     const candidate = snapshot.candidates[0]!;
     expect(Object.keys(candidate).sort()).toEqual(["id", "title"]);
-    expect(candidate.id).toBe("cand_a");
+    expect(candidate.id).toBe("s1-1");
     expect(candidate.title).toBe("莉可丽丝 全集 1080p");
   });
 
@@ -210,7 +243,8 @@ describe("RealResourceProviderV2 — pansou → ResourceProviderV2 adapter", () 
 
     const view = await adapter.search("莉可丽丝 全集");
 
-    expect(view.prefilterScores).toEqual({ cand_a: 0.52 });
+    // Keyed by the alias the agent sees, so the ⚠ lands on the right row.
+    expect(view.prefilterScores).toEqual({ "s1-1": 0.52 });
     // Shallow copy: the V2 view must not share the persisted snapshot's object.
     expect(view.prefilterScores).not.toBe(scores);
     expect(view.prefilterDropped).toBe(1);

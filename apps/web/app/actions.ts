@@ -479,6 +479,22 @@ export async function saveDailySweepTimesAction(times: string[]): Promise<PushSe
   }
 }
 
+export async function savePatrolConcurrencyAction(value: number): Promise<PushSettingsActionResult> {
+  assertNotDemo();
+  try {
+    const { getWorkflowRepository, PATROL_CONCURRENCY_SETTING_KEY, MAX_PATROL_CONCURRENCY } = await import(
+      "../lib/workflow-runtime"
+    );
+    if (!Number.isInteger(value) || value < 1 || value > MAX_PATROL_CONCURRENCY) {
+      return { success: false, message: `只能是 1 到 ${MAX_PATROL_CONCURRENCY}` };
+    }
+    await getWorkflowRepository().setSetting(PATROL_CONCURRENCY_SETTING_KEY, String(value));
+    return { success: true };
+  } catch (error) {
+    return { success: false, message: `保存失败：${String(error)}` };
+  }
+}
+
 /** 手动触发一次全量巡检（force：跑完整 sweep 但不认领定时 slot，run-now 不吞计划）。 */
 export async function runPatrolNowAction(): Promise<PushSettingsActionResult & { checked?: number }> {
   assertNotDemo();

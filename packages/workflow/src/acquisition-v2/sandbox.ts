@@ -3,7 +3,6 @@ import {
   MOVIE_SEARCH_BUDGET,
   MOVIE_SEARCH_SOFT_THRESHOLD,
   decideSearchGate,
-  keywordReferencesTitle,
   normalizeSearchKeyword,
 } from "../planning-search-gate.js";
 import type { AssrtCandidate, AssrtSubtitleFile, AssrtProviderPort } from "../subtitle-provider.js";
@@ -79,6 +78,14 @@ function sourceHealthWarning(health: MergedSourceHealth | undefined): string | u
  *  so the legend is gated on exactly the rows that make it into the document. */
 const RAW_SNAPSHOT_ROW_LIMIT = 120;
 
+/** Below this many rows a majority of ⚠ can still point at something (2 of 3 is a
+ *  real signal); from here on a majority means the judge could not tell. */
+const JEV_FLAG_NOISE_MIN_ROWS = 10;
+
+/** Shown in place of the flags when most rows would carry one. */
+const JEV_FLAGS_SUPPRESSED_NOTE =
+  "系统的片名预筛对这批候选里的大多数都拿不准是不是目标作品(长篇动画常见:字幕组的季号/总集数和 TMDB 对不上),所以本次没有逐条标 ⚠。请按标题自己判断。";
+
 /** The tool-facing view of a snapshot: the ⚠ suffix rendered into each title (same as
  *  the 活期文档), the raw score map stripped (the agent judges titles, not numbers).
  *  Both read paths (searchResources and viewResourceSnapshot) go through here so the
@@ -93,9 +100,20 @@ function presentSnapshotForAgent(snapshot: ResourceSnapshotV2, limit?: number): 
   // The legend explains a ⚠ the agent can SEE. viewResourceSnapshot truncates its
   // rows, so a flag past the cut must not pull in a legend for a document that has
   // no flag in it. `limit` undefined = every row is shown (searchResources).
+  // A flag only helps while it singles out a few rows. On a long-running anime the
+  // fansub numbering (第四季 / 总第78话) disagrees with TMDB's one-season listing, and
+  // the judge doubts nearly every row (Re:从零 patrol: 150 of 155) — a ⚠ on every
+  // line tells the agent nothing and costs tokens on every read. Past that point the
+  // flags are dropped and one line says why.
+  const flags = snapshot.candidates.map((c) => jevUncertaintyFlag(scores[c.id]));
+  const flaggedTotal = flags.filter((flag) => flag !== "").length;
+  if (snapshot.candidates.length >= JEV_FLAG_NOISE_MIN_ROWS && flaggedTotal > snapshot.candidates.length / 2) {
+    const { prefilterScores: _scores, prefilterDropped: _dropped, ...rest } = snapshot;
+    return { snapshot: rest, legend: JEV_FLAGS_SUPPRESSED_NOTE, allDroppedWarning: undefined };
+  }
   let flagged = 0;
   const candidates = snapshot.candidates.map((c, index) => {
-    const flag = jevUncertaintyFlag(scores[c.id]);
+    const flag = flags[index]!;
     if (flag && (limit === undefined || index < limit)) flagged += 1;
     return flag ? { ...c, title: `${c.title}${flag}` } : c;
   });
@@ -349,26 +367,16 @@ export class TaskSandbox {
     // C5 guardrail: PanSou wildcard-matches share titles, which almost never carry
     // 画质/字幕 markers — so a quality/subtitle-laden keyword collapses recall to a
     // subset or to ZERO (实测 铁拳教育 84→+1080p=0, 奥本海默 185→+中字=0). Strip those
-    // tokens BEFORE the title gate so the bare title still passes, and tell the
+    // tokens so the bare title is what gets searched, and tell the
     // agent the words were dropped (raw recalls the most). Not a hard reject — it
     // does not second-guess the agent's title choice, only removes proven-dead noise.
     const stripped = stripQualitySubtitleTokens(keyword);
     const effectiveKeyword = stripped.keyword;
 
-    // Hard guard: a keyword that names no title term is a genre/year-only
-    // fallback ("2026 电影") — it can only return noise. Reject it BEFORE the
-    // budget/provider so it costs nothing and the agent must re-keyword with the
-    // real title. (asEvidence turns this throw into the {error} the agent reads.)
-    if (!keywordReferencesTitle(effectiveKeyword, this.titleTerms)) {
-      this.logSearch(keyword, { outcome: "refused", note: "keyword names no title term" });
-      throw new Error(
-        `搜索关键词必须包含片名(片名/原名/别名)。"${keyword}" 不含片名,只会返回噪音,已拒绝。请用包含片名的关键词(裸标题召回最全;繁体/英文/原名 可作升级。注意:画质/字幕词会被自动移除,年份/季 等词虽不移除但同样会减召回,别加),不要用纯类型或纯年份(如 "电影"、"2026 电影")。`,
-      );
-    }
     const normalized = normalizeSearchKeyword(effectiveKeyword);
     const notice = stripped.stripped ? STRIP_NOTICE : undefined;
 
-    // 病2b: anime taboo-keyword validator (warnings only, after title gate, before dedup).
+    // 病2b: anime taboo-keyword validator (warnings only, before dedup).
     const tabooWarnings = this.profile
       ? animeSearchTabooWarnings({ keyword: effectiveKeyword, profile: this.profile, titleTerms: this.titleTerms })
       : [];

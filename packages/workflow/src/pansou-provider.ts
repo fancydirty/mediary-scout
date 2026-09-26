@@ -28,6 +28,34 @@ export interface PanSouFetchInit {
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
 
+/** PanSou requests in flight per server, across every provider in this process.
+ *  One PanSou fans each search out to dozens of channels and starts answering 502
+ *  at about four simultaneous searches (measured 2026-09-25); parallel patrol runs
+ *  share it, so their searches queue here instead of failing as "source down". */
+const MAX_IN_FLIGHT_PER_SERVER = 2;
+const serverSlots = new Map<string, { inFlight: number; waiters: Array<() => void> }>();
+
+async function withServerSlot<T>(baseURL: string, call: () => Promise<T>): Promise<T> {
+  let slot = serverSlots.get(baseURL);
+  if (!slot) {
+    slot = { inFlight: 0, waiters: [] };
+    serverSlots.set(baseURL, slot);
+  }
+  if (slot.inFlight >= MAX_IN_FLIGHT_PER_SERVER) {
+    await new Promise<void>((resolve) => slot!.waiters.push(resolve));
+  } else {
+    slot.inFlight += 1;
+  }
+  try {
+    return await call();
+  } finally {
+    // Hand the slot straight to the next waiter (inFlight unchanged), or free it.
+    const next = slot.waiters.shift();
+    if (next) next();
+    else slot.inFlight -= 1;
+  }
+}
+
 export type PanSouFetchJson = (url: string, init: PanSouFetchInit) => Promise<unknown>;
 
 export interface PanSouResourceProviderOptions {
@@ -79,15 +107,17 @@ export class PanSouResourceProvider implements ResourceProvider {
   }
 
   private async fetchFacts(keyword: string): Promise<PanSouLinkFact[]> {
-    const response = await this.fetchJson(`${this.baseURL}/api/search`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "User-Agent": "clawd-media-track/1.0",
-      },
-      body: JSON.stringify({ kw: keyword, res: "all" }),
-      timeoutMs: this.requestTimeoutMs,
-    });
+    const response = await withServerSlot(this.baseURL, () =>
+      this.fetchJson(`${this.baseURL}/api/search`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "User-Agent": "clawd-media-track/1.0",
+        },
+        body: JSON.stringify({ kw: keyword, res: "all" }),
+        timeoutMs: this.requestTimeoutMs,
+      }),
+    );
     // 两种「不是成功响应」必须区分,否则用户拿到错误的处置建议(Copilot 评审):
     //  1. 响应带 code 字段 → 它**是** PanSou,只是报了错(限流/参数错)。
     //     那是源侧的临时故障,不是「地址填错了」,不归 PanSouProtocolError。

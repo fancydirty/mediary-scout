@@ -110,19 +110,19 @@ describe("per-run memory quota under concurrent tool calls (Copilot #272 r6)", (
 });
 
 describe("search history for the reflection digest (Copilot #272 r7)", () => {
-  it("keeps every keyword even when two return the same content, and records refusals and errors", async () => {
+  it("keeps every keyword even when two return the same content, and records refusals", async () => {
     const same = [{ id: "c1", title: "Show 1080p", sizeBytes: 1, kind: "share" }];
     const provider = new FakeResourceProviderV2({ results: { Show: same, "Show 2025": same } } as never);
-    const sandbox = new TaskSandbox({ provider, need: ["S01E01"], titleTerms: ["Show"] } as never);
+    const sandbox = new TaskSandbox({ provider, need: ["S01E01"], titleTerms: ["Show"], searchBudget: 2 } as never);
     await sandbox.searchResources("Show");
     await sandbox.searchResources("Show 2025");
     await sandbox.searchResources("Show");
-    await expect(sandbox.searchResources("2025 电影")).rejects.toThrow();
+    expect((await sandbox.searchResources("Show S01")).refused).toBeDefined();
     const history = sandbox.searchHistory();
     expect(history.map((h) => [h.keyword, h.calls, h.outcome])).toEqual([
       ["Show", 2, "ok"],
       ["Show 2025", 1, "ok"],
-      ["2025 电影", 1, "refused"],
+      ["Show S01", 1, "refused"],
     ]);
   });
 

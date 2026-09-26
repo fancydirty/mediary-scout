@@ -28,6 +28,7 @@ import {
 import { assrtPills, isEnvBackedValue, jevPills, llmPills, pansouPills, prowlarrPills, tmdbPills } from "../../lib/service-status";
 import { PanSouConfigForm } from "../../components/pansou-config-form";
 import { DailySweepForm } from "../../components/daily-sweep-form";
+import { PatrolConcurrencyForm } from "../../components/patrol-concurrency-form";
 import { PatrolNowButton } from "../../components/patrol-now-button";
 import { SettingsTabs } from "../../components/settings-tabs";
 import { PasswordChangeForm } from "../../components/password-change-form";
@@ -45,7 +46,9 @@ import {
   isMultiUserEnabled,
   listManagedAccounts,
   getDailySweepTimes,
+  getPatrolConcurrency,
   MAX_DAILY_SWEEP_TIMES,
+  MAX_PATROL_CONCURRENCY,
   LAST_SWEEP_COMPLETED_AT_SETTING_KEY,
   beijingDateTime,
   getPan115ConnectionStatus,
@@ -730,6 +733,7 @@ async function DailySweepSection() {
   await connection();
   const repository = getWorkflowRepository();
   const times = await getDailySweepTimes(repository);
+  const concurrency = await getPatrolConcurrency(repository);
   const lastSweepAt = await repository.getSetting(LAST_SWEEP_COMPLETED_AT_SETTING_KEY);
   const { hhmm } = beijingDateTime();
 
@@ -759,6 +763,7 @@ async function DailySweepSection() {
         </div>
       </div>
       <DailySweepForm initial={times} max={MAX_DAILY_SWEEP_TIMES} />
+      <PatrolConcurrencyForm initial={concurrency} max={MAX_PATROL_CONCURRENCY} />
       <div
         style={{
           display: "flex",

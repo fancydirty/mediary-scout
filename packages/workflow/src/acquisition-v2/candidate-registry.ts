@@ -11,8 +11,11 @@ import type { ResourceCandidate } from "../domain.js";
 export class CandidateRegistry {
   private readonly byId = new Map<string, ResourceCandidate>();
 
-  record(candidate: ResourceCandidate): void {
+  /** Records under the real id and, when given, under the short alias the agent
+   *  was shown — the storage adapter resolves whichever it is handed. */
+  record(candidate: ResourceCandidate, alias?: string): void {
     this.byId.set(candidate.id, candidate);
+    if (alias !== undefined) this.byId.set(alias, candidate);
   }
 
   get(candidateId: string): ResourceCandidate | undefined {

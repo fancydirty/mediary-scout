@@ -123,7 +123,8 @@ describe("runMovieAcquisitionV2 — obtained comes from the AGENT'S coverage, ne
       storage: executor,
       model: scriptModel([
         { tool: "searchResources", input: { keyword: "盗梦空间" } },
-        { tool: "transferCandidate", input: { snapshotId: "snap_q", candidateId } },
+        // The agent addresses candidates by the short run-local alias it was shown.
+        { tool: "transferCandidate", input: { snapshotId: "s1", candidateId: "s1-1" } },
         { tool: "reportNoCoverage", input: { reason: "nothing landed" } },
       ]),
       workflowRunId: "run-blocked",

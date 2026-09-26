@@ -1339,6 +1339,18 @@ export const MAX_DAILY_SWEEP_TIMES = 6;
 
 const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
+export const PATROL_CONCURRENCY_SETTING_KEY = "patrol_max_concurrent_runs";
+export const DEFAULT_PATROL_CONCURRENCY = 1;
+export const MAX_PATROL_CONCURRENCY = 5;
+
+/** 巡检同时处理几部作品（1~5，默认 1 = 逐部）。同一块网盘上的作品始终逐部跑。 */
+export async function getPatrolConcurrency(
+  repository: { getSetting(key: string): Promise<string | null> },
+): Promise<number> {
+  const value = Number((await repository.getSetting(PATROL_CONCURRENCY_SETTING_KEY))?.trim());
+  return Number.isInteger(value) && value >= 1 && value <= MAX_PATROL_CONCURRENCY ? value : DEFAULT_PATROL_CONCURRENCY;
+}
+
 /**
  * 巡检时间点列表（北京 "HH:MM"，升序去重，1~6 个）。读取顺序：
  * daily_sweep_times(JSON 数组) → legacy daily_sweep_time 单值 → 默认 ["06:00"]。
@@ -1732,6 +1744,7 @@ export async function runScheduledType3(options?: {
       animeStorageParentDirectoryId: parents.anime,
       moviesParentDirectoryId: parents.movies,
       staleActiveRunTimeoutMs: 30 * 60 * 1000,
+      maxConcurrentRuns: await getPatrolConcurrency(repository),
       resolveAccountContext: buildAccountContextResolver(),
       onAuthErrorFreeze: (id, reason) => freezeConnectedStorage(id, reason),
       ...(sync ? { syncSeasonMetadata: sync } : {}),
