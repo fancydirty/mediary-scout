@@ -114,6 +114,8 @@ docker compose up -d
 
 自部署到 NAS、软路由、闲置 PC 或 VPS,并经 **Tailscale** 或 **Cloudflare Tunnel** 从手机 / 电视访问(无需公网 IP;别把 `:3000` 裸暴露)。完整教程:**[docs/deploy.md](docs/deploy.md)**。
 
+部署好之后，升级在网页里完成：**设置 → 更新**列出新发布版本，一键更新（也可设成每天定时自动更新）。
+
 ### 让 agent 帮你部署
 
 想让 AI agent(Claude Code、Codex、opencode 等)带你走?把下面这段提示词丢给它——它会问对问题、然后替你部署:

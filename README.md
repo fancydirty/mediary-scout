@@ -172,6 +172,8 @@ A public, **read-only** demo — mock drives, real TMDB search across the whole 
 
 Self-host on a NAS, a router (软路由), a spare PC, or a VPS — and reach it from your phone / TV via **Tailscale** or a **Cloudflare Tunnel** (no public IP needed; never expose `:3000` raw). Full walkthrough: **[docs/deploy.md](docs/deploy.md)**.
 
+Once deployed, updates happen right in the app: **Settings → 更新** lists new releases and updates with one click (or daily, on a schedule you set).
+
 ### Deploy with an agent
 
 Prefer to have an AI agent walk you through it? Paste this prompt:

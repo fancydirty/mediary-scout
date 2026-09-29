@@ -432,6 +432,8 @@ docker compose build --build-arg NPM_REGISTRY=https://registry.npmmirror.com
 
 它不会覆盖你改过的已跟踪文件。配置写在 `.env`。
 
+设置 → 更新里还有「每天自动更新」，默认关。打开后选一个整点（北京时间），到点若有新发布版本就自动更新一次；有获取任务在进行时会等它结束，和手动点「立即更新」一样。同一个发布版本连续两次没更新成功，就不再自动重试，直到你手动点一次「立即更新」。
+
 从 GitHub 下载新版本时，设了 `.env` 里的 `HTTPS_PROXY` / `HTTP_PROXY` 就走它——和应用其余出站请求（TMDB / PanSou 等）同一个代理；没设就直连。改了 `.env` 要在部署目录运行 `docker compose up -d` 才会生效。
 
 只有更新助手容器挂 Docker socket。它不映射任何端口，只接受「更新到这个发布标签」，令牌只有 web 容器能读。更新助手不会更新自己：一键更新只替换 web 容器。某个版本如果改了 `updater/`，发布说明会写明，那时在部署目录运行 `docker compose up -d --build updater`；运行 `./scripts/deploy.sh` 时它也会一并重建。
