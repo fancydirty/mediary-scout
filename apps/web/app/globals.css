@@ -4229,6 +4229,9 @@ select.setting-control {
 .drive-card-actions .secondary-button {
   font-size: 12px;
   padding: 3px 10px;
+  /* A long 测试连接 result sits beside the button: let the message wrap, never the label. */
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .drive-add-heading {
