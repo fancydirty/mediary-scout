@@ -37,6 +37,7 @@ const relationCache = new Map<string, { at: number; relation: CommitRelation | n
  *  polls every 8 s per open tab, and a cold feed is up to 11 GitHub requests. */
 let feedInFlight: Promise<ReleaseEntry[]> | null = null;
 let desktopInFlight: Promise<DesktopRelease | null> | null = null;
+const relationInFlight = new Map<string, Promise<CommitRelation | null>>();
 /** Bumped by 「检查更新」: a fetch that started before it must not refill the cache. */
 let generation = 0;
 
@@ -46,6 +47,7 @@ export function invalidateReleaseFeedCache(): void {
   desktopCache = null;
   feedInFlight = null;
   desktopInFlight = null;
+  relationInFlight.clear();
   relationCache.clear();
 }
 
@@ -62,6 +64,17 @@ export async function fetchCommitRelation(
   const key = `${base}...${head}`;
   const hit = relationCache.get(key);
   if (hit && Date.now() - hit.at < (hit.relation ? OK_TTL_MS : FAIL_TTL_MS)) return hit.relation;
+  const running = relationInFlight.get(key);
+  if (running) return running;
+  const started = generation;
+  const pending = loadCommitRelation(key, fetchImpl, started).finally(() => {
+    if (relationInFlight.get(key) === pending) relationInFlight.delete(key);
+  });
+  relationInFlight.set(key, pending);
+  return pending;
+}
+
+async function loadCommitRelation(key: string, fetchImpl: typeof fetch, started: number): Promise<CommitRelation | null> {
   let relation: CommitRelation | null = null;
   try {
     const raw = await getText(fetchImpl, `https://api.github.com/repos/${REPO}/compare/${key}`);
@@ -70,7 +83,7 @@ export async function fetchCommitRelation(
   } catch {
     relation = null;
   }
-  relationCache.set(key, { at: Date.now(), relation });
+  if (started === generation) relationCache.set(key, { at: Date.now(), relation });
   return relation;
 }
 

@@ -129,6 +129,36 @@ describe("fetchCommitRelation", () => {
     invalidateReleaseFeedCache();
     expect(await fetchCommitRelation(base, head, odd)).toBeNull();
   });
+
+  it("callers that arrive while the comparison is running share it", async () => {
+    const base = "b".repeat(40);
+    const head = "d".repeat(40);
+    const fetchImpl = fakeFetch({ [compare(base, head)]: { status: 200, body: JSON.stringify({ status: "behind" }) } });
+    const both = await Promise.all([fetchCommitRelation(base, head, fetchImpl), fetchCommitRelation(base, head, fetchImpl)]);
+    expect(both).toEqual(["behind", "behind"]);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("a comparison that started before 「检查更新」 does not overwrite the fresh answer", async () => {
+    const base = "b".repeat(40);
+    const head = "d".repeat(40);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    // The old request fails (a cached null would hide the update for five minutes).
+    const stale = vi.fn(async () => {
+      await gate;
+      return new Response("", { status: 502 });
+    }) as unknown as typeof fetch;
+    const pending = fetchCommitRelation(base, head, stale);
+    invalidateReleaseFeedCache();
+    const fresh = fakeFetch({ [compare(base, head)]: { status: 200, body: JSON.stringify({ status: "behind" }) } });
+    expect(await fetchCommitRelation(base, head, fresh)).toBe("behind");
+    release();
+    await pending;
+    expect(await fetchCommitRelation(base, head, fakeFetch({}))).toBe("behind");
+  });
 });
 
 const LATEST = "https://api.github.com/repos/fancydirty/mediary-scout/releases/latest";
