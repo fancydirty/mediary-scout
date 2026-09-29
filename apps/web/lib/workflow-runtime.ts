@@ -103,6 +103,7 @@ import { seedDemoWorkflowRepository } from "./demo-workflow";
 import { resolveRegistration, deriveBootstrapState, canManageAccounts } from "./account-bootstrap";
 import { isDemoMode } from "./demo-mode";
 import { isUpdateHoldActive, whileInFlight } from "./update-hold";
+import { DEFAULT_AUTO_UPDATE_TIME, isAutoUpdateTime, shouldAutoUpdate } from "./auto-update-schedule";
 
 /** Checked by the workflow package right before each claim or patrol reservation, not
  *  only at entry: the updater can take the hold while a tick is still setting up. */
@@ -1748,6 +1749,96 @@ export function beijingDateTime(): { date: string; hhmm: string } {
   }).formatToParts(new Date());
   const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
   return { date: `${get("year")}-${get("month")}-${get("day")}`, hhmm: `${get("hour")}:${get("minute")}` };
+}
+
+export const AUTO_UPDATE_ENABLED_SETTING_KEY = "auto_update_enabled";
+export const AUTO_UPDATE_TIME_SETTING_KEY = "auto_update_time";
+const AUTO_UPDATE_LAST_ATTEMPT_SETTING_KEY = "auto_update_last_attempt";
+export const AUTO_UPDATE_FAIL_STREAK_SETTING_KEY = "auto_update_fail_streak";
+
+/** The auto-update switch and its hour (Beijing time). Off unless explicitly turned on;
+ *  a missing or malformed hour (anything but a whole hour) reads as the 04:00 default. */
+export async function getAutoUpdateSettings(
+  repository: { getSetting(key: string): Promise<string | null> },
+): Promise<{ enabled: boolean; time: string }> {
+  const time = (await repository.getSetting(AUTO_UPDATE_TIME_SETTING_KEY))?.trim();
+  return {
+    enabled: (await repository.getSetting(AUTO_UPDATE_ENABLED_SETTING_KEY))?.trim() === "1",
+    time: time && isAutoUpdateTime(time) ? time : DEFAULT_AUTO_UPDATE_TIME,
+  };
+}
+
+/** Failed attempts at one release. `at` is when the last counted attempt ended: one failed
+ *  attempt is counted once, however many days its status stays on the updater. */
+interface AutoUpdateFailStreak {
+  tag: string;
+  count: number;
+  at: string;
+}
+
+function parseAutoUpdateFailStreak(raw: string | null): AutoUpdateFailStreak | null {
+  if (!raw?.trim()) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<AutoUpdateFailStreak> | null;
+    if (
+      parsed &&
+      typeof parsed.tag === "string" &&
+      typeof parsed.count === "number" &&
+      Number.isInteger(parsed.count) &&
+      parsed.count > 0
+    ) {
+      return { tag: parsed.tag, count: parsed.count, at: typeof parsed.at === "string" ? parsed.at : "" };
+    }
+  } catch {
+    // A hand-edited or damaged value counts as no failures.
+  }
+  return null;
+}
+
+/** Daily auto-update. The worker calls this every tick (3 s): with the switch off it reads
+ *  one setting and returns, and it looks at GitHub and the updater once a day, after the
+ *  set hour. The day is used up whatever the outcome (no update, offline, a state that says
+ *  wait): the next look is tomorrow. */
+export async function runAutoUpdateIfDue(): Promise<void> {
+  if (isDemoMode() || resolveIsDesktop()) return;
+  const repository = getWorkflowRepository();
+  const { enabled, time } = await getAutoUpdateSettings(repository);
+  if (!enabled) return;
+  const { date, hhmm } = beijingDateTime();
+  const lastAttemptDate = (await repository.getSetting(AUTO_UPDATE_LAST_ATTEMPT_SETTING_KEY))?.trim() ?? null;
+  if (hhmm < time || lastAttemptDate === date) return;
+  await repository.setSetting(AUTO_UPDATE_LAST_ATTEMPT_SETTING_KEY, date);
+  // Dynamic: update-view-server imports this module.
+  const { loadUpdateView } = await import("./update-view-server");
+  const { requestUpdate } = await import("./updater-client");
+  const view = await loadUpdateView();
+  if (!view.updater || !view.available) return;
+  const tag = view.available.tag;
+  let failStreak = parseAutoUpdateFailStreak(await repository.getSetting(AUTO_UPDATE_FAIL_STREAK_SETTING_KEY));
+  // The last attempt at this same release failed: count it (once) before deciding.
+  if (view.updater.targetTag === tag && (view.updater.phase === "rolled_back" || view.updater.phase === "failed")) {
+    const at = view.updater.finishedAt ?? view.updater.startedAt ?? "";
+    if (!failStreak || failStreak.tag !== tag) {
+      failStreak = { tag, count: 1, at };
+    } else if (failStreak.at !== at) {
+      failStreak = { tag, count: failStreak.count + 1, at };
+    }
+    await repository.setSetting(AUTO_UPDATE_FAIL_STREAK_SETTING_KEY, JSON.stringify(failStreak));
+  }
+  const due = shouldAutoUpdate({
+    enabled,
+    time,
+    now: { date, hhmm },
+    lastAttemptDate,
+    available: tag,
+    failStreak,
+    updater: view.updater,
+    updateHoldActive: isUpdateHoldActive(Date.now()),
+  });
+  if (!due) return;
+  const result = await requestUpdate(tag);
+  if (result.ok) console.log(`[auto-update] started ${tag}`);
+  else console.warn(`[auto-update] ${tag} not started: ${result.reason}`);
 }
 
 /**

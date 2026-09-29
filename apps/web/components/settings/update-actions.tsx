@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { checkForUpdatesAction, startUpdateAction } from "../../app/update-actions";
+import { checkForUpdatesAction, saveAutoUpdateAction, startUpdateAction } from "../../app/update-actions";
+import { AUTO_UPDATE_HOURS } from "../../lib/auto-update-schedule";
 import { copyText } from "../../lib/copy-text";
 import { ACTIVE_UPDATER_PHASES as ACTIVE } from "../../lib/update-state";
 import type { UpdaterStatus } from "../../lib/updater-client";
@@ -99,6 +100,65 @@ export function UpdateNowButton({ tag, initial }: { tag: string | null; initial:
         立即更新
       </button>
       {message ? <span className="update-muted">{message}</span> : null}
+    </div>
+  );
+}
+
+/** 「每天自动更新」 and its hour (Beijing time). Every change saves both values at once. */
+export function AutoUpdateSwitch({ initial }: { initial: { enabled: boolean; time: string } }) {
+  const [enabled, setEnabled] = useState(initial.enabled);
+  const [time, setTime] = useState(initial.time);
+  const [note, setNote] = useState("");
+  const [pending, startTransition] = useTransition();
+
+  const save = (next: { enabled: boolean; time: string }) => {
+    const previous = { enabled, time };
+    setEnabled(next.enabled);
+    setTime(next.time);
+    setNote("");
+    startTransition(async () => {
+      try {
+        const result = await saveAutoUpdateAction(next.enabled, next.time);
+        setNote(result.message);
+        if (!result.ok) {
+          setEnabled(previous.enabled);
+          setTime(previous.time);
+        }
+      } catch {
+        setNote("没保存上，稍后再试。");
+        setEnabled(previous.enabled);
+        setTime(previous.time);
+      }
+    });
+  };
+
+  return (
+    <div className="update-auto-row">
+      <label className="service-toggle">
+        <input
+          type="checkbox"
+          role="switch"
+          checked={enabled}
+          disabled={pending}
+          onChange={(event) => save({ enabled: event.target.checked, time })}
+        />
+        每天自动更新
+      </label>
+      <select
+        className="setting-control"
+        value={time}
+        disabled={pending}
+        aria-label="自动更新的时间（北京时间）"
+        onChange={(event) => save({ enabled, time: event.target.value })}
+      >
+        {AUTO_UPDATE_HOURS.map((hour) => (
+          <option key={hour} value={hour}>
+            {hour}
+          </option>
+        ))}
+      </select>
+      <span className="update-faint">北京时间</span>
+      {note ? <span className="update-muted">{note}</span> : null}
     </div>
   );
 }

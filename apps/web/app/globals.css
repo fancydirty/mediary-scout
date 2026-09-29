@@ -4009,6 +4009,9 @@ select.setting-control {
 .update-warn { margin: 10px 0 0; font-size: 12.5px; line-height: 1.55; color: var(--warning); }
 .update-failure summary { cursor: pointer; font-size: 12.5px; color: var(--text-muted); }
 .update-migrate .ghost-button { margin-top: 8px; }
+.update-auto-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.update-auto-row .service-toggle { font-size: 13.5px; color: var(--text); }
+.update-auto-row .setting-control { width: auto; }
 
 /* 搜索页空态「近期热门」发现区(#95)。Tab 药丸复用 .filter-pill。 */
 .trending {

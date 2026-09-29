@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { shouldAutoUpdate } from "./auto-update-schedule";
+import { AUTO_UPDATE_HOURS, DEFAULT_AUTO_UPDATE_TIME, isAutoUpdateTime, shouldAutoUpdate } from "./auto-update-schedule";
 
 const base = {
   enabled: true,
@@ -56,5 +56,19 @@ describe("shouldAutoUpdate", () => {
     expect(shouldAutoUpdate({ ...base, failStreak: { tag: "v2026.10.02", count: 1 } })).toBe(true);
     expect(shouldAutoUpdate({ ...base, failStreak: { tag: "v2026.10.02", count: 2 } })).toBe(false);
     expect(shouldAutoUpdate({ ...base, failStreak: { tag: "v2026.10.01", count: 2 } })).toBe(true);
+  });
+});
+
+describe("the auto-update hour", () => {
+  it("is a whole hour, 00:00 to 23:00, and 04:00 by default", () => {
+    expect(AUTO_UPDATE_HOURS).toHaveLength(24);
+    expect(AUTO_UPDATE_HOURS[0]).toBe("00:00");
+    expect(AUTO_UPDATE_HOURS[4]).toBe("04:00");
+    expect(AUTO_UPDATE_HOURS[23]).toBe("23:00");
+    expect(DEFAULT_AUTO_UPDATE_TIME).toBe("04:00");
+    for (const hour of AUTO_UPDATE_HOURS) expect(isAutoUpdateTime(hour)).toBe(true);
+    for (const bad of ["04:30", "24:00", "4:00", "04:00 ", "", "04", "ab:cd", "99:99"]) {
+      expect(isAutoUpdateTime(bad)).toBe(false);
+    }
   });
 });

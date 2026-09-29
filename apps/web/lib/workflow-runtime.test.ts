@@ -999,3 +999,246 @@ describe("importForeignWorkFiles rechecks the update hold inside the in-flight g
     }
   });
 });
+
+describe("runAutoUpdateIfDue（每日自动更新）", () => {
+  // 内存 SQLite 真读写设置、fake Date 钉北京钟；更新视图和更新助手客户端 mock 掉
+  // （runAutoUpdateIfDue 是动态 import 它们的，vi.doMock 可以顶掉）。
+  const prevPg = process.env.MEDIA_TRACK_POSTGRES_URL;
+  const TAG = "v2026.10.02";
+  const idle = {
+    phase: "idle",
+    targetTag: null,
+    fromCommit: null,
+    startedAt: null,
+    finishedAt: null,
+    message: "",
+    logTail: "",
+  };
+  let updater: Record<string, unknown> | null;
+  let available: { tag: string; commit: string } | null;
+  const loadUpdateView = vi.fn();
+  const requestUpdate = vi.fn();
+  let rt: typeof import("./workflow-runtime");
+
+  const boot = async (settings: Record<string, string>, beijingISO: string) => {
+    updater = { ...idle };
+    available = { tag: TAG, commit: "c".repeat(40) };
+    loadUpdateView.mockReset();
+    loadUpdateView.mockImplementation(async () => ({ available, updater, updaterInstalled: true }));
+    requestUpdate.mockReset();
+    requestUpdate.mockImplementation(async () => ({ ok: true }));
+    process.env.MEDIA_TRACK_SQLITE_PATH = ":memory:";
+    delete process.env.MEDIA_TRACK_POSTGRES_URL;
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(`${beijingISO}:00.000+08:00`));
+    vi.resetModules();
+    vi.doMock("./update-view-server", () => ({ loadUpdateView }));
+    vi.doMock("./updater-client", async () => ({
+      ...(await vi.importActual<typeof import("./updater-client")>("./updater-client")),
+      requestUpdate,
+    }));
+    rt = await import("./workflow-runtime");
+    const repository = rt.getWorkflowRepository();
+    for (const [key, value] of Object.entries(settings)) {
+      await repository.setSetting(key, value);
+    }
+    return repository;
+  };
+  const at = (beijingISO: string) => vi.setSystemTime(new Date(`${beijingISO}:00.000+08:00`));
+  const ON = { auto_update_enabled: "1" };
+
+  afterEach(async () => {
+    vi.useRealTimers();
+    vi.doUnmock("./update-view-server");
+    vi.doUnmock("./updater-client");
+    delete process.env.MEDIA_TRACK_SQLITE_PATH;
+    delete process.env.MEDIA_TRACK_DESKTOP;
+    delete process.env.MEDIA_TRACK_DEMO_MODE;
+    if (prevPg !== undefined) process.env.MEDIA_TRACK_POSTGRES_URL = prevPg;
+    const { clearUpdateHold } = await import("./update-hold");
+    clearUpdateHold();
+    vi.resetModules();
+  });
+
+  it("does nothing when switched off, without even reading the release list", async () => {
+    await boot({}, "2026-10-03T05:00");
+    await rt.runAutoUpdateIfDue();
+    expect(loadUpdateView).not.toHaveBeenCalled();
+    expect(requestUpdate).not.toHaveBeenCalled();
+  });
+
+  it("waits for the set time (default 04:00) and looks at GitHub only once it has passed", async () => {
+    const repository = await boot(ON, "2026-10-03T03:59");
+    await rt.runAutoUpdateIfDue();
+    expect(loadUpdateView).not.toHaveBeenCalled();
+    expect(await repository.getSetting("auto_update_last_attempt")).toBeNull();
+    at("2026-10-03T04:00");
+    await rt.runAutoUpdateIfDue();
+    expect(requestUpdate).toHaveBeenCalledTimes(1);
+    expect(requestUpdate).toHaveBeenCalledWith(TAG);
+  });
+
+  it("honours the configured hour, and falls back to 04:00 for a malformed one", async () => {
+    await boot({ ...ON, auto_update_time: "13:00" }, "2026-10-03T12:59");
+    await rt.runAutoUpdateIfDue();
+    expect(requestUpdate).not.toHaveBeenCalled();
+    at("2026-10-03T13:00");
+    await rt.runAutoUpdateIfDue();
+    expect(requestUpdate).toHaveBeenCalledTimes(1);
+
+    for (const bad of ["99:99", "13:30"]) {
+      await boot({ ...ON, auto_update_time: bad }, "2026-10-03T04:05");
+      await rt.runAutoUpdateIfDue();
+      expect(requestUpdate).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("asks at most once per Beijing day, whatever the outcome, and again the next day", async () => {
+    const repository = await boot(ON, "2026-10-03T04:05");
+    await rt.runAutoUpdateIfDue();
+    await rt.runAutoUpdateIfDue();
+    at("2026-10-03T23:59");
+    await rt.runAutoUpdateIfDue();
+    expect(requestUpdate).toHaveBeenCalledTimes(1);
+    expect(loadUpdateView).toHaveBeenCalledTimes(1);
+    expect(await repository.getSetting("auto_update_last_attempt")).toBe("2026-10-03");
+    at("2026-10-04T04:00");
+    await rt.runAutoUpdateIfDue();
+    expect(requestUpdate).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses up the day even when there is nothing to update to, or the updater does not answer", async () => {
+    const repository = await boot(ON, "2026-10-03T04:05");
+    available = null;
+    await rt.runAutoUpdateIfDue();
+    expect(await repository.getSetting("auto_update_last_attempt")).toBe("2026-10-03");
+    available = { tag: TAG, commit: "c".repeat(40) };
+    await rt.runAutoUpdateIfDue(); // same day: no second look
+    expect(requestUpdate).not.toHaveBeenCalled();
+    at("2026-10-04T04:05");
+    updater = null;
+    await rt.runAutoUpdateIfDue();
+    expect(requestUpdate).not.toHaveBeenCalled();
+    expect(await repository.getSetting("auto_update_last_attempt")).toBe("2026-10-04");
+  });
+
+  it.each([
+    ["an update is already running", { phase: "building" }],
+    ["a checkout is waiting to be restored", { phase: "failed", pendingRestore: true }],
+    ["a rollback needs a person", { phase: "failed", needsManualRecovery: true }],
+    ["the deploy folder was changed by hand", { phase: "failed", servingUnknown: true }],
+  ])("does not start while %s", async (_name, status) => {
+    const repository = await boot(ON, "2026-10-03T04:05");
+    updater = { ...idle, ...status };
+    await rt.runAutoUpdateIfDue();
+    expect(requestUpdate).not.toHaveBeenCalled();
+    expect(await repository.getSetting("auto_update_last_attempt")).toBe("2026-10-03");
+  });
+
+  it("does not start while this web process is holding new tasks for an update", async () => {
+    await boot(ON, "2026-10-03T04:05");
+    const { setUpdateHold } = await import("./update-hold");
+    setUpdateHold(Date.now(), 60_000);
+    await rt.runAutoUpdateIfDue();
+    expect(requestUpdate).not.toHaveBeenCalled();
+  });
+
+  it("does nothing on desktop or in demo mode", async () => {
+    const repository = await boot(ON, "2026-10-03T04:05");
+    process.env.MEDIA_TRACK_DESKTOP = "1";
+    await rt.runAutoUpdateIfDue();
+    delete process.env.MEDIA_TRACK_DESKTOP;
+    process.env.MEDIA_TRACK_DEMO_MODE = "1";
+    await rt.runAutoUpdateIfDue();
+    expect(loadUpdateView).not.toHaveBeenCalled();
+    expect(requestUpdate).not.toHaveBeenCalled();
+    expect(await repository.getSetting("auto_update_last_attempt")).toBeNull();
+  });
+
+  it("a refused request does not count as a failed update", async () => {
+    const repository = await boot(ON, "2026-10-03T04:05");
+    requestUpdate.mockImplementation(async () => ({ ok: false, reason: "busy" }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await rt.runAutoUpdateIfDue();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("busy"));
+    } finally {
+      warn.mockRestore();
+    }
+    expect(await repository.getSetting("auto_update_fail_streak")).toBeNull();
+  });
+
+  describe("two failures on the same release stop it", () => {
+    const failed = (finishedAt: string, tag = TAG) => ({
+      ...idle,
+      phase: "rolled_back",
+      targetTag: tag,
+      finishedAt,
+    });
+    const streak = async (repository: { getSetting(k: string): Promise<string | null> }) => {
+      const raw = await repository.getSetting("auto_update_fail_streak");
+      return raw ? (JSON.parse(raw) as { tag: string; count: number }) : null;
+    };
+
+    it("tries again after the first failure, and gives up after the second", async () => {
+      const repository = await boot(ON, "2026-10-03T04:05");
+      await rt.runAutoUpdateIfDue(); // day 1: first attempt
+      expect(requestUpdate).toHaveBeenCalledTimes(1);
+
+      updater = failed("2026-10-02T20:20:00.000Z");
+      at("2026-10-04T04:05");
+      await rt.runAutoUpdateIfDue(); // day 2: sees failure 1, tries again
+      expect(await streak(repository)).toMatchObject({ tag: TAG, count: 1 });
+      expect(requestUpdate).toHaveBeenCalledTimes(2);
+
+      updater = failed("2026-10-03T20:20:00.000Z");
+      at("2026-10-05T04:05");
+      await rt.runAutoUpdateIfDue(); // day 3: sees failure 2, stops
+      expect(await streak(repository)).toMatchObject({ tag: TAG, count: 2 });
+      expect(requestUpdate).toHaveBeenCalledTimes(2);
+
+      at("2026-10-06T04:05");
+      await rt.runAutoUpdateIfDue(); // still stopped on later days
+      expect(requestUpdate).toHaveBeenCalledTimes(2);
+    });
+
+    it("counts one failed attempt once, however many days pass without a new attempt", async () => {
+      const repository = await boot(ON, "2026-10-03T04:05");
+      updater = failed("2026-10-02T20:20:00.000Z");
+      // Day 1 and day 2 both skip (a person's own deploy is under way), then it clears.
+      updater = { ...updater, servingUnknown: true };
+      await rt.runAutoUpdateIfDue();
+      at("2026-10-04T04:05");
+      await rt.runAutoUpdateIfDue();
+      updater = failed("2026-10-02T20:20:00.000Z");
+      at("2026-10-05T04:05");
+      await rt.runAutoUpdateIfDue();
+      expect(await streak(repository)).toMatchObject({ tag: TAG, count: 1 });
+      expect(requestUpdate).toHaveBeenCalledTimes(1);
+    });
+
+    it("a newer release is tried again after the older one gave up", async () => {
+      const repository = await boot(
+        { ...ON, auto_update_fail_streak: JSON.stringify({ tag: TAG, count: 2, at: "x" }) },
+        "2026-10-03T04:05",
+      );
+      await rt.runAutoUpdateIfDue();
+      expect(requestUpdate).not.toHaveBeenCalled();
+      available = { tag: "v2026.10.03", commit: "d".repeat(40) };
+      updater = failed("2026-10-02T20:20:00.000Z");
+      at("2026-10-04T04:05");
+      await rt.runAutoUpdateIfDue();
+      expect(requestUpdate).toHaveBeenCalledWith("v2026.10.03");
+      expect(await streak(repository)).toMatchObject({ tag: TAG, count: 2 });
+    });
+
+    it("an empty or corrupt streak counts as none", async () => {
+      await boot({ ...ON, auto_update_fail_streak: "{oops" }, "2026-10-03T04:05");
+      await rt.runAutoUpdateIfDue();
+      expect(requestUpdate).toHaveBeenCalledTimes(1);
+      await boot({ ...ON, auto_update_fail_streak: "" }, "2026-10-03T04:05");
+      await rt.runAutoUpdateIfDue();
+      expect(requestUpdate).toHaveBeenCalledTimes(1);
+    });
+  });
+});

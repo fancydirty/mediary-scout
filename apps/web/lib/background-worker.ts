@@ -26,19 +26,35 @@ export interface DrainDeps {
    *  drive client that throws "PAN115_COOKIE is required" every poll. Optional so
    *  existing callers/tests behave unchanged (absent ⇒ assume configured). */
   isDriveConfigured?: (() => Promise<boolean>) | undefined;
+  /** The daily auto-update check — self-gated, reads a few settings and returns. Runs
+   *  after the sweep, and also when no drive is connected: it touches no drive. */
+  autoUpdate?: (() => Promise<void>) | undefined;
+}
+
+async function checkAutoUpdate(deps: DrainDeps): Promise<void> {
+  if (!deps.autoUpdate) return;
+  try {
+    await deps.autoUpdate();
+  } catch (error) {
+    console.error(
+      `[background-worker] auto-update check failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 /**
  * One drain tick: claim+run queued workflows until the queue is idle (or the
- * safety cap is hit), then attempt the self-gated daily sweep. Returns how many
- * queued runs were executed. The sweep is always attempted, even if draining
- * threw, so a transient queue failure never starves 巡检.
+ * safety cap is hit), then attempt the self-gated daily sweep and the auto-update
+ * check. Returns how many queued runs were executed. The sweep is always attempted,
+ * even if draining threw, so a transient queue failure never starves 巡检; a failing
+ * sweep never starves the auto-update check either.
  */
 export async function drainQueueOnce(deps: DrainDeps): Promise<number> {
   // Fresh instance, no 网盘 connected yet → nothing the worker can do. Skip QUIETLY
   // (don't call runNext/runScheduled, which would build a drive client and throw
   // every poll). Resumes automatically once the user connects a drive.
   if (deps.isDriveConfigured && !(await deps.isDriveConfigured())) {
+    await checkAutoUpdate(deps);
     return 0;
   }
   const maxDrains = deps.maxDrains ?? 50;
@@ -63,6 +79,7 @@ export async function drainQueueOnce(deps: DrainDeps): Promise<number> {
       `[background-worker] daily sweep failed: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
+  await checkAutoUpdate(deps);
   return drained;
 }
 
@@ -82,6 +99,8 @@ export interface WorkerRuntime {
   /** Whether any drive is connected (gates the tick — see DrainDeps). Optional so
    *  test runtimes can omit it (absent ⇒ assume configured). */
   isDriveConfigured?: () => Promise<boolean>;
+  /** Daily auto-update check (see DrainDeps). Optional so test runtimes can omit it. */
+  autoUpdate?: () => Promise<void>;
 }
 
 /**
@@ -91,11 +110,12 @@ export interface WorkerRuntime {
  * 是桌面零点巡检 bug 的源头，已退役）。
  */
 export async function defaultRuntime(): Promise<WorkerRuntime> {
-  const { runNextQueuedWorkflow, runScheduledType3, recoverOrphanedRuns, workerHasConfiguredDrive } =
+  const { runNextQueuedWorkflow, runScheduledType3, runAutoUpdateIfDue, recoverOrphanedRuns, workerHasConfiguredDrive } =
     await import("./workflow-runtime");
   return {
     runNext: () => runNextQueuedWorkflow(),
     runScheduled: () => runScheduledType3(),
+    autoUpdate: () => runAutoUpdateIfDue(),
     recover: () => recoverOrphanedRuns(),
     isDriveConfigured: () => workerHasConfiguredDrive(),
   };
@@ -143,6 +163,7 @@ export function startBackgroundWorker(options?: { pollMs?: number; runtime?: Wor
           runNext: runtime.runNext,
           runScheduled: runtime.runScheduled,
           isDriveConfigured: runtime.isDriveConfigured,
+          autoUpdate: runtime.autoUpdate,
         });
         if (drained > 0) {
           console.log(`[background-worker] drained ${drained} queued run(s) this tick`);

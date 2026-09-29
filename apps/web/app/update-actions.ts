@@ -1,6 +1,7 @@
 "use server";
 
 import { isDemoMode } from "../lib/demo-mode";
+import { isAutoUpdateTime } from "../lib/auto-update-schedule";
 import { invalidateReleaseFeedCache } from "../lib/release-feed-server";
 import { resolveCurrentIsOwner } from "../lib/settings-attention-server";
 import { loadUpdateView } from "../lib/update-view-server";
@@ -28,9 +29,24 @@ export async function startUpdateAction(
   const offered = (await loadUpdateView()).available?.tag;
   if (!offered || offered !== tag) return { ok: false, message: REASON_TEXT.bad_tag, reason: "stale" };
   const result = await requestUpdate(offered);
-  return result.ok
-    ? { ok: true, message: "已开始更新。" }
-    : { ok: false, message: REASON_TEXT[result.reason], reason: result.reason };
+  if (!result.ok) return { ok: false, message: REASON_TEXT[result.reason], reason: result.reason };
+  // A click is a person's decision to try again: auto-update may retry a release it gave up on.
+  const { getWorkflowRepository, AUTO_UPDATE_FAIL_STREAK_SETTING_KEY } = await import("../lib/workflow-runtime");
+  await getWorkflowRepository().setSetting(AUTO_UPDATE_FAIL_STREAK_SETTING_KEY, "");
+  return { ok: true, message: "已开始更新。" };
+}
+
+/** The 「每天自动更新」 switch and its hour, whole hours in Beijing time. */
+export async function saveAutoUpdateAction(enabled: boolean, time: string): Promise<{ ok: boolean; message: string }> {
+  if (isDemoMode() || !(await resolveCurrentIsOwner())) return { ok: false, message: "没有权限。" };
+  if (!isAutoUpdateTime(time)) return { ok: false, message: "时间只能选整点。" };
+  const { getWorkflowRepository, AUTO_UPDATE_ENABLED_SETTING_KEY, AUTO_UPDATE_TIME_SETTING_KEY } = await import(
+    "../lib/workflow-runtime"
+  );
+  const repository = getWorkflowRepository();
+  await repository.setSetting(AUTO_UPDATE_ENABLED_SETTING_KEY, enabled ? "1" : "0");
+  await repository.setSetting(AUTO_UPDATE_TIME_SETTING_KEY, time);
+  return { ok: true, message: "已保存。" };
 }
 
 let lastManualCheck = 0;

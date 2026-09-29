@@ -79,6 +79,58 @@ describe("drainQueueOnce — the in-process queue drainer (one tick)", () => {
     expect(runNext).toHaveBeenCalledTimes(1);
     expect(runScheduled).toHaveBeenCalledTimes(1);
   });
+
+  it("runs the auto-update check after the sweep and survives its failure", async () => {
+    const calls: string[] = [];
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const drained = await drainQueueOnce({
+        runNext: async () => ({ status: "idle" }),
+        runScheduled: async () => void calls.push("sweep"),
+        autoUpdate: async () => {
+          calls.push("auto");
+          throw new Error("boom");
+        },
+      });
+      expect(drained).toBe(0);
+      expect(calls).toEqual(["sweep", "auto"]);
+      expect(error).toHaveBeenCalledWith(expect.stringContaining("auto-update check failed: boom"));
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("checks auto-update even when a failing drain and sweep came first", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const autoUpdate = vi.fn(async () => undefined);
+      await drainQueueOnce({
+        runNext: async () => {
+          throw new Error("queue down");
+        },
+        runScheduled: async () => {
+          throw new Error("sweep down");
+        },
+        autoUpdate,
+      });
+      expect(autoUpdate).toHaveBeenCalledTimes(1);
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("still checks auto-update when no drive is configured (it does not touch any drive)", async () => {
+    const runNext = vi.fn(async () => ({ status: "idle" as const }));
+    const runScheduled = vi.fn(async () => ({ outcomes: [] }));
+    const autoUpdate = vi.fn(async () => undefined);
+
+    const drained = await drainQueueOnce({ runNext, runScheduled, autoUpdate, isDriveConfigured: async () => false });
+
+    expect(drained).toBe(0);
+    expect(runNext).not.toHaveBeenCalled();
+    expect(runScheduled).not.toHaveBeenCalled();
+    expect(autoUpdate).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("startBackgroundWorker — the in-process worker loop (auto-drive)", () => {
@@ -132,6 +184,25 @@ describe("startBackgroundWorker — the in-process worker loop (auto-drive)", ()
     await vi.advanceTimersByTimeAsync(0);
 
     expect(runtime.recover).toHaveBeenCalledTimes(1); // only one loop started
+  });
+
+  it("each tick also runs the runtime's auto-update check, counted as in flight", async () => {
+    let inFlightDuringCheck = -1;
+    const runtime = {
+      recover: vi.fn(async () => 0),
+      runNext: vi.fn(async () => ({ status: "idle" })),
+      runScheduled: vi.fn(async () => undefined),
+      autoUpdate: vi.fn(async () => {
+        inFlightDuringCheck = inFlightCount();
+      }),
+    };
+
+    startBackgroundWorker({ pollMs: 1000, runtime });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(runtime.autoUpdate).toHaveBeenCalledTimes(1);
+    expect(inFlightDuringCheck).toBe(1);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(runtime.autoUpdate).toHaveBeenCalledTimes(2);
   });
 
   it("keeps draining on each poll interval after the first tick", async () => {
@@ -200,6 +271,7 @@ describe("defaultRuntime — 巡检调度接线（IGNORE_TIME_GATE 特例已退�
     vi.doMock("./workflow-runtime", () => ({
       runNextQueuedWorkflow: vi.fn(async () => ({ status: "idle" })),
       runScheduledType3: spy,
+      runAutoUpdateIfDue: vi.fn(async () => undefined),
       recoverOrphanedRuns: vi.fn(async () => 0),
       workerHasConfiguredDrive: vi.fn(async () => true),
     }));
@@ -208,6 +280,26 @@ describe("defaultRuntime — 巡检调度接线（IGNORE_TIME_GATE 特例已退�
     await runtime.runScheduled();
     return spy;
   }
+
+  async function loadDefaultRuntime(runAutoUpdateIfDue: ReturnType<typeof vi.fn>) {
+    vi.resetModules();
+    vi.doMock("./workflow-runtime", () => ({
+      runNextQueuedWorkflow: vi.fn(async () => ({ status: "idle" })),
+      runScheduledType3: vi.fn(async () => ({ outcomes: [] })),
+      runAutoUpdateIfDue,
+      recoverOrphanedRuns: vi.fn(async () => 0),
+      workerHasConfiguredDrive: vi.fn(async () => true),
+    }));
+    const { defaultRuntime } = await import("./background-worker");
+    return defaultRuntime();
+  }
+
+  it("autoUpdate → runAutoUpdateIfDue", async () => {
+    const spy = vi.fn(async () => undefined);
+    const runtime = await loadDefaultRuntime(spy);
+    await runtime.autoUpdate?.();
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
 
   it("runScheduled → runScheduledType3 无参调用（无 ignoreTimeGate，即使 env 残留 flag）", async () => {
     process.env.MEDIA_TRACK_PATROL_IGNORE_TIME_GATE = "1";

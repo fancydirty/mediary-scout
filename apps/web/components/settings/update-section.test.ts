@@ -43,7 +43,8 @@ const view = (overrides: Partial<UpdateView>): UpdateView => ({
 });
 const newer = { tag: "v2026.10.02", date: "2026-10-02", commit: "c".repeat(40), notes: [] };
 const DMG = "https://github.com/fancydirty/mediary-scout/releases/download/v2026.10.02/a.dmg";
-const render = (props: { view: UpdateView; desktop: boolean }) => renderToStaticMarkup(createElement(UpdateTab, props));
+const render = (props: { view: UpdateView; desktop: boolean; autoUpdate?: { enabled: boolean; time: string } }) =>
+  renderToStaticMarkup(createElement(UpdateTab, { autoUpdate: { enabled: false, time: "04:00" }, ...props }));
 
 describe("UpdateTab on desktop", () => {
   it("offers a one-click download of this platform's installer, and says how to install it", () => {
@@ -80,6 +81,8 @@ describe("UpdateTab on desktop", () => {
 });
 
 const FINISHED = "2026-10-02T20:00:00.000Z";
+// The button itself; the auto-update note also names 「立即更新」.
+const UPDATE_BUTTON = ">立即更新</button>";
 
 function updater(overrides: Partial<UpdaterStatus>): UpdaterStatus {
   return {
@@ -118,13 +121,13 @@ describe("UpdateTab one-click update", () => {
     });
     expect(html).toContain("正在检查新版本是否正常。");
     expect(html).toContain("update-bar");
-    expect(html).not.toContain("立即更新");
+    expect(html).not.toContain(UPDATE_BUTTON);
     expect(html).not.toContain("检查更新");
   });
 
   it("offers 立即更新 only on Docker, with an updater and a newer release, and not while one is running", () => {
     const ready = view({ available: newer, status: "available", updater: updater({ phase: "idle" }) });
-    expect(render({ desktop: false, view: ready })).toContain("立即更新");
+    expect(render({ desktop: false, view: ready })).toContain(UPDATE_BUTTON);
     const building = render({
       desktop: false,
       view: view({
@@ -134,9 +137,9 @@ describe("UpdateTab one-click update", () => {
       }),
     });
     expect(building).toContain("正在构建新版本，构建期间一切照常。");
-    expect(building).not.toContain("立即更新");
-    expect(render({ desktop: false, view: view({ updater: updater({ phase: "idle" }) }) })).not.toContain("立即更新");
-    expect(render({ desktop: true, view: { ...ready, download: { url: DMG, file: "dmg" } } })).not.toContain("立即更新");
+    expect(building).not.toContain(UPDATE_BUTTON);
+    expect(render({ desktop: false, view: view({ updater: updater({ phase: "idle" }) }) })).not.toContain(UPDATE_BUTTON);
+    expect(render({ desktop: true, view: { ...ready, download: { url: DMG, file: "dmg" } } })).not.toContain(UPDATE_BUTTON);
   });
 
   it("says the updater is not answering, without the migration command, when it is installed", () => {
@@ -144,7 +147,7 @@ describe("UpdateTab one-click update", () => {
     expect(html).toContain("更新助手暂时没有回应，稍后刷新再试。");
     expect(html).not.toContain("一键更新需要先完成一次手动升级");
     expect(html).not.toContain("./scripts/deploy.sh");
-    expect(html).not.toContain("立即更新");
+    expect(html).not.toContain(UPDATE_BUTTON);
   });
 
   it("tells a Docker instance with no updater to run deploy.sh once", () => {
@@ -153,7 +156,7 @@ describe("UpdateTab one-click update", () => {
     expect(html).toContain("./scripts/deploy.sh");
     expect(html).toContain("复制");
     expect(html).not.toContain("git pull");
-    expect(html).not.toContain("立即更新");
+    expect(html).not.toContain(UPDATE_BUTTON);
   });
 
   it("does not offer 立即更新 after a failed rollback, only the recovery message", () => {
@@ -171,7 +174,7 @@ describe("UpdateTab one-click update", () => {
         }),
       }),
     });
-    expect(html).not.toContain("立即更新");
+    expect(html).not.toContain(UPDATE_BUTTON);
     expect(html).toContain("自动回退也没成功");
   });
 
@@ -212,7 +215,7 @@ describe("UpdateTab one-click update", () => {
     const html = render({ desktop: false, view: view({}) });
     expect(html).toContain("已是最新");
     expect(html).toContain("检查更新");
-    expect(html).not.toContain("立即更新");
+    expect(html).not.toContain(UPDATE_BUTTON);
     expect(html).not.toContain("./scripts/deploy.sh");
   });
 
@@ -228,7 +231,7 @@ describe("UpdateTab one-click update", () => {
     });
     expect(html).toContain("下载新版本");
     expect(html).toContain("先从菜单栏图标退出巡影，再把新版拖进「应用程序」替换");
-    expect(html).not.toContain("立即更新");
+    expect(html).not.toContain(UPDATE_BUTTON);
     expect(html).not.toContain("检查更新");
     expect(html).not.toContain("./scripts/deploy.sh");
     expect(html).not.toContain("上次更新");
@@ -256,5 +259,46 @@ describe("nextPollStep", () => {
   });
   it("shows the new step while the update runs", () => {
     expect(nextPollStep(status("building"), false)).toBe("show");
+  });
+});
+
+describe("UpdateTab auto-update switch", () => {
+  const withUpdater = view({ updater: updater({ phase: "idle" }), updaterInstalled: true });
+
+  it("shows the switch and the hour on Docker when the updater is installed", () => {
+    const html = render({ desktop: false, view: withUpdater, autoUpdate: { enabled: true, time: "13:00" } });
+    expect(html).toContain("每天自动更新");
+    expect(html).toContain('role="switch"');
+    expect(html).toMatch(/role="switch"[^>]*checked=""|checked=""[^>]*role="switch"/);
+    expect(html).toContain('<option value="00:00">00:00</option>');
+    expect(html).toContain('<option value="13:00" selected="">13:00</option>');
+    expect(html).toContain('<option value="23:00">23:00</option>');
+    expect(html).toContain("有获取任务在进行时会等它结束");
+    expect(html).toContain("连续两次");
+  });
+
+  it("shows it switched off, at the saved hour", () => {
+    const html = render({ desktop: false, view: withUpdater, autoUpdate: { enabled: false, time: "04:00" } });
+    expect(html).toContain('role="switch"');
+    expect(html).not.toMatch(/role="switch"[^>]*checked=""|checked=""[^>]*role="switch"/);
+    expect(html).toContain('<option value="04:00" selected="">04:00</option>');
+  });
+
+  it("shows it even while an update is running or after a failed one", () => {
+    for (const phase of ["building", "failed", "rolled_back", "done"] as const) {
+      const html = render({ desktop: false, view: view({ updater: updater({ phase }), updaterInstalled: true }) });
+      expect(html).toContain("每天自动更新");
+    }
+  });
+
+  it("is not there on desktop, without an updater, or in the old-compose migration state", () => {
+    expect(render({ desktop: true, view: withUpdater })).not.toContain("每天自动更新");
+    expect(render({ desktop: false, view: view({}) })).not.toContain("每天自动更新");
+    expect(render({ desktop: false, view: view({ available: newer, status: "available" }) })).not.toContain("每天自动更新");
+  });
+
+  it("is there when the updater is installed but did not answer just now", () => {
+    const html = render({ desktop: false, view: view({ available: newer, status: "available", updaterInstalled: true }) });
+    expect(html).toContain("每天自动更新");
   });
 });

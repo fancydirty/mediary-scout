@@ -1,11 +1,11 @@
 import { connection } from "next/server";
 import { isDemoMode } from "../../lib/demo-mode";
-import { resolveIsDesktop } from "../../lib/workflow-runtime";
+import { getAutoUpdateSettings, getWorkflowRepository, resolveIsDesktop } from "../../lib/workflow-runtime";
 import { ACTIVE_UPDATER_PHASES, type UpdateView } from "../../lib/update-state";
 import { loadUpdateView } from "../../lib/update-view-server";
 import { resolveCurrentIsOwner } from "../../lib/settings-attention-server";
 import type { UpdaterPhase } from "../../lib/updater-client";
-import { CheckUpdatesButton, CopyCommandButton, UpdateNowButton } from "./update-actions";
+import { AutoUpdateSwitch, CheckUpdatesButton, CopyCommandButton, UpdateNowButton } from "./update-actions";
 
 const MIGRATE_COMMAND = "./scripts/deploy.sh";
 
@@ -19,12 +19,14 @@ const INSTALL_HINT = {
 } as const;
 
 /* Hallmark · component: update-tab · genre: modern-minimal · theme: project (apps/web/DESIGN.md, Spotify)
- * states: up-to-date · update-available · desktop-download · updating · waiting · rolled-back · no-updater · offline feed
+ * states: up-to-date · update-available · desktop-download · updating · waiting · rolled-back · no-updater · offline feed · auto-update row
  * 方向 A：状态卡在上 · 更新日志在下。 */
 export async function UpdateSection() {
   await connection();
   if (isDemoMode() || !(await resolveCurrentIsOwner())) return null;
-  return <UpdateTab view={await loadUpdateView()} desktop={resolveIsDesktop()} />;
+  const desktop = resolveIsDesktop();
+  const [view, autoUpdate] = await Promise.all([loadUpdateView(), getAutoUpdateSettings(getWorkflowRepository())]);
+  return <UpdateTab view={view} desktop={desktop} autoUpdate={autoUpdate} />;
 }
 
 export function ReleaseBlock({ release }: { release: UpdateView["releases"][number] }) {
@@ -91,7 +93,15 @@ export function formatUpdateFinishedAt(iso: string): string {
   }).format(date);
 }
 
-export function UpdateTab({ view, desktop }: { view: UpdateView; desktop: boolean }) {
+export function UpdateTab({
+  view,
+  desktop,
+  autoUpdate,
+}: {
+  view: UpdateView;
+  desktop: boolean;
+  autoUpdate: { enabled: boolean; time: string };
+}) {
   const updating = Boolean(view.updater && ACTIVE_UPDATER_PHASES.has(view.updater.phase));
   const failed = Boolean(view.updater && (view.updater.phase === "rolled_back" || view.updater.phase === "failed"));
   return (
@@ -144,6 +154,14 @@ export function UpdateTab({ view, desktop }: { view: UpdateView; desktop: boolea
           </p>
         ) : null}
       </section>
+      {!desktop && view.updaterInstalled ? (
+        <section className="panel update-auto">
+          <AutoUpdateSwitch initial={autoUpdate} />
+          <p className="update-muted">
+            有新版本时，每天这个时间自动更新；有获取任务在进行时会等它结束。更新需要几分钟，期间网页会短暂打不开。同一个版本连续两次没更新成功，就不再自动重试，等你点「立即更新」。
+          </p>
+        </section>
+      ) : null}
       <section className="panel update-log">
         <h3 className="update-log-title">更新日志</h3>
         {view.releases.length === 0 ? <p className="update-muted">暂时查不到更新日志。</p> : null}

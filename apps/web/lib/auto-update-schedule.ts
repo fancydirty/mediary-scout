@@ -1,6 +1,15 @@
 import type { UpdaterStatus } from "./updater-client";
 import { ACTIVE_UPDATER_PHASES } from "./update-state";
 
+export const DEFAULT_AUTO_UPDATE_TIME = "04:00";
+
+/** The hours the settings page offers (Beijing time): whole hours only. */
+export const AUTO_UPDATE_HOURS: readonly string[] = Array.from({ length: 24 }, (_, hour) => `${String(hour).padStart(2, "0")}:00`);
+
+export function isAutoUpdateTime(value: string): boolean {
+  return AUTO_UPDATE_HOURS.includes(value);
+}
+
 export interface AutoUpdateInput {
   enabled: boolean;
   /** Whole hour, `HH:MM`, Beijing time. */

@@ -5,17 +5,28 @@ vi.mock("../lib/settings-attention-server", () => ({ resolveCurrentIsOwner: vi.f
 vi.mock("../lib/update-view-server", () => ({ loadUpdateView: vi.fn() }));
 vi.mock("../lib/updater-client", () => ({ requestUpdate: vi.fn() }));
 vi.mock("../lib/release-feed-server", () => ({ invalidateReleaseFeedCache: vi.fn() }));
+const settings = vi.hoisted(() => new Map<string, string>());
+vi.mock("../lib/workflow-runtime", () => ({
+  AUTO_UPDATE_ENABLED_SETTING_KEY: "auto_update_enabled",
+  AUTO_UPDATE_TIME_SETTING_KEY: "auto_update_time",
+  AUTO_UPDATE_FAIL_STREAK_SETTING_KEY: "auto_update_fail_streak",
+  getWorkflowRepository: () => ({
+    getSetting: async (key: string) => settings.get(key) ?? null,
+    setSetting: async (key: string, value: string) => void settings.set(key, value),
+  }),
+}));
 
 import { isDemoMode } from "../lib/demo-mode";
 import { invalidateReleaseFeedCache } from "../lib/release-feed-server";
 import { resolveCurrentIsOwner } from "../lib/settings-attention-server";
 import { loadUpdateView } from "../lib/update-view-server";
 import { requestUpdate } from "../lib/updater-client";
-import { checkForUpdatesAction, startUpdateAction } from "./update-actions";
+import { checkForUpdatesAction, saveAutoUpdateAction, startUpdateAction } from "./update-actions";
 
 describe("startUpdateAction", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    settings.clear();
     vi.mocked(isDemoMode).mockReturnValue(false);
     vi.mocked(resolveCurrentIsOwner).mockResolvedValue(true);
   });
@@ -65,6 +76,65 @@ describe("startUpdateAction", () => {
       vi.mocked(requestUpdate).mockResolvedValue({ ok: false, reason });
       expect(await startUpdateAction("v2026.10.02")).toEqual({ ok: false, message, reason });
     }
+  });
+});
+
+describe("startUpdateAction and the auto-update failure count", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    settings.clear();
+    vi.mocked(isDemoMode).mockReturnValue(false);
+    vi.mocked(resolveCurrentIsOwner).mockResolvedValue(true);
+    vi.mocked(loadUpdateView).mockResolvedValue({ available: { tag: "v2026.10.02" } } as never);
+    settings.set("auto_update_fail_streak", JSON.stringify({ tag: "v2026.10.02", count: 2, at: "x" }));
+  });
+
+  it("a click that starts an update lets auto-update try again", async () => {
+    vi.mocked(requestUpdate).mockResolvedValue({ ok: true });
+    await startUpdateAction("v2026.10.02");
+    expect(settings.get("auto_update_fail_streak")).toBe("");
+  });
+
+  it("a click that did not start anything keeps the count", async () => {
+    vi.mocked(requestUpdate).mockResolvedValue({ ok: false, reason: "busy" });
+    await startUpdateAction("v2026.10.02");
+    await startUpdateAction("v2026.09.28"); // stale tag: never reaches the updater
+    expect(JSON.parse(settings.get("auto_update_fail_streak") ?? "")).toMatchObject({ count: 2 });
+  });
+});
+
+describe("saveAutoUpdateAction", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    settings.clear();
+    vi.mocked(isDemoMode).mockReturnValue(false);
+    vi.mocked(resolveCurrentIsOwner).mockResolvedValue(true);
+  });
+
+  it("saves the switch and the hour", async () => {
+    expect(await saveAutoUpdateAction(true, "03:00")).toEqual({ ok: true, message: "已保存。" });
+    expect(settings.get("auto_update_enabled")).toBe("1");
+    expect(settings.get("auto_update_time")).toBe("03:00");
+    expect(await saveAutoUpdateAction(false, "23:00")).toEqual({ ok: true, message: "已保存。" });
+    expect(settings.get("auto_update_enabled")).toBe("0");
+    expect(settings.get("auto_update_time")).toBe("23:00");
+    expect((await saveAutoUpdateAction(true, "00:00")).ok).toBe(true);
+  });
+
+  it("takes whole hours only", async () => {
+    for (const time of ["04:30", "24:00", "4:00", "04:00 ", "", "04", "ab:cd"]) {
+      expect(await saveAutoUpdateAction(true, time)).toEqual({ ok: false, message: "时间只能选整点。" });
+    }
+    expect(settings.size).toBe(0);
+  });
+
+  it("refuses the demo and non-owners without writing anything", async () => {
+    vi.mocked(isDemoMode).mockReturnValue(true);
+    expect(await saveAutoUpdateAction(true, "04:00")).toEqual({ ok: false, message: "没有权限。" });
+    vi.mocked(isDemoMode).mockReturnValue(false);
+    vi.mocked(resolveCurrentIsOwner).mockResolvedValue(false);
+    expect(await saveAutoUpdateAction(true, "04:00")).toEqual({ ok: false, message: "没有权限。" });
+    expect(settings.size).toBe(0);
   });
 });
 
