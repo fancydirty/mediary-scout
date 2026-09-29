@@ -32,8 +32,13 @@ export async function startUpdateAction(
   const result = await requestUpdate(offered);
   if (!result.ok) return { ok: false, message: REASON_TEXT[result.reason], reason: result.reason };
   // A click is a person's decision to try again: auto-update may retry a release it gave up on.
-  const { getWorkflowRepository, AUTO_UPDATE_FAIL_STREAK_SETTING_KEY } = await import("../lib/workflow-runtime");
-  await getWorkflowRepository().setSetting(AUTO_UPDATE_FAIL_STREAK_SETTING_KEY, "");
+  // The update is already running: a failed write here must not report it as not started.
+  try {
+    const { getWorkflowRepository, AUTO_UPDATE_FAIL_STREAK_SETTING_KEY } = await import("../lib/workflow-runtime");
+    await getWorkflowRepository().setSetting(AUTO_UPDATE_FAIL_STREAK_SETTING_KEY, "");
+  } catch (error) {
+    console.error(`[update] could not clear the auto-update retry count: ${error instanceof Error ? error.message : String(error)}`);
+  }
   return { ok: true, message: "已开始更新。" };
 }
 

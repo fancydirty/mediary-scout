@@ -32,6 +32,7 @@ describe("startUpdateAction", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     settings.clear();
+    failingWrites.clear();
     vi.mocked(isDemoMode).mockReturnValue(false);
     vi.mocked(resolveCurrentIsOwner).mockResolvedValue(true);
   });
@@ -48,6 +49,16 @@ describe("startUpdateAction", () => {
     expect(await startUpdateAction("v2026.10.02")).toEqual({ ok: true, message: "已开始更新。" });
     expect(requestUpdate).toHaveBeenCalledTimes(1);
     expect(requestUpdate).toHaveBeenCalledWith("v2026.10.02");
+  });
+
+  it("an update the updater accepted is reported as started even if clearing the retry count fails", async () => {
+    failingWrites.add("auto_update_fail_streak");
+    vi.mocked(loadUpdateView).mockResolvedValue({ available: { tag: "v2026.10.02" } } as never);
+    vi.mocked(requestUpdate).mockResolvedValue({ ok: true });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await startUpdateAction("v2026.10.02")).toEqual({ ok: true, message: "已开始更新。" });
+    expect(error).toHaveBeenCalled();
+    error.mockRestore();
   });
 
   it("marks the demo and non-owner refusals as denied", async () => {
