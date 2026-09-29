@@ -125,6 +125,9 @@ describe("buildSettingsAttentionItems", () => {
     expect(item).toMatchObject({ id: "update:ccccccc", severity: "info", title: "有新版本可用", actionLabel: "去更新" });
     expect(item?.href).toContain("tab=update");
     expect(item).not.toHaveProperty("prompt");
+    // Desktop downloads an installer and an old compose file has no updater yet: the text
+    // must not promise a one-click update the tab may not offer.
+    expect(item?.body).toBe("当前 v2026.09.28 · 新版本 v2026.10.02。去「更新」看看改了什么。");
   });
 
   it("shows no update item to a non-owner or when nothing newer exists", () => {

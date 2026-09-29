@@ -122,7 +122,7 @@ export function buildSettingsAttentionItems(input: {
       kind: "update_available",
       severity: "info",
       title: "有新版本可用",
-      body: `当前 ${input.availableUpdate.currentLabel} · 新版本 ${input.availableUpdate.tag}。去「更新」看改了什么，一键更新。`,
+      body: `当前 ${input.availableUpdate.currentLabel} · 新版本 ${input.availableUpdate.tag}。去「更新」看看改了什么。`,
       actionLabel: "去更新",
       href: href("update"),
     });
