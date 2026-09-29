@@ -178,6 +178,25 @@ describe("UpdateTab one-click update", () => {
     expect(html).toContain("自动回退也没成功");
   });
 
+  it("does not offer 立即更新 while the deploy folder was changed by hand, only the reason", () => {
+    const html = render({
+      desktop: false,
+      view: view({
+        available: newer,
+        status: "available",
+        updaterInstalled: true,
+        updater: updater({
+          phase: "failed",
+          message: "更新被中断了，之后部署目录被人手动换过版本，更新助手没有再改动它。等它跑起来后再更新。",
+          servingUnknown: true,
+          finishedAt: FINISHED,
+        }),
+      }),
+    });
+    expect(html).not.toContain(UPDATE_BUTTON);
+    expect(html).toContain("被人手动换过版本");
+  });
+
   it("shows an amber failure line and the log tail", () => {
     for (const phase of ["rolled_back", "failed"] as const) {
       const html = render({

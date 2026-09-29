@@ -11,6 +11,7 @@ const REASON_TEXT = {
   no_updater: "一键更新需要先完成一次手动升级（见下方命令）。",
   busy: "已经在更新了。",
   needs_recovery: "上次更新回退没成功，请先在部署目录运行 ./scripts/deploy.sh 恢复，再更新。",
+  serving_unknown: "部署目录被手动换过版本，等它跑起来后再更新。",
   bad_tag: "这个版本不是可更新的新版本，刷新页面再试。",
   unreachable: "连不上更新助手，稍后再试。",
 } as const;
@@ -20,7 +21,7 @@ export async function startUpdateAction(
 ): Promise<{
   ok: boolean;
   message: string;
-  reason?: "no_updater" | "busy" | "needs_recovery" | "bad_tag" | "unreachable" | "denied" | "stale";
+  reason?: "no_updater" | "busy" | "needs_recovery" | "serving_unknown" | "bad_tag" | "unreachable" | "denied" | "stale";
 }> {
   if (isDemoMode() || !(await resolveCurrentIsOwner()))
     return { ok: false, message: "没有权限。", reason: "denied" };

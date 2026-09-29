@@ -449,7 +449,7 @@ describe("updater", () => {
     expect(updater.status().servingUnknown).toBe(true);
   });
 
-  it("clears servingUnknown once a recheck sees the web serving the folder HEAD, and on a new run", async () => {
+  it("clears servingUnknown once a recheck sees the web serving the folder HEAD", async () => {
     let serving = "f".repeat(40);
     const calls = [];
     const dir = mkdtempSync(join(tmpdir(), "updater-"));
@@ -477,7 +477,8 @@ describe("updater", () => {
     expect(updater.status().servingUnknown).toBeUndefined();
   });
 
-  it("a new run clears servingUnknown even when no recheck ever saw the web serve the folder HEAD", async () => {
+  it("refuses a new update while servingUnknown, and accepts one once a recheck cleared it", async () => {
+    let serving = "f".repeat(40);
     const calls = [];
     const dir = mkdtempSync(join(tmpdir(), "updater-"));
     const updater = createUpdater({
@@ -492,15 +493,156 @@ describe("updater", () => {
       waitPollMs: 1,
       waitLimitMs: 1000,
       repoCommit: () => "a".repeat(40),
-      servingCommit: async () => "f".repeat(40),
+      servingCommit: async () => serving,
     });
     updater.start("v2026.10.02");
     await updater.idle();
     expect(updater.status().servingUnknown).toBe(true);
-    updater.start("v2026.10.03");
+    // The folder is on somebody's own checkout: an update would check a release tag out over it.
+    expect(updater.start("v2026.10.03")).toEqual({ accepted: false, reason: "serving_unknown" });
+    expect(calls).toHaveLength(1);
+    expect(updater.status().servingUnknown).toBe(true);
+    serving = "a".repeat(40); // the person's deploy.sh finished
+    await updater.recheckRecovery();
+    expect(updater.start("v2026.10.03")).toEqual({ accepted: true });
     await updater.idle();
-    expect(updater.status()).toMatchObject({ phase: "done" });
+    expect(updater.status()).toMatchObject({ phase: "done", targetTag: "v2026.10.03" });
     expect(updater.status().servingUnknown).toBeUndefined();
+  });
+
+  it("answers 409 serving_unknown over HTTP", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "updater-"));
+    writeFileSync(
+      join(dir, "status.json"),
+      JSON.stringify({ phase: "failed", targetTag: "v2026.10.02", fromCommit: null, startedAt: "x", finishedAt: "y", message: "", logTail: "", servingUnknown: true }),
+    );
+    const updater = createUpdater({
+      stateDir: dir,
+      runUpdate: () => Promise.resolve(0),
+      acquisitionsRunning: async () => false,
+      sleep: async () => {},
+      now: () => "2026-10-02T20:00:00.000Z",
+      waitPollMs: 1,
+      waitLimitMs: 1000,
+      repoCommit: () => "a".repeat(40),
+      servingCommit: async () => null,
+    });
+    const handler = createUpdaterHttp(updater, "t0k3n");
+    const req = new PassThrough();
+    req.method = "POST";
+    req.url = "/update";
+    req.headers = { authorization: "Bearer t0k3n" };
+    const res = { code: 0, body: "", writeHead(code) { this.code = code; return this; }, end(body) { this.body = body ?? ""; this.done?.(); } };
+    const done = new Promise((resolve) => (res.done = resolve));
+    handler(req, res);
+    req.end(JSON.stringify({ tag: "v2026.10.03" }));
+    await done;
+    expect(res.code).toBe(409);
+    expect(JSON.parse(res.body)).toEqual({ accepted: false, reason: "serving_unknown" });
+  });
+
+  it("a cut-off update whose restore finds the folder changed by hand is done with it: servingUnknown, nothing retried", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "updater-"));
+    writeFileSync(
+      join(dir, "status.json"),
+      JSON.stringify({ phase: "building", targetTag: "v2026.10.02", fromCommit: "c".repeat(40), startedAt: "x", finishedAt: null, message: "", logTail: "" }),
+    );
+    const boot = (calls) =>
+      createUpdater({
+        stateDir: dir,
+        runUpdate: (args) => {
+          calls.push(args);
+          return Promise.resolve(60);
+        },
+        acquisitionsRunning: async () => false,
+        sleep: async () => {},
+        now: () => "2026-10-02T20:00:00.000Z",
+        waitPollMs: 1,
+        waitLimitMs: 1000,
+        repoCommit: () => "a".repeat(40),
+      });
+    const first = [];
+    const updater = boot(first);
+    await updater.idle();
+    expect(first).toEqual([["restore", "c".repeat(40)]]);
+    expect(updater.status()).toMatchObject({
+      phase: "failed",
+      servingUnknown: true,
+      message: "更新被中断了，之后部署目录被人手动换过版本，更新助手没有再改动它。等它跑起来后再更新。",
+    });
+    expect(updater.status().pendingRestore).toBeUndefined();
+    expect(updater.status().needsManualRecovery).toBeUndefined();
+    // The flag survives a restart, and the restore is not tried again.
+    const second = [];
+    const restarted = boot(second);
+    await restarted.idle();
+    expect(second).toEqual([]);
+    expect(restarted.status().servingUnknown).toBe(true);
+    expect(restarted.start("v2026.10.03")).toEqual({ accepted: false, reason: "serving_unknown" });
+  });
+
+  it("exit 50 whose immediate restore finds the folder changed by hand ends in servingUnknown, not a retry loop", async () => {
+    const calls = [];
+    const { updater } = make({
+      runUpdate: (args, onLine) => {
+        calls.push(args);
+        if (Array.isArray(args)) return Promise.resolve(60);
+        onLine(`==> FROM ${"c".repeat(40)}`);
+        onLine("==> RESTORE_FAILED");
+        return Promise.resolve(50);
+      },
+    });
+    updater.start("v2026.10.02");
+    await updater.idle();
+    expect(calls).toEqual(["v2026.10.02", ["restore", "c".repeat(40)]]);
+    expect(updater.status()).toMatchObject({ phase: "failed", servingUnknown: true });
+    expect(updater.status().pendingRestore).toBeUndefined();
+    expect(updater.start("v2026.10.03")).toEqual({ accepted: false, reason: "serving_unknown" });
+  });
+
+  it("a new update whose pending restore finds the folder changed by hand does not run", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "updater-"));
+    writeFileSync(
+      join(dir, "status.json"),
+      JSON.stringify({
+        phase: "failed",
+        targetTag: "v2026.10.02",
+        fromCommit: "c".repeat(40),
+        startedAt: "x",
+        finishedAt: "y",
+        message: "更新被中断了，原来的版本仍在运行。",
+        logTail: "",
+        pendingRestore: true,
+      }),
+    );
+    const calls = [];
+    let restoreCode = 1;
+    const updater = createUpdater({
+      stateDir: dir,
+      runUpdate: (args) => {
+        calls.push(args);
+        return Promise.resolve(Array.isArray(args) ? restoreCode : 0);
+      },
+      acquisitionsRunning: async () => false,
+      sleep: async () => {},
+      now: () => "2026-10-02T20:00:00.000Z",
+      waitPollMs: 1,
+      waitLimitMs: 1000,
+      repoCommit: () => "a".repeat(40),
+    });
+    await updater.idle(); // the start-up retry: fails, still pending
+    calls.length = 0;
+    restoreCode = 60; // somebody checked something else out meanwhile
+    expect(updater.start("v2026.10.03")).toEqual({ accepted: true });
+    await updater.idle();
+    expect(calls).toEqual([["restore", "c".repeat(40)]]); // no update ran
+    expect(updater.status()).toMatchObject({
+      phase: "failed",
+      servingUnknown: true,
+      message: "更新被中断了，之后部署目录被人手动换过版本，更新助手没有再改动它。等它跑起来后再更新。",
+    });
+    expect(updater.status().pendingRestore).toBeUndefined();
+    expect(updater.start("v2026.10.04")).toEqual({ accepted: false, reason: "serving_unknown" });
   });
 
   it("maps a failed download to a failed update that points at the proxy setting", async () => {

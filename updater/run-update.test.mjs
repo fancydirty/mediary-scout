@@ -687,11 +687,11 @@ describe("run-update.sh", { timeout: 60_000 }, () => {
     expect(signatures(log)).toEqual(["inspect", "rev-parse", "rev-parse", "symbolic-ref", `checkout ${FROM}`, "release"]);
   });
 
-  it("restore leaves a folder someone else changed alone, and still exits 0", async () => {
+  it("restore leaves a folder someone else changed alone, exiting 60 without checking out", async () => {
     const { stubDir, log, env } = setup();
     writeFileSync(join(stubDir, "head"), `${FOREIGN}\n`);
     const result = await runArgs(env, ["restore", FROM, TAG_COMMIT]);
-    expect(result.code).toBe(0);
+    expect(result.code).toBe(60);
     expect(result.stdout).toContain("==> FOLDER_CHANGED");
     expect(signatures(log).some((step) => step.startsWith("checkout"))).toBe(false);
     expect(signatures(log)).toContain("release");
@@ -706,7 +706,7 @@ describe("run-update.sh", { timeout: 60_000 }, () => {
       writeFileSync(join(stubDir, "head"), `${TAG_COMMIT}\n`);
       writeFileSync(join(stubDir, "on-branch"), "");
       const result = await runArgs(env, args);
-      expect({ args, code: result.code }).toEqual({ args, code: 0 });
+      expect({ args, code: result.code }).toEqual({ args, code: 60 });
       expect(result.stdout).toContain("==> FOLDER_CHANGED");
       expect(signatures(log).some((step) => step.startsWith("checkout"))).toBe(false);
       expect(signatures(log)).toContain("release");
@@ -927,7 +927,7 @@ describe("run-update.sh", { timeout: 60_000 }, () => {
 
   it("fails closed when the target commit is unknown: a foreign detached HEAD is left alone", async () => {
     // No `to` argument (an ancient status.json). A person's unrelated detached checkout must
-    // not be overwritten: rollback exits 60 without building, restore leaves it and exits 0.
+    // not be overwritten: rollback exits 60 without building, restore leaves it and exits 60.
     {
       const { stubDir, log, env } = setup();
       writeFileSync(join(stubDir, "head"), `${FOREIGN}\n`);
@@ -940,7 +940,7 @@ describe("run-update.sh", { timeout: 60_000 }, () => {
       const { stubDir, log, env } = setup();
       writeFileSync(join(stubDir, "head"), `${FOREIGN}\n`);
       const result = await runArgs(env, ["restore", FROM]);
-      expect(result.code).toBe(0);
+      expect(result.code).toBe(60);
       expect(result.stdout).toContain("==> FOLDER_CHANGED");
       expect(signatures(log).some((step) => step.startsWith("checkout"))).toBe(false);
     }

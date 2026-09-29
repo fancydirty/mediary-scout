@@ -16,7 +16,7 @@
 #   `run-update.sh restore <commit> [to]` — before the swap: the old version never stopped,
 #     only the deploy folder is left on the new tag; check the old commit back out and
 #     release the hold if that run had taken it.
-#     Exit: 0 restored.
+#     Exit: 0 restored · 60 the folder was changed by someone else (left as it is; not retried).
 # The optional [to] is the commit that update was moving to: it tells a folder still on the
 # new tag (safe to move) from one a person has changed since (left as it is).
 # Either exits 2 on a bad commit.
@@ -346,17 +346,21 @@ if [ "$MODE" = restore ]; then
       web_post '{"hold":false}' >/dev/null 2>&1 || true
       exit 50
     fi
-    # A person changed the folder off the new tag: leave whatever they put there.
-    if [ "$FOLDER" = ours ]; then
-      if ! g -c advice.detachedHead=false checkout "$ROLLBACK_TO"; then
-        # Not under set -e: a failed checkout must still release the pause. Exit 50 keeps
-        # the restore pending, so the updater retries it.
-        echo "==> RESTORE_FAILED"
-        web_post '{"hold":false}' >/dev/null 2>&1 || true
-        exit 50
-      fi
-      echo "==> RESTORED $ROLLBACK_TO"
+    # A person changed the folder off the new tag: leave whatever they put there and stop
+    # retrying (60). What the folder's HEAD is is not what serves; the updater marks that and
+    # clears it once the person's own deploy is up.
+    if [ "$FOLDER" = changed ]; then
+      web_post '{"hold":false}' >/dev/null 2>&1 || true
+      exit 60
     fi
+    if ! g -c advice.detachedHead=false checkout "$ROLLBACK_TO"; then
+      # Not under set -e: a failed checkout must still release the pause. Exit 50 keeps
+      # the restore pending, so the updater retries it.
+      echo "==> RESTORE_FAILED"
+      web_post '{"hold":false}' >/dev/null 2>&1 || true
+      exit 50
+    fi
+    echo "==> RESTORED $ROLLBACK_TO"
   fi
   # The cut-off run may have taken the hold; the old version must start runs again.
   web_post '{"hold":false}' >/dev/null 2>&1 || true

@@ -31,6 +31,8 @@ const INTERRUPTED_MESSAGE = "更新被中断了，原来的版本仍在运行。
 const RESUME_ROLLBACK_MESSAGE = "更新中途被打断，正在回到原来的版本。";
 const ROLLING_BACK_MESSAGE = "新版本没通过自检，正在回到原来的版本，网页会短暂打不开。";
 const RECOVERED_MESSAGE = "上次更新没成功，之后已经恢复正常，可以再次更新。";
+const RESTORE_FOLDER_CHANGED_MESSAGE =
+  "更新被中断了，之后部署目录被人手动换过版本，更新助手没有再改动它。等它跑起来后再更新。";
 const MAX_BODY = 1024;
 
 export function isReleaseTag(value) {
@@ -184,7 +186,7 @@ export function createUpdater(opts) {
   }
 
   async function run(tag) {
-    const { pendingRestore: _stale, servingUnknown: _unknown, ...fresh } = status;
+    const { pendingRestore: _stale, ...fresh } = status;
     status = fresh;
     log.length = 0;
     save({ phase: "waiting", targetTag: tag, fromCommit: null, toCommit: null, startedAt: opts.now(), finishedAt: null });
@@ -285,10 +287,17 @@ export function createUpdater(opts) {
       if (code === 0) {
         const { pendingRestore: _done, ...rest } = status;
         status = rest;
+        save({});
+      } else if (code === 60) {
+        // Somebody changed the folder since: nothing left to restore, and the folder's HEAD is
+        // not what serves. New updates wait until recheckRecovery sees the web serving it.
+        const { pendingRestore: _gone, ...rest } = status;
+        status = { ...rest, servingUnknown: true };
+        save({ message: RESTORE_FOLDER_CHANGED_MESSAGE });
       } else {
         log.push("==> RESTORE_FAILED");
+        save({});
       }
-      save({});
       return;
     }
     save({
@@ -347,6 +356,9 @@ export function createUpdater(opts) {
       if (!isReleaseTag(tag)) return { accepted: false, reason: "bad_tag" };
       if (job) return { accepted: false, reason: "busy" };
       if (status.needsManualRecovery === true) return { accepted: false, reason: "needs_recovery" };
+      // The deploy folder is on somebody's own checkout, not on what serves: an update would
+      // check a release tag out over it. recheckRecovery clears this once their deploy is up.
+      if (status.servingUnknown === true) return { accepted: false, reason: "serving_unknown" };
       // A cut-off update's checkout is not back on the old commit yet: try that again first,
       // from the right commit, and say so. The new update runs only once it worked; if the
       // restore keeps failing, stop and ask for a person rather than update from a wrong tree.
@@ -362,6 +374,10 @@ export function createUpdater(opts) {
                 message: "部署目录没能切回原来的版本，这次先不更新了。请在部署目录运行 ./scripts/deploy.sh。",
                 finishedAt: opts.now(),
               });
+              return undefined;
+            }
+            if (status.servingUnknown === true) {
+              save({ phase: "failed", message: RESTORE_FOLDER_CHANGED_MESSAGE, finishedAt: opts.now() });
               return undefined;
             }
             return run(tag);
@@ -412,7 +428,11 @@ export function createUpdaterHttp(updater, token) {
             tag = null;
           }
           const outcome = updater.start(tag);
-          const status = outcome.accepted ? 202 : outcome.reason === "busy" || outcome.reason === "needs_recovery" ? 409 : 400;
+          const status = outcome.accepted
+            ? 202
+            : outcome.reason === "busy" || outcome.reason === "needs_recovery" || outcome.reason === "serving_unknown"
+              ? 409
+              : 400;
           res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(outcome));
         })
         .catch(() => {

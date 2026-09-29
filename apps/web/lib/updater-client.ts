@@ -102,7 +102,7 @@ export async function getUpdaterStatus(options: ClientOptions = {}): Promise<Upd
 export async function requestUpdate(
   tag: string,
   options: ClientOptions = {},
-): Promise<{ ok: true } | { ok: false; reason: "no_updater" | "busy" | "needs_recovery" | "bad_tag" | "unreachable" }> {
+): Promise<{ ok: true } | { ok: false; reason: "no_updater" | "busy" | "needs_recovery" | "serving_unknown" | "bad_tag" | "unreachable" }> {
   const token = await readToken(options.stateDir ?? DEFAULT_STATE_DIR);
   if (!token) return { ok: false, reason: "no_updater" };
   try {
@@ -115,7 +115,9 @@ export async function requestUpdate(
     if (response.status === 202) return { ok: true };
     if (response.status === 409) {
       const body = (await response.json().catch(() => null)) as { reason?: unknown } | null;
-      return { ok: false, reason: body?.reason === "needs_recovery" ? "needs_recovery" : "busy" };
+      if (body?.reason === "needs_recovery") return { ok: false, reason: "needs_recovery" };
+      if (body?.reason === "serving_unknown") return { ok: false, reason: "serving_unknown" };
+      return { ok: false, reason: "busy" };
     }
     if (response.status === 400) return { ok: false, reason: "bad_tag" };
     return { ok: false, reason: "unreachable" };

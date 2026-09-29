@@ -126,7 +126,7 @@ export function UpdateTab({
           </div>
         </div>
         {desktop ? <DesktopUpdateHint view={view} /> : null}
-        {!desktop && view.updater && (updating || (view.available && !view.updater.needsManualRecovery)) ? (
+        {!desktop && view.updater && (updating || (view.available && !view.updater.needsManualRecovery && !view.updater.servingUnknown)) ? (
           <UpdateNowButton tag={updating ? null : (view.available?.tag ?? null)} initial={view.updater} />
         ) : null}
         {!desktop && !updating && view.available && !view.updater && view.updaterInstalled ? (

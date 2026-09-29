@@ -60,6 +60,14 @@ describe("updater client", () => {
     });
   });
 
+  it("maps a 409 with serving_unknown to serving_unknown", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ accepted: false, reason: "serving_unknown" }), { status: 409 }));
+    expect(await requestUpdate("v2026.10.02", { stateDir: dir, fetchImpl: fetchImpl as never })).toEqual({
+      ok: false,
+      reason: "serving_unknown",
+    });
+  });
+
   it("maps 409 to busy, 400 to bad_tag, and anything else to unreachable", async () => {
     const busy = vi.fn(async () => new Response(JSON.stringify({ accepted: false, reason: "busy" }), { status: 409 }));
     expect(await requestUpdate("v2026.10.02", { stateDir: dir, fetchImpl: busy as never })).toEqual({
