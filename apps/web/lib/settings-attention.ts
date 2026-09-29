@@ -59,7 +59,8 @@ export function buildSettingsAttentionItems(input: {
    *  recordPanSouHealth)。**刻意不在这里探活** —— 这个函数在徽章轮询路径上,
    *  每 8s 一次,真打网络等于每 8s 捶一遍用户的 PanSou。 */
   searchSource?: { custom: boolean; reachable: boolean };
-  /** The newer release the 「更新」 tab offers, or null. Owner-only; never set on desktop or demo. */
+  /** The newer release the 「更新」 tab offers, or null. Owner-only, never in demo mode. On
+   *  desktop it is the newest release with both installers, which the tab offers to download. */
   availableUpdate: { tag: string; commit: string; currentLabel: string } | null;
   /** Non-primary workspace id — preserved on deep-links so inbox actions don't reset context. */
   activeStorageId?: string;

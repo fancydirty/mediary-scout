@@ -6,13 +6,18 @@ vi.mock("../lib/update-view-server", () => ({ loadUpdateView: vi.fn() }));
 vi.mock("../lib/updater-client", () => ({ requestUpdate: vi.fn() }));
 vi.mock("../lib/release-feed-server", () => ({ invalidateReleaseFeedCache: vi.fn() }));
 const settings = vi.hoisted(() => new Map<string, string>());
+/** Keys that fail to write (simulates a DB error part way through a save). */
+const failingWrites = vi.hoisted(() => new Set<string>());
 vi.mock("../lib/workflow-runtime", () => ({
   AUTO_UPDATE_ENABLED_SETTING_KEY: "auto_update_enabled",
   AUTO_UPDATE_TIME_SETTING_KEY: "auto_update_time",
   AUTO_UPDATE_FAIL_STREAK_SETTING_KEY: "auto_update_fail_streak",
   getWorkflowRepository: () => ({
     getSetting: async (key: string) => settings.get(key) ?? null,
-    setSetting: async (key: string, value: string) => void settings.set(key, value),
+    setSetting: async (key: string, value: string) => {
+      if (failingWrites.has(key)) throw new Error(`write ${key} failed`);
+      settings.set(key, value);
+    },
   }),
 }));
 
@@ -108,6 +113,7 @@ describe("saveAutoUpdateAction", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     settings.clear();
+    failingWrites.clear();
     vi.mocked(isDemoMode).mockReturnValue(false);
     vi.mocked(resolveCurrentIsOwner).mockResolvedValue(true);
   });
@@ -120,6 +126,21 @@ describe("saveAutoUpdateAction", () => {
     expect(settings.get("auto_update_enabled")).toBe("0");
     expect(settings.get("auto_update_time")).toBe("23:00");
     expect((await saveAutoUpdateAction(true, "00:00")).ok).toBe(true);
+  });
+
+  it("a save that fails half way never leaves updates switched on at an hour nobody chose", async () => {
+    settings.set("auto_update_enabled", "0");
+    settings.set("auto_update_time", "04:00");
+    // Turning on: the hour is written first, so a failure leaves the switch off.
+    failingWrites.add("auto_update_time");
+    await expect(saveAutoUpdateAction(true, "13:00")).rejects.toThrow();
+    expect(settings.get("auto_update_enabled")).toBe("0");
+    failingWrites.clear();
+    expect(await saveAutoUpdateAction(true, "13:00")).toEqual({ ok: true, message: "已保存。" });
+    // Turning off: the switch is written first, so a failure after it still leaves it off.
+    failingWrites.add("auto_update_time");
+    await expect(saveAutoUpdateAction(false, "05:00")).rejects.toThrow();
+    expect(settings.get("auto_update_enabled")).toBe("0");
   });
 
   it("takes whole hours only", async () => {

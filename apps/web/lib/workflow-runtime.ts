@@ -1761,11 +1761,16 @@ export const AUTO_UPDATE_FAIL_STREAK_SETTING_KEY = "auto_update_fail_streak";
 export async function getAutoUpdateSettings(
   repository: { getSetting(key: string): Promise<string | null> },
 ): Promise<{ enabled: boolean; time: string }> {
+  return { enabled: await isAutoUpdateEnabled(repository), time: await getAutoUpdateTime(repository) };
+}
+
+async function isAutoUpdateEnabled(repository: { getSetting(key: string): Promise<string | null> }): Promise<boolean> {
+  return (await repository.getSetting(AUTO_UPDATE_ENABLED_SETTING_KEY))?.trim() === "1";
+}
+
+async function getAutoUpdateTime(repository: { getSetting(key: string): Promise<string | null> }): Promise<string> {
   const time = (await repository.getSetting(AUTO_UPDATE_TIME_SETTING_KEY))?.trim();
-  return {
-    enabled: (await repository.getSetting(AUTO_UPDATE_ENABLED_SETTING_KEY))?.trim() === "1",
-    time: time && isAutoUpdateTime(time) ? time : DEFAULT_AUTO_UPDATE_TIME,
-  };
+  return time && isAutoUpdateTime(time) ? time : DEFAULT_AUTO_UPDATE_TIME;
 }
 
 /** Failed attempts at one release. `at` is when the last counted attempt ended: one failed
@@ -1802,8 +1807,9 @@ function parseAutoUpdateFailStreak(raw: string | null): AutoUpdateFailStreak | n
 export async function runAutoUpdateIfDue(): Promise<void> {
   if (isDemoMode() || resolveIsDesktop()) return;
   const repository = getWorkflowRepository();
-  const { enabled, time } = await getAutoUpdateSettings(repository);
-  if (!enabled) return;
+  // Off by default and asked every tick: read the switch alone first.
+  if (!(await isAutoUpdateEnabled(repository))) return;
+  const time = await getAutoUpdateTime(repository);
   const { date, hhmm } = beijingDateTime();
   const lastAttemptDate = (await repository.getSetting(AUTO_UPDATE_LAST_ATTEMPT_SETTING_KEY))?.trim() ?? null;
   if (hhmm < time || lastAttemptDate === date) return;
@@ -1826,7 +1832,7 @@ export async function runAutoUpdateIfDue(): Promise<void> {
     await repository.setSetting(AUTO_UPDATE_FAIL_STREAK_SETTING_KEY, JSON.stringify(failStreak));
   }
   const due = shouldAutoUpdate({
-    enabled,
+    enabled: true,
     time,
     now: { date, hhmm },
     lastAttemptDate,

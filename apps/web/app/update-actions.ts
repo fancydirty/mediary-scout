@@ -45,8 +45,15 @@ export async function saveAutoUpdateAction(enabled: boolean, time: string): Prom
     "../lib/workflow-runtime"
   );
   const repository = getWorkflowRepository();
-  await repository.setSetting(AUTO_UPDATE_ENABLED_SETTING_KEY, enabled ? "1" : "0");
-  await repository.setSetting(AUTO_UPDATE_TIME_SETTING_KEY, time);
+  // Two separate writes: order them so a failure part way leaves updates off, never on at
+  // an hour nobody chose. On: hour first, then the switch. Off: the switch first.
+  if (enabled) {
+    await repository.setSetting(AUTO_UPDATE_TIME_SETTING_KEY, time);
+    await repository.setSetting(AUTO_UPDATE_ENABLED_SETTING_KEY, "1");
+  } else {
+    await repository.setSetting(AUTO_UPDATE_ENABLED_SETTING_KEY, "0");
+    await repository.setSetting(AUTO_UPDATE_TIME_SETTING_KEY, time);
+  }
   return { ok: true, message: "已保存。" };
 }
 

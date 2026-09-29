@@ -1061,8 +1061,11 @@ describe("runAutoUpdateIfDue（每日自动更新）", () => {
   });
 
   it("does nothing when switched off, without even reading the release list", async () => {
-    await boot({}, "2026-10-03T05:00");
+    const repository = await boot({}, "2026-10-03T05:00");
+    // The worker asks every 3 s and the switch is off by default: one settings read, no more.
+    const getSetting = vi.spyOn(repository, "getSetting");
     await rt.runAutoUpdateIfDue();
+    expect(getSetting.mock.calls).toEqual([["auto_update_enabled"]]);
     expect(loadUpdateView).not.toHaveBeenCalled();
     expect(requestUpdate).not.toHaveBeenCalled();
   });
