@@ -70,7 +70,7 @@ describe("startUpdateAction", () => {
       ["busy", "已经在更新了。"],
       ["no_updater", "一键更新需要先完成一次手动升级（见下方命令）。"],
       ["needs_recovery", "上次更新回退没成功，请先在部署目录运行 ./scripts/deploy.sh 恢复，再更新。"],
-      ["serving_unknown", "部署目录被手动换过版本，等它跑起来后再更新。"],
+      ["serving_unknown", "部署目录被人手动换过版本。请在部署目录运行 ./scripts/deploy.sh，跑起来之后就能更新。"],
       ["bad_tag", "这个版本不是可更新的新版本，刷新页面再试。"],
       ["unreachable", "连不上更新助手，稍后再试。"],
     ] as const) {

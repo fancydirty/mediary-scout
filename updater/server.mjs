@@ -32,7 +32,7 @@ const RESUME_ROLLBACK_MESSAGE = "更新中途被打断，正在回到原来的�
 const ROLLING_BACK_MESSAGE = "新版本没通过自检，正在回到原来的版本，网页会短暂打不开。";
 const RECOVERED_MESSAGE = "上次更新没成功，之后已经恢复正常，可以再次更新。";
 const RESTORE_FOLDER_CHANGED_MESSAGE =
-  "更新被中断了，之后部署目录被人手动换过版本，更新助手没有再改动它。等它跑起来后再更新。";
+  "更新被中断了，之后部署目录被人手动换过版本，更新助手没有再改动它。请在部署目录运行 ./scripts/deploy.sh，跑起来之后就能再更新。";
 const MAX_BODY = 1024;
 
 export function isReleaseTag(value) {
@@ -254,7 +254,8 @@ export function createUpdater(opts) {
                   : code === 60
                     ? {
                         phase: "failed",
-                        message: "更新途中部署目录被人手动换过版本，这次先不更新了，更新助手没有再改动它。",
+                        message:
+                          "更新途中部署目录被人手动换过版本，这次先不更新了，更新助手没有再改动它。请在部署目录运行 ./scripts/deploy.sh，跑起来之后就能再更新。",
                         // The container was not swapped: the folder's HEAD is not what serves.
                         servingUnknown: true,
                       }
@@ -341,7 +342,8 @@ export function createUpdater(opts) {
       if (!head || head !== serving) return;
       const { needsManualRecovery: _cleared, servingUnknown: _known, ...rest } = status;
       status = rest;
-      save(manual ? { message: RECOVERED_MESSAGE } : {});
+      // Both flags come with a message that asks for ./scripts/deploy.sh: that is done now.
+      save({ message: RECOVERED_MESSAGE });
     } finally {
       rechecking = false;
     }

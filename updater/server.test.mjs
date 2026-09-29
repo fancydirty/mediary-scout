@@ -442,7 +442,7 @@ describe("updater", () => {
     expect(updater.status()).toMatchObject({
       phase: "failed",
       toCommit: "b".repeat(40),
-      message: "更新途中部署目录被人手动换过版本，这次先不更新了，更新助手没有再改动它。",
+      message: "更新途中部署目录被人手动换过版本，这次先不更新了，更新助手没有再改动它。请在部署目录运行 ./scripts/deploy.sh，跑起来之后就能再更新。",
     });
     expect(updater.status().needsManualRecovery).toBeUndefined();
     // The container was not swapped, so the folder HEAD is not what serves.
@@ -470,11 +470,15 @@ describe("updater", () => {
     updater.start("v2026.10.02");
     await updater.idle();
     expect(updater.status().servingUnknown).toBe(true);
+    // Updates are refused from here on, so the page must say what unblocks them.
+    expect(updater.status().message).toContain("./scripts/deploy.sh");
     await updater.recheckRecovery(); // the web still serves another commit
     expect(updater.status().servingUnknown).toBe(true);
     serving = "a".repeat(40); // the person's deploy.sh finished
     await updater.recheckRecovery();
     expect(updater.status().servingUnknown).toBeUndefined();
+    // The "run deploy.sh" advice is stale now: say it is fine again.
+    expect(updater.status()).toMatchObject({ phase: "failed", message: "上次更新没成功，之后已经恢复正常，可以再次更新。" });
   });
 
   it("refuses a new update while servingUnknown, and accepts one once a recheck cleared it", async () => {
@@ -568,7 +572,7 @@ describe("updater", () => {
     expect(updater.status()).toMatchObject({
       phase: "failed",
       servingUnknown: true,
-      message: "更新被中断了，之后部署目录被人手动换过版本，更新助手没有再改动它。等它跑起来后再更新。",
+      message: "更新被中断了，之后部署目录被人手动换过版本，更新助手没有再改动它。请在部署目录运行 ./scripts/deploy.sh，跑起来之后就能再更新。",
     });
     expect(updater.status().pendingRestore).toBeUndefined();
     expect(updater.status().needsManualRecovery).toBeUndefined();
@@ -639,7 +643,7 @@ describe("updater", () => {
     expect(updater.status()).toMatchObject({
       phase: "failed",
       servingUnknown: true,
-      message: "更新被中断了，之后部署目录被人手动换过版本，更新助手没有再改动它。等它跑起来后再更新。",
+      message: "更新被中断了，之后部署目录被人手动换过版本，更新助手没有再改动它。请在部署目录运行 ./scripts/deploy.sh，跑起来之后就能再更新。",
     });
     expect(updater.status().pendingRestore).toBeUndefined();
     expect(updater.start("v2026.10.04")).toEqual({ accepted: false, reason: "serving_unknown" });

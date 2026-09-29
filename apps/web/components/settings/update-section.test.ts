@@ -187,7 +187,7 @@ describe("UpdateTab one-click update", () => {
         updaterInstalled: true,
         updater: updater({
           phase: "failed",
-          message: "更新被中断了，之后部署目录被人手动换过版本，更新助手没有再改动它。等它跑起来后再更新。",
+          message: "更新被中断了，之后部署目录被人手动换过版本，更新助手没有再改动它。请在部署目录运行 ./scripts/deploy.sh，跑起来之后就能再更新。",
           servingUnknown: true,
           finishedAt: FINISHED,
         }),
