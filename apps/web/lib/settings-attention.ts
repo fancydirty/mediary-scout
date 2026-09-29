@@ -1,5 +1,3 @@
-import type { DeploymentUpdateState } from "./deployment-update";
-import { buildContainerUpgradePrompt } from "./deployment-update";
 import { DEFAULT_SETTINGS_TAB, type SettingsTabId } from "./settings-tabs-model";
 
 export type AttentionSeverity = "info" | "warning" | "blocker";
@@ -19,8 +17,6 @@ export interface SettingsAttentionItem {
   actionLabel: string;
   /** Settings deep-link path+query (no origin), e.g. `/settings?tab=services`. */
   href: string;
-  /** Present only for update_available — full agent deploy prompt. */
-  prompt?: string;
   /** First sight of the CURRENT occurrence (per-account state_since). Set by
    *  applySettingsAttentionState; absent on items straight from the builder. */
   createdAt?: string;
@@ -63,9 +59,8 @@ export function buildSettingsAttentionItems(input: {
    *  recordPanSouHealth)。**刻意不在这里探活** —— 这个函数在徽章轮询路径上,
    *  每 8s 一次,真打网络等于每 8s 捶一遍用户的 PanSou。 */
   searchSource?: { custom: boolean; reachable: boolean };
-  update: Pick<DeploymentUpdateState, "kind" | "behind" | "currentShort" | "latestShort"> | null;
-  /** Public request origin — baked into the update prompt's SSH/health-check steps. */
-  origin: string;
+  /** The newer release the 「更新」 tab offers, or null. Owner-only; never set on desktop or demo. */
+  availableUpdate: { tag: string; commit: string; currentLabel: string } | null;
   /** Non-primary workspace id — preserved on deep-links so inbox actions don't reset context. */
   activeStorageId?: string;
   settingsHref?: (tab?: SettingsAttentionTab) => string;
@@ -119,29 +114,17 @@ export function buildSettingsAttentionItems(input: {
     });
   }
 
-  if (
-    input.isOwner &&
-    input.update &&
-    input.update.kind === "container" &&
-    input.update.behind === true &&
-    input.update.currentShort &&
-    input.update.latestShort
-  ) {
+  if (input.isOwner && input.availableUpdate) {
     items.push({
-      // Version-scoped id: when remote main moves to a NEW latestShort this item
-      // gets a NEW id, so it reappears even after the user dismissed/saw the old one.
-      id: `update:${input.update.latestShort}`,
+      // Release-scoped id (7 hex, matches the dismiss-id pattern): a newer release gets a
+      // new id, so it reappears after the user dismissed the older one.
+      id: `update:${input.availableUpdate.commit.slice(0, 7)}`,
       kind: "update_available",
       severity: "info",
       title: "有新版本可用",
-      body: `当前 ${input.update.currentShort} · 远端 ${input.update.latestShort}。复制指令给本地 Agent 按自检流程升级。`,
-      actionLabel: "复制指令",
-      href: href(),
-      prompt: buildContainerUpgradePrompt({
-        currentShort: input.update.currentShort,
-        latestShort: input.update.latestShort,
-        origin: input.origin,
-      }),
+      body: `当前 ${input.availableUpdate.currentLabel} · 新版本 ${input.availableUpdate.tag}。去「更新」看改了什么，一键更新。`,
+      actionLabel: "去更新",
+      href: href("update"),
     });
   }
 

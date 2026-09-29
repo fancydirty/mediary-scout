@@ -5,8 +5,7 @@ import {
   type WorkflowRepository,
 } from "@media-track/workflow";
 import { isDemoMode } from "./demo-mode";
-import { loadDeploymentUpdateState } from "./deployment-update-server";
-import { DEFAULT_LOCAL_ORIGIN } from "./request-origin";
+import { loadUpdateView } from "./update-view-server";
 import {
   ATTENTION_DISMISSED_KEY,
   ATTENTION_SEEN_AT_KEY,
@@ -79,11 +78,9 @@ async function loadAttentionState(
 const MAX_DISMISSALS = 100;
 
 /** Account-scoped attention items for Settings badge + Action Inbox.
- *  Resolves account + drives once; optional `w` preserves workspace on deep-links.
- *  `origin` (public request origin) is baked into the update prompt. */
+ *  Resolves account + drives once; optional `w` preserves workspace on deep-links. */
 export async function loadSettingsAttentionSummary(options?: {
   w?: string | null;
-  origin?: string;
 }): Promise<SettingsAttentionSummary> {
   if (isDemoMode()) {
     return { count: 0, severity: null, items: [] };
@@ -122,9 +119,13 @@ export async function loadSettingsAttentionSummary(options?: {
   // 能对着一个从没探过的源(老用户在本次改动之前保存的)天天报假警。
   const searchSourceReachable = (pansouHealth?.trim() ?? "") !== "" ? pansouHealth!.trim() === "ok" : true;
   // update_available 只对站主存在（见 buildSettingsAttentionItems 的 isOwner
-  // 门控），所以非站主不该付这份代价：两次文件读 + 可能的 GitHub 探测，冷
-  // 缓存时最多要等满 5s 超时——而徽章每 8s 轮询一次。
-  const update = isOwner ? await loadDeploymentUpdateState() : null;
+  // 门控），所以非站主不该付这份代价。徽章每 8s 轮询：传 updaterStatus:false 跳过
+  // 更新助手往返，只问发布视图有没有更新的发行版。桌面也算——loadUpdateView 在桌面
+  // 走桌面发布源，有新安装包时同样给 available，徽章点进「更新」tab 下载。
+  const view = isOwner ? await loadUpdateView({ updaterStatus: false }) : null;
+  const availableUpdate = view?.available
+    ? { tag: view.available.tag, commit: view.available.commit, currentLabel: view.current.label }
+    : null;
 
   const items = buildSettingsAttentionItems({
     demo: false,
@@ -138,8 +139,7 @@ export async function loadSettingsAttentionSummary(options?: {
     brandLabel,
     llmConfigured: Boolean(llm.baseURL && llm.modelId),
     searchSource: { custom: customSearchSource, reachable: searchSourceReachable },
-    update,
-    origin: options?.origin ?? DEFAULT_LOCAL_ORIGIN,
+    availableUpdate,
     ...(workspace.activeStorageId ? { activeStorageId: workspace.activeStorageId } : {}),
   });
 

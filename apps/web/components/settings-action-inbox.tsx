@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { AlertTriangle, CircleAlert, Rocket } from "lucide-react";
 import type { SettingsAttentionItem, AttentionKind } from "../lib/settings-attention";
-import { CopyUpgradePromptButton } from "./copy-upgrade-prompt-button";
 import { DismissAttentionButton } from "./dismiss-attention-button";
 
 /**
@@ -44,19 +43,12 @@ export function SettingsActionInbox({ items }: { items: SettingsAttentionItem[] 
                 <div>
                   <div className="attention-item-title">{item.title}</div>
                   <div className="attention-item-body">{item.body}</div>
-                  {item.kind === "update_available" && item.prompt ? (
-                    <div className="attention-item-prompt">
-                      <CopyUpgradePromptButton prompt={item.prompt} />
-                    </div>
-                  ) : null}
                 </div>
               </div>
               <div className="attention-item-actions">
-                {item.kind === "update_available" ? null : (
-                  <Link className="primary-button attention-item-action" href={item.href}>
-                    {item.actionLabel}
-                  </Link>
-                )}
+                <Link className="primary-button attention-item-action" href={item.href}>
+                  {item.actionLabel}
+                </Link>
                 <DismissAttentionButton id={item.id} />
               </div>
             </div>

@@ -1,6 +1,5 @@
 import { connection, NextResponse, type NextRequest } from "next/server";
 import { loadSettingsAttentionSummary } from "../../../../lib/settings-attention-server";
-import { resolveRequestOrigin } from "../../../../lib/request-origin";
 
 const NO_STORE = { "Cache-Control": "no-store" } as const;
 
@@ -11,7 +10,6 @@ export async function GET(request: NextRequest) {
     await connection();
     const summary = await loadSettingsAttentionSummary({
       w: request.nextUrl.searchParams.get("w"),
-      origin: resolveRequestOrigin(request.headers),
     });
     const includeItems = request.nextUrl.searchParams.get("items") === "1";
     return NextResponse.json(

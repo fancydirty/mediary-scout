@@ -10,22 +10,15 @@ import {
 const brandLabel = (provider: string) =>
   ({ pan115: "115网盘", quark: "夸克网盘", guangya: "光鸭云盘" }[provider] ?? provider);
 
-const ORIGIN = "https://mediary.example.com";
-
 describe("buildSettingsAttentionItems", () => {
   it("returns empty in demo mode even with problems", () => {
     const items = buildSettingsAttentionItems({
       demo: true,
       isOwner: true,
       drives: [{ id: "cs1", provider: "quark", label: null, status: "frozen" }],
-      brandLabel, origin: ORIGIN,
+      brandLabel,
       llmConfigured: false,
-      update: {
-        kind: "container",
-        behind: true,
-        currentShort: "1111111",
-        latestShort: "2222222",
-      },
+      availableUpdate: { tag: "v2026.10.02", commit: "b".repeat(40), currentLabel: "v2026.09.28" },
     });
     expect(items).toEqual([]);
   });
@@ -38,9 +31,9 @@ describe("buildSettingsAttentionItems", () => {
         { id: "cs_q", provider: "quark", label: null, status: "frozen" },
         { id: "cs_a", provider: "pan115", label: "家里115", status: "active" },
       ],
-      brandLabel, origin: ORIGIN,
+      brandLabel,
       llmConfigured: true,
-      update: null,
+      availableUpdate: null,
     });
     expect(items).toEqual([
       expect.objectContaining({
@@ -59,9 +52,9 @@ describe("buildSettingsAttentionItems", () => {
       demo: false,
       isOwner: true,
       drives: [],
-      brandLabel, origin: ORIGIN,
+      brandLabel,
       llmConfigured: false,
-      update: null,
+      availableUpdate: null,
     });
     expect(items.map((i) => i.kind)).toEqual(["missing_llm"]);
     expect(items[0]?.severity).toBe("warning");
@@ -75,9 +68,9 @@ describe("buildSettingsAttentionItems", () => {
       demo: false,
       isOwner: true,
       drives: [],
-      brandLabel, origin: ORIGIN,
+      brandLabel,
       llmConfigured: true,
-      update: null,
+      availableUpdate: null,
       searchSource: { custom: true, reachable: false },
     });
     expect(items.map((i) => i.kind)).toEqual(["search_source_unreachable"]);
@@ -92,9 +85,9 @@ describe("buildSettingsAttentionItems", () => {
       demo: false,
       isOwner: true,
       drives: [],
-      brandLabel, origin: ORIGIN,
+      brandLabel,
       llmConfigured: true,
-      update: null,
+      availableUpdate: null,
       searchSource: { custom: true, reachable: true },
     });
     expect(items).toEqual([]);
@@ -105,9 +98,9 @@ describe("buildSettingsAttentionItems", () => {
       demo: false,
       isOwner: true,
       drives: [],
-      brandLabel, origin: ORIGIN,
+      brandLabel,
       llmConfigured: true,
-      update: null,
+      availableUpdate: null,
       searchSource: { custom: false, reachable: false },
     });
     expect(items).toEqual([]);
@@ -118,40 +111,27 @@ describe("buildSettingsAttentionItems", () => {
     expect(isAttentionItemId("search_source_unreachable")).toBe(true);
   });
 
-  it("adds container update as info severity with version-scoped id + origin-threaded prompt", () => {
-    const container = buildSettingsAttentionItems({
+  it("offers the newer release and links to the update tab (owner only), release-scoped id", () => {
+    const items = buildSettingsAttentionItems({
       demo: false,
       isOwner: true,
       drives: [],
-      brandLabel, origin: ORIGIN,
+      brandLabel,
       llmConfigured: true,
-      update: {
-        kind: "container",
-        behind: true,
-        currentShort: "aaaaaaa",
-        latestShort: "bbbbbbb",
-      },
+      availableUpdate: { tag: "v2026.10.02", commit: "c".repeat(40), currentLabel: "v2026.09.28" },
     });
-    expect(container).toHaveLength(1);
-    expect(container[0]?.kind).toBe("update_available");
-    // Version-scoped id: a NEW remote version gets a NEW id → reappears after dismiss/seen.
-    expect(container[0]?.id).toBe("update:bbbbbbb");
-    expect(container[0]?.severity).toBe("info");
-    expect(container[0]?.prompt).toContain("./scripts/deploy.sh");
-    expect(container[0]?.prompt).toContain("aaaaaaa");
-    expect(container[0]?.prompt).toContain(ORIGIN);
+    const item = items.find((entry) => entry.kind === "update_available");
+    // Release-scoped id (7 hex of the commit): a newer release gets a new id → reappears after dismiss.
+    expect(item).toMatchObject({ id: "update:ccccccc", severity: "info", title: "有新版本可用", actionLabel: "去更新" });
+    expect(item?.href).toContain("tab=update");
+    expect(item).not.toHaveProperty("prompt");
+  });
 
-    for (const kind of ["desktop", "web"] as const) {
-      const items = buildSettingsAttentionItems({
-        demo: false,
-        isOwner: true,
-        drives: [],
-        brandLabel, origin: ORIGIN,
-        llmConfigured: true,
-        update: { kind, behind: true, currentShort: "a", latestShort: "b" },
-      });
-      expect(items).toEqual([]);
-    }
+  it("shows no update item to a non-owner or when nothing newer exists", () => {
+    const update = { tag: "v2026.10.02", commit: "c".repeat(40), currentLabel: "v2026.09.28" };
+    const hasUpdate = (items: Array<{ kind: string }>) => items.some((item) => item.kind === "update_available");
+    expect(hasUpdate(buildSettingsAttentionItems({ demo: false, isOwner: false, drives: [], brandLabel, llmConfigured: true, availableUpdate: update }))).toBe(false);
+    expect(hasUpdate(buildSettingsAttentionItems({ demo: false, isOwner: true, drives: [], brandLabel, llmConfigured: true, availableUpdate: null }))).toBe(false);
   });
 
   it("hides update_available from non-owners (multi-user) but keeps per-account items", () => {
@@ -159,14 +139,9 @@ describe("buildSettingsAttentionItems", () => {
       demo: false,
       isOwner: false,
       drives: [{ id: "cs_q", provider: "quark", label: null, status: "frozen" }],
-      brandLabel, origin: ORIGIN,
+      brandLabel,
       llmConfigured: false,
-      update: {
-        kind: "container",
-        behind: true,
-        currentShort: "aaaaaaa",
-        latestShort: "bbbbbbb",
-      },
+      availableUpdate: { tag: "v2026.10.02", commit: "b".repeat(40), currentLabel: "v2026.09.28" },
     });
     expect(items.map((i) => i.kind).sort()).toEqual(["frozen_drive", "missing_llm"]);
     expect(items.some((i) => i.kind === "update_available")).toBe(false);
@@ -177,14 +152,14 @@ describe("buildSettingsAttentionItems", () => {
       demo: false,
       isOwner: true,
       drives: [] as Array<{ id: string; provider: string; label: string | null; status: "active" | "frozen" }>,
-      brandLabel, origin: ORIGIN,
+      brandLabel,
       llmConfigured: true,
-      update: null,
+      availableUpdate: null,
     };
     const updateOnly = summarizeSettingsAttention(
       buildSettingsAttentionItems({
         ...base,
-        update: { kind: "container", behind: true, currentShort: "1111111", latestShort: "2222222" },
+        availableUpdate: { tag: "v2026.10.02", commit: "2".repeat(40), currentLabel: "v2026.09.28" },
       }),
     );
     expect(updateOnly).toMatchObject({ count: 1, severity: "info" });
@@ -199,7 +174,7 @@ describe("buildSettingsAttentionItems", () => {
         ...base,
         drives: [{ id: "cs1", provider: "quark", label: null, status: "frozen" }],
         llmConfigured: false,
-        update: { kind: "container", behind: true, currentShort: "1111111", latestShort: "2222222" },
+        availableUpdate: { tag: "v2026.10.02", commit: "2".repeat(40), currentLabel: "v2026.09.28" },
       }),
     );
     expect(all.count).toBe(3);
@@ -213,9 +188,9 @@ describe("buildSettingsAttentionItems", () => {
       demo: false,
       isOwner: true,
       drives: [{ id: "cs_q", provider: "quark", label: null, status: "frozen" }],
-      brandLabel, origin: ORIGIN,
+      brandLabel,
       llmConfigured: false,
-      update: null,
+      availableUpdate: null,
       activeStorageId: "cs_other",
     });
     expect(items.map((i) => i.href)).toEqual([
@@ -303,9 +278,9 @@ describe("applySettingsAttentionState", () => {
     demo: false,
     isOwner: true,
     drives: [{ id: "cs1", provider: "quark", label: null, status: "frozen" }],
-    brandLabel, origin: ORIGIN,
+    brandLabel,
     llmConfigured: false,
-    update: { kind: "container", behind: true, currentShort: "1111111", latestShort: "2222222" },
+    availableUpdate: { tag: "v2026.10.02", commit: "2".repeat(40), currentLabel: "v2026.09.28" },
   }); // frozen:cs1 (blocker) + missing_llm (warning) + update:2222222 (info)
 
   const T0 = "2026-07-01T00:00:00.000Z";
