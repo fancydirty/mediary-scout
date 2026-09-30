@@ -1,5 +1,6 @@
 import { ensureMediaLibraryDirectory } from "../media-library-folder.js";
 import type { AuditEvent } from "../domain.js";
+import type { DrivePace } from "../drive-pacer.js";
 import type { StorageExecutor } from "../ports.js";
 
 /**
@@ -62,37 +63,46 @@ export async function ensureSeasonAcquisitionDirectories(
   return { showDirectoryId, seasonDirectoryIds, stagingDirectoryId };
 }
 
+/** A leftover staging dir the janitor handed over, and how this run reaches it. */
+export interface StagingRecoveryDirectories {
+  showDirectoryId: string;
+  stagingDirectoryId: string;
+  /** The drive's category dirs to walk down from, most likely first. Only for drives
+   *  whose executor writes where it listed (123 / 光鸭 / 天翼); omitted on 115 / 夸克. */
+  categoryDirectoryIds?: string[];
+  /** Spaces the walk's calls and waits out the drive's rate limit (123). */
+  pace?: DrivePace;
+}
+
 /**
  * A leftover staging dir is already the run's staging. Season dirs are resolved
  * the same way as other runs (reuse `Season NN` when it is there, create it only
  * when it is not). The show dir and the staging dir are not created.
  */
-export async function bindRecoveryDirectories(input: {
-  executor: Pick<StorageExecutor, "createDirectory" | "listChildDirectories">;
-  showDirectoryId: string;
-  stagingDirectoryId: string;
-  seasons: number[];
-  /** The drive's category dirs to walk down from, most likely first. Only for drives
-   *  whose executor writes where it listed (123 / 光鸭 / 天翼); omitted on 115 / 夸克. */
-  categoryDirectoryIds?: string[];
-}): Promise<AcquisitionDirectories> {
+export async function bindRecoveryDirectories(
+  input: StagingRecoveryDirectories & {
+    executor: Pick<StorageExecutor, "createDirectory" | "listChildDirectories">;
+    seasons: number[];
+  },
+): Promise<AcquisitionDirectories> {
+  const pace: DrivePace = input.pace ?? (<T>(run: () => Promise<T>) => run());
   // 123 / 光鸭 / 天翼 accept a write only into a directory this executor reached from a
   // scope root (the category dirs) or created. The janitor's ids come from another
   // executor, so walk down again: category → show here, show → season + staging below.
   // A show no longer under any category stays out of scope. A failed listing fails the
   // run: without the walk nothing here could be written.
   for (const categoryId of new Set(input.categoryDirectoryIds ?? [])) {
-    const shows = await input.executor.listChildDirectories(categoryId);
+    const shows = await pace(() => input.executor.listChildDirectories(categoryId));
     if (shows.some((show) => show.id === input.showDirectoryId)) break;
   }
-  const children = await input.executor.listChildDirectories(input.showDirectoryId);
+  const children = await pace(() => input.executor.listChildDirectories(input.showDirectoryId));
   const seasonDirectoryIds: Record<number, string> = {};
   for (const season of input.seasons) {
     const name = `Season ${String(season).padStart(2, "0")}`;
     const existing = children.find((child) => child.name === name);
     seasonDirectoryIds[season] = existing
       ? existing.id
-      : await input.executor.createDirectory({ name, parentId: input.showDirectoryId });
+      : await pace(() => input.executor.createDirectory({ name, parentId: input.showDirectoryId }));
   }
   return {
     showDirectoryId: input.showDirectoryId,

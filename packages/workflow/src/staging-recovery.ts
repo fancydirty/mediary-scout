@@ -2,6 +2,7 @@ import type { LanguageModel } from "ai";
 import type { MediaTitle, WorkflowRun } from "./domain.js";
 import type { ResourceProvider, StorageExecutor } from "./ports.js";
 import type { WorkflowRepository } from "./repository.js";
+import { drivePacer, type DriveClock } from "./drive-pacer.js";
 import { runStagingRecoveryV2AndPersist } from "./runner-v2.js";
 import { brandWritesOnlyListedDirectories } from "./storage-brands.js";
 import {
@@ -71,6 +72,8 @@ export async function runQueuedStagingRecovery(
     resolveAccountContext?: ResolveAccountWorkerContext;
     onAuthErrorFreeze?: (storageId: string, reason: string) => Promise<void>;
     mayStartRun?: MayStartRun;
+    /** Paces the drive calls made before the agent starts. Tests pass a fake one. */
+    clock?: DriveClock;
   },
 ): Promise<QueuedType2WorkerResult> {
   const now = input.now ?? (() => new Date().toISOString());
@@ -105,6 +108,8 @@ export async function runQueuedStagingRecovery(
         showDirectoryId: target.showDirectoryId,
         stagingDirectoryId: target.stagingDirectoryId,
         categoryDirectoryIds: recoveryCategoryDirectoryIds(deps, claimed.title.type),
+        // The janitor queued this while it was still walking the same drive.
+        pace: drivePacer(deps.storageProvider, input.clock),
       },
       categoryParentId: "unused",
       resourceProvider: deps.resourceProvider,

@@ -12,6 +12,7 @@ import {
   type StagingCleanupUnverified,
   type StagingKeptUnmoved,
   type StagingLeak,
+  type StagingRecoveryDirectories,
   type AcquisitionDirectories,
 } from "./directory-lifecycle.js";
 import type { DeadLinkStore } from "./dead-links.js";
@@ -81,7 +82,7 @@ export interface RunAcquisitionV2WorkflowRequest {
   linkHistory?: RunAcquisitionV2Request["linkHistory"];
   /** Leftover staging. The orphan dir is the staging handle; season dirs are resolved
    *  under `showDirectoryId`. The agent runs even when the DB already says complete. */
-  stagingRecovery?: { showDirectoryId: string; stagingDirectoryId: string; categoryDirectoryIds?: string[] };
+  stagingRecovery?: StagingRecoveryDirectories;
   onProgress?: (event: AgentToolEvent) => void;
 }
 
@@ -113,12 +114,8 @@ export async function runAcquisitionV2Workflow(
   // A recovery adopts the leftover dir and does not create a new staging dir.
   const directories = request.stagingRecovery
     ? await bindRecoveryDirectories({
+        ...request.stagingRecovery,
         executor: request.executor,
-        showDirectoryId: request.stagingRecovery.showDirectoryId,
-        stagingDirectoryId: request.stagingRecovery.stagingDirectoryId,
-        ...(request.stagingRecovery.categoryDirectoryIds
-          ? { categoryDirectoryIds: request.stagingRecovery.categoryDirectoryIds }
-          : {}),
         seasons: request.seasons.map((season) => season.seasonNumber),
       })
     : await ensureSeasonAcquisitionDirectories({

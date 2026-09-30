@@ -61,7 +61,7 @@ export interface RunTvAcquisitionV2Request {
   /** See orchestrator.linkHistory. */
   linkHistory?: RunAcquisitionV2WorkflowRequest["linkHistory"];
   /** Leftover staging dir adopted as this run's staging. See workflow-v2. */
-  stagingRecovery?: { showDirectoryId: string; stagingDirectoryId: string; categoryDirectoryIds?: string[] };
+  stagingRecovery?: RunAcquisitionV2WorkflowRequest["stagingRecovery"];
   onProgress?: (event: AgentToolEvent) => void;
   now?: () => string;
 }
