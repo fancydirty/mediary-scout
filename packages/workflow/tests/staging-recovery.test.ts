@@ -438,6 +438,46 @@ describe("staging_recovery", () => {
     await expect(staged.sim.listTree({ directoryId: staged.stagingId })).rejects.toThrow(/NOT_FOUND/);
   });
 
+  it("a failed category listing stops the recovery before the agent runs and leaves the leftover alone", async () => {
+    // Carrying on without the walk would hand the agent dirs it cannot write to.
+    const staged = await stage(false);
+    const tvCategory = await staged.sim.createDirectory({ name: "TV", parentId: "root" });
+    class RateLimitedCategory extends DerivedScopeExecutor {
+      override async listChildDirectories(parentId: string) {
+        if (parentId === tvCategory) throw new Error("PAN123_FAILED(/file/list/new): code=100011 请勿频繁操作，请稍后再试");
+        return super.listChildDirectories(parentId);
+      }
+    }
+    let modelCalls = 0;
+    const model = new MockLanguageModelV3({
+      doGenerate: async () => {
+        modelCalls += 1;
+        throw new Error("the model must not run");
+      },
+    });
+    const result = await runQueuedStagingRecovery({
+      repository: staged.repo,
+      resourceProvider: staged.resourceProvider,
+      storage: new RateLimitedCategory(staged.executor, [tvCategory, "root"]) as unknown as StorageExecutor,
+      model,
+      now: () => "2026-09-28T04:00:00.000Z",
+      resolveAccountContext: async () => ({
+        storageProvider: "pan123",
+        storageParentDirectoryId: tvCategory,
+        animeStorageParentDirectoryId: "root",
+      }),
+    });
+    expect(result.status).toBe("failed");
+    expect(modelCalls).toBe(0);
+    const saved = await staged.repo.getWorkflowRunSnapshot("recovery-1", { accountId: "acct", connectedStorageId: "drive" });
+    expect(saved?.workflowRun.status).toBe("failed");
+    expect(saved?.notifications).toEqual([]);
+    expect(await staged.repo.listNotifications({ accountId: "acct" })).toEqual([]);
+    const ids = (files: Array<{ id: string }>) => files.map((file) => file.id).sort();
+    expect(ids(await staged.sim.listTree({ directoryId: staged.stagingId }))).toEqual(ids(staged.stagingBefore));
+    expect(ids(await staged.sim.listTree({ directoryId: staged.seasonId }))).toEqual(ids(staged.seasonBefore));
+  });
+
   it("on 115 / 夸克 it does not list the category dirs (their executors look up a write's parents)", async () => {
     const staged = await stage(false);
     const tvCategory = await staged.sim.createDirectory({ name: "TV", parentId: "root" });
