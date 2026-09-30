@@ -139,6 +139,8 @@ describe("movie acquisition command + worker", () => {
     expect(saved?.workflowRun.kind).toBe("movie_init");
     expect(saved?.workflowRun.status).toBe("succeeded");
     expect(saved?.title.type).toBe("movie");
+    // The user asked for this film: its result is pushed on its own, not saved for the digest.
+    expect(saved?.notifications.map((notification) => notification.trigger)).toEqual(["user"]);
   });
 });
 

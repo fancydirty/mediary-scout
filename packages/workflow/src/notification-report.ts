@@ -484,6 +484,10 @@ export function formatDailyDigestPushText(
       // so a single push carries real information, not just "追完".
       const gained = report.newlyObtained.length > 0 ? `（补齐 ${report.newlyObtained.join("、")}）` : "";
       detail = `🎉 追完，全部获取${gained}${sizeSuffix}`;
+    } else if (report.status === "acquired") {
+      // A film the patrol landed has no episodes: its own lines (入库, a 字幕兜底
+      // warning) and its size, as its single push would have said.
+      detail = `${report.lines.join(" · ")}${sizeSuffix}`;
     } else {
       const segments: string[] = [];
       if (report.newlyObtained.length > 0) {

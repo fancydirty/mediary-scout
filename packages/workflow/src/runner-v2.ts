@@ -765,7 +765,8 @@ export async function runMovieAcquisitionV2AndPersist(input: {
   userRequest?: RunMovieAcquisitionV2Request["userRequest"];
   /** Replace runs: whether the film was obtained before (see RunMovieAcquisitionV2Request). */
   priorObtained?: boolean;
-  /** Replace runs: how the notification is pushed (see stampReplaceNotification). */
+  /** How the notification is pushed (see stampReplaceNotification): replace runs, and
+   *  the patrol's film runs (scheduled, into the daily digest). */
   notice?: ReplaceNotice;
   /** Replace runs: see HeldLockRun. */
   holdLockOpen?: boolean;

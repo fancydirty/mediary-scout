@@ -424,6 +424,11 @@ describe("runScheduledType3Monitoring (V2 engine)", () => {
     expect(outcomes[0]).toMatchObject({ trackedSeasonId: `${movie.id}_movie`, status: "ran", workflowRunId: "run_movie_patrol" });
     const saved = await repository.getWorkflowRunSnapshot("run_movie_patrol");
     expect(saved?.workflowRun.kind).toBe("movie_init");
+    // Like the shows it patrols, the film reports into the daily digest instead of
+    // pushing on its own every sweep, and still reads as not found (not 已是最新).
+    expect(saved?.notifications.map((notification) => [notification.kind, notification.trigger])).toEqual([
+      ["no_coverage", "scheduled"],
+    ]);
 
     const held = await runScheduledType3Monitoring({
       repository,

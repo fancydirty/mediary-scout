@@ -925,6 +925,8 @@ async function patrolMovie(args: {
       ...(deps.agentMemory === undefined
         ? {}
         : { agentMemory: deps.agentMemory }),
+      // Reported in the sweep's daily digest, like the shows, not pushed on its own.
+      notice: { trigger: "scheduled", routineIfNothingReplaced: false },
       workflowRun: { id: workflowRunId, startedAt, finishedAt: null },
       now,
     });

@@ -5,6 +5,7 @@ import {
   buildSeasonReport,
   buildSeriesReport,
   createEpisodeStates,
+  emptyRunOutcome,
   episodeCode,
   formatBytes,
   formatDailyDigestPushText,
@@ -373,6 +374,22 @@ describe("formatDailyDigestPushText", () => {
       }),
     ]);
     expect(text).toContain("约 410 MB");
+  });
+
+  it("a film the patrol landed keeps its own lines and its size in the digest", () => {
+    const report = buildMovieReport("沙丘", undefined, { fileCount: 1, totalBytes: Math.round(5.2 * GB) }, true);
+    const text = formatDailyDigestPushText([
+      { id: "n_dune", workflowRunId: "run_dune", kind: "movie_init", title: "沙丘", body: "", createdAt: "2026-10-01T22:10:00.000Z", trigger: "scheduled", report },
+    ]);
+    expect(text).toContain("- **沙丘** — 已获取入库 · ⚠️ 可能无中文字幕(兜底) · 5.2 GB");
+  });
+
+  it("a film the patrol still cannot find reads as not found yet", () => {
+    const report = { ...buildMovieReport("黄金时段"), ...emptyRunOutcome() };
+    const text = formatDailyDigestPushText([
+      { id: "n_prime", workflowRunId: "run_prime", kind: "no_coverage", title: "黄金时段", body: "", createdAt: "2026-10-01T22:10:00.000Z", trigger: "scheduled", report },
+    ]);
+    expect(text).toContain("- **黄金时段** — 暂未找到可用资源 · 将持续尝试");
   });
 
   it("a changed show with no episode delta shows its concrete progress line, not a vague 已更新", () => {
