@@ -62,7 +62,7 @@ Mediary Scout 有两种部署方式:
 
 ## 然后执行
 - `git clone https://github.com/fancydirty/mediary-scout && cd mediary-scout`
-- 国内构建加速(首次 `up` **之前**):`docker compose build --build-arg NPM_REGISTRY=https://registry.npmmirror.com`,并在 `/etc/docker/daemon.json` 配 registry mirror
+- 国内构建加速(首次 `up` **之前**):按本文「国内构建加速」一节配镜像加速——Linux(软路由 / NAS 上直接装的 Docker)改 `/etc/docker/daemon.json`,Docker Desktop(macOS / Windows)在它自己的设置里改;npm 镜像用 `docker compose build --build-arg NPM_REGISTRY=https://registry.npmmirror.com`
 - `docker compose up -d`(首次构建要几分钟)
 - 多账号:在 `.env` 加 `MEDIA_TRACK_MULTI_USER=1`,再 `docker compose up -d web`
 - Cloudflare Tunnel:按本文「方式二」——在 Zero Trust 控制台建隧道,把 token 写进 `.env` 的 `TUNNEL_TOKEN=<你的-token>`,`docker compose --profile tunnel up -d`,并**务必加 Cloudflare Access**(别裸挂公网)
