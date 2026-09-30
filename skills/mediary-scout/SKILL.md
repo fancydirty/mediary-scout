@@ -20,7 +20,7 @@ description: >-
 cat ~/.mediary/agent.json
 ```
 
-- **文件不存在** → 用户还没启动过。让用户打开 **Mediary Scout 桌面 app**（首启会生成 token 并写这个文件），然后重试。
+- **文件不存在** → 桌面版用户：让用户打开 **Mediary Scout 桌面 app**（首启会生成 token 并写这个文件），然后重试。Docker 用户：这个文件要自己建，按仓库 `docs/agent-api.md` 的「开启 → Docker」三步来。
 - **文件存在但 curl connection refused** → app 没在运行。让用户启动 Mediary Scout 桌面 app。
 - **文件存在且能连** → 继续。
 

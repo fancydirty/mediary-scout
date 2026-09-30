@@ -76,7 +76,7 @@ Per-drive resource counts, and why only these five: [drive evaluations](docs/dri
 
 ## Disclaimer
 
-Mediary Scout is open-source, self-hosted software. It is not offered, and never will be offered, as a hosted service: you run your own instance and bring your own drive, AI model and metadata credentials. It performs the same file operations you could do by hand in your own cloud drive. See [project positioning](docs/distribution-and-legal-positioning.md). Not affiliated with 115, Quark, GuangYaPan, 123, Tianyi, TMDB, or any indexer.
+Mediary Scout is open-source, self-hosted software. It is not offered, and never will be offered, as a hosted service: you run your own instance and bring your own drive and AI model credentials. It performs the same file operations you could do by hand in your own cloud drive. See [project positioning](docs/distribution-and-legal-positioning.md). Not affiliated with 115, Quark, GuangYaPan, 123, Tianyi, TMDB, or any indexer.
 
 ## Credits
 

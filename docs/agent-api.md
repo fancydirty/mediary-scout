@@ -4,14 +4,30 @@
 
 ## 开启
 
-- **桌面版**：自动开启。第一次启动时会把连接信息写到 `~/.mediary/agent.json`。
-- **Docker**：在 `.env` 里设 `MEDIA_TRACK_AGENT_TOKEN=<一串随机字符>`，再在部署目录运行 `docker compose up -d`。
+**桌面版**：自动开启。第一次启动时会生成 token，并把地址和 token 写到 `~/.mediary/agent.json`，skill 就从这个文件读。
+
+**Docker**：
+
+1. 生成一个随机 token：`openssl rand -hex 32`。这个 token 能改设置、发起获取，别用短的或好猜的。
+2. 写进部署目录的 `.env`：`MEDIA_TRACK_AGENT_TOKEN=<上一步的输出>`，然后在部署目录运行 `docker compose up -d`。
+3. 在跑编程 agent 的那台电脑上自己建连接文件（这台电脑要能访问实例，比如同一局域网或 Tailscale）：
+
+```bash
+mkdir -p ~/.mediary && chmod 700 ~/.mediary
+printf '{"baseUrl":"http://<主机IP>:3000","token":"<同一个 token>"}\n' > ~/.mediary/agent.json
+chmod 600 ~/.mediary/agent.json
+```
 
 ## 装上 skill
 
+skill 在本仓库的 `skills/mediary-scout` 里。桌面版用户手上没有仓库，先拉一份：
+
 ```bash
-mkdir -p ~/.claude/skills/ && cp -r skills/mediary-scout ~/.claude/skills/      # 或 ~/.codex/skills/、~/.config/opencode/skills/
+git clone --depth 1 https://github.com/fancydirty/mediary-scout /tmp/mediary-scout
+mkdir -p ~/.claude/skills/ && cp -r /tmp/mediary-scout/skills/mediary-scout ~/.claude/skills/      # 或 ~/.codex/skills/、~/.config/opencode/skills/
 ```
+
+Windows 上在 Git Bash 里跑同样的命令，或者手动把 `skills/mediary-scout` 文件夹复制到 `%USERPROFILE%\.claude\skills\`。
 
 之后直接跟 agent 说「帮我找进击的巨人第二季」「蜘蛛侠下好了吗」「把画质改成 high」就行。能说哪些话见 [`skills/mediary-scout/SKILL.md`](../skills/mediary-scout/SKILL.md)。
 
