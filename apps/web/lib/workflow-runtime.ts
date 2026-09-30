@@ -3065,6 +3065,20 @@ export class StorageOwnedByOtherAccountError extends Error {
   }
 }
 
+/** A same-account re-login is the re-bind a 掉线 card asks for (「重新绑定即恢复」): store the
+ *  fresh credential and bring the drive back. The upsert deliberately keeps the status,
+ *  so the unfreeze is explicit here; until it runs, patrol and acquisition skip the drive. */
+async function refreshConnectedStorage(
+  repository: ReturnType<typeof getWorkflowRepository>,
+  existing: { id: string; status: "active" | "frozen" },
+  row: Parameters<ReturnType<typeof getWorkflowRepository>["upsertConnectedStorage"]>[0],
+): Promise<void> {
+  await repository.upsertConnectedStorage(row);
+  if (existing.status === "frozen") {
+    await repository.setConnectedStorageStatus(existing.id, "active", null, null);
+  }
+}
+
 /**
  * Shared bind skeleton for the two TOKEN brands (光鸭/天翼): enforce instance-wide
  * ownership, then refresh-or-insert the connected_storage row. The parts that
@@ -3085,20 +3099,6 @@ export class StorageOwnedByOtherAccountError extends Error {
  *   carry real per-brand differences (115 ownership + app_settings mirror; 夸克
  *   cookie shape) and keep their own binds.
  */
-/** A same-account re-login is the re-bind a 掉线 card asks for (「重新绑定即恢复」): store the
- *  fresh credential and bring the drive back. The upsert deliberately keeps the status,
- *  so the unfreeze is explicit here; until it runs, patrol and acquisition skip the drive. */
-async function refreshConnectedStorage(
-  repository: ReturnType<typeof getWorkflowRepository>,
-  existing: { id: string; status: "active" | "frozen" },
-  row: Parameters<ReturnType<typeof getWorkflowRepository>["upsertConnectedStorage"]>[0],
-): Promise<void> {
-  await repository.upsertConnectedStorage(row);
-  if (existing.status === "frozen") {
-    await repository.setConnectedStorageStatus(existing.id, "active", null, null);
-  }
-}
-
 async function bindTokenConnectedStorage(input: {
   provider: string;
   providerUid: string;

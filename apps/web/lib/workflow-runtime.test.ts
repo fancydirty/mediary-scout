@@ -1249,6 +1249,7 @@ describe("runAutoUpdateIfDue（每日自动更新）", () => {
 describe("queueing on a drive whose login died names that drive's brand", () => {
   // 在内存 SQLite 里绑一块已冻结的 123 网盘；这两个入口在碰网络之前就会查冻结。
   const prevPg = process.env.MEDIA_TRACK_POSTGRES_URL;
+  const prevMultiUser = process.env.MEDIA_TRACK_MULTI_USER;
   let rt: typeof import("./workflow-runtime");
 
   beforeEach(async () => {
@@ -1272,6 +1273,7 @@ describe("queueing on a drive whose login died names that drive's brand", () => 
   afterEach(() => {
     delete process.env.MEDIA_TRACK_SQLITE_PATH;
     if (prevPg !== undefined) process.env.MEDIA_TRACK_POSTGRES_URL = prevPg;
+    if (prevMultiUser !== undefined) process.env.MEDIA_TRACK_MULTI_USER = prevMultiUser;
     vi.resetModules();
   });
 
