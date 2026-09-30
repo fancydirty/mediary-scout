@@ -1417,3 +1417,127 @@ describe("runScheduledType3Monitoring — the user's rejected list applies to or
     expect(doc).toContain("OldGroup");
   });
 });
+
+/**
+ * A frozen drive's login is dead (re-bind to recover): nothing the patrol could do on it
+ * would work. 2026-09-30 production: a kicked-off 123 login froze its drive, and the 06:00
+ * patrol still reserved a run per show on it — four runs, each failing on the dead login.
+ */
+describe("runScheduledType3Monitoring — frozen drives", () => {
+  async function bindDrive(repository: InMemoryWorkflowRepository, id: string, status: "active" | "frozen") {
+    await repository.upsertConnectedStorage({
+      id,
+      accountId: "acct_default",
+      provider: "pan123",
+      providerUid: id,
+      payload: {},
+      createdAt: fixedNow(),
+    });
+    if (status === "frozen") {
+      await repository.setConnectedStorageStatus(id, "frozen", "PAN123_AUTH_FAILED: 未登录", fixedNow());
+    }
+  }
+
+  /** A show with E02 missing, bound to `drive` (null = unbound: it lands on the account's default drive). */
+  async function gappedShow(
+    repository: InMemoryWorkflowRepository,
+    storage: FakeStorageExecutor,
+    suffix: string,
+    drive: string | null,
+  ) {
+    const { title, season } = trackedFixture(suffix);
+    await repository.saveWorkflowRunSnapshot({
+      ...(drive === null ? {} : { connectedStorageId: drive }),
+      title,
+      season,
+      workflowRun: {
+        id: `seed_${season.id}`,
+        kind: "type2_init",
+        status: "succeeded",
+        trackedSeasonId: season.id,
+        startedAt: fixedNow(),
+        finishedAt: fixedNow(),
+        auditEvents: [],
+      },
+      episodes: createEpisodeStates({ trackedSeasonId: season.id, seasonNumber: 1, totalEpisodes: 2, latestAiredEpisode: 2 }),
+      resourceSnapshots: [],
+      decisions: [],
+      transferAttempts: [],
+      notifications: [],
+    });
+    await seedV2Season(storage, title, season, ["S01E01"]);
+    return season;
+  }
+
+  it("does not patrol a show whose drive is frozen; a show on a working drive still runs", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const storage = new FakeStorageExecutor();
+    await bindDrive(repository, "drive_live", "active");
+    await bindDrive(repository, "drive_dead", "frozen");
+    const live = await gappedShow(repository, storage, "live", "drive_live");
+    const dead = await gappedShow(repository, storage, "dead", "drive_dead");
+    let reserved = 0;
+
+    const outcomes = await runScheduledType3Monitoring({
+      repository, resourceProvider: emptyProvider(), storage, model: noCoverageModel(),
+      storageParentDirectoryId: "library_root", now: fixedNow,
+      createWorkflowRunId: () => `run_frozen_${(reserved += 1)}`,
+    });
+
+    expect(outcomes.map((o) => o.trackedSeasonId)).toEqual([live.id]);
+    expect(outcomes.some((o) => o.trackedSeasonId === dead.id)).toBe(false);
+    expect(reserved).toBe(1);
+  });
+
+  it("does not patrol an unbound show when its account's default drive is frozen", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const storage = new FakeStorageExecutor();
+    await bindDrive(repository, "drive_dead", "frozen");
+    await gappedShow(repository, storage, "unbound", null);
+    let reserved = 0;
+
+    const outcomes = await runScheduledType3Monitoring({
+      repository, resourceProvider: emptyProvider(), storage, model: throwingModel(),
+      storageParentDirectoryId: "library_root", now: fixedNow,
+      createWorkflowRunId: () => `run_unbound_${(reserved += 1)}`,
+      resolveDriveId: async () => "drive_dead",
+    });
+
+    expect(outcomes).toEqual([]);
+    expect(reserved).toBe(0);
+  });
+
+  it("a message on a frozen drive's show queues nothing: it stays pending until the drive is re-bound", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const storage = new FakeStorageExecutor();
+    await bindDrive(repository, "drive_dead", "frozen");
+    await gappedShow(repository, storage, "msg", "drive_dead");
+    const work = { accountId: "acct_default", drive: "drive_dead", titleKey: "title_msg" };
+    await repository.createUserMessage({ ...work, body: "第 1 集发蓝", episodeTags: ["S01E01"], now: fixedNow() });
+
+    const outcomes = await runScheduledType3Monitoring({
+      repository, resourceProvider: emptyProvider(), storage, model: throwingModel(),
+      storageParentDirectoryId: "library_root", now: fixedNow,
+    });
+
+    expect(outcomes).toEqual([]);
+    expect(await repository.listActiveWorkflowRuns({ accountId: "acct_default", connectedStorageId: "drive_dead" })).toEqual([]);
+    expect((await repository.listUserMessages(work))[0]?.status).toBe("pending");
+  });
+
+  it("once the drive is re-bound (active again) its shows are patrolled as before", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const storage = new FakeStorageExecutor();
+    await bindDrive(repository, "drive_back", "frozen");
+    await repository.setConnectedStorageStatus("drive_back", "active", null, null);
+    const back = await gappedShow(repository, storage, "back", "drive_back");
+
+    const outcomes = await runScheduledType3Monitoring({
+      repository, resourceProvider: emptyProvider(), storage, model: noCoverageModel(),
+      storageParentDirectoryId: "library_root", now: fixedNow,
+      createWorkflowRunId: () => "run_back",
+    });
+
+    expect(outcomes).toEqual([expect.objectContaining({ trackedSeasonId: back.id, status: "ran" })]);
+  });
+});

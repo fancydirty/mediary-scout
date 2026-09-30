@@ -510,8 +510,39 @@ export async function runScheduledType3Monitoring(input: {
     ...(await input.repository.listWorksWithPendingReplacements()),
   ];
   const requestKeys = new Set(requestWorks.map(workKey));
+
+  // The drive a show runs on: its bound drive, else its account's default drive (null:
+  // no drive at all → the process-wide fallback executor). One lookup per account.
+  const defaultDrives = new Map<string, Promise<string | null>>();
+  const defaultDriveOf = (accountId: string) => {
+    let drive = defaultDrives.get(accountId);
+    if (!drive) {
+      drive = input.resolveDriveId ? input.resolveDriveId(accountId) : Promise.resolve(null);
+      defaultDrives.set(accountId, drive);
+    }
+    return drive;
+  };
+  // A frozen drive's login is dead: every call on it fails until the drive is re-bound.
+  // Its shows and requests wait untouched (no run, no call to the drive) and are
+  // patrolled again once the drive is active.
+  const frozenDrives = new Set<string>();
+  for (const accountId of new Set([...trackedStates, ...requestWorks].map((item) => item.accountId))) {
+    for (const storage of await input.repository.listConnectedStorages(accountId)) {
+      if (storage.status === "frozen") frozenDrives.add(storage.id);
+    }
+  }
+  const skippedOnFrozen = new Map<string, number>();
+  const onFrozenDrive = async (accountId: string, connectedStorageId: string | null) => {
+    const drive = connectedStorageId ?? (await defaultDriveOf(accountId));
+    if (drive === null || !frozenDrives.has(drive)) return false;
+    skippedOnFrozen.set(drive, (skippedOnFrozen.get(drive) ?? 0) + 1);
+    return true;
+  };
+
   for (const key of requestKeys) {
     const [accountId, drive, titleKey] = JSON.parse(key) as [string, string, string];
+    // Still in requestKeys, so the ordinary patrol leaves the work alone too.
+    if (await onFrozenDrive(accountId, drive === "" ? null : drive)) continue;
     try {
       await queueReplaceRequest({ repository: input.repository, work: { accountId, drive, titleKey }, now, origin: "patrol" });
     } catch (error) {
@@ -532,26 +563,22 @@ export async function runScheduledType3Monitoring(input: {
       busyKeys.add(workKey({ accountId, drive: userMessageDrive(run.connectedStorageId), titleKey: run.title.id }));
     }
   }
-  const patrolStates = trackedStates.filter((s) => {
+  const patrolStates: typeof trackedStates = [];
+  for (const s of trackedStates) {
     const key = workKey({ accountId: s.accountId, drive: userMessageDrive(s.connectedStorageId), titleKey: s.title.id });
-    return !requestKeys.has(key) && !busyKeys.has(key);
-  });
+    if (requestKeys.has(key) || busyKeys.has(key)) continue;
+    if (await onFrozenDrive(s.accountId, s.connectedStorageId)) continue;
+    patrolStates.push(s);
+  }
+  for (const [drive, count] of skippedOnFrozen) {
+    console.log(`[patrol] drive ${drive} is frozen (login expired): skipped ${count} item(s) until it is re-bound`);
+  }
 
   // One drive at a time, several drives side by side (see runKeyedPool). The key
   // is the drive the run will actually land on: a state with no bound drive runs
   // on its account's default drive, so it must share that drive's key, not get
   // one of its own.
   const concurrency = input.maxConcurrentRuns ?? 1;
-  // One lookup per account, not per show.
-  const defaultDrives = new Map<string, Promise<string | null>>();
-  const defaultDriveOf = (accountId: string) => {
-    let drive = defaultDrives.get(accountId);
-    if (!drive) {
-      drive = input.resolveDriveId ? input.resolveDriveId(accountId) : Promise.resolve(null);
-      defaultDrives.set(accountId, drive);
-    }
-    return drive;
-  };
   const driveKeys =
     concurrency > 1
       ? await Promise.all(
