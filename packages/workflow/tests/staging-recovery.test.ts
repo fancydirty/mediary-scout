@@ -261,6 +261,72 @@ async function stage(failMove: boolean) {
   return { sim, repo, executor, created, removed, seasonId, stagingId, seasonBefore, stagingBefore, searches: () => searches, resourceProvider };
 }
 
+/**
+ * Mirrors the 123 / 光鸭 / 天翼 executors: a write target must be a scope root, a
+ * directory this executor created, or one it listed under an in-scope parent. A class
+ * (not a plain object) so the recovery path is exercised with methods that use `this`.
+ */
+class DerivedScopeExecutor {
+  private readonly inScope: Set<string>;
+
+  constructor(
+    private readonly inner: StorageExecutor,
+    roots: string[],
+  ) {
+    this.inScope = new Set(roots);
+  }
+
+  private assertInScope(directoryId: string, action: string): void {
+    if (!this.inScope.has(directoryId)) {
+      throw new Error(`WRITE_SCOPE_VIOLATION: refusing to ${action} outside configured write scope; fileId=${directoryId}`);
+    }
+  }
+
+  async listChildDirectories(parentId: string) {
+    const parentInScope = this.inScope.has(parentId);
+    const dirs = await this.inner.listChildDirectories!(parentId);
+    if (parentInScope) for (const dir of dirs) this.inScope.add(dir.id);
+    return dirs;
+  }
+
+  async listSubdirectories(input: { directoryId: string; maxDepth?: number }) {
+    const parentInScope = this.inScope.has(input.directoryId);
+    const dirs = await this.inner.listSubdirectories!(input);
+    if (parentInScope) for (const dir of dirs) this.inScope.add(dir.id);
+    return dirs;
+  }
+
+  async listTree(input: { directoryId: string; maxDepth?: number }) {
+    return this.inner.listTree(input);
+  }
+
+  async createDirectory(input: { name: string; parentId: string }) {
+    this.assertInScope(input.parentId, "create directory");
+    const id = await this.inner.createDirectory(input);
+    this.inScope.add(id);
+    return id;
+  }
+
+  async moveFiles(input: { fileIds: string[]; targetDirectoryId: string }) {
+    this.assertInScope(input.targetDirectoryId, "move files into");
+    return this.inner.moveFiles!(input);
+  }
+
+  async deleteFiles(input: { directoryId: string; fileIds: string[] }) {
+    this.assertInScope(input.directoryId, "delete files");
+    return this.inner.deleteFiles!(input);
+  }
+
+  async removeDirectory(directoryId: string) {
+    this.assertInScope(directoryId, "remove directory");
+    return this.inner.removeDirectory(directoryId);
+  }
+
+  async renameFile(): Promise<never> {
+    throw new Error("rename is not part of this recovery");
+  }
+}
+
 describe("staging_recovery", () => {
   it("claims nothing while mayStartRun says no; the recovery stays queued", async () => {
     const staged = await stage(false);
@@ -313,6 +379,30 @@ describe("staging_recovery", () => {
     expect(seasonIds).not.toContain(duplicate.id);
     await expect(staged.sim.listTree({ directoryId: staged.stagingId })).rejects.toThrow(/NOT_FOUND/);
     expect(staged.removed).toContain(staged.stagingId);
+  });
+
+  it("on a derived-scope drive (123 / 光鸭 / 天翼) it reaches the leftover through the drive's category dirs", async () => {
+    // 2026-09-30 production: the recovery adopted the janitor's ids without walking down
+    // to them, so every move and delete was refused and the leftover stayed for good.
+    const staged = await stage(false);
+    const tvCategory = await staged.sim.createDirectory({ name: "TV", parentId: "root" });
+    const storage = new DerivedScopeExecutor(staged.executor, [tvCategory, "root"]) as unknown as StorageExecutor;
+    const result = await runQueuedStagingRecovery({
+      repository: staged.repo,
+      resourceProvider: staged.resourceProvider,
+      storage,
+      model: recoveryModel(new Set<string>(), false, { value: false }),
+      now: () => "2026-09-28T04:00:00.000Z",
+      // The drive's category dirs come from the per-account context, as in production.
+      // The show sits under the second one ("root" stands in for the anime category).
+      resolveAccountContext: async () => ({ storageParentDirectoryId: tvCategory, animeStorageParentDirectoryId: "root" }),
+    });
+    expect(result.status).toBe("ran");
+    const saved = await staged.repo.getWorkflowRunSnapshot("recovery-1", { accountId: "acct", connectedStorageId: "drive" });
+    expect(saved?.episodes.find((episode) => episode.episodeCode === "S01E05")?.obtained).toBe(true);
+    const moved = staged.stagingBefore.find((file) => file.path.endsWith("S01E05.mkv"))!;
+    expect((await staged.sim.listTree({ directoryId: staged.seasonId })).map((file) => file.id)).toContain(moved.id);
+    await expect(staged.sim.listTree({ directoryId: staged.stagingId })).rejects.toThrow(/NOT_FOUND/);
   });
 
   it("keeps the staging dir when the move fails and does not mark the episode obtained", async () => {

@@ -81,7 +81,7 @@ export interface RunAcquisitionV2WorkflowRequest {
   linkHistory?: RunAcquisitionV2Request["linkHistory"];
   /** Leftover staging. The orphan dir is the staging handle; season dirs are resolved
    *  under `showDirectoryId`. The agent runs even when the DB already says complete. */
-  stagingRecovery?: { showDirectoryId: string; stagingDirectoryId: string };
+  stagingRecovery?: { showDirectoryId: string; stagingDirectoryId: string; categoryDirectoryIds?: string[] };
   onProgress?: (event: AgentToolEvent) => void;
 }
 
@@ -116,6 +116,9 @@ export async function runAcquisitionV2Workflow(
         executor: request.executor,
         showDirectoryId: request.stagingRecovery.showDirectoryId,
         stagingDirectoryId: request.stagingRecovery.stagingDirectoryId,
+        ...(request.stagingRecovery.categoryDirectoryIds
+          ? { categoryDirectoryIds: request.stagingRecovery.categoryDirectoryIds }
+          : {}),
         seasons: request.seasons.map((season) => season.seasonNumber),
       })
     : await ensureSeasonAcquisitionDirectories({

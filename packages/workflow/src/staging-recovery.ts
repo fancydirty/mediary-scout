@@ -79,7 +79,14 @@ export async function runQueuedStagingRecovery(
       seasons: states.map((state) => ({ season: state.season, episodes: state.episodes })),
       lockSeasonNumber: claimed.season.seasonNumber,
       lockAuditEvents: claimed.workflowRun.auditEvents,
-      stagingRecovery: { showDirectoryId: target.showDirectoryId, stagingDirectoryId: target.stagingDirectoryId },
+      stagingRecovery: {
+        showDirectoryId: target.showDirectoryId,
+        stagingDirectoryId: target.stagingDirectoryId,
+        // Where the janitor found the show: the derived-scope brands must reach it from there.
+        categoryDirectoryIds: [deps.storageParentDirectoryId, deps.animeStorageParentDirectoryId].filter(
+          (id): id is string => typeof id === "string" && id.length > 0,
+        ),
+      },
       categoryParentId: "unused",
       resourceProvider: deps.resourceProvider,
       storage: deps.storage,
