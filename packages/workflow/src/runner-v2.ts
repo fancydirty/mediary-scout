@@ -578,7 +578,7 @@ export async function runStagingRecoveryV2AndPersist(
     seasons: Array<{ season: TrackedSeason; episodes: EpisodeState[] }>;
     lockSeasonNumber: number;
     lockAuditEvents: AuditEvent[];
-    stagingRecovery: { showDirectoryId: string; stagingDirectoryId: string };
+    stagingRecovery: NonNullable<RunTvAcquisitionV2Request["stagingRecovery"]>;
   },
 ): Promise<BridgedV2Result> {
   const now = resolveNow(input);

@@ -154,7 +154,7 @@ function asExecutor(sim: Storage115Simulator, failMove: boolean): { executor: St
   return { executor: executor as unknown as StorageExecutor, created, removed };
 }
 
-async function stage(failMove: boolean) {
+async function stage(failMove: boolean, type: "tv" | "anime" = "tv") {
   const sim = new Storage115Simulator({
     packs: {
       have: { files: [{ path: "Show.S01E01.mkv", sizeBytes: 1000 }] },
@@ -179,7 +179,7 @@ async function stage(failMove: boolean) {
   const title = {
     id: "title_7",
     tmdbId: 7,
-    type: "tv" as const,
+    type,
     title: "Show",
     originalTitle: "Show",
     year: 2024,
@@ -258,7 +258,108 @@ async function stage(failMove: boolean) {
       return { id: "snap", provider: "pansou", keyword: "Show", candidates: [], createdAt: "2026-09-28T03:00:00.000Z" };
     },
   };
-  return { sim, repo, executor, created, removed, seasonId, stagingId, seasonBefore, stagingBefore, searches: () => searches, resourceProvider };
+  return {
+    sim,
+    repo,
+    executor,
+    created,
+    removed,
+    showId,
+    seasonId,
+    stagingId,
+    seasonBefore,
+    stagingBefore,
+    searches: () => searches,
+    resourceProvider,
+  };
+}
+
+const RATE_LIMITED = "PAN123_FAILED(/file/list/new): code=100011 请勿频繁操作，请稍后再试";
+
+/** Time only moves when something sleeps. */
+function fakeClock() {
+  let time = 0;
+  const sleeps: number[] = [];
+  return {
+    clock: {
+      now: () => time,
+      sleep: async (ms: number) => {
+        sleeps.push(ms);
+        time += ms;
+      },
+    },
+    sleeps,
+    time: () => time,
+  };
+}
+
+/**
+ * Mirrors the 123 / 光鸭 / 天翼 executors: a write target must be a scope root, a
+ * directory this executor created, or one it listed under an in-scope parent. A class
+ * (not a plain object) so the recovery path is exercised with methods that use `this`.
+ */
+class DerivedScopeExecutor {
+  private readonly inScope: Set<string>;
+  /** Every directory listed with listChildDirectories, in call order. */
+  readonly listedParents: string[] = [];
+
+  constructor(
+    private readonly inner: StorageExecutor,
+    roots: string[],
+  ) {
+    this.inScope = new Set(roots);
+  }
+
+  private assertInScope(directoryId: string, action: string): void {
+    if (!this.inScope.has(directoryId)) {
+      throw new Error(`WRITE_SCOPE_VIOLATION: refusing to ${action} outside configured write scope; fileId=${directoryId}`);
+    }
+  }
+
+  async listChildDirectories(parentId: string) {
+    this.listedParents.push(parentId);
+    const parentInScope = this.inScope.has(parentId);
+    const dirs = await this.inner.listChildDirectories!(parentId);
+    if (parentInScope) for (const dir of dirs) this.inScope.add(dir.id);
+    return dirs;
+  }
+
+  async listSubdirectories(input: { directoryId: string; maxDepth?: number }) {
+    const parentInScope = this.inScope.has(input.directoryId);
+    const dirs = await this.inner.listSubdirectories!(input);
+    if (parentInScope) for (const dir of dirs) this.inScope.add(dir.id);
+    return dirs;
+  }
+
+  async listTree(input: { directoryId: string; maxDepth?: number }) {
+    return this.inner.listTree(input);
+  }
+
+  async createDirectory(input: { name: string; parentId: string }) {
+    this.assertInScope(input.parentId, "create directory");
+    const id = await this.inner.createDirectory(input);
+    this.inScope.add(id);
+    return id;
+  }
+
+  async moveFiles(input: { fileIds: string[]; targetDirectoryId: string }) {
+    this.assertInScope(input.targetDirectoryId, "move files into");
+    return this.inner.moveFiles!(input);
+  }
+
+  async deleteFiles(input: { directoryId: string; fileIds: string[] }) {
+    this.assertInScope(input.directoryId, "delete files");
+    return this.inner.deleteFiles!(input);
+  }
+
+  async removeDirectory(directoryId: string) {
+    this.assertInScope(directoryId, "remove directory");
+    return this.inner.removeDirectory(directoryId);
+  }
+
+  async renameFile(): Promise<never> {
+    throw new Error("rename is not part of this recovery");
+  }
 }
 
 describe("staging_recovery", () => {
@@ -313,6 +414,210 @@ describe("staging_recovery", () => {
     expect(seasonIds).not.toContain(duplicate.id);
     await expect(staged.sim.listTree({ directoryId: staged.stagingId })).rejects.toThrow(/NOT_FOUND/);
     expect(staged.removed).toContain(staged.stagingId);
+  });
+
+  it("on a derived-scope drive (123 / 光鸭 / 天翼) it reaches the leftover through the drive's category dirs", async () => {
+    // 2026-09-30 production: the recovery adopted the janitor's ids without walking down
+    // to them, so every move and delete was refused and the leftover stayed for good.
+    const staged = await stage(false);
+    const tvCategory = await staged.sim.createDirectory({ name: "TV", parentId: "root" });
+    const storage = new DerivedScopeExecutor(staged.executor, [tvCategory, "root"]) as unknown as StorageExecutor;
+    const result = await runQueuedStagingRecovery({
+      repository: staged.repo,
+      resourceProvider: staged.resourceProvider,
+      storage,
+      model: recoveryModel(new Set<string>(), false, { value: false }),
+      now: () => "2026-09-28T04:00:00.000Z",
+      // The drive's category dirs come from the per-account context, as in production.
+      // The show sits under the second one ("root" stands in for the anime category).
+      resolveAccountContext: async () => ({
+        storageProvider: "pan123",
+        storageParentDirectoryId: tvCategory,
+        animeStorageParentDirectoryId: "root",
+      }),
+    });
+    expect(result.status).toBe("ran");
+    const saved = await staged.repo.getWorkflowRunSnapshot("recovery-1", { accountId: "acct", connectedStorageId: "drive" });
+    expect(saved?.episodes.find((episode) => episode.episodeCode === "S01E05")?.obtained).toBe(true);
+    const moved = staged.stagingBefore.find((file) => file.path.endsWith("S01E05.mkv"))!;
+    expect((await staged.sim.listTree({ directoryId: staged.seasonId })).map((file) => file.id)).toContain(moved.id);
+    await expect(staged.sim.listTree({ directoryId: staged.stagingId })).rejects.toThrow(/NOT_FOUND/);
+  });
+
+  it("for an anime title it looks in the anime category first and does not list the tv one", async () => {
+    // The janitor matches an anime title only on the anime shelf. A big tv dir on 123 is
+    // several rate-limited pages, so the walk must not start there.
+    const staged = await stage(false, "anime");
+    const tvCategory = await staged.sim.createDirectory({ name: "TV", parentId: "root" });
+    const storage = new DerivedScopeExecutor(staged.executor, [tvCategory, "root"]);
+    const result = await runQueuedStagingRecovery({
+      repository: staged.repo,
+      resourceProvider: staged.resourceProvider,
+      storage: storage as unknown as StorageExecutor,
+      model: recoveryModel(new Set<string>(), false, { value: false }),
+      now: () => "2026-09-28T04:00:00.000Z",
+      resolveAccountContext: async () => ({
+        storageProvider: "pan123",
+        storageParentDirectoryId: tvCategory,
+        animeStorageParentDirectoryId: "root",
+      }),
+    });
+    expect(result.status).toBe("ran");
+    expect(storage.listedParents[0]).toBe("root");
+    expect(storage.listedParents).not.toContain(tvCategory);
+    const moved = staged.stagingBefore.find((file) => file.path.endsWith("S01E05.mkv"))!;
+    expect((await staged.sim.listTree({ directoryId: staged.seasonId })).map((file) => file.id)).toContain(moved.id);
+    await expect(staged.sim.listTree({ directoryId: staged.stagingId })).rejects.toThrow(/NOT_FOUND/);
+  });
+
+  it("a rate-limited category listing on 123 is waited out, then the recovery runs", async () => {
+    // The janitor queues the recovery in the middle of its own 123 sweep, so the walk
+    // can meet 123's rate limit (2026-09-30 production: code=100011 around 05:21 UTC).
+    const staged = await stage(false);
+    const tvCategory = await staged.sim.createDirectory({ name: "TV", parentId: "root" });
+    const { clock, sleeps, time } = fakeClock();
+    const firstListedAt = new Map<string, number>();
+    let refusals = 2;
+    class RateLimitedTwice extends DerivedScopeExecutor {
+      override async listChildDirectories(parentId: string) {
+        if (parentId === tvCategory && refusals > 0) {
+          refusals -= 1;
+          throw new Error(RATE_LIMITED);
+        }
+        if (!firstListedAt.has(parentId)) firstListedAt.set(parentId, time());
+        return super.listChildDirectories(parentId);
+      }
+    }
+    const result = await runQueuedStagingRecovery({
+      repository: staged.repo,
+      resourceProvider: staged.resourceProvider,
+      storage: new RateLimitedTwice(staged.executor, [tvCategory, "root"]) as unknown as StorageExecutor,
+      model: recoveryModel(new Set<string>(), false, { value: false }),
+      now: () => "2026-09-28T04:00:00.000Z",
+      clock,
+      resolveAccountContext: async () => ({
+        storageProvider: "pan123",
+        storageParentDirectoryId: tvCategory,
+        animeStorageParentDirectoryId: "root",
+      }),
+    });
+    expect(result.status).toBe("ran");
+    expect(sleeps.filter((ms) => ms >= 30_000)).toEqual([30_000, 60_000]);
+    // The walk's listings are spaced like the janitor's.
+    expect(firstListedAt.get("root")! - firstListedAt.get(tvCategory)!).toBeGreaterThanOrEqual(1_500);
+    expect(firstListedAt.get(staged.showId)! - firstListedAt.get("root")!).toBeGreaterThanOrEqual(1_500);
+    const moved = staged.stagingBefore.find((file) => file.path.endsWith("S01E05.mkv"))!;
+    expect((await staged.sim.listTree({ directoryId: staged.seasonId })).map((file) => file.id)).toContain(moved.id);
+    await expect(staged.sim.listTree({ directoryId: staged.stagingId })).rejects.toThrow(/NOT_FOUND/);
+  });
+
+  it("a category listing that stays rate-limited stops the recovery before the agent runs and leaves the leftover alone", async () => {
+    // Carrying on without the walk would hand the agent dirs it cannot write to.
+    const staged = await stage(false);
+    const tvCategory = await staged.sim.createDirectory({ name: "TV", parentId: "root" });
+    const { clock, sleeps } = fakeClock();
+    class RateLimitedCategory extends DerivedScopeExecutor {
+      override async listChildDirectories(parentId: string) {
+        if (parentId === tvCategory) throw new Error(RATE_LIMITED);
+        return super.listChildDirectories(parentId);
+      }
+    }
+    let modelCalls = 0;
+    const model = new MockLanguageModelV3({
+      doGenerate: async () => {
+        modelCalls += 1;
+        throw new Error("the model must not run");
+      },
+    });
+    const result = await runQueuedStagingRecovery({
+      repository: staged.repo,
+      resourceProvider: staged.resourceProvider,
+      storage: new RateLimitedCategory(staged.executor, [tvCategory, "root"]) as unknown as StorageExecutor,
+      model,
+      now: () => "2026-09-28T04:00:00.000Z",
+      clock,
+      resolveAccountContext: async () => ({
+        storageProvider: "pan123",
+        storageParentDirectoryId: tvCategory,
+        animeStorageParentDirectoryId: "root",
+      }),
+    });
+    expect(result.status).toBe("failed");
+    expect(sleeps.filter((ms) => ms >= 30_000)).toEqual([30_000, 60_000, 120_000]);
+    expect(modelCalls).toBe(0);
+    const saved = await staged.repo.getWorkflowRunSnapshot("recovery-1", { accountId: "acct", connectedStorageId: "drive" });
+    expect(saved?.workflowRun.status).toBe("failed");
+    expect(saved?.notifications).toEqual([]);
+    expect(await staged.repo.listNotifications({ accountId: "acct" })).toEqual([]);
+    const ids = (files: Array<{ id: string }>) => files.map((file) => file.id).sort();
+    expect(ids(await staged.sim.listTree({ directoryId: staged.stagingId }))).toEqual(ids(staged.stagingBefore));
+    expect(ids(await staged.sim.listTree({ directoryId: staged.seasonId }))).toEqual(ids(staged.seasonBefore));
+  });
+
+  it("any other category listing error stops the recovery at once, without waiting", async () => {
+    const staged = await stage(false);
+    const tvCategory = await staged.sim.createDirectory({ name: "TV", parentId: "root" });
+    const { clock, sleeps } = fakeClock();
+    class BrokenCategory extends DerivedScopeExecutor {
+      override async listChildDirectories(parentId: string) {
+        if (parentId === tvCategory) throw new Error("PAN123_FAILED(/file/list/new): code=5066 文件不存在");
+        return super.listChildDirectories(parentId);
+      }
+    }
+    let modelCalls = 0;
+    const model = new MockLanguageModelV3({
+      doGenerate: async () => {
+        modelCalls += 1;
+        throw new Error("the model must not run");
+      },
+    });
+    const result = await runQueuedStagingRecovery({
+      repository: staged.repo,
+      resourceProvider: staged.resourceProvider,
+      storage: new BrokenCategory(staged.executor, [tvCategory, "root"]) as unknown as StorageExecutor,
+      model,
+      now: () => "2026-09-28T04:00:00.000Z",
+      clock,
+      resolveAccountContext: async () => ({
+        storageProvider: "pan123",
+        storageParentDirectoryId: tvCategory,
+        animeStorageParentDirectoryId: "root",
+      }),
+    });
+    expect(result.status).toBe("failed");
+    expect(sleeps).toEqual([]);
+    expect(modelCalls).toBe(0);
+    await expect(staged.sim.listTree({ directoryId: staged.stagingId })).resolves.toHaveLength(staged.stagingBefore.length);
+  });
+
+  it("on 115 / 夸克 it does not list the category dirs (their executors look up a write's parents)", async () => {
+    const staged = await stage(false);
+    const tvCategory = await staged.sim.createDirectory({ name: "TV", parentId: "root" });
+    const listedParents: string[] = [];
+    const storage: StorageExecutor = {
+      ...staged.executor,
+      listChildDirectories: async (parentId: string) => {
+        listedParents.push(parentId);
+        return staged.executor.listChildDirectories(parentId);
+      },
+    };
+    const result = await runQueuedStagingRecovery({
+      repository: staged.repo,
+      resourceProvider: staged.resourceProvider,
+      storage,
+      model: recoveryModel(new Set<string>(), false, { value: false }),
+      now: () => "2026-09-28T04:00:00.000Z",
+      resolveAccountContext: async () => ({
+        storageProvider: "pan115",
+        storageParentDirectoryId: tvCategory,
+        animeStorageParentDirectoryId: "root",
+      }),
+    });
+    expect(result.status).toBe("ran");
+    expect(listedParents).not.toContain(tvCategory);
+    expect(listedParents).not.toContain("root");
+    const saved = await staged.repo.getWorkflowRunSnapshot("recovery-1", { accountId: "acct", connectedStorageId: "drive" });
+    expect(saved?.episodes.find((episode) => episode.episodeCode === "S01E05")?.obtained).toBe(true);
   });
 
   it("keeps the staging dir when the move fails and does not mark the episode obtained", async () => {

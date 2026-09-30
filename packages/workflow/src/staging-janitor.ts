@@ -6,6 +6,7 @@ import {
   mediaLibraryFolderName,
   tmdbIdFromMediaLibraryFolderName,
 } from "./media-library-folder.js";
+import { drivePacer, realtimeDriveClock, type DriveClock } from "./drive-pacer.js";
 import { JANITOR_LIST_DEPTH } from "./staging-depth.js";
 import type { MayStartRun } from "./worker.js";
 
@@ -36,60 +37,9 @@ export interface StagingJanitorDrive {
   executor: Partial<Pick<StorageExecutor, "listChildDirectories" | "listTree" | "listSubdirectories" | "removeDirectory">>;
 }
 
-export interface StagingJanitorClock {
-  now(): number;
-  sleep(ms: number): Promise<void>;
-}
-
-const PAN123_MIN_INTERVAL_MS = 1500;
-/** One paced call can paginate. 123 answers the burst with code=100011.
- *  Three waits, then give up. The resume cursor stays where the walk stopped. */
-const RATE_LIMIT_BACKOFF_MS = [30_000, 60_000, 120_000];
-
-function isRateLimited(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /code=100011|请勿频繁操作/.test(message);
-}
-
-const realtimeClock: StagingJanitorClock = {
-  now: () => Date.now(),
-  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-};
-
-function minIntervalMs(provider: string): number {
-  return provider === "pan123" ? PAN123_MIN_INTERVAL_MS : 0;
-}
-
-/** Start-to-start gap. The first call does not wait. gap 0 never sleeps.
- *  A code=100011 / 请勿频繁操作 waits 30s, then 60s, then 120s and retries;
- *  the fourth such failure, or any other error, propagates. */
-function pacerFor(gapMs: number, clock: StagingJanitorClock): <T>(run: () => Promise<T>) => Promise<T> {
-  let last = Number.NEGATIVE_INFINITY;
-  return async function pace<T>(run: () => Promise<T>): Promise<T> {
-    let attempt = 0;
-    for (;;) {
-      if (gapMs > 0 && Number.isFinite(last)) {
-        const wait = gapMs - (clock.now() - last);
-        if (wait > 0) {
-          await clock.sleep(wait);
-        }
-      }
-      if (gapMs > 0) {
-        last = clock.now();
-      }
-      try {
-        return await run();
-      } catch (error) {
-        const backoff = RATE_LIMIT_BACKOFF_MS[attempt];
-        if (backoff === undefined || !isRateLimited(error)) {
-          throw error;
-        }
-        attempt += 1;
-        await clock.sleep(backoff);
-      }
-    }
-  };
-}
+/** Calls are spaced and 123's rate limit is waited out by drivePacer. When it gives
+ *  up, the resume cursor stays where the walk stopped. */
+export type StagingJanitorClock = DriveClock;
 
 type SweepRepository = Pick<
   WorkflowRepository,
@@ -216,7 +166,7 @@ async function sweepDrive(
     return { removed: 0, queued: 0, notRemoved: 0, skippedDeep: 0, removedUntracked: 0, skippedUnmatched: 0, held: false };
   }
   const executor = drive.executor;
-  const pace = pacerFor(minIntervalMs(drive.provider), clock);
+  const pace = drivePacer(drive.provider, clock);
   const scope = { accountId: drive.accountId, connectedStorageId: drive.storageId };
   const states = await repository.listTrackedSeasonStates(scope);
   const active = await repository.listActiveWorkflowRuns(scope);
@@ -393,7 +343,7 @@ export async function sweepOrphanStagingDirs(input: {
   mayStartRun?: MayStartRun;
 }): Promise<{ held: boolean }> {
   const log = input.log ?? ((line: string) => console.log(line));
-  const clock = input.clock ?? realtimeClock;
+  const clock = input.clock ?? realtimeDriveClock;
   let held = false;
   for (const drive of input.drives) {
     if (held) break;

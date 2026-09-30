@@ -1,5 +1,6 @@
 import { ensureMediaLibraryDirectory } from "../media-library-folder.js";
 import type { AuditEvent } from "../domain.js";
+import type { DrivePace } from "../drive-pacer.js";
 import type { StorageExecutor } from "../ports.js";
 
 /**
@@ -62,25 +63,61 @@ export async function ensureSeasonAcquisitionDirectories(
   return { showDirectoryId, seasonDirectoryIds, stagingDirectoryId };
 }
 
+/** A leftover staging dir the janitor handed over, and how this run reaches it. */
+export interface StagingRecoveryDirectories {
+  showDirectoryId: string;
+  stagingDirectoryId: string;
+  /** The drive's category dirs to walk down from, most likely first. Only for drives
+   *  whose executor writes where it listed (123 / 光鸭 / 天翼); omitted on 115 / 夸克. */
+  categoryDirectoryIds?: string[];
+  /** Spaces the walk's calls and waits out the drive's rate limit (123). */
+  pace?: DrivePace;
+}
+
 /**
  * A leftover staging dir is already the run's staging. Season dirs are resolved
  * the same way as other runs (reuse `Season NN` when it is there, create it only
  * when it is not). The show dir and the staging dir are not created.
  */
-export async function bindRecoveryDirectories(input: {
-  executor: Pick<StorageExecutor, "createDirectory" | "listChildDirectories">;
-  showDirectoryId: string;
-  stagingDirectoryId: string;
-  seasons: number[];
-}): Promise<AcquisitionDirectories> {
-  const children = await input.executor.listChildDirectories(input.showDirectoryId);
+export async function bindRecoveryDirectories(
+  input: StagingRecoveryDirectories & {
+    executor: Pick<StorageExecutor, "createDirectory" | "listChildDirectories">;
+    seasons: number[];
+  },
+): Promise<AcquisitionDirectories> {
+  const pace: DrivePace = input.pace ?? (<T>(run: () => Promise<T>) => run());
+  // 123 / 光鸭 / 天翼 accept a write only into a directory this executor reached from a
+  // scope root (the category dirs) or created. The janitor's ids come from another
+  // executor, so walk down again: category → show here, show → season + staging below.
+  // A failed listing, or a show or leftover that is no longer where the janitor saw it,
+  // fails the run before the agent starts: it could not write anything here.
+  const categories = new Set(input.categoryDirectoryIds ?? []);
+  let showReached = false;
+  for (const categoryId of categories) {
+    const shows = await pace(() => input.executor.listChildDirectories(categoryId));
+    if (shows.some((show) => show.id === input.showDirectoryId)) {
+      showReached = true;
+      break;
+    }
+  }
+  if (categories.size > 0 && !showReached) {
+    throw new Error(
+      `STAGING_RECOVERY_UNREACHABLE: show dir ${input.showDirectoryId} is no longer under the drive's category dirs`,
+    );
+  }
+  const children = await pace(() => input.executor.listChildDirectories(input.showDirectoryId));
+  if (categories.size > 0 && !children.some((child) => child.id === input.stagingDirectoryId)) {
+    throw new Error(
+      `STAGING_RECOVERY_UNREACHABLE: staging dir ${input.stagingDirectoryId} is no longer under show dir ${input.showDirectoryId}`,
+    );
+  }
   const seasonDirectoryIds: Record<number, string> = {};
   for (const season of input.seasons) {
     const name = `Season ${String(season).padStart(2, "0")}`;
     const existing = children.find((child) => child.name === name);
     seasonDirectoryIds[season] = existing
       ? existing.id
-      : await input.executor.createDirectory({ name, parentId: input.showDirectoryId });
+      : await pace(() => input.executor.createDirectory({ name, parentId: input.showDirectoryId }));
   }
   return {
     showDirectoryId: input.showDirectoryId,
