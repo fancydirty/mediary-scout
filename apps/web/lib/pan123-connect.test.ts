@@ -243,6 +243,27 @@ describe("completePan123QrLogin (QR bind)", () => {
     expect(stored!.rootCid).toBe("root-1"); // refresh keeps CIDs
   });
 
+  it("re-scanning the same account on a 掉线 (frozen) drive brings it back: active, reason cleared", async () => {
+    // The frozen card says 「掉线 · 重新绑定即恢复」, and patrol skips a frozen drive: the
+    // re-scan itself must unfreeze it (upsert deliberately keeps the old status).
+    const repository = rt.getWorkflowRepository();
+    await repository.upsertConnectedStorage({
+      id: "cs_pan123_seed",
+      accountId: "acct_default",
+      provider: "pan123",
+      providerUid: "10086",
+      label: null,
+      payload: { token: "OLD-TOKEN", meta: { connectedAt: "2020-01-01T00:00:00.000Z" } },
+      createdAt: "2020-01-01T00:00:00.000Z",
+    });
+    await repository.setConnectedStorageStatus("cs_pan123_seed", "frozen", "PAN123_AUTH_FAILED: 未登录", "2026-09-30T00:00:00.000Z");
+
+    await rt.completePan123QrLogin(VALID_TOKEN);
+
+    const stored = (await repository.listConnectedStorages("acct_default")).find((s) => s.id === "cs_pan123_seed");
+    expect(stored).toMatchObject({ status: "active", frozenReason: null, frozenAt: null });
+  });
+
   it("QR flow returned an empty token → friendly re-scan error, no probe", async () => {
     await expect(rt.completePan123QrLogin("  ")).rejects.toThrow(/扫码/);
     expect(pan123ClientConstructions).toBe(0);

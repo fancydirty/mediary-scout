@@ -88,6 +88,24 @@ describe("connectQuarkCookie (C10 live-check before bind)", () => {
     expect((drives[0]?.payload as { cookie?: string }).cookie).toContain("__uid=quark_uid_live");
   });
 
+  it("re-binding the same account on a 掉线 (frozen) drive brings it back: active, reason cleared", async () => {
+    const repository = rt.getWorkflowRepository();
+    await repository.upsertConnectedStorage({
+      id: "cs_quark_seed",
+      accountId: "acct_default",
+      provider: "quark",
+      providerUid: "quark_uid_live",
+      payload: { cookie: "__uid=quark_uid_live; __kps=old" },
+      createdAt: "2020-01-01T00:00:00.000Z",
+    });
+    await repository.setConnectedStorageStatus("cs_quark_seed", "frozen", "QUARK_AUTH_FAILED: cookie dead", "2026-09-30T00:00:00.000Z");
+
+    await rt.connectQuarkCookie(LIVE_COOKIE);
+
+    const stored = (await repository.listConnectedStorages("acct_default")).find((s) => s.id === "cs_quark_seed");
+    expect(stored).toMatchObject({ status: "active", frozenReason: null, frozenAt: null });
+  });
+
   it("unparseable cookie → error without network probe", async () => {
     await expect(rt.connectQuarkCookie("not-a-cookie")).rejects.toThrow(/无法从该 cookie 解析/);
     expect(quarkClientConstructions).toBe(0);

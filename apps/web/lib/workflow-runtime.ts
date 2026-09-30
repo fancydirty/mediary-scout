@@ -3085,6 +3085,20 @@ export class StorageOwnedByOtherAccountError extends Error {
  *   carry real per-brand differences (115 ownership + app_settings mirror; 夸克
  *   cookie shape) and keep their own binds.
  */
+/** A same-account re-login is the re-bind a 掉线 card asks for (「重新绑定即恢复」): store the
+ *  fresh credential and bring the drive back. The upsert deliberately keeps the status,
+ *  so the unfreeze is explicit here; until it runs, patrol and acquisition skip the drive. */
+async function refreshConnectedStorage(
+  repository: ReturnType<typeof getWorkflowRepository>,
+  existing: { id: string; status: "active" | "frozen" },
+  row: Parameters<ReturnType<typeof getWorkflowRepository>["upsertConnectedStorage"]>[0],
+): Promise<void> {
+  await repository.upsertConnectedStorage(row);
+  if (existing.status === "frozen") {
+    await repository.setConnectedStorageStatus(existing.id, "active", null, null);
+  }
+}
+
 async function bindTokenConnectedStorage(input: {
   provider: string;
   providerUid: string;
@@ -3109,7 +3123,7 @@ async function bindTokenConnectedStorage(input: {
   const payload = { ...credentialBlob, meta };
   if (decision.action === "refresh" && existing) {
     // Same account re-login → refresh the credential blob, keep the resolved CIDs.
-    await repository.upsertConnectedStorage({
+    await refreshConnectedStorage(repository, existing, {
       id: existing.id,
       accountId,
       provider,
@@ -3186,7 +3200,7 @@ async function bindPan115ConnectedStorage(input: {
   };
   if (decision.action === "refresh" && existing) {
     // Keep the already-resolved directory CIDs; only refresh the cookie.
-    await repository.upsertConnectedStorage({
+    await refreshConnectedStorage(repository, existing, {
       id: existing.id,
       accountId: input.accountId,
       provider: "pan115",
@@ -3332,7 +3346,7 @@ export async function connectQuarkCookie(rawCookie: string): Promise<{ providerU
   const payload = { cookie, meta: { connectedAt: new Date().toISOString() } };
   if (decision.action === "refresh" && existing) {
     // Same account re-bind → refresh the cookie, keep the resolved CIDs.
-    await repository.upsertConnectedStorage({
+    await refreshConnectedStorage(repository, existing, {
       id: existing.id,
       accountId,
       provider: "quark",
