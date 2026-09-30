@@ -460,7 +460,7 @@ docker compose build --build-arg NPM_REGISTRY=https://registry.npmmirror.com
 
 设置 → 更新会列出新的发布版本，自托管实例上有「立即更新」。
 
-第一次要先手动升级一次，更新助手容器才会起来。在部署目录运行：
+新装的实例直接就有。从还没有更新助手的旧版本升级上来的，要先手动升级一次，更新助手容器才会起来。在部署目录运行：
 
 ```bash
 ./scripts/deploy.sh
