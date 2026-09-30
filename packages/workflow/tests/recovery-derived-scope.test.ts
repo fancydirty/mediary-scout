@@ -73,14 +73,24 @@ describe("bindRecoveryDirectories on a derived-scope drive (123)", () => {
     expect(listFiles.mock.calls.map(([id]) => id)).toEqual(["tv", "show"]);
   });
 
-  it("a show folder no longer under any category stays out of scope: listing it grants nothing", async () => {
+  it("a show folder no longer under any category stops the recovery before the agent runs", async () => {
     const dirs = drive();
     dirs.anime = []; // moved away after the janitor saw it
-    const { executor, trash } = executorOver(dirs);
+    const { executor, trash, listFiles } = executorOver(dirs);
 
-    await bindRecoveryDirectories({ executor, ...target });
+    await expect(bindRecoveryDirectories({ executor, ...target })).rejects.toThrow(/STAGING_RECOVERY_UNREACHABLE/);
 
+    // The show was not listed, so nothing under it became writable.
+    expect(listFiles.mock.calls.map(([id]) => id)).toEqual(["tv", "anime"]);
     await expect(executor.removeDirectory("staging")).rejects.toThrow(/WRITE_SCOPE_VIOLATION/);
     expect(trash).not.toHaveBeenCalled();
+  });
+
+  it("a staging dir no longer under the show stops the recovery before the agent runs", async () => {
+    const dirs = drive();
+    dirs.show = [folder("season", "Season 01")]; // the leftover is gone
+    const { executor } = executorOver(dirs);
+
+    await expect(bindRecoveryDirectories({ executor, ...target })).rejects.toThrow(/STAGING_RECOVERY_UNREACHABLE/);
   });
 });

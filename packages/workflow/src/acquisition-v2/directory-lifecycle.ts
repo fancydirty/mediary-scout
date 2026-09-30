@@ -89,13 +89,28 @@ export async function bindRecoveryDirectories(
   // 123 / 光鸭 / 天翼 accept a write only into a directory this executor reached from a
   // scope root (the category dirs) or created. The janitor's ids come from another
   // executor, so walk down again: category → show here, show → season + staging below.
-  // A show no longer under any category stays out of scope. A failed listing fails the
-  // run: without the walk nothing here could be written.
-  for (const categoryId of new Set(input.categoryDirectoryIds ?? [])) {
+  // A failed listing, or a show or leftover that is no longer where the janitor saw it,
+  // fails the run before the agent starts: it could not write anything here.
+  const categories = new Set(input.categoryDirectoryIds ?? []);
+  let showReached = false;
+  for (const categoryId of categories) {
     const shows = await pace(() => input.executor.listChildDirectories(categoryId));
-    if (shows.some((show) => show.id === input.showDirectoryId)) break;
+    if (shows.some((show) => show.id === input.showDirectoryId)) {
+      showReached = true;
+      break;
+    }
+  }
+  if (categories.size > 0 && !showReached) {
+    throw new Error(
+      `STAGING_RECOVERY_UNREACHABLE: show dir ${input.showDirectoryId} is no longer under the drive's category dirs`,
+    );
   }
   const children = await pace(() => input.executor.listChildDirectories(input.showDirectoryId));
+  if (categories.size > 0 && !children.some((child) => child.id === input.stagingDirectoryId)) {
+    throw new Error(
+      `STAGING_RECOVERY_UNREACHABLE: staging dir ${input.stagingDirectoryId} is no longer under show dir ${input.showDirectoryId}`,
+    );
+  }
   const seasonDirectoryIds: Record<number, string> = {};
   for (const season of input.seasons) {
     const name = `Season ${String(season).padStart(2, "0")}`;
