@@ -1245,3 +1245,39 @@ describe("runAutoUpdateIfDue（每日自动更新）", () => {
     });
   });
 });
+
+describe("queueing on a drive whose login died names that drive's brand", () => {
+  // 在内存 SQLite 里绑一块已冻结的 123 网盘；这两个入口在碰网络之前就会查冻结。
+  const prevPg = process.env.MEDIA_TRACK_POSTGRES_URL;
+  let rt: typeof import("./workflow-runtime");
+
+  beforeEach(async () => {
+    delete process.env.MEDIA_TRACK_MULTI_USER;
+    delete process.env.MEDIA_TRACK_POSTGRES_URL;
+    process.env.MEDIA_TRACK_SQLITE_PATH = ":memory:";
+    vi.resetModules();
+    rt = await import("./workflow-runtime");
+    const repository = rt.getWorkflowRepository();
+    await repository.upsertConnectedStorage({
+      id: "cs_pan123_1",
+      accountId: "acct_default",
+      provider: "pan123",
+      providerUid: "1",
+      payload: {},
+      createdAt: "2026-09-30T00:00:00.000Z",
+    });
+    await repository.setConnectedStorageStatus("cs_pan123_1", "frozen", "PAN123_AUTH_FAILED: 未登录", "2026-09-30T00:00:00.000Z");
+  });
+
+  afterEach(() => {
+    delete process.env.MEDIA_TRACK_SQLITE_PATH;
+    if (prevPg !== undefined) process.env.MEDIA_TRACK_POSTGRES_URL = prevPg;
+    vi.resetModules();
+  });
+
+  it("asks to re-scan the same 123网盘, not a 115", async () => {
+    const refusal = { status: "unsupported", message: "该网盘已掉线，请重新扫码绑定同一个123网盘后再获取。" };
+    expect(await rt.queueCandidateSeries("tmdb_tv_1_s1", "cs_pan123_1")).toEqual(refusal);
+    expect(await rt.queueCandidateTracking("tmdb_tv_1_s1", "cs_pan123_1")).toEqual(refusal);
+  });
+});

@@ -828,7 +828,7 @@ export async function queueCandidateTracking(
     return { status: "unsupported", message: "网盘工作区不可用（未找到或暂时无法访问），请刷新后重试。" };
   }
   if (workspace.frozen) {
-    return { status: "unsupported", message: "该网盘已掉线，请重新扫码绑定同一个 115 后再获取。" };
+    return { status: "unsupported", message: frozenDriveMessage(workspace.provider, "获取") };
   }
   const movieTmdbId = parseMovieCandidateId(candidateId);
   if (movieTmdbId !== null) {
@@ -1526,7 +1526,7 @@ export async function reserveCandidate(
     return { status: "unsupported", message: "网盘工作区不可用（未找到或暂时无法访问），请刷新后重试。" };
   }
   if (workspace.frozen) {
-    return { status: "unsupported", message: "该网盘已掉线，请重新扫码绑定同一个 115 后再预定。" };
+    return { status: "unsupported", message: frozenDriveMessage(workspace.provider, "预定") };
   }
   const request = await reserveMovie({
     title: movie.title,
@@ -1643,7 +1643,7 @@ export async function queueCandidateSeries(
     return { status: "unsupported", message: "网盘工作区不可用（未找到或暂时无法访问），请刷新后重试。" };
   }
   if (workspace.frozen) {
-    return { status: "unsupported", message: "该网盘已掉线，请重新扫码绑定同一个 115 后再获取。" };
+    return { status: "unsupported", message: frozenDriveMessage(workspace.provider, "获取") };
   }
   if (process.env.MEDIA_TRACK_SEARCH_PROVIDER === "tmdb") {
     const target = await prepareSeriesTarget({
@@ -2482,17 +2482,24 @@ async function getAccountStorageCredentials(
 async function resolveQueueStorage(
   accountId: string,
   explicitConnectedStorageId?: string | null,
-): Promise<{ id: string | null; frozen: boolean; unknown: boolean }> {
+): Promise<{ id: string | null; frozen: boolean; unknown: boolean; provider: string | null }> {
   try {
     const storages = (await getWorkflowRepository().listConnectedStorages(accountId)).filter(
       (storage) => isRegisteredStorageProvider(storage.provider),
     );
-    return resolveQueueStorageChoice(storages, explicitConnectedStorageId);
+    const choice = resolveQueueStorageChoice(storages, explicitConnectedStorageId);
+    return { ...choice, provider: storages.find((storage) => storage.id === choice.id)?.provider ?? null };
   } catch {
     // Fail closed: transient DB errors must not queue unscoped or drop an
     // explicit workspace pin (would land on the wrong drive).
-    return { id: null, frozen: false, unknown: true };
+    return { id: null, frozen: false, unknown: true, provider: null };
   }
+}
+
+/** Refusal for a queue/reserve action on a drive whose login died: re-scan THAT brand. */
+function frozenDriveMessage(provider: string | null, action: "获取" | "预定"): string {
+  const label = provider ? getStorageBrand(provider).label : "网盘";
+  return `该网盘已掉线，请重新扫码绑定同一个${label}后再${action}。`;
 }
 
 /** Marks a drive frozen — its cookie died. Called when a worker/probe hits a
