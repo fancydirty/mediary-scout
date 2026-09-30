@@ -54,6 +54,6 @@ BASE=$(jq -r .baseUrl ~/.mediary/agent.json)
 2. **脱敏值绝不回写。** `GET config` 里秘密字段只露尾 4 位或显示为 `***`（如 `"apiKey": "sk-***7f2a"`、`"tmdbApiKey": "***"`）。**任何以 `***` 开头或含 `***` 的值都禁止写回 `PUT config`**——服务端会 400，且回写会毁掉真凭据。
 3. **秘密字段只在用户明确给出新值时才写。** LLM apiKey、tmdbApiKey、prowlarr.apiKey、推送密钥等，只有用户在本次对话里明确提供了新的明文值，才放进 `PUT` body。用户没提就别碰这些字段。
 4. **storages 只读。** `GET config` 会列出 `storages`（id/brand/name，不含凭据）；`PUT config` 不接受 `storages`，改盘绑定要在桌面 app 里做。
-5. **未运行 / 未配置。** 端点隐身（返回 404、非预期结构）时：多半是 app 没运行或该环境没配 agent token——提示用户启动桌面 app，别把 404 当「没找到片」（找片的「无匹配」也是 404，用返回体区分：有 `candidates` 是歧义，有 `matched`/`status` 是成功，纯 404 且带 no-token 语义是未启用）。
+5. **未运行 / 未配置。** 端点隐身（返回 404、非预期结构）时：多半是 app 没运行或该环境没配 agent token——桌面版提示用户启动桌面 app；Docker 提示用户检查 `.env` 里的 `MEDIA_TRACK_AGENT_TOKEN` 是否设了、改后是否在部署目录跑过 `docker compose up -d`。别把 404 当「没找到片」（找片的「无匹配」也是 404，用返回体区分：有 `candidates` 是歧义，有 `matched`/`status` 是成功，纯 404 且带 no-token 语义是未启用）。
 
 完整请求/响应 schema、全部错误码（404 无 token / 无匹配、401 token 错、409 候选、403 demo、400 校验）、字段级说明见 `references/api.md`。

@@ -10,15 +10,15 @@
 
 ### 发现文件
 
-桌面 app boot 成功后写入 `~/.mediary/agent.json`（权限 0600）：
+桌面 app boot 成功后写入 `~/.mediary/agent.json`（权限 0600）；Docker 实例没有这一步，由用户在跑 agent 的电脑上按仓库 `docs/agent-api.md` 手动建同样格式的文件：
 
 ```json
 { "baseUrl": "http://127.0.0.1:<port>", "token": "<hex>", "version": "<app version>" }
 ```
 
 - App 退出**不**删除此文件。
-- 遇 `connection refused` → app 未运行（不是没配置）。
-- 文件缺失 → app 从未成功启动过；让用户打开桌面 app。
+- 遇 `connection refused` → 桌面版：app 未运行（不是没配置）。Docker：实例没在跑，或文件里的 `baseUrl` 从这台电脑连不上。
+- 文件缺失 → 桌面版：app 从未成功启动过，让用户打开桌面 app。Docker：用户还没建这个文件，按 `docs/agent-api.md` 建。
 
 Token 由 Electron 主进程首启生成（32 字节 hex），持久化在 userData（`agent-token` 文件），通过环境变量 `MEDIA_TRACK_AGENT_TOKEN` 注入 server。容器版由运维显式设同名 env——desktop 与容器完全对称。
 
@@ -49,14 +49,14 @@ curl -H "Authorization: Bearer $TOKEN" "$BASE/api/agent/<endpoint>"
 
 | 状态码 | 触发条件 | 响应要点 | agent 应对 |
 |---|---|---|---|
-| `404` | 环境未配置 agent token（端点隐身） | 端点整体不存在/不可用 | 提示用户启动桌面 app 或该环境未启用 agent |
+| `404` | 环境未配置 agent token（端点隐身） | 端点整体不存在/不可用 | 桌面版：提示用户启动桌面 app；Docker：提示用户在 `.env` 设 `MEDIA_TRACK_AGENT_TOKEN` 后 `docker compose up -d` |
 | `404` | `acquire` TMDB 无匹配 | 无 `candidates`、无 `matched` | 告诉用户没搜到，建议换关键词/补 `type` |
-| `401` | token 错误 | `WWW-Authenticate: Bearer` | token 失效，让用户重新从桌面 app 读 agent.json |
+| `401` | token 错误 | `WWW-Authenticate: Bearer` | 桌面版：token 失效，让用户重开桌面 app 重新生成 agent.json；Docker：agent.json 里的 token 和 `.env` 的 `MEDIA_TRACK_AGENT_TOKEN` 不一致，让用户改成同一个 |
 | `409` | `acquire` 多个高分候选 | `{ "candidates": [top5] }` | 列候选给用户挑，带 `tmdbId` 重发。**绝不瞎猜** |
 | `403` | demo 模式 | 全端点拒绝 | 告诉用户这是只读 demo，无法执行写操作 |
 | `400` | 校验失败 / 回写脱敏占位值 | 具体字段与原因 | 修正 body 后重试；脱敏值禁止回写 |
 
-> **区分两种 404**：无 token 的 404 是「端点隐身/未启用」；`acquire` 的 404 是「片没搜到」。用是否随桌面 app 运行、以及响应体结构区分。
+> **区分两种 404**：无 token 的 404 是「端点隐身/未启用」；`acquire` 的 404 是「片没搜到」。用其它端点是否也 404、以及响应体结构区分。
 
 ---
 
