@@ -3,8 +3,11 @@ import {
   createAgentModel,
   createAgentProviderConfig,
   createAgentModelFromEnv,
+  DEFAULT_AGENT_MODEL_MAX_RETRIES,
   llmConfigError,
+  MAX_AGENT_MODEL_MAX_RETRIES,
   normalizeLlmBaseUrl,
+  resolveAgentModelMaxRetries,
   sanitizeLlmApiKey,
 } from "../src/agent-model.js";
 
@@ -159,6 +162,38 @@ describe("llmConfigError — agnostic, BYO required-config predicate", () => {
       "未配置 AI 模型。请到「设置 → AI 模型」填写 Base URL 和模型名(任意 OpenAI 兼容服务,自带);云端服务还需 API Key,本地模型可留空。",
     );
   });
+});
+
+describe("resolveAgentModelMaxRetries — bounded upstream retry policy", () => {
+  it("uses the default when unset or blank", () => {
+    expect(resolveAgentModelMaxRetries({} as NodeJS.ProcessEnv)).toBe(
+      DEFAULT_AGENT_MODEL_MAX_RETRIES,
+    );
+    expect(
+      resolveAgentModelMaxRetries({
+        AGENT_MODEL_MAX_RETRIES: "  ",
+      } as NodeJS.ProcessEnv),
+    ).toBe(DEFAULT_AGENT_MODEL_MAX_RETRIES);
+  });
+
+  it("accepts an explicit in-range value", () => {
+    expect(
+      resolveAgentModelMaxRetries({
+        AGENT_MODEL_MAX_RETRIES: "7",
+      } as NodeJS.ProcessEnv),
+    ).toBe(7);
+  });
+
+  it.each(["nope", "-1", "9", "1.5", String(MAX_AGENT_MODEL_MAX_RETRIES + 1)])(
+    "rejects %j and falls back to the default",
+    (value) => {
+      expect(
+        resolveAgentModelMaxRetries({
+          AGENT_MODEL_MAX_RETRIES: value,
+        } as NodeJS.ProcessEnv),
+      ).toBe(DEFAULT_AGENT_MODEL_MAX_RETRIES);
+    },
+  );
 });
 
 describe("normalizeLlmBaseUrl — provider appends /chat/completions itself", () => {

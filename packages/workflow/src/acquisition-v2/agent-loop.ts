@@ -1,5 +1,6 @@
 import { AGENT_MEMORY_WRITE_KINDS, fenceMemory, stripMemoryFence } from "../agent-memory.js";
 import { AgentContentFilterError } from "../agent-error.js";
+import { resolveAgentModelMaxRetries } from "../agent-model.js";
 import { generateText, stepCountIs, type LanguageModel, type ToolSet } from "ai";
 import { z } from "zod";
 import type { SearchHistoryEntry, TaskSandbox } from "./sandbox.js";
@@ -388,6 +389,7 @@ export async function runAcquisitionAgent(
   const generateAgentTurn = (system: string, prompt: string, toolSet: ToolSet, stepLimit: number) =>
     generateText({
       model: request.model,
+      maxRetries: resolveAgentModelMaxRetries(),
       system,
       prompt,
       tools: toolSet,
@@ -671,6 +673,7 @@ async function reflect(
   try {
     await generateText({
       model: input.model,
+      maxRetries: resolveAgentModelMaxRetries(),
       system,
       // The digest quotes provider-controlled text (candidate titles, error messages),
       // so it is fenced like memory: evidence to cite, never instructions to follow.

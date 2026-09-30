@@ -1,4 +1,5 @@
 import { generateText, type LanguageModel, type ModelMessage } from "ai";
+import { resolveAgentModelMaxRetries } from "../agent-model.js";
 
 /**
  * Phase 5.5 — the §6a interrogation harness. BEFORE spending real money / touching
@@ -180,6 +181,7 @@ export async function runInterrogation(
     messages.push({ role: "user", content: question.prompt });
     const result = await generateText({
       model: request.model,
+      maxRetries: resolveAgentModelMaxRetries(),
       system: request.systemPrompt,
       messages,
     });

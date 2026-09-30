@@ -22,11 +22,39 @@ import type { LanguageModel } from "ai";
 
 const DEFAULT_PROVIDER_NAME = "agent-model";
 
+/** AI SDK retries are per model request and include exponential backoff. The
+ * default SDK value is 2 (3 attempts total), which is too tight for flaky
+ * OpenAI-compatible gateways that intermittently return 502/504. Keep a bounded
+ * default and expose an env override for self-host operators. */
+export const DEFAULT_AGENT_MODEL_MAX_RETRIES = 5;
+export const MAX_AGENT_MODEL_MAX_RETRIES = 8;
+
 export interface AgentModelOptions {
   apiKey?: string;
   baseURL?: string;
   modelId?: string;
   providerName?: string;
+}
+
+/** Resolve the per-request retry allowance for agent model calls. Invalid or
+ * out-of-range values fall back to the safe default rather than silently
+ * accepting an unbounded retry loop. */
+export function resolveAgentModelMaxRetries(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const raw = env.AGENT_MODEL_MAX_RETRIES?.trim();
+  if (!raw) {
+    return DEFAULT_AGENT_MODEL_MAX_RETRIES;
+  }
+  const parsed = Number(raw);
+  if (
+    !Number.isInteger(parsed) ||
+    parsed < 0 ||
+    parsed > MAX_AGENT_MODEL_MAX_RETRIES
+  ) {
+    return DEFAULT_AGENT_MODEL_MAX_RETRIES;
+  }
+  return parsed;
 }
 
 /**
