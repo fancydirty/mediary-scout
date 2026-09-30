@@ -154,7 +154,7 @@ function asExecutor(sim: Storage115Simulator, failMove: boolean): { executor: St
   return { executor: executor as unknown as StorageExecutor, created, removed };
 }
 
-async function stage(failMove: boolean) {
+async function stage(failMove: boolean, type: "tv" | "anime" = "tv") {
   const sim = new Storage115Simulator({
     packs: {
       have: { files: [{ path: "Show.S01E01.mkv", sizeBytes: 1000 }] },
@@ -179,7 +179,7 @@ async function stage(failMove: boolean) {
   const title = {
     id: "title_7",
     tmdbId: 7,
-    type: "tv" as const,
+    type,
     title: "Show",
     originalTitle: "Show",
     year: 2024,
@@ -268,6 +268,8 @@ async function stage(failMove: boolean) {
  */
 class DerivedScopeExecutor {
   private readonly inScope: Set<string>;
+  /** Every directory listed with listChildDirectories, in call order. */
+  readonly listedParents: string[] = [];
 
   constructor(
     private readonly inner: StorageExecutor,
@@ -283,6 +285,7 @@ class DerivedScopeExecutor {
   }
 
   async listChildDirectories(parentId: string) {
+    this.listedParents.push(parentId);
     const parentInScope = this.inScope.has(parentId);
     const dirs = await this.inner.listChildDirectories!(parentId);
     if (parentInScope) for (const dir of dirs) this.inScope.add(dir.id);
@@ -395,7 +398,11 @@ describe("staging_recovery", () => {
       now: () => "2026-09-28T04:00:00.000Z",
       // The drive's category dirs come from the per-account context, as in production.
       // The show sits under the second one ("root" stands in for the anime category).
-      resolveAccountContext: async () => ({ storageParentDirectoryId: tvCategory, animeStorageParentDirectoryId: "root" }),
+      resolveAccountContext: async () => ({
+        storageProvider: "pan123",
+        storageParentDirectoryId: tvCategory,
+        animeStorageParentDirectoryId: "root",
+      }),
     });
     expect(result.status).toBe("ran");
     const saved = await staged.repo.getWorkflowRunSnapshot("recovery-1", { accountId: "acct", connectedStorageId: "drive" });
@@ -403,6 +410,62 @@ describe("staging_recovery", () => {
     const moved = staged.stagingBefore.find((file) => file.path.endsWith("S01E05.mkv"))!;
     expect((await staged.sim.listTree({ directoryId: staged.seasonId })).map((file) => file.id)).toContain(moved.id);
     await expect(staged.sim.listTree({ directoryId: staged.stagingId })).rejects.toThrow(/NOT_FOUND/);
+  });
+
+  it("for an anime title it looks in the anime category first and does not list the tv one", async () => {
+    // The janitor matches an anime title only on the anime shelf. A big tv dir on 123 is
+    // several rate-limited pages, so the walk must not start there.
+    const staged = await stage(false, "anime");
+    const tvCategory = await staged.sim.createDirectory({ name: "TV", parentId: "root" });
+    const storage = new DerivedScopeExecutor(staged.executor, [tvCategory, "root"]);
+    const result = await runQueuedStagingRecovery({
+      repository: staged.repo,
+      resourceProvider: staged.resourceProvider,
+      storage: storage as unknown as StorageExecutor,
+      model: recoveryModel(new Set<string>(), false, { value: false }),
+      now: () => "2026-09-28T04:00:00.000Z",
+      resolveAccountContext: async () => ({
+        storageProvider: "pan123",
+        storageParentDirectoryId: tvCategory,
+        animeStorageParentDirectoryId: "root",
+      }),
+    });
+    expect(result.status).toBe("ran");
+    expect(storage.listedParents[0]).toBe("root");
+    expect(storage.listedParents).not.toContain(tvCategory);
+    const moved = staged.stagingBefore.find((file) => file.path.endsWith("S01E05.mkv"))!;
+    expect((await staged.sim.listTree({ directoryId: staged.seasonId })).map((file) => file.id)).toContain(moved.id);
+    await expect(staged.sim.listTree({ directoryId: staged.stagingId })).rejects.toThrow(/NOT_FOUND/);
+  });
+
+  it("on 115 / 夸克 it does not list the category dirs (their executors look up a write's parents)", async () => {
+    const staged = await stage(false);
+    const tvCategory = await staged.sim.createDirectory({ name: "TV", parentId: "root" });
+    const listedParents: string[] = [];
+    const storage: StorageExecutor = {
+      ...staged.executor,
+      listChildDirectories: async (parentId: string) => {
+        listedParents.push(parentId);
+        return staged.executor.listChildDirectories(parentId);
+      },
+    };
+    const result = await runQueuedStagingRecovery({
+      repository: staged.repo,
+      resourceProvider: staged.resourceProvider,
+      storage,
+      model: recoveryModel(new Set<string>(), false, { value: false }),
+      now: () => "2026-09-28T04:00:00.000Z",
+      resolveAccountContext: async () => ({
+        storageProvider: "pan115",
+        storageParentDirectoryId: tvCategory,
+        animeStorageParentDirectoryId: "root",
+      }),
+    });
+    expect(result.status).toBe("ran");
+    expect(listedParents).not.toContain(tvCategory);
+    expect(listedParents).not.toContain("root");
+    const saved = await staged.repo.getWorkflowRunSnapshot("recovery-1", { accountId: "acct", connectedStorageId: "drive" });
+    expect(saved?.episodes.find((episode) => episode.episodeCode === "S01E05")?.obtained).toBe(true);
   });
 
   it("keeps the staging dir when the move fails and does not mark the episode obtained", async () => {

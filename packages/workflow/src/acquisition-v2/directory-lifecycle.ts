@@ -72,14 +72,15 @@ export async function bindRecoveryDirectories(input: {
   showDirectoryId: string;
   stagingDirectoryId: string;
   seasons: number[];
-  /** The drive's category dirs (tv / anime), where the janitor found the show. */
+  /** The drive's category dirs to walk down from, most likely first. Only for drives
+   *  whose executor writes where it listed (123 / 光鸭 / 天翼); omitted on 115 / 夸克. */
   categoryDirectoryIds?: string[];
 }): Promise<AcquisitionDirectories> {
   // 123 / 光鸭 / 天翼 accept a write only into a directory this executor reached from a
   // scope root (the category dirs) or created. The janitor's ids come from another
   // executor, so walk down again: category → show here, show → season + staging below.
-  // Best effort: a show no longer under any category stays out of scope, and 115 / 夸克
-  // (which check scope by walking up) do not need the walk.
+  // A show no longer under any category stays out of scope. A failed listing fails the
+  // run: without the walk nothing here could be written.
   for (const categoryId of new Set(input.categoryDirectoryIds ?? [])) {
     const shows = await input.executor.listChildDirectories(categoryId);
     if (shows.some((show) => show.id === input.showDirectoryId)) break;

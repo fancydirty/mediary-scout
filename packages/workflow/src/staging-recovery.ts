@@ -1,8 +1,9 @@
 import type { LanguageModel } from "ai";
-import type { WorkflowRun } from "./domain.js";
+import type { MediaTitle, WorkflowRun } from "./domain.js";
 import type { ResourceProvider, StorageExecutor } from "./ports.js";
 import type { WorkflowRepository } from "./repository.js";
 import { runStagingRecoveryV2AndPersist } from "./runner-v2.js";
+import { brandWritesOnlyListedDirectories } from "./storage-brands.js";
 import {
   handleWorkflowRunFailure,
   resolveWorkerDeps,
@@ -33,6 +34,27 @@ export function stagingRecoveryTarget(run: Pick<WorkflowRun, "auditEvents">): St
     return { stagingDirectoryId, showDirectoryId, seasonNumbers };
   }
   return null;
+}
+
+/**
+ * The category dirs a recovery walks down from to reach the show, title's own shelf
+ * first (the janitor matches a title only on its own shelf). Empty on 115 / 夸克: their
+ * executors look a write's parents up, so the walk would only cost calls.
+ */
+function recoveryCategoryDirectoryIds(
+  deps: {
+    storageProvider: string | undefined;
+    storageParentDirectoryId: string | undefined;
+    animeStorageParentDirectoryId: string | undefined;
+  },
+  titleType: MediaTitle["type"],
+): string[] {
+  if (!brandWritesOnlyListedDirectories(deps.storageProvider)) return [];
+  const shelves =
+    titleType === "anime"
+      ? [deps.animeStorageParentDirectoryId, deps.storageParentDirectoryId]
+      : [deps.storageParentDirectoryId, deps.animeStorageParentDirectoryId];
+  return shelves.filter((id): id is string => typeof id === "string" && id.length > 0);
 }
 
 /**
@@ -82,10 +104,7 @@ export async function runQueuedStagingRecovery(
       stagingRecovery: {
         showDirectoryId: target.showDirectoryId,
         stagingDirectoryId: target.stagingDirectoryId,
-        // Where the janitor found the show: the derived-scope brands must reach it from there.
-        categoryDirectoryIds: [deps.storageParentDirectoryId, deps.animeStorageParentDirectoryId].filter(
-          (id): id is string => typeof id === "string" && id.length > 0,
-        ),
+        categoryDirectoryIds: recoveryCategoryDirectoryIds(deps, claimed.title.type),
       },
       categoryParentId: "unused",
       resourceProvider: deps.resourceProvider,
