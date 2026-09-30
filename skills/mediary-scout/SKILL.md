@@ -31,6 +31,8 @@ TOKEN=$(jq -r .token ~/.mediary/agent.json)
 BASE=$(jq -r .baseUrl ~/.mediary/agent.json)
 ```
 
+（没有 `jq` 就 `cat ~/.mediary/agent.json`，自己读出 `token` 和 `baseUrl` 两个值再用。）
+
 请求统一带 `-H "Authorization: Bearer $TOKEN"`。
 
 ## 2. 能力速查（用户说什么 → 调什么）

@@ -31,6 +31,8 @@ mkdir -p ~/.claude/skills/ && cp -r /tmp/mediary-scout/skills/mediary-scout ~/.c
 
 Windows 上在 Git Bash 里跑同样的命令，或者手动把 `skills/mediary-scout` 文件夹复制到 `%USERPROFILE%\.claude\skills\`。
 
+skill 用 `curl` 和 `jq` 调接口。Git Bash 不带 `jq`，Windows 上先装一下（`winget install jqlang.jq`）；macOS / Linux 没有的话用 `brew install jq` 或 `apt install jq`。
+
 之后直接跟 agent 说「帮我找进击的巨人第二季」「蜘蛛侠下好了吗」「把画质改成 high」就行。能说哪些话见 [`skills/mediary-scout/SKILL.md`](../skills/mediary-scout/SKILL.md)。
 
 ## 接口
