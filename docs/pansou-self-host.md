@@ -33,7 +33,7 @@ docker run -d --name mediary-pansou --restart unless-stopped \
 - `-p 8899:8888`：容器的 8888 映射到本机 `localhost:8899`（换个不冲突的端口也行）。
 - `--restart unless-stopped`：开机自启，省得每次手动拉起。
 
-> 🇨🇳 **拉不下 ghcr 镜像？** `ghcr.io` 在国内偶尔受阻。用镜像代理前缀，或参考 [docs/deploy.md → 国内构建加速](deploy.md#国内构建加速连不上-docker-hub)。
+> 🇨🇳 **拉不下 ghcr 镜像？** `ghcr.io` 在国内偶尔受阻。用镜像代理前缀，或参考 [docs/deploy.md → 国内构建加速](deploy.md#国内构建加速docker-hub-常年不稳定)。
 
 起来后等几十秒让它从各频道预热缓存。
 
