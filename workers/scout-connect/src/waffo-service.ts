@@ -13,7 +13,7 @@ export interface WaffoCompletedEvidence {
   orderMerchantExternalId: string;
   currency: string;
   total: string;
-  paymentStatus?: string;
+  paymentStatus: string;
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -45,10 +45,7 @@ export function readWaffoCompletedEvidence(data: unknown): WaffoCompletedEvidenc
   const listPrice = record(object.listPrice);
   const total = normalizeWaffoAmount(listPrice?.total);
   if (total === null) throw new InvalidWaffoEvidenceError("Waffo list price total is missing");
-  const paymentStatus = object.paymentStatus;
-  if (paymentStatus !== undefined && typeof paymentStatus !== "string") {
-    throw new InvalidWaffoEvidenceError("Waffo payment status is invalid");
-  }
+  const paymentStatus = requiredString(object.paymentStatus, "payment status");
   return {
     orderId: requiredString(object.orderId, "order id"),
     paymentId: requiredString(object.paymentId, "payment id"),
@@ -58,7 +55,7 @@ export function readWaffoCompletedEvidence(data: unknown): WaffoCompletedEvidenc
     ),
     currency: requiredString(object.currency, "currency"),
     total,
-    ...(paymentStatus === undefined ? {} : { paymentStatus: paymentStatus.trim() }),
+    paymentStatus,
   };
 }
 
@@ -73,7 +70,7 @@ export function assertWaffoCompletedEvidence(
   if (evidence.currency !== "CNY") {
     throw new InvalidWaffoEvidenceError("Waffo payment currency mismatch");
   }
-  if (evidence.paymentStatus !== undefined && evidence.paymentStatus !== "succeeded") {
+  if (evidence.paymentStatus.trim() !== "succeeded") {
     throw new InvalidWaffoEvidenceError("Waffo payment is not succeeded");
   }
   const expected = normalizeWaffoAmount(expectedTotal);

@@ -901,7 +901,7 @@ async function fulfillWaffoOrder(staleOrder: PaymentOrderRow, deps: RouteDeps): 
 }
 
 async function acceptWaffoPayment(
-  evidence: { orderId: string; paymentId: string; orderMerchantExternalId: string; currency: string; total: string; paymentStatus?: string },
+  evidence: { orderId: string; paymentId: string; orderMerchantExternalId: string; currency: string; total: string; paymentStatus: string },
   deps: RouteDeps,
 ): Promise<PaymentOrderRow> {
   const order = await deps.db.getPaymentOrderByOutTradeNo(evidence.orderMerchantExternalId);
@@ -984,8 +984,12 @@ interface WaffoCompensationOptions {
   checkFulfilledForRefund?: boolean;
 }
 
+// Covers the Waffo session/retry lifetime for unpaid orders.
+const WAFFO_UNPAID_RECONCILIATION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 // Covers the 14-day refund policy plus exceptional refunds granted later by the owner.
-const WAFFO_RECONCILIATION_WINDOW_MS = 60 * 24 * 60 * 60 * 1000;
+const WAFFO_SETTLED_RECONCILIATION_WINDOW_MS = 60 * 24 * 60 * 60 * 1000;
+// Keeps one daily run inside the cron wall-clock limit; later runs cover the rest.
+const WAFFO_RECONCILIATION_BATCH_LIMIT = 200;
 
 async function compensateWaffoOrder(
   orderId: string,
@@ -1105,12 +1109,20 @@ async function getWaffoOrderStatus(request: Request, deps: RouteDeps, orderId: s
 }
 
 /** Daily production reconciliation; each order is isolated so one provider/D1 failure does not stop the rest. */
-export async function reconcileWaffoOrders(deps: RouteDeps): Promise<void> {
+export async function reconcileWaffoOrders(
+  deps: RouteDeps,
+  options: { limit?: number } = {},
+): Promise<void> {
   if (deps.waffoEnvironment !== "prod" || deps.waffoApi === undefined) return;
   const nowMs = Date.parse(deps.now());
   if (!Number.isFinite(nowMs)) throw new Error("server time is invalid");
-  const since = new Date(nowMs - WAFFO_RECONCILIATION_WINDOW_MS).toISOString();
-  const orders = await deps.db.listPaymentOrdersForReconciliation("waffo", since);
+  const unpaidSinceIso = new Date(nowMs - WAFFO_UNPAID_RECONCILIATION_WINDOW_MS).toISOString();
+  const settledSinceIso = new Date(nowMs - WAFFO_SETTLED_RECONCILIATION_WINDOW_MS).toISOString();
+  const orders = await deps.db.listPaymentOrdersForReconciliation("waffo", {
+    unpaidSinceIso,
+    settledSinceIso,
+    limit: options.limit ?? WAFFO_RECONCILIATION_BATCH_LIMIT,
+  });
   for (const order of orders) {
     try {
       await compensateWaffoOrder(order.id, deps, { checkFulfilledForRefund: true });

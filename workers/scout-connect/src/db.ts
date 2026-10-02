@@ -113,6 +113,12 @@ export interface PaymentOrderCondition {
   refundRequestNo?: string | null;
 }
 
+export interface PaymentOrderReconciliationOptions {
+  unpaidSinceIso: string;
+  settledSinceIso: string;
+  limit: number;
+}
+
 export interface AuditRow {
   id: string;
   at: string;
@@ -234,7 +240,7 @@ export interface ConnectDb {
   /** Waffo reconciliation scan: recent orders that still need payment/refund compensation. */
   listPaymentOrdersForReconciliation(
     provider: PaymentOrderRow["provider"],
-    sinceIso: string,
+    options: PaymentOrderReconciliationOptions,
   ): Promise<PaymentOrderRow[]>;
   updatePaymentOrder(id: string, patch: PaymentOrderPatch): Promise<void>;
   /** Atomic conditional update used where fulfillment and refunds can race. */
@@ -839,16 +845,24 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
       return row === null ? null : mapPaymentOrder(row);
     },
 
-    async listPaymentOrdersForReconciliation(provider, sinceIso) {
+    async listPaymentOrdersForReconciliation(provider, options) {
       const rows = await d1
         .prepare(
           `SELECT * FROM payment_orders
              WHERE provider = ?
-               AND created_at >= ?
-               AND status != 'refunded'
-             ORDER BY created_at ASC, id ASC`,
+               AND status NOT IN ('refunded', 'closed')
+               AND (
+                 (status IN ('created', 'form_issued', 'pending') AND created_at >= ?)
+                 OR (status IN ('paid', 'fulfilled') AND created_at >= ?)
+               )
+             ORDER BY
+               CASE WHEN last_queried_at IS NULL THEN 0 ELSE 1 END ASC,
+               last_queried_at ASC,
+               created_at DESC,
+               id DESC
+             LIMIT ?`,
         )
-        .bind(provider, sinceIso)
+        .bind(provider, options.unpaidSinceIso, options.settledSinceIso, options.limit)
         .all<RawRow>();
       return rows.results.map(mapPaymentOrder);
     },
@@ -1415,15 +1429,26 @@ export function createMemoryConnectDb(): ConnectDb {
       return null;
     },
 
-    async listPaymentOrdersForReconciliation(provider, sinceIso) {
+    async listPaymentOrdersForReconciliation(provider, options) {
       return [...paymentOrders.values()]
         .filter(
           (row) =>
             row.provider === provider &&
-            row.created_at >= sinceIso &&
-            row.status !== "refunded",
+            row.status !== "refunded" &&
+            row.status !== "closed" &&
+            ((row.status === "created" || row.status === "form_issued" || row.status === "pending")
+              ? row.created_at >= options.unpaidSinceIso
+              : (row.status === "paid" || row.status === "fulfilled") && row.created_at >= options.settledSinceIso),
         )
-        .sort(byCreatedAtAsc)
+        .sort((a, b) => {
+          const aQueried = a.last_queried_at === null ? 0 : 1;
+          const bQueried = b.last_queried_at === null ? 0 : 1;
+          return aQueried - bQueried
+            || (a.last_queried_at ?? "").localeCompare(b.last_queried_at ?? "")
+            || b.created_at.localeCompare(a.created_at)
+            || b.id.localeCompare(a.id);
+        })
+        .slice(0, options.limit)
         .map((row) => ({ ...row }));
     },
 

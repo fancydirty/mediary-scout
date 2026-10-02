@@ -1397,7 +1397,7 @@ describe("migration 0007 — Waffo payment orders", () => {
     expect(check.sql).toMatch(/provider\s+TEXT\s+NOT NULL\s+CHECK\s*\(provider IN \('alipay', 'waffo'\)\)/i);
   });
 
-  it("accepts a Waffo row and returns only recent unresolved rows to reconciliation", async () => {
+  it("accepts a Waffo row and returns status-window reconciliation candidates", async () => {
     const sqlite = migratedAlipayDb();
     sqlite.exec(MIGRATION7_SQL);
     const db = createD1ConnectDb(d1Over(sqlite));
@@ -1430,6 +1430,7 @@ describe("migration 0007 — Waffo payment orders", () => {
       checkout_token_sha256: "sha_waffo_done",
       out_trade_no: "MC-WAFFO-DONE",
       status: "fulfilled",
+      created_at: "2026-10-01T00:00:01.000Z",
     });
     await db.insertPaymentOrder({
       ...base,
@@ -1444,9 +1445,43 @@ describe("migration 0007 — Waffo payment orders", () => {
       waffo_session_id: "cs_waffo_1",
       waffo_order_id: null,
     });
-    expect(await db.listPaymentOrdersForReconciliation("waffo", "2026-09-15T00:00:00.000Z")).toEqual([
-      expect.objectContaining({ id: base.id, provider: "waffo" }),
+    expect(await db.listPaymentOrdersForReconciliation("waffo", {
+      unpaidSinceIso: "2026-09-15T00:00:00.000Z",
+      settledSinceIso: "2026-09-15T00:00:00.000Z",
+      limit: 10,
+    })).toEqual([
       expect.objectContaining({ id: "ord_waffo_done", status: "fulfilled" }),
+      expect.objectContaining({ id: base.id, provider: "waffo" }),
+    ]);
+
+    // Rotation: never-queried rows first, then the least recently queried; the limit bounds one run.
+    await db.insertPaymentOrder({
+      ...base,
+      id: "ord_waffo_queried_late",
+      checkout_token_sha256: "sha_waffo_queried_late",
+      out_trade_no: "MC-WAFFO-QUERIED-LATE",
+      created_at: "2026-10-01T00:00:03.000Z",
+      last_queried_at: "2026-10-02T00:00:00.000Z",
+    });
+    await db.insertPaymentOrder({
+      ...base,
+      id: "ord_waffo_queried_early",
+      checkout_token_sha256: "sha_waffo_queried_early",
+      out_trade_no: "MC-WAFFO-QUERIED-EARLY",
+      created_at: "2026-10-01T00:00:02.000Z",
+      last_queried_at: "2026-10-01T12:00:00.000Z",
+    });
+    const window = { unpaidSinceIso: "2026-09-15T00:00:00.000Z", settledSinceIso: "2026-09-15T00:00:00.000Z" };
+    expect((await db.listPaymentOrdersForReconciliation("waffo", { ...window, limit: 10 })).map((row) => row.id)).toEqual([
+      "ord_waffo_done",
+      base.id,
+      "ord_waffo_queried_early",
+      "ord_waffo_queried_late",
+    ]);
+    expect((await db.listPaymentOrdersForReconciliation("waffo", { ...window, limit: 3 })).map((row) => row.id)).toEqual([
+      "ord_waffo_done",
+      base.id,
+      "ord_waffo_queried_early",
     ]);
   });
 

@@ -815,7 +815,7 @@ function entitlement(overrides: Partial<EntitlementRow> = {}): EntitlementRow {
 }
 
 describe("payment-order and provider-neutral entitlement persistence", () => {
-  it("stores Waffo session/order ids and scans recent unresolved orders", async () => {
+  it("stores Waffo session/order ids and scans reconciliation candidates", async () => {
     const db = createMemoryConnectDb();
     const row = paymentOrder({
       id: "ord_waffo",
@@ -839,10 +839,37 @@ describe("payment-order and provider-neutral entitlement persistence", () => {
     );
 
     expect(await db.getPaymentOrderById(row.id)).toEqual(row);
-    expect(await db.listPaymentOrdersForReconciliation("waffo", "2026-09-30T00:00:00.000Z")).toEqual([
-      row,
+    expect(await db.listPaymentOrdersForReconciliation("waffo", {
+      unpaidSinceIso: "2026-09-30T00:00:00.000Z",
+      settledSinceIso: "2026-09-30T00:00:00.000Z",
+      limit: 10,
+    })).toEqual([
       expect.objectContaining({ id: "ord_waffo_fulfilled", status: "fulfilled" }),
+      row,
     ]);
+  });
+
+  it("reconciliation scan uses status windows, NULL-first query order, and a limit", async () => {
+    const db = createMemoryConnectDb();
+    const base = paymentOrder({ provider: "waffo", status: "created" });
+    await db.insertPaymentOrder({ ...base, id: "ord_null_old", checkout_token_sha256: "sha_null_old", out_trade_no: "MC_NULL_OLD", created_at: "2026-10-01T00:00:00.000Z", last_queried_at: null });
+    await db.insertPaymentOrder({ ...base, id: "ord_null_new", checkout_token_sha256: "sha_null_new", out_trade_no: "MC_NULL_NEW", created_at: "2026-10-02T00:00:00.000Z", last_queried_at: null });
+    await db.insertPaymentOrder({ ...base, id: "ord_queried", checkout_token_sha256: "sha_queried", out_trade_no: "MC_QUERIED", created_at: "2026-10-02T00:00:01.000Z", last_queried_at: "2026-09-30T00:00:00.000Z" });
+    await db.insertPaymentOrder({ ...base, id: "ord_paid_old", checkout_token_sha256: "sha_paid_old", out_trade_no: "MC_PAID_OLD", status: "paid", created_at: "2026-09-20T00:00:00.000Z" });
+    await db.insertPaymentOrder({ ...base, id: "ord_closed", checkout_token_sha256: "sha_closed", out_trade_no: "MC_CLOSED", status: "closed" });
+    await db.insertPaymentOrder({ ...base, id: "ord_refunded", checkout_token_sha256: "sha_refunded", out_trade_no: "MC_REFUNDED", status: "refunded" });
+    expect((await db.listPaymentOrdersForReconciliation("waffo", {
+      unpaidSinceIso: "2026-09-25T00:00:00.000Z",
+      settledSinceIso: "2026-09-15T00:00:00.000Z",
+      limit: 2,
+    })).map((row) => row.id)).toEqual(["ord_null_new", "ord_null_old"]);
+    const allCandidates = await db.listPaymentOrdersForReconciliation("waffo", {
+      unpaidSinceIso: "2026-09-25T00:00:00.000Z",
+      settledSinceIso: "2026-09-15T00:00:00.000Z",
+      limit: 10,
+    });
+    expect(allCandidates.map((row) => row.id)).toContain("ord_paid_old");
+    expect(allCandidates.map((row) => row.id)).not.toEqual(expect.arrayContaining(["ord_closed", "ord_refunded"]));
   });
 
   it("round-trips and updates an Alipay order by every server-owned key", async () => {

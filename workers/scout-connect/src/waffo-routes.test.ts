@@ -182,7 +182,41 @@ describe("Waffo webhook and status compensation", () => {
     }), deps(db, { waffoApi: waffo }));
     expect(response.status).toBe(200);
     expect(await db.listEntitlements("act_1")).toHaveLength(0);
-    expect(await db.listPaymentOrdersForReconciliation("waffo", "2020-01-01T00:00:00.000Z")).toHaveLength(0);
+    expect(await db.listPaymentOrdersForReconciliation("waffo", {
+      unpaidSinceIso: "2020-01-01T00:00:00.000Z",
+      settledSinceIso: "2020-01-01T00:00:00.000Z",
+      limit: 10,
+    })).toHaveLength(0);
+  });
+
+  it("rejects order.completed without paymentStatus, then fulfils via status compensation", async () => {
+    const db = createMemoryConnectDb();
+    const cookie = await loggedIn(db);
+    const order = await db.insertPaymentOrder({
+      id: "ord_missing_status", checkout_token_sha256: "missing-status".padEnd(64, "x"), account_id: "act_1", provider: "waffo",
+      out_trade_no: "MC_missing_status", trade_no: null, waffo_session_id: "cs", waffo_order_id: null,
+      months: 3, total_amount: "45.00", status: "created", created_at: NOW,
+      expires_at: "2026-10-02T10:30:00.000Z", paid_at: null, fulfilled_at: null, closed_at: null,
+      refunded_at: null, refund_request_no: null, last_notify_id: null, last_queried_at: null,
+    });
+    const webhookWaffo = api({ verifyWebhook: vi.fn(async () => ({
+      eventType: "order.completed", mode: "test", storeId: "STO_TEST",
+      data: { orderId: "ORD_MISSING_STATUS", paymentId: "PAY_MISSING_STATUS", orderMerchantExternalId: order.out_trade_no, currency: "CNY", listPrice: { total: "45.00" } },
+    })) });
+    const webhook = await handleRequest(new Request("https://dev.example/api/waffo/webhook", {
+      method: "POST", body: "{}", headers: { "x-waffo-signature": "t=1,v1=sig" },
+    }), deps(db, { waffoApi: webhookWaffo }));
+    expect(webhook.status).toBe(400);
+    expect(await db.listEntitlements("act_1")).toHaveLength(0);
+    const statusWaffo = api({ queryPayments: vi.fn(async () => [{
+      id: "PAY_MISSING_STATUS", orderId: "ORD_MISSING_STATUS", status: "succeeded",
+      amount: { amount: "4500", currency: "CNY", display: "45.00" }, testMode: true,
+      orderMerchantExternalId: order.out_trade_no,
+    }]) });
+    const status = await handleRequest(new Request(`https://dev.example/api/orders/${order.id}/status`, { headers: { cookie } }), deps(db, { waffoApi: statusWaffo }));
+    expect(status.status).toBe(200);
+    expect(await status.json()).toEqual({ status: "fulfilled" });
+    expect(await db.listEntitlements("act_1")).toHaveLength(1);
   });
 
   it("rejects bad signature, mode/store mismatch, and amount mismatch", async () => {
@@ -370,7 +404,7 @@ describe("Waffo webhook and status compensation", () => {
       expires_at: "2027-01-01T00:00:00.000Z", paid_at: NOW, fulfilled_at: NOW, closed_at: null,
       refunded_at: null, refund_request_no: null, last_notify_id: null, last_queried_at: null,
     });
-    const queryPayments = vi.fn(async () => []);
+    const queryPayments = vi.fn(async (_externalId: string) => []);
     const response = await handleRequest(new Request(`https://dev.example/api/orders/${order.id}/status`, { headers: { cookie } }), deps(db, { waffoApi: api({ queryPayments }) }));
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ status: "fulfilled" });
@@ -383,8 +417,8 @@ describe("Waffo webhook and status compensation", () => {
     const makeOrder = async (id: string, createdAt: string) => db.insertPaymentOrder({
       id, checkout_token_sha256: id.padEnd(64, "x"), account_id: "act_1", provider: "waffo",
       out_trade_no: id, trade_no: null, waffo_session_id: "cs", waffo_order_id: null,
-      months: 3, total_amount: "45.00", status: "created", created_at: createdAt,
-      expires_at: "2026-10-02T10:30:00.000Z", paid_at: null, fulfilled_at: null, closed_at: null,
+      months: 3, total_amount: "45.00", status: "fulfilled", created_at: createdAt,
+      expires_at: "2026-10-02T10:30:00.000Z", paid_at: NOW, fulfilled_at: NOW, closed_at: null,
       refunded_at: null, refund_request_no: null, last_notify_id: null, last_queried_at: null,
     });
     const recent = await makeOrder("ord_59_days", "2026-08-04T10:00:00.000Z");
@@ -393,5 +427,46 @@ describe("Waffo webhook and status compensation", () => {
     await reconcileWaffoOrders(deps(db, { waffoEnvironment: "prod", waffoApi: api({ queryPayments }) }));
     expect(queryPayments).toHaveBeenCalledTimes(1);
     expect(queryPayments).toHaveBeenCalledWith(recent.out_trade_no);
+  });
+
+  it("cron cap rotates through the least recently queried orders", async () => {
+    const db = createMemoryConnectDb();
+    await loggedIn(db);
+    const makeOrder = async (id: string, createdAt: string, lastQueriedAt: string | null) => db.insertPaymentOrder({
+      id, checkout_token_sha256: id.padEnd(64, "x"), account_id: "act_1", provider: "waffo",
+      out_trade_no: id, trade_no: null, waffo_session_id: "cs", waffo_order_id: null,
+      months: 3, total_amount: "45.00", status: "created", created_at: createdAt,
+      expires_at: "2026-10-02T10:30:00.000Z", paid_at: null, fulfilled_at: null, closed_at: null,
+      refunded_at: null, refund_request_no: null, last_notify_id: null, last_queried_at: lastQueriedAt,
+    });
+    const first = await makeOrder("ord_cap_first", "2026-09-30T00:00:00.000Z", null);
+    const second = await makeOrder("ord_cap_second", "2026-09-29T00:00:00.000Z", null);
+    const remaining = await makeOrder("ord_cap_remaining", "2026-10-01T00:00:00.000Z", "2026-09-30T00:00:00.000Z");
+    const queryPayments = vi.fn(async (_externalId: string) => []);
+    const routeDeps = deps(db, { waffoEnvironment: "prod", waffoApi: api({ queryPayments }) });
+    await reconcileWaffoOrders(routeDeps, { limit: 2 });
+    expect(queryPayments.mock.calls.map(([externalId]) => externalId)).toEqual([first.out_trade_no, second.out_trade_no]);
+    queryPayments.mockClear();
+    await reconcileWaffoOrders(routeDeps, { limit: 2 });
+    expect(queryPayments.mock.calls.map(([externalId]) => externalId)).toEqual([remaining.out_trade_no]);
+  });
+
+  it("cron scans a 59-day fulfilled order but skips an 8-day-old unpaid order", async () => {
+    const db = createMemoryConnectDb();
+    await loggedIn(db);
+    const makeOrder = async (id: string, status: "created" | "fulfilled", createdAt: string) => db.insertPaymentOrder({
+      id, checkout_token_sha256: id.padEnd(64, "x"), account_id: "act_1", provider: "waffo",
+      out_trade_no: id, trade_no: status === "fulfilled" ? "PAY_" + id : null, waffo_session_id: "cs", waffo_order_id: null,
+      months: 3, total_amount: "45.00", status, created_at: createdAt,
+      expires_at: "2026-12-01T10:30:00.000Z", paid_at: status === "fulfilled" ? NOW : null, fulfilled_at: status === "fulfilled" ? NOW : null, closed_at: null,
+      refunded_at: null, refund_request_no: null, last_notify_id: null, last_queried_at: null,
+    });
+    const unpaid = await makeOrder("ord_unpaid_8_days", "created", "2026-09-24T10:00:00.000Z");
+    const fulfilled = await makeOrder("ord_fulfilled_59_days", "fulfilled", "2026-08-04T10:00:00.000Z");
+    const queryPayments = vi.fn(async () => []);
+    await reconcileWaffoOrders(deps(db, { waffoEnvironment: "prod", waffoApi: api({ queryPayments }) }));
+    expect(queryPayments).toHaveBeenCalledTimes(1);
+    expect(queryPayments).toHaveBeenCalledWith(fulfilled.out_trade_no);
+    expect(queryPayments).not.toHaveBeenCalledWith(unpaid.out_trade_no);
   });
 });
