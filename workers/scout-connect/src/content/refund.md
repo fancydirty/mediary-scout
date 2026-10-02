@@ -2,9 +2,9 @@
 
 ## 退款政策
 
-Last updated: 2026-08-16
+Last updated: 2026-10-02
 
-最后更新:2026-08-16
+最后更新:2026-10-02
 
 ## 14-day, no-questions-asked
 
@@ -18,13 +18,17 @@ Within **14 days** of payment you may request a full refund for any reason, **wh
 
 ## 如何申请
 
-- Email **support@mediaryconnect.app** from your registered email and include the original Alipay order or transaction number. **No reason needed.**
+- Email **support@mediaryconnect.app** from your registered email and include the original Waffo order or payment ID. **No reason needed.**
 
-- 使用注册邮箱发邮件至 **support@mediaryconnect.app**,附上原支付宝订单号或交易号即可。**无需说明理由。**
+- 使用注册邮箱发邮件至 **support@mediaryconnect.app**,附上原 Waffo 订单号或付款 ID 即可。**无需说明理由。**
 
-Refunds return by the original payment method, typically within 5–10 business days.
+Refunds are requested through our support email and processed by Waffo back to the original WeChat Pay method, typically within 5–10 business days.
 
-退款处理后,款项按原路退回,到账时间取决于你的付款方式(通常 5-10 个工作日)。
+退款申请通过支持邮箱提交,由 Waffo 按原微信支付路径退回,到账时间通常为 5-10 个工作日。
+
+Waffo.com Limited is the merchant of record and sends the payment receipt.
+
+Waffo.com Limited 是记录商户,负责发送付款凭证。
 
 ## After a refund
 

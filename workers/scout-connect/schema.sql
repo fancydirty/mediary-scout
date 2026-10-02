@@ -130,9 +130,12 @@ CREATE TABLE payment_orders (
   id TEXT PRIMARY KEY,
   checkout_token_sha256 TEXT NOT NULL UNIQUE,
   account_id TEXT NOT NULL REFERENCES accounts(id),
-  provider TEXT NOT NULL CHECK(provider = 'alipay'),
+  -- Keep historical Alipay rows readable while new checkout uses Waffo.
+  provider TEXT NOT NULL CHECK(provider IN ('alipay', 'waffo')),
   out_trade_no TEXT NOT NULL UNIQUE,
   trade_no TEXT UNIQUE,
+  waffo_session_id TEXT,
+  waffo_order_id TEXT,
   months INTEGER NOT NULL CHECK(months IN (3, 12, 24)),
   total_amount TEXT NOT NULL,
   status TEXT NOT NULL CHECK(status IN (

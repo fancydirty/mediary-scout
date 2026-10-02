@@ -2368,37 +2368,39 @@ describe("POST /waitlist Turnstile gate", () => {
   });
 });
 
-describe("GET /buy — Alipay-only tier selector", () => {
-  it("serves the three unchanged Alipay tiers", async () => {
+describe("GET /buy — Waffo tier selector", () => {
+  it("serves the three unchanged Waffo tiers", async () => {
     const res = await handleRequest(new Request(`${BASE}/buy`), {
       ...setup().deps,
-      alipayApi: { pagePayForm: async () => "" } as never,
+      waffoApi: { config: {}, createSession: async () => ({ checkoutUrl: "", sessionId: "", expiresAt: "" }), verifyWebhook: async () => ({ eventType: "" }), queryPayments: async () => [] } as never,
+      waffoProducts: { quarter: "q", year: "y", two_years: "2y" },
     });
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/html");
     const body = await res.text();
-    expect(body).toContain("支付宝支付");
+    expect(body).toContain("微信支付");
     expect(body).toContain("¥45");
     expect(body).toContain("¥108");
     expect(body).toContain("¥188");
   });
 
-  it("未配置支付宝服务端时仍 200 且明确禁用(不是白页/不是 500)", async () => {
+  it("未配置 Waffo 服务端时仍 200 且明确禁用(不是白页/不是 500)", async () => {
     const res = await handleRequest(new Request(`${BASE}/buy`), setup().deps);
     expect(res.status).toBe(200);
     const body = await res.text();
-    expect(body).toContain("支付宝结账暂未开放");
+    expect(body).toContain("微信支付结账暂未开放");
     expect(body).toContain("disabled");
   });
 
-  it("页面只依赖支付宝服务端配置，不包含第三方浏览器 SDK", async () => {
+  it("页面只依赖 Waffo 服务端配置，不包含第三方浏览器 SDK", async () => {
     const res = await handleRequest(new Request(`${BASE}/buy`), {
       ...setup().deps,
-      alipayApi: { pagePayForm: async () => "" } as never,
+      waffoApi: { config: {}, createSession: async () => ({ checkoutUrl: "", sessionId: "", expiresAt: "" }), verifyWebhook: async () => ({ eventType: "" }), queryPayments: async () => [] } as never,
+      waffoProducts: { quarter: "q", year: "y", two_years: "2y" },
     });
     const body = await res.text();
-    expect(body).not.toContain("Paddle");
-    expect(body).not.toContain("paddle.com");
+    expect(body).not.toContain("Alipay");
+    expect(body).not.toContain("支付宝");
     expect(body).not.toContain("<script src=");
   });
 });

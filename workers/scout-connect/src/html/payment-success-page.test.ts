@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { paymentSuccessPage } from "./payment-success-page.js";
 
-describe("paymentSuccessPage (server-confirmed Alipay state)", () => {
+describe("paymentSuccessPage (server-confirmed Waffo state)", () => {
   it("starts in a neutral confirmation state and is never indexable", () => {
     const html = paymentSuccessPage();
     expect(html).toContain("付款确认中");
@@ -12,7 +12,7 @@ describe("paymentSuccessPage (server-confirmed Alipay state)", () => {
   it("reads only our opaque order id and polls our session-bound status API", () => {
     const html = paymentSuccessPage();
     expect(html).toContain('URLSearchParams(location.search).get("order")');
-    expect(html).toContain("/api/alipay/orders/");
+    expect(html).toContain("/api/orders/");
     expect(html).toContain("/status");
     for (const untrusted of ["trade_status", "total_amount", "out_trade_no", "seller_id", "sign"]) {
       expect(html, `must not read ${untrusted}`).not.toContain(`.get("${untrusted}")`);
@@ -34,6 +34,9 @@ describe("paymentSuccessPage (server-confirmed Alipay state)", () => {
     expect(html).toContain('href="/buy"');
     expect(html).toContain('href="/refund"');
     expect(html).toContain('href="/contact"');
+    expect(html).toContain("微信支付");
+    expect(html).toContain("Waffo");
+    expect(html).not.toMatch(/支付宝|Alipay/);
   });
 
   it("aborts hung polling even when AbortSignal.timeout is unavailable", () => {

@@ -38,7 +38,7 @@ export function consolePage(input: {
    *  推:控制台可从 beta 子域访问,host 会是 beta.<root>,后缀就错了。 */
   rootDomain: string;
   now: string;
-  /** 可下单档位。空数组 = 支付宝配置不完整,页面不给假按钮。 */
+  /** 可下单档位。空数组 = Waffo 配置不完整,页面不给假按钮。 */
   tiers?: readonly PurchasableTier[];
   /** 隧道配额是否已满(CF 1000 硬上限)。只影响「已付费未开通」态:满了就不给
    *  slug 表单,免得用户填完名字才吃 503。已开通用户完全不受影响。 */
@@ -165,20 +165,20 @@ function renderBody(
     now: string;
     /** 隧道配额已满(CF 1000 硬上限)。已开通用户不受影响,只挡新开通。 */
     atCapacity: boolean;
-    /** 可下单档位(固定支付宝档位,空数组=购买通道未配置)。 */
+    /** 可下单档位(固定 Waffo 档位,空数组=购买通道未配置)。 */
     tiers: readonly PurchasableTier[];
   },
   active: boolean,
 ): string {
   if (!active) {
     if (input.tiers.length === 0) {
-      // 支付宝凭证未完整配置:不给假按钮,老实说不可用。
+      // Waffo 配置未完整:不给假按钮,老实说不可用。
       return `<p class="sub">你还没有有效时长。</p>
 <p class="lead-sub">购买通道暂时不可用,请稍后再试或<a href="/contact">联系我们</a>。</p>`;
     }
     return `<p class="sub">你还没有有效时长。开通后即可为自托管实例生成专属远程访问地址。</p>
 <p style="margin:14px 0 0;padding:12px 14px;border:1px solid #f59e0b;border-radius:10px;background:rgba(245,158,11,.08);color:var(--text);font-size:13px;line-height:1.7">
-付款会跳转支付宝。浏览器返回本站不代表已经到账，以服务端验签通知或主动查单结果为准；请在付款确认页等待，不要重复付款。
+付款会跳转到 Waffo 的微信支付页面。浏览器返回本站不代表已经到账，以服务端确认结果为准；请在付款确认页等待，不要重复付款。
 </p>
 <div class="tiers">
 ${input.tiers
@@ -194,7 +194,7 @@ ${t.featured ? `<span class="tier-tag">推荐</span>` : ""}
 </div>
 <p class="msg" id="buymsg" hidden></p>
 <p class="lead-sub" style="margin-top:14px">预付时长,不自动续费。买多次会叠加到同一个账号,到期日往后延。<br>
-使用<strong>支付宝</strong>一次性付款。<br>
+使用<strong>微信支付</strong>一次性付款，订单由记录商户 Waffo.com Limited 处理。<br>
 14 天内无条件全额退款 —— 见<a href="/refund">退款政策</a>。</p>`;
   }
   if (input.endpoint === null && input.atCapacity) {
@@ -241,11 +241,11 @@ ${lastSeenHtml(input.endpoint.last_seen_at, input.now)}
 }
 
 /**
- * 档位按钮 → 创建本地订单 → 跳同源一次性 checkout hop → 提交支付宝表单。
+ * 档位按钮 → 创建本地订单 → 跳转 Waffo checkout 页面。
  *
  * ## 失败必须说话
  *
- * 三种真实失败:503(购买通道未配置)、502(支付宝上游失败)、401(session 过期)。
+ * 两种真实失败:503(购买通道未开放,或 Waffo 上游暂时失败)、401(session 过期)。
  * 每种都给不同的下一步动作 —— 「请重试」对 session 过期毫无用处。
  * 不回显后端的原始错误(可能含内部细节)。
  */
@@ -260,7 +260,7 @@ btns.forEach((btn)=>btn.addEventListener("click",async()=>{
   btns.forEach(b=>b.disabled=true);
   btn.dataset.busy="1";
   try{
-    const res=await fetch("/api/alipay/checkout",{
+    const res=await fetch("/api/checkout",{
       method:"POST",
       headers:{"content-type":"application/json"},
       body:JSON.stringify({tier:btn.dataset.tier}),
@@ -269,11 +269,11 @@ btns.forEach((btn)=>btn.addEventListener("click",async()=>{
     if(res.status===503){fail("购买通道暂时不可用。请稍后再试,或联系我们。");return;}
     if(!res.ok){fail("发起支付失败了。稍后再试一次;若一直失败请联系我们。");return;}
     const data=await res.json();
-    if(typeof data.checkout_url!=="string"||data.checkout_url===""){
+    if(typeof data.checkoutUrl!=="string"||data.checkoutUrl===""){
       fail("发起支付失败了。稍后再试一次;若一直失败请联系我们。");return;
     }
-    // 同源 hop 持有一次性能力 token，随后 POST 表单到支付宝。
-    window.location.href=data.checkout_url;
+    // 必须在当前标签页打开，微信支付在手机上依赖原页面上下文；新标签页还会触发弹窗拦截。
+    window.location.assign(data.checkoutUrl);
   }catch{
     // 网络断了/请求被拦。不能静默 —— 用户会以为按钮坏了然后反复点。
     fail("网络请求没成功。检查网络后再试一次。");

@@ -2,9 +2,9 @@
 
 ## 联系我们
 
-Last updated: 2026-08-16
+Last updated: 2026-10-02
 
-最后更新:2026-08-16
+最后更新:2026-10-02
 
 ## Email
 
@@ -38,6 +38,6 @@ Mediary Scout 是开源项目:[github.com/fancydirty/mediary-scout](https://gith
 
 ## 运营主体
 
-This service is operated and sold by **DF Digital**, a sole proprietorship (business license details available on request). Alipay provides the payment channel.
+This service is operated by **DF Digital**, a sole proprietorship (business license details available on request). **Waffo.com Limited is the merchant of record**, handles WeChat Pay, and sends payment receipts.
 
-本服务由 **DF Digital**(个体工商户)运营并销售(营业执照信息可应要求提供),支付宝提供支付通道。
+本服务由 **DF Digital**(个体工商户)运营(营业执照信息可应要求提供)。**Waffo.com Limited 是记录商户**,负责微信支付并发送付款凭证。

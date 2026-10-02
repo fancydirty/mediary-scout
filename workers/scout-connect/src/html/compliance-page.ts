@@ -146,7 +146,7 @@ ${body}
     : "自托管 Mediary Scout 的远程访问服务"
 }</p>
 <p>${lang === "en" ? "Operated by" : "运营主体"} DF Digital · ${
-  lang === "en" ? "Payments via Alipay" : "付款使用支付宝"
+  lang === "en" ? "Waffo.com Limited is the merchant of record" : "Waffo.com Limited 是记录商户"
 }</p>
 </div>
 </body>

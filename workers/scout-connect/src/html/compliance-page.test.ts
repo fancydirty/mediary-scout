@@ -149,25 +149,27 @@ describe("compliance pages", () => {
 });
 
 // 合规页与首页/代码现实必须一致 —— 不一致就是虚假宣传,退款争议里站不住。
-describe("合规页与支付宝支付现实的一致性", () => {
+describe("合规页与 Waffo 支付现实的一致性", () => {
   const ALL = ["pricing", "terms", "privacy", "refund", "contact"] as const;
 
-  it("五页完全移除旧支付服务商与记录商户表述", () => {
+  it("五页明确当前记录商户并移除旧支付服务商表述", () => {
     for (const key of ALL) {
       const markdown = COMPLIANCE_MARKDOWN[key];
       expect(markdown).not.toContain("Paddle");
-      expect(markdown).not.toContain("Merchant of Record");
-      expect(markdown).not.toContain("记录商户");
+      expect(markdown).toContain("Waffo.com Limited");
+      expect(markdown).not.toMatch(/支付宝|Alipay/);
     }
   });
 
-  it("定价页明确仅支付宝，三档价格保持不变", () => {
+  it("定价页明确微信支付与记录商户，三档价格保持不变", () => {
     const zh = compliancePage("pricing", "zh");
     const en = compliancePage("pricing", "en");
-    expect(zh).toContain("仅支持支付宝");
-    expect(en).toContain("Alipay only");
-    expect(zh).not.toContain("微信支付");
-    expect(en).not.toContain("WeChat Pay");
+    expect(zh).toContain("微信支付");
+    expect(en).toContain("WeChat Pay");
+    expect(zh).toContain("Waffo.com Limited");
+    expect(en).toContain("Waffo.com Limited");
+    expect(zh).not.toMatch(/支付宝|Alipay/);
+    expect(en).not.toMatch(/支付宝|Alipay/);
     for (const price of ["¥45", "¥108", "¥188"]) {
       expect(zh).toContain(price);
       expect(en).toContain(price);
@@ -175,22 +177,22 @@ describe("合规页与支付宝支付现实的一致性", () => {
     expect(zh).not.toContain("¥88");
   });
 
-  it("退款页要求提供原支付宝订单或交易号，并保留原路退款承诺", () => {
+  it("退款页要求提供原 Waffo 订单或付款 ID，并保留原路退款承诺", () => {
     const zh = compliancePage("refund", "zh");
     const en = compliancePage("refund", "en");
-    expect(zh).toContain("原支付宝订单号或交易号");
-    expect(en).toContain("original Alipay order or transaction number");
-    expect(zh).toContain("原路退回");
-    expect(en).toContain("original payment method");
+    expect(zh).toContain("原 Waffo 订单号或付款 ID");
+    expect(en).toContain("original Waffo order or payment ID");
+    expect(zh).toContain("原微信支付路径");
+    expect(en).toContain("original WeChat Pay method");
     expect(zh).toContain("support@mediaryconnect.app");
   });
 
-  it("隐私页准确说明支付宝处理凭据、我方只存最少订单记录", () => {
+  it("隐私页准确说明 Waffo 处理凭据、我方只存最少订单记录", () => {
     const zh = compliancePage("privacy", "zh");
     const en = compliancePage("privacy", "en");
-    expect(zh).toContain("支付宝处理你的钱包凭据");
+    expect(zh).toContain("Waffo.com Limited 处理你的微信支付凭据");
     expect(zh).toContain("不会接收或保存");
-    expect(en).toContain("Alipay handles your wallet credentials");
+    expect(en).toContain("Waffo.com Limited handles your WeChat Pay credentials");
     expect(en).toContain("never receive or store");
     expect(zh).toContain("订单号");
     expect(en).toContain("order number");
@@ -208,8 +210,8 @@ describe("合规页与支付宝支付现实的一致性", () => {
 
   it("所有本轮修改页的 Last updated 都是切换日期", () => {
     for (const key of ALL) {
-      expect(compliancePage(key, "en")).toContain("Last updated: 2026-08-16");
-      expect(compliancePage(key, "zh")).toContain("最后更新:2026-08-16");
+      expect(compliancePage(key, "en")).toContain("Last updated: 2026-10-02");
+      expect(compliancePage(key, "zh")).toContain("最后更新:2026-10-02");
     }
   });
 });

@@ -35,10 +35,11 @@ describe("home page(apex 落地页)", () => {
     expect(html).toContain("不能直接下单");
   });
 
-  it("明确全站仅支付宝付款", () => {
+  it("明确全站使用微信支付并由 Waffo 处理", () => {
     const html = homePage();
-    expect(html).toContain("仅支持支付宝");
-    expect(html).not.toContain("微信支付");
+    expect(html).toContain("使用微信支付");
+    expect(html).toContain("Waffo.com Limited");
+    expect(html).not.toMatch(/支付宝|Alipay/);
     expect(html).not.toContain("Paddle");
   });
 
@@ -297,12 +298,12 @@ describe("home page(apex 落地页)", () => {
     expect(html).toContain(".apex .btn2{color:var(--tx-1)}");
   });
 
-  it("页脚合规五链接、运营主体与支付宝说明齐全", () => {
+  it("页脚合规五链接、运营主体与 Waffo 说明齐全", () => {
     const html = homePage();
     for (const p of ["/pricing", "/terms", "/privacy", "/refund", "/contact"]) {
       expect(html).toContain(`href="${p}"`);
     }
     expect(html).toContain("DF Digital");
-    expect(html).toContain("付款使用支付宝");
+    expect(html).toContain("Waffo.com Limited 是记录商户");
   });
 });

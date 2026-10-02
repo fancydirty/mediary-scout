@@ -19,7 +19,8 @@ describe("expiryReminderText", () => {
     expect(text).toContain("/pricing");
     expect(text).toContain("/login");
     expect(text).toContain("DF Digital");
-    expect(text).toContain("支付宝");
+    expect(text).toContain("Waffo.com Limited");
+    expect(text).toContain("微信支付");
     expect(text).not.toContain("Paddle");
   });
 

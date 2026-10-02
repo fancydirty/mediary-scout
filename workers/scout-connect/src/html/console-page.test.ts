@@ -218,11 +218,11 @@ describe("consolePage 报到时间", () => {
   });
 });
 
-describe("无时长态 = 支付宝购买入口", () => {
+describe("无时长态 = Waffo 微信支付入口", () => {
   const TIERS = [
     { tierId: "quarter", months: 3, label: "季度", price: "¥45", featured: false, note: "3 个月" },
     { tierId: "year", months: 12, label: "年度", price: "¥108", featured: true, note: "12 个月 · 折月付 ¥9" },
-    { tierId: "two_year", months: 24, label: "两年", price: "¥188", featured: false, note: "24 个月" },
+    { tierId: "two_years", months: 24, label: "两年", price: "¥188", featured: false, note: "24 个月" },
   ];
   const noTime = (tiers = TIERS) => base({ entitlements: [], endpoint: null, tiers });
 
@@ -236,12 +236,12 @@ describe("无时长态 = 支付宝购买入口", () => {
     expect(html).not.toContain("data-price");
   });
 
-  it("调用支付宝 checkout，并使用服务端返回的同源 hop", () => {
+  it("调用 Waffo checkout，并使用服务端返回的 checkoutUrl", () => {
     const html = noTime();
-    expect(html).toContain("/api/alipay/checkout");
+    expect(html).toContain("/api/checkout");
     expect(html).toContain("JSON.stringify({tier:btn.dataset.tier})");
-    expect(html).toContain("checkout_url");
-    expect(html).toContain("window.location.href");
+    expect(html).toContain("checkoutUrl");
+    expect(html).toContain("window.location.assign");
   });
 
   it("年度是唯一主推档", () => {
@@ -251,10 +251,10 @@ describe("无时长态 = 支付宝购买入口", () => {
     expect(yearButton.slice(0, 400)).toContain("¥108");
   });
 
-  it("支付宝配置缺失时不给假按钮或死脚本", () => {
+  it("Waffo 配置缺失时不给假按钮或死脚本", () => {
     const html = noTime([]);
     expect(html).not.toContain("data-tier");
-    expect(html).not.toContain("/api/alipay/checkout");
+    expect(html).not.toContain("/api/checkout");
     expect(html).toContain("购买通道暂时不可用");
   });
 
@@ -266,14 +266,15 @@ describe("无时长态 = 支付宝购买入口", () => {
     expect(html).toContain("disabled=true");
   });
 
-  it("明确仅支付宝、一次性付款、不自动续费，并说明返回页不等于到账", () => {
+  it("明确微信支付、一次性付款、不自动续费，并说明返回页不等于到账", () => {
     const html = noTime();
-    expect(html).toContain("支付宝");
+    expect(html).toContain("微信支付");
+    expect(html).toContain("Waffo.com Limited");
     expect(html).toContain("一次性付款");
     expect(html).toContain("不自动续费");
     expect(html).toContain("不代表已经到账");
     expect(html).toContain("/refund");
-    expect(html).not.toContain("微信支付");
+    expect(html).not.toMatch(/支付宝|Alipay/);
     expect(html).not.toContain("Paddle");
   });
 

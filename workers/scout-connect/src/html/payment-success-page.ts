@@ -1,13 +1,13 @@
 import { BRAND_BAR, BRAND_CSS, FAVICON_LINK, THEME_BASE, THEME_TOKENS } from "./theme.js";
 
-/** Alipay browser return shell. It only renders state obtained from our authenticated API. */
+/** Waffo browser return shell. It only renders state obtained from our authenticated API. */
 export function paymentSuccessPage(): string {
   return `<!doctype html>
 <html lang="zh-Hans">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>付款确认中 · Mediary Connect</title>
+<title>微信支付确认中 · Mediary Connect</title>
 ${FAVICON_LINK}
 <meta name="robots" content="noindex">
 <style>
@@ -26,7 +26,7 @@ ${BRAND_BAR}
 <section class="card">
 <div class="state"><span class="pulse" aria-hidden="true"></span><h1 id="title">付款确认中</h1></div>
 <p id="detail" role="status">正在向服务端查询订单状态，请不要重复付款。</p>
-<div class="notice"><strong>支付宝页面返回不等于到账。</strong>只有服务端确认后才会开通权益；如果支付宝已扣款，请留在此页等待自动更新。</div>
+<div class="notice"><strong>微信支付页面返回不等于到账。</strong>订单由 Waffo.com Limited 处理，只有服务端确认后才会开通权益；如果已扣款，请留在此页等待自动更新。</div>
 <div class="actions"><a class="btn" href="/console">进入控制台</a><a class="btn secondary" href="/buy">返回购买页</a></div>
 <p class="links"><a href="/refund">退款政策</a> · <a href="/contact">联系我们</a></p>
 </section>
@@ -45,7 +45,7 @@ ${BRAND_BAR}
   function render(status) {
     if (status === "pending") {
       title.textContent = "付款确认中";
-      detail.textContent = "正在等待支付宝服务端确认。请勿重复付款，本页会自动更新。";
+      detail.textContent = "正在等待 Waffo 服务端确认。请勿重复付款，本页会自动更新。";
       return;
     }
     if (status === "paid_unfulfilled") {
@@ -78,7 +78,7 @@ ${BRAND_BAR}
     var controller = new AbortController();
     var requestTimeout = setTimeout(function () { controller.abort(); }, 8000);
     try {
-      var response = await fetch("/api/alipay/orders/" + encodeURIComponent(order) + "/status", {
+      var response = await fetch("/api/orders/" + encodeURIComponent(order) + "/status", {
         signal: controller.signal,
       });
       if (response.status === 401) {

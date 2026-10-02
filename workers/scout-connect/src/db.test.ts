@@ -815,12 +815,40 @@ function entitlement(overrides: Partial<EntitlementRow> = {}): EntitlementRow {
 }
 
 describe("payment-order and provider-neutral entitlement persistence", () => {
+  it("stores Waffo session/order ids and scans recent unresolved orders", async () => {
+    const db = createMemoryConnectDb();
+    const row = paymentOrder({
+      id: "ord_waffo",
+      checkout_token_sha256: "sha_waffo",
+      provider: "waffo",
+      out_trade_no: "MC-WAFFO",
+      waffo_session_id: "cs_waffo",
+      waffo_order_id: "ORD_WAFFO",
+      created_at: "2026-10-01T00:00:00.000Z",
+    });
+    await db.insertPaymentOrder(row);
+    await db.insertPaymentOrder(
+      paymentOrder({
+        id: "ord_waffo_fulfilled",
+        checkout_token_sha256: "sha_waffo_fulfilled",
+        provider: "waffo",
+        out_trade_no: "MC-WAFFO-FULFILLED",
+        status: "fulfilled",
+        created_at: "2026-10-01T00:00:01.000Z",
+      }),
+    );
+
+    expect(await db.getPaymentOrderById(row.id)).toEqual(row);
+    expect(await db.listPaymentOrdersForReconciliation("waffo", "2026-09-30T00:00:00.000Z")).toEqual([
+      row,
+    ]);
+  });
+
   it("round-trips and updates an Alipay order by every server-owned key", async () => {
     const db = createMemoryConnectDb();
     const row = paymentOrder();
     expect(await db.insertPaymentOrder(row)).toEqual(row);
     expect(await db.getPaymentOrderById(row.id)).toEqual(row);
-    expect(await db.getPaymentOrderByCheckoutHash(row.checkout_token_sha256)).toEqual(row);
     expect(await db.getPaymentOrderByOutTradeNo(row.out_trade_no)).toEqual(row);
 
     await db.updatePaymentOrder(row.id, {

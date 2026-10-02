@@ -1,20 +1,18 @@
-import { ALIPAY_TIERS } from "../alipay-order.js";
 import { BRAND_BAR, BRAND_CSS, FAVICON_LINK, THEME_BASE, THEME_TOKENS } from "./theme.js";
+import { PAYMENT_TIERS } from "../payment-order.js";
 
-export function buyPage(input: { alipayConfigured: boolean }): string {
-  const tiers = Object.values(ALIPAY_TIERS)
-    .map(
-      (tier) => `<article class="tier${tier.featured ? " featured" : ""}">
+export function buyPage(input: { waffoConfigured: boolean }): string {
+  const tiers = Object.values(PAYMENT_TIERS).map(
+    (tier) => `<article class="tier${tier.featured ? " featured" : ""}">
 ${tier.featured ? '<span class="badge">最划算</span>' : ""}
 <h2>${tier.label}</h2>
 <div class="price">${tier.price}</div>
 <p>${tier.months} 个月 Mediary Connect 使用时长</p>
-<button type="button" data-tier="${tier.id}"${input.alipayConfigured ? "" : " disabled"}>支付宝支付</button>
+<button type="button" data-tier="${tier.id}"${input.waffoConfigured ? "" : " disabled"}>微信支付</button>
 </article>`,
-    )
-    .join("\n");
+  ).join("\n");
 
-  const checkoutScript = input.alipayConfigured
+  const checkoutScript = input.waffoConfigured
     ? `<script>
 (function () {
   var status = document.getElementById("status");
@@ -27,9 +25,9 @@ ${tier.featured ? '<span class="badge">最划算</span>' : ""}
       var tier = button.getAttribute("data-tier");
       if (!tier) return;
       setBusy(true);
-      status.textContent = "正在创建支付宝订单…";
+      status.textContent = "正在创建微信支付订单…";
       try {
-        var response = await fetch("/api/alipay/checkout", {
+        var response = await fetch("/api/checkout", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ tier: tier }),
@@ -39,13 +37,18 @@ ${tier.featured ? '<span class="badge">最划算</span>' : ""}
           return;
         }
         var data = await response.json();
-        if (!response.ok || !data || typeof data.checkout_url !== "string" ||
-            !data.checkout_url.startsWith("/alipay/checkout?checkout=")) {
+        if (response.status === 503) {
+          status.textContent = "结账暂未开放，请稍后再试或联系我们。";
+          setBusy(false);
+          return;
+        }
+        if (!response.ok || !data || typeof data.checkoutUrl !== "string" || data.checkoutUrl === "") {
           throw new Error("checkout unavailable");
         }
-        location.href = data.checkout_url;
+        // 必须在当前标签页打开，微信支付在手机上依赖原页面上下文；新标签页还会触发弹窗拦截。
+        location.assign(data.checkoutUrl);
       } catch (_) {
-        status.textContent = "暂时无法打开支付宝，请稍后重试或联系我们。";
+        status.textContent = "暂时无法打开微信支付，请稍后重试或联系我们。";
         setBusy(false);
       }
     });
@@ -59,7 +62,7 @@ ${tier.featured ? '<span class="badge">最划算</span>' : ""}
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>支付宝结账 · Mediary Connect</title>
+<title>微信支付结账 · Mediary Connect</title>
 ${FAVICON_LINK}
 <meta name="robots" content="noindex">
 <style>
@@ -84,11 +87,11 @@ ${BRAND_BAR}
 <h1>选择使用时长</h1>
 <p>价格保持不变，一次付款，不自动续费。付款完成后，原有账号权益与开通流程保持不变。</p>
 </section>
-<section class="tiers" aria-label="Mediary Connect 支付宝价格档位">
+<section class="tiers" aria-label="Mediary Connect 微信支付价格档位">
 ${tiers}
 </section>
-<p id="status" role="status">${input.alipayConfigured ? "付款将跳转至支付宝安全页面。" : "支付宝结账暂未开放，请稍后再试。"}</p>
-<div class="notice"><strong>付款后请回到本页等待确认。</strong>支付宝回跳只代表浏览器已返回，系统会通过支付宝服务端结果核实到账并自动开通权益。请勿重复付款。</div>
+<p id="status" role="status">${input.waffoConfigured ? "付款将跳转至 Waffo 微信支付页面。" : "微信支付结账暂未开放，请稍后再试。"}</p>
+<div class="notice"><strong>订单由记录商户 Waffo.com Limited 处理。</strong>付款凭证由 Waffo 发送。付款后请回到本页等待确认，浏览器返回本页本身不代表已经到账，请勿重复付款。</div>
 <p class="links"><a href="/refund">退款政策</a> · <a href="/contact">联系我们</a> · <a href="/console">返回控制台</a></p>
 <noscript><p id="status">支付需要 JavaScript，请开启后刷新本页。</p></noscript>
 </main>

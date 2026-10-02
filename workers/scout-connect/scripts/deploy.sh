@@ -2,8 +2,8 @@
 # scout-connect 唯一部署入口。代码必须先合并到 GitHub；不要直接跑 wrangler deploy。
 #
 # 支付安全边界:
-# - 支付宝四项凭证全部在 Worker secrets，不进入仓库。
-# - /buy 只有四项齐全才开放按钮；notify 缺配置一律 503，避免钱到但不发权益。
+# - Waffo 私钥只在 Worker secret，不进入仓库。
+# - /buy 只有 Waffo 配置齐全才开放按钮；webhook 缺配置一律 503，避免钱到但不发权益。
 # - 这里的无扣款自检只能证明配置存在与路由切换成功；上线最终门禁仍是一笔
 #   非商户本人真实付款，核对异步通知、主动查单、权益到账和退款。
 set -eu
@@ -32,15 +32,12 @@ if [ "$LOCAL" != "$REMOTE" ]; then
 fi
 
 # 3) 生产前置条件。必须在 wrangler deploy 前失败，不能先切代码再发现缺配置。
-echo "→ 生产支付宝 secrets 预检（只读名称，不读取值）"
+echo "→ 生产 Waffo secret 预检（只读名称，不读取值）"
 SECRET_LIST=$(mktemp)
 trap 'rm -f "$SECRET_LIST"' EXIT HUP INT TERM
 env -u CF_API_TOKEN npx wrangler secret list --format json >"$SECRET_LIST"
 for SECRET_NAME in \
-  ALIPAY_APP_ID \
-  ALIPAY_PRIVATE_KEY \
-  ALIPAY_ALIPAY_PUBLIC_KEY \
-  ALIPAY_SELLER_ID
+  WAFFO_PRIVATE_KEY
 do
   if ! grep -Eq "\"name\"[[:space:]]*:[[:space:]]*\"$SECRET_NAME\"" "$SECRET_LIST"; then
     echo "❌ 缺少 Worker secret: $SECRET_NAME；尚未部署。" >&2
@@ -48,11 +45,30 @@ do
   fi
 done
 
-echo "→ 生产 D1 支付 schema 预检（只读）"
+echo "→ wrangler Waffo 生产配置预检（只读配置名和值）"
+for VAR_NAME in \
+  WAFFO_MERCHANT_ID \
+  WAFFO_STORE_ID \
+  WAFFO_ENVIRONMENT \
+  WAFFO_PRODUCT_QUARTER \
+  WAFFO_PRODUCT_YEAR \
+  WAFFO_PRODUCT_TWO_YEARS
+do
+  if ! grep -Eq "\"$VAR_NAME\"[[:space:]]*:[[:space:]]*\"[^\"]+\"" wrangler.jsonc; then
+    echo "❌ wrangler.jsonc 缺少 Waffo var: $VAR_NAME；尚未部署。" >&2
+    exit 1
+  fi
+done
+if ! grep -Eq '"WAFFO_ENVIRONMENT"[[:space:]]*:[[:space:]]*"prod"' wrangler.jsonc; then
+  echo "❌ wrangler.jsonc 必须将 WAFFO_ENVIRONMENT 固定为 prod；尚未部署。" >&2
+  exit 1
+fi
+
+echo "→ 生产 D1 Waffo schema 预检（只读）"
 if ! env -u CF_API_TOKEN npx wrangler d1 execute scout-connect --remote \
-  --command "SELECT refund_request_no, last_queried_at FROM payment_orders LIMIT 0; SELECT payment_provider, payment_transaction_id, refunded_at FROM entitlements LIMIT 0;" \
+  --command "SELECT waffo_session_id, waffo_order_id FROM payment_orders LIMIT 0; SELECT payment_provider, payment_transaction_id, refunded_at FROM entitlements LIMIT 0;" \
   >/dev/null; then
-  echo "❌ 生产 D1 尚未完整应用 0006-alipay-payment-orders.sql；尚未部署。" >&2
+  echo "❌ 生产 D1 尚未应用 0007-waffo-payment-orders.sql；尚未部署。" >&2
   exit 1
 fi
 
@@ -66,24 +82,23 @@ echo "→ wrangler deploy"
 env -u CF_API_TOKEN npx wrangler deploy "$@"
 
 # 5) 不发起交易的生产自检。
-echo "→ 部署后支付宝自检（不创建订单、不扣款）"
+echo "→ 部署后 Waffo 自检（不创建订单、不扣款）"
 sleep 3
 BUY=$(curl -fsS https://mediaryconnect.app/buy 2>/dev/null || echo "")
-if ! printf '%s' "$BUY" | grep -q "支付宝支付"; then
-  echo "❌ 线上 /buy 不是支付宝购买页，部署未生效或页面异常。" >&2
+if ! printf '%s' "$BUY" | grep -q "微信支付"; then
+  echo "❌ 线上 /buy 不是微信支付购买页，部署未生效或页面异常。" >&2
   exit 1
 fi
-if printf '%s' "$BUY" | grep -q "支付宝结账暂未开放"; then
-  echo "❌ 支付宝结账未开放。检查 ALIPAY_APP_ID / ALIPAY_PRIVATE_KEY /" >&2
-  echo "   ALIPAY_ALIPAY_PUBLIC_KEY / ALIPAY_SELLER_ID 四项 Worker secrets。" >&2
+if printf '%s' "$BUY" | grep -q "结账暂未开放"; then
+  echo "❌ Waffo 结账未开放。检查 WAFFO_PRIVATE_KEY 与 wrangler.jsonc 中的 Waffo vars。" >&2
   exit 1
 fi
-NOTIFY=$(curl -s -o /dev/null -w "%{http_code}" -X POST   https://mediaryconnect.app/api/alipay/notify   -H "content-type: application/x-www-form-urlencoded" -d '')
-if [ "$NOTIFY" != "400" ]; then
-  echo "❌ 支付宝 notify 空请求应 fail-closed 为 400，实际 HTTP $NOTIFY。" >&2
-  echo "   若为 503，通常是四项支付宝 secrets 未完整配置。" >&2
+WEBHOOK=$(curl -s -o /dev/null -w "%{http_code}" -X POST   https://mediaryconnect.app/api/waffo/webhook   -H "content-type: application/json" -d '')
+if [ "$WEBHOOK" != "401" ]; then
+  echo "❌ Waffo webhook 空请求应 fail-closed 为 401，实际 HTTP $WEBHOOK。" >&2
+  echo "   若为 503，通常是 WAFFO_PRIVATE_KEY 未完整配置。" >&2
   exit 1
 fi
 
-echo "✅ 部署完成：支付宝页面开放，notify 正确 fail-closed。"
-echo "   尚未证明真实收款闭环：必须再做一笔非商户本人真实付款与全额退款。"
+echo "✅ 部署完成：微信支付页面开放，Waffo webhook 正确 fail-closed。"
+echo "   尚未证明真实收款闭环：生产环境仍需由非商户本人完成真实付款并做一次全额退款。"

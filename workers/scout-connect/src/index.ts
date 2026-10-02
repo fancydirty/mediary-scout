@@ -1,26 +1,22 @@
 import { createCfApi } from "./cf-api.js";
 import { createD1ConnectDb } from "./db.js";
 import { newId, newInviteCode } from "./ids.js";
-import { handleRequest } from "./routes.js";
+import { handleRequest, reconcileWaffoOrders, type RouteDeps } from "./routes.js";
 import { createMagicLinkSender } from "./magic-link-sender.js";
 import type { Env } from "./env.js";
-import {
-  ALIPAY_PRODUCTION_GATEWAY,
-  ALIPAY_SANDBOX_GATEWAY,
-  createAlipayApi,
-} from "./alipay-api.js";
+import { createWaffoApi, type WaffoApi } from "./waffo-api.js";
+import { sweepExpiredEndpoints } from "./expiry-sweep.js";
+import { createEmailSender } from "./email-sender.js";
 
 /** 取值或显式抛错。某些 env(如 RESEND_API_KEY)对**部分**路径可选(到期提醒),
  *  但对其它路径(登录)是必需的 —— 在必需处显式断言,比让 undefined 流到下游
  *  变成隐晦失败好。 */
 function requireEnv(value: string | undefined, name: string): string {
   if (value === undefined || value.trim() === "") {
-    throw new Error(`${name} is required but not configured`);
+    throw new Error(name + " is required but not configured");
   }
   return value;
 }
-import { sweepExpiredEndpoints } from "./expiry-sweep.js";
-import { createEmailSender } from "./email-sender.js";
 
 // Workers 运行时注入的类型。本仓不引 @cloudflare/workers-types(只为这一个
 // 签名拉整个包不值),这里做最小声明。scheduled/cron 的真实签名见
@@ -33,16 +29,71 @@ interface WorkersExecutionContext {
   waitUntil(promise: Promise<unknown>): void;
 }
 
-export function resolveAlipayEnvironment(
-  requestUrl: string,
-  configured: string | undefined,
-): "production" | "sandbox" | undefined {
-  const requested = configured?.trim() || "production";
-  if (requested === "production") return "production";
-  const hostname = new URL(requestUrl).hostname;
-  const local =
-    hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
-  return requested === "sandbox" && local ? "sandbox" : undefined;
+function createWaffoFromEnv(env: Env): WaffoApi | undefined {
+  const values = {
+    merchantId: env.WAFFO_MERCHANT_ID,
+    storeId: env.WAFFO_STORE_ID,
+    environment: env.WAFFO_ENVIRONMENT,
+    privateKey: env.WAFFO_PRIVATE_KEY,
+    productQuarter: env.WAFFO_PRODUCT_QUARTER,
+    productYear: env.WAFFO_PRODUCT_YEAR,
+    productTwoYears: env.WAFFO_PRODUCT_TWO_YEARS,
+  };
+  if (Object.values(values).some((value) => value === undefined || value.trim() === "")) return undefined;
+  try {
+    return createWaffoApi({
+      merchantId: values.merchantId!,
+      storeId: values.storeId!,
+      environment: values.environment!,
+      privateKey: values.privateKey!,
+      productQuarter: values.productQuarter!,
+      productYear: values.productYear!,
+      productTwoYears: values.productTwoYears!,
+    });
+  } catch {
+    console.error("Waffo payment configuration is invalid");
+    return undefined;
+  }
+}
+
+function routeDeps(env: Env, waffoApi: WaffoApi | undefined, scheduled = false): RouteDeps {
+  return {
+    db: createD1ConnectDb(env.DB),
+    cf: createCfApi({
+      accountId: env.CF_ACCOUNT_ID,
+      zoneId: env.CF_ZONE_ID,
+      apiToken: env.CF_API_TOKEN,
+    }),
+    adminToken: env.ADMIN_TOKEN,
+    rootDomain: env.CONNECT_ROOT_DOMAIN,
+    tokenWrapKeyHex: env.TOKEN_WRAP_KEY,
+    now: () => new Date().toISOString(),
+    newInviteId: () => newId("inv"),
+    newEndpointId: () => newId("ep"),
+    newAuditId: () => newId("aud"),
+    newInviteCode,
+    turnstileSitekey: env.TURNSTILE_SITEKEY,
+    waffoApi,
+    waffoEnvironment: env.WAFFO_ENVIRONMENT === "prod" || env.WAFFO_ENVIRONMENT === "test"
+      ? env.WAFFO_ENVIRONMENT
+      : undefined,
+    waffoStoreId: env.WAFFO_STORE_ID,
+    waffoProducts: {
+      quarter: env.WAFFO_PRODUCT_QUARTER ?? "",
+      year: env.WAFFO_PRODUCT_YEAR ?? "",
+      two_years: env.WAFFO_PRODUCT_TWO_YEARS ?? "",
+    },
+    turnstileSecret: env.TURNSTILE_SECRET,
+    newAccountId: () => newId("act"),
+    newEntitlementId: () => newId("ent"),
+    sessionSecret: env.SESSION_SECRET,
+    // 登录魔法链接**必需** key —— 缺失时显式抛错(而不是让 Bearer undefined
+    // 流到 fetch 里变成隐晦的上游 401)。到期提醒可无(上面 sendEmail 的条件),
+    // 但登录是核心功能,没 key 就该 fail fast。
+    sendMagicLink: scheduled
+      ? async () => {}
+      : createMagicLinkSender(requireEnv(env.RESEND_API_KEY, "RESEND_API_KEY")),
+  };
 }
 
 export default {
@@ -50,87 +101,34 @@ export default {
   // 不真删 DNS/隧道、不发邮件。EXPIRY_SWEEP_LIVE=true 才开真删 ——
   // 这是唯一会真删生产资源的路径,先在实例上验证时间边界再放开。
   async scheduled(_event: CronScheduledEvent, env: Env, ctx: WorkersExecutionContext): Promise<void> {
+    const waffoApi = createWaffoFromEnv(env);
+    const deps = routeDeps(env, waffoApi, true);
     ctx.waitUntil(
-      sweepExpiredEndpoints({
-        db: createD1ConnectDb(env.DB),
-        cf: createCfApi({
-          accountId: env.CF_ACCOUNT_ID,
-          zoneId: env.CF_ZONE_ID,
-          apiToken: env.CF_API_TOKEN,
+      Promise.all([
+        sweepExpiredEndpoints({
+          db: deps.db,
+          cf: deps.cf,
+          now: deps.now,
+          newAuditId: deps.newAuditId,
+          // dry-run 时不需要发信器(sweep 只在 live 且配置了时才调它)。
+          // 没配 RESEND key 时即便 live 也只是邮件发不出去,回收照走。
+          sendEmail:
+            env.RESEND_API_KEY === undefined || env.RESEND_API_KEY.trim() === ""
+              ? undefined
+              : createEmailSender(env.RESEND_API_KEY),
+          live: env.EXPIRY_SWEEP_LIVE === "true",
+        }).catch((error) => {
+          // 顶层兜底:任一轮失败不能让 cron 静默消失 —— 记录日志,下一轮再试。
+          console.error("expiry sweep failed:", error instanceof Error ? error.message : String(error));
         }),
-        now: () => new Date().toISOString(),
-        newAuditId: () => newId("aud"),
-        // dry-run 时不需要发信器(sweep 只在 live 且配置了时才调它)。
-        // 没配 RESEND key 时即便 live 也只是邮件发不出去,回收照走。
-        sendEmail:
-          env.RESEND_API_KEY === undefined || env.RESEND_API_KEY.trim() === ""
-            ? undefined
-            : createEmailSender(env.RESEND_API_KEY),
-        live: env.EXPIRY_SWEEP_LIVE === "true",
-      }).catch((e) => {
-        // 顶层兜底:任一轮失败不能让 cron 静默消失 —— 记录日志,下一轮再试。
-        console.error("expiry sweep failed:", e instanceof Error ? e.message : String(e));
-      }),
+        reconcileWaffoOrders(deps).catch((error) => {
+          // 同一轮的 Waffo 对账失败也只影响下一轮,不能吞掉其它 cron 工作。
+          console.error("Waffo reconciliation scan failed:", error instanceof Error ? error.message : String(error));
+        }),
+      ]),
     );
   },
   async fetch(request: Request, env: Env): Promise<Response> {
-    const alipayAppId = env.ALIPAY_APP_ID?.trim();
-    const alipayPrivateKey = env.ALIPAY_PRIVATE_KEY?.trim();
-    const alipayPublicKey = env.ALIPAY_ALIPAY_PUBLIC_KEY?.trim();
-    const alipaySellerId = env.ALIPAY_SELLER_ID?.trim();
-    const alipayEnvironment = resolveAlipayEnvironment(request.url, env.ALIPAY_ENVIRONMENT);
-    let alipayApi;
-    if (
-      alipayEnvironment &&
-      alipayAppId &&
-      alipayPrivateKey &&
-      alipayPublicKey &&
-      alipaySellerId
-    ) {
-      try {
-        alipayApi = await createAlipayApi({
-          appId: alipayAppId,
-          privateKeyPem: alipayPrivateKey,
-          alipayPublicKeyPem: alipayPublicKey,
-          gatewayUrl:
-            alipayEnvironment === "sandbox"
-              ? ALIPAY_SANDBOX_GATEWAY
-              : ALIPAY_PRODUCTION_GATEWAY,
-        });
-      } catch {
-        // Never log key material or parser details. Invalid bindings make every payment route
-        // fail closed and keep the buy page disabled.
-        console.error("Alipay payment configuration is invalid");
-      }
-    }
-    return handleRequest(request, {
-      db: createD1ConnectDb(env.DB),
-      cf: createCfApi({
-        accountId: env.CF_ACCOUNT_ID,
-        zoneId: env.CF_ZONE_ID,
-        apiToken: env.CF_API_TOKEN,
-      }),
-      adminToken: env.ADMIN_TOKEN,
-      rootDomain: env.CONNECT_ROOT_DOMAIN,
-      tokenWrapKeyHex: env.TOKEN_WRAP_KEY,
-      now: () => new Date().toISOString(),
-      newInviteId: () => newId("inv"),
-      newEndpointId: () => newId("ep"),
-      newAuditId: () => newId("aud"),
-      newInviteCode,
-      turnstileSitekey: env.TURNSTILE_SITEKEY,
-      alipayApi,
-      alipayAppId,
-      alipaySellerId,
-      alipayEnvironment,
-      turnstileSecret: env.TURNSTILE_SECRET,
-      newAccountId: () => newId("act"),
-      newEntitlementId: () => newId("ent"),
-      sessionSecret: env.SESSION_SECRET,
-      // 登录魔法链接**必需** key —— 缺失时显式抛错(而不是让 Bearer undefined
-      // 流到 fetch 里变成隐晦的上游 401)。到期提醒可无(上面 sendEmail 的条件),
-      // 但登录是核心功能,没 key 就该 fail fast。
-      sendMagicLink: createMagicLinkSender(requireEnv(env.RESEND_API_KEY, "RESEND_API_KEY")),
-    });
+    return handleRequest(request, routeDeps(env, createWaffoFromEnv(env)));
   },
 };

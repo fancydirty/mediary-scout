@@ -1,7 +1,7 @@
-export type AlipayTierId = "quarter" | "year" | "two_year";
+export type PaymentTierId = "quarter" | "year" | "two_years";
 
-export interface AlipayTier {
-  readonly id: AlipayTierId;
+export interface PaymentTier {
+  readonly id: PaymentTierId;
   readonly months: 3 | 12 | 24;
   readonly totalAmount: string;
   readonly label: string;
@@ -9,7 +9,7 @@ export interface AlipayTier {
   readonly featured: boolean;
 }
 
-export const ALIPAY_TIERS: Readonly<Record<AlipayTierId, AlipayTier>> = Object.freeze({
+export const PAYMENT_TIERS: Readonly<Record<PaymentTierId, PaymentTier>> = Object.freeze({
   quarter: Object.freeze({
     id: "quarter",
     months: 3,
@@ -26,8 +26,8 @@ export const ALIPAY_TIERS: Readonly<Record<AlipayTierId, AlipayTier>> = Object.f
     price: "¥108",
     featured: true,
   }),
-  two_year: Object.freeze({
-    id: "two_year",
+  two_years: Object.freeze({
+    id: "two_years",
     months: 24,
     totalAmount: "188.00",
     label: "两年",
@@ -36,12 +36,12 @@ export const ALIPAY_TIERS: Readonly<Record<AlipayTierId, AlipayTier>> = Object.f
   }),
 });
 
-export function resolveAlipayTier(value: unknown): AlipayTier | null {
-  if (typeof value !== "string" || !Object.hasOwn(ALIPAY_TIERS, value)) return null;
-  return ALIPAY_TIERS[value as AlipayTierId];
+export function resolvePaymentTier(value: unknown): PaymentTier | null {
+  if (typeof value !== "string" || !Object.hasOwn(PAYMENT_TIERS, value)) return null;
+  return PAYMENT_TIERS[value as PaymentTierId];
 }
 
-export function normalizeAlipayAmount(value: unknown): string | null {
+export function normalizePaymentAmount(value: unknown): string | null {
   const match = typeof value === "string" ? value.trim().match(/^(\d+)(?:\.(\d{1,2}))?$/) : null;
   if (!match?.[1]) return null;
   return `${BigInt(match[1]).toString()}.${(match[2] ?? "").padEnd(2, "0")}`;

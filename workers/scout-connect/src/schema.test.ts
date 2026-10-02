@@ -41,6 +41,10 @@ const MIGRATION6_SQL = readFileSync(
   new URL("../migrations/0006-alipay-payment-orders.sql", import.meta.url),
   "utf8",
 );
+const MIGRATION7_SQL = readFileSync(
+  new URL("../migrations/0007-waffo-payment-orders.sql", import.meta.url),
+  "utf8",
+);
 
 // The production shape BEFORE this Worker version: schema.sql as of 884f4c4.
 // `cf_access_app_id` is NOT NULL and `last_seen_at` does not exist — exactly
@@ -171,6 +175,45 @@ function queryPlan(sqlite: Sqlite, sql: string, ...params: unknown[]): string {
 }
 
 describe("schema.sql — fresh install against real SQLite", () => {
+  it("accepts Waffo payment orders with session and provider order ids", () => {
+    const { sqlite } = freshDb(SCHEMA_SQL);
+    sqlite
+      .prepare("INSERT INTO accounts(id,email,created_at) VALUES(?,?,?)")
+      .run("act_waffo", "waffo@example.com", "2026-10-02T00:00:00.000Z");
+    expect(() =>
+      sqlite
+        .prepare(
+          `INSERT INTO payment_orders
+             (id, checkout_token_sha256, account_id, provider, out_trade_no, trade_no,
+              waffo_session_id, waffo_order_id, months, total_amount, status, created_at,
+              expires_at, paid_at, fulfilled_at, closed_at, refunded_at,
+              refund_request_no, last_notify_id, last_queried_at)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        )
+        .run(
+          "ord_waffo",
+          "sha_waffo",
+          "act_waffo",
+          "waffo",
+          "MCWAFFO",
+          null,
+          "cs_waffo",
+          null,
+          3,
+          "45.00",
+          "created",
+          "2026-10-02T00:00:00.000Z",
+          "2026-10-02T00:30:00.000Z",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+        ),
+    ).not.toThrow();
+  });
   it("CRITICAL-2: accepts the endpoint row provision.ts actually writes (Access ids null)", async () => {
     const { db } = freshDb(SCHEMA_SQL);
     const row = postAccessEndpoint();
@@ -1150,6 +1193,7 @@ describe("migration 0006 — provider-neutral entitlements and Alipay orders", (
   it("converges with the fresh schema and creates the order indexes", () => {
     const migrated = preAlipayDb();
     migrated.exec(MIGRATION6_SQL);
+    migrated.exec(MIGRATION7_SQL);
     const fresh = freshDb(SCHEMA_SQL).sqlite;
     const columns = (sqlite: Sqlite, table: string): string[] =>
       (sqlite.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((row) => row.name);
@@ -1162,6 +1206,7 @@ describe("migration 0006 — provider-neutral entitlements and Alipay orders", (
   it("runs the real D1 order and entitlement methods against the migrated shape", async () => {
     const sqlite = preAlipayDb();
     sqlite.exec(MIGRATION6_SQL);
+    sqlite.exec(MIGRATION7_SQL);
     const db = createD1ConnectDb(d1Over(sqlite));
     await db.insertAccount({
       id: "act_rt",
@@ -1196,7 +1241,7 @@ describe("migration 0006 — provider-neutral entitlements and Alipay orders", (
       trade_no: "trade_rt",
       paid_at: "2026-08-16T00:03:00.000Z",
     });
-    expect(await db.getPaymentOrderByCheckoutHash("sha_rt")).toMatchObject({
+    expect(await db.getPaymentOrderById("ord_rt")).toMatchObject({
       id: "ord_rt",
       status: "paid",
       trade_no: "trade_rt",
@@ -1290,5 +1335,125 @@ describe("migration 0006 — provider-neutral entitlements and Alipay orders", (
     expect(MIGRATION6_SQL).not.toMatch(/BEGIN\s+TRANSACTION/i);
     expect(MIGRATION6_SQL).toContain("wrangler d1 execute");
     expect(MIGRATION6_SQL).toMatch(/BEFORE/i);
+  });
+});
+
+describe("migration 0007 — Waffo payment orders", () => {
+  function migratedAlipayDb(): Sqlite {
+    const sqlite = new Database(":memory:");
+    sqlite.exec(LEGACY_SCHEMA_SQL);
+    sqlite.exec(MIGRATION_SQL);
+    sqlite.exec(MIGRATION2_SQL);
+    sqlite.exec(MIGRATION3_SQL);
+    sqlite.exec(MIGRATION4_SQL);
+    sqlite.exec(MIGRATION5_SQL);
+    sqlite.exec(MIGRATION6_SQL);
+    sqlite
+      .prepare("INSERT INTO accounts(id,email,created_at) VALUES(?,?,?)")
+      .run("act_history", "history@example.com", "2026-08-24T00:00:00.000Z");
+    sqlite
+      .prepare(
+        `INSERT INTO payment_orders
+          (id,checkout_token_sha256,account_id,provider,out_trade_no,trade_no,months,total_amount,status,created_at,expires_at)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        "ord_history",
+        "sha_history",
+        "act_history",
+        "alipay",
+        "MC-HISTORY",
+        "ALI-HISTORY",
+        3,
+        "45.00",
+        "fulfilled",
+        "2026-08-24T00:00:00.000Z",
+        "2026-08-24T00:20:00.000Z",
+      );
+    return sqlite;
+  }
+
+  it("rebuilds the 0006 table, preserves historical rows and named indexes", () => {
+    const sqlite = migratedAlipayDb();
+    sqlite.exec(MIGRATION7_SQL);
+
+    expect(
+      sqlite
+        .prepare("SELECT provider,out_trade_no,trade_no,waffo_session_id,waffo_order_id FROM payment_orders")
+        .get(),
+    ).toEqual({
+      provider: "alipay",
+      out_trade_no: "MC-HISTORY",
+      trade_no: "ALI-HISTORY",
+      waffo_session_id: null,
+      waffo_order_id: null,
+    });
+    expect(indexNames(sqlite)).toEqual(
+      expect.arrayContaining(["idx_payment_orders_account_created", "idx_payment_orders_status"]),
+    );
+    const check = sqlite
+      .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='payment_orders'")
+      .get() as { sql: string };
+    expect(check.sql).toMatch(/provider\s+TEXT\s+NOT NULL\s+CHECK\s*\(provider IN \('alipay', 'waffo'\)\)/i);
+  });
+
+  it("accepts a Waffo row and returns only recent unresolved rows to reconciliation", async () => {
+    const sqlite = migratedAlipayDb();
+    sqlite.exec(MIGRATION7_SQL);
+    const db = createD1ConnectDb(d1Over(sqlite));
+    const base: PaymentOrderRow = {
+      id: "ord_waffo_1",
+      checkout_token_sha256: "sha_waffo_1",
+      account_id: "act_history",
+      provider: "waffo",
+      out_trade_no: "MC-WAFFO-1",
+      trade_no: null,
+      waffo_session_id: "cs_waffo_1",
+      waffo_order_id: null,
+      months: 3,
+      total_amount: "45.00",
+      status: "created",
+      created_at: "2026-10-01T00:00:00.000Z",
+      expires_at: "2026-10-01T00:30:00.000Z",
+      paid_at: null,
+      fulfilled_at: null,
+      closed_at: null,
+      refunded_at: null,
+      refund_request_no: null,
+      last_notify_id: null,
+      last_queried_at: null,
+    };
+    await db.insertPaymentOrder(base);
+    await db.insertPaymentOrder({
+      ...base,
+      id: "ord_waffo_done",
+      checkout_token_sha256: "sha_waffo_done",
+      out_trade_no: "MC-WAFFO-DONE",
+      status: "fulfilled",
+    });
+    await db.insertPaymentOrder({
+      ...base,
+      id: "ord_waffo_old",
+      checkout_token_sha256: "sha_waffo_old",
+      out_trade_no: "MC-WAFFO-OLD",
+      created_at: "2026-09-01T00:00:00.000Z",
+    });
+
+    expect(await db.getPaymentOrderById(base.id)).toMatchObject({
+      provider: "waffo",
+      waffo_session_id: "cs_waffo_1",
+      waffo_order_id: null,
+    });
+    expect(await db.listPaymentOrdersForReconciliation("waffo", "2026-09-15T00:00:00.000Z")).toEqual([
+      expect.objectContaining({ id: base.id, provider: "waffo" }),
+    ]);
+  });
+
+  it("is D1-safe and documents migrate-before-deploy", () => {
+    expect(MIGRATION7_SQL).not.toMatch(/^\s*BEGIN\b/im);
+    expect(MIGRATION7_SQL).not.toMatch(/^\s*COMMIT\b/im);
+    expect(MIGRATION7_SQL).not.toMatch(/BEGIN\s+TRANSACTION/i);
+    expect(MIGRATION7_SQL).toContain("ALTER TABLE payment_orders RENAME TO payment_orders_old");
+    expect(MIGRATION7_SQL).toContain("DROP TABLE payment_orders_old");
   });
 });

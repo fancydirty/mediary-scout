@@ -2,6 +2,7 @@
   "name": "scout-connect",
   "main": "src/index.ts",
   "compatibility_date": "2026-06-01",
+  "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "routes": [
     { "pattern": "mediaryconnect.app", "custom_domain": true },
@@ -22,6 +23,12 @@
   },
   "vars": {
     "CONNECT_ROOT_DOMAIN": "mediaryconnect.app",
+    "WAFFO_MERCHANT_ID": "MER_4XNDR15LYZPCUbUPbuR6R7",
+    "WAFFO_STORE_ID": "STO_11zoOG0p1l1qIZIQc9dH5I",
+    "WAFFO_ENVIRONMENT": "prod",
+    "WAFFO_PRODUCT_QUARTER": "PROD_7P69wSLsArPk0FR21U6bB8",
+    "WAFFO_PRODUCT_YEAR": "PROD_38VUdQpFXUxVCrvKVZ0NiC",
+    "WAFFO_PRODUCT_TWO_YEARS": "PROD_2x5JlwkaBl7QujpMzqcjnB",
     // Turnstile sitekey —— **刻意留空以关闭人机验证门禁**。
     //
     // 为什么关:`challenges.cloudflare.com` 在中国大陆不可靠。挡住的不是脚本,
@@ -36,9 +43,8 @@
     // 见 src/rate-limit.ts 的 SIGNUP_* 参数与那里对取舍的说明。
     // "TURNSTILE_SITEKEY": "0x4AAAAAAD-wkGraJigl3YK0"
   }
-  // 支付宝凭证全部使用 `wrangler secret put` 配置，不进入源码或 vars：
-  // ALIPAY_APP_ID / ALIPAY_PRIVATE_KEY / ALIPAY_ALIPAY_PUBLIC_KEY /
-  // ALIPAY_SELLER_ID。四项缺一即 fail closed，购买入口不会显示可用按钮。
+  // Waffo 私钥使用 `wrangler secret put WAFFO_PRIVATE_KEY` 配置，不进入源码或 vars。
+  // 缺少私钥或任一 Waffo var 即 fail closed，购买入口不会显示可用按钮。
   // EXPIRY_SWEEP_LIVE 用 `wrangler secret put` 或 dashboard 设 —— 它是行为开关
   // (true 才真删生产资源),刻意不放 vars 防误开。见 src/index.ts 的注释。
 }

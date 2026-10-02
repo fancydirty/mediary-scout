@@ -2,9 +2,9 @@
 
 ## 定价
 
-Last updated: 2026-08-16
+Last updated: 2026-10-02
 
-最后更新:2026-08-16
+最后更新:2026-10-02
 
 ## Prepaid time, never auto-charged
 
@@ -26,9 +26,9 @@ Mediary Connect 按**预付时长**计费:一次付费,获得对应月数的远�
 - **年度(12 个月)** — ¥108
 - **两年(24 个月)** — ¥188
 
-Prices are in CNY. Checkout is handled through **Alipay only**. Each purchase is a one-time payment and never starts an automatic renewal.
+Prices are in CNY. Checkout is handled by **Waffo.com Limited**, our merchant of record, through WeChat Pay. Waffo sends the payment receipt. Each purchase is a one-time payment and never starts an automatic renewal.
 
-价格以人民币计,**仅支持支付宝**结账。每次购买都是一次性付款,不会开通自动续费。
+价格以人民币计,由记录商户 **Waffo.com Limited** 通过微信支付处理结账。付款凭证由 Waffo 发送。每次购买都是一次性付款,不会开通自动续费。
 
 ## Every tier includes
 

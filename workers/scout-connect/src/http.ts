@@ -30,7 +30,6 @@ export function htmlPage(
     status?: number;
     noStore?: boolean;
     posters?: boolean;
-    alipayForm?: true | "sandbox";
   } = {},
 ): Response {
   const status = opts.status ?? 200;
@@ -38,11 +37,6 @@ export function htmlPage(
   // 默认 img-src 只有 'self' data:,加海报时漏了这条,线上 28 张图全被 CSP
   // 挡成裂图(curl 能拿到,浏览器不行 —— 这类 bug 只有真在浏览器里看才发现)。
   const posters = opts.posters === true;
-  // Only the one-time same-origin checkout hop may submit a form to Alipay.
-  // Chromium applies form-action across redirects. Both official gateways issue a
-  // redirect through unitradeprod to excashier, so the full owned chain must be allowed.
-  // The tier-selection and return pages use same-origin fetch only.
-  const alipayForm = opts.alipayForm;
   const csp = [
     "default-src 'none'",
     "style-src 'unsafe-inline'",
@@ -55,11 +49,7 @@ export function htmlPage(
     // 'self' 供将来的同源图标;data: 不产生网络请求,不放宽攻击面。
     `img-src 'self' data:${posters ? ` ${POSTER_IMG_SOURCE}` : ""}`,
     "base-uri 'none'",
-    alipayForm === "sandbox"
-      ? "form-action https://openapi-sandbox.dl.alipaydev.com https://unitradeprod-sandbox.dl.alipaydev.com https://excashier-sandbox.dl.alipaydev.com"
-      : alipayForm
-        ? "form-action https://openapi.alipay.com https://unitradeprod.alipay.com https://excashier.alipay.com"
-        : "form-action 'self'",
+    "form-action 'self'",
     "frame-ancestors 'none'",
   ].join("; ");
   const headers: Record<string, string> = {

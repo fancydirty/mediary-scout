@@ -33,6 +33,7 @@
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^2.0.48",
+    "@waffo/pancake-ts": "0.25.0",
     "ai": "^6.0.201",
     "lucide-react": "^1.17.0",
     "next": "^16.2.9",
