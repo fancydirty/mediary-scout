@@ -841,6 +841,7 @@ describe("payment-order and provider-neutral entitlement persistence", () => {
     expect(await db.getPaymentOrderById(row.id)).toEqual(row);
     expect(await db.listPaymentOrdersForReconciliation("waffo", "2026-09-30T00:00:00.000Z")).toEqual([
       row,
+      expect.objectContaining({ id: "ord_waffo_fulfilled", status: "fulfilled" }),
     ]);
   });
 

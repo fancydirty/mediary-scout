@@ -980,11 +980,23 @@ function paymentEvidenceFromQuery(order: PaymentOrderRow, payment: WaffoPayment)
   };
 }
 
-async function compensateWaffoOrder(orderId: string, deps: RouteDeps): Promise<PaymentOrderRow> {
+interface WaffoCompensationOptions {
+  checkFulfilledForRefund?: boolean;
+}
+
+// Covers the 14-day refund policy plus exceptional refunds granted later by the owner.
+const WAFFO_RECONCILIATION_WINDOW_MS = 60 * 24 * 60 * 60 * 1000;
+
+async function compensateWaffoOrder(
+  orderId: string,
+  deps: RouteDeps,
+  options: WaffoCompensationOptions = {},
+): Promise<PaymentOrderRow> {
   let order = await deps.db.getPaymentOrderById(orderId);
   if (order === null) throw new InvalidWaffoEvidenceError("Waffo payment order not found");
   if (order.provider !== "waffo") throw new InvalidWaffoEvidenceError("payment provider mismatch");
-  if (order.status === "fulfilled" || order.status === "refunded") return order;
+  if (order.status === "refunded") return order;
+  if (order.status === "fulfilled" && options.checkFulfilledForRefund !== true) return order;
   if (order.status === "paid") return fulfillWaffoOrder(order, deps);
   const queriedAtMs = Date.parse(deps.now());
   if (!Number.isFinite(queriedAtMs)) throw new Error("server time is invalid");
@@ -1097,11 +1109,11 @@ export async function reconcileWaffoOrders(deps: RouteDeps): Promise<void> {
   if (deps.waffoEnvironment !== "prod" || deps.waffoApi === undefined) return;
   const nowMs = Date.parse(deps.now());
   if (!Number.isFinite(nowMs)) throw new Error("server time is invalid");
-  const since = new Date(nowMs - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const since = new Date(nowMs - WAFFO_RECONCILIATION_WINDOW_MS).toISOString();
   const orders = await deps.db.listPaymentOrdersForReconciliation("waffo", since);
   for (const order of orders) {
     try {
-      await compensateWaffoOrder(order.id, deps);
+      await compensateWaffoOrder(order.id, deps, { checkFulfilledForRefund: true });
     } catch (error) {
       console.error("Waffo reconciliation failed for order", order.id, error instanceof Error ? error.message : "unknown error");
     }

@@ -231,7 +231,7 @@ export interface ConnectDb {
   insertPaymentOrder(row: PaymentOrderRow): Promise<PaymentOrderRow>;
   getPaymentOrderById(id: string): Promise<PaymentOrderRow | null>;
   getPaymentOrderByOutTradeNo(outTradeNo: string): Promise<PaymentOrderRow | null>;
-  /** Waffo reconciliation scan: recent orders that still need compensation. */
+  /** Waffo reconciliation scan: recent orders that still need payment/refund compensation. */
   listPaymentOrdersForReconciliation(
     provider: PaymentOrderRow["provider"],
     sinceIso: string,
@@ -845,7 +845,7 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
           `SELECT * FROM payment_orders
              WHERE provider = ?
                AND created_at >= ?
-               AND status NOT IN ('fulfilled', 'refunded')
+               AND status != 'refunded'
              ORDER BY created_at ASC, id ASC`,
         )
         .bind(provider, sinceIso)
@@ -937,7 +937,7 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
           `UPDATE payment_orders
               SET last_queried_at = ?
             WHERE id = ?
-              AND status IN ('created', 'form_issued', 'pending')
+              AND status IN ('created', 'form_issued', 'pending', 'fulfilled')
               AND (last_queried_at IS NULL OR last_queried_at <= ?)`,
         )
         .bind(queriedAt, id, cutoff)
@@ -1421,7 +1421,6 @@ export function createMemoryConnectDb(): ConnectDb {
           (row) =>
             row.provider === provider &&
             row.created_at >= sinceIso &&
-            row.status !== "fulfilled" &&
             row.status !== "refunded",
         )
         .sort(byCreatedAtAsc)
@@ -1488,7 +1487,7 @@ export function createMemoryConnectDb(): ConnectDb {
     async claimPaymentOrderQuery(id, queriedAt, cutoff) {
       const row = paymentOrders.get(id);
       const queryable =
-        row?.status === "created" || row?.status === "form_issued" || row?.status === "pending";
+        row?.status === "created" || row?.status === "form_issued" || row?.status === "pending" || row?.status === "fulfilled";
       if (
         row === undefined ||
         !queryable ||

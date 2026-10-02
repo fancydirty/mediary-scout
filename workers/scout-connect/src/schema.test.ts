@@ -1446,6 +1446,7 @@ describe("migration 0007 — Waffo payment orders", () => {
     });
     expect(await db.listPaymentOrdersForReconciliation("waffo", "2026-09-15T00:00:00.000Z")).toEqual([
       expect.objectContaining({ id: base.id, provider: "waffo" }),
+      expect.objectContaining({ id: "ord_waffo_done", status: "fulfilled" }),
     ]);
   });
 

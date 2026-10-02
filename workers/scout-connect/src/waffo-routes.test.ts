@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { handleRequest, type RouteDeps } from "./routes.js";
+import { handleRequest, reconcileWaffoOrders, type RouteDeps } from "./routes.js";
 import { createMemoryConnectDb, type ConnectDb } from "./db.js";
 import { buildSessionCookie } from "./session.js";
 import type { CfApi } from "./cf-api.js";
@@ -305,5 +305,93 @@ describe("Waffo webhook and status compensation", () => {
     expect(response.status).toBe(200);
     expect(["pending", "expired", "closed"]).toContain((await response.json() as { status: string }).status);
     expect(await db.listEntitlements("act_1")).toHaveLength(0);
+  });
+
+  it("cron reconciles a fulfilled order whose payment was fully refunded", async () => {
+    const db = createMemoryConnectDb();
+    await loggedIn(db);
+    const order = await db.insertPaymentOrder({
+      id: "ord_cron_refund", checkout_token_sha256: "f".repeat(64), account_id: "act_1", provider: "waffo",
+      out_trade_no: "MC_cron_refund", trade_no: "PAY_CRON_REFUND", waffo_session_id: "cs", waffo_order_id: "ORD",
+      months: 3, total_amount: "45.00", status: "fulfilled", created_at: "2026-09-01T00:00:00.000Z",
+      expires_at: "2026-12-01T00:00:00.000Z", paid_at: NOW, fulfilled_at: NOW, closed_at: null,
+      refunded_at: null, refund_request_no: null, last_notify_id: null, last_queried_at: null,
+    });
+    await db.insertEntitlement({
+      id: "ent_cron_refund", account_id: "act_1", expires_at: "2026-12-01T00:00:00.000Z", source: "waffo",
+      paddle_transaction_id: null, payment_provider: "waffo", payment_transaction_id: order.out_trade_no,
+      refunded_at: null, months: 3, created_at: "2026-09-01T00:00:00.000Z",
+    });
+    const queryPayments = vi.fn(async () => [{
+      id: "PAY_CRON_REFUND", orderId: "ORD", status: "succeeded",
+      amount: { amount: "4500", currency: "CNY", display: "45.00" },
+      refundedAmount: { amount: "4500", currency: "CNY", display: "45.00" }, isFullyRefunded: true,
+      testMode: false, orderMerchantExternalId: order.out_trade_no,
+    }]);
+    await reconcileWaffoOrders(deps(db, { waffoEnvironment: "prod", waffoApi: api({ queryPayments }) }));
+    expect(queryPayments).toHaveBeenCalledOnce();
+    expect((await db.getPaymentOrderById(order.id))?.status).toBe("refunded");
+    expect((await db.listEntitlements("act_1"))[0]?.refunded_at).toBe(NOW);
+  });
+
+  it("cron leaves a fulfilled order with a succeeded non-refunded payment unchanged", async () => {
+    const db = createMemoryConnectDb();
+    await loggedIn(db);
+    const order = await db.insertPaymentOrder({
+      id: "ord_cron_paid", checkout_token_sha256: "g".repeat(64), account_id: "act_1", provider: "waffo",
+      out_trade_no: "MC_cron_paid", trade_no: "PAY_CRON_PAID", waffo_session_id: "cs", waffo_order_id: "ORD",
+      months: 12, total_amount: "108.00", status: "fulfilled", created_at: "2026-09-01T00:00:00.000Z",
+      expires_at: "2027-09-01T00:00:00.000Z", paid_at: NOW, fulfilled_at: NOW, closed_at: null,
+      refunded_at: null, refund_request_no: null, last_notify_id: null, last_queried_at: null,
+    });
+    await db.insertEntitlement({
+      id: "ent_cron_paid", account_id: "act_1", expires_at: "2027-09-01T00:00:00.000Z", source: "waffo",
+      paddle_transaction_id: null, payment_provider: "waffo", payment_transaction_id: order.out_trade_no,
+      refunded_at: null, months: 12, created_at: "2026-09-01T00:00:00.000Z",
+    });
+    const queryPayments = vi.fn(async () => [{
+      id: "PAY_CRON_PAID", orderId: "ORD", status: "succeeded",
+      amount: { amount: "10800", currency: "CNY", display: "108.00" },
+      testMode: false, orderMerchantExternalId: order.out_trade_no,
+    }]);
+    await reconcileWaffoOrders(deps(db, { waffoEnvironment: "prod", waffoApi: api({ queryPayments }) }));
+    expect(queryPayments).toHaveBeenCalledOnce();
+    expect((await db.getPaymentOrderById(order.id))?.status).toBe("fulfilled");
+    expect(await db.listEntitlements("act_1")).toHaveLength(1);
+  });
+
+  it("does not query Waffo on a fulfilled status poll", async () => {
+    const db = createMemoryConnectDb();
+    const cookie = await loggedIn(db);
+    const order = await db.insertPaymentOrder({
+      id: "ord_status_fulfilled", checkout_token_sha256: "h".repeat(64), account_id: "act_1", provider: "waffo",
+      out_trade_no: "MC_status_fulfilled", trade_no: "PAY_STATUS", waffo_session_id: "cs", waffo_order_id: "ORD",
+      months: 3, total_amount: "45.00", status: "fulfilled", created_at: NOW,
+      expires_at: "2027-01-01T00:00:00.000Z", paid_at: NOW, fulfilled_at: NOW, closed_at: null,
+      refunded_at: null, refund_request_no: null, last_notify_id: null, last_queried_at: null,
+    });
+    const queryPayments = vi.fn(async () => []);
+    const response = await handleRequest(new Request(`https://dev.example/api/orders/${order.id}/status`, { headers: { cookie } }), deps(db, { waffoApi: api({ queryPayments }) }));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ status: "fulfilled" });
+    expect(queryPayments).not.toHaveBeenCalled();
+  });
+
+  it("cron scans a 59-day-old order but skips a 61-day-old order", async () => {
+    const db = createMemoryConnectDb();
+    await loggedIn(db);
+    const makeOrder = async (id: string, createdAt: string) => db.insertPaymentOrder({
+      id, checkout_token_sha256: id.padEnd(64, "x"), account_id: "act_1", provider: "waffo",
+      out_trade_no: id, trade_no: null, waffo_session_id: "cs", waffo_order_id: null,
+      months: 3, total_amount: "45.00", status: "created", created_at: createdAt,
+      expires_at: "2026-10-02T10:30:00.000Z", paid_at: null, fulfilled_at: null, closed_at: null,
+      refunded_at: null, refund_request_no: null, last_notify_id: null, last_queried_at: null,
+    });
+    const recent = await makeOrder("ord_59_days", "2026-08-04T10:00:00.000Z");
+    await makeOrder("ord_61_days", "2026-08-02T10:00:00.000Z");
+    const queryPayments = vi.fn(async () => []);
+    await reconcileWaffoOrders(deps(db, { waffoEnvironment: "prod", waffoApi: api({ queryPayments }) }));
+    expect(queryPayments).toHaveBeenCalledTimes(1);
+    expect(queryPayments).toHaveBeenCalledWith(recent.out_trade_no);
   });
 });

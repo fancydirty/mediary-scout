@@ -213,9 +213,10 @@ idempotency key. Full refunds reconcile the entitlement and revoke access only
 when no other unrefunded entitlement remains; partial refunds are logged and do
 not remove access.
 
-After deploying, the script performs no-charge production checks. Final launch
-acceptance still requires one Waffo test payment through the WeChat simulator,
-automatic entitlement fulfillment, and a full refund handled through Waffo.
+The WeChat simulator only proves the integration. Production launch also
+requires KYB approval (`prodEnabled`), all three products published to
+production, the production webhook registered, a real payment by someone
+other than the merchant, and a full refund of that payment.
 
 **Refunds**: issue refunds from the Waffo dashboard (or through the merchant
 API refund ticket). The resulting `refund.succeeded` webhook removes the

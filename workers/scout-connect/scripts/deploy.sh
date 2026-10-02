@@ -72,6 +72,49 @@ if ! env -u CF_API_TOKEN npx wrangler d1 execute scout-connect --remote \
   exit 1
 fi
 
+NOW_ISO=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
+if ! ALIPAY_OPEN_RESULT=$(env -u CF_API_TOKEN npx wrangler d1 execute scout-connect --remote --json \
+  --command "SELECT COUNT(*) AS count FROM payment_orders WHERE provider = 'alipay' AND status IN ('created','form_issued','pending') AND expires_at > '$NOW_ISO';"); then
+  echo "❌ 无法查询未过期支付宝订单，停止部署。" >&2
+  exit 1
+fi
+if ! ALIPAY_OPEN_COUNT=$(printf '%s' "$ALIPAY_OPEN_RESULT" | node -e '
+let input = "";
+process.stdin.on("data", (chunk) => { input += chunk; });
+process.stdin.on("end", () => {
+  const findCount = (value) => {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const result = findCount(item);
+        if (result !== null) return result;
+      }
+    } else if (value !== null && typeof value === "object") {
+      if (typeof value.count === "number" || typeof value.count === "string") return Number(value.count);
+      for (const item of Object.values(value)) {
+        const result = findCount(item);
+        if (result !== null) return result;
+      }
+    }
+    return null;
+  };
+  try {
+    const count = findCount(JSON.parse(input));
+    if (count === null || !Number.isInteger(count) || count < 0) process.exit(2);
+    process.stdout.write(String(count));
+  } catch {
+    process.exit(2);
+  }
+});
+'); then
+  echo "❌ 无法解析未过期支付宝订单数量，停止部署。" >&2
+  exit 1
+fi
+echo "→ Alipay payable-order cutover guard: $ALIPAY_OPEN_COUNT"
+if [ "$ALIPAY_OPEN_COUNT" -gt 0 ]; then
+  echo "❌ 仍有 $ALIPAY_OPEN_COUNT 个未过期支付宝订单可支付；本次发布移除了支付宝 notify/query 路由，请等待这些订单过期。" >&2
+  exit 1
+fi
+
 # 4) 本地门禁。
 echo "→ typecheck"
 npx tsc -p tsconfig.json --noEmit
