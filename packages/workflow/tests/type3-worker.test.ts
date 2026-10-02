@@ -277,6 +277,48 @@ describe("runScheduledType3Monitoring (V2 engine)", () => {
     expect(saved?.season.latestAiredEpisode).toBe(4);
   });
 
+  it("heals an inflated season before patrol and never invokes the agent", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const { title } = trackedFixture("inflated");
+    const season: TrackedSeason = {
+      ...trackedFixture("inflated").season,
+      id: `${title.id}_s1`,
+      mediaTitleId: title.id,
+      totalEpisodes: 14,
+      latestAiredEpisode: 14,
+    };
+    await seedTrackedSeason({ repository, title, season, obtainedCodes: ["S01E01"] });
+    const storage = new FakeStorageExecutor();
+    await seedV2Season(storage, title, season, ["S01E01"]);
+
+    const outcomes = await runScheduledType3Monitoring({
+      repository,
+      resourceProvider: emptyProvider(),
+      storage,
+      model: throwingModel(),
+      storageParentDirectoryId: "library_root",
+      now: () => "2026-06-12T00:00:01.000Z",
+      createWorkflowRunId: () => "run_heal_type3",
+      syncSeasonMetadata: async () => ({ latestAiredEpisode: 1, totalEpisodes: 14 }),
+    });
+
+    expect(outcomes).toEqual([
+      { trackedSeasonId: season.id, status: "ran", workflowRunId: "run_heal_type3", workflowStatus: "succeeded" },
+    ]);
+    const saved = await repository.getWorkflowRunSnapshot("run_heal_type3");
+    expect(saved?.season.latestAiredEpisode).toBe(1);
+    const persisted = (await repository.listAllTrackedSeasonStates()).find((state) => state.season.id === season.id);
+    expect(persisted?.season.latestAiredEpisode).toBe(1);
+    expect(persisted?.episodes.find((episode) => episode.episodeCode === "S01E02")).toMatchObject({
+      airStatus: "unaired",
+      obtained: false,
+    });
+    const patrol = (await repository.listNotifications()).find(
+      (notification) => notification.workflowRunId === "run_heal_type3",
+    );
+    expect(patrol?.kind).toBe("already_current");
+  });
+
   it("records a no-op run when a tracked season is already current — the agent model is never invoked", async () => {
     const repository = new InMemoryWorkflowRepository();
     const { title, season } = trackedFixture();

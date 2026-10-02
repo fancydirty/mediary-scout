@@ -60,6 +60,7 @@ describe("TmdbMetadataProvider", () => {
       qualityPreference: "4K",
       storageDirectoryId: "dir_qiaochu_s1",
       metadataProvider: provider,
+      now: new Date("2026-10-02T00:00:00Z"),
     });
 
     expect(requests).toEqual([
@@ -138,6 +139,7 @@ describe("TmdbMetadataProvider", () => {
       seasonNumber: 1,
       qualityPreference: "4K",
       metadataProvider: provider,
+      now: new Date("2026-10-02T00:00:00Z"),
     });
 
     expect(target.season.latestAiredEpisode).toBe(22);
@@ -190,6 +192,7 @@ describe("TmdbMetadataProvider", () => {
       qualityPreference: "1080p",
       storageDirectoryId: "dir_show_s1",
       metadataProvider: provider,
+      now: new Date("2026-01-10T00:00:00Z"),
     });
 
     expect(target.title).toMatchObject({
@@ -205,6 +208,194 @@ describe("TmdbMetadataProvider", () => {
       latestAiredSource: "metadata",
     });
     expect(target.keyword).toBe("Show"); // quality preference must NOT pollute the keyword
+  });
+
+  it("counts only aired dates when a season-premiere summary still points at the prior season", async () => {
+    const episodes = Array.from({ length: 14 }, (_, index) => {
+      const date = new Date(Date.UTC(2026, 9, 1 + index * 7));
+      return { episode_number: index + 1, air_date: date.toISOString().slice(0, 10) };
+    });
+    const provider = new TmdbMetadataProvider({
+      readToken: "token",
+      fetchJson: async (url) => {
+        if (url.includes("/tv/283428?")) {
+          return {
+            id: 283428,
+            name: "冰之城墙",
+            original_name: "冰之城墙",
+            first_air_date: "2026-01-01",
+            number_of_episodes: 28,
+            overview: "",
+            poster_path: null,
+            backdrop_path: null,
+            last_episode_to_air: { season_number: 1, episode_number: 14 },
+            seasons: [
+              { season_number: 1, episode_count: 14 },
+              { season_number: 2, episode_count: 14 },
+            ],
+          };
+        }
+        if (url.includes("/tv/283428/season/2?")) {
+          return { season_number: 2, episodes };
+        }
+        throw new Error(`Unexpected URL ${url}`);
+      },
+    });
+
+    for (const [now, latestAiredEpisode] of [
+      ["2026-09-30T22:00:00Z", 0],
+      ["2026-10-01T22:00:00Z", 1],
+      ["2026-10-08T22:00:00Z", 2],
+      ["2027-01-01T00:00:00Z", 14],
+    ] as const) {
+      const target = await prepareTrackingTarget({
+        tmdbId: 283428,
+        mediaType: "tv",
+        seasonNumber: 2,
+        qualityPreference: "4K",
+        metadataProvider: provider,
+        now: new Date(now),
+      });
+      expect(target.season.latestAiredEpisode).toBe(latestAiredEpisode);
+      expect(target.season.totalEpisodes).toBe(14);
+    }
+  });
+
+  it("counts a brand-new show's first episode after its UTC air date", async () => {
+    const provider = new TmdbMetadataProvider({
+      readToken: "token",
+      fetchJson: async (url) => {
+        if (url.includes("/tv/311842?")) {
+          return {
+            id: 311842,
+            name: "FX战士久留美",
+            original_name: "FX战士久留美",
+            first_air_date: "2026-10-01",
+            number_of_episodes: 12,
+            overview: "",
+            poster_path: null,
+            backdrop_path: null,
+            last_episode_to_air: null,
+            seasons: [{ season_number: 1, episode_count: 12 }],
+          };
+        }
+        if (url.includes("/tv/311842/season/1?")) {
+          return {
+            season_number: 1,
+            episodes: Array.from({ length: 12 }, (_, index) => ({
+              episode_number: index + 1,
+              air_date: new Date(Date.UTC(2026, 9, 1 + index * 7)).toISOString().slice(0, 10),
+            })),
+          };
+        }
+        throw new Error(`Unexpected URL ${url}`);
+      },
+    });
+
+    const target = await prepareTrackingTarget({
+      tmdbId: 311842,
+      mediaType: "tv",
+      seasonNumber: 1,
+      qualityPreference: "4K",
+      metadataProvider: provider,
+      now: new Date("2026-10-01T22:00:00Z"),
+    });
+
+    expect(target.season.latestAiredEpisode).toBe(1);
+    expect(target.season.totalEpisodes).toBe(12);
+  });
+
+  it("uses the UTC calendar date at the day boundary", async () => {
+    const provider = new TmdbMetadataProvider({
+      readToken: "token",
+      fetchJson: async (url) => {
+        if (url.includes("/tv/99?")) {
+          return {
+            id: 99,
+            name: "Boundary",
+            original_name: "Boundary",
+            first_air_date: "2026-10-01",
+            number_of_episodes: 1,
+            overview: "",
+            poster_path: null,
+            backdrop_path: null,
+            last_episode_to_air: null,
+            seasons: [{ season_number: 1, episode_count: 1 }],
+          };
+        }
+        if (url.includes("/tv/99/season/1?")) {
+          return { season_number: 1, episodes: [{ episode_number: 1, air_date: "2026-10-02" }] };
+        }
+        throw new Error(`Unexpected URL ${url}`);
+      },
+    });
+
+    const beforeMidnight = await prepareTrackingTarget({
+      tmdbId: 99,
+      mediaType: "tv",
+      seasonNumber: 1,
+      qualityPreference: "4K",
+      metadataProvider: provider,
+      now: new Date("2026-10-01T23:59:59Z"),
+    });
+    const atMidnight = await prepareTrackingTarget({
+      tmdbId: 99,
+      mediaType: "tv",
+      seasonNumber: 1,
+      qualityPreference: "4K",
+      metadataProvider: provider,
+      now: new Date("2026-10-02T00:00:00Z"),
+    });
+
+    expect(beforeMidnight.season.latestAiredEpisode).toBe(0);
+    expect(atMidnight.season.latestAiredEpisode).toBe(1);
+  });
+
+  it("keeps TMDB's season-local last_episode_to_air as the main path", async () => {
+    const provider = new TmdbMetadataProvider({
+      readToken: "token",
+      fetchJson: async (url) => {
+        if (url.includes("/tv/100?")) {
+          return {
+            id: 100,
+            name: "Main path",
+            original_name: "Main path",
+            first_air_date: "2026-01-01",
+            number_of_episodes: 5,
+            overview: "",
+            poster_path: null,
+            backdrop_path: null,
+            last_episode_to_air: { season_number: 1, episode_number: 3 },
+            seasons: [{ season_number: 1, episode_count: 5 }],
+          };
+        }
+        if (url.includes("/tv/100/season/1?")) {
+          return {
+            season_number: 1,
+            episodes: [
+              { episode_number: 1, air_date: "2026-01-01" },
+              { episode_number: 2, air_date: "2026-01-08" },
+              { episode_number: 3, air_date: "2026-01-15" },
+              { episode_number: 4, air_date: "2026-01-22" },
+              { episode_number: 5, air_date: "2026-01-29" },
+            ],
+          };
+        }
+        throw new Error(`Unexpected URL ${url}`);
+      },
+    });
+
+    const target = await prepareTrackingTarget({
+      tmdbId: 100,
+      mediaType: "tv",
+      seasonNumber: 1,
+      qualityPreference: "4K",
+      metadataProvider: provider,
+      now: new Date("2026-02-01T00:00:00Z"),
+    });
+
+    expect(target.season.latestAiredEpisode).toBe(3);
+    expect(target.season.totalEpisodes).toBe(5);
   });
 });
 
@@ -394,6 +585,7 @@ describe("TmdbSearchProvider", () => {
       seasonNumber: 1,
       qualityPreference: "4K",
       metadataProvider: provider,
+      now: new Date("2026-10-02T00:00:00Z"),
     });
 
     expect(target.title.type).toBe("anime");

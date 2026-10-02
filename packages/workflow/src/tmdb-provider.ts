@@ -156,6 +156,7 @@ export interface TvTrackingTargetInput {
   qualityPreference: string;
   storageDirectoryId?: string;
   metadataProvider: TmdbMetadataProvider;
+  now?: Date;
 }
 
 export interface PreparedTrackingTarget {
@@ -362,7 +363,12 @@ export async function prepareTrackingTarget(input: TvTrackingTargetInput): Promi
   const titleId = `tmdb_tv_${details.id}`;
   const title = normalizeTitle(details.name);
   const totalEpisodes = totalEpisodesForSeason(details, seasonDetails, input.seasonNumber);
-  const latestAiredEpisode = latestAiredEpisodeForSeason(details, seasonDetails, input.seasonNumber);
+  const latestAiredEpisode = latestAiredEpisodeForSeason(
+    details,
+    seasonDetails,
+    input.seasonNumber,
+    input.now ?? new Date(),
+  );
   const latestAiredSource: LatestAiredSource = "metadata";
 
   return {
@@ -798,15 +804,26 @@ function latestAiredEpisodeForSeason(
   details: TmdbTvDetails,
   seasonDetails: TmdbSeasonDetails,
   seasonNumber: number,
+  now: Date,
 ): number {
   const lastEpisode = details.last_episode_to_air;
   if (lastEpisode?.season_number === seasonNumber && lastEpisode.episode_number !== undefined) {
     return lastEpisode.episode_number;
   }
+  const utcToday = now.toISOString().slice(0, 10);
+  // The patrol normally runs at 06:00 China time (22:00 UTC the previous day),
+  // so a UTC date keeps an episode dated today in Asia from being counted too early.
+  // Having an air_date is not having aired: TMDB publishes schedules in advance,
+  // and last_episode_to_air lags at a season premiere and for brand-new shows.
   return Math.max(
     0,
     ...(seasonDetails.episodes ?? [])
-      .filter((episode) => episode.air_date !== null && episode.air_date !== "")
+      .filter(
+        (episode) =>
+          typeof episode.air_date === "string" &&
+          /^\d{4}-\d{2}-\d{2}$/.test(episode.air_date) &&
+          episode.air_date <= utcToday,
+      )
       .map((episode) => episode.episode_number ?? 0),
   );
 }

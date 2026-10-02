@@ -64,6 +64,82 @@ describe("syncSeasonAgainstMetadata", () => {
     expect(result.episodes.find((e) => e.episodeCode === episodeCode(1, 13))?.obtained).toBe(false);
   });
 
+  it("heals an inflated aired cursor while keeping obtained episodes", () => {
+    const s = season({ latestAiredEpisode: 14, totalEpisodes: 14 });
+    const result = syncSeasonAgainstMetadata({
+      season: s,
+      episodes: episodes(s, [episodeCode(1, 1)]),
+      latestAiredEpisode: 1,
+      totalEpisodes: 14,
+    });
+
+    expect(result.changed).toBe(true);
+    expect(result.season.latestAiredEpisode).toBe(1);
+    expect(result.episodes).toHaveLength(14);
+    expect(result.episodes.find((e) => e.episodeCode === episodeCode(1, 1))).toMatchObject({
+      airStatus: "aired",
+      obtained: true,
+    });
+    for (let i = 2; i <= 14; i += 1) {
+      expect(result.episodes.find((e) => e.episodeCode === episodeCode(1, i))).toMatchObject({
+        airStatus: "unaired",
+        obtained: false,
+      });
+    }
+  });
+
+  it("keeps an inflated cursor when every episode is already obtained", () => {
+    const s = season({ latestAiredEpisode: 14, totalEpisodes: 14 });
+    const obtained = Array.from({ length: 14 }, (_, i) => episodeCode(1, i + 1));
+    const result = syncSeasonAgainstMetadata({
+      season: s,
+      episodes: episodes(s, obtained),
+      latestAiredEpisode: 12,
+      totalEpisodes: 14,
+    });
+
+    expect(result.changed).toBe(false);
+    expect(result.season.latestAiredEpisode).toBe(14);
+  });
+
+  it("floors healing at the highest obtained episode without restoring the inflated tail", () => {
+    const s = season({ latestAiredEpisode: 14, totalEpisodes: 14 });
+    const obtained = Array.from({ length: 13 }, (_, i) => episodeCode(1, i + 1));
+    const result = syncSeasonAgainstMetadata({
+      season: s,
+      episodes: episodes(s, obtained),
+      latestAiredEpisode: 10,
+      totalEpisodes: 14,
+    });
+
+    expect(result.changed).toBe(true);
+    expect(result.season.latestAiredEpisode).toBe(13);
+    expect(result.episodes.find((e) => e.episodeCode === episodeCode(1, 14))).toMatchObject({
+      airStatus: "unaired",
+      obtained: false,
+    });
+    for (let i = 11; i <= 13; i += 1) {
+      expect(result.episodes.find((e) => e.episodeCode === episodeCode(1, i))).toMatchObject({
+        airStatus: "aired",
+        obtained: true,
+      });
+    }
+  });
+
+  it("keeps provider-ahead obtained episodes ahead without raising the stored cursor", () => {
+    const s = season({ latestAiredEpisode: 3, totalEpisodes: 12 });
+    const obtained = Array.from({ length: 5 }, (_, i) => episodeCode(1, i + 1));
+    const result = syncSeasonAgainstMetadata({
+      season: s,
+      episodes: episodes(s, obtained),
+      latestAiredEpisode: 3,
+      totalEpisodes: 12,
+    });
+
+    expect(result.changed).toBe(false);
+    expect(result.season.latestAiredEpisode).toBe(3);
+  });
+
   it("grows the episode list when total episodes increase", () => {
     const s = season({ latestAiredEpisode: 16, totalEpisodes: 16 });
     const result = syncSeasonAgainstMetadata({
@@ -77,7 +153,7 @@ describe("syncSeasonAgainstMetadata", () => {
     expect(result.episodes.find((e) => e.episodeCode === episodeCode(1, 20))).toBeDefined();
   });
 
-  it("reports no change and never regresses when TMDB is stale or lower", () => {
+  it("heals a stored cursor when fresh TMDB metadata is lower", () => {
     const s = season({ latestAiredEpisode: 14, totalEpisodes: 16 });
     const result = syncSeasonAgainstMetadata({
       season: s,
@@ -85,7 +161,21 @@ describe("syncSeasonAgainstMetadata", () => {
       latestAiredEpisode: 12,
       totalEpisodes: 16,
     });
-    expect(result.changed).toBe(false);
+    expect(result.changed).toBe(true);
+    expect(result.season.latestAiredEpisode).toBe(12);
+    expect(result.episodes).toHaveLength(16);
+  });
+
+  it("never shrinks total episodes while healing the aired cursor", () => {
+    const s = season({ latestAiredEpisode: 12, totalEpisodes: 16 });
+    const result = syncSeasonAgainstMetadata({
+      season: s,
+      episodes: episodes(s),
+      latestAiredEpisode: 14,
+      totalEpisodes: 14,
+    });
+
+    expect(result.season.totalEpisodes).toBe(16);
     expect(result.season.latestAiredEpisode).toBe(14);
     expect(result.episodes).toHaveLength(16);
   });

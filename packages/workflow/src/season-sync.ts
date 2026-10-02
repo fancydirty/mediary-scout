@@ -1,4 +1,4 @@
-import { createEpisodeStates } from "./domain.js";
+import { createEpisodeStates, episodeNumberFromCode } from "./domain.js";
 import type { EpisodeState, TrackedSeason } from "./domain.js";
 
 /**
@@ -8,8 +8,11 @@ import type { EpisodeState, TrackedSeason } from "./domain.js";
  * discover episodes that aired AFTER tracking began.
  *
  * Rules:
- * - `latestAiredEpisode` and `totalEpisodes` only ever advance (max), so a
- *   stale/regressing TMDB read never un-airs episodes already known.
+ * - `totalEpisodes` only ever advances (max). `latestAiredEpisode` follows fresh
+ *   TMDB metadata in both directions so a bad read (including the old future-date
+ *   bug) can heal; the floor keeps obtained episodes aired and is capped by the
+ *   stored count, so it never raises the count and provider-ahead episodes remain
+ *   reported as ahead.
  * - Newly-aired episodes surface as aired-but-not-obtained (real gaps the
  *   sweep will then acquire); a higher total grows the episode list.
  * - Already-obtained episodes keep their obtained flag and verified files.
@@ -24,7 +27,16 @@ export function syncSeasonAgainstMetadata(input: {
   totalEpisodes: number;
 }): { season: TrackedSeason; episodes: EpisodeState[]; changed: boolean } {
   const newTotal = Math.max(input.season.totalEpisodes, input.totalEpisodes);
-  const newLatest = Math.min(newTotal, Math.max(input.season.latestAiredEpisode, input.latestAiredEpisode));
+  const highestObtained = Math.max(
+    0,
+    ...input.episodes
+      .filter((episode) => episode.obtained)
+      .map((episode) => episodeNumberFromCode(episode.episodeCode)),
+  );
+  const newLatest = Math.min(
+    newTotal,
+    Math.max(input.latestAiredEpisode, Math.min(input.season.latestAiredEpisode, highestObtained)),
+  );
   const changed = newTotal !== input.season.totalEpisodes || newLatest !== input.season.latestAiredEpisode;
   if (!changed) {
     return { season: input.season, episodes: input.episodes, changed: false };
