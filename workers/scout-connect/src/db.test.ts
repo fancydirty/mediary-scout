@@ -872,6 +872,16 @@ describe("payment-order and provider-neutral entitlement persistence", () => {
     expect(allCandidates.map((row) => row.id)).not.toEqual(expect.arrayContaining(["ord_closed", "ord_refunded"]));
   });
 
+  it("counts only this account's orders inside the checkout window", async () => {
+    const db = createMemoryConnectDb();
+    const base = paymentOrder({ provider: "waffo", account_id: "act_limit", created_at: "2026-10-02T09:00:00.000Z" });
+    await db.insertPaymentOrder(base);
+    await db.insertPaymentOrder({ ...base, id: "ord_limit_boundary", checkout_token_sha256: "sha_limit_boundary", out_trade_no: "MC_LIMIT_BOUNDARY", created_at: "2026-10-01T10:00:00.000Z" });
+    await db.insertPaymentOrder({ ...base, id: "ord_limit_old", checkout_token_sha256: "sha_limit_old", out_trade_no: "MC_LIMIT_OLD", created_at: "2026-10-01T09:59:59.999Z" });
+    await db.insertPaymentOrder({ ...base, id: "ord_other_account", checkout_token_sha256: "sha_other_account", out_trade_no: "MC_OTHER_ACCOUNT", account_id: "act_other" });
+    expect(await db.countPaymentOrdersForAccountSince("act_limit", "2026-10-01T10:00:00.000Z")).toBe(2);
+  });
+
   it("round-trips and updates an Alipay order by every server-owned key", async () => {
     const db = createMemoryConnectDb();
     const row = paymentOrder();

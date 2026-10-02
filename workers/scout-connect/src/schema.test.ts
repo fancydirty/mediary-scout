@@ -1485,6 +1485,29 @@ describe("migration 0007 — Waffo payment orders", () => {
     ]);
   });
 
+  it("counts only one account at the inclusive checkout window boundary", async () => {
+    const sqlite = migratedAlipayDb();
+    sqlite.exec(MIGRATION7_SQL);
+    const db = createD1ConnectDb(d1Over(sqlite));
+    sqlite.prepare("INSERT INTO accounts(id,email,created_at) VALUES(?,?,?)").run("act_limit", "limit@example.com", "2026-10-01T00:00:00.000Z");
+    sqlite.prepare("INSERT INTO accounts(id,email,created_at) VALUES(?,?,?)").run("act_other", "other@example.com", "2026-10-01T00:00:00.000Z");
+    await db.insertPaymentOrder({
+      id: "ord_count_boundary", checkout_token_sha256: "sha_count_boundary", account_id: "act_limit", provider: "waffo",
+      out_trade_no: "MC_COUNT_BOUNDARY", trade_no: null, waffo_session_id: null, waffo_order_id: null,
+      months: 3, total_amount: "45.00", status: "created", created_at: "2026-10-01T10:00:00.000Z",
+      expires_at: "2026-10-01T10:30:00.000Z", paid_at: null, fulfilled_at: null, closed_at: null,
+      refunded_at: null, refund_request_no: null, last_notify_id: null, last_queried_at: null,
+    });
+    await db.insertPaymentOrder({
+      id: "ord_count_other", checkout_token_sha256: "sha_count_other", account_id: "act_other", provider: "waffo",
+      out_trade_no: "MC_COUNT_OTHER", trade_no: null, waffo_session_id: null, waffo_order_id: null,
+      months: 3, total_amount: "45.00", status: "created", created_at: "2026-10-01T10:00:00.000Z",
+      expires_at: "2026-10-01T10:30:00.000Z", paid_at: null, fulfilled_at: null, closed_at: null,
+      refunded_at: null, refund_request_no: null, last_notify_id: null, last_queried_at: null,
+    });
+    expect(await db.countPaymentOrdersForAccountSince("act_limit", "2026-10-01T10:00:00.000Z")).toBe(1);
+  });
+
   it("is D1-safe and documents migrate-before-deploy", () => {
     expect(MIGRATION7_SQL).not.toMatch(/^\s*BEGIN\b/im);
     expect(MIGRATION7_SQL).not.toMatch(/^\s*COMMIT\b/im);

@@ -1,3 +1,4 @@
+import { generateKeyPairSync } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import {
   WaffoConfigurationError,
@@ -11,8 +12,8 @@ describe("Waffo configuration", () => {
   it("requires the merchant, store, environment, private key, and product ids", () => {
     expect(() => validateWaffoConfig({})).toThrow(WaffoConfigurationError);
     expect(() => validateWaffoConfig({
-      merchantId: "merchant",
-      storeId: "store",
+      merchantId: "MER_4XNDR15LYZPCUbUPbuR6R7",
+      storeId: "STO_11zoOG0p1l1qIZIQc9dH5I",
       environment: "test",
       privateKey: "key",
       productQuarter: "quarter",
@@ -35,6 +36,60 @@ describe("Waffo configuration", () => {
 });
 
 describe("Waffo checkout adapter", () => {
+  function realClientConfig() {
+    const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    return {
+      merchantId: "MER_4XNDR15LYZPCUbUPbuR6R7",
+      storeId: "STO_11zoOG0p1l1qIZIQc9dH5I",
+      environment: "test" as const,
+      privateKey: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+      productQuarter: "PROD_Q",
+      productYear: "PROD_Y",
+      productTwoYears: "PROD_2Y",
+    };
+  }
+
+  it("rejects a real SDK checkout request when the bounded fetch times out", async () => {
+    let sawSignal: AbortSignal | null | undefined;
+    const fetchImpl = vi.fn((_input: Request | string | URL, init?: RequestInit) => {
+      sawSignal = init?.signal;
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+      });
+    });
+    const api = createWaffoApi({ ...realClientConfig(), fetch: fetchImpl, timeoutMs: 20 });
+    await expect(api.createSession({
+      productId: "PROD_Q", successUrl: "http://localhost/payment-success?order=ord_1",
+      orderMerchantExternalId: "MC_TIMEOUT", metadata: { orderId: "ord_1" }, expiresInSeconds: 1800,
+      language: "zh-Hans", buyerEmail: "buyer@example.com",
+    })).rejects.toBeDefined();
+    expect(sawSignal).toBeInstanceOf(AbortSignal);
+    expect(sawSignal?.aborted).toBe(true);
+  });
+
+  it("normalizes a successful response through the real SDK client with a signal", async () => {
+    let sawSignal: AbortSignal | null | undefined;
+    const fetchImpl = vi.fn(async (_input: Request | string | URL, init?: RequestInit) => {
+      sawSignal = init?.signal;
+      return new Response(JSON.stringify({ data: {
+        checkoutUrl: "https://checkout.test/real", sessionId: "cs_real", expiresAt: "2026-10-02T10:00:00.000Z",
+      } }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    const api = createWaffoApi({ ...realClientConfig(), fetch: fetchImpl, timeoutMs: 20 });
+    await expect(api.createSession({
+      productId: "PROD_Q", successUrl: "http://localhost/payment-success?order=ord_1",
+      orderMerchantExternalId: "MC_REAL", metadata: { orderId: "ord_1" }, expiresInSeconds: 1800,
+      language: "zh-Hans", buyerEmail: "buyer@example.com",
+    })).resolves.toMatchObject({ checkoutUrl: "https://checkout.test/real", sessionId: "cs_real" });
+    expect(sawSignal).toBeInstanceOf(AbortSignal);
+    expect(sawSignal?.aborted).toBe(false);
+  });
+
+  it("rejects invalid request timeout values", () => {
+    expect(() => createWaffoApi({ ...realClientConfig(), timeoutMs: 0 })).toThrow(WaffoConfigurationError);
+    expect(() => createWaffoApi({ ...realClientConfig(), timeoutMs: Number.NaN })).toThrow(WaffoConfigurationError);
+  });
+
   it("passes the exact one-time CNY session parameters to the SDK", async () => {
     const createSession = vi.fn(async () => ({
       checkoutUrl: "https://checkout.test/session",

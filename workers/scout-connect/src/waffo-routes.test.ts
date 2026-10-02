@@ -144,6 +144,55 @@ describe("Waffo checkout routes", () => {
     expect(rejected.status).toBe(503);
     expect(await rejected.json()).toEqual({ error: "checkout_not_open" });
   });
+
+  it("returns 429 and does not create a Waffo session after 20 recent checkouts", async () => {
+    const db = createMemoryConnectDb();
+    const cookie = await loggedIn(db);
+    for (let i = 0; i < 20; i += 1) {
+      await db.insertPaymentOrder({
+        id: `ord_limit_${i}`, checkout_token_sha256: `sha_limit_${i}`, account_id: "act_1", provider: "waffo",
+        out_trade_no: `MC_LIMIT_${i}`, trade_no: null, waffo_session_id: null, waffo_order_id: null,
+        months: 3, total_amount: "45.00", status: "created", created_at: NOW,
+        expires_at: "2026-10-02T10:30:00.000Z", paid_at: null, fulfilled_at: null, closed_at: null,
+        refunded_at: null, refund_request_no: null, last_notify_id: null, last_queried_at: null,
+      });
+    }
+    const createSession = vi.fn(async () => ({ checkoutUrl: "https://checkout.test/blocked", sessionId: "cs_blocked", expiresAt: "2026-10-02T10:30:00.000Z" }));
+    const response = await handleRequest(new Request("https://dev.example/api/checkout", {
+      method: "POST", body: JSON.stringify({ tier: "quarter" }), headers: { cookie, "content-type": "application/json" },
+    }), deps(db, { waffoApi: api({ createSession }) }));
+    expect(response.status).toBe(429);
+    expect(await response.json()).toEqual({ error: "too_many_checkouts" });
+    expect(createSession).not.toHaveBeenCalled();
+    expect(await db.getPaymentOrderByOutTradeNo("MC_LIMIT_20")).toBeNull();
+  });
+
+  it("allows checkout when only 19 orders are recent and one is older than 24 hours", async () => {
+    const db = createMemoryConnectDb();
+    const cookie = await loggedIn(db);
+    for (let i = 0; i < 19; i += 1) {
+      await db.insertPaymentOrder({
+        id: `ord_recent_${i}`, checkout_token_sha256: `sha_recent_${i}`, account_id: "act_1", provider: "waffo",
+        out_trade_no: `MC_RECENT_${i}`, trade_no: null, waffo_session_id: null, waffo_order_id: null,
+        months: 3, total_amount: "45.00", status: "created", created_at: NOW,
+        expires_at: "2026-10-02T10:30:00.000Z", paid_at: null, fulfilled_at: null, closed_at: null,
+        refunded_at: null, refund_request_no: null, last_notify_id: null, last_queried_at: null,
+      });
+    }
+    await db.insertPaymentOrder({
+      id: "ord_old", checkout_token_sha256: "sha_old", account_id: "act_1", provider: "waffo",
+      out_trade_no: "MC_OLD", trade_no: null, waffo_session_id: null, waffo_order_id: null,
+      months: 3, total_amount: "45.00", status: "created", created_at: "2026-10-01T08:59:59.999Z",
+      expires_at: "2026-10-01T09:29:59.999Z", paid_at: null, fulfilled_at: null, closed_at: null,
+      refunded_at: null, refund_request_no: null, last_notify_id: null, last_queried_at: null,
+    });
+    const createSession = vi.fn(async () => ({ checkoutUrl: "https://checkout.test/allowed", sessionId: "cs_allowed", expiresAt: "2026-10-02T10:30:00.000Z" }));
+    const response = await handleRequest(new Request("https://dev.example/api/checkout", {
+      method: "POST", body: JSON.stringify({ tier: "quarter" }), headers: { cookie, "content-type": "application/json" },
+    }), deps(db, { waffoApi: api({ createSession }) }));
+    expect(response.status).toBe(200);
+    expect(createSession).toHaveBeenCalledOnce();
+  });
 });
 
 describe("Waffo webhook and status compensation", () => {

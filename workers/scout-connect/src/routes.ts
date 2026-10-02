@@ -791,6 +791,9 @@ function paymentOrigin(request: Request, deps: RouteDeps): string {
     : new URL(request.url).origin;
 }
 
+// A buyer needs a handful of attempts a day; 20 keeps one account far below the 200-row reconciliation batch.
+const WAFFO_CHECKOUT_DAILY_LIMIT = 20;
+
 /** Create an account-bound Waffo order from a server-owned tier and amount. */
 async function createWaffoCheckout(request: Request, deps: RouteDeps): Promise<Response> {
   const api = assertWaffoRuntime(request, deps);
@@ -810,6 +813,10 @@ async function createWaffoCheckout(request: Request, deps: RouteDeps): Promise<R
   const now = deps.now();
   const nowMs = Date.parse(now);
   if (!Number.isFinite(nowMs)) throw new HttpError(500, "server time unavailable");
+  const sinceIso = new Date(nowMs - 24 * 60 * 60 * 1000).toISOString();
+  if ((await deps.db.countPaymentOrdersForAccountSince(account.id, sinceIso)) >= WAFFO_CHECKOUT_DAILY_LIMIT) {
+    return json({ error: "too_many_checkouts" }, 429, { noStore: true });
+  }
   const externalId = newWaffoExternalId(deps);
   const order = await deps.db.insertPaymentOrder({
     id: newPaymentOrderId(deps),

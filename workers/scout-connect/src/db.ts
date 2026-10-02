@@ -237,6 +237,7 @@ export interface ConnectDb {
   insertPaymentOrder(row: PaymentOrderRow): Promise<PaymentOrderRow>;
   getPaymentOrderById(id: string): Promise<PaymentOrderRow | null>;
   getPaymentOrderByOutTradeNo(outTradeNo: string): Promise<PaymentOrderRow | null>;
+  countPaymentOrdersForAccountSince(accountId: string, sinceIso: string): Promise<number>;
   /** Waffo reconciliation scan: recent orders that still need payment/refund compensation. */
   listPaymentOrdersForReconciliation(
     provider: PaymentOrderRow["provider"],
@@ -845,6 +846,14 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
       return row === null ? null : mapPaymentOrder(row);
     },
 
+    async countPaymentOrdersForAccountSince(accountId, sinceIso) {
+      const row = await d1
+        .prepare(`SELECT COUNT(*) AS count FROM payment_orders WHERE account_id = ? AND created_at >= ?`)
+        .bind(accountId, sinceIso)
+        .first<{ count?: number }>();
+      return row?.count ?? 0;
+    },
+
     async listPaymentOrdersForReconciliation(provider, options) {
       const rows = await d1
         .prepare(
@@ -1427,6 +1436,14 @@ export function createMemoryConnectDb(): ConnectDb {
         if (row.out_trade_no === outTradeNo) return { ...row };
       }
       return null;
+    },
+
+    async countPaymentOrdersForAccountSince(accountId, sinceIso) {
+      let count = 0;
+      for (const row of paymentOrders.values()) {
+        if (row.account_id === accountId && row.created_at >= sinceIso) count += 1;
+      }
+      return count;
     },
 
     async listPaymentOrdersForReconciliation(provider, options) {

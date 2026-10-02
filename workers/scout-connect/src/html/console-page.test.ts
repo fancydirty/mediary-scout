@@ -263,6 +263,8 @@ describe("无时长态 = Waffo 微信支付入口", () => {
     expect(html).toContain("401");
     expect(html).toContain("重新登录");
     expect(html).toContain("503");
+    expect(html).toContain("429");
+    expect(html).toContain("发起支付的次数太多了");
     expect(html).toContain("disabled=true");
   });
 

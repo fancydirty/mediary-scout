@@ -2,6 +2,9 @@ import { WaffoPancake, verifyWebhook as sdkVerifyWebhook } from "@waffo/pancake-
 
 export type WaffoEnvironment = "prod" | "test";
 
+// Same bound as the previous Alipay adapter; Waffo normally answers much faster.
+export const WAFFO_REQUEST_TIMEOUT_MS = 10_000;
+
 export interface WaffoConfig {
   merchantId: string;
   storeId: string;
@@ -140,6 +143,10 @@ export type WaffoWebhookVerifier = (
 export interface CreateWaffoApiOptions extends WaffoConfigInput {
   /** Test seam. Production callers leave this unset so the SDK owns signing. */
   client?: WaffoSdkClient;
+  /** Fetch seam for tests and local callers; production uses the global fetch at call time. */
+  fetch?: typeof fetch;
+  /** Override the request bound for tests; must be finite and positive. */
+  timeoutMs?: number;
   /** Test seam for injecting a generated-key verifier; production uses the SDK verifier below. */
   verifyWebhook?: WaffoWebhookVerifier;
 }
@@ -230,9 +237,23 @@ async function defaultWebhookVerifier(
 
 export function createWaffoApi(options: CreateWaffoApiOptions): WaffoApi {
   const config = validateWaffoConfig(options);
+  const timeoutMs = options.timeoutMs ?? WAFFO_REQUEST_TIMEOUT_MS;
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new WaffoConfigurationError("Waffo request timeout must be finite and positive");
+  }
+  const baseFetch: typeof fetch = options.fetch ?? ((input, init) => fetch(input, init));
+  const boundedFetch: typeof fetch = (input, init) => {
+    const timeoutSignal = AbortSignal.timeout(timeoutMs);
+    // init.signal is AbortSignal | null; both null and undefined mean "no caller signal".
+    const signal = init?.signal
+      ? AbortSignal.any([init.signal, timeoutSignal])
+      : timeoutSignal;
+    return baseFetch(input, { ...init, signal });
+  };
   const client = options.client ?? (new WaffoPancake({
     merchantId: config.merchantId,
     privateKey: config.privateKey,
+    fetch: boundedFetch,
   }) as unknown as WaffoSdkClient);
   const verifier = options.verifyWebhook ?? defaultWebhookVerifier;
 

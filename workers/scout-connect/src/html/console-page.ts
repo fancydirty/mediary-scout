@@ -245,7 +245,7 @@ ${lastSeenHtml(input.endpoint.last_seen_at, input.now)}
  *
  * ## 失败必须说话
  *
- * 两种真实失败:503(购买通道未开放,或 Waffo 上游暂时失败)、401(session 过期)。
+ * 三种真实失败:503(购买通道未开放,或 Waffo 上游暂时失败)、401(session 过期)、429(次数过多)。
  * 每种都给不同的下一步动作 —— 「请重试」对 session 过期毫无用处。
  * 不回显后端的原始错误(可能含内部细节)。
  */
@@ -267,6 +267,7 @@ btns.forEach((btn)=>btn.addEventListener("click",async()=>{
     });
     if(res.status===401){fail("登录状态已过期。刷新页面重新登录后再试。");return;}
     if(res.status===503){fail("购买通道暂时不可用。请稍后再试,或联系我们。");return;}
+    if(res.status===429){fail("发起支付的次数太多了。请过几个小时再试;若需要帮助请联系我们。");return;}
     if(!res.ok){fail("发起支付失败了。稍后再试一次;若一直失败请联系我们。");return;}
     const data=await res.json();
     if(typeof data.checkoutUrl!=="string"||data.checkoutUrl===""){

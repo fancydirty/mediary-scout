@@ -44,6 +44,10 @@ admin ──► mediaryconnect.app (this worker)
 
 ### Public endpoints (no auth)
 
+`POST /api/checkout` requires the logged-in session cookie. It returns the Waffo
+checkout URL and local order ID on success; `429 { error: "too_many_checkouts" }`
+means the account has reached the 20-checkout daily limit.
+
 `POST /waitlist` — beta signup. Body `{ email }`.
 
 | Status | Body |
