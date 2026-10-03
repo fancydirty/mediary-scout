@@ -16,6 +16,14 @@ const HOST_RE = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:(\d{1,5}))?$/i;
 export function resolveRequestOrigin(headers: {
   get(name: string): string | null;
 }): string {
+  return resolveRequestOriginOrNull(headers) ?? DEFAULT_LOCAL_ORIGIN;
+}
+
+/** Same rules, but null when the request carries no usable host — for links that would
+ *  be worse than none (a checkout return address must never point at a made-up origin). */
+export function resolveRequestOriginOrNull(headers: {
+  get(name: string): string | null;
+}): string | null {
   const protoRaw = headers
     .get("x-forwarded-proto")
     ?.split(",")[0]
@@ -33,9 +41,9 @@ export function resolveRequestOrigin(headers: {
     const port = match[3];
     if (port !== undefined) {
       const n = Number(port);
-      if (!Number.isInteger(n) || n < 1 || n > 65535) return DEFAULT_LOCAL_ORIGIN;
+      if (!Number.isInteger(n) || n < 1 || n > 65535) return null;
     }
     return `${proto}://${hostRaw}`;
   }
-  return DEFAULT_LOCAL_ORIGIN;
+  return null;
 }

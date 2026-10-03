@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 // @ts-expect-error Vitest runtime supports virtual mocks, but v4 typings omit the option.
 vi.mock("server-only", () => ({}), { virtual: true });
 
-import { connectSlugReasonText, stepForAccount } from "./connect-wizard";
+import { connectSlugReasonText, nextLinkPollDelayMs, stepForAccount } from "./connect-wizard";
 
 describe("ConnectWizard copy", () => {
   it.each([
@@ -40,5 +40,22 @@ describe("ConnectWizard step after the account is read", () => {
 
   it("offers renewal once this instance already has its tunnel", () => {
     expect(stepForAccount(account({}), true)).toBe(3);
+  });
+});
+
+describe("ConnectWizard link polling delay", () => {
+  it("polls at the interval Connect asked for", () => {
+    expect(nextLinkPollDelayMs(3_000, 5, false)).toBe(5_000);
+  });
+
+  it("backs off by two seconds on slow_down, up to ten seconds", () => {
+    expect(nextLinkPollDelayMs(3_000, 3, true)).toBe(5_000);
+    expect(nextLinkPollDelayMs(9_000, 3, true)).toBe(10_000);
+  });
+
+  it("falls back to three seconds when the interval is missing or nonsense", () => {
+    expect(nextLinkPollDelayMs(3_000, undefined, false)).toBe(3_000);
+    expect(nextLinkPollDelayMs(3_000, 0, false)).toBe(3_000);
+    expect(nextLinkPollDelayMs(3_000, 600, false)).toBe(10_000);
   });
 });

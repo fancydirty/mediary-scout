@@ -262,18 +262,18 @@ export async function RemoteAccessSection({
         </>
       )}
 
-      {linked ? (
-        <ConnectWizard
-          compact
-          linked={linked}
-          email={linkedEmail}
-          pending={pending}
-          account={connectAccount}
-          hasTunnelToken={Boolean(localToken)}
-          passwordSet={passwordState}
-          multiUser={isMultiUserEnabled()}
-        />
-      ) : null}
+      {/* Always offered: after 断开, or on an instance connected with connect.sh, this is the
+          only in-app way to link an account (to renew, or to reconnect). */}
+      <ConnectWizard
+        compact
+        linked={linked}
+        email={linkedEmail}
+        pending={pending}
+        account={connectAccount}
+        hasTunnelToken={Boolean(localToken)}
+        passwordSet={passwordState}
+        multiUser={isMultiUserEnabled()}
+      />
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
         <a

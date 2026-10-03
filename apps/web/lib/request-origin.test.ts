@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_LOCAL_ORIGIN, resolveRequestOrigin } from "./request-origin";
+import { DEFAULT_LOCAL_ORIGIN, resolveRequestOrigin, resolveRequestOriginOrNull } from "./request-origin";
 
 function headers(entries: Record<string, string>): { get(name: string): string | null } {
   return { get: (name) => entries[name.toLowerCase()] ?? null };
@@ -66,5 +66,18 @@ describe("resolveRequestOrigin", () => {
       headers({ "x-forwarded-proto": "gopher", host: "nas.local:3300" }),
     );
     expect(origin).toBe("http://nas.local:3300");
+  });
+});
+
+describe("resolveRequestOriginOrNull", () => {
+  it("returns the public origin from the first forwarded hop", () => {
+    const h = new Headers({ host: "web:3000", "x-forwarded-host": "a.example.com", "x-forwarded-proto": "https" });
+    expect(resolveRequestOriginOrNull(h)).toBe("https://a.example.com");
+  });
+
+  it("returns null instead of a made-up default when the host is unusable", () => {
+    expect(resolveRequestOriginOrNull(new Headers({ host: "not a host" }))).toBeNull();
+    expect(resolveRequestOriginOrNull(new Headers({ host: "a.example.com:0" }))).toBeNull();
+    expect(resolveRequestOriginOrNull(new Headers())).toBeNull();
   });
 });

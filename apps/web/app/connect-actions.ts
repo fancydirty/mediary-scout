@@ -34,6 +34,7 @@ import {
 } from "../lib/connect-link-store";
 import { scoutConnectBaseUrl } from "../lib/remote-access";
 import { startTunnel } from "../lib/updater-client";
+import { resolveRequestOriginOrNull } from "../lib/request-origin";
 import { testRemoteAccessConnectionAction } from "./actions";
 
 type Refusal = { ok: false; message: string };
@@ -54,7 +55,7 @@ function clientMessage(result: { message?: string; reason?: string }): string {
 }
 
 export type ConnectStartLinkResult =
-  | { ok: true; verifyCode: string; email: string }
+  | { ok: true; verifyCode: string; email: string; interval: number }
   | Refusal;
 
 export async function connectStartLinkAction(email: string): Promise<ConnectStartLinkResult> {
@@ -70,11 +71,11 @@ export async function connectStartLinkAction(email: string): Promise<ConnectStar
     email: normalized,
   });
   await setConnectAccountEmail(normalized);
-  return { ok: true, verifyCode: result.verifyCode, email: normalized };
+  return { ok: true, verifyCode: result.verifyCode, email: normalized, interval: result.interval };
 }
 
 export type ConnectPollLinkResult =
-  | { state: "pending" | "linked" | "expired" | "none" }
+  | { state: "pending" | "slow_down" | "linked" | "expired" | "none" }
   | { state: "error"; message: string };
 
 export async function connectPollLinkAction(): Promise<ConnectPollLinkResult> {
@@ -84,7 +85,7 @@ export async function connectPollLinkAction(): Promise<ConnectPollLinkResult> {
   if (!pending) return { state: "none" };
   const result = await pollInstanceLink(pending.pollSecret);
   if (!result.ok) {
-    if (result.reason === "slow_down") return { state: "pending" };
+    if (result.reason === "slow_down") return { state: "slow_down" };
     if (result.reason === "expired" || result.reason === "unknown" || result.reason === "delivered") {
       await clearConnectLinkPending();
       return { state: "expired" };
@@ -134,17 +135,6 @@ export async function connectAccountAction(): Promise<ConnectAccountResult> {
   return { state: "linked", account };
 }
 
-function validHostHeader(host: string | null): host is string {
-  if (!host || host.length > 255 || /\s|[/\\]/.test(host)) return false;
-  const match = host.match(/^(.*?)(?::(\d{1,5}))?$/);
-  if (!match || !match[1] || (match[2] && Number(match[2]) > 65535)) return false;
-  const name = match[1];
-  if (name === "localhost") return true;
-  if (/^\d+(?:\.\d+){3}$/.test(name)) return name.split(".").every((part) => Number(part) <= 255);
-  if (/^\[[0-9a-fA-F:]+\]$/.test(name)) return true;
-  return name.split(".").every((label) => /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/.test(label));
-}
-
 export async function connectCheckoutAction(
   tier: "quarter" | "year" | "two_years",
 ): Promise<{ ok: true; checkoutUrl: string; orderId: string } | Refusal> {
@@ -152,12 +142,10 @@ export async function connectCheckoutAction(
   if (refused) return refused;
   const credential = await getConnectInstanceCredential();
   if (!credential) return { ok: false, message: "请先连接 Mediary Connect。" };
-  const requestHeaders = await headers();
-  const host = requestHeaders.get("host");
-  const proto = requestHeaders.get("x-forwarded-proto")?.split(",")[0]?.trim() || "http";
-  const returnUrl = validHostHeader(host) && (proto === "http" || proto === "https")
-    ? `${proto}://${host}/settings?tab=remote`
-    : undefined;
+  // Behind a reverse proxy (or the tunnel) the browser's address is the forwarded host,
+  // not the internal Host header; without a usable host, Connect keeps its own success page.
+  const origin = resolveRequestOriginOrNull(await headers());
+  const returnUrl = origin ? `${origin}/settings?tab=remote` : undefined;
   const result = await createConnectCheckout(credential, tier, returnUrl);
   if (!result.ok) return { ok: false, message: clientMessage(result) };
   return { ok: true, checkoutUrl: result.checkoutUrl, orderId: result.orderId };
@@ -210,10 +198,14 @@ export async function connectBindAction(): Promise<ConnectBindResult> {
   if (!claim.ok) return { ok: false, reason: "compose_failed", message: clientMessage(claim) };
   const exchanged = await exchangeClaimCode(claim.code);
   if (!exchanged.ok) return { ok: false, reason: "compose_failed", message: clientMessage(exchanged) };
-  await setConnectTunnelToken(exchanged.token);
-  await setConnectHostname(exchanged.hostname);
   const started = await startTunnel({ token: exchanged.token, hostname: exchanged.hostname });
-  if (started.ok) return { ok: true };
+  if (started.ok) {
+    // Only now: a stored token makes the page report the tunnel as on. After a failed start
+    // the wizard stays on 接入; after the connect.sh fallback, web reads the token from .env.
+    await setConnectTunnelToken(exchanged.token);
+    await setConnectHostname(exchanged.hostname);
+    return { ok: true };
+  }
   if (started.reason === "no_updater") {
     return {
       ok: false,

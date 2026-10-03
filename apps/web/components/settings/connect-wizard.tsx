@@ -18,7 +18,7 @@ import {
 import type { TestRemoteAccessResult } from "../../app/actions";
 import { copyText } from "../../lib/copy-text";
 
-export type ConnectWizardPending = { email: string; verifyCode: string; expiresAt: string };
+export type ConnectWizardPending = { email: string; verifyCode: string; expiresAt: string; interval?: number };
 
 export type ConnectWizardProps = {
   linked: boolean;
@@ -46,6 +46,16 @@ export function connectSlugReasonText(reason: string | undefined): string {
     default:
       return "这个名字暂时不能用";
   }
+}
+
+/** Delay before the next link poll: Connect's interval (seconds, 3 when missing or odd),
+ *  two seconds slower after each slow_down, never more than ten seconds. */
+export function nextLinkPollDelayMs(currentMs: number, intervalSec: number | undefined, slowDown: boolean): number {
+  const base =
+    typeof intervalSec === "number" && Number.isFinite(intervalSec) && intervalSec > 0
+      ? Math.min(Math.max(intervalSec * 1_000, 1_000), 10_000)
+      : 3_000;
+  return slowDown ? Math.min(Math.max(currentMs, base) + 2_000, 10_000) : base;
 }
 
 /** Where a linked instance continues, from the account it just read. An account that already
@@ -88,7 +98,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
   const [tunnelStarting, setTunnelStarting] = useState(false);
   const [fallbackCommand, setFallbackCommand] = useState<string | null>(null);
   const [password, setPassword] = useState("");
-  const probeTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const probeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     setLinked(props.linked);
@@ -103,7 +113,11 @@ export function ConnectWizard(props: ConnectWizardProps) {
   useEffect(() => {
     if (step !== 2 || !pending) return;
     let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let delay = nextLinkPollDelayMs(3_000, pending.interval, false);
+    // Next poll only after this one answered (no overlap), slower after slow_down.
     const poll = async () => {
+      let slowDown = false;
       try {
         const result = await connectPollLinkAction();
         if (stopped) return;
@@ -130,40 +144,45 @@ export function ConnectWizard(props: ConnectWizardProps) {
             setStep(3);
             setNotice({ text: friendlyError(error), tone: "danger" });
           }
+          return;
         } else if (result.state === "expired") {
           setPending(null);
           setStep(1);
           setNotice({ text: "确认邮件已失效，请重新发送。", tone: "danger" });
+          return;
+        } else if (result.state === "slow_down") {
+          slowDown = true;
         } else if (result.state === "error") {
           setNotice({ text: result.message, tone: "danger" });
         }
       } catch (error) {
         if (!stopped) setNotice({ text: friendlyError(error), tone: "danger" });
       }
+      if (stopped) return;
+      delay = nextLinkPollDelayMs(delay, pending.interval, slowDown);
+      timer = setTimeout(() => void poll(), delay);
     };
     void poll();
-    const timer = setInterval(() => void poll(), 3000);
     return () => {
       stopped = true;
-      clearInterval(timer);
+      if (timer !== undefined) clearTimeout(timer);
     };
   }, [step, pending]);
 
   useEffect(() => {
     if (!orderId || step !== 3) return;
     let stopped = false;
-    // Set once the order is fulfilled, so the next interval tick does not handle it twice.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // Set once the order is fulfilled or closed: no further polls.
     let settling = false;
     const poll = async () => {
-      if (settling) return;
       try {
         const result = await connectOrderStatusAction(orderId);
         if (stopped) return;
         if (!result.ok) {
+          // Keep polling: a passing network error must not strand a paid order.
           setNotice({ text: result.message, tone: "danger" });
-          return;
-        }
-        if (result.status === "fulfilled") {
+        } else if (result.status === "fulfilled") {
           settling = true;
           // Read the account before clearing orderId: clearing it re-runs this effect, and the
           // cleanup's `stopped` would drop every update below (the wizard then sat on step 3).
@@ -194,18 +213,20 @@ export function ConnectWizard(props: ConnectWizardProps) {
             setNotice({ text: "暂时读不到 Mediary Connect 账号信息。", tone: "danger" });
           }
         } else if (["closed", "expired"].includes(result.status)) {
+          settling = true;
           setOrderId(null);
           setNotice({ text: "这笔订单已关闭，请重新选择时长。", tone: "danger" });
         }
       } catch (error) {
         if (!stopped) setNotice({ text: friendlyError(error), tone: "danger" });
       }
+      if (stopped || settling) return;
+      timer = setTimeout(() => void poll(), 3_000);
     };
     void poll();
-    const timer = setInterval(() => void poll(), 3000);
     return () => {
       stopped = true;
-      clearInterval(timer);
+      if (timer !== undefined) clearTimeout(timer);
     };
   }, [orderId, step]);
 
@@ -243,7 +264,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
   }, [slug, step]);
 
   useEffect(() => () => {
-    if (probeTimer.current) clearInterval(probeTimer.current);
+    if (probeTimer.current) clearTimeout(probeTimer.current);
   }, []);
 
   const tiers = useMemo(() => account?.tiers ?? [], [account]);
@@ -286,7 +307,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
           return;
         }
         setEmail(result.email);
-        setPending({ email: result.email, verifyCode: result.verifyCode, expiresAt: "" });
+        setPending({ email: result.email, verifyCode: result.verifyCode, expiresAt: "", interval: result.interval });
         setStep(2);
       } catch (error) {
         setNotice({ text: friendlyError(error), tone: "danger" });
@@ -366,13 +387,13 @@ export function ConnectWizard(props: ConnectWizardProps) {
   };
 
   const probeUntilReachable = () => {
-    if (probeTimer.current) clearInterval(probeTimer.current);
+    if (probeTimer.current) clearTimeout(probeTimer.current);
     const startedAt = Date.now();
+    // Each probe can take seconds; schedule the next one only after this one answered.
     const probe = async () => {
       try {
         const result: TestRemoteAccessResult = await connectProbeAction();
         if (result.ok && result.detail === "reachable") {
-          if (probeTimer.current) clearInterval(probeTimer.current);
           setTunnelStarting(false);
           setNotice({ text: `已接通 https://${account?.endpoint?.hostname ?? ""}`, tone: "success" });
           router.refresh();
@@ -382,13 +403,13 @@ export function ConnectWizard(props: ConnectWizardProps) {
         setNotice({ text: friendlyError(error), tone: "danger" });
       }
       if (Date.now() - startedAt >= 120_000) {
-        if (probeTimer.current) clearInterval(probeTimer.current);
         setTunnelStarting(false);
         setNotice({ text: "隧道还没有响应，请稍后点击重新接入。", tone: "danger" });
+        return;
       }
+      probeTimer.current = setTimeout(() => void probe(), 5_000);
     };
     void probe();
-    probeTimer.current = setInterval(() => void probe(), 5000);
   };
 
   const bind = () => {
@@ -448,7 +469,9 @@ export function ConnectWizard(props: ConnectWizardProps) {
 
       {step === 1 ? (
         <form onSubmit={(event) => { event.preventDefault(); sendLink(); }} style={{ maxWidth: 420 }}>
-          <p className="panel-note">输入邮箱，我们会发一封确认邮件。点击邮件里的「确认连接」后，这台实例就会和你的 Mediary Connect 账号关联。</p>
+          <p className="panel-note">{props.compact
+            ? "用开通时的邮箱连上 Mediary Connect 账号，就能在这里续期、重新接入。我们会发一封确认邮件，点邮件里的「确认连接」即可。"
+            : "输入邮箱，我们会发一封确认邮件。点击邮件里的「确认连接」后，这台实例就会和你的 Mediary Connect 账号关联。"}</p>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <input className="setting-control" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="你的邮箱" aria-label="邮箱" required />
             <button className="primary-button" type="submit" disabled={busy || !email.trim()}>发送确认邮件</button>

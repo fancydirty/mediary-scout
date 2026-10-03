@@ -58,6 +58,7 @@ vi.mock("../lib/connect-link-store", () => ({
 
 import { createConnectCheckout } from "../lib/connect-client";
 import { startTunnel } from "../lib/updater-client";
+import { setConnectTunnelToken } from "../lib/connect-link-store";
 import { connectBindAction, connectCheckoutAction, connectPollLinkAction, connectUnlinkAction } from "./connect-actions";
 
 beforeEach(() => {
@@ -95,6 +96,16 @@ describe("connectCheckoutAction", () => {
     expect(createConnectCheckout).toHaveBeenCalledWith("ic_secret", "year", "https://scout.local:3000/settings?tab=remote");
   });
 
+  it("uses the first forwarded host and proto behind a reverse proxy", async () => {
+    state.headers = new Headers({
+      host: "web:3000",
+      "x-forwarded-host": "media.example.com, proxy.internal",
+      "x-forwarded-proto": "https, http",
+    });
+    await connectCheckoutAction("year");
+    expect(createConnectCheckout).toHaveBeenCalledWith("ic_secret", "year", "https://media.example.com/settings?tab=remote");
+  });
+
   it("omits returnUrl when the host header is not a host", async () => {
     state.headers = new Headers({ host: "not a host", "x-forwarded-proto": "https" });
     await connectCheckoutAction("year");
@@ -119,13 +130,23 @@ describe("connectBindAction", () => {
     expect(await connectBindAction()).toEqual({ ok: false, reason: "password_required" });
   });
 
-  it("stores exchanged credentials before starting the updater", async () => {
+  it("stores the tunnel token and hostname only after the updater started cloudflared", async () => {
     expect(await connectBindAction()).toEqual({ ok: true });
-    expect(state.stored.findIndex(([key]) => key === "tunnel")).toBeGreaterThanOrEqual(0);
-    expect(vi.mocked(startTunnel).mock.invocationCallOrder[0]).toBeGreaterThan(
-      state.stored.findIndex(([key]) => key === "hostname"),
+    expect(state.stored).toContainEqual(["tunnel", "tunnel-token"]);
+    expect(state.stored).toContainEqual(["hostname", "owner.mediaryconnect.app"]);
+    expect(vi.mocked(setConnectTunnelToken).mock.invocationCallOrder[0]).toBeGreaterThan(
+      vi.mocked(startTunnel).mock.invocationCallOrder[0]!,
     );
   });
+
+  it.each(["no_updater", "busy", "pull_failed", "compose_failed", "invalid_input"] as const)(
+    "stores no tunnel state when the updater answers %s, so the page does not claim it is on",
+    async (reason) => {
+      vi.mocked(startTunnel).mockResolvedValue({ ok: false, reason });
+      expect((await connectBindAction()).ok).toBe(false);
+      expect(state.stored.filter(([key]) => key === "tunnel" || key === "hostname")).toEqual([]);
+    },
+  );
 
   it("returns a fallback command when the updater is absent", async () => {
     vi.mocked(startTunnel).mockResolvedValue({ ok: false, reason: "no_updater" });
