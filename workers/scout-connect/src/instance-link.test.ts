@@ -151,15 +151,19 @@ describe("instance-link confirmation and polling", () => {
     expect(await page.text()).toContain(data.verifyCode);
     expect(page.headers.get("cache-control")).toBe("no-store");
     expect(page.headers.get("referrer-policy")).toBe("no-referrer");
-    expect((await handleRequest(new Request(`${BASE}/link`, {
+    const confirmed = await handleRequest(new Request(`${BASE}/link`, {
       method: "POST", headers: { "content-type": "application/json", origin: BASE, "sec-fetch-site": "same-origin" }, body: JSON.stringify({ t: token }),
-    }), deps)).status).toBe(200);
+    }), deps);
+    expect(confirmed.status).toBe(200);
+    // Confirming also signs the browser into the console.
+    expect(confirmed.headers.get("set-cookie")).toMatch(/^__Host-mc_session=[^;]+;/);
     const account = await deps.db.getAccountByEmail("alice@example.com");
     expect(account).not.toBeNull();
-    const cookie = (await handleRequest(new Request(`${BASE}/link`, {
+    const again = await handleRequest(new Request(`${BASE}/link`, {
       method: "POST", headers: { "content-type": "application/json", origin: BASE, "sec-fetch-site": "same-origin" }, body: JSON.stringify({ t: token }),
-    }), deps));
-    expect(cookie.status).toBe(409);
+    }), deps);
+    expect(again.status).toBe(409);
+    expect(again.headers.get("set-cookie")).toBeNull();
 
     const poll = await handleRequest(new Request(`${BASE}/api/instance-link/poll`, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pollSecret: data.pollSecret }),

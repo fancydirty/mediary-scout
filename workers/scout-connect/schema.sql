@@ -179,7 +179,7 @@ CREATE INDEX idx_rate_limits_lookup ON rate_limits (bucket, key, at);
 -- 将来若真要做「全表扫过期行」的周期性 sweep,再加。
 
 CREATE TABLE instance_link_requests (
-  id TEXT PRIMARY KEY,                       -- "ilr_" + 16 random bytes hex
+  id TEXT PRIMARY KEY,                       -- "ilr_" + 16 random hex chars (8 bytes)
   poll_secret_sha256 TEXT NOT NULL UNIQUE,   -- sha256 hex of the poll secret
   email TEXT NOT NULL,                       -- normalized (trim + lowercase), same rules as magic link
   verify_code TEXT NOT NULL,                 -- 4 chars from "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
@@ -192,11 +192,12 @@ CREATE TABLE instance_link_requests (
   delivered_at TEXT,
   last_polled_at TEXT
 );
-CREATE INDEX idx_instance_link_requests_email_created
-  ON instance_link_requests(email, created_at);
+-- The daily retention job deletes by expiry, oldest first.
+CREATE INDEX idx_instance_link_requests_expires
+  ON instance_link_requests(expires_at, id);
 
 CREATE TABLE instance_credentials (
-  id TEXT PRIMARY KEY,                       -- "icr_" + 16 random bytes hex
+  id TEXT PRIMARY KEY,                       -- "icr_" + 16 random hex chars (8 bytes)
   account_id TEXT NOT NULL,
   credential_sha256 TEXT NOT NULL UNIQUE,
   link_request_id TEXT NOT NULL UNIQUE,

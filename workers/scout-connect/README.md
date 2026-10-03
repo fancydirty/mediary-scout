@@ -81,7 +81,9 @@ sets the session cookie. A GET never signs anyone in, so another site cannot
 log a visitor into its own account by linking its magic link.
 
 `GET /api/account` returns the account email, entitlement status, endpoint,
-checkout availability, and the three payment tiers. `GET /api/orders/:id/status`,
+checkout availability, and the configured payment tiers (only tiers whose Waffo
+product is set, so possibly fewer than three; `checkoutOpen` is false when there
+are none). `GET /api/orders/:id/status`,
 `GET /api/slug/check`, `POST /api/provision`, and `POST /api/claim-code` use the
 same authentication choices. Bearer checkout requests may include an `http:` or
 `https:` `returnUrl` of at most 400 characters without userinfo; cookie checkout

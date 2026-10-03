@@ -1551,10 +1551,21 @@ describe("migration 0008 — instance links", () => {
     expect(tables).toEqual(["instance_credentials", "instance_link_requests"]);
     expect(indexNames(sqlite.sqlite)).toEqual(
       expect.arrayContaining([
-        "idx_instance_link_requests_email_created",
+        "idx_instance_link_requests_expires",
         "idx_instance_credentials_account",
       ]),
     );
+    // The daily retention delete walks the expiry index instead of scanning and sorting the table.
+    for (const db of [sqlite.sqlite, freshDb(SCHEMA_SQL).sqlite]) {
+      expect(
+        queryPlan(
+          db,
+          `SELECT id FROM instance_link_requests WHERE expires_at < ? ORDER BY expires_at ASC, id ASC LIMIT ?`,
+          "2026-10-01T00:00:00.000Z",
+          1000,
+        ),
+      ).toMatch(/USING (COVERING )?INDEX idx_instance_link_requests_expires/);
+    }
     expect(MIGRATION8_SQL).toContain("link_request_id TEXT NOT NULL UNIQUE");
     const credentialColumns = sqlite.sqlite
       .prepare("PRAGMA table_info(instance_credentials)")
