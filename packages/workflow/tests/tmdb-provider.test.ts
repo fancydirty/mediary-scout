@@ -1,10 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createTmdbMetadataProvider,
   createTmdbSearchProvider,
   prepareMovieTarget,
   prepareTrackingTarget,
   TmdbMetadataProvider,
+  TmdbHttpError,
+  TmdbNotFoundError,
   TmdbSearchProvider,
 } from "../src/index.js";
 
@@ -258,6 +260,200 @@ describe("TmdbMetadataProvider", () => {
       });
       expect(target.season.latestAiredEpisode).toBe(latestAiredEpisode);
       expect(target.season.totalEpisodes).toBe(14);
+    }
+  });
+
+  it("falls back to a uniquely matching episode-group season when TMDB deleted the season", async () => {
+    const requests: string[] = [];
+    const groupEpisodes = Array.from({ length: 14 }, (_, index) => ({
+      episode_number: index + 15,
+      order: index,
+      air_date: new Date(Date.UTC(2026, 9, 1 + index * 7)).toISOString().slice(0, 10),
+    }));
+    const provider = new TmdbMetadataProvider({
+      readToken: "token",
+      fetchJson: async (url) => {
+        requests.push(url);
+        if (url.includes("/tv/283428?")) {
+          return {
+            id: 283428,
+            name: "冰之城墙",
+            original_name: "冰之城墙",
+            first_air_date: "2026-04-02",
+            number_of_episodes: 28,
+            overview: "",
+            poster_path: null,
+            backdrop_path: null,
+            last_episode_to_air: { season_number: 1, episode_number: 15 },
+            seasons: [{ season_number: 1, episode_count: 28 }],
+          };
+        }
+        if (url.includes("/tv/283428/season/2?")) {
+          throw new TmdbHttpError("TMDB request failed with HTTP 404", 404);
+        }
+        if (url.includes("/tv/283428/episode_groups?")) {
+          return {
+            id: 283428,
+            results: [{ id: "group-seasons", name: "Seasons", type: 1, episode_count: 28, group_count: 2 }],
+          };
+        }
+        if (url.includes("/tv/episode_group/group-seasons?")) {
+          return {
+            id: "group-seasons",
+            name: "Seasons",
+            type: 1,
+            groups: [
+              { id: "group-s1", name: "Season 1", order: 1, episodes: [] },
+              { id: "group-s2", name: "Season 2", order: 2, episodes: groupEpisodes },
+            ],
+          };
+        }
+        throw new Error(`Unexpected URL ${url}`);
+      },
+    });
+
+    const beforeSecondEpisode = await prepareTrackingTarget({
+      tmdbId: 283428,
+      mediaType: "tv",
+      seasonNumber: 2,
+      qualityPreference: "4K",
+      metadataProvider: provider,
+      now: new Date("2026-10-02T22:00:04Z"),
+    });
+    const afterSecondEpisode = await prepareTrackingTarget({
+      tmdbId: 283428,
+      mediaType: "tv",
+      seasonNumber: 2,
+      qualityPreference: "4K",
+      metadataProvider: provider,
+      now: new Date("2026-10-08T23:00:00Z"),
+    });
+
+    expect(beforeSecondEpisode.season).toMatchObject({ totalEpisodes: 14, latestAiredEpisode: 1 });
+    expect(afterSecondEpisode.season).toMatchObject({ totalEpisodes: 14, latestAiredEpisode: 2 });
+    expect(requests.some((url) => url.includes("/tv/283428/episode_groups?"))).toBe(true);
+    expect(requests.some((url) => url.includes("/tv/episode_group/group-seasons?"))).toBe(true);
+  });
+
+  it.each([
+    ["has no episode groups", { results: [] }],
+    ["has no matching subgroup", { results: [{ id: "group", type: 1, groups: [{ name: "Bonus", order: 9, episodes: [] }] }] }],
+    ["has two matching subgroups", { results: [{ id: "group", type: 1, groups: [{ name: "Season 2", order: 2, episodes: [] }, { name: "第 2 季", order: 2, episodes: [] }] }] }],
+  ])("rethrows the original not-found error when the episode-group fallback %s", async (_label, groups) => {
+    const provider = new TmdbMetadataProvider({
+      readToken: "token",
+      fetchJson: async (url) => {
+        if (url.includes("/tv/283428?")) {
+          return {
+            id: 283428,
+            name: "冰之城墙",
+            original_name: "冰之城墙",
+            first_air_date: "2026-04-02",
+            number_of_episodes: 28,
+            overview: "",
+            poster_path: null,
+            backdrop_path: null,
+            last_episode_to_air: null,
+            seasons: [{ season_number: 1, episode_count: 28 }],
+          };
+        }
+        if (url.includes("/tv/283428/season/2?")) {
+          throw new TmdbHttpError("TMDB request failed with HTTP 404", 404);
+        }
+        if (url.includes("/tv/283428/episode_groups?")) return { id: 283428, results: groups.results.map(({ groups: _groups, ...summary }) => summary) };
+        if (url.includes("/tv/episode_group/group?")) return groups.results[0];
+        throw new Error(`Unexpected URL ${url}`);
+      },
+    });
+
+    await expect(
+      prepareTrackingTarget({
+        tmdbId: 283428,
+        mediaType: "tv",
+        seasonNumber: 2,
+        qualityPreference: "4K",
+        metadataProvider: provider,
+      }),
+    ).rejects.toBeInstanceOf(TmdbNotFoundError);
+  });
+
+  it("does not try episode groups when the requested season still exists", async () => {
+    const requests: string[] = [];
+    const provider = new TmdbMetadataProvider({
+      readToken: "token",
+      fetchJson: async (url) => {
+        requests.push(url);
+        if (url.includes("/tv/100?")) {
+          return {
+            id: 100,
+            name: "Existing season",
+            original_name: "Existing season",
+            first_air_date: "2026-01-01",
+            number_of_episodes: 2,
+            overview: "",
+            poster_path: null,
+            backdrop_path: null,
+            last_episode_to_air: { season_number: 1, episode_number: 1 },
+            seasons: [{ season_number: 1, episode_count: 2 }],
+          };
+        }
+        if (url.includes("/tv/100/season/1?")) return { season_number: 1, episodes: [{ episode_number: 1, air_date: "2026-01-01" }, { episode_number: 2, air_date: "2026-01-08" }] };
+        throw new Error(`Unexpected URL ${url}`);
+      },
+    });
+
+    await prepareTrackingTarget({ tmdbId: 100, mediaType: "tv", seasonNumber: 1, qualityPreference: "4K", metadataProvider: provider });
+    expect(requests.some((url) => url.includes("episode_groups"))).toBe(false);
+    expect(requests.some((url) => url.includes("episode_group/"))).toBe(false);
+  });
+
+  it("does not treat a season timeout as a deleted season", async () => {
+    const requests: string[] = [];
+    const provider = new TmdbMetadataProvider({
+      readToken: "token",
+      fetchJson: async (url) => {
+        requests.push(url);
+        if (url.includes("/tv/100?")) {
+          return {
+            id: 100,
+            name: "Timeout season",
+            original_name: "Timeout season",
+            first_air_date: "2026-01-01",
+            number_of_episodes: 2,
+            overview: "",
+            poster_path: null,
+            backdrop_path: null,
+            last_episode_to_air: null,
+            seasons: [{ season_number: 1, episode_count: 2 }],
+          };
+        }
+        if (url.includes("/tv/100/season/2?")) {
+          const error = new Error("TMDB timeout");
+          error.name = "TimeoutError";
+          throw error;
+        }
+        throw new Error(`Unexpected URL ${url}`);
+      },
+    });
+
+    await expect(
+      prepareTrackingTarget({ tmdbId: 100, mediaType: "tv", seasonNumber: 2, qualityPreference: "4K", metadataProvider: provider }),
+    ).rejects.toThrow(/failed/i);
+    await expect(
+      prepareTrackingTarget({ tmdbId: 100, mediaType: "tv", seasonNumber: 2, qualityPreference: "4K", metadataProvider: provider }),
+    ).rejects.not.toBeInstanceOf(TmdbNotFoundError);
+    expect(requests.some((url) => url.includes("episode_groups"))).toBe(false);
+  });
+
+  it("exposes the HTTP status on a default-fetch not-found error", async () => {
+    const fetch = globalThis.fetch;
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ status_code: 34 }), { status: 404 })));
+    try {
+      const provider = new TmdbMetadataProvider({ readToken: "token" });
+      await expect(provider.getTvSeason(283428, 2)).rejects.toMatchObject({ status: 404 });
+      await expect(provider.getTvSeason(283428, 2)).rejects.toBeInstanceOf(TmdbNotFoundError);
+    } finally {
+      vi.stubGlobal("fetch", fetch);
     }
   });
 

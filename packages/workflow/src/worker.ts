@@ -649,8 +649,10 @@ async function patrolTrackedState(args: {
           season = synced.season;
           episodes = synced.episodes;
         }
-      } catch {
-        // Metadata sync is best-effort; fall back to stored counts.
+      } catch (error) {
+        console.warn(
+          `[patrol] metadata sync failed tmdbId=${state.title.tmdbId} season=${state.season.seasonNumber}: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
     }
 

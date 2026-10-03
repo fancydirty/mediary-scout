@@ -26,6 +26,23 @@ export interface TmdbFetchInit {
 
 export type TmdbFetchJson = (url: string, init: TmdbFetchInit) => Promise<unknown>;
 
+export class TmdbHttpError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "TmdbHttpError";
+    this.status = status;
+  }
+}
+
+export class TmdbNotFoundError extends TmdbHttpError {
+  constructor(message: string) {
+    super(message, 404);
+    this.name = "TmdbNotFoundError";
+  }
+}
+
 export const TMDB_DIRECT_BASE_URL = "https://api.themoviedb.org/3";
 
 /** One way to reach TMDB: a base URL and an optional bearer token. The proxy
@@ -62,6 +79,7 @@ async function fetchViaAccessChain(
 ): Promise<unknown> {
   let lastError: unknown = new Error("no TMDB access configured");
   let sawTimeout = false;
+  let allErrorsWereNotFound = accesses.length > 0;
   // NUL sentinel for a token-less access (undefined) so it never collides with a
   // real (even empty-string) token on the same host — the function treats those
   // distinctly when setting Authorization, and the dead key must too.
@@ -93,6 +111,9 @@ async function fetchViaAccessChain(
         return { ok: true, value };
       } catch (error) {
         lastError = error;
+        if (!(error instanceof TmdbHttpError && error.status === 404)) {
+          allErrorsWereNotFound = false;
+        }
         if (isTimeout(error)) {
           sawTimeout = true;
         }
@@ -116,6 +137,9 @@ async function fetchViaAccessChain(
     if (second.ok) {
       return second.value;
     }
+  }
+  if (allErrorsWereNotFound) {
+    throw new TmdbNotFoundError(`All ${candidates.length} TMDB access(es) returned HTTP 404`);
   }
   throw new Error(`All ${candidates.length} TMDB access(es) failed: ${String(lastError)}`);
 }
@@ -194,6 +218,27 @@ interface TmdbSeasonDetails {
   }>;
 }
 
+interface TmdbEpisodeGroupSummary {
+  id: string;
+  type?: number;
+}
+
+interface TmdbEpisodeGroupEpisode {
+  order?: number;
+  air_date?: string | null;
+}
+
+interface TmdbEpisodeGroupSubgroup {
+  name: string;
+  order?: number;
+  episodes: TmdbEpisodeGroupEpisode[];
+}
+
+interface TmdbEpisodeGroupDetails {
+  type?: number;
+  groups: TmdbEpisodeGroupSubgroup[];
+}
+
 interface TmdbMovieDetails {
   id: number;
   title: string;
@@ -231,6 +276,22 @@ export class TmdbMetadataProvider {
   async getTvSeason(tmdbId: number, seasonNumber: number): Promise<TmdbSeasonDetails> {
     return parseSeasonDetails(
       await this.get(`tv/${tmdbId}/season/${seasonNumber}`, {
+        language: this.language,
+      }),
+    );
+  }
+
+  async getTvEpisodeGroups(tmdbId: number): Promise<TmdbEpisodeGroupSummary[]> {
+    return parseEpisodeGroupSummaries(
+      await this.get(`tv/${tmdbId}/episode_groups`, {
+        language: this.language,
+      }),
+    );
+  }
+
+  async getTvEpisodeGroup(groupId: string): Promise<TmdbEpisodeGroupDetails> {
+    return parseEpisodeGroupDetails(
+      await this.get(`tv/episode_group/${encodeURIComponent(groupId)}`, {
         language: this.language,
       }),
     );
@@ -356,10 +417,30 @@ export function createTmdbSearchProviderFromEnv(env: NodeJS.ProcessEnv = process
 }
 
 export async function prepareTrackingTarget(input: TvTrackingTargetInput): Promise<PreparedTrackingTarget> {
-  const [details, seasonDetails] = await Promise.all([
+  const [detailsResult, seasonResult] = await Promise.allSettled([
     input.metadataProvider.getTvDetails(input.tmdbId),
     input.metadataProvider.getTvSeason(input.tmdbId, input.seasonNumber),
   ]);
+  if (detailsResult.status === "rejected") {
+    throw detailsResult.reason;
+  }
+  const details = detailsResult.value;
+  let seasonDetails: TmdbSeasonDetails;
+  if (seasonResult.status === "fulfilled") {
+    seasonDetails = seasonResult.value;
+  } else if (
+    seasonResult.reason instanceof TmdbNotFoundError &&
+    !(details.seasons ?? []).some((season) => season.season_number === input.seasonNumber)
+  ) {
+    seasonDetails = await seasonFromEpisodeGroupFallback({
+      metadataProvider: input.metadataProvider,
+      tmdbId: input.tmdbId,
+      seasonNumber: input.seasonNumber,
+      originalError: seasonResult.reason,
+    });
+  } else {
+    throw seasonResult.reason;
+  }
   const titleId = `tmdb_tv_${details.id}`;
   const title = normalizeTitle(details.name);
   const totalEpisodes = totalEpisodesForSeason(details, seasonDetails, input.seasonNumber);
@@ -405,6 +486,48 @@ export async function prepareTrackingTarget(input: TvTrackingTargetInput): Promi
     // is post-recall selection guidance (getQualityGuidance), not a search term.
     keyword: title,
   };
+}
+
+async function seasonFromEpisodeGroupFallback(input: {
+  metadataProvider: TmdbMetadataProvider;
+  tmdbId: number;
+  seasonNumber: number;
+  originalError: TmdbNotFoundError;
+}): Promise<TmdbSeasonDetails> {
+  try {
+    const summaries = await input.metadataProvider.getTvEpisodeGroups(input.tmdbId);
+    const groupDetails = await Promise.all(
+      summaries.map(async (summary) => ({ summary, details: await input.metadataProvider.getTvEpisodeGroup(summary.id) })),
+    );
+    const preferredTypes = new Set([1, 6, 7]);
+    const subgroups = groupDetails.flatMap(({ summary, details }) =>
+      details.groups.map((group) => ({
+        group,
+        preferred: preferredTypes.has(summary.type ?? details.type ?? 0),
+      })),
+    );
+    const namedMatches = subgroups.filter(({ group }) => seasonGroupNameMatches(group.name, input.seasonNumber));
+    const matches = (namedMatches.length > 0 ? namedMatches : subgroups.filter(({ group }) => group.order === input.seasonNumber));
+    const preferredMatches = matches.filter((match) => match.preferred);
+    const selected = (preferredMatches.length > 0 ? preferredMatches : matches);
+    if (selected.length !== 1) {
+      throw input.originalError;
+    }
+    const episodes = [...selected[0]!.group.episodes]
+      .sort((left, right) => (left.order ?? Number.MAX_SAFE_INTEGER) - (right.order ?? Number.MAX_SAFE_INTEGER))
+      .map((episode, index) => ({ episode_number: index + 1, air_date: episode.air_date ?? null }));
+    return { season_number: input.seasonNumber, episodes };
+  } catch (error) {
+    if (error === input.originalError) {
+      throw error;
+    }
+    throw input.originalError;
+  }
+}
+
+function seasonGroupNameMatches(name: string, seasonNumber: number): boolean {
+  return new RegExp(`^season\\s*${seasonNumber}$`, "i").test(name) ||
+    new RegExp(`^第\\s*${seasonNumber}\\s*季$`).test(name);
 }
 
 export interface PreparedMovieTarget {
@@ -535,7 +658,7 @@ async function defaultFetchJson(url: string, init: TmdbFetchInit): Promise<unkno
     signal: AbortSignal.timeout(init.timeoutMs ?? TMDB_DIRECT_TIMEOUT_MS),
   });
   if (!response.ok) {
-    throw new Error(`TMDB request failed with HTTP ${response.status}`);
+    throw new TmdbHttpError(`TMDB request failed with HTTP ${response.status}`, response.status);
   }
   return response.json();
 }
@@ -609,6 +732,44 @@ function parseSeasonDetails(value: unknown): TmdbSeasonDetails {
       ? value["episodes"].filter(isRecord).map(optionalSeasonEpisode)
       : [],
   };
+}
+
+function parseEpisodeGroupSummaries(value: unknown): TmdbEpisodeGroupSummary[] {
+  if (!isRecord(value) || !Array.isArray(value["results"])) {
+    return [];
+  }
+  return value["results"].filter(isRecord).flatMap((entry) => {
+    const id = typeof entry["id"] === "string" ? entry["id"] : "";
+    if (!id) return [];
+    const type = optionalNumberValue(entry["type"]);
+    return [{ id, ...(type === undefined ? {} : { type }) }];
+  });
+}
+
+function parseEpisodeGroupDetails(value: unknown): TmdbEpisodeGroupDetails {
+  if (!isRecord(value)) {
+    return { groups: [] };
+  }
+  const groups = Array.isArray(value["groups"])
+    ? value["groups"].filter(isRecord).map((group) => {
+        const order = optionalNumberValue(group["order"]);
+        return {
+          name: stringValue(group["name"]),
+          ...(order === undefined ? {} : { order }),
+          episodes: Array.isArray(group["episodes"])
+            ? group["episodes"].filter(isRecord).map((episode) => {
+                const episodeOrder = optionalNumberValue(episode["order"]);
+                return {
+                  ...(episodeOrder === undefined ? {} : { order: episodeOrder }),
+                  air_date: typeof episode["air_date"] === "string" ? episode["air_date"] : null,
+                };
+              })
+            : [],
+        };
+      })
+    : [];
+  const type = optionalNumberValue(value["type"]);
+  return { groups, ...(type === undefined ? {} : { type }) };
 }
 
 type TmdbSearchResult =

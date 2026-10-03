@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { MockLanguageModelV3 } from "ai/test";
 import {
   createEpisodeStates,
@@ -317,6 +317,44 @@ describe("runScheduledType3Monitoring (V2 engine)", () => {
       (notification) => notification.workflowRunId === "run_heal_type3",
     );
     expect(patrol?.kind).toBe("already_current");
+  });
+
+  it("warns when metadata sync fails and continues with the stored counts", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const { title } = trackedFixture("sync-error");
+    const season: TrackedSeason = {
+      ...trackedFixture("sync-error").season,
+      totalEpisodes: 4,
+      latestAiredEpisode: 2,
+    };
+    await seedTrackedSeason({ repository, title, season, obtainedCodes: ["S01E01", "S01E02"] });
+    const storage = new FakeStorageExecutor();
+    await seedV2Season(storage, title, season, ["S01E01", "S01E02"]);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      const outcomes = await runScheduledType3Monitoring({
+        repository,
+        resourceProvider: emptyProvider(),
+        storage,
+        model: throwingModel(),
+        storageParentDirectoryId: "library_root",
+        now: fixedNow,
+        createWorkflowRunId: () => "run_sync_error_type3",
+        syncSeasonMetadata: async () => {
+          throw new Error("TMDB metadata unavailable");
+        },
+      });
+
+      expect(outcomes[0]).toMatchObject({ status: "ran", workflowRunId: "run_sync_error_type3" });
+      const saved = await repository.getWorkflowRunSnapshot("run_sync_error_type3");
+      expect(saved?.season).toMatchObject({ totalEpisodes: 4, latestAiredEpisode: 2 });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("tmdbId=1"));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("season=1"));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("TMDB metadata unavailable"));
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("records a no-op run when a tracked season is already current — the agent model is never invoked", async () => {
