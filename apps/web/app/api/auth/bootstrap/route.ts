@@ -1,8 +1,9 @@
-import { connection, NextResponse } from "next/server";
+import { connection, NextResponse, type NextRequest } from "next/server";
 import {
   isMultiUserEnabled,
   getBootstrapState,
   hasLoginPassword,
+  isRemoteRequest,
 } from "../../../../lib/workflow-runtime";
 
 /** Tells the /login page whether the instance is unclaimed (→ show the context-aware
@@ -16,9 +17,14 @@ import {
  *  time. Without it, cacheComponents prerenders the handler at BUILD time (multi-user
  *  off) and serves a baked {needsClaim:false} forever → the owner can never claim →
  *  locked out. (Caught in prod live e2e. `export const dynamic` is disallowed under
- *  cacheComponents, so the opt-in is connection().) */
-export async function GET() {
+ *  cacheComponents, so the opt-in is connection().)
+ *
+ *  `remote`: the visitor came through the tunnel. First-time setup (the first access
+ *  password, or claiming the instance) is LAN-only, so the page shows a notice
+ *  instead of a form for remote visitors. */
+export async function GET(request: NextRequest) {
   await connection();
+  const remote = isRemoteRequest(request.headers);
   if (!isMultiUserEnabled()) {
     return NextResponse.json({
       needsClaim: false,
@@ -28,7 +34,8 @@ export async function GET() {
       // fail-closed 的，若这里报「无需登录」，用户会被引到一条走不通的路。
       // 宁可显示登录框（顶多多输一次密码），也不要误导。
       passwordSet: (await hasLoginPassword()) !== false,
+      remote,
     });
   }
-  return NextResponse.json({ ...(await getBootstrapState()), singleUser: false });
+  return NextResponse.json({ ...(await getBootstrapState()), singleUser: false, remote });
 }

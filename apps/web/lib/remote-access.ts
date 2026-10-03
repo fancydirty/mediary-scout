@@ -283,6 +283,50 @@ export function accountPasswordHref(w?: string): string {
   return `/settings?${params.toString()}#password`;
 }
 
+/**
+ * 「去设置密码」按钮的去处。单用户实例的设置页没有密码表单(改密表单只在已设过
+ * 密码时出现在远程访问区块里),第一次设密码的表单在 /login —— 局域网里打开它就是
+ * 「设置访问密码」屏。多用户仍去账号 tab 的改密区。
+ */
+export function passwordSetupHref(opts: { multiUser: boolean; w?: string | undefined }): string {
+  return opts.multiUser ? accountPasswordHref(opts.w) : "/login";
+}
+
+/** /login 页读到的 bootstrap 状态(见 app/api/auth/bootstrap/route.ts)。 */
+export interface LoginBootstrap {
+  needsClaim?: boolean;
+  singleUser?: boolean;
+  passwordSet?: boolean;
+  remote?: boolean;
+}
+
+/**
+ * 外网访客不能做实例的第一次设置。还没设访问密码的单用户实例、还没认领的多用户
+ * 实例,谁先在外网打开这个地址谁就能把它变成自己的(读到网盘凭据和模型 key)。
+ * 第一次设置只在局域网做,外网访客只看到这段说明、没有表单。
+ * 返回 null = 不拦(局域网、已设密码、已认领,或状态没读到)。
+ */
+export function remoteFirstSetupNotice(bootstrap: LoginBootstrap | null): { title: string; note: string } | null {
+  if (bootstrap?.remote !== true) return null;
+  if (bootstrap.singleUser === true && bootstrap.passwordSet === false) {
+    return {
+      title: "还没有设置访问密码",
+      note:
+        "为了不让别人抢先设置，第一次设访问密码只能在局域网里完成：在家里的网络打开这台机器的局域网地址" +
+        "（例如 http://192.168.1.10:3000/login）设一个。设好之后就能从这里用密码登录。",
+    };
+  }
+  if (bootstrap.singleUser !== true && bootstrap.needsClaim === true) {
+    return {
+      title: "这台实例还没有站主",
+      note:
+        "为了不让别人抢先认领，创建站主账号只能在局域网里完成：在家里的网络打开这台机器的局域网地址" +
+        "（例如 http://192.168.1.10:3000/login）认领。之后家人朋友可以从这里注册自己的账号。",
+    };
+  }
+  return null;
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // 在设置页内发起 Mediary Connect 登录
 // ─────────────────────────────────────────────────────────────────────────

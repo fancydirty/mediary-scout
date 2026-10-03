@@ -6,6 +6,7 @@ import {
   setSingleUserPassword,
   clearSingleUserPassword,
   requireAuthenticatedAccountId,
+  isRemoteRequest,
 } from "../../../../lib/workflow-runtime";
 
 /**
@@ -13,8 +14,9 @@ import {
  *
  * 授权模型：**已设密码后**，改密与清密都必须是已认证请求
  * （`requireAuthenticatedAccountId()` 对远程无 session 会抛错；局域网视为可信）。
- * 尚未设密码时实例本来就全开放，首次设置无从要求凭据——这与「局域网可信」
- * 的整体设计一致：能碰到局域网端口的人本来就能读写全部数据。
+ * 尚未设密码时首次设置无从要求凭据，所以**只接受局域网请求**——这与「局域网可信」
+ * 的整体设计一致：能碰到局域网端口的人本来就能读写全部数据；经隧道来的外网请求
+ * 在这一刻一律拒绝（否则谁先找到公网地址谁就能抢先设密码）。
  *
  * 这里**不再**写 `mt_auth_required` flag cookie。它当初只服务一件事：proxy 的
  * 旧规则 `passwordSet && isRemote`。那条规则已被删除（远程一律要 session，
@@ -38,7 +40,16 @@ export async function POST(request: NextRequest) {
 
   // 已设密码 → 后续变更必须已认证。状态读不出来（"unknown"）时同样要求认证，
   // 宁可让本地用户多登录一次，也不能让远程匿名请求清掉密码。
-  if ((await hasLoginPassword()) !== false) {
+  const passwordState = await hasLoginPassword();
+  if (passwordState === false && isRemoteRequest(request.headers)) {
+    // 第一次设置只在局域网：隧道接通、站主还没设密码的这段时间里，谁先在外网打开
+    // 这个地址谁就能设上密码、登进来拿到网盘凭据和模型 key。
+    return NextResponse.json(
+      { error: "第一次设置访问密码只能在局域网里完成。请在家里的网络打开这台机器的局域网地址设置。" },
+      { status: 403 },
+    );
+  }
+  if (passwordState !== false) {
     await requireAuthenticatedAccountId();
   }
 

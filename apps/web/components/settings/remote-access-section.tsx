@@ -1,11 +1,11 @@
 import { connection } from "next/server";
 import { Globe, ShieldAlert, TriangleAlert } from "lucide-react";
-import { getCurrentAccountSummary, hasLoginPassword } from "../../lib/workflow-runtime";
+import { getCurrentAccountSummary, hasLoginPassword, isMultiUserEnabled } from "../../lib/workflow-runtime";
 import {
   instanceTunnelToken,
   instanceConnectHostname,
   resolveRemoteAccessState,
-  accountPasswordHref,
+  passwordSetupHref,
   formatLastSeen,
   CONNECT_SITE_URL,
   consoleUrl,
@@ -59,7 +59,7 @@ export async function RemoteAccessSection({
   // hostname 现在有本地来源了:connect.sh 接入时把 MEDIARY_CONNECT_HOSTNAME
   // 写进 .env(worker 的 204 无 body 契约不变,不碰元数据端点)。
   const { w } = await searchParams;
-  const passwordHref = accountPasswordHref(w);
+  const passwordHref = passwordSetupHref({ multiUser: isMultiUserEnabled(), w });
   // 只求值一次:重复调用会重跑校验,理论上还可能在同一次渲染里读到不同 env。
   const localHostname = instanceConnectHostname();
   const state = await resolveRemoteAccessState({

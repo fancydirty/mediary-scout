@@ -6,6 +6,8 @@ import {
   resolveRemoteAccessState,
   scoutConnectBaseUrl,
   accountPasswordHref,
+  passwordSetupHref,
+  remoteFirstSetupNotice,
   CONNECT_SITE_URL,
   consoleUrl,
   type RemoteAccessState,
@@ -345,6 +347,37 @@ describe("accountPasswordHref（保留 ?w 工作区上下文）", () => {
     const href = accountPasswordHref("cs_a b&c");
     expect(href).toContain("w=cs_a+b%26c");
     expect(href.endsWith("#password")).toBe(true);
+  });
+});
+
+describe("passwordSetupHref（「去设置密码」按钮的去处）", () => {
+  it("单用户：设置页没有密码表单，去 /login（局域网里那里就是设置密码表单）", () => {
+    expect(passwordSetupHref({ multiUser: false })).toBe("/login");
+    expect(passwordSetupHref({ multiUser: false, w: "cs_abc" })).toBe("/login");
+  });
+
+  it("多用户：仍去账号 tab 的改密区，并保留 ?w", () => {
+    expect(passwordSetupHref({ multiUser: true, w: "cs_abc" })).toBe(accountPasswordHref("cs_abc"));
+  });
+});
+
+describe("remoteFirstSetupNotice（外网来的访客不能做第一次设置）", () => {
+  it("单用户、还没设密码、经隧道访问 → 提示回局域网设置，不给表单", () => {
+    const notice = remoteFirstSetupNotice({ remote: true, singleUser: true, passwordSet: false, needsClaim: false });
+    expect(notice?.title).toContain("访问密码");
+    expect(notice?.note).toContain("局域网");
+  });
+
+  it("多用户、还没认领、经隧道访问 → 提示回局域网认领", () => {
+    const notice = remoteFirstSetupNotice({ remote: true, singleUser: false, needsClaim: true });
+    expect(notice?.note).toContain("局域网");
+  });
+
+  it("局域网访问、已设密码、已认领、或状态没读到时都不拦", () => {
+    expect(remoteFirstSetupNotice({ remote: false, singleUser: true, passwordSet: false, needsClaim: false })).toBeNull();
+    expect(remoteFirstSetupNotice({ remote: true, singleUser: true, passwordSet: true, needsClaim: false })).toBeNull();
+    expect(remoteFirstSetupNotice({ remote: true, singleUser: false, needsClaim: false })).toBeNull();
+    expect(remoteFirstSetupNotice(null)).toBeNull();
   });
 });
 

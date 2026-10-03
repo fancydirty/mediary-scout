@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { HelpCircle, LoaderCircle } from "lucide-react";
+import { remoteFirstSetupNotice } from "../../lib/remote-access";
 
 /**
  * §7 P1 login / register, with a context-aware CLAIM screen. Only reachable when
@@ -12,10 +13,11 @@ import { HelpCircle, LoaderCircle } from "lucide-react";
  * it's the normal login + open self-registration.
  *
  * 单用户 + 尚未设密码（`singleUser && passwordSet === false`）是**设置密码**屏。
- * 远程访问现在无条件需要 session（Cloudflare Access 已移除，未设密码不再等于开放），
- * 所以能走到这里的远程站主手上没有任何密码可输——必须就地设一个，否则被锁在外面。
- * 表单打 `POST /api/auth/password`：该端点在「还没有密码」时不要求认证
- * （见 app/api/auth/password/route.ts），设置成功后再登录换取 session。
+ * 表单打 `POST /api/auth/password`：该端点在「还没有密码」时不要求认证、但**只接受
+ * 局域网请求**（见 app/api/auth/password/route.ts），设置成功后再登录换取 session。
+ * 经隧道来的外网访客（bootstrap.remote）不能做第一次设置——设密码和认领站主都一样，
+ * 谁先在外网打开地址谁就能把实例变成自己的——所以只给说明、不给表单
+ * （remoteFirstSetupNotice）。
  */
 export default function LoginPage() {
   const [mode, setMode] = useState<"login" | "register">("login");
@@ -29,6 +31,7 @@ export default function LoginPage() {
     hasExistingLibrary: boolean;
     singleUser?: boolean;
     passwordSet?: boolean;
+    remote?: boolean;
   } | null>(null);
 
   useEffect(() => {
@@ -104,7 +107,7 @@ export default function LoginPage() {
   const note = singleUser
     ? bootstrap?.passwordSet
       ? "这台实例已设置访问密码。局域网内无需登录，从外网访问需要输入密码。"
-      : "这台实例已开启外网访问，但还没有设置访问密码。任何人只要知道这个网址就能进来，看到你的媒体库、网盘凭据和全部设置。现在设一个密码把它锁上——局域网内依旧免登录。"
+      : "给这台实例设一个访问密码。局域网内依旧免登录；以后从外网（远程访问）打开时，要输入这个密码才能进来。"
     : claiming
     ? bootstrap?.hasExistingLibrary
       ? "这台实例已有媒体库。设置站主用户名 + 密码来接管它——你的库和网盘都会原样归你。"
@@ -121,6 +124,20 @@ export default function LoginPage() {
         : mode === "login"
           ? "登录"
           : "创建并登录";
+
+  const lanOnly = remoteFirstSetupNotice(bootstrap);
+  if (lanOnly) {
+    return (
+      <main style={{ maxWidth: 360, margin: "14vh auto", padding: "0 20px" }}>
+        <div className="panel" style={{ textAlign: "center" }}>
+          <h1 className="panel-title" style={{ margin: "0 0 6px" }}>
+            {lanOnly.title}
+          </h1>
+          <p className="panel-note">{lanOnly.note}</p>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main style={{ maxWidth: 360, margin: "14vh auto", padding: "0 20px" }}>
