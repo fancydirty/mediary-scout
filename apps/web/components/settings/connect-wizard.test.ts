@@ -10,6 +10,23 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ConnectWizard, connectSlugReasonText, nextLinkPollDelayMs, paymentOutcome, stepForAccount } from "./connect-wizard";
 
+describe("ConnectWizard while waiting for the email confirmation", () => {
+  it("offers a way back to use another address or send again", () => {
+    const html = renderToStaticMarkup(
+      createElement(ConnectWizard, {
+        linked: false,
+        email: null,
+        pending: { email: "typo@example.com", verifyCode: "ABCD", expiresAt: "2999-01-01T00:00:00.000Z" },
+        account: null,
+        hasTunnelToken: false,
+        passwordSet: true,
+      }),
+    );
+    expect(html).toContain("确认码：ABCD");
+    expect(html).toMatch(/<button[^>]*>换个邮箱或重新发送<\/button>/);
+  });
+});
+
 describe("ConnectWizard expiry time", () => {
   it("renders the expiry in China time whatever timezone the server runs in, so hydration matches", () => {
     const previous = process.env.TZ;

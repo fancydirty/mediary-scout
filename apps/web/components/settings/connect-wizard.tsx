@@ -6,6 +6,7 @@ import {
   connectAbandonOrderAction,
   connectAccountAction,
   connectBindAction,
+  connectCancelLinkAction,
   connectCheckoutAction,
   connectOrderStatusAction,
   connectPollLinkAction,
@@ -520,6 +521,26 @@ export function ConnectWizard(props: ConnectWizardProps) {
     });
   };
 
+  const cancelLink = () => {
+    if (!pending) return;
+    const verifyCode = pending.verifyCode;
+    startTransition(async () => {
+      try {
+        const result = await connectCancelLinkAction(verifyCode);
+        if (!result.ok) {
+          setNotice({ text: result.message, tone: "danger" });
+          return;
+        }
+        // Back to the email form, keeping the address so it can be corrected or sent again.
+        setPending(null);
+        setStep(1);
+        setNotice(null);
+      } catch (error) {
+        setNotice({ text: friendlyError(error), tone: "danger" });
+      }
+    });
+  };
+
   const abandonOrder = () => {
     if (!order) return;
     const abandoned = order.orderId;
@@ -587,6 +608,8 @@ export function ConnectWizard(props: ConnectWizardProps) {
           <p style={{ margin: "8px 0", fontSize: "1.25rem", fontWeight: 700 }}>确认码：{pending.verifyCode}</p>
           <p className="panel-note">30 分钟内有效。</p>
           <p className="panel-note">如果不是你刚在这台实例里发起的，请忽略这封邮件。</p>
+          {/* A mistyped address or a mail that never arrives must not lock the page for 30 minutes. */}
+          <button type="button" className="ghost-button" onClick={cancelLink} disabled={busy}>换个邮箱或重新发送</button>
         </div>
       ) : null}
 

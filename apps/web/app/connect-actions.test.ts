@@ -65,13 +65,14 @@ vi.mock("../lib/connect-link-store", () => ({
   clearConnectPendingOrder: vi.fn(async () => { state.order = null; state.cleared.push("order"); }),
 }));
 
-import { createConnectCheckout, exchangeClaimCode, getConnectAccount, getConnectOrderStatus, issueClaimCode, revokeInstanceLink } from "../lib/connect-client";
+import { createConnectCheckout, exchangeClaimCode, getConnectAccount, getConnectOrderStatus, issueClaimCode, pollInstanceLink, revokeInstanceLink } from "../lib/connect-client";
 import { scoutConnectBaseUrl } from "../lib/remote-access";
 import { startTunnel } from "../lib/updater-client";
 import { getConnectLinkPending, setConnectBinding } from "../lib/connect-link-store";
 import {
   connectAbandonOrderAction,
   connectAccountAction,
+  connectCancelLinkAction,
   connectBindAction,
   connectCheckoutAction,
   connectOrderStatusAction,
@@ -133,12 +134,46 @@ describe("connectCheckoutAction", () => {
 });
 
 describe("connectPollLinkAction", () => {
-  it("drops a stale answer when another tab started a newer link meanwhile", async () => {
-    const older = { pollSecret: "poll-old", verifyCode: "AAAA", expiresAt: "2026-10-03T00:00:00Z", email: "old@example.com" };
-    const newer = { pollSecret: "poll-new", verifyCode: "BBBB", expiresAt: "2026-10-03T00:00:00Z", email: "new@example.com" };
+  const FUTURE = "2999-01-01T00:00:00.000Z";
+
+  it("keeps an approved credential even if another tab started a newer link meanwhile, and leaves that request pending", async () => {
+    // Connect hands a credential out once: dropping it here would lose a link the owner confirmed.
+    const older = { pollSecret: "poll-old", verifyCode: "AAAA", expiresAt: FUTURE, email: "old@example.com" };
+    const newer = { pollSecret: "poll-new", verifyCode: "BBBB", expiresAt: FUTURE, email: "new@example.com" };
     vi.mocked(getConnectLinkPending).mockResolvedValueOnce(older).mockResolvedValueOnce(newer);
+    expect(await connectPollLinkAction()).toEqual({ state: "linked" });
+    expect(state.stored).toContainEqual(["credential", "ic_new"]);
+    expect(state.cleared).not.toContain("pending");
+  });
+
+  it("leaves the request to the tab that received the credential when this poll hears it was delivered", async () => {
+    state.credential = null as never;
+    state.pending = { pollSecret: "poll", verifyCode: "ABCD", expiresAt: FUTURE, email: "owner@example.com" };
+    vi.mocked(pollInstanceLink).mockResolvedValueOnce({ ok: false, reason: "delivered", message: "x" });
     expect(await connectPollLinkAction()).toEqual({ state: "pending" });
-    expect(state.stored.filter(([key]) => key === "credential")).toEqual([]);
+    expect(state.cleared).not.toContain("pending");
+  });
+
+  it("reports linked when the other tab already stored the delivered credential", async () => {
+    state.pending = { pollSecret: "poll", verifyCode: "ABCD", expiresAt: FUTURE, email: "owner@example.com" };
+    vi.mocked(pollInstanceLink).mockResolvedValueOnce({ ok: false, reason: "delivered", message: "x" });
+    expect(await connectPollLinkAction()).toEqual({ state: "linked" });
+  });
+
+  it("gives up on a delivered request once it has expired", async () => {
+    state.credential = null as never;
+    state.pending = { pollSecret: "poll", verifyCode: "ABCD", expiresAt: "2000-01-01T00:00:00.000Z", email: "owner@example.com" };
+    vi.mocked(pollInstanceLink).mockResolvedValueOnce({ ok: false, reason: "delivered", message: "x" });
+    expect(await connectPollLinkAction()).toEqual({ state: "expired" });
+    expect(state.cleared).toContain("pending");
+  });
+
+  it("clears an expired request only if it is still the stored one", async () => {
+    const older = { pollSecret: "poll-old", verifyCode: "AAAA", expiresAt: FUTURE, email: "old@example.com" };
+    const newer = { pollSecret: "poll-new", verifyCode: "BBBB", expiresAt: FUTURE, email: "new@example.com" };
+    vi.mocked(getConnectLinkPending).mockResolvedValueOnce(older).mockResolvedValueOnce(newer);
+    vi.mocked(pollInstanceLink).mockResolvedValueOnce({ ok: false, reason: "expired", message: "x" });
+    expect(await connectPollLinkAction()).toEqual({ state: "pending" });
     expect(state.cleared).not.toContain("pending");
   });
 
@@ -147,6 +182,20 @@ describe("connectPollLinkAction", () => {
     expect(await connectPollLinkAction()).toEqual({ state: "linked" });
     expect(state.stored).toContainEqual(["credential", "ic_new"]);
     expect(state.cleared).toContain("pending");
+  });
+});
+
+describe("connectCancelLinkAction", () => {
+  it("forgets the request the page shows, so another address can be used", async () => {
+    state.pending = { pollSecret: "poll", verifyCode: "ABCD", expiresAt: "2999-01-01T00:00:00.000Z", email: "typo@example.com" };
+    expect(await connectCancelLinkAction("ABCD")).toEqual({ ok: true });
+    expect(state.cleared).toContain("pending");
+  });
+
+  it("leaves a newer request started in another tab alone", async () => {
+    state.pending = { pollSecret: "poll-new", verifyCode: "WXYZ", expiresAt: "2999-01-01T00:00:00.000Z", email: "new@example.com" };
+    expect(await connectCancelLinkAction("ABCD")).toEqual({ ok: true });
+    expect(state.cleared).not.toContain("pending");
   });
 });
 

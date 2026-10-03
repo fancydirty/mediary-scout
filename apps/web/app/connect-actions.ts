@@ -97,26 +97,48 @@ export async function connectPollLinkAction(): Promise<ConnectPollLinkResult> {
   const pending = await getConnectLinkPending();
   if (!pending) return { state: "none" };
   const result = await pollInstanceLink(pending.pollSecret);
-  // Another tab may have started a newer link while this poll was in flight: an answer about
-  // the request it replaced must neither store a credential nor clear the newer request.
+  // Clear the request only if it is still the one this poll was about: another tab may have
+  // started a newer one while the poll was in flight.
+  const clearIfSame = async () => {
+    if ((await getConnectLinkPending())?.pollSecret === pending.pollSecret) await clearConnectLinkPending();
+  };
+  if (result.ok && result.status === "approved") {
+    // Connect hands the credential out exactly once: always keep it (the owner confirmed this
+    // request), even if a newer request was started meanwhile — that one stays pending.
+    await setConnectInstanceCredential(result.credential);
+    await setConnectAccountEmail(result.email);
+    await clearIfSame();
+    return { state: "linked" };
+  }
+  if (!result.ok && result.reason === "delivered") {
+    // Another tab's poll received the credential; it stores it and clears the request. Until
+    // then keep waiting, unless the request expired long ago and the credential never arrived.
+    if (await getConnectInstanceCredential()) return { state: "linked" };
+    if (Date.now() < Date.parse(pending.expiresAt)) return { state: "pending" };
+    await clearIfSame();
+    return { state: "expired" };
+  }
   if ((await getConnectLinkPending())?.pollSecret !== pending.pollSecret) return { state: "pending" };
   if (!result.ok) {
     if (result.reason === "slow_down") return { state: "slow_down" };
-    if (result.reason === "expired" || result.reason === "unknown" || result.reason === "delivered") {
-      await clearConnectLinkPending();
+    if (result.reason === "expired" || result.reason === "unknown") {
+      await clearIfSame();
       return { state: "expired" };
     }
     return { state: "error", message: clientMessage(result) };
   }
   if (result.status === "pending") return { state: "pending" };
-  if (result.status === "approved") {
-    await setConnectInstanceCredential(result.credential);
-    await setConnectAccountEmail(result.email);
-    await clearConnectLinkPending();
-    return { state: "linked" };
-  }
-  await clearConnectLinkPending();
+  await clearIfSame();
   return { state: "expired" };
+}
+
+/** Give up on the request the page shows (mistyped address, mail not arriving) so another can
+ *  be started; a newer request from another tab is left alone. */
+export async function connectCancelLinkAction(verifyCode: string): Promise<{ ok: true } | Refusal> {
+  const refused = await commonGuard();
+  if (refused) return refused;
+  if ((await getConnectLinkPending())?.verifyCode === verifyCode) await clearConnectLinkPending();
+  return { ok: true };
 }
 
 export type ConnectAccountResult =
