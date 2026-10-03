@@ -308,6 +308,23 @@ function decodeParam(s: string): string {
   }
 }
 
+/**
+ * Session-cookie POSTs must come from this origin. Every customer instance is
+ * served on <slug>.<root> and its owner controls what that origin serves; a
+ * page there is same-site with the apex, so SameSite=Lax still attaches the
+ * session cookie to its POSTs (and a text/plain body skips the CORS preflight).
+ * Browsers that send Fetch Metadata state the relationship directly; older ones
+ * still send Origin on every POST. A request with neither header did not come
+ * from a browser page, so no ambient cookie was attached on someone's behalf.
+ */
+function assertSameOriginRequest(request: Request, url: URL): void {
+  const site = request.headers.get("sec-fetch-site");
+  const origin = request.headers.get("origin");
+  if ((site !== null && site !== "same-origin") || (origin !== null && origin !== url.origin)) {
+    throw new HttpError(403, "cross-origin request");
+  }
+}
+
 async function route(request: Request, deps: RouteDeps): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname;
@@ -347,6 +364,7 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
     return waffoWebhook(request, deps);
   }
   if (method === "POST" && path === "/api/checkout") {
+    assertSameOriginRequest(request, url);
     return createWaffoCheckout(request, deps);
   }
   const waffoStatusMatch = path.match(/^\/api\/orders\/([^/]+)\/status$/);
@@ -458,9 +476,11 @@ ${hreflang}
     return await slugCheckRoute(url, request, deps);
   }
   if (method === "POST" && path === "/api/claim-code") {
+    assertSameOriginRequest(request, url);
     return await issueClaimCode(request, deps);
   }
   if (method === "POST" && path === "/api/provision") {
+    assertSameOriginRequest(request, url);
     return await selfServeProvision(request, deps);
   }
   if (method === "POST" && path === "/api/claim/exchange") {
