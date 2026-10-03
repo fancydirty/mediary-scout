@@ -55,13 +55,15 @@ vi.mock("../lib/connect-link-store", () => ({
     state.stored.push(["tunnel", v.token], ["hostname", v.hostname], ["boundAt", v.boundAt]);
   }),
   getConnectTunnelToken: vi.fn(async () => null),
+  setConnectPendingOrder: vi.fn(async (v: string) => { state.stored.push(["order", v]); }),
+  clearConnectPendingOrder: vi.fn(async () => { state.cleared.push("order"); }),
 }));
 
-import { createConnectCheckout, exchangeClaimCode, issueClaimCode } from "../lib/connect-client";
+import { createConnectCheckout, exchangeClaimCode, getConnectOrderStatus, issueClaimCode, revokeInstanceLink } from "../lib/connect-client";
 import { scoutConnectBaseUrl } from "../lib/remote-access";
 import { startTunnel } from "../lib/updater-client";
 import { setConnectBinding } from "../lib/connect-link-store";
-import { connectBindAction, connectCheckoutAction, connectPollLinkAction, connectUnlinkAction } from "./connect-actions";
+import { connectBindAction, connectCheckoutAction, connectOrderStatusAction, connectPollLinkAction, connectUnlinkAction } from "./connect-actions";
 
 beforeEach(() => {
   state.demo = false;
@@ -197,8 +199,40 @@ describe("connectBindAction", () => {
 });
 
 describe("connectUnlinkAction", () => {
-  it("clears the credential even when revoke fails", async () => {
-    await connectUnlinkAction();
+  it("clears the local link after Connect revoked the credential", async () => {
+    expect(await connectUnlinkAction()).toEqual({ ok: true });
     expect(state.cleared).toEqual(expect.arrayContaining(["credential", "email", "pending"]));
+  });
+
+  it("also clears it when Connect says the credential is already invalid", async () => {
+    vi.mocked(revokeInstanceLink).mockResolvedValueOnce({ ok: false, reason: "unauthorized", message: "x" });
+    expect(await connectUnlinkAction()).toEqual({ ok: true });
+    expect(state.cleared).toContain("credential");
+  });
+
+  it("keeps the credential when Connect could not be reached, so 断开 can be retried", async () => {
+    vi.mocked(revokeInstanceLink).mockResolvedValueOnce({ ok: false, reason: "unreachable", message: "x" });
+    const result = await connectUnlinkAction();
+    expect(result.ok).toBe(false);
+    expect(state.cleared).not.toContain("credential");
+  });
+});
+
+describe("pending order", () => {
+  it("remembers the order a checkout created, so a reloaded page can keep checking it", async () => {
+    await connectCheckoutAction("year");
+    expect(state.stored).toContainEqual(["order", "ord_1"]);
+  });
+
+  it("forgets the order once it is fulfilled, closed or expired, and keeps it while pending", async () => {
+    vi.mocked(getConnectOrderStatus).mockResolvedValueOnce({ ok: true, status: "pending" });
+    await connectOrderStatusAction("ord_1");
+    expect(state.cleared).not.toContain("order");
+    for (const status of ["fulfilled", "closed", "expired"] as const) {
+      state.cleared = [];
+      vi.mocked(getConnectOrderStatus).mockResolvedValueOnce({ ok: true, status });
+      await connectOrderStatusAction("ord_1");
+      expect(state.cleared).toContain("order");
+    }
   });
 });

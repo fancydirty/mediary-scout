@@ -14,7 +14,7 @@ import { PasswordChangeForm } from "../password-change-form";
 import { RemoteAccessTestButton } from "./remote-access-test-button";
 import { ConnectWizard, type ConnectWizardPending } from "./connect-wizard";
 import { connectAccountAction } from "../../app/connect-actions";
-import { getConnectAccountEmail, getConnectInstanceCredential, getConnectLinkPending } from "../../lib/connect-link-store";
+import { getConnectAccountEmail, getConnectInstanceCredential, getConnectLinkPending, getConnectPendingOrder } from "../../lib/connect-link-store";
 
 /**
  * 「上次从本机报到控制面」一行。
@@ -76,6 +76,7 @@ export async function RemoteAccessSection({
     : null;
   const linkedEmail = await getConnectAccountEmail();
   const storedCredential = await getConnectInstanceCredential();
+  const pendingOrderId = storedCredential === null ? null : await getConnectPendingOrder();
   let connectAccount = null;
   try {
     const accountResult = await connectAccountAction();
@@ -121,6 +122,7 @@ export async function RemoteAccessSection({
           hasTunnelToken={false}
           passwordSet={passwordState}
           multiUser={isMultiUserEnabled()}
+          pendingOrderId={pendingOrderId}
         />
 
         <div
@@ -275,6 +277,7 @@ export async function RemoteAccessSection({
         hasTunnelToken={Boolean(localToken)}
         passwordSet={passwordState}
         multiUser={isMultiUserEnabled()}
+        pendingOrderId={pendingOrderId}
       />
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>

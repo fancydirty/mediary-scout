@@ -17,13 +17,13 @@ import {
   CONNECT_BOUND_AT_KEY,
   CONNECT_HOSTNAME_KEY,
   CONNECT_INSTANCE_CREDENTIAL_KEY,
-  CONNECT_LINK_EXPIRES_AT_KEY,
-  CONNECT_LINK_POLL_SECRET_KEY,
-  CONNECT_LINK_VERIFY_CODE_KEY,
+  CONNECT_LINK_PENDING_KEY,
+  CONNECT_PENDING_ORDER_KEY,
   CONNECT_TUNNEL_TOKEN_KEY,
   clearConnectAccountEmail,
   clearConnectInstanceCredential,
   clearConnectLinkPending,
+  clearConnectPendingOrder,
   clearConnectHostname,
   clearConnectTunnelToken,
   getConnectAccountEmail,
@@ -31,11 +31,13 @@ import {
   getConnectHostname,
   getConnectInstanceCredential,
   getConnectLinkPending,
+  getConnectPendingOrder,
   getConnectTunnelToken,
   setConnectAccountEmail,
   setConnectBinding,
   setConnectInstanceCredential,
   setConnectLinkPending,
+  setConnectPendingOrder,
   setConnectHostname,
   setConnectTunnelToken,
 } from "./connect-link-store";
@@ -66,45 +68,7 @@ describe("connect link instance settings", () => {
     expect(repository.setSetting).toHaveBeenNthCalledWith(4, CONNECT_HOSTNAME_KEY, "name.mediaryconnect.app");
   });
 
-  it("stores and reads pending link fields, then clears them without touching a linked email", async () => {
-    await setConnectLinkPending({
-      email: "owner@example.com",
-      pollSecret: "poll-secret",
-      verifyCode: "123456",
-      expiresAt: "2026-10-03T00:00:00.000Z",
-    });
-    expect(repository.setSetting).toHaveBeenCalledWith(CONNECT_ACCOUNT_EMAIL_KEY, "owner@example.com");
 
-    repository.getSetting.mockImplementation(async (key: string) => {
-      const values: Record<string, string> = {
-        [CONNECT_ACCOUNT_EMAIL_KEY]: "owner@example.com",
-        [CONNECT_LINK_POLL_SECRET_KEY]: "poll-secret",
-        [CONNECT_LINK_VERIFY_CODE_KEY]: "123456",
-        [CONNECT_LINK_EXPIRES_AT_KEY]: "2026-10-03T00:00:00.000Z",
-      };
-      return values[key] ?? null;
-    });
-    await expect(getConnectLinkPending()).resolves.toEqual({
-      email: "owner@example.com",
-      pollSecret: "poll-secret",
-      verifyCode: "123456",
-      expiresAt: "2026-10-03T00:00:00.000Z",
-    });
-
-    repository.getSetting.mockImplementation(async (key: string) =>
-      key === CONNECT_INSTANCE_CREDENTIAL_KEY ? "credential" : null,
-    );
-    await clearConnectLinkPending();
-    expect(repository.deleteSetting).toHaveBeenCalledWith(CONNECT_LINK_POLL_SECRET_KEY);
-    expect(repository.deleteSetting).toHaveBeenCalledWith(CONNECT_LINK_VERIFY_CODE_KEY);
-    expect(repository.deleteSetting).toHaveBeenCalledWith(CONNECT_LINK_EXPIRES_AT_KEY);
-    expect(repository.deleteSetting).not.toHaveBeenCalledWith(CONNECT_ACCOUNT_EMAIL_KEY);
-  });
-
-  it("clears the pending email too when no credential is linked", async () => {
-    await clearConnectLinkPending();
-    expect(repository.deleteSetting).toHaveBeenCalledWith(CONNECT_ACCOUNT_EMAIL_KEY);
-  });
 
   it("clears individual linked and tunnel values", async () => {
     await clearConnectInstanceCredential();
@@ -134,5 +98,42 @@ describe("connect tunnel binding", () => {
     ]);
     repository.getSetting.mockResolvedValueOnce(" 2026-10-03T14:00:00.000Z ");
     expect(await getConnectBoundAt()).toBe("2026-10-03T14:00:00.000Z");
+  });
+});
+
+describe("pending link and order are single settings", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("stores the whole pending request as one value and reads it back", async () => {
+    const pending = { email: "a@b.c", pollSecret: "poll", verifyCode: "ABCD", expiresAt: "2026-10-03T00:30:00.000Z" };
+    await setConnectLinkPending(pending);
+    expect(repository.setSetting).toHaveBeenCalledTimes(1);
+    const [key, value] = repository.setSetting.mock.calls[0]!;
+    expect(key).toBe(CONNECT_LINK_PENDING_KEY);
+    repository.getSetting.mockResolvedValueOnce(value);
+    expect(await getConnectLinkPending()).toEqual(pending);
+  });
+
+  it("treats an unreadable pending value as no pending request", async () => {
+    repository.getSetting.mockResolvedValueOnce("{not json");
+    expect(await getConnectLinkPending()).toBeNull();
+    repository.getSetting.mockResolvedValueOnce(JSON.stringify({ email: "a@b.c" }));
+    expect(await getConnectLinkPending()).toBeNull();
+  });
+
+  it("clears the pending request with one delete and leaves the linked email alone", async () => {
+    await clearConnectLinkPending();
+    expect(repository.deleteSetting.mock.calls).toEqual([[CONNECT_LINK_PENDING_KEY]]);
+  });
+
+  it("remembers and forgets a pending order id", async () => {
+    await setConnectPendingOrder("ord_1");
+    expect(repository.setSetting).toHaveBeenCalledWith(CONNECT_PENDING_ORDER_KEY, "ord_1");
+    repository.getSetting.mockResolvedValueOnce("ord_1");
+    expect(await getConnectPendingOrder()).toBe("ord_1");
+    await clearConnectPendingOrder();
+    expect(repository.deleteSetting).toHaveBeenCalledWith(CONNECT_PENDING_ORDER_KEY);
   });
 });

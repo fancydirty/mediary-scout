@@ -29,6 +29,8 @@ export type ConnectWizardProps = {
   passwordSet: boolean | "unknown";
   multiUser?: boolean;
   compact?: boolean;
+  /** A checkout this instance is still waiting on (kept across reloads). */
+  pendingOrderId?: string | null;
 };
 
 type Step = 1 | 2 | 3 | 4 | 5;
@@ -93,7 +95,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
   const [busy, startTransition] = useTransition();
   const [slug, setSlug] = useState("");
   const [slugCheck, setSlugCheck] = useState<{ available: boolean; reason?: string; suggestions: string[] } | null>(null);
-  const [orderId, setOrderId] = useState<string | null>(null);
+  const [orderId, setOrderId] = useState<string | null>(props.pendingOrderId ?? null);
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
   const [tunnelStarting, setTunnelStarting] = useState(false);
   const [fallbackCommand, setFallbackCommand] = useState<string | null>(null);
@@ -108,7 +110,8 @@ export function ConnectWizard(props: ConnectWizardProps) {
     setAccountUnavailable(props.linked && props.account === null);
     setPasswordSet(props.passwordSet);
     setStep(initialStep(props));
-  }, [props.linked, props.email, props.pending, props.account, props.hasTunnelToken, props.passwordSet]);
+    setOrderId(props.pendingOrderId ?? null);
+  }, [props.linked, props.email, props.pending, props.account, props.hasTunnelToken, props.passwordSet, props.pendingOrderId]);
 
   useEffect(() => {
     if (step !== 2 || !pending) return;
@@ -184,7 +187,9 @@ export function ConnectWizard(props: ConnectWizardProps) {
   }, [step, pending]);
 
   useEffect(() => {
-    if (!orderId || step !== 3) return;
+    // Any step: a reload restores a paid-but-unconfirmed order, and checking it is also what
+    // lets Connect settle it when its webhook did not arrive.
+    if (!orderId) return;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     // Set once the order is fulfilled or closed: no further polls.

@@ -3,9 +3,11 @@ import { getWorkflowRepository } from "./workflow-runtime";
 /** Instance-level settings written by the in-app Mediary Connect flow. */
 export const CONNECT_INSTANCE_CREDENTIAL_KEY = "connect_instance_credential";
 export const CONNECT_ACCOUNT_EMAIL_KEY = "connect_account_email";
-export const CONNECT_LINK_POLL_SECRET_KEY = "connect_link_poll_secret";
-export const CONNECT_LINK_VERIFY_CODE_KEY = "connect_link_verify_code";
-export const CONNECT_LINK_EXPIRES_AT_KEY = "connect_link_expires_at";
+/** The pending link request as one JSON value: its fields belong together, and two tabs
+ *  starting a link at once must not leave one request's poll secret next to another's code. */
+export const CONNECT_LINK_PENDING_KEY = "connect_link_pending";
+/** The checkout order this page is waiting on, so a reload keeps checking it. */
+export const CONNECT_PENDING_ORDER_KEY = "connect_pending_order";
 export const CONNECT_TUNNEL_TOKEN_KEY = "connect_tunnel_token";
 export const CONNECT_HOSTNAME_KEY = "connect_hostname";
 /** When the stored token/hostname were last bound from this page (ISO). */
@@ -66,38 +68,43 @@ export function clearConnectAccountEmail(): Promise<void> {
 }
 
 export async function getConnectLinkPending(): Promise<ConnectLinkPending | null> {
-  const [email, pollSecret, verifyCode, expiresAt] = await Promise.all([
-    getValue(CONNECT_ACCOUNT_EMAIL_KEY),
-    getValue(CONNECT_LINK_POLL_SECRET_KEY),
-    getValue(CONNECT_LINK_VERIFY_CODE_KEY),
-    getValue(CONNECT_LINK_EXPIRES_AT_KEY),
-  ]);
-  if (!email || !pollSecret || !verifyCode || !expiresAt) return null;
-  return { email, pollSecret, verifyCode, expiresAt };
+  const raw = await getValue(CONNECT_LINK_PENDING_KEY);
+  if (!raw) return null;
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (typeof value !== "object" || value === null) return null;
+    const { email, pollSecret, verifyCode, expiresAt } = value as Record<string, unknown>;
+    if ([email, pollSecret, verifyCode, expiresAt].some((field) => typeof field !== "string" || field.trim() === "")) {
+      return null;
+    }
+    return { email, pollSecret, verifyCode, expiresAt } as ConnectLinkPending;
+  } catch {
+    return null;
+  }
 }
 
 export async function setConnectLinkPending(value: ConnectLinkPending): Promise<void> {
-  await Promise.all([
-    setValue(CONNECT_ACCOUNT_EMAIL_KEY, value.email),
-    setValue(CONNECT_LINK_POLL_SECRET_KEY, value.pollSecret),
-    setValue(CONNECT_LINK_VERIFY_CODE_KEY, value.verifyCode),
-    setValue(CONNECT_LINK_EXPIRES_AT_KEY, value.expiresAt),
-  ]);
+  await getWorkflowRepository().setSetting(
+    CONNECT_LINK_PENDING_KEY,
+    JSON.stringify({ email: value.email, pollSecret: value.pollSecret, verifyCode: value.verifyCode, expiresAt: value.expiresAt }),
+  );
 }
 
-/** Clear a pending request. A linked email is retained while its credential exists. */
+/** Clear a pending request. The linked account's email is a separate setting and stays. */
 export async function clearConnectLinkPending(): Promise<void> {
-  const repository = getWorkflowRepository();
-  await Promise.all([
-    repository.deleteSetting(CONNECT_LINK_POLL_SECRET_KEY),
-    repository.deleteSetting(CONNECT_LINK_VERIFY_CODE_KEY),
-    repository.deleteSetting(CONNECT_LINK_EXPIRES_AT_KEY),
-  ]);
-  // The same email setting records the linked account email after approval. Do not
-  // erase it when clearing a stale pending request for an already-linked instance.
-  if (!(await getValue(CONNECT_INSTANCE_CREDENTIAL_KEY))) {
-    await repository.deleteSetting(CONNECT_ACCOUNT_EMAIL_KEY);
-  }
+  await clearValue(CONNECT_LINK_PENDING_KEY);
+}
+
+export function getConnectPendingOrder(): Promise<string | null> {
+  return getValue(CONNECT_PENDING_ORDER_KEY);
+}
+
+export function setConnectPendingOrder(orderId: string): Promise<void> {
+  return setValue(CONNECT_PENDING_ORDER_KEY, orderId);
+}
+
+export function clearConnectPendingOrder(): Promise<void> {
+  return clearValue(CONNECT_PENDING_ORDER_KEY);
 }
 
 export function getConnectTunnelToken(): Promise<string | null> {

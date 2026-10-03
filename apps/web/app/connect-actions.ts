@@ -24,12 +24,14 @@ import {
   clearConnectAccountEmail,
   clearConnectInstanceCredential,
   clearConnectLinkPending,
+  clearConnectPendingOrder,
   getConnectInstanceCredential,
   getConnectLinkPending,
   setConnectAccountEmail,
   setConnectBinding,
   setConnectInstanceCredential,
   setConnectLinkPending,
+  setConnectPendingOrder,
 } from "../lib/connect-link-store";
 import { scoutConnectBaseUrl } from "../lib/remote-access";
 import { startTunnel } from "../lib/updater-client";
@@ -69,7 +71,6 @@ export async function connectStartLinkAction(email: string): Promise<ConnectStar
     expiresAt: result.expiresAt,
     email: normalized,
   });
-  await setConnectAccountEmail(normalized);
   return { ok: true, verifyCode: result.verifyCode, email: normalized, interval: result.interval };
 }
 
@@ -147,6 +148,9 @@ export async function connectCheckoutAction(
   const returnUrl = origin ? `${origin}/settings?tab=remote` : undefined;
   const result = await createConnectCheckout(credential, tier, returnUrl);
   if (!result.ok) return { ok: false, message: clientMessage(result) };
+  // A reload (or finishing payment in the other tab) must not lose the only handle that makes
+  // this page check the order, and with it Connect's compensation path.
+  await setConnectPendingOrder(result.orderId);
   return { ok: true, checkoutUrl: result.checkoutUrl, orderId: result.orderId };
 }
 
@@ -156,7 +160,11 @@ export async function connectOrderStatusAction(orderId: string) {
   const credential = await getConnectInstanceCredential();
   if (!credential) return { ok: false as const, message: "请先连接 Mediary Connect。" };
   const result = await getConnectOrderStatus(credential, orderId);
-  return result.ok ? { ok: true as const, status: result.status } : { ok: false as const, message: clientMessage(result) };
+  if (!result.ok) return { ok: false as const, message: clientMessage(result) };
+  if (result.status === "fulfilled" || result.status === "closed" || result.status === "expired") {
+    await clearConnectPendingOrder();
+  }
+  return { ok: true as const, status: result.status };
 }
 
 export async function connectSlugCheckAction(slug: string) {
@@ -244,10 +252,12 @@ export async function connectUnlinkAction(): Promise<{ ok: true } | Refusal> {
   if (refused) return refused;
   const credential = await getConnectInstanceCredential();
   if (credential) {
-    try {
-      await revokeInstanceLink(credential);
-    } catch {
-      // Best effort: local unlink must still work if Connect is unavailable.
+    // Only forget the credential once Connect stopped honouring it (revoked now, or already
+    // invalid): deleting the only copy while it still works would leave a live credential
+    // nobody can revoke.
+    const revoked = await revokeInstanceLink(credential);
+    if (!revoked.ok && revoked.reason !== "unauthorized") {
+      return { ok: false, message: `${clientMessage(revoked)}没有断开，稍后再点一次「断开」。` };
     }
   }
   await clearConnectInstanceCredential();
