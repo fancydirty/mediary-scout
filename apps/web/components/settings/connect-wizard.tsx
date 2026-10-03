@@ -150,6 +150,9 @@ export function ConnectWizard(props: ConnectWizardProps) {
   const [fallbackCommand, setFallbackCommand] = useState<string | null>(null);
   const [password, setPassword] = useState("");
   const probeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Bumped by every new probe loop and on unmount: a probe answering for an older loop (or after
+  // the page was left) stops instead of scheduling another one.
+  const probeGeneration = useRef(0);
 
   useEffect(() => {
     setLinked(props.linked);
@@ -342,6 +345,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
   }, [slug, step]);
 
   useEffect(() => () => {
+    probeGeneration.current += 1;
     if (probeTimer.current) clearTimeout(probeTimer.current);
   }, []);
 
@@ -463,11 +467,13 @@ export function ConnectWizard(props: ConnectWizardProps) {
 
   const probeUntilReachable = () => {
     if (probeTimer.current) clearTimeout(probeTimer.current);
+    const generation = ++probeGeneration.current;
     const startedAt = Date.now();
     // Each probe can take seconds; schedule the next one only after this one answered.
     const probe = async () => {
       try {
         const result: TestRemoteAccessResult = await connectProbeAction();
+        if (generation !== probeGeneration.current) return;
         if (result.ok && result.detail === "reachable") {
           setTunnelStarting(false);
           setNotice({ text: `已接通 https://${account?.endpoint?.hostname ?? ""}`, tone: "success" });
@@ -475,6 +481,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
           return;
         }
       } catch (error) {
+        if (generation !== probeGeneration.current) return;
         setNotice({ text: friendlyError(error), tone: "danger" });
       }
       if (Date.now() - startedAt >= 120_000) {
