@@ -1584,7 +1584,7 @@ describe("tunnel compose runner", () => {
     ]);
   });
 
-  it("spawns docker with stdin closed and kills the child at 10 minutes", async () => {
+  it("spawns docker with stdin closed and kills the child at 270 s, before the web's fetch gives up at 300 s", async () => {
     const child = new EventEmitter();
     child.stdout = new PassThrough();
     child.stderr = new PassThrough();
@@ -1626,7 +1626,9 @@ describe("tunnel compose runner", () => {
       ],
       options: { stdio: ["ignore", "pipe", "pipe"] },
     });
-    expect(armed.ms).toBe(10 * 60 * 1000);
+    // Node's fetch on the web side stops waiting for response headers after 300 s (undici
+    // headersTimeout), whatever its AbortSignal says; the answer must come before that.
+    expect(armed.ms).toBe(270_000);
     child.stdout.write(`still pulling ${TUNNEL_TOKEN}\n`);
     armed.fn();
     await expect(pending).resolves.toEqual({ code: 1, output: `still pulling ${TUNNEL_TOKEN}\n`, timedOut: true });

@@ -36,7 +36,11 @@ const RESTORE_FOLDER_CHANGED_MESSAGE =
   "更新被中断了，之后部署目录被人手动换过版本，更新助手没有再改动它。请在部署目录运行 ./scripts/deploy.sh，跑起来之后就能再更新。";
 const MAX_BODY = 1024;
 const TUNNEL_MAX_BODY = 8192;
-const TUNNEL_COMPOSE_TIMEOUT_MS = 10 * 60 * 1000;
+// Below 300 s on purpose: the web calls /tunnel with Node's fetch, which stops waiting for
+// response headers after 300 s (undici headersTimeout) whatever its AbortSignal says. A slower
+// image pull ends as pull_failed/compose_failed with a DOCKER_MIRROR hint, and a retry resumes
+// from the layers already downloaded.
+const TUNNEL_COMPOSE_TIMEOUT_MS = 270_000;
 const TUNNEL_TOKEN_RE = /^[A-Za-z0-9+/=_-]{20,4096}$/;
 const TUNNEL_HOSTNAME_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/;
 const PULL_MARKERS = [
