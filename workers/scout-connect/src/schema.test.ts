@@ -1555,6 +1555,15 @@ describe("migration 0008 — instance links", () => {
         "idx_instance_credentials_account",
       ]),
     );
+    expect(MIGRATION8_SQL).toContain("link_request_id TEXT NOT NULL UNIQUE");
+    const credentialColumns = sqlite.sqlite
+      .prepare("PRAGMA table_info(instance_credentials)")
+      .all() as { name: string; notnull: number }[];
+    expect(credentialColumns.find((column) => column.name === "link_request_id")).toMatchObject({ notnull: 1 });
+    const uniqueCredentialIndexes = sqlite.sqlite
+      .prepare("PRAGMA index_list(instance_credentials)")
+      .all() as { name: string; unique: number }[];
+    expect(uniqueCredentialIndexes.some((index) => index.unique === 1)).toBe(true);
     expect(MIGRATION8_SQL).not.toMatch(/^\s*BEGIN\b/im);
     expect(MIGRATION8_SQL).not.toMatch(/^\s*COMMIT\b/im);
   });

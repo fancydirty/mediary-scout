@@ -169,6 +169,61 @@ describe("instance-link confirmation and polling", () => {
     }), deps)).status).toBe(401);
   });
 
+  it("keeps an approved request retryable when credential delivery throws", async () => {
+    const { deps, sent } = setup();
+    const data = await startData(deps);
+    const token = new URL(sent[0]!.details.url).searchParams.get("t")!;
+    await handleRequest(new Request(`${BASE}/link`, {
+      method: "POST", headers: { "content-type": "application/json", origin: BASE, "sec-fetch-site": "same-origin" },
+      body: JSON.stringify({ t: token }),
+    }), deps);
+    const baseDb = deps.db;
+    let attemptedSha = "";
+    let failed = true;
+    deps.db = {
+      ...baseDb,
+      async deliverInstanceCredential(input) {
+        attemptedSha = input.credential.credential_sha256;
+        if (failed) {
+          failed = false;
+          throw new Error("delivery unavailable");
+        }
+        return baseDb.deliverInstanceCredential(input);
+      },
+    };
+    const first = await handleRequest(new Request(`${BASE}/api/instance-link/poll`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pollSecret: data.pollSecret }),
+    }), deps);
+    expect(first.status).toBe(500);
+    const requestRow = await baseDb.getInstanceLinkRequestByPollSecretSha(await sha256Hex(data.pollSecret));
+    expect(requestRow?.status).toBe("approved");
+    expect(await baseDb.getActiveInstanceCredentialBySha(attemptedSha)).toBeNull();
+
+    const second = await handleRequest(new Request(`${BASE}/api/instance-link/poll`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pollSecret: data.pollSecret }),
+    }), deps);
+    expect(second.status).toBe(200);
+  });
+
+  it("delivers one credential when two polls race for the same request", async () => {
+    const { deps, sent } = setup();
+    const data = await startData(deps);
+    const token = new URL(sent[0]!.details.url).searchParams.get("t")!;
+    await handleRequest(new Request(`${BASE}/link`, {
+      method: "POST", headers: { "content-type": "application/json", origin: BASE, "sec-fetch-site": "same-origin" },
+      body: JSON.stringify({ t: token }),
+    }), deps);
+    const request = () => handleRequest(new Request(`${BASE}/api/instance-link/poll`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pollSecret: data.pollSecret }),
+    }), deps);
+    const responses = await Promise.all([request(), request()]);
+    expect(responses.filter((response) => response.status === 200)).toHaveLength(1);
+    expect(responses.filter((response) => response.status === 410)).toHaveLength(1);
+    const approved = responses.find((response) => response.status === 200)!;
+    const credential = (await approved.json() as { credential: string }).credential;
+    expect(await deps.db.getActiveInstanceCredentialBySha(await sha256Hex(credential))).not.toBeNull();
+  });
+
   it("revokes the previous credential when the same account links again", async () => {
     const { deps, sent } = setup();
     let now = NOW;

@@ -227,12 +227,10 @@ export async function pollInstanceLink(request: Request, deps: RouteDeps): Promi
       return json({ status: "pending" }, 200, { noStore: true });
     }
   }
-  const delivered = await deps.db.markInstanceLinkDelivered(row.id, now);
-  if (!delivered) return json({ status: "delivered" }, 410, { noStore: true });
   if (row.account_id === null) throw new HttpError(500, "instance link missing account");
   const credential = `ic_${randomBytesBase64Url(32)}`;
   const credentialId = newId("icr");
-  await deps.db.insertInstanceCredential({
+  const credentialRow: InstanceCredentialRow = {
     id: credentialId,
     account_id: row.account_id,
     credential_sha256: await sha256Hex(credential),
@@ -240,8 +238,13 @@ export async function pollInstanceLink(request: Request, deps: RouteDeps): Promi
     created_at: now,
     last_used_at: null,
     revoked_at: null,
+  };
+  const delivered = await deps.db.deliverInstanceCredential({
+    requestId: row.id,
+    credential: credentialRow,
+    nowIso: now,
   });
-  await deps.db.revokeOtherInstanceCredentials(row.account_id, credentialId, now);
+  if (!delivered) return json({ status: "delivered" }, 410, { noStore: true });
   return json({ status: "approved", credential, email: row.email }, 200, { noStore: true });
 }
 

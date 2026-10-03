@@ -262,10 +262,13 @@ export interface ConnectDb {
   getInstanceLinkRequestById(id: string): Promise<InstanceLinkRequestRow | null>;
   getInstanceLinkRequestByPollSecretSha(sha: string): Promise<InstanceLinkRequestRow | null>;
   approveInstanceLinkRequest(id: string, accountId: string, nowIso: string): Promise<boolean>;
-  markInstanceLinkDelivered(id: string, nowIso: string): Promise<boolean>;
   touchInstanceLinkPoll(id: string, nowIso: string): Promise<boolean>;
   insertInstanceCredential(row: InstanceCredentialRow): Promise<void>;
-  revokeOtherInstanceCredentials(accountId: string, keepId: string, nowIso: string): Promise<void>;
+  deliverInstanceCredential(input: {
+    requestId: string;
+    credential: InstanceCredentialRow;
+    nowIso: string;
+  }): Promise<boolean>;
   getActiveInstanceCredentialBySha(sha: string): Promise<InstanceCredentialRow | null>;
   revokeInstanceCredential(id: string, nowIso: string): Promise<void>;
   touchInstanceCredential(id: string, nowIso: string): Promise<void>;
@@ -326,7 +329,7 @@ export interface D1Database {
    * 缺失时 hitAndCount 回退成逐条 await(行为一致,只是慢),
    * 而不是强迫每个 fake 都实现一个它用不到的方法。
    */
-  batch?(statements: D1PreparedStatement[]): Promise<Array<{ results?: unknown[] }>>;
+  batch?(statements: D1PreparedStatement[]): Promise<Array<{ results?: unknown[]; meta?: { changes?: number } }>>;
 }
 
 type RawRow = Record<string, unknown>;
@@ -919,18 +922,6 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
       return (result.meta?.changes ?? 0) > 0;
     },
 
-    async markInstanceLinkDelivered(id, nowIso) {
-      const result = (await d1
-        .prepare(
-          `UPDATE instance_link_requests
-              SET status = 'delivered', delivered_at = ?
-            WHERE id = ? AND status = 'approved'`,
-        )
-        .bind(nowIso, id)
-        .run()) as { meta?: { changes?: number } };
-      return (result.meta?.changes ?? 0) > 0;
-    },
-
     async touchInstanceLinkPoll(id, nowIso) {
       const cutoff = new Date(Date.parse(nowIso) - 2_000).toISOString();
       const result = (await d1
@@ -964,21 +955,66 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
         .run();
     },
 
-    async revokeOtherInstanceCredentials(accountId, keepId, nowIso) {
-      await d1
+    async deliverInstanceCredential({ requestId, credential, nowIso }) {
+      if (credential.link_request_id !== requestId) return false;
+      if (typeof d1.batch !== "function") {
+        throw new Error("D1 batch is required for instance credential delivery");
+      }
+      const insert = d1
         .prepare(
-          `WITH kept AS (
-             SELECT created_at FROM instance_credentials WHERE id = ? AND account_id = ?
-           )
-           UPDATE instance_credentials SET revoked_at = ?
+          `INSERT INTO instance_credentials
+             (id, account_id, credential_sha256, link_request_id, created_at, last_used_at, revoked_at)
+           SELECT ?, ?, ?, ?, ?, ?, ?
+             WHERE EXISTS (
+               SELECT 1 FROM instance_link_requests
+                WHERE id = ? AND account_id = ? AND status = 'approved'
+             )`,
+        )
+        .bind(
+          credential.id,
+          credential.account_id,
+          credential.credential_sha256,
+          credential.link_request_id,
+          credential.created_at,
+          credential.last_used_at,
+          credential.revoked_at,
+          requestId,
+          credential.account_id,
+        );
+      const markDelivered = d1
+        .prepare(
+          `UPDATE instance_link_requests
+              SET status = 'delivered', delivered_at = ?
+            WHERE id = ? AND status = 'approved'`,
+        )
+        .bind(nowIso, requestId);
+      const rotate = d1
+        .prepare(
+          `UPDATE instance_credentials SET revoked_at = ?
             WHERE account_id = ? AND revoked_at IS NULL
-              AND (
-                created_at < (SELECT created_at FROM kept)
-                OR (created_at = (SELECT created_at FROM kept) AND id < ?)
+              AND id <> (
+                SELECT id FROM instance_credentials
+                 WHERE account_id = ?
+                 ORDER BY created_at DESC, id DESC
+                 LIMIT 1
+              )
+              AND EXISTS (
+                SELECT 1 FROM instance_link_requests
+                 WHERE id = ? AND status = 'delivered' AND delivered_at = ?
               )`,
         )
-        .bind(keepId, accountId, nowIso, accountId, keepId)
-        .run();
+        .bind(nowIso, credential.account_id, credential.account_id, requestId, nowIso);
+      try {
+        const results = await d1.batch([insert, markDelivered, rotate]);
+        const marked = (results[1] as { meta?: { changes?: number } } | undefined)?.meta?.changes;
+        return marked === 1;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (/UNIQUE constraint failed/i.test(message) && /link_request_id/i.test(message)) {
+          return false;
+        }
+        throw error;
+      }
     },
 
     async getActiveInstanceCredentialBySha(sha) {
@@ -1680,14 +1716,6 @@ export function createMemoryConnectDb(): ConnectDb {
       return true;
     },
 
-    async markInstanceLinkDelivered(id, nowIso) {
-      const row = instanceLinkRequests.get(id);
-      if (row === undefined || row.status !== "approved") return false;
-      row.status = "delivered";
-      row.delivered_at = nowIso;
-      return true;
-    },
-
     async touchInstanceLinkPoll(id, nowIso) {
       const row = instanceLinkRequests.get(id);
       if (row === undefined || row.status !== "pending") return false;
@@ -1711,16 +1739,33 @@ export function createMemoryConnectDb(): ConnectDb {
       instanceCredentials.set(row.id, { ...row });
     },
 
-    async revokeOtherInstanceCredentials(accountId, keepId, nowIso) {
-      const kept = instanceCredentials.get(keepId);
-      if (kept === undefined || kept.account_id !== accountId) return;
+    async deliverInstanceCredential({ requestId, credential, nowIso }) {
+      const request = instanceLinkRequests.get(requestId);
+      if (credential.link_request_id !== requestId || request === undefined || request.status !== "approved" || request.account_id !== credential.account_id) {
+        return false;
+      }
       for (const row of instanceCredentials.values()) {
-        const createdBeforeKept =
-          row.created_at < kept.created_at || (row.created_at === kept.created_at && row.id < kept.id);
-        if (row.account_id === accountId && row.revoked_at === null && createdBeforeKept) {
+        if (row.link_request_id === requestId) return false;
+        if (row.id === credential.id || row.credential_sha256 === credential.credential_sha256) {
+          throw new Error(`UNIQUE constraint failed: instance_credentials (${row.id})`);
+        }
+      }
+      instanceCredentials.set(credential.id, { ...credential });
+      request.status = "delivered";
+      request.delivered_at = nowIso;
+      let newest: InstanceCredentialRow | null = null;
+      for (const row of instanceCredentials.values()) {
+        if (row.account_id !== credential.account_id || row.revoked_at !== null) continue;
+        if (newest === null || row.created_at > newest.created_at || (row.created_at === newest.created_at && row.id > newest.id)) {
+          newest = row;
+        }
+      }
+      for (const row of instanceCredentials.values()) {
+        if (row.account_id === credential.account_id && row.revoked_at === null && newest !== null && row.id !== newest.id) {
           row.revoked_at = nowIso;
         }
       }
+      return true;
     },
 
     async getActiveInstanceCredentialBySha(sha) {

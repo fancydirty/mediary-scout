@@ -77,7 +77,7 @@ describe("ConnectDb surface guard", () => {
 
     // Direct insertion is intentionally a fixture/migration primitive. Production checkout
     // uses insertPaymentOrderWithinDailyLimit so the account cap is atomic.
-    const fixtureOnly = new Set(["insertPaymentOrder"]);
+    const fixtureOnly = new Set(["insertPaymentOrder", "insertInstanceCredential"]);
     const dead = names.filter((name) => !fixtureOnly.has(name) && !nonTestSource.includes(`.${name}(`));
 
     expect(

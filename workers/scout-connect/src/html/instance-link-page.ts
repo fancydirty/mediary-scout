@@ -46,7 +46,7 @@ ${BRAND_BAR}
 <p class="meta">请核对实例页面上显示的也是 ${esc(state.verifyCode)}<br>请求 IP：${esc(state.requestIp || "未知")}<br>请求时间：${esc(formatBeijingTime(state.requestedAt))}</p>
 <p class="warning">只有你自己刚在实例的「设置 → 远程访问」里点了连接，才点确认；不是你发起的就关掉这个页面。</p>
 <button id="btn" type="button">确认连接</button>
-<p class="msg" id="msg" hidden></p>
+<p class="msg" id="msg" role="status" aria-live="polite" hidden></p>
 <noscript><p class="msg">需要启用 JavaScript 才能确认连接。</p></noscript>
 </div>
 </main>
