@@ -1764,6 +1764,11 @@ export function createMemoryConnectDb(): ConnectDb {
             `UNIQUE constraint failed: instance_credentials.credential_sha256 (${row.credential_sha256})`,
           );
         }
+        if (existing.link_request_id === row.link_request_id) {
+          throw new Error(
+            `UNIQUE constraint failed: instance_credentials.link_request_id (${row.link_request_id})`,
+          );
+        }
       }
       instanceCredentials.set(row.id, { ...row });
     },

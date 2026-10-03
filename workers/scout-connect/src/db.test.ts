@@ -409,6 +409,22 @@ async function exerciseInstanceLinkDb(db: ConnectDb): Promise<void> {
 }
 
 describe("instance link DB methods", () => {
+  async function exerciseOneCredentialPerRequest(db: ConnectDb): Promise<void> {
+    await db.insertInstanceCredential(makeInstanceCredential({ id: "icr_first", credential_sha256: "sha-first", link_request_id: "ilr_shared" }));
+    await expect(
+      db.insertInstanceCredential(makeInstanceCredential({ id: "icr_second", credential_sha256: "sha-second", link_request_id: "ilr_shared" })),
+    ).rejects.toThrow(/UNIQUE/i);
+  }
+
+  it("allows one credential per link request in memory, like D1", async () => {
+    await exerciseOneCredentialPerRequest(createMemoryConnectDb());
+  });
+
+  it("allows one credential per link request in D1", async () => {
+    const { db } = createSqliteConnectDb();
+    await exerciseOneCredentialPerRequest(db);
+  });
+
   async function exerciseInstanceLinkRetention(db: ConnectDb): Promise<void> {
     await db.insertInstanceLinkRequest(makeInstanceLinkRequest({
       id: "ilr_old_1", poll_secret_sha256: "poll-old-1", expires_at: "2026-10-01T00:00:00.000Z",
