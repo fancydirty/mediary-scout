@@ -84,6 +84,16 @@ describe("instance connect env and stored value resolution", () => {
     expect(await resolveInstanceConnectHostname()).toBe("new.example.com");
   });
 
+  it("lets the env win once web was recreated, even with the same env (another container)", async () => {
+    // e.g. the tunnel lines were removed from .env and web recreated: the env is empty again,
+    // as it was at binding time, but this is a new container.
+    store.getConnectTunnelToken.mockResolvedValue("db-token");
+    store.getConnectHostname.mockResolvedValue("db.example.com");
+    store.getConnectBoundEnv.mockResolvedValue(instanceEnvFingerprint("old-container-id"));
+    expect(await resolveInstanceTunnelToken()).toBeUndefined();
+    expect(await resolveInstanceConnectHostname()).toBeNull();
+  });
+
   it("lets the env win once web was recreated with a different env, even an empty one", async () => {
     store.getConnectTunnelToken.mockResolvedValue("db-token");
     store.getConnectHostname.mockResolvedValue("db.example.com");

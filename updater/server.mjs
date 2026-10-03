@@ -36,11 +36,12 @@ const RESTORE_FOLDER_CHANGED_MESSAGE =
   "更新被中断了，之后部署目录被人手动换过版本，更新助手没有再改动它。请在部署目录运行 ./scripts/deploy.sh，跑起来之后就能再更新。";
 const MAX_BODY = 1024;
 const TUNNEL_MAX_BODY = 8192;
-// Below 300 s on purpose: the web calls /tunnel with Node's fetch, which stops waiting for
-// response headers after 300 s (undici headersTimeout) whatever its AbortSignal says. A slower
-// image pull ends as pull_failed/compose_failed with a DOCKER_MIRROR hint, and a retry resumes
-// from the layers already downloaded.
-const TUNNEL_COMPOSE_TIMEOUT_MS = 270_000;
+// The web calls /tunnel with Node's fetch, which stops waiting for response headers after 300 s
+// (undici headersTimeout) whatever its AbortSignal says, and gives up itself at 290 s. The whole
+// call — ≤15 s project lookup, this budget, 10 s TERM grace, 5 s KILL wait — must answer before
+// that. A slower image pull ends as pull_failed/compose_failed with a DOCKER_MIRROR hint, and a
+// retry resumes from the layers already downloaded.
+const TUNNEL_COMPOSE_TIMEOUT_MS = 250_000;
 // After SIGTERM, how long docker gets to exit before SIGKILL, and how long we then wait for it.
 const TUNNEL_TERM_GRACE_MS = 10_000;
 const TUNNEL_KILL_WAIT_MS = 5_000;
@@ -194,7 +195,7 @@ export function runComposeTunnel(args, deps = {}) {
     };
     // Settle only once docker has exited: the caller releases the shared job lock then, and an
     // update or a second /tunnel must not start while this compose run is still going.
-    // Worst case 270 + 10 + 5 s, inside the web's 290 s client timeout.
+    // Worst case 15 s project lookup + 250 + 10 + 5 s, inside the web's 290 s client timeout.
     arm(() => {
       timedOut = true;
       kill("SIGTERM");
@@ -224,8 +225,68 @@ export function runComposeTunnel(args, deps = {}) {
   });
 }
 
+// Same lock and same way of taking it as scripts/deploy.sh and run-update.sh: create the file
+// world-writable if missing (root here, the owner there), then flock fd 9 without waiting. The
+// shell keeps the lock until its stdin closes; if the updater dies, the pipe closes and the
+// kernel drops the lock. Where flock is missing (the macOS test host) the scripts skip it too.
+const REPO_LOCK_SCRIPT =
+  '[ -e "$1" ] || (umask 000; : > "$1") 2>/dev/null; ' +
+  'if command -v flock >/dev/null 2>&1; then exec 9>>"$1" && flock -n 9 || exit 75; fi; ' +
+  "echo locked; read _";
+
+/** Take the repo lock shared with deploy.sh / run-update.sh. Resolves to a handle with
+ *  release(), or null when someone else holds it. */
+export function holdRepoLock(lockFile, deps = {}) {
+  const spawnFn = deps.spawn ?? spawn;
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    let child;
+    try {
+      child = spawnFn("sh", ["-c", REPO_LOCK_SCRIPT, "sh", lockFile], { stdio: ["pipe", "pipe", "ignore"] });
+    } catch {
+      done(null);
+      return;
+    }
+    let output = "";
+    child.stdout?.on("data", (chunk) => {
+      output += chunk.toString();
+      if (output.includes("locked")) {
+        done({
+          release() {
+            try {
+              child.stdin?.end();
+            } catch {
+              // Already gone: the lock went with it.
+            }
+          },
+        });
+      }
+    });
+    child.on("error", () => done(null));
+    child.on("close", () => done(null));
+  });
+}
+
 export async function performTunnel(input, deps = {}) {
   const repoDir = deps.repoDir ?? process.env.UPDATER_REPO_DIR ?? "/repo";
+  // A manual deploy (or an update started elsewhere) must not run compose or rewrite .env while
+  // this does, and this must not while it does: hold the shared repo lock for the whole write /
+  // compose / rollback, or answer busy.
+  const lock = deps.acquireRepoLock ? await deps.acquireRepoLock(repoDir) : { release() {} };
+  if (!lock) return { ok: false, reason: "busy" };
+  try {
+    return await performTunnelLocked(input, repoDir, deps);
+  } finally {
+    lock.release();
+  }
+}
+
+async function performTunnelLocked(input, repoDir, deps) {
   let project;
   try {
     project = await deps.composeProject();
@@ -596,6 +657,7 @@ export function createUpdater(opts) {
             restoreTunnelEnv: opts.restoreTunnelEnv,
             composeProject: opts.composeProject,
             runCompose: opts.runCompose,
+            acquireRepoLock: opts.acquireRepoLock,
           }),
         )
         .finally(() => {
@@ -673,6 +735,10 @@ export function createUpdaterHttp(updater, token) {
             const applied = await outcome.done;
             if (applied && applied.ok === true) {
               sendJson(res, 200, { ok: true }, parsed.token);
+              return;
+            }
+            if (applied && applied.reason === "busy") {
+              sendJson(res, 409, { ok: false, reason: "busy" });
               return;
             }
             const reason = applied && applied.reason === "pull_failed" ? "pull_failed" : "compose_failed";
@@ -769,6 +835,8 @@ if (isDirectRun()) {
     restoreTunnelEnv,
     composeProject: () => readComposeProject(dockerText),
     runCompose: (argv) => runComposeTunnel(argv),
+    // run-update.sh and deploy.sh take this file too (UPDATER_LOCK_FILE overrides it there).
+    acquireRepoLock: (repoDir) => holdRepoLock(process.env.UPDATER_LOCK_FILE ?? join(repoDir, ".update.lock")),
     // The commit the running web container was built from (its BUILD_COMMIT). Async with a
     // timeout on both calls: the recheck skips a round while the last one is still running,
     // so one hung docker call must not stop it for good.

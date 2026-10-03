@@ -4,6 +4,9 @@ import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { hostname as machineHostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
+import { spawn as spawnChild } from "node:child_process";
+
+const spawnProbe = () => spawnChild("sh", ["-c", "command -v flock >/dev/null 2>&1"], { stdio: "ignore" });
 import { describe, expect, it } from "vitest";
 import { parseReleaseTag } from "../apps/web/lib/release-version.ts";
 import {
@@ -14,6 +17,7 @@ import {
   performTunnel,
   readComposeProject,
   readLimitedBody,
+  holdRepoLock,
   runComposeTunnel,
 } from "./server.mjs";
 
@@ -71,6 +75,7 @@ function make(opts = {}) {
     writeTunnelEnv: opts.writeTunnelEnv,
     composeProject: opts.composeProject,
     runCompose: opts.runCompose,
+    acquireRepoLock: opts.acquireRepoLock,
   });
   return { updater, dir };
 }
@@ -1612,6 +1617,125 @@ describe("performTunnel .env rollback", () => {
   });
 });
 
+describe("tunnel and the repo lock shared with deploy.sh / run-update.sh", () => {
+  it("answers busy without touching .env when a manual deploy holds the lock", async () => {
+    let wrote = false;
+    const result = await performTunnel(
+      { token: TUNNEL_TOKEN, hostname: "a.example.com" },
+      {
+        repoDir: "/repo",
+        acquireRepoLock: async () => null,
+        composeProject: async () => "scout",
+        writeTunnelEnv() {
+          wrote = true;
+          return { backup: null, installed: "" };
+        },
+        runCompose: async () => ({ code: 0, output: "" }),
+      },
+    );
+    expect(result).toEqual({ ok: false, reason: "busy" });
+    expect(wrote).toBe(false);
+  });
+
+  it("holds the lock for the whole write / compose / rollback and releases it once, also on failure", async () => {
+    for (const code of [0, 1]) {
+      const events = [];
+      await performTunnel(
+        { token: TUNNEL_TOKEN, hostname: "a.example.com" },
+        {
+          repoDir: "/repo",
+          acquireRepoLock: async (repoDir) => {
+            events.push(`lock ${repoDir}`);
+            return { release: () => events.push("release") };
+          },
+          composeProject: async () => "scout",
+          writeTunnelEnv() {
+            events.push("write");
+            return { backup: null, installed: "x" };
+          },
+          restoreTunnelEnv() {
+            events.push("restore");
+          },
+          runCompose: async () => {
+            events.push("compose");
+            return { code, output: "" };
+          },
+        },
+      );
+      expect(events).toEqual(code === 0 ? ["lock /repo", "write", "compose", "release"] : ["lock /repo", "write", "compose", "restore", "release"]);
+    }
+  });
+
+  it("returns 409 busy from POST /tunnel when the repo lock is taken", async () => {
+    const { updater } = make({
+      repoDir: "/repo",
+      acquireRepoLock: async () => null,
+      composeProject: async () => "scout",
+      writeTunnelEnv() {},
+      runCompose: async () => ({ code: 0, output: "" }),
+    });
+    await withServer(updater, "t0k3n", async (port) => {
+      const response = await call(port, { method: "POST", path: "/tunnel", token: "t0k3n", body: tunnelBody() });
+      expect(response.status).toBe(409);
+      expect(JSON.parse(response.body)).toEqual({ ok: false, reason: "busy" });
+    });
+  });
+
+  function fakeLockChild() {
+    const child = new EventEmitter();
+    child.stdout = new PassThrough();
+    child.stdin = new PassThrough();
+    child.stdinEnded = false;
+    child.stdin.on("finish", () => {
+      child.stdinEnded = true;
+    });
+    return child;
+  }
+
+  it("takes the lock through a shell that keeps it until its stdin closes", async () => {
+    const child = fakeLockChild();
+    let seen;
+    const pending = holdRepoLock("/repo/.update.lock", {
+      spawn(command, args, options) {
+        seen = { command, args, options };
+        return child;
+      },
+    });
+    child.stdout.write("locked\n");
+    const lock = await pending;
+    expect(seen.command).toBe("sh");
+    expect(seen.args.slice(-2)).toEqual(["sh", "/repo/.update.lock"]);
+    expect(seen.args[1]).toContain("flock -n 9");
+    expect(lock).not.toBeNull();
+    lock.release();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(child.stdinEnded).toBe(true);
+  });
+
+  it("reports the lock as taken when the shell exits before saying it holds it", async () => {
+    const child = fakeLockChild();
+    const pending = holdRepoLock("/repo/.update.lock", { spawn: () => child });
+    child.emit("close", 75);
+    expect(await pending).toBeNull();
+  });
+
+  it("really excludes a second holder where flock exists (Linux)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "repo-lock-"));
+    const lockFile = join(dir, ".update.lock");
+    const first = await holdRepoLock(lockFile);
+    expect(first).not.toBeNull();
+    const second = await holdRepoLock(lockFile);
+    const hasFlock = await new Promise((resolve) => {
+      const probe = spawnProbe();
+      probe.on("close", (code) => resolve(code === 0));
+    });
+    if (hasFlock) expect(second).toBeNull();
+    else expect(second).not.toBeNull();
+    second?.release();
+    first.release();
+  });
+});
+
 describe("tunnel compose runner", () => {
   it("reads the compose project from the same container label as an update", async () => {
     const calls = [];
@@ -1651,7 +1775,7 @@ describe("tunnel compose runner", () => {
     };
   }
 
-  it("spawns docker with stdin closed and stops it at 270 s, before the web's fetch gives up at 300 s", async () => {
+  it("spawns docker with stdin closed and stops it at 250 s, so the whole /tunnel answers before the web gives up at 290 s", async () => {
     const child = fakeComposeChild();
     const timers = fakeTimers();
     let seen;
@@ -1677,7 +1801,7 @@ describe("tunnel compose runner", () => {
     });
     // Node's fetch on the web side stops waiting for response headers after 300 s (undici
     // headersTimeout), whatever its AbortSignal says; the answer must come before that.
-    expect(timers.armed[0].ms).toBe(270_000);
+    expect(timers.armed[0].ms).toBe(250_000);
     child.stdout.write(`still pulling ${TUNNEL_TOKEN}\n`);
     timers.armed[0].fn();
     expect(child.killed).toEqual(["SIGTERM"]);
@@ -1692,7 +1816,7 @@ describe("tunnel compose runner", () => {
     expect(settled).toBe(false);
     child.emit("close", null);
     await expect(pending).resolves.toEqual({ code: 1, output: `still pulling ${TUNNEL_TOKEN}\n`, timedOut: true, pullFailure: false });
-    // 270 + 10 + 5 s worst case stays under the web's 290 s client timeout.
+    // 15 s project lookup + 250 + 10 + 5 s worst case stays under the web's 290 s client timeout.
     expect(timers.armed[2].ms).toBe(5_000);
   });
 

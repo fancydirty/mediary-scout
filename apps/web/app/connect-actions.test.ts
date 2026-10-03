@@ -270,7 +270,7 @@ describe("connectBindAction", () => {
     expect(await connectBindAction()).toEqual({
       ok: false,
       reason: "busy",
-      message: "更新助手正在忙（更新版本或另一次接入），等它结束再点「接入」。",
+      message: "更新助手正在忙（更新版本、部署或另一次接入），等它结束再点「接入」。",
     });
   });
 
@@ -340,6 +340,7 @@ describe("a credential Connect no longer accepts", () => {
   });
 
   it("is forgotten while checking an order, and the wizard is told to start over", async () => {
+    state.order = { orderId: "ord_1", checkoutUrl: "https://pay.example/ord_1" };
     vi.mocked(getConnectOrderStatus).mockResolvedValueOnce({ ok: false, reason: "unauthorized", message: "x" });
     const result = await connectOrderStatusAction("ord_1");
     expect(result).toMatchObject({ ok: false, unlinked: true });
@@ -357,6 +358,7 @@ describe("a credential Connect no longer accepts", () => {
   });
 
   it("leaves a newer credential alone when another tab linked while the order check was in flight", async () => {
+    state.order = { orderId: "ord_1", checkoutUrl: "https://pay.example/ord_1" };
     vi.mocked(getConnectOrderStatus).mockImplementationOnce(async () => {
       state.credential = "ic_newer";
       return { ok: false, reason: "unauthorized", message: "x" };
@@ -367,6 +369,7 @@ describe("a credential Connect no longer accepts", () => {
   });
 
   it("is kept when the order check failed for another reason, so polling can retry", async () => {
+    state.order = { orderId: "ord_1", checkoutUrl: "https://pay.example/ord_1" };
     vi.mocked(getConnectOrderStatus).mockResolvedValueOnce({ ok: false, reason: "unreachable", message: "x" });
     const result = await connectOrderStatusAction("ord_1");
     expect(result).toMatchObject({ ok: false });
@@ -437,10 +440,23 @@ describe("pending order", () => {
     expect(state.order).toBeNull();
   });
 
+  it("tells a page polling an order to stop once another tab disconnected", async () => {
+    state.credential = null as never;
+    const result = await connectOrderStatusAction("ord_1");
+    expect(result).toMatchObject({ ok: false, unlinked: true });
+    expect(getConnectOrderStatus).not.toHaveBeenCalled();
+  });
+
+  it("tells a page polling an order that is no longer the stored one to stop and re-read the account", async () => {
+    state.order = { orderId: "ord_other", checkoutUrl: "https://pay.example/ord_other" };
+    const result = await connectOrderStatusAction("ord_1");
+    expect(result).toMatchObject({ ok: false, stale: true });
+    expect(getConnectOrderStatus).not.toHaveBeenCalled();
+  });
+
   it("keeps a newer order another tab created while an older one settled", async () => {
     state.order = { orderId: "ord_new", checkoutUrl: "https://pay.example/ord_new" };
-    vi.mocked(getConnectOrderStatus).mockResolvedValueOnce({ ok: true, status: "closed" });
-    await connectOrderStatusAction("ord_old");
+    expect(await connectOrderStatusAction("ord_old")).toMatchObject({ ok: false, stale: true });
     expect(state.cleared).not.toContain("order");
   });
 

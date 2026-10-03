@@ -283,6 +283,18 @@ export function ConnectWizard(props: ConnectWizardProps) {
           setAccountUnavailable(false);
           setStep(1);
           setNotice({ text: result.message, tone: "danger" });
+        } else if (!result.ok && "stale" in result) {
+          // Another tab settled this order or started a newer one: stop here and show the
+          // account as it is now (read before clearing orderId, which re-runs this effect).
+          const accountResult = await connectAccountAction();
+          if (stopped) return;
+          settling = true;
+          setOrder(null);
+          if (accountResult.state === "linked") {
+            setAccount(accountResult.account);
+            setAccountUnavailable(false);
+            setStep(stepForAccount(accountResult.account, props.hasTunnelToken, props.boundHostname));
+          }
         } else if (!result.ok) {
           // Keep polling: a passing network error must not strand a paid order.
           setNotice({ text: result.message, tone: "danger" });

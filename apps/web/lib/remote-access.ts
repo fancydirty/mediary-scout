@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { hostname as containerHostname } from "node:os";
 import { getConnectBoundEnv, getConnectHostname, getConnectTunnelToken } from "./connect-link-store";
 export { remoteFirstSetupNotice, type LoginBootstrap } from "./remote-access-copy";
 
@@ -239,20 +240,23 @@ export function instanceTunnelToken(): string | undefined {
 }
 
 /**
- * Fingerprint of the tunnel env web is running with (token and hostname, normalized). A binding
- * made from the settings page records it, see `storedBindingIsCurrent`.
+ * Fingerprint of the web container and the tunnel env it runs with (token and hostname,
+ * normalized). A binding made from the settings page records it, see `storedBindingIsCurrent`.
+ * The container part is its hostname, which Docker sets to the container id: the same across a
+ * restart, new when the container is recreated.
  */
-export function instanceEnvFingerprint(): string {
+export function instanceEnvFingerprint(container: string = containerHostname()): string {
   const token = process.env.TUNNEL_TOKEN?.trim() ?? "";
   const hostname = process.env.MEDIARY_CONNECT_HOSTNAME?.trim().toLowerCase() ?? "";
-  return createHash("sha256").update(`${token}\n${hostname}`).digest("hex");
+  return createHash("sha256").update(`${container}\n${token}\n${hostname}`).digest("hex");
 }
 
 /**
- * A binding made from the settings page beats the env web is running with for as long as that
- * env is unchanged: 「接入」 rewrites .env and recreates only cloudflared, and restarting web
- * (crash, host reboot) keeps the env its container was created with. Only recreating web from
- * .env (an update, connect.sh, docker compose up) changes its env, and then the env wins.
+ * A binding made from the settings page beats the env web is running with for as long as web is
+ * the same container with the same env: 「接入」 rewrites .env and recreates only cloudflared, and
+ * restarting web (crash, host reboot) keeps the container and the env it was created with.
+ * Recreating web (an update, connect.sh, docker compose up) gives a new container, reading .env
+ * afresh, and then the env wins — even when it happens to equal the env at binding time.
  */
 async function storedBindingIsCurrent(): Promise<boolean> {
   const boundEnv = await getConnectBoundEnv();

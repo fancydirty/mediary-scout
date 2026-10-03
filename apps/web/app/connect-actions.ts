@@ -222,7 +222,11 @@ export async function connectOrderStatusAction(orderId: string) {
   const refused = await commonGuard();
   if (refused) return { ok: false as const, message: refused.message };
   const credential = await getConnectInstanceCredential();
-  if (!credential) return { ok: false as const, message: "请先连接 Mediary Connect。" };
+  // Another tab disconnected, or moved on to another order: this page should stop polling.
+  if (!credential) return { ok: false as const, unlinked: true as const, message: "Mediary Connect 已断开。" };
+  if ((await getConnectPendingOrder())?.orderId !== orderId) {
+    return { ok: false as const, stale: true as const, message: "" };
+  }
   const result = await getConnectOrderStatus(credential, orderId);
   if (!result.ok) {
     if (result.reason === "unauthorized") {
@@ -312,8 +316,8 @@ export async function connectBindAction(): Promise<ConnectBindResult> {
     };
   }
   if (started.reason === "busy") {
-    // The updater runs updates and 接入 through one lock.
-    return { ok: false, reason: "busy", message: "更新助手正在忙（更新版本或另一次接入），等它结束再点「接入」。" };
+    // The updater runs updates and 接入 through one lock, which a manual deploy.sh also takes.
+    return { ok: false, reason: "busy", message: "更新助手正在忙（更新版本、部署或另一次接入），等它结束再点「接入」。" };
   }
   if (started.reason === "pull_failed") {
     return { ok: false, reason: "pull_failed", message: "拉取隧道镜像失败。可以在 .env 里加 DOCKER_MIRROR=docker.1ms.run 后再试。" };
