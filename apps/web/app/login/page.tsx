@@ -34,11 +34,17 @@ export default function LoginPage() {
     remote?: boolean;
   } | null>(null);
 
+  // 读完 bootstrap 之前不渲染表单：否则外网访客（以及服务端渲染出的首屏）会先看到一个
+  // 登录/设密码表单，等状态回来才换成「回局域网设置」的说明。读失败时照旧给登录表单——
+  // 第一次设置在服务端只认局域网，外网提交会被拒并给出同样的说明。
+  const [bootstrapLoaded, setBootstrapLoaded] = useState(false);
+
   useEffect(() => {
     fetch("/api/auth/bootstrap")
       .then((res) => res.json())
       .then((data) => setBootstrap(data))
-      .catch(() => setBootstrap(null));
+      .catch(() => setBootstrap(null))
+      .finally(() => setBootstrapLoaded(true));
   }, []);
 
   const claiming = bootstrap?.needsClaim === true;
@@ -124,6 +130,16 @@ export default function LoginPage() {
         : mode === "login"
           ? "登录"
           : "创建并登录";
+
+  if (!bootstrapLoaded) {
+    return (
+      <main style={{ maxWidth: 360, margin: "14vh auto", padding: "0 20px" }}>
+        <div className="panel" style={{ textAlign: "center" }} aria-busy="true">
+          <LoaderCircle size={16} className="spin" aria-label="加载中" />
+        </div>
+      </main>
+    );
+  }
 
   const lanOnly = remoteFirstSetupNotice(bootstrap);
   if (lanOnly) {
