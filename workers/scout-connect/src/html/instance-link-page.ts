@@ -57,8 +57,10 @@ btn.addEventListener("click",async()=>{
   try{
     const t=new URLSearchParams(location.search).get("t")||"";
     const res=await fetch("/link",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({t})});
-    if(res.ok){document.querySelector("h1").textContent="连接已确认";btn.remove();msg.textContent="已确认，回到实例页面即可。";msg.hidden=false;return;}
-    msg.textContent=res.status===410?"链接已失效，请回到实例页面重新发起。":res.status===409?"已确认，回到实例页面即可。":"连接没有成功，请稍后再试。";
+    // 409: confirmed already (another click, or a lost response), same end state as 200.
+    if(res.ok||res.status===409){document.querySelector("h1").textContent="连接已确认";btn.remove();msg.textContent="已确认，回到实例页面即可。";msg.hidden=false;return;}
+    if(res.status===410){btn.remove();msg.textContent="链接已失效，请回到实例页面重新发起。";msg.hidden=false;return;}
+    msg.textContent="连接没有成功，请稍后再试。";
   }catch{msg.textContent="网络错误，请稍后重试。";}
   msg.hidden=false;btn.disabled=false;
 });
