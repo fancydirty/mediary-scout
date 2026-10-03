@@ -16,6 +16,7 @@ import {
   type ConnectAccountView,
 } from "../../app/connect-actions";
 import type { TestRemoteAccessResult } from "../../app/actions";
+import { copyText } from "../../lib/copy-text";
 
 export type ConnectWizardPending = { email: string; verifyCode: string; expiresAt: string };
 
@@ -47,12 +48,18 @@ export function connectSlugReasonText(reason: string | undefined): string {
   }
 }
 
+/** Where a linked instance continues, from the account it just read. An account that already
+ *  paid and picked a name on the website goes straight to connecting. */
+export function stepForAccount(account: ConnectAccountView, hasTunnelToken: boolean): Step {
+  if (!account.active) return 3;
+  if (!account.endpoint) return 4;
+  return hasTunnelToken ? 3 : 5;
+}
+
 function initialStep(props: ConnectWizardProps): Step {
   if (!props.linked) return props.pending ? 2 : 1;
-  if (!props.account || !props.account.active) return 3;
-  if (!props.account.endpoint) return 4;
-  if (!props.hasTunnelToken) return 5;
-  return 3;
+  if (!props.account) return 3;
+  return stepForAccount(props.account, props.hasTunnelToken);
 }
 
 function friendlyError(error: unknown): string {
@@ -109,18 +116,20 @@ export function ConnectWizard(props: ConnectWizardProps) {
             if (accountResult.state === "linked") {
               setAccount(accountResult.account);
               setAccountUnavailable(false);
+              setStep(stepForAccount(accountResult.account, props.hasTunnelToken));
             } else if (accountResult.state === "unlinked") {
               setLinked(false);
               setStep(1);
               setAccountUnavailable(false);
             } else {
               setAccountUnavailable(true);
+              setStep(3);
             }
           } catch (error) {
             setAccountUnavailable(true);
+            setStep(3);
             setNotice({ text: friendlyError(error), tone: "danger" });
           }
-          setStep(3);
         } else if (result.state === "expired") {
           setPending(null);
           setStep(1);
@@ -143,7 +152,10 @@ export function ConnectWizard(props: ConnectWizardProps) {
   useEffect(() => {
     if (!orderId || step !== 3) return;
     let stopped = false;
+    // Set once the order is fulfilled, so the next interval tick does not handle it twice.
+    let settling = false;
     const poll = async () => {
+      if (settling) return;
       try {
         const result = await connectOrderStatusAction(orderId);
         if (stopped) return;
@@ -152,9 +164,13 @@ export function ConnectWizard(props: ConnectWizardProps) {
           return;
         }
         if (result.status === "fulfilled") {
-          setOrderId(null);
+          settling = true;
+          // Read the account before clearing orderId: clearing it re-runs this effect, and the
+          // cleanup's `stopped` would drop every update below (the wizard then sat on step 3).
           const accountResult = await connectAccountAction();
-          if (!stopped && accountResult.state === "linked") {
+          if (stopped) return;
+          setOrderId(null);
+          if (accountResult.state === "linked") {
             setAccount(accountResult.account);
             setAccountUnavailable(false);
             if (props.hasTunnelToken) {
@@ -167,13 +183,13 @@ export function ConnectWizard(props: ConnectWizardProps) {
               setStep(accountResult.account.endpoint ? 5 : 4);
               setNotice({ text: "付款已确认。", tone: "success" });
             }
-          } else if (!stopped && accountResult.state === "unlinked") {
+          } else if (accountResult.state === "unlinked") {
             setLinked(false);
             setAccount(null);
             setAccountUnavailable(false);
             setStep(1);
             setNotice({ text: "Mediary Connect 连接已失效，请重新连接。", tone: "danger" });
-          } else if (!stopped) {
+          } else {
             setAccountUnavailable(true);
             setNotice({ text: "暂时读不到 Mediary Connect 账号信息。", tone: "danger" });
           }
@@ -252,7 +268,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
         }
         setAccount(result.account);
         setAccountUnavailable(false);
-        setStep(!result.account.active ? 3 : !result.account.endpoint ? 4 : props.hasTunnelToken ? 3 : 5);
+        setStep(stepForAccount(result.account, props.hasTunnelToken));
       } catch (error) {
         setAccountUnavailable(true);
         setNotice({ text: friendlyError(error), tone: "danger" });
@@ -386,7 +402,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
           setTunnelStarting(false);
           if (result.reason === "no_updater") {
             setFallbackCommand(result.command ?? null);
-            setNotice({ text: "这台机器的更新助手还不支持一键接入（或没有装）。在部署目录（有 docker-compose.yml 的那个文件夹）运行下面这条命令完成接入，15 分钟内有效：", tone: "danger" });
+            setNotice(null);
           } else {
             setNotice({ text: result.message || (result.reason === "password_required" ? "请先设置访问密码。" : "接入没有完成。"), tone: "danger" });
           }
@@ -462,7 +478,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
           <div style={{ display: "grid", gap: 8 }}>
             {tiers.map((tier) => (
               <div key={tier.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, border: "1px solid var(--border)", borderRadius: 8, padding: "10px 12px" }}>
-                <span><strong>{tier.label}</strong><span className="panel-note"> · {tier.months} 个月 · ¥{tier.price}</span>{tier.featured ? <span className="hub-badge tone-green" style={{ marginLeft: 8 }}>推荐</span> : null}</span>
+                <span><strong>{tier.label}</strong><span className="panel-note"> · {tier.months} 个月 · ¥{tier.price.replace(/\.00$/, "")}</span>{tier.featured ? <span className="hub-badge tone-green" style={{ marginLeft: 8 }}>推荐</span> : null}</span>
                 <button className="primary-button" type="button" onClick={() => buy(tier.id)} disabled={busy || !account?.checkoutOpen}>微信支付</button>
               </div>
             ))}
@@ -506,7 +522,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
             </div>
           ) : null}
           <button className="primary-button" type="button" onClick={bind} disabled={busy || tunnelStarting || (!props.multiUser && passwordSet !== true)}>{tunnelStarting ? "正在启动隧道…" : props.compact ? "重新接入" : "接入"}</button>
-          {fallbackCommand ? <div style={{ marginTop: 12 }}><p className="panel-note">这台机器的更新助手还不支持一键接入（或没有装）。在部署目录（有 docker-compose.yml 的那个文件夹）运行下面这条命令完成接入，15 分钟内有效：</p><code style={{ display: "block", wordBreak: "break-all", padding: 10, borderRadius: 6, background: "var(--surface-muted, #f4f4f4)" }}>{fallbackCommand}</code><button type="button" className="secondary-button" style={{ marginTop: 8 }} onClick={() => void navigator.clipboard?.writeText(fallbackCommand)}>复制命令</button></div> : null}
+          {fallbackCommand ? <div style={{ marginTop: 12 }}><p className="panel-note">这台机器的更新助手还不支持一键接入（或没有装）。在部署目录（有 docker-compose.yml 的那个文件夹）运行下面这条命令完成接入，15 分钟内有效：</p><pre className="update-cmd" style={{ whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{fallbackCommand}</pre><button type="button" className="secondary-button" style={{ marginTop: 8 }} onClick={() => void copyText(fallbackCommand).then((ok) => setNotice(ok ? { text: "已复制。", tone: "success" } : { text: "复制没成功，请手动选中命令复制。", tone: "danger" }))}>复制命令</button></div> : null}
         </div>
       ) : null}
 
