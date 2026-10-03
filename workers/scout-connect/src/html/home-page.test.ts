@@ -69,6 +69,23 @@ describe("home page(apex 落地页)", () => {
     expect(html).toContain("绝不猜");
   });
 
+  it("部署提示词与现在的装法一致(端口、配置入口、国内镜像、局域网先设密码)", () => {
+    const html = homePage();
+    // compose 默认把 web 映射到宿主 3000(WEB_PORT 可改);3300 只是作者自己实例的改法。
+    expect(html).not.toContain(":3300");
+    expect(html).toContain(":3000");
+    // 网盘扫码、AI 模型都在网页设置里配;TMDB 默认走代理,国内填自己的 token 反而容易连不上。
+    expect(html).not.toContain("TMDB_READ_TOKEN");
+    expect(html).toContain("设置页");
+    // Docker Hub 在大陆常年拉不动,首次 up 之前要能设镜像源。
+    expect(html).toContain("DOCKER_MIRROR");
+    // 新装的部署目录可能还没有 .env(connect.sh 会自己建),不能要求它存在。
+    expect(html).not.toContain("docker-compose.yml 和 .env");
+    // 第一次设访问密码只能在局域网里做(外网打开没设密码的实例只有提示)。
+    expect(html).toContain("/login");
+    expect(html).toContain("局域网");
+  });
+
   it("接入命令与 connect.sh 的真实用法一致", () => {
     const html = homePage();
     expect(html).toContain("connect.sh");

@@ -53,6 +53,16 @@ describe("GET /connect.sh", () => {
     expect(body.indexOf("hostname 形状不合法")).toBeLessThan(body.indexOf('cp -p "$ENV_FILE"'));
   });
 
+  it("success message sends a first-time owner to the LAN to set the access password", async () => {
+    const res = await handleRequest(new Request(`${BASE}/connect.sh`), deps());
+    const body = await res.text();
+    // A remote first open of an instance without a password only shows a notice now;
+    // the first password can only be set from the LAN.
+    expect(body).not.toContain("首次会要求设置");
+    expect(body).toContain("局域网");
+    expect(body).toContain("/login");
+  });
+
   it("is servable over the beta host too (curl | sh 从任一入口)", async () => {
     const res = await handleRequest(new Request("https://beta.mediaryconnect.app/connect.sh"), deps());
     expect(res.status).toBe(200);

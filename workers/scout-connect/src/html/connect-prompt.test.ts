@@ -54,4 +54,16 @@ describe("buildConnectPrompt", () => {
   it("rejects a non-URL baseUrl", () => {
     expect(() => buildConnectPrompt({ ...OK, baseUrl: "not a url" })).toThrow();
   });
+
+  it("部署目录就是那个 git clone:不叫 AI 回避它,而是只跑命令、不改源码", () => {
+    const out = buildConnectPrompt(OK);
+    expect(out).not.toContain("不要碰任何 git 源码克隆");
+    expect(out).toContain("不改源码");
+  });
+
+  it("接通前先让用户在局域网设好访问密码(第一次设置只能在局域网里做)", () => {
+    const out = buildConnectPrompt(OK);
+    expect(out).toContain("局域网");
+    expect(out).toContain("/login");
+  });
 });

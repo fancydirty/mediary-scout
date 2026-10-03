@@ -208,7 +208,8 @@ while [ "$(date +%s)" -lt "$DEADLINE" ]; do
     *'"status":"ok"'*|*'"status": "ok"'*)
       echo ""
       echo "✅ 完成!你的实例已可远程访问:https://$HOSTNAME"
-      echo "   浏览器打开它,首次会要求设置/输入访问密码。"
+      echo "   浏览器打开它要输入这台实例的访问密码。还没设过的话,先在局域网里打开"
+      echo "   http://<这台机器的局域网IP>:<端口>/login(端口默认 3000)设一个 —— 第一次设置只能在局域网里做。"
       exit 0
       ;;
   esac

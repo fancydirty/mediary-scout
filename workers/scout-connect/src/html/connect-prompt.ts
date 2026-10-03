@@ -47,19 +47,24 @@ export function buildConnectPrompt(input: {
 
 1. 先问我:Mediary Scout 部署在哪台机器?怎么 SSH 过去?
    (不确定就问;连不上就停下来问我——绝不猜地址乱试。)
-2. SSH 到那台机器,\`docker ps\` 找到 web 容器,
-   \`docker inspect\` 拿到它的 compose 部署目录,\`cd\` 进去。
-3. 在那个部署目录执行这一条(脚本会凭码换取隧道凭据、原子写入 .env、
+2. 再问我这台实例设过访问密码没有。没设的话,让我先在局域网里打开
+   http://<局域网IP>:<端口>/login(端口默认 3000)自己设一个——第一次设置
+   只能在局域网里做,你不要替我设。等我回复设好了再继续。
+3. SSH 到那台机器,\`docker ps\` 找到 web 容器,
+   \`docker inspect\` 拿到它的 compose 部署目录(通常就是当初 git clone 的目录),
+   \`cd\` 进去,确认里面有 docker-compose.yml。
+4. 在那个部署目录执行这一条(脚本会凭码换取隧道凭据、原子写入 .env、
    带 --profile tunnel 起 cloudflared、并轮询到隧道真通才报成功):
    curl -fsSL ${url} | sh -s -- ${input.claimCode}
-4. 脚本轮询到 https://${input.hostname} 就绪才算成功;
+5. 脚本轮询到 https://${input.hostname} 就绪才算成功;
    若失败,它会打印分级诊断,请把输出原样贴回给我,我们一起看。
 
 安全红线:
 - 取件码 15 分钟内有效,只用于换取隧道凭据;隧道 token 是机密,
   connect.sh 只把它写进那台机器的 .env,绝不打印、不提交 git、不贴日志。
-- 全程只在部署目录里操作,不要碰任何 git 源码克隆(那是源码,不是部署)。
+- 只在部署目录里跑上面这条命令:不改源码、不 git commit / push、
+  不删容器或卷,也不要手动改 .env 里的隧道字段。
 
 完成后用简短中文告诉我:隧道是否连通、https://${input.hostname} 能否打开
-(首次打开会要求设置访问密码,这就是远程访问的门禁)。`;
+(从外网打开要输入访问密码,这就是远程访问的门禁)。`;
 }

@@ -2,9 +2,9 @@
 
 ## 定价
 
-Last updated: 2026-10-02
+Last updated: 2026-10-03
 
-最后更新:2026-10-02
+最后更新:2026-10-03
 
 ## Prepaid time, never auto-charged
 
@@ -78,13 +78,13 @@ Mediary Connect is an **add-on** to Mediary Scout, not a standalone product. It 
 
 - It does **not** host an instance for you — you need your own always-on machine (NAS, router-class box, mini PC, an old laptop all work).
 - It does **not** search or download anything on your behalf; your own Scout does that.
-- It does **not** hold your instance's access password — that gate is Scout's own, set by you on first open, and we keep no copy.
+- It does **not** hold your instance's access password — that gate is Scout's own, set by you from your home network, and we keep no copy.
 
 Mediary Connect 是 Mediary Scout 的**附加服务**,不是独立产品。它需要一个已经在运行的 Scout 实例才有东西可连。
 
 - **不**为你托管实例 —— 你需要自己有一台常开的机器(NAS、软路由、迷你主机、旧笔记本都行)。
 - **不**代你搜索或下载任何东西,那是你自己的 Scout 在做。
-- **不**持有你实例的访问密码 —— 那道门禁是 Scout 自己的,首次打开时由你设定,我们这边没有副本。
+- **不**持有你实例的访问密码 —— 那道门禁是 Scout 自己的,由你在家里的局域网里设定,我们这边没有副本。
 
 ## Changing tiers, and price changes
 

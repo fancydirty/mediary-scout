@@ -2,9 +2,9 @@
 
 ## 服务条款
 
-Last updated: 2026-10-02
+Last updated: 2026-10-03
 
-最后更新:2026-10-02
+最后更新:2026-10-03
 
 ## What the service is
 
@@ -22,12 +22,12 @@ Mediary Connect 为自托管的 Mediary Scout 实例提供远程访问通道:一
 
 ## 你的责任
 
-- **You must enable the access password.** Your instance is exposed on the public internet via the dedicated hostname; you must enable the access password in your instance settings (it is required on first remote open). Data leaks from an ungated instance are on you.
+- **You must set the access password.** Your instance is exposed on the public internet via the dedicated hostname, and the access password is its only gate. Set it from your home network first (open your instance's LAN address, e.g. `http://192.168.1.10:3000/login`): the first password can only be set on the LAN, and a remote visitor to an instance without one only sees a notice. Data leaks from an ungated instance are on you.
 - **Lawful use.** You are solely responsible for the legality of content you acquire or transmit through your instance. We do not and cannot inspect tunnel traffic.
 - **Slug.** Do not use a name that infringes trademarks, impersonates others, or contains offensive words. Violations may be disabled, and we reserve the slug from reassignment.
 - Do not use the tunnel for anything other than your Mediary Scout instance (the tunnel target is fixed to your instance's web service).
 
-- **必须启用访问密码**:你的实例经专属域名暴露在公网,必须在实例设置中启用访问密码(首次远程打开时会强制要求)。因未设门禁导致的数据泄露由你自行承担。
+- **必须设置访问密码**:你的实例经专属域名暴露在公网,访问密码是它唯一的门禁。请先在家里的局域网设好(打开实例的局域网地址,例如 `http://192.168.1.10:3000/login`):第一次设置只能在局域网里完成,外网打开没设密码的实例只会看到提示。因未设门禁导致的数据泄露由你自行承担。
 - **合法使用**:你通过实例获取与传输的内容,由你对其合法性负全责。本服务不审查也无法审查隧道流量。
 - **域名前缀(slug)**:不得使用侵犯他人商标、冒充他人或含有攻击性词汇的名字。违者我们有权停用并保留该 slug 不再分配。
 - 不得将隧道用于 Mediary Scout 实例之外的用途(隧道指向固定为你实例的 web 服务)。

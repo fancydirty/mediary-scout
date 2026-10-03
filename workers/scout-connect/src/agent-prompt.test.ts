@@ -119,6 +119,19 @@ describe("buildAgentPrompt", () => {
     expect(out).toContain("设置访问密码");
   });
 
+  it("sends the first-time password to the LAN and does not steer the agent away from the deploy dir", () => {
+    const out = buildAgentPrompt(INPUT);
+    // The first access password can only be set from the LAN now; a remote first
+    // open shows a notice instead of a set-password form.
+    expect(out).toContain("局域网");
+    expect(out).toContain("/login");
+    // The compose deploy dir IS the git clone in a standard install.
+    expect(out).not.toContain("不要碰任何 git 源码克隆");
+    const manual = buildAgentPromptOrManual({ hostname: "h.example.com", tunnelToken: "a\nb" });
+    expect(manual).not.toContain("首次打开时设置");
+    expect(manual).toContain("局域网");
+  });
+
   it("halts ONLY when the app is reachable with no login page at all", () => {
     const out = buildAgentPrompt(INPUT);
     // The old halt condition fired on the now-normal success path (app

@@ -208,10 +208,21 @@ describe("合规页与 Waffo 支付现实的一致性", () => {
     expect(en).toContain("when you claim your hostname");
   });
 
-  it("所有本轮修改页的 Last updated 都是切换日期", () => {
+  it("所有本轮修改页的 Last updated 都是切换日期(terms / pricing 10-03 又改过访问密码的说法)", () => {
+    const LATER: Record<string, string> = { terms: "2026-10-03", pricing: "2026-10-03" };
     for (const key of ALL) {
-      expect(compliancePage(key, "en")).toContain("Last updated: 2026-10-02");
-      expect(compliancePage(key, "zh")).toContain("最后更新:2026-10-02");
+      const date = LATER[key] ?? "2026-10-02";
+      expect(compliancePage(key, "en")).toContain(`Last updated: ${date}`);
+      expect(compliancePage(key, "zh")).toContain(`最后更新:${date}`);
+    }
+  });
+
+  it("访问密码的说法与实例行为一致:第一次设置只能在局域网里做", () => {
+    for (const key of ["terms", "pricing"] as const) {
+      const md = COMPLIANCE_MARKDOWN[key];
+      expect(md, key).not.toContain("首次远程打开时会强制要求");
+      expect(md, key).not.toContain("required on first remote open");
+      expect(md, key).toContain("局域网");
     }
   });
 });

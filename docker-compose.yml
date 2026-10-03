@@ -157,8 +157,9 @@ services:
   #      NOT localhost), and copy the connector token.
   #   2. Put TUNNEL_TOKEN=<token> in .env  (compose reads .env for interpolation).
   #   3. docker compose --profile tunnel up -d
-  #   4. ⚠️ Gate the hostname: set an access password in 设置 → 账号 (remote requests
-  #      then require login while the LAN stays open), or put Cloudflare Access in front.
+  #   4. ⚠️ Gate the hostname: open http://<host>:3000/login on the LAN and set an access
+  #      password (the first one can only be set from the LAN; remote requests then require
+  #      login while the LAN stays open), or put Cloudflare Access in front.
   #      See docs/deploy.md → 「必须有门禁」. Never expose the hostname unless at
   #      least one of those two gates is in place.
   # See docs/deploy.md → 「方式二:Cloudflare Tunnel」 for the full walkthrough.

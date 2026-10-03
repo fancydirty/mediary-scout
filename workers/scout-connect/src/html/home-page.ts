@@ -538,24 +538,27 @@ ${BRAND_CSS}
         <div class="ph"><span>① 只装 Scout(还没买 Connect)</span></div>
 <pre>你在我的电脑上。我要在一台机器上部署 Mediary Scout(自托管媒体获取 agent)。
 
-0. 先问我:这台机器是本机还是远程?远程的话要 SSH 目标(主机名/IP/端口/用户)。
+0. 先问我:装在本机还是远程机器?远程的话要 SSH 目标(主机名/IP/端口/用户)。
    连不上就停下问我,<b>绝不猜地址乱试</b>。
 1. 确认 docker 与 docker compose 可用:\`docker version &amp;&amp; docker compose version\`。
    缺就先装(问我操作系统,不要自作主张换包管理器)。
 2. 选一个<b>数据盘</b>目录(不要装在系统盘的临时目录),
    \`git clone https://github.com/fancydirty/mediary-scout\` 并 cd 进去。
-3. \`cp .env.example .env\`,然后<b>逐项问我</b>要这些值,不要编造、不要留占位符:
-   - 网盘凭据(115/夸克/光鸭/123/天翼 任选其一起步)
-   - LLM:base URL + API key + 模型名(任意 OpenAI 兼容服务)
-   - TMDB_READ_TOKEN(没有就告诉我去哪申请)
+3. 大陆网络下 Docker Hub 常年拉不动:首次启动<b>之前</b>在这个目录的 .env 里加一行
+   \`DOCKER_MIRROR=docker.1ms.run\`(拉不动再换 dockerproxy.net 或 docker.m.daocloud.io)。
+   境外网络不用设。除此之外不需要往 .env 里写任何东西。
 4. \`docker compose up -d\`(首次构建要几分钟)。
 5. <b>验证(缺一不可)</b>:
    - \`docker compose ps\` 所有服务 running/healthy
-   - \`curl -fsS http://localhost:3300/api/health\` 返回 status ok
-     (这条走真实 DB 读路径,DB 没起来会 503)
+   - \`curl -fsS http://localhost:3000/api/health\` 返回 status ok
+     (端口默认 3000,.env 里设过 WEB_PORT 就用那个;这条走真实 DB 读路径,DB 没起来会 503)
    任一不过就<b>视为部署失败</b>,不要跟我说「装好了」。
-6. 用浏览器打开 \`http://&lt;这台机器的局域网IP&gt;:3300\`,
-   首次进入会让设置访问密码 —— 提醒我自己设,你不要替我设。
+6. 告诉我用浏览器打开 \`http://&lt;这台机器的局域网IP&gt;:3000\`,在设置页里
+   连网盘(115 / 夸克 / 123 / 天翼 扫码,光鸭粘 token)、填 AI 模型(任意 OpenAI 兼容接口)。
+   TMDB 元数据默认走作者的代理,开箱即用,不用问我要 token。
+   网盘和模型的凭据由我自己在页面里填,你不要向我索要,也不要写进任何文件。
+7. 以后要远程访问的话,访问密码由我自己在局域网里打开
+   \`http://&lt;局域网IP&gt;:3000/login\` 设置,你不要替我设。
 
 任何一步失败:<b>立即停止</b>,把完整日志给我。
 不做任何破坏性操作:不 force push、不删容器/卷、不 \`docker system prune\`、
@@ -566,21 +569,24 @@ ${BRAND_CSS}
 <pre>你在我的电脑上。Mediary Scout 已经在另一台机器上跑着了,
 我要给它接上 Mediary Connect(远程访问隧道)。取件码:&lt;粘贴你的取件码&gt;
 
-0. 先定位部署机:我平时通过 http://&lt;局域网IP&gt;:3300 访问它。
+0. 先定位部署机:我平时在局域网里通过 http://&lt;局域网IP&gt;:&lt;端口&gt;(默认 3000)访问它。
    从这个地址推出 SSH 目标,端口和用户不确定就问我;连不上停下问我。
-1. 在部署机上 \`docker ps\` 找到 Mediary Scout 的 web 容器。
-2. \`docker inspect &lt;容器&gt; --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}'\`
-   拿到部署目录并 cd 进去。<b>确认该目录下有 docker-compose.yml 和 .env</b>,
+1. 先问我这台实例设过访问密码没有。没设的话,让我现在在局域网里打开
+   http://&lt;局域网IP&gt;:&lt;端口&gt;/login 自己设一个(第一次设置只能在局域网里做,
+   你不要替我设),等我回复设好了再继续。
+2. 在部署机上 \`docker ps\` 找到 Mediary Scout 的 web 容器。
+3. \`docker inspect &lt;容器&gt; --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}'\`
+   拿到部署目录并 cd 进去。<b>确认该目录下有 docker-compose.yml</b>(没有 .env 没关系,脚本会建),
    不是就停下问我(别在错的目录里写文件)。
-3. 在这个目录下跑:
+4. 在这个目录下跑:
    \`curl -fsSL https://mediaryconnect.app/connect.sh | sh -s -- &lt;取件码&gt;\`
    (脚本会用取件码换隧道凭据、原子写入 .env、用 --profile tunnel 起 cloudflared)
    取件码 <b>15 分钟有效、用完即弃</b>;报「已过期」就回控制台重新生成一个给我。
-4. <b>验证(缺一不可)</b>:
+5. <b>验证(缺一不可)</b>:
    - \`docker compose ps\` 里 cloudflared 已 running
    - \`curl -fsS https://&lt;我的名字&gt;.mediaryconnect.app/api/health\` 返回 status ok
    脚本自己会轮询到隧道真通才报成功;它说失败就是失败,不要替它下结论。
-5. 顺手确认原有服务没被碰坏:\`curl -fsS http://localhost:3300/api/health\` 仍然 ok。
+6. 顺手确认原有服务没被碰坏:在部署机上 \`curl -fsS http://localhost:&lt;端口&gt;/api/health\` 仍然 ok。
 
 任何一步失败:<b>立即停止</b>并把完整日志给我。
 特别注意:<b>不要手动改 .env 里的隧道字段</b>(脚本负责),
@@ -591,20 +597,21 @@ ${BRAND_CSS}
 <pre>你在我的电脑上。我要在一台机器上从零装好 Mediary Scout,
 再接上 Mediary Connect 远程访问。取件码:&lt;粘贴你的取件码&gt;
 
-<b>顺序很重要:Scout 必须先在局域网里验证通过,才能接隧道。</b>
+<b>顺序很重要:Scout 必须先在局域网里验证通过、设好访问密码,才能接隧道。</b>
 先做完 A 段并让我确认,再做 B 段。
 
 ── A 段:装 Scout ──
 0. 先问我:本机还是远程?远程要 SSH 目标。连不上停下问我,绝不猜。
 1. \`docker version &amp;&amp; docker compose version\`,缺就先装(问我操作系统)。
 2. 选数据盘目录,\`git clone https://github.com/fancydirty/mediary-scout\`,cd 进去。
-3. \`cp .env.example .env\`,逐项问我要:网盘凭据、LLM base URL/key/模型、
-   TMDB_READ_TOKEN。<b>不要编造任何值</b>。
+3. 大陆网络:首次启动前在 .env 里加一行 \`DOCKER_MIRROR=docker.1ms.run\`
+   (拉不动再换别的镜像源);境外网络不用设。
 4. \`docker compose up -d\`。
 5. 验证:\`docker compose ps\` 全部 running/healthy
-   且 \`curl -fsS http://localhost:3300/api/health\` 返回 ok。
-6. 让我用局域网 IP 打开一次、设好访问密码,<b>等我回复确认后再继续</b>。
-   (访问密码是我自己设的,你不要替我设 —— 它是我实例的唯一门禁)
+   且 \`curl -fsS http://localhost:3000/api/health\` 返回 ok(设过 WEB_PORT 就用那个端口)。
+6. 让我在局域网里打开 \`http://&lt;局域网IP&gt;:3000/login\` 自己设访问密码,
+   再到设置页连网盘、填 AI 模型。<b>等我回复确认后再继续</b>。
+   (访问密码和各种凭据都由我自己在页面里填,你不要替我设,也不要向我索要)
 
 ── B 段:接 Connect ──
 7. 仍在同一目录下:
@@ -612,7 +619,7 @@ ${BRAND_CSS}
    取件码 15 分钟有效;过期就让我回控制台重新生成。
 8. 验证:\`docker compose ps\` 里 cloudflared running,
    且 \`curl -fsS https://&lt;我的名字&gt;.mediaryconnect.app/api/health\` 返回 ok。
-9. 复核局域网访问没被影响:\`curl -fsS http://localhost:3300/api/health\` 仍 ok。
+9. 复核局域网访问没被影响:\`curl -fsS http://localhost:3000/api/health\` 仍 ok。
 
 任何一步失败:<b>立即停止</b>,把完整日志给我,不要绕过。
 不做破坏性操作:不 force push、不删容器/卷、不 prune、

@@ -268,7 +268,7 @@ Mediary Scout 默认单用户、无登录。公网入口必须挡住,二选一:
 
 **方案 A(推荐):在应用里设访问密码**
 
-设置 → 账号 → 设置访问密码。设好之后:
+在**局域网**里打开 `http://<主机IP>:3000/login`,设置访问密码。第一次设置只能在局域网里做:外网打开还没设密码的实例只会看到一段提示,没人能抢先替你设。之后要改密码:单用户在「设置 → 远程访问」,多用户在「设置 → 账号 → 修改密码」。设好之后:
 
 | 来源 | 行为 |
 |---|---|
@@ -355,17 +355,22 @@ d. 登录身份默认走 One-time PIN(邮箱一次性验证码);若登录页提�
 完成后用简短中文汇报:隧道是否 Registered、Access 是否配置、面板是否(由用户确认)能进。
 ```
 
-### 方式三:Mediary Connect（受邀）
+### 方式三:Mediary Connect（付费托管隧道）
 
-若你收到作者的 Mediary Connect 邀请链接（`https://mediaryconnect.app/i/...`）:
+不想自己买域名、配 Cloudflare 的话,[Mediary Connect](https://mediaryconnect.app) 给你一个 `https://<你选的名字>.mediaryconnect.app`:
 
-1. 打开链接，按页显示一次连接信息（含 `TUNNEL_TOKEN`）。
-2. 写入实例 `.env` 的 `TUNNEL_TOKEN=...`（可复制页上的 Agent 提示词交给 coding agent 代配）。
-3. `docker compose --profile tunnel up -d`
-4. 浏览器打开页上的 `https://<slug>.mediaryconnect.app`，完成 Cloudflare Access 邮箱验证。
+1. **先在局域网设好访问密码**:打开 `http://<主机IP>:3000/login` 设一个。它是远程访问唯一的门禁;第一次设置只能在局域网里做。
+2. 在 mediaryconnect.app 用邮箱登录 → 控制台选时长(微信支付)→ 选一个名字。
+3. 控制台点「生成取件码」,然后在部署目录(`docker-compose.yml` 所在的目录)跑:
 
-Public Hostname 与 Access 已由 Connect 控制面配好，服务目标固定为 compose 内 `http://web:3000`。
-网络不稳时可加 `TUNNEL_TRANSPORT_PROTOCOL=http2`。
+   ```bash
+   curl -fsSL https://mediaryconnect.app/connect.sh | sh -s -- <取件码>
+   ```
+
+   脚本凭取件码换隧道凭据、写进 `.env`(`TUNNEL_TOKEN`、`MEDIARY_CONNECT_HOSTNAME`)、`docker compose --profile tunnel up -d`,轮询到隧道真通才报成功。取件码 15 分钟有效;部署目录不在当前路径时加 `--dir /path/to/deploy`。也可以复制控制台里的提示词,交给 coding agent 代办。
+4. 浏览器打开 `https://<名字>.mediaryconnect.app`,用访问密码登录。
+
+服务目标固定为 compose 内的 `http://web:3000`。网络不稳时在 `.env` 加 `TUNNEL_TRANSPORT_PROTOCOL=http2`,再 `docker compose --profile tunnel up -d`。
 
 ## 安全
 
