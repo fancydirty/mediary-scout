@@ -55,6 +55,13 @@ function clientMessage(result: { message?: string; reason?: string }): string {
   return result.message || "操作没完成，请稍后再试。";
 }
 
+/** Forget the credential and everything tied to its account (email, the order being waited on). */
+async function forgetConnectAccount(): Promise<void> {
+  await clearConnectInstanceCredential();
+  await clearConnectAccountEmail();
+  await clearConnectPendingOrder();
+}
+
 export type ConnectStartLinkResult =
   | { ok: true; verifyCode: string; email: string; interval: number }
   | Refusal;
@@ -84,6 +91,9 @@ export async function connectPollLinkAction(): Promise<ConnectPollLinkResult> {
   const pending = await getConnectLinkPending();
   if (!pending) return { state: "none" };
   const result = await pollInstanceLink(pending.pollSecret);
+  // Another tab may have started a newer link while this poll was in flight: an answer about
+  // the request it replaced must neither store a credential nor clear the newer request.
+  if ((await getConnectLinkPending())?.pollSecret !== pending.pollSecret) return { state: "pending" };
   if (!result.ok) {
     if (result.reason === "slow_down") return { state: "slow_down" };
     if (result.reason === "expired" || result.reason === "unknown" || result.reason === "delivered") {
@@ -125,8 +135,7 @@ export async function connectAccountAction(): Promise<ConnectAccountResult> {
   const result = await getConnectAccount(credential);
   if (!result.ok) {
     if (result.reason === "unauthorized") {
-      await clearConnectInstanceCredential();
-      await clearConnectAccountEmail();
+      await forgetConnectAccount();
       return { state: "unlinked" };
     }
     return { state: "error", message: clientMessage(result) };
@@ -160,7 +169,13 @@ export async function connectOrderStatusAction(orderId: string) {
   const credential = await getConnectInstanceCredential();
   if (!credential) return { ok: false as const, message: "请先连接 Mediary Connect。" };
   const result = await getConnectOrderStatus(credential, orderId);
-  if (!result.ok) return { ok: false as const, message: clientMessage(result) };
+  if (!result.ok) {
+    if (result.reason === "unauthorized") {
+      await forgetConnectAccount();
+      return { ok: false as const, unlinked: true as const, message: "Mediary Connect 连接已失效，请重新连接。" };
+    }
+    return { ok: false as const, message: clientMessage(result) };
+  }
   if (result.status === "fulfilled" || result.status === "closed" || result.status === "expired") {
     await clearConnectPendingOrder();
   }
@@ -260,8 +275,8 @@ export async function connectUnlinkAction(): Promise<{ ok: true } | Refusal> {
       return { ok: false, message: `${clientMessage(revoked)}没有断开，稍后再点一次「断开」。` };
     }
   }
-  await clearConnectInstanceCredential();
-  await clearConnectAccountEmail();
+  // Including its pending order: the next account must not inherit it.
+  await forgetConnectAccount();
   await clearConnectLinkPending();
   return { ok: true };
 }

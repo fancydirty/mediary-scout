@@ -198,7 +198,16 @@ export function ConnectWizard(props: ConnectWizardProps) {
       try {
         const result = await connectOrderStatusAction(orderId);
         if (stopped) return;
-        if (!result.ok) {
+        if (!result.ok && "unlinked" in result) {
+          // Connect no longer accepts this instance's credential; the action forgot it and the order.
+          settling = true;
+          setOrderId(null);
+          setLinked(false);
+          setAccount(null);
+          setAccountUnavailable(false);
+          setStep(1);
+          setNotice({ text: result.message, tone: "danger" });
+        } else if (!result.ok) {
           // Keep polling: a passing network error must not strand a paid order.
           setNotice({ text: result.message, tone: "danger" });
         } else if (result.status === "fulfilled") {
@@ -469,6 +478,9 @@ export function ConnectWizard(props: ConnectWizardProps) {
         setPending(null);
         setAccount(null);
         setAccountUnavailable(false);
+        // The order belonged to the account just unlinked: stop waiting for it.
+        setOrderId(null);
+        setCheckoutUrl(null);
         setStep(1);
         setNotice({ text: "已断开 Mediary Connect。", tone: "success" });
       } catch (error) {

@@ -74,9 +74,6 @@ export async function RemoteAccessSection({
   const pending: ConnectWizardPending | null = pendingRaw
     ? { email: pendingRaw.email, verifyCode: pendingRaw.verifyCode, expiresAt: pendingRaw.expiresAt }
     : null;
-  const linkedEmail = await getConnectAccountEmail();
-  const storedCredential = await getConnectInstanceCredential();
-  const pendingOrderId = storedCredential === null ? null : await getConnectPendingOrder();
   let connectAccount = null;
   try {
     const accountResult = await connectAccountAction();
@@ -84,7 +81,11 @@ export async function RemoteAccessSection({
   } catch {
     // The existing remote-access status remains useful when Connect is temporarily unavailable.
   }
-  const linked = storedCredential !== null;
+  // Read after the account check: it forgets a credential Connect no longer accepts, and with it
+  // the email and the pending order.
+  const linked = (await getConnectInstanceCredential()) !== null;
+  const linkedEmail = await getConnectAccountEmail();
+  const pendingOrderId = linked ? await getConnectPendingOrder() : null;
   const passwordState = await hasLoginPassword();
 
   // 「上次报到」只在 active 态有意义 —— 降级态本来就是「拿不到状态」,

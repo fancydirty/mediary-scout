@@ -59,11 +59,11 @@ vi.mock("../lib/connect-link-store", () => ({
   clearConnectPendingOrder: vi.fn(async () => { state.cleared.push("order"); }),
 }));
 
-import { createConnectCheckout, exchangeClaimCode, getConnectOrderStatus, issueClaimCode, revokeInstanceLink } from "../lib/connect-client";
+import { createConnectCheckout, exchangeClaimCode, getConnectAccount, getConnectOrderStatus, issueClaimCode, revokeInstanceLink } from "../lib/connect-client";
 import { scoutConnectBaseUrl } from "../lib/remote-access";
 import { startTunnel } from "../lib/updater-client";
-import { setConnectBinding } from "../lib/connect-link-store";
-import { connectBindAction, connectCheckoutAction, connectOrderStatusAction, connectPollLinkAction, connectUnlinkAction } from "./connect-actions";
+import { getConnectLinkPending, setConnectBinding } from "../lib/connect-link-store";
+import { connectAccountAction, connectBindAction, connectCheckoutAction, connectOrderStatusAction, connectPollLinkAction, connectUnlinkAction } from "./connect-actions";
 
 beforeEach(() => {
   state.demo = false;
@@ -118,6 +118,15 @@ describe("connectCheckoutAction", () => {
 });
 
 describe("connectPollLinkAction", () => {
+  it("drops a stale answer when another tab started a newer link meanwhile", async () => {
+    const older = { pollSecret: "poll-old", verifyCode: "AAAA", expiresAt: "2026-10-03T00:00:00Z", email: "old@example.com" };
+    const newer = { pollSecret: "poll-new", verifyCode: "BBBB", expiresAt: "2026-10-03T00:00:00Z", email: "new@example.com" };
+    vi.mocked(getConnectLinkPending).mockResolvedValueOnce(older).mockResolvedValueOnce(newer);
+    expect(await connectPollLinkAction()).toEqual({ state: "pending" });
+    expect(state.stored.filter(([key]) => key === "credential")).toEqual([]);
+    expect(state.cleared).not.toContain("pending");
+  });
+
   it("clears the pending link and stores a credential after approval", async () => {
     state.pending = { pollSecret: "poll", verifyCode: "ABCD", expiresAt: "2026-10-03T00:00:00Z", email: "owner@example.com" };
     expect(await connectPollLinkAction()).toEqual({ state: "linked" });
@@ -199,9 +208,9 @@ describe("connectBindAction", () => {
 });
 
 describe("connectUnlinkAction", () => {
-  it("clears the local link after Connect revoked the credential", async () => {
+  it("clears the local link and any order it was waiting on after Connect revoked the credential", async () => {
     expect(await connectUnlinkAction()).toEqual({ ok: true });
-    expect(state.cleared).toEqual(expect.arrayContaining(["credential", "email", "pending"]));
+    expect(state.cleared).toEqual(expect.arrayContaining(["credential", "email", "pending", "order"]));
   });
 
   it("also clears it when Connect says the credential is already invalid", async () => {
@@ -215,6 +224,29 @@ describe("connectUnlinkAction", () => {
     const result = await connectUnlinkAction();
     expect(result.ok).toBe(false);
     expect(state.cleared).not.toContain("credential");
+  });
+});
+
+describe("a credential Connect no longer accepts", () => {
+  it("is forgotten with its email and its pending order when the account is read", async () => {
+    vi.mocked(getConnectAccount).mockResolvedValueOnce({ ok: false, reason: "unauthorized", message: "x" });
+    expect(await connectAccountAction()).toEqual({ state: "unlinked" });
+    expect(state.cleared).toEqual(expect.arrayContaining(["credential", "email", "order"]));
+  });
+
+  it("is forgotten while checking an order, and the wizard is told to start over", async () => {
+    vi.mocked(getConnectOrderStatus).mockResolvedValueOnce({ ok: false, reason: "unauthorized", message: "x" });
+    const result = await connectOrderStatusAction("ord_1");
+    expect(result).toMatchObject({ ok: false, unlinked: true });
+    expect(state.cleared).toEqual(expect.arrayContaining(["credential", "email", "order"]));
+  });
+
+  it("is kept when the order check failed for another reason, so polling can retry", async () => {
+    vi.mocked(getConnectOrderStatus).mockResolvedValueOnce({ ok: false, reason: "unreachable", message: "x" });
+    const result = await connectOrderStatusAction("ord_1");
+    expect(result).toMatchObject({ ok: false });
+    expect(result).not.toHaveProperty("unlinked", true);
+    expect(state.cleared).toEqual([]);
   });
 });
 
