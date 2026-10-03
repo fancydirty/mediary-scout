@@ -248,6 +248,56 @@ describe("Waffo webhook and status compensation", () => {
     expect((await db.getPaymentOrderById(created.orderId))?.status).toBe("fulfilled");
   });
 
+  it("rejects a losing CAS winner with a different payment id", async () => {
+    const baseDb = createMemoryConnectDb();
+    await loggedIn(baseDb);
+    const order = await baseDb.insertPaymentOrder({
+      id: "ord_cas_loser", checkout_token_sha256: "cas-loser".padEnd(64, "x"), account_id: "act_1", provider: "waffo",
+      out_trade_no: "MC_cas_loser", trade_no: null, waffo_session_id: "cs", waffo_order_id: null,
+      months: 3, total_amount: "45.00", status: "created", created_at: NOW,
+      expires_at: "2026-10-02T10:30:00.000Z", paid_at: null, fulfilled_at: null, closed_at: null,
+      refunded_at: null, refund_request_no: null, last_notify_id: null, last_queried_at: null,
+    });
+    const db: ConnectDb = {
+      ...baseDb,
+      async compareAndSetPaymentOrder(id, _expected, _patch) {
+        await baseDb.updatePaymentOrder(id, { status: "paid", trade_no: "PAY_WINNER" });
+        return false;
+      },
+    };
+    const waffo = api({ verifyWebhook: vi.fn(async () => completedEvent(order.out_trade_no, { paymentId: "PAY_LOSER" })) });
+    const response = await handleRequest(new Request("https://dev.example/api/waffo/webhook", {
+      method: "POST", body: "{}", headers: { "x-waffo-signature": "t=1,v1=sig" },
+    }), deps(db, { waffoApi: waffo }));
+    expect(response.status).toBe(400);
+    expect(await baseDb.listEntitlements("act_1")).toHaveLength(0);
+  });
+
+  it("fulfills once when a lost CAS winner has the same payment id", async () => {
+    const baseDb = createMemoryConnectDb();
+    await loggedIn(baseDb);
+    const order = await baseDb.insertPaymentOrder({
+      id: "ord_cas_same", checkout_token_sha256: "cas-same".padEnd(64, "x"), account_id: "act_1", provider: "waffo",
+      out_trade_no: "MC_cas_same", trade_no: null, waffo_session_id: "cs", waffo_order_id: null,
+      months: 3, total_amount: "45.00", status: "created", created_at: NOW,
+      expires_at: "2026-10-02T10:30:00.000Z", paid_at: null, fulfilled_at: null, closed_at: null,
+      refunded_at: null, refund_request_no: null, last_notify_id: null, last_queried_at: null,
+    });
+    const db: ConnectDb = {
+      ...baseDb,
+      async compareAndSetPaymentOrder(id, _expected, _patch) {
+        await baseDb.updatePaymentOrder(id, { status: "paid", trade_no: "PAY_SAME" });
+        return false;
+      },
+    };
+    const waffo = api({ verifyWebhook: vi.fn(async () => completedEvent(order.out_trade_no, { paymentId: "PAY_SAME" })) });
+    const response = await handleRequest(new Request("https://dev.example/api/waffo/webhook", {
+      method: "POST", body: "{}", headers: { "x-waffo-signature": "t=1,v1=sig" },
+    }), deps(db, { waffoApi: waffo }));
+    expect(response.status).toBe(200);
+    expect(await baseDb.listEntitlements("act_1")).toHaveLength(1);
+  });
+
   it("ignores an order.completed event without our external order id", async () => {
     const db = createMemoryConnectDb();
     await loggedIn(db);
@@ -336,6 +386,58 @@ describe("Waffo webhook and status compensation", () => {
     const response = await handleRequest(new Request(`https://dev.example/api/orders/${order.id}/status`, { headers: { cookie } }), deps(db, { waffoApi: waffo }));
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ status: "fulfilled" });
+  });
+
+  it("fails closed when queried payment identity fields are missing", async () => {
+    const db = createMemoryConnectDb();
+    const cookie = await loggedIn(db);
+    const order = await db.insertPaymentOrder({
+      id: "ord_query_identity", checkout_token_sha256: "query-identity".padEnd(64, "x"), account_id: "act_1", provider: "waffo",
+      out_trade_no: "MC_query_identity", trade_no: null, waffo_session_id: "cs", waffo_order_id: null,
+      months: 3, total_amount: "45.00", status: "created", created_at: NOW,
+      expires_at: "2026-10-02T10:30:00.000Z", paid_at: null, fulfilled_at: null, closed_at: null,
+      refunded_at: null, refund_request_no: null, last_notify_id: null, last_queried_at: null,
+    });
+    const missingIdentity = api({ queryPayments: vi.fn(async () => [{
+      id: "PAY_MISSING_IDENTITY", orderId: "ORD", status: "succeeded",
+      amount: { amount: "4500", currency: "CNY", display: "45.00" },
+    }]) });
+    const first = await handleRequest(new Request(`https://dev.example/api/orders/${order.id}/status`, { headers: { cookie } }), deps(db, { waffoApi: missingIdentity }));
+    expect(first.status).toBe(200);
+    expect((await first.json() as { status: string }).status).toBe("pending");
+    expect(await db.listEntitlements("act_1")).toHaveLength(0);
+
+    const missingMode = api({ queryPayments: vi.fn(async () => [{
+      id: "PAY_MISSING_MODE", orderId: "ORD", status: "succeeded", orderMerchantExternalId: order.out_trade_no,
+      amount: { amount: "4500", currency: "CNY", display: "45.00" },
+    }]) });
+    const second = await handleRequest(new Request(`https://dev.example/api/orders/${order.id}/status`, { headers: { cookie } }), deps(db, { waffoApi: missingMode }));
+    expect(second.status).toBe(200);
+    expect((await second.json() as { status: string }).status).toBe("pending");
+    expect(await db.listEntitlements("act_1")).toHaveLength(0);
+  });
+
+  it("does not refund a queried payment missing identity fields", async () => {
+    const db = createMemoryConnectDb();
+    const cookie = await loggedIn(db);
+    const order = await db.insertPaymentOrder({
+      id: "ord_query_refund_identity", checkout_token_sha256: "query-refund".padEnd(64, "x"), account_id: "act_1", provider: "waffo",
+      out_trade_no: "MC_query_refund_identity", trade_no: null, waffo_session_id: "cs", waffo_order_id: null,
+      months: 3, total_amount: "45.00", status: "created", created_at: NOW,
+      expires_at: "2026-10-02T10:30:00.000Z", paid_at: null, fulfilled_at: null, closed_at: null,
+      refunded_at: null, refund_request_no: null, last_notify_id: null, last_queried_at: null,
+    });
+    const waffo = api({ queryPayments: vi.fn(async () => [{
+      id: "PAY_REFUND_MISSING_MODE", orderId: "ORD", status: "succeeded",
+      amount: { amount: "4500", currency: "CNY", display: "45.00" },
+      refundedAmount: { amount: "4500", currency: "CNY", display: "45.00" }, isFullyRefunded: true,
+      orderMerchantExternalId: order.out_trade_no,
+    }]) });
+    const response = await handleRequest(new Request(`https://dev.example/api/orders/${order.id}/status`, { headers: { cookie } }), deps(db, { waffoApi: waffo }));
+    expect(response.status).toBe(200);
+    expect((await response.json() as { status: string }).status).toBe("pending");
+    expect((await db.getPaymentOrderById(order.id))?.status).toBe("created");
+    expect(await db.listEntitlements("act_1")).toHaveLength(0);
   });
 
   it("chooses an older succeeded payment when the newest payment failed", async () => {

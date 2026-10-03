@@ -928,8 +928,12 @@ async function acceptWaffoPayment(
     );
     if (!changed) {
       const latest = await deps.db.getPaymentOrderById(order.id);
-      if (latest?.status === "fulfilled") return latest;
-      if (latest?.status !== "paid") throw new InvalidWaffoEvidenceError("Waffo paid state race");
+      if (latest === null) throw new Error("payment order disappeared");
+      if (latest.trade_no !== null && latest.trade_no !== evidence.paymentId) {
+        throw new InvalidWaffoEvidenceError("Waffo payment id mismatch");
+      }
+      if (latest.status === "fulfilled") return latest;
+      if (latest.status !== "paid") throw new InvalidWaffoEvidenceError("Waffo paid state race");
     }
   } else if (order.status === "paid" && (order.trade_no === null || order.waffo_order_id === null)) {
     await deps.db.updatePaymentOrder(order.id, {
@@ -977,10 +981,13 @@ function paymentEvidenceFromQuery(order: PaymentOrderRow, payment: WaffoPayment)
   const currency = payment.amount?.currency ?? "";
   const total = normalizeWaffoAmount(payment.amount);
   if (total === null) throw new InvalidWaffoEvidenceError("Waffo payment amount is missing");
+  if (typeof payment.orderMerchantExternalId !== "string" || payment.orderMerchantExternalId.trim() === "") {
+    throw new InvalidWaffoEvidenceError("Waffo order merchant external id is missing");
+  }
   return {
     orderId: payment.orderId,
     paymentId: payment.id,
-    orderMerchantExternalId: payment.orderMerchantExternalId ?? order.out_trade_no,
+    orderMerchantExternalId: payment.orderMerchantExternalId.trim(),
     currency,
     total,
     paymentStatus: payment.status,
@@ -1019,8 +1026,8 @@ async function compensateWaffoOrder(
   const payments = await deps.waffoApi!.queryPayments(order.out_trade_no);
   const expectedTestMode = deps.waffoEnvironment === "test";
   const matchingPayments = payments.filter((candidate) =>
-    (candidate.orderMerchantExternalId === undefined || candidate.orderMerchantExternalId === order.out_trade_no) &&
-    (candidate.testMode === undefined || candidate.testMode === expectedTestMode),
+    candidate.orderMerchantExternalId === order.out_trade_no &&
+    candidate.testMode === expectedTestMode,
   );
   if (matchingPayments.length === 0) return order;
   const refundedPayment = matchingPayments.find((candidate) =>
