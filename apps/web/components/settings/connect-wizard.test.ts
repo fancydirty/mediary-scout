@@ -8,7 +8,20 @@ vi.mock("../../app/connect-actions", () => ({}));
 
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { ConnectWizard, connectSlugReasonText, nextLinkPollDelayMs, paymentOutcome, stepForAccount } from "./connect-wizard";
+import { ConnectWizard, connectSlugReasonText, nextLinkPollDelayMs, paymentOutcome, probeVerdict, stepForAccount } from "./connect-wizard";
+
+describe("ConnectWizard reachability probe after 接入", () => {
+  it("stops on success, and stops with the instance to blame when the tunnel answers 503", () => {
+    expect(probeVerdict({ ok: true, detail: "reachable" })).toBe("reachable");
+    // A 503 came back through the tunnel: the tunnel works, the instance does not.
+    expect(probeVerdict({ ok: false, detail: "instance_problem" })).toBe("instance_problem");
+  });
+
+  it("keeps trying while the name does not answer yet", () => {
+    expect(probeVerdict({ ok: false, detail: "unreachable" })).toBe("retry");
+    expect(probeVerdict({ ok: false, detail: "no_hostname" })).toBe("retry");
+  });
+});
 
 describe("ConnectWizard while waiting for the email confirmation", () => {
   it("offers a way back to use another address or send again", () => {

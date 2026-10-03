@@ -102,6 +102,13 @@ export function paymentOutcome(
   };
 }
 
+/** What one reachability probe after 接入 means for the loop. A 503 came back through the
+ *  tunnel, so the tunnel works and retrying would only end in a wrong "no response". */
+export function probeVerdict(result: TestRemoteAccessResult): "reachable" | "instance_problem" | "retry" {
+  if (result.ok) return "reachable";
+  return result.detail === "instance_problem" ? "instance_problem" : "retry";
+}
+
 /** Expiry in China time, like the rest of the app: the server (often UTC in Docker) and the
  *  browser must render the same text, or hydration mismatches and the time jumps. */
 function formatExpiry(iso: string): string {
@@ -475,9 +482,16 @@ export function ConnectWizard(props: ConnectWizardProps) {
       try {
         const result: TestRemoteAccessResult = await connectProbeAction();
         if (generation !== probeGeneration.current) return;
-        if (result.ok && result.detail === "reachable") {
+        const verdict = probeVerdict(result);
+        if (verdict === "reachable") {
           setTunnelStarting(false);
           setNotice({ text: `已接通 https://${account?.endpoint?.hostname ?? ""}`, tone: "success" });
+          router.refresh();
+          return;
+        }
+        if (verdict === "instance_problem") {
+          setTunnelStarting(false);
+          setNotice({ text: "隧道已经通了，但实例内部有问题（如数据库），请检查这台机器。", tone: "danger" });
           router.refresh();
           return;
         }

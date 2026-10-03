@@ -318,6 +318,8 @@ export async function connectUnlinkAction(): Promise<{ ok: true } | Refusal> {
   const refused = await commonGuard();
   if (refused) return refused;
   const credential = await getConnectInstanceCredential();
+  // Snapshot before the network call: a link another tab starts meanwhile must survive 断开.
+  const pendingBefore = await getConnectLinkPending();
   if (credential) {
     // Only forget the credential once Connect stopped honouring it (revoked now, or already
     // invalid): deleting the only copy while it still works would leave a live credential
@@ -332,6 +334,8 @@ export async function connectUnlinkAction(): Promise<{ ok: true } | Refusal> {
     await clearConnectAccountEmail();
     await clearConnectPendingOrder();
   }
-  await clearConnectLinkPending();
+  if (pendingBefore && (await getConnectLinkPending())?.pollSecret === pendingBefore.pollSecret) {
+    await clearConnectLinkPending();
+  }
   return { ok: true };
 }

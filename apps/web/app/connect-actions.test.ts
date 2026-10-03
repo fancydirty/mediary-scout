@@ -282,6 +282,7 @@ describe("connectBindAction", () => {
 
 describe("connectUnlinkAction", () => {
   it("clears the local link and any order it was waiting on after Connect revoked the credential", async () => {
+    state.pending = { pollSecret: "poll", verifyCode: "ABCD", expiresAt: "2999-01-01T00:00:00.000Z", email: "a@example.com" };
     expect(await connectUnlinkAction()).toEqual({ ok: true });
     expect(state.cleared).toEqual(expect.arrayContaining(["credential", "email", "pending", "order"]));
   });
@@ -300,6 +301,16 @@ describe("connectUnlinkAction", () => {
     expect(await connectUnlinkAction()).toEqual({ ok: true });
     expect(state.credential).toBe("ic_newer");
     expect(state.cleared).not.toContain("credential");
+  });
+
+  it("leaves a link request another tab started while the revoke was in flight", async () => {
+    state.pending = { pollSecret: "poll-old", verifyCode: "AAAA", expiresAt: "2999-01-01T00:00:00.000Z", email: "a@example.com" };
+    vi.mocked(revokeInstanceLink).mockImplementationOnce(async () => {
+      state.pending = { pollSecret: "poll-new", verifyCode: "BBBB", expiresAt: "2999-01-01T00:00:00.000Z", email: "b@example.com" };
+      return { ok: true };
+    });
+    expect(await connectUnlinkAction()).toEqual({ ok: true });
+    expect(state.cleared).not.toContain("pending");
   });
 
   it("keeps the credential when Connect could not be reached, so 断开 can be retried", async () => {
