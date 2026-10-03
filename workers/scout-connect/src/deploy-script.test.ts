@@ -22,6 +22,13 @@ describe("deploy cutover guard", () => {
     );
     expect(deployScript).toContain("已付款未开通");
   });
+
+  it("refuses deployment until the 0008 instance-link tables exist", () => {
+    expect(deployScript).toContain("SELECT id, poll_secret_sha256 FROM instance_link_requests LIMIT 0");
+    expect(deployScript).toContain("SELECT id, credential_sha256 FROM instance_credentials LIMIT 0");
+    expect(deployScript).toContain("尚未应用 0008-instance-links.sql");
+    expect(deployScript).toContain("请先应用 0008");
+  });
 });
 
 describe("post-deploy /buy self-check", () => {

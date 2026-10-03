@@ -42,7 +42,12 @@ admin ──► mediaryconnect.app (this worker)
             docker compose --profile tunnel up -d   (TUNNEL_TOKEN in .env)
 ```
 
-### Authenticated endpoints (session cookie)
+### Authenticated endpoints (session cookie or instance credential)
+
+Account endpoints accept either the `__Host-mc_session` cookie or
+`Authorization: Bearer ic_...`. A present `Authorization` header is always
+checked as a bearer credential; an invalid or revoked credential does not fall
+back to a cookie.
 
 `POST /api/checkout` — body `{ tier }` (`quarter` / `year` / `two_years`).
 
@@ -74,6 +79,24 @@ email is about to sign in. The page's button sends `POST /auth/callback` with
 `{ t }` from this origin; that request creates the account on first login and
 sets the session cookie. A GET never signs anyone in, so another site cannot
 log a visitor into its own account by linking its magic link.
+
+`GET /api/account` returns the account email, entitlement status, endpoint,
+checkout availability, and the three payment tiers. `GET /api/orders/:id/status`,
+`GET /api/slug/check`, `POST /api/provision`, and `POST /api/claim-code` use the
+same authentication choices. Bearer checkout requests may include an `http:` or
+`https:` `returnUrl` of at most 400 characters without userinfo; cookie checkout
+requests keep the default payment return page.
+
+### Instance link
+
+An instance starts a link with `POST /api/instance-link/start` and receives a
+poll secret and a four-character verification code. Connect emails the account
+owner a confirmation URL. After the owner confirms it, the instance polls
+`POST /api/instance-link/poll` and receives a long-lived `ic_...` credential
+once. It then sends that credential as a bearer token to the authenticated
+account endpoints. `POST /api/instance-link/revoke` revokes it. Each account
+has one active instance credential; linking another instance revokes the older
+credential.
 
 ### Public endpoints (no auth)
 

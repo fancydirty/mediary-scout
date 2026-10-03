@@ -113,6 +113,31 @@ export interface PaymentOrderCondition {
   refundRequestNo?: string | null;
 }
 
+export interface InstanceLinkRequestRow {
+  id: string;
+  poll_secret_sha256: string;
+  email: string;
+  verify_code: string;
+  status: "pending" | "approved" | "delivered";
+  account_id: string | null;
+  request_ip: string | null;
+  created_at: string;
+  expires_at: string;
+  approved_at: string | null;
+  delivered_at: string | null;
+  last_polled_at: string | null;
+}
+
+export interface InstanceCredentialRow {
+  id: string;
+  account_id: string;
+  credential_sha256: string;
+  link_request_id: string;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+}
+
 export interface PaymentOrderReconciliationOptions {
   unpaidSinceIso: string;
   settledSinceIso: string;
@@ -233,6 +258,17 @@ export interface ConnectDb {
   getAccountById(id: string): Promise<AccountRow | null>;
   getAccountByEmail(email: string): Promise<AccountRow | null>;
   updateAccountLastLogin(id: string, at: string): Promise<void>;
+  insertInstanceLinkRequest(row: InstanceLinkRequestRow): Promise<void>;
+  getInstanceLinkRequestById(id: string): Promise<InstanceLinkRequestRow | null>;
+  getInstanceLinkRequestByPollSecretSha(sha: string): Promise<InstanceLinkRequestRow | null>;
+  approveInstanceLinkRequest(id: string, accountId: string, nowIso: string): Promise<boolean>;
+  markInstanceLinkDelivered(id: string, nowIso: string): Promise<boolean>;
+  touchInstanceLinkPoll(id: string, nowIso: string): Promise<void>;
+  insertInstanceCredential(row: InstanceCredentialRow): Promise<void>;
+  revokeOtherInstanceCredentials(accountId: string, keepId: string, nowIso: string): Promise<void>;
+  getActiveInstanceCredentialBySha(sha: string): Promise<InstanceCredentialRow | null>;
+  revokeInstanceCredential(id: string, nowIso: string): Promise<void>;
+  touchInstanceCredential(id: string, nowIso: string): Promise<void>;
   // Durable payment state (historical Alipay rows and current Waffo rows).
   insertPaymentOrder(row: PaymentOrderRow): Promise<PaymentOrderRow>;
   getPaymentOrderById(id: string): Promise<PaymentOrderRow | null>;
@@ -402,6 +438,35 @@ function mapPaymentOrder(row: RawRow): PaymentOrderRow {
     refund_request_no: row.refund_request_no as string | null,
     last_notify_id: row.last_notify_id as string | null,
     last_queried_at: row.last_queried_at as string | null,
+  };
+}
+
+function mapInstanceLinkRequest(row: RawRow): InstanceLinkRequestRow {
+  return {
+    id: row.id as string,
+    poll_secret_sha256: row.poll_secret_sha256 as string,
+    email: row.email as string,
+    verify_code: row.verify_code as string,
+    status: row.status as InstanceLinkRequestRow["status"],
+    account_id: row.account_id as string | null,
+    request_ip: row.request_ip as string | null,
+    created_at: row.created_at as string,
+    expires_at: row.expires_at as string,
+    approved_at: row.approved_at as string | null,
+    delivered_at: row.delivered_at as string | null,
+    last_polled_at: row.last_polled_at as string | null,
+  };
+}
+
+function mapInstanceCredential(row: RawRow): InstanceCredentialRow {
+  return {
+    id: row.id as string,
+    account_id: row.account_id as string,
+    credential_sha256: row.credential_sha256 as string,
+    link_request_id: row.link_request_id as string,
+    created_at: row.created_at as string,
+    last_used_at: row.last_used_at as string | null,
+    revoked_at: row.revoked_at as string | null,
   };
 }
 
@@ -801,6 +866,135 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
       await d1.prepare(`UPDATE accounts SET last_login_at = ? WHERE id = ?`).bind(at, id).run();
     },
 
+    async insertInstanceLinkRequest(row) {
+      await d1
+        .prepare(
+          `INSERT INTO instance_link_requests
+             (id, poll_secret_sha256, email, verify_code, status, account_id, request_ip,
+              created_at, expires_at, approved_at, delivered_at, last_polled_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          row.id,
+          row.poll_secret_sha256,
+          row.email,
+          row.verify_code,
+          row.status,
+          row.account_id,
+          row.request_ip,
+          row.created_at,
+          row.expires_at,
+          row.approved_at,
+          row.delivered_at,
+          row.last_polled_at,
+        )
+        .run();
+    },
+
+    async getInstanceLinkRequestById(id) {
+      const row = await d1
+        .prepare(`SELECT * FROM instance_link_requests WHERE id = ?`)
+        .bind(id)
+        .first<RawRow>();
+      return row === null ? null : mapInstanceLinkRequest(row);
+    },
+
+    async getInstanceLinkRequestByPollSecretSha(sha) {
+      const row = await d1
+        .prepare(`SELECT * FROM instance_link_requests WHERE poll_secret_sha256 = ?`)
+        .bind(sha)
+        .first<RawRow>();
+      return row === null ? null : mapInstanceLinkRequest(row);
+    },
+
+    async approveInstanceLinkRequest(id, accountId, nowIso) {
+      const result = (await d1
+        .prepare(
+          `UPDATE instance_link_requests
+              SET status = 'approved', account_id = ?, approved_at = ?
+            WHERE id = ? AND status = 'pending' AND expires_at > ?`,
+        )
+        .bind(accountId, nowIso, id, nowIso)
+        .run()) as { meta?: { changes?: number } };
+      return (result.meta?.changes ?? 0) > 0;
+    },
+
+    async markInstanceLinkDelivered(id, nowIso) {
+      const result = (await d1
+        .prepare(
+          `UPDATE instance_link_requests
+              SET status = 'delivered', delivered_at = ?
+            WHERE id = ? AND status = 'approved'`,
+        )
+        .bind(nowIso, id)
+        .run()) as { meta?: { changes?: number } };
+      return (result.meta?.changes ?? 0) > 0;
+    },
+
+    async touchInstanceLinkPoll(id, nowIso) {
+      await d1
+        .prepare(`UPDATE instance_link_requests SET last_polled_at = ? WHERE id = ?`)
+        .bind(nowIso, id)
+        .run();
+    },
+
+    async insertInstanceCredential(row) {
+      await d1
+        .prepare(
+          `INSERT INTO instance_credentials
+             (id, account_id, credential_sha256, link_request_id, created_at, last_used_at, revoked_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          row.id,
+          row.account_id,
+          row.credential_sha256,
+          row.link_request_id,
+          row.created_at,
+          row.last_used_at,
+          row.revoked_at,
+        )
+        .run();
+    },
+
+    async revokeOtherInstanceCredentials(accountId, keepId, nowIso) {
+      await d1
+        .prepare(
+          `UPDATE instance_credentials SET revoked_at = ?
+            WHERE account_id = ? AND id <> ? AND revoked_at IS NULL`,
+        )
+        .bind(nowIso, accountId, keepId)
+        .run();
+    },
+
+    async getActiveInstanceCredentialBySha(sha) {
+      const row = await d1
+        .prepare(
+          `SELECT * FROM instance_credentials
+            WHERE credential_sha256 = ? AND revoked_at IS NULL`,
+        )
+        .bind(sha)
+        .first<RawRow>();
+      return row === null ? null : mapInstanceCredential(row);
+    },
+
+    async revokeInstanceCredential(id, nowIso) {
+      await d1
+        .prepare(
+          `UPDATE instance_credentials SET revoked_at = ?
+            WHERE id = ? AND revoked_at IS NULL`,
+        )
+        .bind(nowIso, id)
+        .run();
+    },
+
+    async touchInstanceCredential(id, nowIso) {
+      await d1
+        .prepare(`UPDATE instance_credentials SET last_used_at = ? WHERE id = ? AND revoked_at IS NULL`)
+        .bind(nowIso, id)
+        .run();
+    },
+
     async insertPaymentOrder(row) {
       await d1
         .prepare(
@@ -1112,6 +1306,8 @@ export function createMemoryConnectDb(): ConnectDb {
   const accounts = new Map<string, AccountRow>();
   const entitlements = new Map<string, EntitlementRow>();
   const paymentOrders = new Map<string, PaymentOrderRow>();
+  const instanceLinkRequests = new Map<string, InstanceLinkRequestRow>();
+  const instanceCredentials = new Map<string, InstanceCredentialRow>();
 
   return {
     async insertInvite(row) {
@@ -1433,6 +1629,93 @@ export function createMemoryConnectDb(): ConnectDb {
     async updateAccountLastLogin(id, at) {
       const row = accounts.get(id);
       if (row !== undefined) row.last_login_at = at;
+    },
+
+    async insertInstanceLinkRequest(row) {
+      if (instanceLinkRequests.has(row.id)) {
+        throw new Error(`UNIQUE constraint failed: instance_link_requests.id (${row.id})`);
+      }
+      for (const existing of instanceLinkRequests.values()) {
+        if (existing.poll_secret_sha256 === row.poll_secret_sha256) {
+          throw new Error(
+            `UNIQUE constraint failed: instance_link_requests.poll_secret_sha256 (${row.poll_secret_sha256})`,
+          );
+        }
+      }
+      instanceLinkRequests.set(row.id, { ...row });
+    },
+
+    async getInstanceLinkRequestById(id) {
+      const row = instanceLinkRequests.get(id);
+      return row === undefined ? null : { ...row };
+    },
+
+    async getInstanceLinkRequestByPollSecretSha(sha) {
+      for (const row of instanceLinkRequests.values()) {
+        if (row.poll_secret_sha256 === sha) return { ...row };
+      }
+      return null;
+    },
+
+    async approveInstanceLinkRequest(id, accountId, nowIso) {
+      const row = instanceLinkRequests.get(id);
+      if (row === undefined || row.status !== "pending" || row.expires_at <= nowIso) return false;
+      row.status = "approved";
+      row.account_id = accountId;
+      row.approved_at = nowIso;
+      return true;
+    },
+
+    async markInstanceLinkDelivered(id, nowIso) {
+      const row = instanceLinkRequests.get(id);
+      if (row === undefined || row.status !== "approved") return false;
+      row.status = "delivered";
+      row.delivered_at = nowIso;
+      return true;
+    },
+
+    async touchInstanceLinkPoll(id, nowIso) {
+      const row = instanceLinkRequests.get(id);
+      if (row !== undefined) row.last_polled_at = nowIso;
+    },
+
+    async insertInstanceCredential(row) {
+      if (instanceCredentials.has(row.id)) {
+        throw new Error(`UNIQUE constraint failed: instance_credentials.id (${row.id})`);
+      }
+      for (const existing of instanceCredentials.values()) {
+        if (existing.credential_sha256 === row.credential_sha256) {
+          throw new Error(
+            `UNIQUE constraint failed: instance_credentials.credential_sha256 (${row.credential_sha256})`,
+          );
+        }
+      }
+      instanceCredentials.set(row.id, { ...row });
+    },
+
+    async revokeOtherInstanceCredentials(accountId, keepId, nowIso) {
+      for (const row of instanceCredentials.values()) {
+        if (row.account_id === accountId && row.id !== keepId && row.revoked_at === null) {
+          row.revoked_at = nowIso;
+        }
+      }
+    },
+
+    async getActiveInstanceCredentialBySha(sha) {
+      for (const row of instanceCredentials.values()) {
+        if (row.credential_sha256 === sha && row.revoked_at === null) return { ...row };
+      }
+      return null;
+    },
+
+    async revokeInstanceCredential(id, nowIso) {
+      const row = instanceCredentials.get(id);
+      if (row !== undefined && row.revoked_at === null) row.revoked_at = nowIso;
+    },
+
+    async touchInstanceCredential(id, nowIso) {
+      const row = instanceCredentials.get(id);
+      if (row !== undefined && row.revoked_at === null) row.last_used_at = nowIso;
     },
 
     async insertPaymentOrder(row) {

@@ -22,6 +22,7 @@ function baseDeps(): RouteDeps {
     newEntitlementId: () => `ent_${++entSeq}`,
     sessionSecret: "f".repeat(64),
     sendMagicLink: async () => {},
+    sendInstanceLinkEmail: async () => {},
   };
 }
 

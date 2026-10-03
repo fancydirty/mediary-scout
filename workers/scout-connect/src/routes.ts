@@ -46,6 +46,14 @@ import {
 } from "./waffo-service.js";
 import { PAYMENT_TIERS, resolvePaymentTier, canTransitionPaymentOrder } from "./payment-order.js";
 import { isWaffoNotApprovedError } from "./waffo-api.js";
+import { resolveAccount, type AccountAuthDb } from "./account-auth.js";
+import {
+  startInstanceLink,
+  instanceLinkLanding,
+  confirmInstanceLink,
+  pollInstanceLink,
+  revokeInstanceLink,
+} from "./instance-link.js";
 
 // Same aperture mark as apps/web/app/icon.svg — the product brand.
 const LOGO_SVG =
@@ -87,6 +95,11 @@ export interface RouteDeps {
   sessionSecret: string;
   /** 发一封含魔法链接的邮件。注入以便测试不打真 Resend。 */
   sendMagicLink: (to: string, url: string) => Promise<void>;
+  /** 发一封含实例连接确认链接的邮件。 */
+  sendInstanceLinkEmail: (
+    to: string,
+    details: { url: string; verifyCode: string; requestIp: string; requestedAt: string },
+  ) => Promise<void>;
 }
 
 // slug/check 限流器,worker 实例生命周期内有效(单实例内存窗口,
@@ -275,7 +288,7 @@ async function readBodyTextCapped(
   return new TextDecoder().decode(joined);
 }
 
-async function readJsonBody(request: Request): Promise<Record<string, unknown>> {
+export async function readJsonBody(request: Request): Promise<Record<string, unknown>> {
   assertDeclaredSizeWithinCap(request);
   const text = await readBodyTextCapped(request);
   if (text.trim() === "") {
@@ -318,7 +331,7 @@ function decodeParam(s: string): string {
  * still send Origin on every POST. A request with neither header did not come
  * from a browser page, so no ambient cookie was attached on someone's behalf.
  */
-function assertSameOriginRequest(request: Request, url: URL): void {
+export function assertSameOriginRequest(request: Request, url: URL): void {
   const site = request.headers.get("sec-fetch-site");
   const origin = request.headers.get("origin");
   if ((site !== null && site !== "same-origin") || (origin !== null && origin !== url.origin)) {
@@ -385,6 +398,12 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
   // noStore:这是一次性的支付确认页,不该被缓存复用。
   if (method === "GET" && path === "/payment-success") {
     return htmlPage(paymentSuccessPage(), { noStore: true });
+  }
+  if (method === "GET" && path === "/link") {
+    return await instanceLinkLanding(url, deps);
+  }
+  if (method === "POST" && path === "/link") {
+    return await confirmInstanceLink(request, deps);
   }
   // 合规五页（条款/隐私/退款/定价/联系）。两个 host 都放行。
   if (method === "GET" && path.length > 1) {
@@ -464,6 +483,15 @@ ${hreflang}
   if (method === "POST" && path === "/api/auth/magic") {
     return await requestMagicLink(request, deps);
   }
+  if (method === "POST" && path === "/api/instance-link/start") {
+    return await startInstanceLink(request, deps);
+  }
+  if (method === "POST" && path === "/api/instance-link/poll") {
+    return await pollInstanceLink(request, deps);
+  }
+  if (method === "POST" && path === "/api/instance-link/revoke") {
+    return await revokeInstanceLink(request, deps);
+  }
   if (method === "GET" && path === "/auth/callback") {
     return await magicLanding(url, deps);
   }
@@ -479,6 +507,9 @@ ${hreflang}
   }
   if (method === "GET" && path === "/api/slug/check") {
     return await slugCheckRoute(url, request, deps);
+  }
+  if (method === "GET" && path === "/api/account") {
+    return await accountRoute(request, deps);
   }
   if (method === "POST" && path === "/api/claim-code") {
     assertSameOriginRequest(request, url);
@@ -695,7 +726,7 @@ async function requestMagicLink(request: Request, deps: RouteDeps): Promise<Resp
  *  早先多处裸写 `Date.parse(deps.now())`:now 坏值 → NaN → session 总被判无效 →
  *  401 误导排障,以为用户没登录而真正的问题是服务器时钟。
  *  现在一处守卫,四处复用,与别处「non-finite now 视为过期」的守卫契约一致。 */
-async function parseSessionWithValidatedNow(
+export async function parseSessionWithValidatedNow(
   cookie: string | null,
   deps: Pick<RouteDeps, "sessionSecret" | "now">,
 ): Promise<{ ok: false } | { ok: true; accountId: string }> {
@@ -704,9 +735,20 @@ async function parseSessionWithValidatedNow(
   return parseSessionCookie(cookie, { secret: deps.sessionSecret, now: nowMs });
 }
 
+async function resolveRouteAccount(
+  request: Request,
+  deps: RouteDeps,
+): ReturnType<typeof resolveAccount> {
+  return resolveAccount(request, {
+    db: deps.db as unknown as AccountAuthDb,
+    sessionSecret: deps.sessionSecret,
+    now: deps.now,
+  });
+}
+
 async function selfServeProvision(request: Request, deps: RouteDeps): Promise<Response> {
-  const session = await parseSessionWithValidatedNow(request.headers.get("cookie"), deps);
-  if (!session.ok) throw new HttpError(401, "unauthorized");
+  const accountAuth = await resolveRouteAccount(request, deps);
+  if (!accountAuth.ok) throw new HttpError(401, "unauthorized");
   const body = await readJsonBody(request);
   const slugRaw = optString(body.slug);
   if (slugRaw === null) throw new HttpError(400, "slug required");
@@ -718,7 +760,7 @@ async function selfServeProvision(request: Request, deps: RouteDeps): Promise<Re
   }
   try {
     const result = await provisionEndpoint({
-      origin: { kind: "account", accountId: session.accountId },
+      origin: { kind: "account", accountId: accountAuth.accountId },
       slug,
       deps: {
         cf: deps.cf,
@@ -821,10 +863,10 @@ const WAFFO_CHECKOUT_DAILY_LIMIT = 20;
 
 /** Create an account-bound Waffo order from a server-owned tier and amount. */
 async function createWaffoCheckout(request: Request, deps: RouteDeps): Promise<Response> {
+  const accountAuth = await resolveRouteAccount(request, deps);
+  if (!accountAuth.ok) return json({ error: "unauthorized" }, 401, { noStore: true });
   const api = assertWaffoRuntime(request, deps);
-  const session = await parseSessionWithValidatedNow(request.headers.get("cookie"), deps);
-  if (!session.ok) return json({ error: "unauthorized" }, 401, { noStore: true });
-  const account = await deps.db.getAccountById(session.accountId);
+  const account = await deps.db.getAccountById(accountAuth.accountId);
   if (account === null) return json({ error: "unauthorized" }, 401, { noStore: true });
 
   const body = await readJsonBody(request);
@@ -833,6 +875,26 @@ async function createWaffoCheckout(request: Request, deps: RouteDeps): Promise<R
   const productId = waffoProductId(deps, tier);
   if (productId === null || productId.trim() === "") {
     return json({ error: "checkout_not_open" }, 503, { noStore: true });
+  }
+
+  let requestedSuccessUrl: string | null = null;
+  if (accountAuth.via === "bearer" && body.returnUrl !== undefined) {
+    if (typeof body.returnUrl !== "string" || body.returnUrl.length > 400) {
+      throw new HttpError(400, "invalid returnUrl");
+    }
+    try {
+      const candidate = new URL(body.returnUrl);
+      if (
+        (candidate.protocol !== "http:" && candidate.protocol !== "https:") ||
+        candidate.username !== "" ||
+        candidate.password !== ""
+      ) {
+        throw new Error("invalid returnUrl");
+      }
+      requestedSuccessUrl = candidate.toString();
+    } catch {
+      throw new HttpError(400, "invalid returnUrl");
+    }
   }
 
   const now = deps.now();
@@ -870,7 +932,9 @@ async function createWaffoCheckout(request: Request, deps: RouteDeps): Promise<R
       productId,
       productType: "onetime",
       currency: "CNY",
-      successUrl: paymentOrigin(request, deps) + "/payment-success?order=" + encodeURIComponent(order.id),
+      successUrl:
+        requestedSuccessUrl ??
+        paymentOrigin(request, deps) + "/payment-success?order=" + encodeURIComponent(order.id),
       orderMerchantExternalId: order.out_trade_no,
       metadata: { orderId: order.id },
       expiresInSeconds: 1800,
@@ -1128,11 +1192,11 @@ async function waffoWebhook(request: Request, deps: RouteDeps): Promise<Response
 }
 
 async function getWaffoOrderStatus(request: Request, deps: RouteDeps, orderId: string): Promise<Response> {
+  const accountAuth = await resolveRouteAccount(request, deps);
+  if (!accountAuth.ok) return json({ error: "unauthorized" }, 401, { noStore: true });
   assertWaffoRuntime(request, deps);
-  const session = await parseSessionWithValidatedNow(request.headers.get("cookie"), deps);
-  if (!session.ok) return json({ error: "unauthorized" }, 401, { noStore: true });
   let order = await deps.db.getPaymentOrderById(orderId);
-  if (order === null || order.account_id !== session.accountId) {
+  if (order === null || order.account_id !== accountAuth.accountId) {
     return json({ error: "not found" }, 404, { noStore: true });
   }
   const nowMs = Date.parse(deps.now());
@@ -1181,12 +1245,9 @@ async function issueClaimCode(request: Request, deps: RouteDeps): Promise<Respon
   // new Date(NaN).toISOString() 会抛 RangeError 变裸 500;且签出的 token
   // 过期语义不可信。与别处「non-finite now 视为过期」的守卫一致,显式拒。
   if (!Number.isFinite(nowMs)) throw new HttpError(500, "server time unavailable");
-  const session = await parseSessionCookie(request.headers.get("cookie"), {
-    secret: deps.sessionSecret,
-    now: nowMs,
-  });
-  if (!session.ok) throw new HttpError(401, "unauthorized");
-  const endpoint = await deps.db.getActiveEndpointByAccountId(session.accountId);
+  const accountAuth = await resolveRouteAccount(request, deps);
+  if (!accountAuth.ok) throw new HttpError(401, "unauthorized");
+  const endpoint = await deps.db.getActiveEndpointByAccountId(accountAuth.accountId);
   if (endpoint === null) {
     // 还没开通(付费但未 provision,或从未开通)→ 没有可接入的实例。
     throw new HttpError(404, "no active endpoint");
@@ -1227,12 +1288,12 @@ async function exchangeClaimCode(request: Request, deps: RouteDeps): Promise<Res
 
 /** slug 实时查重 + 相似推荐(登录后选 slug 用)。需 session。 */
 async function slugCheckRoute(url: URL, request: Request, deps: RouteDeps): Promise<Response> {
-  const session = await parseSessionWithValidatedNow(request.headers.get("cookie"), deps);
-  if (!session.ok) throw new HttpError(401, "unauthorized");
+  const accountAuth = await resolveRouteAccount(request, deps);
+  if (!accountAuth.ok) throw new HttpError(401, "unauthorized");
   // 限流:此端点登录即可访问,且每个查询可能触发上百次 D1 查重。
   // 不限流的话任一登录用户能无限枚举全站 slug 占用情况(隐私 + 资源放大)。
   // 按账号限 —— 比按 IP 准(用户可能在 NAT 后),且它本就是登录态端点。
-  if (!slugCheckLimiter.allow(session.accountId)) {
+  if (!slugCheckLimiter.allow(accountAuth.accountId)) {
     return json({ error: "too many requests" }, 429, { noStore: true });
   }
   const slug = url.searchParams.get("s") ?? "";
@@ -1245,9 +1306,51 @@ async function slugCheckRoute(url: URL, request: Request, deps: RouteDeps): Prom
   return json(result, 200, { noStore: true });
 }
 
+/** Account snapshot consumed by the in-instance settings wizard. */
+async function accountRoute(request: Request, deps: RouteDeps): Promise<Response> {
+  const accountAuth = await resolveRouteAccount(request, deps);
+  if (!accountAuth.ok) return json({ error: "unauthorized" }, 401, { noStore: true });
+  const account = await deps.db.getAccountById(accountAuth.accountId);
+  if (account === null) return json({ error: "unauthorized" }, 401, { noStore: true });
+
+  const now = deps.now();
+  const entitlements = await deps.db.listEntitlements(account.id);
+  const expiresAt = latestExpiry(entitlements);
+  const endpoint = await deps.db.getActiveEndpointByAccountId(account.id);
+  let checkoutOpen = false;
+  try {
+    assertWaffoRuntime(request, deps);
+    checkoutOpen = true;
+  } catch {
+    // The account endpoint is still useful when checkout is not configured;
+    // report the gate as a boolean instead of surfacing a 503.
+  }
+
+  return json(
+    {
+      email: account.email,
+      active: isEntitlementActive(expiresAt, now),
+      expiresAt,
+      endpoint: endpoint === null
+        ? null
+        : { slug: endpoint.slug, hostname: endpoint.hostname, status: endpoint.status },
+      checkoutOpen,
+      tiers: Object.values(PAYMENT_TIERS).map((tier) => ({
+        id: tier.id,
+        label: tier.label,
+        months: tier.months,
+        price: tier.totalAmount,
+        featured: tier.featured,
+      })),
+    },
+    200,
+    { noStore: true },
+  );
+}
+
 /** 按 email upsert 账号,race-safe:两个并发请求可能都读到 null,第二个
  *  INSERT 撞 UNIQUE(email) —— 捕获后重读,而不是让登录 500(Copilot round 2)。 */
-async function upsertAccount(email: string, deps: RouteDeps): Promise<AccountRow> {
+export async function upsertAccount(email: string, deps: RouteDeps): Promise<AccountRow> {
   const existing = await deps.db.getAccountByEmail(email);
   if (existing !== null) return existing;
   try {

@@ -1,14 +1,19 @@
 import { describe, it, expect } from "vitest";
+import Database from "better-sqlite3";
+import { readFileSync } from "node:fs";
 import {
   createMemoryConnectDb,
   createD1ConnectDb,
   type D1Database,
   type D1PreparedStatement,
+  type ConnectDb,
   type InviteRow,
   type EndpointRow,
   type AuditRow,
   type EntitlementRow,
   type PaymentOrderRow,
+  type InstanceLinkRequestRow,
+  type InstanceCredentialRow,
 } from "./db.js";
 
 function makeInvite(overrides: Partial<InviteRow> = {}): InviteRow {
@@ -43,6 +48,37 @@ function makeEndpoint(overrides: Partial<EndpointRow> = {}): EndpointRow {
     last_seen_at: null,
     created_at: "2026-07-24T00:00:00.000Z",
     revoked_at: null, account_id: null, grace_until: null, suspended_at: null, purge_after: null,
+    ...overrides,
+  };
+}
+
+function makeInstanceLinkRequest(overrides: Partial<InstanceLinkRequestRow> = {}): InstanceLinkRequestRow {
+  return {
+    id: "ilr_1",
+    poll_secret_sha256: "poll-sha-1",
+    email: "alice@example.com",
+    verify_code: "AB23",
+    status: "pending",
+    account_id: null,
+    request_ip: "192.0.2.1",
+    created_at: "2026-10-03T00:00:00.000Z",
+    expires_at: "2026-10-03T00:30:00.000Z",
+    approved_at: null,
+    delivered_at: null,
+    last_polled_at: null,
+    ...overrides,
+  };
+}
+
+function makeInstanceCredential(overrides: Partial<InstanceCredentialRow> = {}): InstanceCredentialRow {
+  return {
+    id: "icr_1",
+    account_id: "act_1",
+    credential_sha256: "credential-sha-1",
+    link_request_id: "ilr_1",
+    created_at: "2026-10-03T00:01:00.000Z",
+    last_used_at: null,
+    revoked_at: null,
     ...overrides,
   };
 }
@@ -275,6 +311,109 @@ function createSpyD1(respond: { first?: unknown; all?: unknown[] } = {}): {
   };
   return { d1, calls };
 }
+
+function createSqliteConnectDb(): { sqlite: Database.Database; db: ConnectDb } {
+  const sqlite = new Database(":memory:");
+  const schema = readFileSync(new URL("../schema.sql", import.meta.url), "utf8");
+  sqlite.exec(schema);
+  const d1: D1Database = {
+    prepare(query: string): D1PreparedStatement {
+      const stmt = sqlite.prepare(query);
+      let values: unknown[] = [];
+      const api: D1PreparedStatement = {
+        bind(...next: unknown[]) {
+          values = next;
+          return api;
+        },
+        async first<T>() {
+          return (stmt.get(...values) as T | undefined) ?? null;
+        },
+        async all<T>() {
+          return { results: stmt.all(...values) as T[] };
+        },
+        async run() {
+          const result = stmt.run(...values);
+          return { meta: { changes: result.changes } };
+        },
+      };
+      return api;
+    },
+  };
+  return { sqlite, db: createD1ConnectDb(d1) };
+}
+
+async function exerciseInstanceLinkDb(db: ConnectDb): Promise<void> {
+  const row = makeInstanceLinkRequest();
+  await db.insertInstanceLinkRequest(row);
+  expect(await db.getInstanceLinkRequestById(row.id)).toEqual(row);
+  expect(await db.getInstanceLinkRequestByPollSecretSha(row.poll_secret_sha256)).toEqual(row);
+  expect(await db.getInstanceLinkRequestById("missing")).toBeNull();
+  expect(await db.getInstanceLinkRequestByPollSecretSha("missing")).toBeNull();
+
+  expect(await db.approveInstanceLinkRequest(row.id, "act_1", "2026-10-03T00:10:00.000Z")).toBe(true);
+  expect(await db.approveInstanceLinkRequest(row.id, "act_1", "2026-10-03T00:11:00.000Z")).toBe(false);
+  expect(await db.getInstanceLinkRequestById(row.id)).toMatchObject({
+    status: "approved",
+    account_id: "act_1",
+    approved_at: "2026-10-03T00:10:00.000Z",
+  });
+
+  expect(await db.markInstanceLinkDelivered(row.id, "2026-10-03T00:12:00.000Z")).toBe(true);
+  expect(await db.markInstanceLinkDelivered(row.id, "2026-10-03T00:13:00.000Z")).toBe(false);
+  expect(await db.getInstanceLinkRequestById(row.id)).toMatchObject({
+    status: "delivered",
+    delivered_at: "2026-10-03T00:12:00.000Z",
+  });
+
+  const expired = makeInstanceLinkRequest({ id: "ilr_expired", poll_secret_sha256: "poll-sha-expired" });
+  await db.insertInstanceLinkRequest(expired);
+  expect(await db.approveInstanceLinkRequest(expired.id, "act_1", "2026-10-03T00:30:00.001Z")).toBe(false);
+  await db.touchInstanceLinkPoll(expired.id, "2026-10-03T00:20:00.000Z");
+  expect(await db.getInstanceLinkRequestById(expired.id)).toMatchObject({
+    last_polled_at: "2026-10-03T00:20:00.000Z",
+  });
+
+  await db.insertInstanceCredential(makeInstanceCredential());
+  await db.insertInstanceCredential(
+    makeInstanceCredential({
+      id: "icr_keep",
+      credential_sha256: "credential-sha-keep",
+      account_id: "act_1",
+      link_request_id: "ilr_keep",
+    }),
+  );
+  await db.insertInstanceCredential(
+    makeInstanceCredential({
+      id: "icr_other-account",
+      credential_sha256: "credential-sha-other-account",
+      account_id: "act_2",
+      link_request_id: "ilr_other-account",
+    }),
+  );
+  await db.revokeOtherInstanceCredentials("act_1", "icr_keep", "2026-10-03T00:14:00.000Z");
+  expect(await db.getActiveInstanceCredentialBySha("credential-sha-1")).toBeNull();
+  expect(await db.getActiveInstanceCredentialBySha("credential-sha-keep")).toMatchObject({ id: "icr_keep" });
+  expect(await db.getActiveInstanceCredentialBySha("credential-sha-other-account")).toMatchObject({
+    id: "icr_other-account",
+  });
+  await db.touchInstanceCredential("icr_keep", "2026-10-03T00:15:00.000Z");
+  expect(await db.getActiveInstanceCredentialBySha("credential-sha-keep")).toMatchObject({
+    last_used_at: "2026-10-03T00:15:00.000Z",
+  });
+  await db.revokeInstanceCredential("icr_keep", "2026-10-03T00:16:00.000Z");
+  expect(await db.getActiveInstanceCredentialBySha("credential-sha-keep")).toBeNull();
+}
+
+describe("instance link DB methods", () => {
+  it("memory implementation preserves request and credential CAS semantics", async () => {
+    await exerciseInstanceLinkDb(createMemoryConnectDb());
+  });
+
+  it("D1 implementation preserves request and credential CAS semantics", async () => {
+    const { db } = createSqliteConnectDb();
+    await exerciseInstanceLinkDb(db);
+  });
+});
 
 describe("D1 ConnectDb SQL", () => {
   it("updateInviteStatus full patch keeps placeholder↔bind alignment", async () => {

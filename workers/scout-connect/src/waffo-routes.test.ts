@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { handleRequest, reconcileWaffoOrders, type RouteDeps } from "./routes.js";
 import { createMemoryConnectDb, type ConnectDb } from "./db.js";
+import { sha256Hex } from "./crypto-token.js";
 import { buildSessionCookie } from "./session.js";
 import type { CfApi } from "./cf-api.js";
 import { createWaffoApi, type WaffoApi, type WaffoSdkClient, type WaffoWebhookEvent } from "./waffo-api.js";
@@ -56,6 +57,7 @@ function deps(db: ConnectDb, overrides: Partial<RouteDeps> = {}): RouteDeps {
     newEntitlementId: next("ent"),
     sessionSecret: SECRET,
     sendMagicLink: async () => {},
+    sendInstanceLinkEmail: async () => {},
     waffoApi: api(),
     waffoEnvironment: "test",
     waffoStoreId: "STO_TEST",
@@ -73,6 +75,19 @@ async function loggedIn(db: ConnectDb, accountId = "act_1"): Promise<string> {
     last_login_at: null,
   });
   return buildSessionCookie(accountId, { secret: SECRET, ttlMs: 3600_000, now: Date.parse(NOW) });
+}
+
+async function bearerFor(db: ConnectDb, accountId = "act_1", credential = `ic_${"a".repeat(43)}`): Promise<string> {
+  await db.insertInstanceCredential({
+    id: "icr_test",
+    account_id: accountId,
+    credential_sha256: await sha256Hex(credential),
+    link_request_id: "ilr_test",
+    created_at: NOW,
+    last_used_at: null,
+    revoked_at: null,
+  });
+  return credential;
 }
 
 function completedEvent(externalId: string, overrides: Record<string, unknown> = {}): WaffoWebhookEvent {
@@ -94,6 +109,68 @@ function completedEvent(externalId: string, overrides: Record<string, unknown> =
 }
 
 describe("Waffo checkout routes", () => {
+  it("accepts a bearer credential and passes a valid returnUrl to Waffo", async () => {
+    const db = createMemoryConnectDb();
+    await db.insertAccount({
+      id: "act_1",
+      email: "buyer@example.com",
+      paddle_customer_id: null,
+      created_at: NOW,
+      last_login_at: null,
+    });
+    const createSession = vi.fn(async () => ({
+      checkoutUrl: "https://checkout.test/session",
+      sessionId: "cs_bearer",
+      expiresAt: "2026-10-02T10:30:00.000Z",
+    }));
+    const routeDeps = deps(db, { waffoApi: api({ createSession }) });
+    const credential = await bearerFor(db);
+    const response = await handleRequest(new Request("https://dev.example/api/checkout", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${credential}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ tier: "quarter", returnUrl: "http://192.168.1.10:3000/settings?tab=remote" }),
+    }), routeDeps);
+    expect(response.status).toBe(200);
+    expect(createSession).toHaveBeenCalledWith(expect.objectContaining({
+      successUrl: "http://192.168.1.10:3000/settings?tab=remote",
+    }));
+  });
+
+  it("rejects an unknown bearer even when a valid cookie is also present", async () => {
+    const db = createMemoryConnectDb();
+    const cookie = await loggedIn(db);
+    const response = await handleRequest(new Request("https://dev.example/api/checkout", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer ic_unknown",
+        cookie,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ tier: "quarter" }),
+    }), deps(db));
+    expect(response.status).toBe(401);
+  });
+
+  it("rejects unsafe bearer returnUrl values", async () => {
+    const db = createMemoryConnectDb();
+    await db.insertAccount({
+      id: "act_1", email: "buyer@example.com", paddle_customer_id: null,
+      created_at: NOW, last_login_at: null,
+    });
+    const credential = await bearerFor(db);
+    for (const returnUrl of ["javascript:alert(1)", "https://user:pass@example.com/", "x".repeat(401)]) {
+      const response = await handleRequest(new Request("https://dev.example/api/checkout", {
+        method: "POST",
+        headers: { authorization: `Bearer ${credential}`, "content-type": "application/json" },
+        body: JSON.stringify({ tier: "quarter", returnUrl }),
+      }), deps(db));
+      expect(response.status).toBe(400);
+    }
+  });
+
   it("requires login, maps tier server-side, and calls exact Waffo checkout params", async () => {
     const db = createMemoryConnectDb();
     const waffo = api({ createSession: vi.fn(async (input) => ({

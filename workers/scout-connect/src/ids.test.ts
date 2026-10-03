@@ -3,7 +3,7 @@ import { newId, newInviteCode } from "./ids.js";
 
 describe("ids", () => {
   it("newId returns prefix underscore 16 hex chars", () => {
-    for (const prefix of ["inv", "ep", "aud"] as const) {
+    for (const prefix of ["inv", "ep", "aud", "ilr", "icr"] as const) {
       const id = newId(prefix);
       expect(id.startsWith(`${prefix}_`)).toBe(true);
       expect(id).toMatch(new RegExp(`^${prefix}_[0-9a-f]{16}$`));
@@ -18,6 +18,8 @@ describe("ids", () => {
     expect(newId("inv")).not.toBe(newId("inv"));
     expect(newId("ep")).not.toBe(newId("ep"));
     expect(newId("aud")).not.toBe(newId("aud"));
+    expect(newId("ilr")).not.toBe(newId("ilr"));
+    expect(newId("icr")).not.toBe(newId("icr"));
     expect(newInviteCode()).not.toBe(newInviteCode());
   });
 });

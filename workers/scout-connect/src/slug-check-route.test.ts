@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { handleRequest, type RouteDeps } from "./routes.js";
-import { createMemoryConnectDb } from "./db.js";
+import { createMemoryConnectDb, type ConnectDb } from "./db.js";
 import { buildSessionCookie, SESSION_COOKIE } from "./session.js";
+import { sha256Hex } from "./crypto-token.js";
 
 const BASE = "https://mediaryconnect.app";
 const SECRET = "f".repeat(64);
@@ -22,12 +23,25 @@ function deps(): RouteDeps {
     newEntitlementId: () => "ent_x",
     sessionSecret: SECRET,
     sendMagicLink: async () => {},
+    sendInstanceLinkEmail: async () => {},
   };
 }
 
 async function cookie(): Promise<string> {
   const c = await buildSessionCookie("act_1", { secret: SECRET, ttlMs: 3600_000, now: Date.parse("2026-07-28T00:00:00.000Z") });
   return `${SESSION_COOKIE}=${c.match(new RegExp(`${SESSION_COOKIE}=([^;]+)`))![1]}`;
+}
+
+async function bearer(db: ConnectDb, credential = `ic_${"a".repeat(43)}`): Promise<string> {
+  await db.insertAccount({
+    id: "act_1", email: "owner@example.com", paddle_customer_id: null,
+    created_at: "2026-07-28T00:00:00.000Z", last_login_at: null,
+  });
+  await db.insertInstanceCredential({
+    id: "icr_slug", account_id: "act_1", credential_sha256: await sha256Hex(credential),
+    link_request_id: "ilr_slug", created_at: "2026-07-28T00:00:00.000Z", last_used_at: null, revoked_at: null,
+  });
+  return credential;
 }
 
 describe("GET /api/slug/check", () => {
@@ -44,6 +58,16 @@ describe("GET /api/slug/check", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ available: true });
     expect(res.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("works with only an instance bearer credential", async () => {
+    const d = deps();
+    const credential = await bearer(d.db);
+    const res = await handleRequest(new Request(`${BASE}/api/slug/check?s=charlie`, {
+      headers: { authorization: `Bearer ${credential}` },
+    }), d);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ available: true });
   });
 
   it("taken slug (including revoked) returns unavailable + suggestions", async () => {

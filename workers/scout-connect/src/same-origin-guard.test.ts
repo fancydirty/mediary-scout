@@ -76,6 +76,7 @@ function setup() {
     newEntitlementId: next("ent"),
     sessionSecret: SECRET,
     sendMagicLink: async () => {},
+    sendInstanceLinkEmail: async () => {},
     waffoApi,
     waffoEnvironment: "test",
     waffoStoreId: "STO_TEST",

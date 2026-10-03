@@ -3,6 +3,7 @@ import { handleRequest, type RouteDeps } from "./routes.js";
 import { createMemoryConnectDb, type ConnectDb } from "./db.js";
 import type { CfApi } from "./cf-api.js";
 import { buildSessionCookie, SESSION_COOKIE } from "./session.js";
+import { sha256Hex } from "./crypto-token.js";
 
 const BASE = "https://mediaryconnect.app";
 const SECRET = "f".repeat(64);
@@ -45,6 +46,7 @@ function setup(cfCalls: string[] = []): { deps: RouteDeps; db: ConnectDb } {
     newEntitlementId: () => "ent_x",
     sessionSecret: SECRET,
     sendMagicLink: async () => {},
+    sendInstanceLinkEmail: async () => {},
   };
   return { deps, db };
 }
@@ -52,6 +54,19 @@ function setup(cfCalls: string[] = []): { deps: RouteDeps; db: ConnectDb } {
 async function cookieFor(accountId: string): Promise<string> {
   const c = await buildSessionCookie(accountId, { secret: SECRET, ttlMs: 3600_000, now: Date.parse(NOW) });
   return `${SESSION_COOKIE}=${c.match(new RegExp(`${SESSION_COOKIE}=([^;]+)`))![1]}`;
+}
+
+async function bearerFor(db: ConnectDb, accountId: string, credential = `ic_${"a".repeat(43)}`): Promise<string> {
+  await db.insertInstanceCredential({
+    id: "icr_claim",
+    account_id: accountId,
+    credential_sha256: await sha256Hex(credential),
+    link_request_id: "ilr_claim",
+    created_at: NOW,
+    last_used_at: null,
+    revoked_at: null,
+  });
+  return credential;
 }
 
 /** 给账号种一个 active endpoint(付费开通后的形态)。 */
@@ -95,6 +110,17 @@ describe("POST /api/claim-code (登录用户签发取件码)", () => {
     expect(typeof body.code).toBe("string");
     expect(body.code!.length).toBeGreaterThan(0);
     expect(res.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("issues a code with only the instance bearer credential", async () => {
+    const { deps, db } = setup();
+    await seedEndpoint(db, "act_1");
+    const credential = await bearerFor(db, "act_1");
+    const res = await handleRequest(new Request(`${BASE}/api/claim-code`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${credential}` },
+    }), deps);
+    expect(res.status).toBe(200);
   });
 
   it("404 when the account has no active endpoint (not provisioned yet)", async () => {

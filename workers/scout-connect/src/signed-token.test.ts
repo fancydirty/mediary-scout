@@ -68,6 +68,31 @@ describe("signed-token (魔法链接 + 取件码共用的 HMAC 自包含凭据)"
     expect(result).toEqual({ ok: true, purpose: "claim", subject: "ep_abc" });
   });
 
+  it("keeps instance-link tokens separate from magic tokens", async () => {
+    const now = 1_800_000_000_000;
+    const magic = await signToken(
+      { purpose: "magic", subject: "request-1" },
+      { key: KEY, ttlMs: 60_000, now },
+    );
+    const instanceLink = await signToken(
+      { purpose: "instance-link", subject: "request-1" },
+      { key: KEY, ttlMs: 60_000, now },
+    );
+    await expect(verifyToken(magic, { key: KEY, now, expectPurpose: "instance-link" })).resolves.toEqual({
+      ok: false,
+      reason: "wrong_purpose",
+    });
+    await expect(verifyToken(instanceLink, { key: KEY, now, expectPurpose: "magic" })).resolves.toEqual({
+      ok: false,
+      reason: "wrong_purpose",
+    });
+    await expect(verifyToken(instanceLink, { key: KEY, now, expectPurpose: "instance-link" })).resolves.toEqual({
+      ok: true,
+      purpose: "instance-link",
+      subject: "request-1",
+    });
+  });
+
   it("rejects a key that is not exactly 32 bytes (weak HMAC guard)", async () => {
     await expect(
       signToken({ purpose: "login", subject: "x" }, { key: "abcd", ttlMs: 1000 }),

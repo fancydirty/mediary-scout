@@ -70,7 +70,7 @@ function timingSafeEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 
-export type TokenPurpose = "login" | "claim" | "magic";
+export type TokenPurpose = "login" | "claim" | "magic" | "instance-link";
 
 export interface SignInput {
   purpose: TokenPurpose;
@@ -115,7 +115,7 @@ export async function verifyToken(token: string, opts: VerifyOptions): Promise<V
   if (opts.expectPurpose !== undefined && purpose !== opts.expectPurpose) {
     return { ok: false, reason: "wrong_purpose" };
   }
-  if (purpose !== "login" && purpose !== "claim" && purpose !== "magic") {
+  if (purpose !== "login" && purpose !== "claim" && purpose !== "magic" && purpose !== "instance-link") {
     return { ok: false, reason: "wrong_purpose" };
   }
 

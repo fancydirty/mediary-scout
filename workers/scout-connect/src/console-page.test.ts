@@ -22,6 +22,7 @@ function baseDeps(): RouteDeps {
     newEntitlementId: () => "ent_new",
     sessionSecret: SESSION_SECRET,
     sendMagicLink: async () => {},
+    sendInstanceLinkEmail: async () => {},
   };
 }
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createMemoryConnectDb, type ConnectDb, type EndpointRow } from "./db.js";
+import { sha256Hex } from "./crypto-token.js";
 import { buildSessionCookie } from "./session.js";
 import { handleRequest, type RouteDeps } from "./routes.js";
 
@@ -47,6 +48,7 @@ function setup(cfCalls: string[] = []): { deps: RouteDeps; db: ConnectDb } {
     newEntitlementId: () => "ent_x",
     sessionSecret: SECRET,
     sendMagicLink: async () => {},
+    sendInstanceLinkEmail: async () => {},
   };
   return { deps, db };
 }
@@ -93,7 +95,37 @@ function post(slug: string, cookie?: string): Request {
   });
 }
 
+async function bearerFor(db: ConnectDb, accountId = "act_1", credential = `ic_${"a".repeat(43)}`): Promise<string> {
+  await db.insertInstanceCredential({
+    id: "icr_provision",
+    account_id: accountId,
+    credential_sha256: await sha256Hex(credential),
+    link_request_id: "ilr_provision",
+    created_at: NOW,
+    last_used_at: null,
+    revoked_at: null,
+  });
+  return credential;
+}
+
+function postBearer(slug: string, credential: string): Request {
+  return new Request(`${BASE}/api/provision`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${credential}` },
+    body: JSON.stringify({ slug }),
+  });
+}
+
 describe("POST /api/provision (自助开通)", () => {
+  it("accepts only a bearer credential for the instance flow", async () => {
+    const { deps, db } = setup();
+    await seedAccount(db, "act_1", FUTURE);
+    const credential = await bearerFor(db);
+    const res = await handleRequest(postBearer("bearer-instance", credential), deps);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ hostname: "bearer-instance.mediaryconnect.app" });
+  });
+
   it("401 without session", async () => {
     const { deps } = setup();
     const res = await handleRequest(post("alice"), deps);

@@ -80,6 +80,7 @@ function makeDeps(db: ConnectDb, cf: CfApi): RouteDeps {
     newEntitlementId: seq("ent"),
     sessionSecret: "f".repeat(64),
     sendMagicLink: async () => {},
+    sendInstanceLinkEmail: async () => {},
   };
 }
 

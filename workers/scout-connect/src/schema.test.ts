@@ -45,6 +45,10 @@ const MIGRATION7_SQL = readFileSync(
   new URL("../migrations/0007-waffo-payment-orders.sql", import.meta.url),
   "utf8",
 );
+const MIGRATION8_SQL = readFileSync(
+  new URL("../migrations/0008-instance-links.sql", import.meta.url),
+  "utf8",
+);
 
 // The production shape BEFORE this Worker version: schema.sql as of 884f4c4.
 // `cf_access_app_id` is NOT NULL and `last_seen_at` does not exist — exactly
@@ -727,6 +731,7 @@ describe("migration 0001 — existing install against real SQLite", () => {
     migrated.sqlite.exec(MIGRATION4_SQL);
     migrated.sqlite.exec(MIGRATION5_SQL);
     migrated.sqlite.exec(MIGRATION6_SQL);
+    migrated.sqlite.exec(MIGRATION8_SQL);
     const fresh = freshDb(SCHEMA_SQL);
 
     const shapeOf = (sqlite: Sqlite): unknown =>
@@ -843,6 +848,7 @@ describe("migration 0001 — legacy install that predates the waitlist table", (
     migrated.sqlite.exec(MIGRATION4_SQL);
     migrated.sqlite.exec(MIGRATION5_SQL);
     migrated.sqlite.exec(MIGRATION6_SQL);
+    migrated.sqlite.exec(MIGRATION8_SQL);
     const fresh = freshDb(SCHEMA_SQL);
 
     const shapeOf = (sqlite: Sqlite, table: string): unknown =>
@@ -906,6 +912,7 @@ describe("migration 0002 — waitlist.survey_json against real SQLite", () => {
     migrated.sqlite.exec(MIGRATION4_SQL);
     migrated.sqlite.exec(MIGRATION5_SQL);
     migrated.sqlite.exec(MIGRATION6_SQL);
+    migrated.sqlite.exec(MIGRATION8_SQL);
     const fresh = freshDb(SCHEMA_SQL);
 
     const shapeOf = (sqlite: Sqlite, table: string): unknown =>
@@ -1194,6 +1201,7 @@ describe("migration 0006 — provider-neutral entitlements and Alipay orders", (
     const migrated = preAlipayDb();
     migrated.exec(MIGRATION6_SQL);
     migrated.exec(MIGRATION7_SQL);
+    migrated.exec(MIGRATION8_SQL);
     const fresh = freshDb(SCHEMA_SQL).sqlite;
     const columns = (sqlite: Sqlite, table: string): string[] =>
       (sqlite.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((row) => row.name);
@@ -1207,6 +1215,7 @@ describe("migration 0006 — provider-neutral entitlements and Alipay orders", (
     const sqlite = preAlipayDb();
     sqlite.exec(MIGRATION6_SQL);
     sqlite.exec(MIGRATION7_SQL);
+    sqlite.exec(MIGRATION8_SQL);
     const db = createD1ConnectDb(d1Over(sqlite));
     await db.insertAccount({
       id: "act_rt",
@@ -1521,5 +1530,54 @@ describe("migration 0007 — Waffo payment orders", () => {
     expect(MIGRATION7_SQL).not.toMatch(/BEGIN\s+TRANSACTION/i);
     expect(MIGRATION7_SQL).toContain("ALTER TABLE payment_orders RENAME TO payment_orders_old");
     expect(MIGRATION7_SQL).toContain("DROP TABLE payment_orders_old");
+  });
+});
+
+describe("migration 0008 — instance links", () => {
+  it("creates both instance-link tables and exactly their two indexes", () => {
+    const sqlite = freshDb(LEGACY_SCHEMA_SQL);
+    sqlite.sqlite.exec(MIGRATION_SQL);
+    sqlite.sqlite.exec(MIGRATION2_SQL);
+    sqlite.sqlite.exec(MIGRATION3_SQL);
+    sqlite.sqlite.exec(MIGRATION4_SQL);
+    sqlite.sqlite.exec(MIGRATION5_SQL);
+    sqlite.sqlite.exec(MIGRATION6_SQL);
+    sqlite.sqlite.exec(MIGRATION7_SQL);
+    sqlite.sqlite.exec(MIGRATION8_SQL);
+
+    const tables = (sqlite.sqlite.prepare(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name IN ('instance_link_requests','instance_credentials') ORDER BY name`,
+    ).all() as { name: string }[]).map((row) => row.name);
+    expect(tables).toEqual(["instance_credentials", "instance_link_requests"]);
+    expect(indexNames(sqlite.sqlite)).toEqual(
+      expect.arrayContaining([
+        "idx_instance_link_requests_email_created",
+        "idx_instance_credentials_account",
+      ]),
+    );
+    expect(MIGRATION8_SQL).not.toMatch(/^\s*BEGIN\b/im);
+    expect(MIGRATION8_SQL).not.toMatch(/^\s*COMMIT\b/im);
+  });
+
+  it("fresh schema.sql and the migration chain have the same instance-link shape", () => {
+    const migrated = freshDb(LEGACY_SCHEMA_SQL);
+    migrated.sqlite.exec(MIGRATION_SQL);
+    migrated.sqlite.exec(MIGRATION2_SQL);
+    migrated.sqlite.exec(MIGRATION3_SQL);
+    migrated.sqlite.exec(MIGRATION4_SQL);
+    migrated.sqlite.exec(MIGRATION5_SQL);
+    migrated.sqlite.exec(MIGRATION6_SQL);
+    migrated.sqlite.exec(MIGRATION7_SQL);
+    migrated.sqlite.exec(MIGRATION8_SQL);
+    const fresh = freshDb(SCHEMA_SQL).sqlite;
+    const columns = (sqlite: Sqlite, table: string): string[] =>
+      (sqlite.prepare(`PRAGMA table_info(${table})`).all() as { name: string; type: string; notnull: number }[])
+        .map((row) => `${row.name} ${row.type} notnull=${row.notnull}`);
+    expect(columns(migrated.sqlite, "instance_link_requests")).toEqual(
+      columns(fresh, "instance_link_requests"),
+    );
+    expect(columns(migrated.sqlite, "instance_credentials")).toEqual(
+      columns(fresh, "instance_credentials"),
+    );
   });
 });

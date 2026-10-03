@@ -20,6 +20,7 @@ function deps(): RouteDeps {
     newEntitlementId: () => "ent_x",
     sessionSecret: "f".repeat(64),
     sendMagicLink: async () => {},
+    sendInstanceLinkEmail: async () => {},
   };
 }
 

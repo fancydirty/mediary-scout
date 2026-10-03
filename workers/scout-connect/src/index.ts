@@ -3,6 +3,7 @@ import { createD1ConnectDb } from "./db.js";
 import { newId, newInviteCode } from "./ids.js";
 import { handleRequest, reconcileWaffoOrders, type RouteDeps } from "./routes.js";
 import { createMagicLinkSender } from "./magic-link-sender.js";
+import { createInstanceLinkSender } from "./instance-link-sender.js";
 import type { Env } from "./env.js";
 import { createWaffoApi, type WaffoApi } from "./waffo-api.js";
 import { sweepExpiredEndpoints } from "./expiry-sweep.js";
@@ -93,6 +94,9 @@ function routeDeps(env: Env, waffoApi: WaffoApi | undefined, scheduled = false):
     sendMagicLink: scheduled
       ? async () => {}
       : createMagicLinkSender(requireEnv(env.RESEND_API_KEY, "RESEND_API_KEY")),
+    sendInstanceLinkEmail: scheduled
+      ? async () => {}
+      : createInstanceLinkSender(requireEnv(env.RESEND_API_KEY, "RESEND_API_KEY")),
   };
 }
 

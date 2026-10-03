@@ -26,6 +26,7 @@ function setup(overrides: Partial<RouteDeps> = {}): { deps: RouteDeps; sent: Arr
     sendMagicLink: async (to: string, url: string) => {
       sent.push({ to, url });
     },
+    sendInstanceLinkEmail: async () => {},
     ...overrides,
   };
   return { deps, sent };

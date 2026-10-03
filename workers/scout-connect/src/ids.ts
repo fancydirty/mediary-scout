@@ -8,7 +8,7 @@ function randomHex(hexLength: number): string {
   return hex;
 }
 
-export function newId(prefix: "inv" | "ep" | "aud" | "wl" | "act" | "ent"): string {
+export function newId(prefix: "inv" | "ep" | "aud" | "wl" | "act" | "ent" | "ilr" | "icr"): string {
   return `${prefix}_${randomHex(16)}`;
 }
 

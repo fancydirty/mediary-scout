@@ -97,8 +97,8 @@ export function htmlPage(
 // only an HttpError's own deliberate message is exposed.
 export function handleError(e: unknown): Response {
   if (e instanceof HttpError) {
-    return json({ error: e.message }, e.status);
+    return json({ error: e.message }, e.status, { noStore: true });
   }
   console.error("unhandled route error", e);
-  return json({ error: "internal" }, 500);
+  return json({ error: "internal" }, 500, { noStore: true });
 }
