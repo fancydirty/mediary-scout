@@ -2,8 +2,8 @@ import { connection } from "next/server";
 import { Globe, ShieldAlert, TriangleAlert } from "lucide-react";
 import { getCurrentAccountSummary, hasLoginPassword, isMultiUserEnabled } from "../../lib/workflow-runtime";
 import {
-  instanceTunnelToken,
-  instanceConnectHostname,
+  resolveInstanceTunnelToken,
+  resolveInstanceConnectHostname,
   resolveRemoteAccessState,
   passwordSetupHref,
   formatLastSeen,
@@ -11,8 +11,10 @@ import {
   consoleUrl,
 } from "../../lib/remote-access";
 import { PasswordChangeForm } from "../password-change-form";
-import { ConnectLoginForm } from "./connect-login-form";
 import { RemoteAccessTestButton } from "./remote-access-test-button";
+import { ConnectWizard, type ConnectWizardPending } from "./connect-wizard";
+import { connectAccountAction } from "../../app/connect-actions";
+import { getConnectAccountEmail, getConnectInstanceCredential, getConnectLinkPending } from "../../lib/connect-link-store";
 
 /**
  * 「上次从本机报到控制面」一行。
@@ -61,17 +63,34 @@ export async function RemoteAccessSection({
   const { w } = await searchParams;
   const passwordHref = passwordSetupHref({ multiUser: isMultiUserEnabled(), w });
   // 只求值一次:重复调用会重跑校验,理论上还可能在同一次渲染里读到不同 env。
-  const localHostname = instanceConnectHostname();
+  const localHostname = await resolveInstanceConnectHostname();
+  const localToken = await resolveInstanceTunnelToken();
   const state = await resolveRemoteAccessState({
-    token: instanceTunnelToken(),
+    token: localToken,
     hostname: localHostname,
   });
+
+  const pendingRaw = await getConnectLinkPending();
+  const pending: ConnectWizardPending | null = pendingRaw
+    ? { email: pendingRaw.email, verifyCode: pendingRaw.verifyCode, expiresAt: pendingRaw.expiresAt }
+    : null;
+  const linkedEmail = await getConnectAccountEmail();
+  const storedCredential = await getConnectInstanceCredential();
+  let connectAccount = null;
+  try {
+    const accountResult = await connectAccountAction();
+    if (accountResult.state === "linked") connectAccount = accountResult.account;
+  } catch {
+    // The existing remote-access status remains useful when Connect is temporarily unavailable.
+  }
+  const linked = storedCredential !== null;
+  const passwordState = await hasLoginPassword();
 
   // 「上次报到」只在 active 态有意义 —— 降级态本来就是「拿不到状态」,
   // 那时摆一个旧时间戳出来只会让人以为它是当前状态。
   const lastSeenLabel = state.kind === "active" ? formatLastSeen(state.lastSeenAt) : null;
 
-  if (state.kind === "not_provisioned") {
+  if (state.kind === "not_provisioned" || (linked && !localToken)) {
     // **双入口**:登录框(主)+ apex 跳转(次)。
     // 登录框占主位是刻意的 —— 能在这个页面操作的人已经有实例(他正在用这个
     // 容器),转化路径最短,不该把他踢去外站读一遍宣传再回来。
@@ -92,7 +111,15 @@ export async function RemoteAccessSection({
           <span className="hub-badge tone-green">NEW</span>
         </div>
 
-        <ConnectLoginForm />
+        <ConnectWizard
+          linked={linked}
+          email={linkedEmail}
+          pending={pending}
+          account={connectAccount}
+          hasTunnelToken={Boolean(localToken)}
+          passwordSet={passwordState}
+          multiUser={isMultiUserEnabled()}
+        />
 
         <div
           style={{
@@ -128,7 +155,6 @@ export async function RemoteAccessSection({
     );
   }
 
-  const passwordState = await hasLoginPassword();
   // 三态：true / false / "unknown"（DB 读失败）。**不能**把 "unknown" 当 false，
   // 那会在数据库抖动时凭空弹出一条「你没设密码」的假警告；也不能当 true，
   // 那会在真没设密码时把唯一的警告吞掉。分开各说各话。
@@ -235,6 +261,19 @@ export async function RemoteAccessSection({
           </div>
         </>
       )}
+
+      {linked ? (
+        <ConnectWizard
+          compact
+          linked={linked}
+          email={linkedEmail}
+          pending={pending}
+          account={connectAccount}
+          hasTunnelToken={Boolean(localToken)}
+          passwordSet={passwordState}
+          multiUser={isMultiUserEnabled()}
+        />
+      ) : null}
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
         <a

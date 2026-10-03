@@ -1,3 +1,6 @@
+import { getConnectHostname, getConnectTunnelToken } from "./connect-link-store";
+export { remoteFirstSetupNotice, type LoginBootstrap } from "./remote-access-copy";
+
 /**
  * 实例侧「远程访问」状态解析。纯逻辑 + 依赖注入，node 环境可测。
  *
@@ -234,6 +237,14 @@ export function instanceTunnelToken(): string | undefined {
   return process.env.TUNNEL_TOKEN?.trim() || undefined;
 }
 
+/** Resolve the token without requiring a web-container restart after in-app binding. */
+export async function resolveInstanceTunnelToken(): Promise<string | undefined> {
+  const fromEnv = instanceTunnelToken();
+  if (fromEnv) return fromEnv;
+  const stored = (await getConnectTunnelToken())?.trim();
+  return stored || undefined;
+}
+
 /**
  * 用户控制台入口（登录页即入口，魔法链接无密码）。
  *
@@ -259,7 +270,11 @@ export function consoleUrl(): string {
  * 在函数里读 env(cacheComponents 下模块顶层求值会把构建期 env 烤进产物)。
  * 校验成 hostname 形状(DNS 字符集,无协议无路径)防 env 被塞怪东西。 */
 export function instanceConnectHostname(): string | null {
-  const raw = process.env.MEDIARY_CONNECT_HOSTNAME?.trim().toLowerCase();
+  return parseInstanceConnectHostname(process.env.MEDIARY_CONNECT_HOSTNAME);
+}
+
+function parseInstanceConnectHostname(value: string | null | undefined): string | null {
+  const raw = value?.trim().toLowerCase();
   if (!raw) return null;
   // 逐 label 校验:每段以字母数字开头结尾、中间可含连字符,最后一段是 TLD。
   // 宽松的 /^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$/ 会放过 `a..b.com`、`a-.b.com`
@@ -267,6 +282,15 @@ export function instanceConnectHostname(): string | null {
   const LABEL = "[a-z0-9](?:[a-z0-9-]*[a-z0-9])?";
   const HOSTNAME_RE = new RegExp(`^(?:${LABEL}\\.)+[a-z]{2,}$`);
   return HOSTNAME_RE.test(raw) ? raw : null;
+}
+
+/** Resolve the hostname without requiring a web-container restart after in-app binding. */
+export async function resolveInstanceConnectHostname(): Promise<string | null> {
+  // A non-empty env setting remains authoritative even when malformed: return the
+  // same null that the sync reader returns instead of silently shadowing an invalid
+  // deployment configuration with a database value. Only empty/whitespace env is unset.
+  if (process.env.MEDIARY_CONNECT_HOSTNAME?.trim()) return instanceConnectHostname();
+  return parseInstanceConnectHostname(await getConnectHostname());
 }
 
 /**
@@ -290,41 +314,6 @@ export function accountPasswordHref(w?: string): string {
  */
 export function passwordSetupHref(opts: { multiUser: boolean; w?: string | undefined }): string {
   return opts.multiUser ? accountPasswordHref(opts.w) : "/login";
-}
-
-/** /login 页读到的 bootstrap 状态(见 app/api/auth/bootstrap/route.ts)。 */
-export interface LoginBootstrap {
-  needsClaim?: boolean;
-  singleUser?: boolean;
-  passwordSet?: boolean;
-  remote?: boolean;
-}
-
-/**
- * 外网访客不能做实例的第一次设置。还没设访问密码的单用户实例、还没认领的多用户
- * 实例,谁先在外网打开这个地址谁就能把它变成自己的(读到网盘凭据和模型 key)。
- * 第一次设置只在局域网做,外网访客只看到这段说明、没有表单。
- * 返回 null = 不拦(局域网、已设密码、已认领,或状态没读到)。
- */
-export function remoteFirstSetupNotice(bootstrap: LoginBootstrap | null): { title: string; note: string } | null {
-  if (bootstrap?.remote !== true) return null;
-  if (bootstrap.singleUser === true && bootstrap.passwordSet === false) {
-    return {
-      title: "还没有设置访问密码",
-      note:
-        "为了不让别人抢先设置，第一次设访问密码只能在局域网里完成：在家里的网络打开这台机器的局域网地址" +
-        "（例如 http://192.168.1.10:3000/login）设一个。设好之后就能从这里用密码登录。",
-    };
-  }
-  if (bootstrap.singleUser !== true && bootstrap.needsClaim === true) {
-    return {
-      title: "这台实例还没有站主",
-      note:
-        "为了不让别人抢先认领，创建站主账号只能在局域网里完成：在家里的网络打开这台机器的局域网地址" +
-        "（例如 http://192.168.1.10:3000/login）认领。之后家人朋友可以从这里注册自己的账号。",
-    };
-  }
-  return null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────

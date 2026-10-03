@@ -1,5 +1,5 @@
 import { getWorkflowRepository, getCurrentAccountId, UNAUTHENTICATED_ACCOUNT_ID } from "./workflow-runtime";
-import { instanceTunnelToken } from "./remote-access";
+import { resolveInstanceTunnelToken } from "./remote-access";
 import { isDemoMode } from "./demo-mode";
 import { resolveIsDesktop } from "./workflow-runtime";
 import { CONNECT_NOTICE_DISMISSED_KEY, shouldShowConnectNotice } from "./connect-notice";
@@ -20,7 +20,7 @@ export async function resolveConnectNoticeConditions(): Promise<ConnectNoticeCon
     dismissedAt = await repository.getAccountSetting(accountId, CONNECT_NOTICE_DISMISSED_KEY);
   }
 
-  const hasTunnelToken = instanceTunnelToken() !== undefined;
+  const hasTunnelToken = (await resolveInstanceTunnelToken()) !== undefined;
 
   return {
     isDemo: isDemoMode(),

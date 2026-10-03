@@ -998,8 +998,8 @@ export async function testRemoteAccessConnectionAction(): Promise<TestRemoteAcce
   // demo gate:与其它 settings action 一致(Copilot round 1)。
   // demo 站没有真实隧道,探测只会做无意义的跨网请求。
   assertNotDemo();
-  const { instanceConnectHostname } = await import("../lib/remote-access");
-  const hostname = instanceConnectHostname();
+  const { resolveInstanceConnectHostname } = await import("../lib/remote-access");
+  const hostname = await resolveInstanceConnectHostname();
   if (hostname === null) {
     return { ok: false, detail: "no_hostname" };
   }

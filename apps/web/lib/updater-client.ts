@@ -126,6 +126,63 @@ export async function requestUpdate(
   }
 }
 
+export type StartTunnelResult =
+  | { ok: true }
+  | { ok: false; reason: "no_updater" | "busy" | "invalid_input" | "pull_failed" | "compose_failed"; logTail?: string };
+
+const CONNECTION_FAILURE_CODES = new Set([
+  "ECONNREFUSED",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+]);
+
+function isConnectionFailure(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const cause = (error as { cause?: unknown }).cause;
+  if (!cause || typeof cause !== "object") return false;
+  const code = (cause as { code?: unknown }).code;
+  return typeof code === "string" && CONNECTION_FAILURE_CODES.has(code);
+}
+
+/** Ask the updater to persist the Connect tunnel credentials and start cloudflared. */
+export async function startTunnel(
+  input: { token: string; hostname: string },
+  options: ClientOptions = {},
+): Promise<StartTunnelResult> {
+  const updaterToken = await readToken(options.stateDir ?? DEFAULT_STATE_DIR);
+  if (!updaterToken) return { ok: false, reason: "no_updater" };
+
+  const signal = AbortSignal.timeout(290_000);
+  try {
+    const response = await (options.fetchImpl ?? fetch)(`${updaterUrl()}/tunnel`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${updaterToken}`, "content-type": "application/json" },
+      body: JSON.stringify(input),
+      signal,
+    });
+
+    if (response.status === 200) return { ok: true };
+    if (response.status === 401 || response.status === 404) return { ok: false, reason: "no_updater" };
+    if (response.status === 409) return { ok: false, reason: "busy" };
+    if (response.status === 400) return { ok: false, reason: "invalid_input" };
+    if (response.status === 502) {
+      const body = (await response.json().catch(() => null)) as { reason?: unknown; logTail?: unknown } | null;
+      if (body?.reason === "pull_failed" || body?.reason === "compose_failed") {
+        return {
+          ok: false,
+          reason: body.reason,
+          ...(typeof body.logTail === "string" ? { logTail: body.logTail } : {}),
+        };
+      }
+    }
+    return { ok: false, reason: "compose_failed" };
+  } catch (error) {
+    return { ok: false, reason: isConnectionFailure(error) ? "no_updater" : "compose_failed" };
+  }
+}
+
 /** The updater calls /api/update/busy with the same token; verify it here. */
 export async function isUpdaterToken(header: string | null, options: ClientOptions = {}): Promise<boolean> {
   const token = await readToken(options.stateDir ?? DEFAULT_STATE_DIR);

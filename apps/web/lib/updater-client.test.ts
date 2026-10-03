@@ -6,6 +6,7 @@ import {
   getUpdaterStatus,
   isUpdaterToken,
   requestUpdate,
+  startTunnel,
   servingRepoCommit,
   isUpdaterInstalled,
 } from "./updater-client";
@@ -127,5 +128,106 @@ describe("updater client", () => {
     expect(await isUpdaterToken("Bearer t0k3n-longer", { stateDir: dir })).toBe(false);
     expect(await isUpdaterToken(null, { stateDir: dir })).toBe(false);
     expect(await isUpdaterToken("Bearer t0k3n", { stateDir: join(dir, "missing") })).toBe(false);
+  });
+
+  it("starts a tunnel through the updater", async () => {
+    const fetchImpl = vi.fn(async (url: string, init: RequestInit) => {
+      expect(url).toBe("http://updater:8787/tunnel");
+      expect(init.method).toBe("POST");
+      expect((init.headers as Record<string, string>).authorization).toBe("Bearer t0k3n");
+      expect((init.headers as Record<string, string>)["content-type"]).toBe("application/json");
+      expect(init.body).toBe(JSON.stringify({ token: "tunnel-token", hostname: "demo.mediaryconnect.app" }));
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+
+    expect(await startTunnel(
+      { token: "tunnel-token", hostname: "demo.mediaryconnect.app" },
+      { stateDir: dir, fetchImpl: fetchImpl as never },
+    )).toEqual({ ok: true });
+  });
+
+  it("does not call the updater when the bearer token file is missing", async () => {
+    const fetchImpl = vi.fn();
+    expect(await startTunnel(
+      { token: "tunnel-token", hostname: "demo.mediaryconnect.app" },
+      { stateDir: join(dir, "missing"), fetchImpl: fetchImpl as never },
+    )).toEqual({ ok: false, reason: "no_updater" });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [409, { reason: "busy" }, { ok: false, reason: "busy" }],
+    [400, {}, { ok: false, reason: "invalid_input" }],
+    [401, {}, { ok: false, reason: "no_updater" }],
+    [404, {}, { ok: false, reason: "no_updater" }],
+    [500, {}, { ok: false, reason: "compose_failed" }],
+  ])("maps tunnel response status %s", async (status, body, expected) => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify(body), { status }));
+    expect(await startTunnel(
+      { token: "tunnel-token", hostname: "demo.mediaryconnect.app" },
+      { stateDir: dir, fetchImpl: fetchImpl as never },
+    )).toEqual(expected);
+  });
+
+  it("maps updater tunnel failure reasons and log tail", async () => {
+    const fetchImpl = vi.fn(async () => new Response(
+      JSON.stringify({ ok: false, reason: "pull_failed", logTail: "pull denied" }),
+      { status: 502 },
+    ));
+    expect(await startTunnel(
+      { token: "tunnel-token", hostname: "demo.mediaryconnect.app" },
+      { stateDir: dir, fetchImpl: fetchImpl as never },
+    )).toEqual({ ok: false, reason: "pull_failed", logTail: "pull denied" });
+  });
+
+  it("maps malformed tunnel failure responses to compose_failed", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ ok: false, reason: "other" }), { status: 502 }));
+    expect(await startTunnel(
+      { token: "tunnel-token", hostname: "demo.mediaryconnect.app" },
+      { stateDir: dir, fetchImpl: fetchImpl as never },
+    )).toEqual({ ok: false, reason: "compose_failed" });
+  });
+
+  it("uses a 290 second timeout for tunnel startup", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    await startTunnel(
+      { token: "tunnel-token", hostname: "demo.mediaryconnect.app" },
+      { stateDir: dir, fetchImpl: fetchImpl as never },
+    );
+
+    expect(timeout).toHaveBeenCalledWith(290_000);
+  });
+
+  it.each(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "EHOSTUNREACH", "ENETUNREACH"])(
+    "maps a pre-response connection failure (%s) to no_updater",
+    async (code) => {
+      const network = vi.fn(async () => {
+        throw new TypeError("fetch failed", { cause: { code } });
+      });
+      expect(await startTunnel(
+        { token: "tunnel-token", hostname: "demo.mediaryconnect.app" },
+        { stateDir: dir, fetchImpl: network as never },
+      )).toEqual({ ok: false, reason: "no_updater" });
+    },
+  );
+
+  it.each([
+    { name: "UND_ERR_HEADERS_TIMEOUT", cause: { code: "UND_ERR_HEADERS_TIMEOUT" } },
+    { name: "UND_ERR_BODY_TIMEOUT", cause: { code: "UND_ERR_BODY_TIMEOUT" } },
+    { name: "an abort", cause: undefined, errorName: "AbortError" },
+    { name: "a reset", cause: { code: "ECONNRESET" } },
+    { name: "an unknown failure", cause: undefined },
+  ])("maps $name after request start to compose_failed", async ({ cause, errorName }) => {
+    const network = vi.fn(async () => {
+      const error = new TypeError("fetch failed", cause === undefined ? undefined : { cause });
+      if (errorName) error.name = errorName;
+      throw error;
+    });
+    expect(await startTunnel(
+      { token: "tunnel-token", hostname: "demo.mediaryconnect.app" },
+      { stateDir: dir, fetchImpl: network as never },
+    )).toEqual({ ok: false, reason: "compose_failed" });
   });
 });

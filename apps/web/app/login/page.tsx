@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { HelpCircle, LoaderCircle } from "lucide-react";
-import { remoteFirstSetupNotice } from "../../lib/remote-access";
+import { remoteFirstSetupNotice } from "../../lib/remote-access-copy";
 
 /**
  * §7 P1 login / register, with a context-aware CLAIM screen. Only reachable when
