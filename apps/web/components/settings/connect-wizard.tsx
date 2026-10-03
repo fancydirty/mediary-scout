@@ -376,7 +376,10 @@ export function ConnectWizard(props: ConnectWizardProps) {
           } else {
             setSlugCheck(null);
           }
-          if (!result.ok) setNotice({ text: result.message, tone: "danger" });
+          if (!result.ok) {
+            if (isUnlinked(result)) resetToUnlinked(result.message);
+            else setNotice({ text: result.message, tone: "danger" });
+          }
         } catch (error) {
           if (!stopped) setNotice({ text: friendlyError(error), tone: "danger" });
         }
@@ -441,6 +444,19 @@ export function ConnectWizard(props: ConnectWizardProps) {
     });
   };
 
+  /** Connect stopped accepting this instance's credential (the action already forgot it). */
+  const resetToUnlinked = (message: string) => {
+    setLinked(false);
+    setAccount(null);
+    setAccountUnavailable(false);
+    setOrder(null);
+    setFallbackCommand(null);
+    setStep(1);
+    setNotice({ text: message, tone: "danger" });
+  };
+  const isUnlinked = (result: unknown): result is { ok: false; unlinked: true; message: string } =>
+    typeof result === "object" && result !== null && "unlinked" in result && (result as { unlinked?: unknown }).unlinked === true;
+
   const buy = (tier: "quarter" | "year" | "two_years") => {
     const popup = window.open("about:blank", "mediary-connect-checkout");
     setNotice(null);
@@ -449,7 +465,8 @@ export function ConnectWizard(props: ConnectWizardProps) {
         const result = await connectCheckoutAction(tier);
         if (!result.ok) {
           popup?.close();
-          setNotice({ text: result.message, tone: "danger" });
+          if (isUnlinked(result)) resetToUnlinked(result.message);
+          else setNotice({ text: result.message, tone: "danger" });
           return;
         }
         if (popup) {
@@ -475,7 +492,11 @@ export function ConnectWizard(props: ConnectWizardProps) {
       try {
         const result = await connectProvisionAction(normalized);
         if (!result.ok) {
-          setNotice({ text: result.reason === "slug_taken" ? "刚被别人抢先占用了，换一个吧。" : result.message, tone: "danger" });
+          if (isUnlinked(result)) {
+            resetToUnlinked(result.message);
+            return;
+          }
+          setNotice({ text: "reason" in result && result.reason === "slug_taken" ? "刚被别人抢先占用了，换一个吧。" : result.message, tone: "danger" });
           return;
         }
         setAccount((current) => current ? { ...current, endpoint: { slug: normalized, hostname: result.hostname, status: "active" } } : current);
@@ -555,6 +576,10 @@ export function ConnectWizard(props: ConnectWizardProps) {
         const result = await connectBindAction();
         if (!result.ok) {
           setTunnelStarting(false);
+          if (result.reason === "unlinked") {
+            resetToUnlinked(result.message ?? "Mediary Connect 连接已失效，请重新连接。");
+            return;
+          }
           if (result.reason === "no_updater") {
             setFallbackCommand(result.command ?? null);
             setNotice(null);
@@ -599,7 +624,8 @@ export function ConnectWizard(props: ConnectWizardProps) {
       try {
         const result = await connectAbandonOrderAction(abandoned);
         if (!result.ok) {
-          setNotice({ text: result.message, tone: "danger" });
+          if (isUnlinked(result)) resetToUnlinked(result.message);
+          else setNotice({ text: result.message, tone: "danger" });
           return;
         }
         setOrder((current) => (current?.orderId === abandoned ? null : current));

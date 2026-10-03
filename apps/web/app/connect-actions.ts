@@ -68,6 +68,15 @@ async function forgetConnectAccount(used: string): Promise<void> {
   await clearConnectPendingOrder();
 }
 
+const LINK_LOST = "Mediary Connect 连接已失效，请重新连接。";
+
+/** Connect answered 401 to the credential a request used (e.g. the account was linked from
+ *  another instance since): forget it and tell the page, which goes back to step 1. */
+async function credentialRejected(used: string): Promise<{ ok: false; unlinked: true; message: string }> {
+  await forgetConnectAccount(used);
+  return { ok: false, unlinked: true, message: LINK_LOST };
+}
+
 export type ConnectStartLinkResult =
   | { ok: true; verifyCode: string; email: string; interval: number }
   | Refusal;
@@ -174,7 +183,7 @@ export async function connectAccountAction(): Promise<ConnectAccountResult> {
 
 export async function connectCheckoutAction(
   tier: "quarter" | "year" | "two_years",
-): Promise<{ ok: true; checkoutUrl: string; orderId: string } | Refusal> {
+): Promise<{ ok: true; checkoutUrl: string; orderId: string } | Refusal | { ok: false; unlinked: true; message: string }> {
   const refused = await commonGuard();
   if (refused) return refused;
   const credential = await getConnectInstanceCredential();
@@ -189,7 +198,10 @@ export async function connectCheckoutAction(
   const origin = resolveRequestOriginOrNull(await headers());
   const returnUrl = origin ? `${origin}/settings?tab=remote` : undefined;
   const result = await createConnectCheckout(credential, tier, returnUrl);
-  if (!result.ok) return { ok: false, message: clientMessage(result) };
+  if (!result.ok) {
+    if (result.reason === "unauthorized") return credentialRejected(credential);
+    return { ok: false, message: clientMessage(result) };
+  }
   // A reload (or finishing payment in the other tab) must not lose the only handle that makes
   // this page check the order, and with it Connect's compensation path.
   await setConnectPendingOrder({ orderId: result.orderId, checkoutUrl: result.checkoutUrl });
@@ -201,7 +213,9 @@ export async function connectCheckoutAction(
  * if it is paid after all, Connect still credits it (webhook, daily reconciliation) and the
  * account shows the time on the next read.
  */
-export async function connectAbandonOrderAction(orderId: string): Promise<{ ok: true } | Refusal> {
+export async function connectAbandonOrderAction(
+  orderId: string,
+): Promise<{ ok: true } | Refusal | { ok: false; unlinked: true; message: string }> {
   const refused = await commonGuard();
   if (refused) return refused;
   const credential = await getConnectInstanceCredential();
@@ -209,6 +223,7 @@ export async function connectAbandonOrderAction(orderId: string): Promise<{ ok: 
     // Never drop an order that is already paid: the buttons would come back and the same time
     // could be bought twice.
     const status = await getConnectOrderStatus(credential, orderId);
+    if (!status.ok && status.reason === "unauthorized") return credentialRejected(credential);
     if (!status.ok) return { ok: false, message: `${clientMessage(status)}现在查不到这笔订单，稍后再点「不付了」。` };
     if (status.status === "paid_unfulfilled" || status.status === "fulfilled") {
       return { ok: false, message: "这笔订单已经付款，正在开通，请稍等。" };
@@ -229,10 +244,7 @@ export async function connectOrderStatusAction(orderId: string) {
   }
   const result = await getConnectOrderStatus(credential, orderId);
   if (!result.ok) {
-    if (result.reason === "unauthorized") {
-      await forgetConnectAccount(credential);
-      return { ok: false as const, unlinked: true as const, message: "Mediary Connect 连接已失效，请重新连接。" };
-    }
+    if (result.reason === "unauthorized") return credentialRejected(credential);
     return { ok: false as const, message: clientMessage(result) };
   }
   // Only forget the order this answer is about: another tab may have started a newer one.
@@ -251,7 +263,10 @@ export async function connectSlugCheckAction(slug: string) {
   const credential = await getConnectInstanceCredential();
   if (!credential) return { ok: false as const, message: "请先连接 Mediary Connect。" };
   const result = await checkConnectSlug(credential, slug.trim().toLowerCase());
-  if (!result.ok) return { ok: false as const, message: clientMessage(result) };
+  if (!result.ok) {
+    if (result.reason === "unauthorized") return credentialRejected(credential);
+    return { ok: false as const, message: clientMessage(result) };
+  }
   return result.available
     ? { ok: true as const, available: true }
     : { ok: true as const, available: false, reason: result.reason, suggestions: result.suggestions };
@@ -264,6 +279,7 @@ export async function connectProvisionAction(slug: string) {
   if (!credential) return { ok: false as const, message: "请先连接 Mediary Connect。" };
   const result = await provisionConnectSlug(credential, slug.trim().toLowerCase());
   if (result.ok) return { ok: true as const, hostname: result.hostname };
+  if (result.reason === "unauthorized") return credentialRejected(credential);
   if (result.reason === "already_provisioned") {
     // The name exists already: an earlier 确定 whose answer was lost, or one picked in the
     // console. Carry on with it instead of leaving the page on this step.
@@ -275,7 +291,7 @@ export async function connectProvisionAction(slug: string) {
 
 export type ConnectBindResult =
   | { ok: true }
-  | { ok: false; reason: "password_required" | "no_updater" | "busy" | "invalid_input" | "pull_failed" | "compose_failed"; message?: string; command?: string };
+  | { ok: false; reason: "password_required" | "no_updater" | "busy" | "invalid_input" | "pull_failed" | "compose_failed" | "unlinked"; message?: string; command?: string };
 
 const SAFE_CLAIM_CODE = /^[A-Za-z0-9_.-]+$/;
 
@@ -293,7 +309,13 @@ export async function connectBindAction(): Promise<ConnectBindResult> {
   const credential = await getConnectInstanceCredential();
   if (!credential) return { ok: false, reason: "compose_failed", message: "请先连接 Mediary Connect。" };
   const claim = await issueClaimCode(credential);
-  if (!claim.ok) return { ok: false, reason: "compose_failed", message: clientMessage(claim) };
+  if (!claim.ok) {
+    if (claim.reason === "unauthorized") {
+      await forgetConnectAccount(credential);
+      return { ok: false, reason: "unlinked", message: LINK_LOST };
+    }
+    return { ok: false, reason: "compose_failed", message: clientMessage(claim) };
+  }
   // The code may end up in a shell command (the connect.sh fallback below): only the signed-token
   // alphabet, same rule as the Connect console's prompt builder.
   if (!SAFE_CLAIM_CODE.test(claim.code)) {

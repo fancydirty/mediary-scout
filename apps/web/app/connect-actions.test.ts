@@ -66,6 +66,7 @@ vi.mock("../lib/connect-link-store", () => ({
 }));
 
 import {
+  checkConnectSlug,
   createConnectCheckout,
   exchangeClaimCode,
   getConnectAccount,
@@ -87,6 +88,7 @@ import {
   connectOrderStatusAction,
   connectPollLinkAction,
   connectProvisionAction,
+  connectSlugCheckAction,
   connectUnlinkAction,
 } from "./connect-actions";
 
@@ -375,6 +377,42 @@ describe("a credential Connect no longer accepts", () => {
     expect(result).toMatchObject({ ok: false });
     expect(result).not.toHaveProperty("unlinked", true);
     expect(state.cleared).toEqual([]);
+  });
+});
+
+describe("every bearer action when Connect answers 401", () => {
+  const unauthorized = { ok: false as const, reason: "unauthorized" as const, message: "x" };
+  const expectForgotten = (result: unknown) => {
+    expect(result).toMatchObject({ ok: false, unlinked: true });
+    expect(state.cleared).toEqual(expect.arrayContaining(["credential", "email", "order"]));
+  };
+
+  it("checkout forgets the dead credential and tells the page", async () => {
+    vi.mocked(createConnectCheckout).mockResolvedValueOnce(unauthorized);
+    expectForgotten(await connectCheckoutAction("year"));
+  });
+
+  it("不付了 forgets the dead credential and tells the page", async () => {
+    state.order = { orderId: "ord_1", checkoutUrl: "https://pay.example/ord_1" };
+    vi.mocked(getConnectOrderStatus).mockResolvedValueOnce(unauthorized);
+    expectForgotten(await connectAbandonOrderAction("ord_1"));
+  });
+
+  it("the name check forgets the dead credential and tells the page", async () => {
+    vi.mocked(checkConnectSlug).mockResolvedValueOnce(unauthorized);
+    expectForgotten(await connectSlugCheckAction("family"));
+  });
+
+  it("provisioning forgets the dead credential and tells the page", async () => {
+    vi.mocked(provisionConnectSlug).mockResolvedValueOnce(unauthorized);
+    expectForgotten(await connectProvisionAction("family"));
+  });
+
+  it("接入 forgets the dead credential and tells the page", async () => {
+    vi.mocked(issueClaimCode).mockResolvedValueOnce(unauthorized);
+    const result = await connectBindAction();
+    expect(result).toMatchObject({ ok: false, reason: "unlinked" });
+    expect(state.cleared).toEqual(expect.arrayContaining(["credential", "email", "order"]));
   });
 });
 
