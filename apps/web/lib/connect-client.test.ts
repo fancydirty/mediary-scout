@@ -278,6 +278,14 @@ describe("connect-client", () => {
     }
   });
 
+  it("says an order is not found when Connect does not know it for this account", async () => {
+    const result = await getConnectOrderStatus(CREDENTIAL, "ord_other", {
+      baseUrl: BASE,
+      fetchImpl: fetchOnce(() => {}, { error: "not found" }, 404),
+    });
+    expect(result).toMatchObject({ ok: false, reason: "not_found" });
+  });
+
   it("maps generic Connect failures without echoing secrets", async () => {
     const secret = `${CREDENTIAL}-do-not-echo`;
     const unauthorized = await getConnectAccount(secret, {

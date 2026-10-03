@@ -28,7 +28,8 @@ export type ConnectFailureReason =
   | "at_capacity"
   | "already_provisioned"
   | "slug_taken"
-  | "no_endpoint";
+  | "no_endpoint"
+  | "not_found";
 
 export type ConnectFailure = {
   ok: false;
@@ -435,6 +436,8 @@ export async function getConnectOrderStatus(
   const result = await request(`/api/orders/${encodeURIComponent(orderId)}/status`, bearerGet(credential), options);
   if (!result.ok) return result;
   if (result.response.status === 401) return failure("unauthorized");
+  // Not an order of this account (e.g. one created before another account was linked).
+  if (result.response.status === 404) return failure("not_found");
   if (result.response.status === 429) return failure("rate_limited");
   const bodyError = bodyFailure(result);
   if (bodyError) return bodyError;

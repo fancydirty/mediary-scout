@@ -439,6 +439,27 @@ describe("connectProvisionAction", () => {
 });
 
 describe("pending order", () => {
+  it("does not publish an order when the credential changed while the checkout was being created", async () => {
+    vi.mocked(createConnectCheckout).mockImplementationOnce(async () => {
+      state.credential = "ic_newer";
+      return { ok: true, checkoutUrl: "https://pay.example/order", orderId: "ord_1" };
+    });
+    expect((await connectCheckoutAction("year")).ok).toBe(false);
+    expect(state.order).toBeNull();
+  });
+
+  it("drops an order Connect does not know for this account, when polled or abandoned", async () => {
+    const notFound = { ok: false as const, reason: "not_found" as const, message: "x" };
+    state.order = { orderId: "ord_1", checkoutUrl: "https://pay.example/ord_1" };
+    vi.mocked(getConnectOrderStatus).mockResolvedValueOnce(notFound);
+    expect(await connectOrderStatusAction("ord_1")).toMatchObject({ ok: false, stale: true });
+    expect(state.order).toBeNull();
+    state.order = { orderId: "ord_1", checkoutUrl: "https://pay.example/ord_1" };
+    vi.mocked(getConnectOrderStatus).mockResolvedValueOnce(notFound);
+    expect(await connectAbandonOrderAction("ord_1")).toEqual({ ok: true });
+    expect(state.order).toBeNull();
+  });
+
   it("does not give up on an order that is already paid, so it cannot be bought twice", async () => {
     state.order = { orderId: "ord_1", checkoutUrl: "https://pay.example/ord_1" };
     for (const status of ["paid_unfulfilled", "fulfilled"] as const) {

@@ -202,6 +202,11 @@ export async function connectCheckoutAction(
     if (result.reason === "unauthorized") return credentialRejected(credential);
     return { ok: false, message: clientMessage(result) };
   }
+  // Another tab disconnected or linked another account meanwhile: this order is not the
+  // current account's, so it must not become the one this instance waits on.
+  if ((await getConnectInstanceCredential()) !== credential) {
+    return { ok: false, message: "Mediary Connect 的连接刚变了，请重新选择时长。" };
+  }
   // A reload (or finishing payment in the other tab) must not lose the only handle that makes
   // this page check the order, and with it Connect's compensation path.
   await setConnectPendingOrder({ orderId: result.orderId, checkoutUrl: result.checkoutUrl });
@@ -224,14 +229,18 @@ export async function connectAbandonOrderAction(
     // could be bought twice.
     const status = await getConnectOrderStatus(credential, orderId);
     if (!status.ok && status.reason === "unauthorized") return credentialRejected(credential);
-    if (!status.ok) return { ok: false, message: `${clientMessage(status)}现在查不到这笔订单，稍后再点「不付了」。` };
-    if (status.status === "paid_unfulfilled" || status.status === "fulfilled") {
+    // An order Connect does not know for this account has nothing left to wait for.
+    if (!status.ok && status.reason !== "not_found") {
+      return { ok: false, message: `${clientMessage(status)}现在查不到这笔订单，稍后再点「不付了」。` };
+    }
+    if (status.ok && (status.status === "paid_unfulfilled" || status.status === "fulfilled")) {
       return { ok: false, message: "这笔订单已经付款，正在开通，请稍等。" };
     }
   }
   if ((await getConnectPendingOrder())?.orderId === orderId) await clearConnectPendingOrder();
   return { ok: true };
 }
+
 
 export async function connectOrderStatusAction(orderId: string) {
   const refused = await commonGuard();
@@ -245,6 +254,11 @@ export async function connectOrderStatusAction(orderId: string) {
   const result = await getConnectOrderStatus(credential, orderId);
   if (!result.ok) {
     if (result.reason === "unauthorized") return credentialRejected(credential);
+    if (result.reason === "not_found") {
+      // Not an order of this account: stop waiting for it.
+      if ((await getConnectPendingOrder())?.orderId === orderId) await clearConnectPendingOrder();
+      return { ok: false as const, stale: true as const, message: "" };
+    }
     return { ok: false as const, message: clientMessage(result) };
   }
   // Only forget the order this answer is about: another tab may have started a newer one.

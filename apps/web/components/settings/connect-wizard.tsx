@@ -705,7 +705,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
             ? "用开通时的邮箱连上 Mediary Connect 账号，就能在这里续期、重新接入。我们会发一封确认邮件，点邮件里的「确认连接」即可。"
             : "输入邮箱，我们会发一封确认邮件。点击邮件里的「确认连接」后，这台实例就会和你的 Mediary Connect 账号关联。"}</p>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <input className="setting-control" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="你的邮箱" aria-label="邮箱" required />
+            <input className="setting-control" type="email" name="email" inputMode="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="你的邮箱" aria-label="邮箱" required />
             <button className="primary-button" type="submit" disabled={busy || !email.trim()}>发送确认邮件</button>
           </div>
         </form>
@@ -790,7 +790,8 @@ export function ConnectWizard(props: ConnectWizardProps) {
         </div>
       ) : null}
 
-      {notice ? <p className="panel-note" role="status" style={{ marginTop: 12, color: notice.tone === "danger" ? "var(--danger, #e5484d)" : notice.tone === "success" ? "var(--accent)" : undefined }}>{notice.text}</p> : null}
+      {/* Failures interrupt (alert); progress and success are announced politely (status). */}
+      {notice ? <p className="panel-note" role={notice.tone === "danger" ? "alert" : "status"} style={{ marginTop: 12, color: notice.tone === "danger" ? "var(--danger, #e5484d)" : notice.tone === "success" ? "var(--accent)" : undefined }}>{notice.text}</p> : null}
     </div>
   );
 }
