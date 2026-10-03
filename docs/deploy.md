@@ -268,13 +268,15 @@ Mediary Scout 默认单用户、无登录。公网入口必须挡住,二选一:
 
 **方案 A(推荐):在应用里设访问密码**
 
-在**局域网**里打开 `http://<主机IP>:<端口>/login`(端口默认 3000,改过 `WEB_PORT` 就用那个),设置访问密码。第一次设置只能在局域网里做:外网打开还没设密码的实例只会看到一段提示,没人能抢先替你设。之后要改密码:多用户在「设置 → 账号 → 修改密码」;已开通 Mediary Connect 的单用户实例在「设置 → 远程访问」;其余单用户实例(比如自建隧道)在部署机上跑
+在**局域网**里打开 `http://<主机IP>:<端口>/login`(端口默认 3000,改过 `WEB_PORT` 就用那个),设置访问密码。第一次设置只能在局域网里做:外网打开还没设密码的实例只会看到一段提示,没人能抢先替你设。之后要改密码:多用户在「设置 → 账号 → 修改密码」;已开通 Mediary Connect 的单用户实例在「设置 → 远程访问」;其余单用户实例(比如自建隧道)在部署目录里跑下面三行——密码不回显,也不会出现在命令历史和进程参数里:
 
 ```bash
-curl -X POST http://localhost:<端口>/api/auth/password -H 'content-type: application/json' -d '{"password":"新密码"}'
+printf '新密码: '; stty -echo; read -r PW; stty echo; echo
+printf '%s' "$PW" | docker compose exec -T web node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",async()=>{const r=await fetch("http://127.0.0.1:3000/api/auth/password",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({password:s})});console.log(r.status,await r.text());process.exit(r.ok?0:1)})'
+unset PW
 ```
 
-(从部署机本机发出的请求按局域网对待;改完所有登录会话失效,外网要用新密码重新登录。)设好之后:
+(请求从 web 容器内部发出,按局域网对待;成功会打印 `200`,所有登录会话随之失效,外网要用新密码重新登录。)设好之后:
 
 | 来源 | 行为 |
 |---|---|
