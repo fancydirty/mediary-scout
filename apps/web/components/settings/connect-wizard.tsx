@@ -152,6 +152,20 @@ export function ConnectWizard(props: ConnectWizardProps) {
           return;
         } else if (result.state === "slow_down") {
           slowDown = true;
+        } else if (result.state === "none") {
+          // Nothing pending any more: another tab (or this page before a refresh) already took
+          // the approval, or the request was cleared. Stop polling and follow the account.
+          setPending(null);
+          const accountResult = await connectAccountAction();
+          if (accountResult.state === "linked") {
+            setLinked(true);
+            setAccount(accountResult.account);
+            setAccountUnavailable(false);
+            setStep(stepForAccount(accountResult.account, props.hasTunnelToken));
+          } else {
+            setStep(1);
+          }
+          return;
         } else if (result.state === "error") {
           setNotice({ text: result.message, tone: "danger" });
         }

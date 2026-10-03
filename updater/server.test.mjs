@@ -1483,6 +1483,10 @@ describe("POST /tunnel", () => {
     ["connection reset by peer"],
     ["I/O timeout"],
     ["TooManyRequests"],
+    // The most common Docker Hub failure from mainland China (docs/deploy.md); connect.sh
+    // already sends it to the DOCKER_MIRROR hint.
+    ["Error response from daemon: Get \"https://registry-1.docker.io/v2/\": failed to fetch anonymous token: Get \"https://auth.docker.io/token\": EOF"],
+    ["failed to fetch anonymous token: EOF"],
   ])("classifies %s as pull_failed", async (marker) => {
     const { updater } = make({
       repoDir: "/repo",

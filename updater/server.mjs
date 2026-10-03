@@ -46,7 +46,11 @@ const TUNNEL_TERM_GRACE_MS = 10_000;
 const TUNNEL_KILL_WAIT_MS = 5_000;
 const TUNNEL_TOKEN_RE = /^[A-Za-z0-9+/=_-]{20,4096}$/;
 const TUNNEL_HOSTNAME_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/;
+// Same set connect.sh sends to its DOCKER_MIRROR hint, plus a few other pull-side errors.
 const PULL_MARKERS = [
+  "failed to fetch anonymous token",
+  "auth.docker.io",
+  "registry-1.docker.io",
   "failed to resolve reference",
   "pull access denied",
   "tls handshake timeout",

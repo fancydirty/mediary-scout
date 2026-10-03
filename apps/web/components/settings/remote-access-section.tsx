@@ -111,12 +111,14 @@ export async function RemoteAccessSection({
           <span className="hub-badge tone-green">NEW</span>
         </div>
 
+        {/* In this branch any local token was rejected by Connect (or there is none): it is not a
+            working tunnel, so the wizard must still offer 接入. */}
         <ConnectWizard
           linked={linked}
           email={linkedEmail}
           pending={pending}
           account={connectAccount}
-          hasTunnelToken={Boolean(localToken)}
+          hasTunnelToken={false}
           passwordSet={passwordState}
           multiUser={isMultiUserEnabled()}
         />
