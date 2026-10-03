@@ -73,7 +73,11 @@ describe("home page(apex 落地页)", () => {
     const html = homePage();
     // compose 默认把 web 映射到宿主 3000(WEB_PORT 可改);3300 只是作者自己实例的改法。
     expect(html).not.toContain(":3300");
-    expect(html).toContain(":3000");
+    expect(html).toContain("默认 3000");
+    // 宿主端口可改:所有宿主地址都用 <端口> 占位,不写死 3000(隧道目标 web:3000 是容器内的,另说)。
+    expect(html).not.toMatch(/localhost:3000|IP&gt;:3000/);
+    // connect.sh 认四种 compose 文件名,提示词不能只认 docker-compose.yml。
+    expect(html).toContain("compose.yaml");
     // 网盘扫码、AI 模型都在网页设置里配;TMDB 默认走代理,国内填自己的 token 反而容易连不上。
     expect(html).not.toContain("TMDB_READ_TOKEN");
     expect(html).toContain("设置页");

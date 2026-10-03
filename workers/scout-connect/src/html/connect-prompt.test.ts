@@ -59,6 +59,8 @@ describe("buildConnectPrompt", () => {
     const out = buildConnectPrompt(OK);
     expect(out).not.toContain("不要碰任何 git 源码克隆");
     expect(out).toContain("不改源码");
+    // connect.sh 认四种 compose 文件名(docker-compose.yml/.yaml、compose.yml/.yaml)。
+    expect(out).toContain("compose.yaml");
   });
 
   it("接通前先让用户在局域网设好访问密码(第一次设置只能在局域网里做)", () => {

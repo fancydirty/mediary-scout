@@ -550,15 +550,16 @@ ${BRAND_CSS}
 4. \`docker compose up -d\`(首次构建要几分钟)。
 5. <b>验证(缺一不可)</b>:
    - \`docker compose ps\` 所有服务 running/healthy
-   - \`curl -fsS http://localhost:3000/api/health\` 返回 status ok
-     (端口默认 3000,.env 里设过 WEB_PORT 就用那个;这条走真实 DB 读路径,DB 没起来会 503)
+   - \`curl -fsS http://localhost:&lt;端口&gt;/api/health\` 返回 status ok
+     (&lt;端口&gt; 是 web 的宿主端口:默认 3000,.env 里设过 WEB_PORT 就用那个;
+     这条走真实 DB 读路径,DB 没起来会 503)
    任一不过就<b>视为部署失败</b>,不要跟我说「装好了」。
-6. 告诉我用浏览器打开 \`http://&lt;这台机器的局域网IP&gt;:3000\`,在设置页里
+6. 告诉我用浏览器打开 \`http://&lt;这台机器的局域网IP&gt;:&lt;端口&gt;\`,在设置页里
    连网盘(115 / 夸克 / 123 / 天翼 扫码,光鸭粘 token)、填 AI 模型(任意 OpenAI 兼容接口)。
    TMDB 元数据默认走作者的代理,开箱即用,不用问我要 token。
    网盘和模型的凭据由我自己在页面里填,你不要向我索要,也不要写进任何文件。
 7. 以后要远程访问的话,访问密码由我自己在局域网里打开
-   \`http://&lt;局域网IP&gt;:3000/login\` 设置,你不要替我设。
+   \`http://&lt;局域网IP&gt;:&lt;端口&gt;/login\` 设置,你不要替我设。
 
 任何一步失败:<b>立即停止</b>,把完整日志给我。
 不做任何破坏性操作:不 force push、不删容器/卷、不 \`docker system prune\`、
@@ -576,7 +577,8 @@ ${BRAND_CSS}
    你不要替我设),等我回复设好了再继续。
 2. 在部署机上 \`docker ps\` 找到 Mediary Scout 的 web 容器。
 3. \`docker inspect &lt;容器&gt; --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}'\`
-   拿到部署目录并 cd 进去。<b>确认该目录下有 docker-compose.yml</b>(没有 .env 没关系,脚本会建),
+   拿到部署目录并 cd 进去。<b>确认该目录下有 compose 文件</b>(docker-compose.yml / docker-compose.yaml /
+   compose.yml / compose.yaml 任一;没有 .env 没关系,脚本会建),
    不是就停下问我(别在错的目录里写文件)。
 4. 在这个目录下跑:
    \`curl -fsSL https://mediaryconnect.app/connect.sh | sh -s -- &lt;取件码&gt;\`
@@ -608,8 +610,9 @@ ${BRAND_CSS}
    (拉不动再换别的镜像源);境外网络不用设。
 4. \`docker compose up -d\`。
 5. 验证:\`docker compose ps\` 全部 running/healthy
-   且 \`curl -fsS http://localhost:3000/api/health\` 返回 ok(设过 WEB_PORT 就用那个端口)。
-6. 让我在局域网里打开 \`http://&lt;局域网IP&gt;:3000/login\` 自己设访问密码,
+   且 \`curl -fsS http://localhost:&lt;端口&gt;/api/health\` 返回 ok
+   (&lt;端口&gt; 是 web 的宿主端口:默认 3000,.env 里设过 WEB_PORT 就用那个)。
+6. 让我在局域网里打开 \`http://&lt;局域网IP&gt;:&lt;端口&gt;/login\` 自己设访问密码,
    再到设置页连网盘、填 AI 模型。<b>等我回复确认后再继续</b>。
    (访问密码和各种凭据都由我自己在页面里填,你不要替我设,也不要向我索要)
 
@@ -619,7 +622,7 @@ ${BRAND_CSS}
    取件码 15 分钟有效;过期就让我回控制台重新生成。
 8. 验证:\`docker compose ps\` 里 cloudflared running,
    且 \`curl -fsS https://&lt;我的名字&gt;.mediaryconnect.app/api/health\` 返回 ok。
-9. 复核局域网访问没被影响:\`curl -fsS http://localhost:3000/api/health\` 仍 ok。
+9. 复核局域网访问没被影响:\`curl -fsS http://localhost:&lt;端口&gt;/api/health\` 仍 ok。
 
 任何一步失败:<b>立即停止</b>,把完整日志给我,不要绕过。
 不做破坏性操作:不 force push、不删容器/卷、不 prune、

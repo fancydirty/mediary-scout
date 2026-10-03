@@ -52,7 +52,8 @@ export function buildConnectPrompt(input: {
    只能在局域网里做,你不要替我设。等我回复设好了再继续。
 3. SSH 到那台机器,\`docker ps\` 找到 web 容器,
    \`docker inspect\` 拿到它的 compose 部署目录(通常就是当初 git clone 的目录),
-   \`cd\` 进去,确认里面有 docker-compose.yml。
+   \`cd\` 进去,确认里面有 compose 文件(docker-compose.yml / docker-compose.yaml /
+   compose.yml / compose.yaml 任一)。
 4. 在那个部署目录执行这一条(脚本会凭码换取隧道凭据、原子写入 .env、
    带 --profile tunnel 起 cloudflared、并轮询到隧道真通才报成功):
    curl -fsSL ${url} | sh -s -- ${input.claimCode}
