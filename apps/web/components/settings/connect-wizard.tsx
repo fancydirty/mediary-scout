@@ -171,6 +171,8 @@ export function ConnectWizard(props: ConnectWizardProps) {
     setPasswordSet(props.passwordSet);
     setStep(initialStep(props));
     setOrder(props.pendingOrder ?? null);
+    // A connect.sh command belongs to the account it was issued for.
+    if (!props.linked) setFallbackCommand(null);
   }, [props.linked, props.email, props.pending, props.account, props.hasTunnelToken, props.boundHostname, props.passwordSet, props.pendingOrder]);
 
   useEffect(() => {
@@ -295,6 +297,13 @@ export function ConnectWizard(props: ConnectWizardProps) {
             setAccount(accountResult.account);
             setAccountUnavailable(false);
             setStep(stepForAccount(accountResult.account, props.hasTunnelToken, props.boundHostname));
+          } else if (accountResult.state === "unlinked") {
+            resetToUnlinked("Mediary Connect 连接已失效，请重新连接。");
+          } else {
+            // The order may have been paid: show the retry view rather than the old account.
+            setAccountUnavailable(true);
+            setStep(3);
+            setNotice({ text: accountResult.message, tone: "danger" });
           }
         } else if (!result.ok) {
           // Keep polling: a passing network error must not strand a paid order.
