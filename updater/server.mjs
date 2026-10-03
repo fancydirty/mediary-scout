@@ -212,8 +212,14 @@ export function runComposeTunnel(args, deps = {}) {
     };
     child.stdout?.on("data", take);
     child.stderr?.on("data", take);
-    child.on("error", () => finish(1));
-    child.on("close", (code) => finish(typeof code === "number" ? code : 1));
+    // "error" also comes from a failed kill while docker keeps running, so it must not settle
+    // (that would release the job lock early). Node follows it with "close" once the child is
+    // gone, including when docker could not be started at all.
+    let errored = false;
+    child.on("error", () => {
+      errored = true;
+    });
+    child.on("close", (code) => finish(errored || typeof code !== "number" ? 1 : code));
   });
 }
 

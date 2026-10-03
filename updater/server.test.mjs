@@ -1725,6 +1725,40 @@ describe("tunnel compose runner", () => {
     expect(result.pullFailure).toBe(true);
   });
 
+  it("keeps holding on after a child error (a failed kill) until docker actually exits", async () => {
+    const child = fakeComposeChild();
+    const timers = fakeTimers();
+    let settled = false;
+    const pending = runComposeTunnel(["compose", "up"], {
+      spawn: () => child,
+      setTimeout: timers.setTimeout,
+      clearTimeout: timers.clearTimeout,
+    }).then((value) => {
+      settled = true;
+      return value;
+    });
+    timers.armed[0].fn();
+    child.emit("error", new Error("kill EPERM"));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+    child.emit("close", 0);
+    await expect(pending).resolves.toMatchObject({ code: 1, timedOut: true });
+  });
+
+  it("reports a spawn failure as a failed run once Node closes the child", async () => {
+    const child = fakeComposeChild();
+    const timers = fakeTimers();
+    const pending = runComposeTunnel(["compose", "up"], {
+      spawn: () => child,
+      setTimeout: timers.setTimeout,
+      clearTimeout: timers.clearTimeout,
+    });
+    // Node emits error, then close with a negative code, when docker cannot be started.
+    child.emit("error", Object.assign(new Error("spawn docker ENOENT"), { code: "ENOENT" }));
+    child.emit("close", -2);
+    await expect(pending).resolves.toMatchObject({ code: 1, timedOut: false });
+  });
+
   it("gives up waiting 5 s after SIGKILL if docker never reports an exit", async () => {
     const child = fakeComposeChild();
     const timers = fakeTimers();

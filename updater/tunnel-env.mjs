@@ -2,7 +2,6 @@ import { randomBytes } from "node:crypto";
 import {
   chmodSync,
   chownSync,
-  copyFileSync,
   existsSync,
   readFileSync,
   renameSync,
@@ -31,7 +30,6 @@ function fsFrom(deps) {
     existsSync: deps.existsSync ?? existsSync,
     statSync: deps.statSync ?? statSync,
     readFileSync: deps.readFileSync ?? readFileSync,
-    copyFileSync: deps.copyFileSync ?? copyFileSync,
     writeFileSync: deps.writeFileSync ?? writeFileSync,
     chmodSync: deps.chmodSync ?? chmodSync,
     chownSync: deps.chownSync ?? chownSync,
@@ -103,8 +101,9 @@ export function writeTunnelEnv(repoDir, { token, hostname }, deps = {}) {
   const stat = fs.statSync(envPath);
   let backup = join(repoDir, `.env.bak-tunnel-${stampUtc(now())}-${pid}`);
   while (fs.existsSync(backup)) backup += "-1";
-  fs.copyFileSync(envPath, backup);
-  fs.chmodSync(backup, 0o600);
+  // Written from the bytes already read, created 0600 and exclusively: a copy would carry the
+  // .env's own (often 0644) mode until a later chmod, and the backup holds the old credentials.
+  fs.writeFileSync(backup, previous, { mode: 0o600, flag: "wx" });
   fs.chownSync(backup, stat.uid, stat.gid);
   installEnv(fs, repoDir, oldContent, {
     token,

@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync as writeBytes } from "node:fs";
+import { chmodSync, copyFileSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync as writeBytes } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -123,6 +123,31 @@ describe("writeTunnelEnv", () => {
     expect(chowns[0].path).toBe(backup);
     expect(chowns[1].path.startsWith(dir)).toBe(true);
     expect(chowns[1].path).not.toBe(envPath);
+  });
+
+  it("never creates the backup with the .env's wider mode, not even briefly", () => {
+    const dir = makeRepo();
+    const envPath = join(dir, ".env");
+    writeBytes(envPath, "KEEP=1\nTUNNEL_TOKEN=old-secret\n");
+    chmodSync(envPath, 0o644);
+    // Mode of the backup at the moment it first exists, however it gets created.
+    const created = [];
+    const isBackup = (path) => String(path).includes(".env.bak-tunnel-");
+    writeTunnelEnv(dir, { token: TOKEN, hostname: HOST }, {
+      now: () => new Date("2026-10-03T04:05:06.000Z"),
+      pid: 5,
+      chownSync() {},
+      copyFileSync(from, to) {
+        copyFileSync(from, to);
+        if (isBackup(to)) created.push(statSync(to).mode & 0o777);
+      },
+      writeFileSync(path, data, options) {
+        writeBytes(path, data, options);
+        if (isBackup(path)) created.push(statSync(path).mode & 0o777);
+      },
+    });
+    expect(created).toEqual([0o600]);
+    expect(readFileSync(join(dir, ".env.bak-tunnel-20261003-040506-5"), "utf8")).toBe("KEEP=1\nTUNNEL_TOKEN=old-secret\n");
   });
 
   it("leaves .env byte-for-byte untouched and removes the temp file when writing it fails", () => {
