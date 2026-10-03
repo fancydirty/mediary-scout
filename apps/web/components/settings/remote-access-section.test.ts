@@ -66,6 +66,7 @@ function findWizardProps(node: ReactNode): Record<string, unknown> | null {
 }
 
 beforeEach(() => {
+  vi.clearAllMocks();
   state.credential = "ic_revoked";
   state.email = "owner@example.com";
   state.order = { orderId: "ord_1", checkoutUrl: "https://pay.example/ord_1" };
@@ -73,6 +74,17 @@ beforeEach(() => {
 });
 
 describe("RemoteAccessSection", () => {
+  it("starts the Connect account read before waiting on the tunnel status, so two slow calls do not add up", async () => {
+    const { connectAccountAction } = await import("../../app/connect-actions");
+    const { resolveRemoteAccessState } = await import("../../lib/remote-access");
+    vi.mocked(resolveRemoteAccessState).mockImplementationOnce(async () => {
+      expect(vi.mocked(connectAccountAction)).toHaveBeenCalled();
+      return { kind: "not_provisioned" } as never;
+    });
+    await RemoteAccessSection({ searchParams: Promise.resolve({}) });
+    expect(vi.mocked(resolveRemoteAccessState)).toHaveBeenCalled();
+  });
+
   it("shows the wizard as not linked when Connect just rejected the stored credential", async () => {
     const tree = await RemoteAccessSection({ searchParams: Promise.resolve({}) });
     const props = findWizardProps(tree);

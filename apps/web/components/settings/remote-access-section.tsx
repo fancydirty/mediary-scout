@@ -62,6 +62,9 @@ export async function RemoteAccessSection({
   // 写进 .env(worker 的 204 无 body 契约不变,不碰元数据端点)。
   const { w } = await searchParams;
   const passwordHref = passwordSetupHref({ multiUser: isMultiUserEnabled(), w });
+  // The Connect account read is independent of the tunnel status below and each has its own
+  // timeout: start it first so a Connect outage costs one timeout, not two in a row.
+  const accountRead = connectAccountAction().catch(() => null);
   // 只求值一次:重复调用会重跑校验,理论上还可能在同一次渲染里读到不同 env。
   const localHostname = await resolveInstanceConnectHostname();
   const localToken = await resolveInstanceTunnelToken();
@@ -74,13 +77,9 @@ export async function RemoteAccessSection({
   const pending: ConnectWizardPending | null = pendingRaw
     ? { email: pendingRaw.email, verifyCode: pendingRaw.verifyCode, expiresAt: pendingRaw.expiresAt }
     : null;
-  let connectAccount = null;
-  try {
-    const accountResult = await connectAccountAction();
-    if (accountResult.state === "linked") connectAccount = accountResult.account;
-  } catch {
-    // The existing remote-access status remains useful when Connect is temporarily unavailable.
-  }
+  // A failed read (null) leaves the remote-access status above useful on its own.
+  const accountResult = await accountRead;
+  const connectAccount = accountResult?.state === "linked" ? accountResult.account : null;
   // Read after the account check: it forgets a credential Connect no longer accepts, and with it
   // the email and the pending order.
   const linked = (await getConnectInstanceCredential()) !== null;

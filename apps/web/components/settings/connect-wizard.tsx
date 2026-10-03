@@ -587,7 +587,13 @@ export function ConnectWizard(props: ConnectWizardProps) {
 
       {step === 5 ? (
         <div style={{ maxWidth: 520 }}>
-          {!props.multiUser && passwordSet !== true ? (
+          {!props.multiUser && passwordSet === "unknown" ? (
+            // A failed read is not "no password": do not offer first-time setup, but keep 接入 off.
+            <p className="panel-note" role="status" style={{ marginBottom: 12 }}>
+              暂时读不到访问密码的状态（数据库读取失败），请稍后刷新页面再接入。
+            </p>
+          ) : null}
+          {!props.multiUser && passwordSet === false ? (
             <div style={{ border: "1px solid var(--border)", borderRadius: 8, padding: 12, marginBottom: 12 }}>
               <strong>先设置访问密码</strong>
               <p className="panel-note">远程访问的门禁就是这个密码。第一次设置请在局域网里完成。</p>

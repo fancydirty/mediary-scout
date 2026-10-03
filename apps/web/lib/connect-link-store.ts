@@ -154,9 +154,11 @@ export function getConnectBoundEnv(): Promise<string | null> {
   return getValue(CONNECT_BOUND_ENV_KEY);
 }
 
-/** A tunnel the updater just started. The fingerprint goes last: it is what lets these values
- *  supersede the env web is running with (see remote-access.ts). */
+/** A tunnel the updater just started. The fingerprint is what lets these values supersede the
+ *  env web is running with (see remote-access.ts), so it is removed first and written last: a
+ *  failure in between leaves the env in charge, never a half-written token/hostname pair. */
 export async function setConnectBinding(binding: { token: string; hostname: string; envFingerprint: string }): Promise<void> {
+  await clearValue(CONNECT_BOUND_ENV_KEY);
   await setValue(CONNECT_TUNNEL_TOKEN_KEY, binding.token);
   await setValue(CONNECT_HOSTNAME_KEY, binding.hostname);
   await setValue(CONNECT_BOUND_ENV_KEY, binding.envFingerprint);

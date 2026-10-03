@@ -3,7 +3,44 @@ import { describe, expect, it, vi } from "vitest";
 // @ts-expect-error Vitest runtime supports virtual mocks, but v4 typings omit the option.
 vi.mock("server-only", () => ({}), { virtual: true });
 
-import { connectSlugReasonText, nextLinkPollDelayMs, stepForAccount } from "./connect-wizard";
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: () => undefined }) }));
+vi.mock("../../app/connect-actions", () => ({}));
+
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { ConnectWizard, connectSlugReasonText, nextLinkPollDelayMs, stepForAccount } from "./connect-wizard";
+
+describe("ConnectWizard access password on the 接入 step", () => {
+  const render = (passwordSet: boolean | "unknown") =>
+    renderToStaticMarkup(
+      createElement(ConnectWizard, {
+        linked: true,
+        email: "a@b.c",
+        pending: null,
+        account: {
+          email: "a@b.c",
+          active: true,
+          expiresAt: "2027-01-03T00:00:00.000Z",
+          endpoint: { slug: "x", hostname: "x.mediaryconnect.app", status: "active" },
+          checkoutOpen: true,
+          tiers: [],
+        },
+        hasTunnelToken: false,
+        passwordSet,
+      }),
+    );
+
+  it("offers the first-password form only when no password is set", () => {
+    expect(render(false)).toContain("先设置访问密码");
+  });
+
+  it("says the password state could not be read instead of offering first-time setup, and keeps 接入 off", () => {
+    const html = render("unknown");
+    expect(html).not.toContain("先设置访问密码");
+    expect(html).toContain("暂时读不到访问密码的状态");
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>接入<\/button>/);
+  });
+});
 
 describe("ConnectWizard copy", () => {
   it.each([

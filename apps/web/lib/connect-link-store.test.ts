@@ -89,13 +89,15 @@ describe("connect tunnel binding", () => {
     vi.clearAllMocks();
   });
 
-  it("writes token, hostname, then the env fingerprint last, and reads the fingerprint back", async () => {
+  it("drops the old fingerprint first, writes token and hostname, then the new fingerprint last", async () => {
     await setConnectBinding({ token: " tok ", hostname: "a.example.com", envFingerprint: "fp-1" });
     expect(repository.setSetting.mock.calls).toEqual([
       [CONNECT_TUNNEL_TOKEN_KEY, "tok"],
       [CONNECT_HOSTNAME_KEY, "a.example.com"],
       [CONNECT_BOUND_ENV_KEY, "fp-1"],
     ]);
+    expect(repository.deleteSetting.mock.calls).toEqual([[CONNECT_BOUND_ENV_KEY]]);
+    expect(repository.deleteSetting.mock.invocationCallOrder[0]).toBeLessThan(repository.setSetting.mock.invocationCallOrder[0]!);
     repository.getSetting.mockResolvedValueOnce(" fp-1 ");
     expect(await getConnectBoundEnv()).toBe("fp-1");
   });
