@@ -42,11 +42,19 @@ admin ──► mediaryconnect.app (this worker)
             docker compose --profile tunnel up -d   (TUNNEL_TOKEN in .env)
 ```
 
-### Public endpoints (no auth)
+### Authenticated endpoints (session cookie)
 
-`POST /api/checkout` requires the logged-in session cookie. It returns the Waffo
-checkout URL and local order ID on success; `429 { error: "too_many_checkouts" }`
-means the account has reached the 20-checkout daily limit.
+`POST /api/checkout` — body `{ tier }` (`quarter` / `year` / `two_years`).
+
+| Status | Body |
+| --- | --- |
+| 200 | `{ checkoutUrl, orderId }` — open `checkoutUrl` (Waffo, HTTPS only) in the same tab |
+| 400 | `{ error: "unknown tier" }` (or a body-parse error) |
+| 401 | `{ error: "unauthorized" }` — no or expired session |
+| 429 | `{ error: "too_many_checkouts" }` — the account already created 20 checkouts in the last 24 hours |
+| 503 | `{ error: "checkout_not_open" }` / `{ error: "checkout_unavailable" }` — Waffo not configured or not approved / upstream failure |
+
+### Public endpoints (no auth)
 
 `POST /waitlist` — beta signup. Body `{ email }`.
 

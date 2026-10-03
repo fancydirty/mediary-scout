@@ -226,10 +226,15 @@ function normalizeSession(value: unknown): WaffoCheckoutSession {
   } catch {
     throw new WaffoApiError("WAFFO_INVALID_RESPONSE", "Waffo response checkoutUrl must be HTTPS");
   }
+  const expiresAt = requiredString(record?.expiresAt, "expiresAt").trim();
+  // The local order's expiry is read back with Date.parse; a non-date would leave it pending forever.
+  if (!Number.isFinite(Date.parse(expiresAt))) {
+    throw new WaffoApiError("WAFFO_INVALID_RESPONSE", "Waffo response expiresAt must be a date");
+  }
   return {
     checkoutUrl,
     sessionId: requiredString(record?.sessionId, "sessionId"),
-    expiresAt: requiredString(record?.expiresAt, "expiresAt"),
+    expiresAt,
   };
 }
 

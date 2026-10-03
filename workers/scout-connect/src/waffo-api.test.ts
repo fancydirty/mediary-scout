@@ -165,6 +165,24 @@ describe("Waffo checkout adapter", () => {
     })).resolves.toMatchObject({ checkoutUrl: "https://checkout.test/session" });
   });
 
+  it("rejects a provider session whose expiresAt is not a date", async () => {
+    const config = {
+      merchantId: "merchant", storeId: "store", environment: "test" as const, privateKey: "key",
+      productQuarter: "PROD_Q", productYear: "PROD_Y", productTwoYears: "PROD_2Y",
+    };
+    for (const expiresAt of ["not a date", "2026-13-45T99:00:00Z", " "]) {
+      const client: WaffoSdkClient = {
+        checkout: { createSession: vi.fn(async () => ({ checkoutUrl: "https://checkout.test/session", sessionId: "cs_bad", expiresAt })) },
+        graphql: { query: vi.fn() },
+      };
+      await expect(createWaffoApi({ ...config, client }).createSession({
+        productId: "PROD_Q", successUrl: "http://localhost/payment-success?order=ord_1",
+        orderMerchantExternalId: "MC_EXP", metadata: { orderId: "ord_1" }, expiresInSeconds: 1800,
+        language: "zh-Hans",
+      })).rejects.toBeInstanceOf(Error);
+    }
+  });
+
   it("classifies an unapproved production store error", async () => {
     const error = Object.assign(new Error("Store is not approved for production payments"), {
       status: 403,
