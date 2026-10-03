@@ -41,6 +41,9 @@ const TUNNEL_MAX_BODY = 8192;
 // image pull ends as pull_failed/compose_failed with a DOCKER_MIRROR hint, and a retry resumes
 // from the layers already downloaded.
 const TUNNEL_COMPOSE_TIMEOUT_MS = 270_000;
+// After SIGTERM, how long docker gets to exit before SIGKILL, and how long we then wait for it.
+const TUNNEL_TERM_GRACE_MS = 10_000;
+const TUNNEL_KILL_WAIT_MS = 5_000;
 const TUNNEL_TOKEN_RE = /^[A-Za-z0-9+/=_-]{20,4096}$/;
 const TUNNEL_HOSTNAME_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/;
 const PULL_MARKERS = [
@@ -162,28 +165,40 @@ export function runComposeTunnel(args, deps = {}) {
     child.stdin?.end();
     let output = "";
     let settled = false;
-    let timer;
-    const finish = (code, timedOut) => {
+    let timedOut = false;
+    const timers = [];
+    const arm = (fn, ms) => timers.push(setTimer(fn, ms));
+    const finish = (code) => {
       if (settled) return;
       settled = true;
-      if (timer !== undefined) clearTimer(timer);
-      resolve({ code, output, timedOut });
+      for (const timer of timers) clearTimer(timer);
+      resolve({ code: timedOut ? 1 : code, output, timedOut });
     };
-    timer = setTimer(() => {
+    const kill = (signal) => {
       try {
-        child.kill("SIGTERM");
+        child.kill(signal);
       } catch {
         // Already exited.
       }
-      finish(1, true);
+    };
+    // Settle only once docker has exited: the caller releases the shared job lock then, and an
+    // update or a second /tunnel must not start while this compose run is still going.
+    // Worst case 270 + 10 + 5 s, inside the web's 290 s client timeout.
+    arm(() => {
+      timedOut = true;
+      kill("SIGTERM");
+      arm(() => {
+        kill("SIGKILL");
+        arm(() => finish(1), TUNNEL_KILL_WAIT_MS);
+      }, TUNNEL_TERM_GRACE_MS);
     }, timeoutMs);
     const take = (chunk) => {
       output += chunk.toString();
     };
     child.stdout?.on("data", take);
     child.stderr?.on("data", take);
-    child.on("error", () => finish(1, false));
-    child.on("close", (code) => finish(typeof code === "number" ? code : 1, false));
+    child.on("error", () => finish(1));
+    child.on("close", (code) => finish(typeof code === "number" ? code : 1));
   });
 }
 

@@ -1584,15 +1584,36 @@ describe("tunnel compose runner", () => {
     ]);
   });
 
-  it("spawns docker with stdin closed and kills the child at 270 s, before the web's fetch gives up at 300 s", async () => {
+  function fakeComposeChild() {
     const child = new EventEmitter();
     child.stdout = new PassThrough();
     child.stderr = new PassThrough();
-    const killed = [];
-    child.kill = (signal) => killed.push(signal);
+    child.killed = [];
+    child.kill = (signal) => child.killed.push(signal);
+    return child;
+  }
+
+  function fakeTimers() {
+    const armed = [];
+    const cleared = new Set();
+    return {
+      armed,
+      cleared,
+      setTimeout(fn, ms) {
+        armed.push({ fn, ms });
+        return armed.length;
+      },
+      clearTimeout(id) {
+        cleared.add(id);
+      },
+    };
+  }
+
+  it("spawns docker with stdin closed and stops it at 270 s, before the web's fetch gives up at 300 s", async () => {
+    const child = fakeComposeChild();
+    const timers = fakeTimers();
     let seen;
-    let armed;
-    let cleared = false;
+    let settled = false;
     const pending = runComposeTunnel(
       ["compose", "-p", "scout", "--project-directory", "/repo", "--profile", "tunnel", "up", "-d", "--no-deps", "cloudflared"],
       {
@@ -1600,40 +1621,66 @@ describe("tunnel compose runner", () => {
           seen = { command, args, options };
           return child;
         },
-        setTimeout(fn, ms) {
-          armed = { fn, ms };
-          return 1;
-        },
-        clearTimeout() {
-          cleared = true;
-        },
+        setTimeout: timers.setTimeout,
+        clearTimeout: timers.clearTimeout,
       },
-    );
+    ).then((value) => {
+      settled = true;
+      return value;
+    });
     expect(seen).toEqual({
       command: "docker",
-      args: [
-        "compose",
-        "-p",
-        "scout",
-        "--project-directory",
-        "/repo",
-        "--profile",
-        "tunnel",
-        "up",
-        "-d",
-        "--no-deps",
-        "cloudflared",
-      ],
+      args: ["compose", "-p", "scout", "--project-directory", "/repo", "--profile", "tunnel", "up", "-d", "--no-deps", "cloudflared"],
       options: { stdio: ["ignore", "pipe", "pipe"] },
     });
     // Node's fetch on the web side stops waiting for response headers after 300 s (undici
     // headersTimeout), whatever its AbortSignal says; the answer must come before that.
-    expect(armed.ms).toBe(270_000);
+    expect(timers.armed[0].ms).toBe(270_000);
     child.stdout.write(`still pulling ${TUNNEL_TOKEN}\n`);
-    armed.fn();
+    timers.armed[0].fn();
+    expect(child.killed).toEqual(["SIGTERM"]);
+    // The job lock is released when this promise settles: not before docker has exited.
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+    // Still running after a 10 s grace: SIGKILL.
+    expect(timers.armed[1].ms).toBe(10_000);
+    timers.armed[1].fn();
+    expect(child.killed).toEqual(["SIGTERM", "SIGKILL"]);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+    child.emit("close", null);
     await expect(pending).resolves.toEqual({ code: 1, output: `still pulling ${TUNNEL_TOKEN}\n`, timedOut: true });
-    expect(killed).toEqual(["SIGTERM"]);
-    expect(cleared).toBe(true);
+    // 270 + 10 + 5 s worst case stays under the web's 290 s client timeout.
+    expect(timers.armed[2].ms).toBe(5_000);
+  });
+
+  it("settles as soon as docker exits after SIGTERM, without waiting out the grace period", async () => {
+    const child = fakeComposeChild();
+    const timers = fakeTimers();
+    const pending = runComposeTunnel(["compose", "up"], {
+      spawn: () => child,
+      setTimeout: timers.setTimeout,
+      clearTimeout: timers.clearTimeout,
+    });
+    timers.armed[0].fn();
+    child.emit("close", 143);
+    await expect(pending).resolves.toEqual({ code: 1, output: "", timedOut: true });
+    expect(child.killed).toEqual(["SIGTERM"]);
+    expect(timers.cleared.has(2)).toBe(true);
+  });
+
+  it("gives up waiting 5 s after SIGKILL if docker never reports an exit", async () => {
+    const child = fakeComposeChild();
+    const timers = fakeTimers();
+    const pending = runComposeTunnel(["compose", "up"], {
+      spawn: () => child,
+      setTimeout: timers.setTimeout,
+      clearTimeout: timers.clearTimeout,
+    });
+    timers.armed[0].fn();
+    timers.armed[1].fn();
+    timers.armed[2].fn();
+    await expect(pending).resolves.toEqual({ code: 1, output: "", timedOut: true });
   });
 });
 
