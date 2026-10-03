@@ -51,14 +51,16 @@ vi.mock("../lib/connect-link-store", () => ({
   getConnectLinkPending: vi.fn(async () => state.pending),
   setConnectLinkPending: vi.fn(async (v: unknown) => { state.pending = v; state.stored.push(["pending", JSON.stringify(v)]); }),
   clearConnectLinkPending: vi.fn(async () => { state.pending = null; state.cleared.push("pending"); }),
-  setConnectTunnelToken: vi.fn(async (v: string) => { state.stored.push(["tunnel", v]); }),
-  setConnectHostname: vi.fn(async (v: string) => { state.stored.push(["hostname", v]); }),
+  setConnectBinding: vi.fn(async (v: { token: string; hostname: string; boundAt: string }) => {
+    state.stored.push(["tunnel", v.token], ["hostname", v.hostname], ["boundAt", v.boundAt]);
+  }),
   getConnectTunnelToken: vi.fn(async () => null),
 }));
 
-import { createConnectCheckout } from "../lib/connect-client";
+import { createConnectCheckout, exchangeClaimCode, issueClaimCode } from "../lib/connect-client";
+import { scoutConnectBaseUrl } from "../lib/remote-access";
 import { startTunnel } from "../lib/updater-client";
-import { setConnectTunnelToken } from "../lib/connect-link-store";
+import { setConnectBinding } from "../lib/connect-link-store";
 import { connectBindAction, connectCheckoutAction, connectPollLinkAction, connectUnlinkAction } from "./connect-actions";
 
 beforeEach(() => {
@@ -134,9 +136,11 @@ describe("connectBindAction", () => {
     expect(await connectBindAction()).toEqual({ ok: true });
     expect(state.stored).toContainEqual(["tunnel", "tunnel-token"]);
     expect(state.stored).toContainEqual(["hostname", "owner.mediaryconnect.app"]);
-    expect(vi.mocked(setConnectTunnelToken).mock.invocationCallOrder[0]).toBeGreaterThan(
+    expect(vi.mocked(setConnectBinding).mock.invocationCallOrder[0]).toBeGreaterThan(
       vi.mocked(startTunnel).mock.invocationCallOrder[0]!,
     );
+    const boundAt = state.stored.find(([key]) => key === "boundAt")?.[1];
+    expect(Number.isFinite(Date.parse(boundAt ?? ""))).toBe(true);
   });
 
   it.each(["no_updater", "busy", "pull_failed", "compose_failed", "invalid_input"] as const)(
@@ -147,6 +151,25 @@ describe("connectBindAction", () => {
       expect(state.stored.filter(([key]) => key === "tunnel" || key === "hostname")).toEqual([]);
     },
   );
+
+  it("never builds a fallback command from a claim code with shell syntax in it", async () => {
+    vi.mocked(startTunnel).mockResolvedValue({ ok: false, reason: "no_updater" });
+    vi.mocked(issueClaimCode).mockResolvedValueOnce({ ok: true, code: "claim.x; rm -rf ~", expires_at: "2026-10-03T00:10:00Z" });
+    const result = await connectBindAction();
+    expect(result.ok).toBe(false);
+    expect(result).not.toHaveProperty("command");
+    expect(vi.mocked(exchangeClaimCode)).not.toHaveBeenCalled();
+  });
+
+  it("puts only the origin of the Connect address into the fallback command", async () => {
+    vi.mocked(startTunnel).mockResolvedValue({ ok: false, reason: "no_updater" });
+    vi.mocked(scoutConnectBaseUrl).mockReturnValueOnce("https://connect.example/some/path?x=1");
+    expect(await connectBindAction()).toEqual({
+      ok: false,
+      reason: "no_updater",
+      command: "curl -fsSL https://connect.example/connect.sh | sh -s -- claim-code",
+    });
+  });
 
   it("returns a fallback command when the updater is absent", async () => {
     vi.mocked(startTunnel).mockResolvedValue({ ok: false, reason: "no_updater" });

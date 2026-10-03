@@ -8,7 +8,7 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { writeTunnelEnv } from "./tunnel-env.mjs";
+import { restoreTunnelEnv, writeTunnelEnv } from "./tunnel-env.mjs";
 
 // Same shape as apps/web/lib/release-version.ts TAG_RE, plus that file's calendar check
 // (v2026.02.31 matches the pattern and is still not a date). Keep the two in sync.
@@ -44,6 +44,8 @@ const TUNNEL_COMPOSE_TIMEOUT_MS = 270_000;
 // After SIGTERM, how long docker gets to exit before SIGKILL, and how long we then wait for it.
 const TUNNEL_TERM_GRACE_MS = 10_000;
 const TUNNEL_KILL_WAIT_MS = 5_000;
+// Compose output kept for logTail; only the end matters, and a noisy daemon must not grow us.
+const TUNNEL_OUTPUT_LIMIT = 1024 * 1024;
 const TUNNEL_TOKEN_RE = /^[A-Za-z0-9+/=_-]{20,4096}$/;
 const TUNNEL_HOSTNAME_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/;
 // Same set connect.sh sends to its DOCKER_MIRROR hint, plus a few other pull-side errors.
@@ -135,9 +137,13 @@ function redactToken(output, token) {
   return text.split(token).join("[redacted]");
 }
 
+function looksLikePullFailure(text) {
+  const haystack = text.toLowerCase();
+  return PULL_MARKERS.some((marker) => haystack.includes(marker));
+}
+
 function classifyComposeOutput(output) {
-  const haystack = output.toLowerCase();
-  return PULL_MARKERS.some((marker) => haystack.includes(marker)) ? "pull_failed" : "compose_failed";
+  return looksLikePullFailure(output) ? "pull_failed" : "compose_failed";
 }
 
 function lastLines(output, count) {
@@ -176,7 +182,7 @@ export function runComposeTunnel(args, deps = {}) {
       if (settled) return;
       settled = true;
       for (const timer of timers) clearTimer(timer);
-      resolve({ code: timedOut ? 1 : code, output, timedOut });
+      resolve({ code: timedOut ? 1 : code, output, timedOut, pullFailure });
     };
     const kill = (signal) => {
       try {
@@ -196,8 +202,13 @@ export function runComposeTunnel(args, deps = {}) {
         arm(() => finish(1), TUNNEL_KILL_WAIT_MS);
       }, TUNNEL_TERM_GRACE_MS);
     }, timeoutMs);
+    // Remembered across the whole run: the tail kept below may no longer contain the marker.
+    let pullFailure = false;
     const take = (chunk) => {
-      output += chunk.toString();
+      const text = chunk.toString();
+      if (!pullFailure) pullFailure = looksLikePullFailure(output.slice(-128) + text);
+      output += text;
+      if (output.length > TUNNEL_OUTPUT_LIMIT) output = output.slice(-TUNNEL_OUTPUT_LIMIT);
     };
     child.stdout?.on("data", take);
     child.stderr?.on("data", take);
@@ -216,11 +227,21 @@ export async function performTunnel(input, deps = {}) {
   } catch {
     return { ok: false, reason: "compose_failed", logTail: PROJECT_LOOKUP_FAILURE };
   }
+  let written;
   try {
-    await deps.writeTunnelEnv(repoDir, { token: input.token, hostname: input.hostname });
+    written = await deps.writeTunnelEnv(repoDir, { token: input.token, hostname: input.hostname });
   } catch {
     return { ok: false, reason: "compose_failed", logTail: ENV_WRITE_FAILURE };
   }
+  // A token left in .env for a tunnel that never started would make the next web restart
+  // report it as on: put .env back. Best effort; the compose failure is still the answer.
+  const rollBack = async () => {
+    try {
+      await deps.restoreTunnelEnv?.(repoDir, written?.backup ?? null);
+    } catch {
+      // .env keeps the new values; the page still shows the failure and offers 重新接入.
+    }
+  };
   // --no-deps keeps web up: recreating it would cut off a download that is still running.
   const argv = [
     "compose",
@@ -239,13 +260,16 @@ export async function performTunnel(input, deps = {}) {
   try {
     result = await deps.runCompose(argv);
   } catch {
+    await rollBack();
     return { ok: false, reason: "compose_failed", logTail: "启动 cloudflared 失败。" };
   }
   const output = redactToken(result && result.output, input.token);
   const timedOut = Boolean(result && result.timedOut);
   const code = result && typeof result.code === "number" ? result.code : 1;
   if (code === 0 && !timedOut) return { ok: true };
-  return { ok: false, reason: classifyComposeOutput(output), logTail: lastLines(output, 40) };
+  await rollBack();
+  const reason = result && result.pullFailure ? "pull_failed" : classifyComposeOutput(output);
+  return { ok: false, reason, logTail: lastLines(output, 40) };
 }
 
 function parseTunnelBody(raw) {
@@ -561,6 +585,7 @@ export function createUpdater(opts) {
           performTunnel(input, {
             repoDir: opts.repoDir,
             writeTunnelEnv: opts.writeTunnelEnv,
+            restoreTunnelEnv: opts.restoreTunnelEnv,
             composeProject: opts.composeProject,
             runCompose: opts.runCompose,
           }),
@@ -733,6 +758,7 @@ if (isDirectRun()) {
     waitLimitMs: 2 * 60 * 60 * 1000,
     repoDir: process.env.UPDATER_REPO_DIR ?? "/repo",
     writeTunnelEnv,
+    restoreTunnelEnv,
     composeProject: () => readComposeProject(dockerText),
     runCompose: (argv) => runComposeTunnel(argv),
     // The commit the running web container was built from (its BUILD_COMMIT). Async with a

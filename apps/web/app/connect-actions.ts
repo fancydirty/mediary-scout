@@ -27,10 +27,9 @@ import {
   getConnectInstanceCredential,
   getConnectLinkPending,
   setConnectAccountEmail,
-  setConnectHostname,
+  setConnectBinding,
   setConnectInstanceCredential,
   setConnectLinkPending,
-  setConnectTunnelToken,
 } from "../lib/connect-link-store";
 import { scoutConnectBaseUrl } from "../lib/remote-access";
 import { startTunnel } from "../lib/updater-client";
@@ -186,6 +185,13 @@ export type ConnectBindResult =
   | { ok: true }
   | { ok: false; reason: "password_required" | "no_updater" | "busy" | "invalid_input" | "pull_failed" | "compose_failed"; message?: string; command?: string };
 
+const SAFE_CLAIM_CODE = /^[A-Za-z0-9_.-]+$/;
+
+/** Only scheme + host of the Connect address go into a shell command, never a path or query. */
+function connectOrigin(): string {
+  return new URL(scoutConnectBaseUrl()).origin;
+}
+
 export async function connectBindAction(): Promise<ConnectBindResult> {
   const refused = await commonGuard();
   if (refused) return { ok: false, reason: "compose_failed", message: refused.message };
@@ -196,21 +202,25 @@ export async function connectBindAction(): Promise<ConnectBindResult> {
   if (!credential) return { ok: false, reason: "compose_failed", message: "请先连接 Mediary Connect。" };
   const claim = await issueClaimCode(credential);
   if (!claim.ok) return { ok: false, reason: "compose_failed", message: clientMessage(claim) };
+  // The code may end up in a shell command (the connect.sh fallback below): only the signed-token
+  // alphabet, same rule as the Connect console's prompt builder.
+  if (!SAFE_CLAIM_CODE.test(claim.code)) {
+    return { ok: false, reason: "compose_failed", message: "Mediary Connect 返回的接入码格式不对，请稍后再试。" };
+  }
   const exchanged = await exchangeClaimCode(claim.code);
   if (!exchanged.ok) return { ok: false, reason: "compose_failed", message: clientMessage(exchanged) };
   const started = await startTunnel({ token: exchanged.token, hostname: exchanged.hostname });
   if (started.ok) {
     // Only now: a stored token makes the page report the tunnel as on. After a failed start
     // the wizard stays on 接入; after the connect.sh fallback, web reads the token from .env.
-    await setConnectTunnelToken(exchanged.token);
-    await setConnectHostname(exchanged.hostname);
+    await setConnectBinding({ token: exchanged.token, hostname: exchanged.hostname, boundAt: new Date().toISOString() });
     return { ok: true };
   }
   if (started.reason === "no_updater") {
     return {
       ok: false,
       reason: "no_updater",
-      command: `curl -fsSL ${scoutConnectBaseUrl()}/connect.sh | sh -s -- ${claim.code}`,
+      command: `curl -fsSL ${connectOrigin()}/connect.sh | sh -s -- ${claim.code}`,
     };
   }
   if (started.reason === "busy") return { ok: false, reason: "busy", message: "正在更新版本，等更新结束再接入。" };

@@ -14,6 +14,7 @@ vi.mock("./workflow-runtime", () => ({
 
 import {
   CONNECT_ACCOUNT_EMAIL_KEY,
+  CONNECT_BOUND_AT_KEY,
   CONNECT_HOSTNAME_KEY,
   CONNECT_INSTANCE_CREDENTIAL_KEY,
   CONNECT_LINK_EXPIRES_AT_KEY,
@@ -26,11 +27,13 @@ import {
   clearConnectHostname,
   clearConnectTunnelToken,
   getConnectAccountEmail,
+  getConnectBoundAt,
   getConnectHostname,
   getConnectInstanceCredential,
   getConnectLinkPending,
   getConnectTunnelToken,
   setConnectAccountEmail,
+  setConnectBinding,
   setConnectInstanceCredential,
   setConnectLinkPending,
   setConnectHostname,
@@ -114,5 +117,22 @@ describe("connect link instance settings", () => {
     expect(repository.deleteSetting).toHaveBeenCalledWith(CONNECT_HOSTNAME_KEY);
     expect(await getConnectTunnelToken()).toBeNull();
     expect(await getConnectHostname()).toBeNull();
+  });
+});
+
+describe("connect tunnel binding", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("writes token, hostname, then the bound time last, and reads the time back", async () => {
+    await setConnectBinding({ token: " tok ", hostname: "a.example.com", boundAt: "2026-10-03T14:00:00.000Z" });
+    expect(repository.setSetting.mock.calls).toEqual([
+      [CONNECT_TUNNEL_TOKEN_KEY, "tok"],
+      [CONNECT_HOSTNAME_KEY, "a.example.com"],
+      [CONNECT_BOUND_AT_KEY, "2026-10-03T14:00:00.000Z"],
+    ]);
+    repository.getSetting.mockResolvedValueOnce(" 2026-10-03T14:00:00.000Z ");
+    expect(await getConnectBoundAt()).toBe("2026-10-03T14:00:00.000Z");
   });
 });

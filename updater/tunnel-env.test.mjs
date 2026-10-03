@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, wr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { rewriteEnvForTunnel, writeTunnelEnv } from "./tunnel-env.mjs";
+import { restoreTunnelEnv, rewriteEnvForTunnel, writeTunnelEnv } from "./tunnel-env.mjs";
 
 const TOKEN = "tok_value_0123456789";
 const HOST = "home.mediaryconnect.app";
@@ -164,5 +164,28 @@ describe("writeTunnelEnv", () => {
     ).toThrow(/配置行/);
     expect(readFileSync(envPath, "utf8")).toBe(old);
     expect(readdirSync(dir).filter((name) => name.startsWith(".env.tmp"))).toEqual([]);
+  });
+});
+
+describe("restoreTunnelEnv", () => {
+  it("puts the backed-up bytes back with the current .env's mode when the tunnel did not start", () => {
+    const dir = makeRepo();
+    const envPath = join(dir, ".env");
+    const old = "DOCKER_MIRROR=docker.1ms.run\nWEB_PORT=3300\n";
+    writeBytes(envPath, old);
+    chmodSync(envPath, 0o640);
+    const { backup } = writeTunnelEnv(dir, { token: TOKEN, hostname: HOST }, { chownSync() {} });
+    restoreTunnelEnv(dir, backup, { chownSync() {} });
+    expect(readFileSync(envPath, "utf8")).toBe(old);
+    expect(statSync(envPath).mode & 0o777).toBe(0o640);
+    expect(readdirSync(dir).filter((name) => name.startsWith(".env.tmp"))).toEqual([]);
+  });
+
+  it("removes a .env it created itself", () => {
+    const dir = makeRepo();
+    const { backup } = writeTunnelEnv(dir, { token: TOKEN, hostname: HOST }, { chownSync() {} });
+    expect(backup).toBeNull();
+    restoreTunnelEnv(dir, backup, { chownSync() {} });
+    expect(readdirSync(dir).includes(".env")).toBe(false);
   });
 });

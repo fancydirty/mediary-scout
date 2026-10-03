@@ -115,3 +115,27 @@ export function writeTunnelEnv(repoDir, { token, hostname }, deps = {}) {
   });
   return { backup };
 }
+
+/** Undo writeTunnelEnv after the tunnel failed to start, so a later web restart does not read
+ *  a token for a tunnel that never came up. backup = what writeTunnelEnv returned: put those
+ *  bytes back (atomically, with the current .env's mode and owner), or, when it created .env
+ *  itself (null), remove it. */
+export function restoreTunnelEnv(repoDir, backup, deps = {}) {
+  const fs = fsFrom(deps);
+  const envPath = join(repoDir, ".env");
+  if (backup === null) {
+    fs.unlinkSync(envPath);
+    return;
+  }
+  const current = fs.statSync(envPath);
+  const tmp = join(repoDir, `.env.tmp-tunnel-${randomBytes(6).toString("hex")}`);
+  try {
+    fs.writeFileSync(tmp, fs.readFileSync(backup), { mode: current.mode & 0o777 });
+    fs.chmodSync(tmp, current.mode & 0o777);
+    fs.chownSync(tmp, current.uid, current.gid);
+    fs.renameSync(tmp, envPath);
+  } catch (error) {
+    removeTemp(fs, tmp);
+    throw error;
+  }
+}

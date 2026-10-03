@@ -4,6 +4,7 @@ const { store } = vi.hoisted(() => ({
   store: {
     getConnectTunnelToken: vi.fn(),
     getConnectHostname: vi.fn(),
+    getConnectBoundAt: vi.fn(),
   },
 }));
 
@@ -19,6 +20,7 @@ beforeEach(() => {
   delete process.env.MEDIARY_CONNECT_HOSTNAME;
   store.getConnectTunnelToken.mockResolvedValue(null);
   store.getConnectHostname.mockResolvedValue(null);
+  store.getConnectBoundAt.mockResolvedValue(null);
 });
 
 afterEach(() => {
@@ -46,24 +48,40 @@ describe("instance connect env and stored value resolution", () => {
     expect(await resolveInstanceConnectHostname()).toBe("db.example.com");
   });
 
-  it("never uses stored values when env wins and rejects malformed stored hostnames", async () => {
+  it("prefers the env this process started with over a binding made before it started", async () => {
     process.env.TUNNEL_TOKEN = "env-token";
     process.env.MEDIARY_CONNECT_HOSTNAME = "env.example.com";
     store.getConnectTunnelToken.mockResolvedValue("db-token");
-    store.getConnectHostname.mockResolvedValue("https://bad.example.com/path");
+    store.getConnectHostname.mockResolvedValue("db.example.com");
+    store.getConnectBoundAt.mockResolvedValue("2000-01-01T00:00:00.000Z");
     expect(await resolveInstanceTunnelToken()).toBe("env-token");
     expect(await resolveInstanceConnectHostname()).toBe("env.example.com");
-    expect(store.getConnectTunnelToken).not.toHaveBeenCalled();
-    expect(store.getConnectHostname).not.toHaveBeenCalled();
+    // Bindings stored before this feature recorded no time: env still wins.
+    store.getConnectBoundAt.mockResolvedValue(null);
+    expect(await resolveInstanceTunnelToken()).toBe("env-token");
+    expect(await resolveInstanceConnectHostname()).toBe("env.example.com");
+  });
 
-    delete process.env.MEDIARY_CONNECT_HOSTNAME;
+  it("lets a binding made after this process started supersede its stale env (重新接入 without restarting web)", async () => {
+    process.env.TUNNEL_TOKEN = "old-env-token";
+    process.env.MEDIARY_CONNECT_HOSTNAME = "old.example.com";
+    store.getConnectTunnelToken.mockResolvedValue("new-token");
+    store.getConnectHostname.mockResolvedValue("new.example.com");
+    store.getConnectBoundAt.mockResolvedValue(new Date().toISOString());
+    expect(await resolveInstanceTunnelToken()).toBe("new-token");
+    expect(await resolveInstanceConnectHostname()).toBe("new.example.com");
+  });
+
+  it("rejects malformed stored hostnames", async () => {
+    store.getConnectHostname.mockResolvedValue("https://bad.example.com/path");
+    store.getConnectBoundAt.mockResolvedValue(new Date().toISOString());
     expect(await resolveInstanceConnectHostname()).toBeNull();
   });
 
-  it("keeps a malformed non-empty env hostname authoritative", async () => {
+  it("keeps a malformed non-empty env hostname authoritative over an older binding", async () => {
     process.env.MEDIARY_CONNECT_HOSTNAME = "https://bad.example.com/path";
     store.getConnectHostname.mockResolvedValue("valid.example.com");
+    store.getConnectBoundAt.mockResolvedValue("2000-01-01T00:00:00.000Z");
     expect(await resolveInstanceConnectHostname()).toBeNull();
-    expect(store.getConnectHostname).not.toHaveBeenCalled();
   });
 });

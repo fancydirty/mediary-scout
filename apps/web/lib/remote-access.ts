@@ -1,4 +1,4 @@
-import { getConnectHostname, getConnectTunnelToken } from "./connect-link-store";
+import { getConnectBoundAt, getConnectHostname, getConnectTunnelToken } from "./connect-link-store";
 export { remoteFirstSetupNotice, type LoginBootstrap } from "./remote-access-copy";
 
 /**
@@ -237,12 +237,22 @@ export function instanceTunnelToken(): string | undefined {
   return process.env.TUNNEL_TOKEN?.trim() || undefined;
 }
 
+/**
+ * A binding made from the settings page after this web process started beats the env the
+ * process was started with: 「重新接入」 rewrites .env and recreates only cloudflared, so
+ * process.env still holds the old values. Once web restarts, its env already contains what
+ * the updater wrote (or whatever a person put in .env since), and env wins again.
+ */
+async function storedBindingIsNewer(): Promise<boolean> {
+  const boundAt = Date.parse((await getConnectBoundAt()) ?? "");
+  return Number.isFinite(boundAt) && boundAt > Date.now() - process.uptime() * 1_000;
+}
+
 /** Resolve the token without requiring a web-container restart after in-app binding. */
 export async function resolveInstanceTunnelToken(): Promise<string | undefined> {
-  const fromEnv = instanceTunnelToken();
-  if (fromEnv) return fromEnv;
-  const stored = (await getConnectTunnelToken())?.trim();
-  return stored || undefined;
+  const stored = (await getConnectTunnelToken())?.trim() || undefined;
+  if (stored && (await storedBindingIsNewer())) return stored;
+  return instanceTunnelToken() ?? stored;
 }
 
 /**
@@ -286,11 +296,12 @@ function parseInstanceConnectHostname(value: string | null | undefined): string 
 
 /** Resolve the hostname without requiring a web-container restart after in-app binding. */
 export async function resolveInstanceConnectHostname(): Promise<string | null> {
-  // A non-empty env setting remains authoritative even when malformed: return the
-  // same null that the sync reader returns instead of silently shadowing an invalid
-  // deployment configuration with a database value. Only empty/whitespace env is unset.
+  const stored = parseInstanceConnectHostname(await getConnectHostname());
+  if (stored && (await storedBindingIsNewer())) return stored;
+  // A non-empty env setting stays authoritative even when malformed: return the same null the
+  // sync reader returns instead of silently shadowing an invalid deployment configuration.
   if (process.env.MEDIARY_CONNECT_HOSTNAME?.trim()) return instanceConnectHostname();
-  return parseInstanceConnectHostname(await getConnectHostname());
+  return stored;
 }
 
 /**

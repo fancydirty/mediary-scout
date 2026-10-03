@@ -11,6 +11,7 @@ import {
   createUpdaterHttp,
   interpretBusyResponse,
   isReleaseTag,
+  performTunnel,
   readComposeProject,
   readLimitedBody,
   runComposeTunnel,
@@ -1574,6 +1575,39 @@ describe("POST /tunnel", () => {
   });
 });
 
+describe("performTunnel .env rollback", () => {
+  it("restores the previous .env when compose fails, and leaves it when compose works", async () => {
+    const restored = [];
+    const deps = (code) => ({
+      repoDir: "/repo",
+      composeProject: async () => "scout",
+      writeTunnelEnv: () => ({ backup: "/repo/.env.bak-tunnel-x" }),
+      restoreTunnelEnv: (dir, backup) => restored.push([dir, backup]),
+      runCompose: async () => ({ code, output: "boom\n" }),
+    });
+    expect((await performTunnel({ token: TUNNEL_TOKEN, hostname: "a.example.com" }, deps(1))).ok).toBe(false);
+    expect(restored).toEqual([["/repo", "/repo/.env.bak-tunnel-x"]]);
+    expect((await performTunnel({ token: TUNNEL_TOKEN, hostname: "a.example.com" }, deps(0))).ok).toBe(true);
+    expect(restored).toHaveLength(1);
+  });
+
+  it("still answers with the compose failure when the rollback itself fails", async () => {
+    const result = await performTunnel(
+      { token: TUNNEL_TOKEN, hostname: "a.example.com" },
+      {
+        repoDir: "/repo",
+        composeProject: async () => "scout",
+        writeTunnelEnv: () => ({ backup: null }),
+        restoreTunnelEnv: () => {
+          throw new Error("disk full");
+        },
+        runCompose: async () => ({ code: 1, output: "pull access denied\n" }),
+      },
+    );
+    expect(result).toMatchObject({ ok: false, reason: "pull_failed" });
+  });
+});
+
 describe("tunnel compose runner", () => {
   it("reads the compose project from the same container label as an update", async () => {
     const calls = [];
@@ -1653,7 +1687,7 @@ describe("tunnel compose runner", () => {
     await new Promise((resolve) => setImmediate(resolve));
     expect(settled).toBe(false);
     child.emit("close", null);
-    await expect(pending).resolves.toEqual({ code: 1, output: `still pulling ${TUNNEL_TOKEN}\n`, timedOut: true });
+    await expect(pending).resolves.toEqual({ code: 1, output: `still pulling ${TUNNEL_TOKEN}\n`, timedOut: true, pullFailure: false });
     // 270 + 10 + 5 s worst case stays under the web's 290 s client timeout.
     expect(timers.armed[2].ms).toBe(5_000);
   });
@@ -1668,9 +1702,27 @@ describe("tunnel compose runner", () => {
     });
     timers.armed[0].fn();
     child.emit("close", 143);
-    await expect(pending).resolves.toEqual({ code: 1, output: "", timedOut: true });
+    await expect(pending).resolves.toEqual({ code: 1, output: "", timedOut: true, pullFailure: false });
     expect(child.killed).toEqual(["SIGTERM"]);
     expect(timers.cleared.has(2)).toBe(true);
+  });
+
+  it("keeps a bounded tail of the output but remembers an early pull failure", async () => {
+    const child = fakeComposeChild();
+    const timers = fakeTimers();
+    const pending = runComposeTunnel(["compose", "up"], {
+      spawn: () => child,
+      setTimeout: timers.setTimeout,
+      clearTimeout: timers.clearTimeout,
+    });
+    child.stderr.write("Error response from daemon: failed to fetch anonymous token: EOF\n");
+    const noisy = `${"x".repeat(1023)}\n`;
+    for (let i = 0; i < 3 * 1024; i += 1) child.stdout.write(noisy);
+    child.emit("close", 1);
+    const result = await pending;
+    expect(result.output.length).toBeLessThanOrEqual(1024 * 1024);
+    expect(result.output.includes("anonymous token")).toBe(false);
+    expect(result.pullFailure).toBe(true);
   });
 
   it("gives up waiting 5 s after SIGKILL if docker never reports an exit", async () => {
@@ -1684,7 +1736,7 @@ describe("tunnel compose runner", () => {
     timers.armed[0].fn();
     timers.armed[1].fn();
     timers.armed[2].fn();
-    await expect(pending).resolves.toEqual({ code: 1, output: "", timedOut: true });
+    await expect(pending).resolves.toEqual({ code: 1, output: "", timedOut: true, pullFailure: false });
   });
 });
 
