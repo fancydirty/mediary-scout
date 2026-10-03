@@ -10,6 +10,7 @@ export interface AccountAuthDb {
 export interface ActiveInstanceCredential {
   id: string;
   account_id: string;
+  last_used_at?: string | null;
   revoked_at?: string | null;
 }
 
@@ -32,6 +33,8 @@ export type ResolvedAccount =
  * is present. Updating credential usage is deliberately best effort so a
  * telemetry write cannot turn an otherwise valid request into a failure.
  */
+const CREDENTIAL_TOUCH_INTERVAL_MS = 60 * 60_000;
+
 /** The instance credential in an `Authorization` value, or null. The scheme is case-insensitive. */
 export function instanceCredentialFromAuthorization(value: string): string | null {
   const match = /^bearer\s+(\S+)$/i.exec(value.trim());
@@ -50,11 +53,16 @@ export async function resolveAccount(
     const credentialSha = await sha256Hex(credential);
     const row = await deps.db.getActiveInstanceCredentialBySha(credentialSha);
     if (row === null || row.revoked_at != null) return { ok: false };
-    try {
-      await deps.db.touchInstanceCredential(row.id, deps.now());
-    } catch {
-      // Usage timestamps are observability only; preserve the authenticated
-      // request if the best-effort write is unavailable.
+    const now = deps.now();
+    const lastUsedMs = row.last_used_at == null ? Number.NaN : Date.parse(row.last_used_at);
+    // Hourly resolution is enough to see which instances are in use; order polling stays a read.
+    if (!Number.isFinite(lastUsedMs) || Date.parse(now) - lastUsedMs >= CREDENTIAL_TOUCH_INTERVAL_MS) {
+      try {
+        await deps.db.touchInstanceCredential(row.id, now);
+      } catch {
+        // Usage timestamps are observability only; preserve the authenticated
+        // request if the best-effort write is unavailable.
+      }
     }
     return { ok: true, accountId: row.account_id, via: "bearer" };
   }

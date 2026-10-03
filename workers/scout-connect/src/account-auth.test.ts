@@ -31,6 +31,35 @@ describe("resolveAccount", () => {
     expect(touch).toHaveBeenCalledWith("icr_1", NOW);
   });
 
+  it("records use at most once an hour, so polling does not turn every read into a write", async () => {
+    const touch = vi.fn(async () => {});
+    const credentialRow = (lastUsedAt: string | null) => ({
+      id: "icr_1",
+      account_id: "act_1",
+      credential_sha256: "sha",
+      link_request_id: "ilr_1",
+      created_at: "2026-10-01T00:00:00.000Z",
+      last_used_at: lastUsedAt,
+      revoked_at: null,
+    });
+    const read = async (lastUsedAt: string | null) => {
+      const db = {
+        getActiveInstanceCredentialBySha: vi.fn(async () => credentialRow(lastUsedAt)),
+        touchInstanceCredential: touch,
+      };
+      return resolveAccount(
+        new Request("https://mediaryconnect.app/api/account", { headers: { authorization: `Bearer ${CREDENTIAL}` } }),
+        { db, sessionSecret: SECRET, now: () => NOW } as never,
+      );
+    };
+    expect(await read("2026-10-02T23:30:00.000Z")).toEqual({ ok: true, accountId: "act_1", via: "bearer" });
+    expect(touch).not.toHaveBeenCalled();
+    await read("2026-10-02T22:59:59.000Z");
+    expect(touch).toHaveBeenCalledTimes(1);
+    await read(null);
+    expect(touch).toHaveBeenCalledTimes(2);
+  });
+
   it("accepts the Bearer scheme in any letter case, as HTTP allows", async () => {
     const db = {
       getActiveInstanceCredentialBySha: vi.fn(async () => ({
