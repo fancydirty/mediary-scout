@@ -300,8 +300,9 @@ function parseInstanceConnectHostname(value: string | null | undefined): string 
   // 逐 label 校验:每段以字母数字开头结尾、中间可含连字符,最后一段是 TLD。
   // 宽松的 /^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$/ 会放过 `a..b.com`、`a-.b.com`
   // 这类非法 DNS 形状——虽然不危险,但会渲染出点了就坏的链接。
-  const LABEL = "[a-z0-9](?:[a-z0-9-]*[a-z0-9])?";
-  const HOSTNAME_RE = new RegExp(`^(?:${LABEL}\\.)+[a-z]{2,}$`);
+  // Same contract as connect-client and the updater's /tunnel check.
+  const LABEL = "[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?";
+  const HOSTNAME_RE = new RegExp(`^(?:${LABEL}\\.)+[a-z]{2,63}$`);
   return HOSTNAME_RE.test(raw) ? raw : null;
 }
 

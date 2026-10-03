@@ -3,6 +3,7 @@ import "server-only";
 import { scoutConnectBaseUrl } from "./remote-access";
 
 const CONNECT_TIMEOUT_MS = 10_000;
+const CONNECT_PROVISION_TIMEOUT_MS = 30_000;
 const UNREACHABLE_MESSAGE = "连不上 Mediary Connect，检查这台机器能不能访问外网。";
 const RATE_LIMITED_MESSAGE = "请求太频繁了，过几分钟再试。";
 const INVALID_RESPONSE_MESSAGE = "Mediary Connect 返回了无效响应。";
@@ -317,10 +318,11 @@ function isHostname(value: unknown): value is string {
   return isConnectHostname(value);
 }
 
+/** Same hostname contract as remote-access and the updater: DNS labels, alphabetic TLD. */
 function isConnectHostname(value: unknown): value is string {
   if (!nonEmptyString(value)) return false;
   const label = "[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?";
-  return new RegExp(`^(?:${label}\\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`).test(value);
+  return new RegExp(`^(?:${label}\\.)+[a-z]{2,63}$`).test(value);
 }
 
 function apiErrorReason(value: unknown): ConnectFailureReason | null {
@@ -459,7 +461,13 @@ export async function provisionConnectSlug(
   slug: string,
   options: ConnectClientOptions = {},
 ): Promise<ConnectProvisionResult> {
-  const result = await request("/api/provision", jsonPost({ slug }, credential), options);
+  // Provisioning creates the Cloudflare tunnel and DNS record before it answers: give it longer
+  // than the other calls, so a slow Cloudflare does not turn into a lost answer.
+  const result = await request(
+    "/api/provision",
+    { ...jsonPost({ slug }, credential), signal: AbortSignal.timeout(CONNECT_PROVISION_TIMEOUT_MS) },
+    options,
+  );
   if (!result.ok) return result;
   if (result.response.status === 401) return failure("unauthorized");
   if (result.response.status === 429) return failure("rate_limited");

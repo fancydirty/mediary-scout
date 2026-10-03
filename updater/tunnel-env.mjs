@@ -82,6 +82,7 @@ function installEnv(fs, repoDir, oldContent, { token, hostname, mode, uid, gid }
     removeTemp(fs, tmp);
     throw error;
   }
+  return next;
 }
 
 export function writeTunnelEnv(repoDir, { token, hostname }, deps = {}) {
@@ -92,8 +93,8 @@ export function writeTunnelEnv(repoDir, { token, hostname }, deps = {}) {
 
   if (!fs.existsSync(envPath)) {
     const dir = fs.statSync(repoDir);
-    installEnv(fs, repoDir, "", { token, hostname, mode: 0o600, uid: dir.uid, gid: dir.gid });
-    return { backup: null };
+    const installed = installEnv(fs, repoDir, "", { token, hostname, mode: 0o600, uid: dir.uid, gid: dir.gid });
+    return { backup: null, installed };
   }
 
   const previous = fs.readFileSync(envPath);
@@ -105,26 +106,37 @@ export function writeTunnelEnv(repoDir, { token, hostname }, deps = {}) {
   // .env's own (often 0644) mode until a later chmod, and the backup holds the old credentials.
   fs.writeFileSync(backup, previous, { mode: 0o600, flag: "wx" });
   fs.chownSync(backup, stat.uid, stat.gid);
-  installEnv(fs, repoDir, oldContent, {
+  const installed = installEnv(fs, repoDir, oldContent, {
     token,
     hostname,
     mode: stat.mode & 0o777,
     uid: stat.uid,
     gid: stat.gid,
   });
-  return { backup };
+  return { backup, installed };
 }
 
 /** Undo writeTunnelEnv after the tunnel failed to start, so a later web restart does not read
  *  a token for a tunnel that never came up. backup = what writeTunnelEnv returned: put those
  *  bytes back (atomically, with the current .env's mode and owner), or, when it created .env
- *  itself (null), remove it. */
-export function restoreTunnelEnv(repoDir, backup, deps = {}) {
+ *  itself (null), remove it. installed = the content writeTunnelEnv wrote: when given, roll back
+ *  only if .env still holds exactly that, so an edit made meanwhile is never thrown away.
+ *  Returns whether it rolled back. */
+export function restoreTunnelEnv(repoDir, backup, deps = {}, installed) {
   const fs = fsFrom(deps);
   const envPath = join(repoDir, ".env");
+  if (installed !== undefined) {
+    let current;
+    try {
+      current = fs.readFileSync(envPath, "utf8");
+    } catch {
+      return false;
+    }
+    if (current !== installed) return false;
+  }
   if (backup === null) {
     fs.unlinkSync(envPath);
-    return;
+    return true;
   }
   const current = fs.statSync(envPath);
   const tmp = join(repoDir, `.env.tmp-tunnel-${randomBytes(6).toString("hex")}`);
@@ -137,4 +149,5 @@ export function restoreTunnelEnv(repoDir, backup, deps = {}) {
     removeTemp(fs, tmp);
     throw error;
   }
+  return true;
 }

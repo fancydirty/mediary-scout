@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "../../lib/use-router";
 import {
   connectAbandonOrderAction,
   connectAccountAction,
@@ -151,7 +151,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [busy, startTransition] = useTransition();
   const [slug, setSlug] = useState("");
-  const [slugCheck, setSlugCheck] = useState<{ available: boolean; reason?: string; suggestions: string[] } | null>(null);
+  const [slugCheck, setSlugCheck] = useState<{ slug: string; available: boolean; reason?: string; suggestions: string[] } | null>(null);
   const [order, setOrder] = useState<{ orderId: string; checkoutUrl: string } | null>(props.pendingOrder ?? null);
   const orderId = order?.orderId ?? null;
   const [tunnelStarting, setTunnelStarting] = useState(false);
@@ -217,17 +217,31 @@ export function ConnectWizard(props: ConnectWizardProps) {
           slowDown = true;
         } else if (result.state === "none") {
           // Nothing pending any more: another tab (or this page before a refresh) already took
-          // the approval, or the request was cleared. Stop polling and follow the account.
-          setPending(null);
-          const accountResult = await connectAccountAction();
-          if (accountResult.state === "linked") {
-            setLinked(true);
-            setAccount(accountResult.account);
-            setAccountUnavailable(false);
-            setStep(stepForAccount(accountResult.account, props.hasTunnelToken, props.boundHostname));
-          } else {
-            setStep(1);
+          // the approval, or the request was cleared. Follow the account; read it before
+          // clearing `pending`, which re-runs this effect and would drop the updates below.
+          let accountResult: Awaited<ReturnType<typeof connectAccountAction>> | null = null;
+          try {
+            accountResult = await connectAccountAction();
+          } catch {
+            accountResult = null;
           }
+          if (stopped) return;
+          if (accountResult?.state === "unlinked") {
+            setStep(1);
+          } else {
+            // Linked (a credential is stored); an unreadable account still gets the retry view.
+            setLinked(true);
+            if (accountResult?.state === "linked") {
+              setAccount(accountResult.account);
+              setAccountUnavailable(false);
+              setStep(stepForAccount(accountResult.account, props.hasTunnelToken, props.boundHostname));
+            } else {
+              setAccountUnavailable(true);
+              setStep(3);
+              if (accountResult?.state === "error") setNotice({ text: accountResult.message, tone: "danger" });
+            }
+          }
+          setPending(null);
           return;
         } else if (result.state === "error") {
           setNotice({ text: result.message, tone: "danger" });
@@ -254,6 +268,8 @@ export function ConnectWizard(props: ConnectWizardProps) {
     let timer: ReturnType<typeof setTimeout> | undefined;
     // Set once the order is fulfilled or closed: no further polls.
     let settling = false;
+    // Set when a poll failed; the next readable status clears that error from the page.
+    let failedPoll = false;
     const poll = async () => {
       try {
         const result = await connectOrderStatusAction(orderId);
@@ -270,6 +286,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
         } else if (!result.ok) {
           // Keep polling: a passing network error must not strand a paid order.
           setNotice({ text: result.message, tone: "danger" });
+          failedPoll = true;
         } else if (result.status === "fulfilled") {
           // Read the account before clearing orderId: clearing it re-runs this effect, and the
           // cleanup's `stopped` would drop every update below (the wizard then sat on step 3).
@@ -305,6 +322,9 @@ export function ConnectWizard(props: ConnectWizardProps) {
           settling = true;
           setOrder(null);
           setNotice({ text: "这笔订单已关闭，请重新选择时长。", tone: "danger" });
+        } else if (failedPoll) {
+          failedPoll = false;
+          setNotice(null);
         }
       } catch (error) {
         if (!stopped) setNotice({ text: friendlyError(error), tone: "danger" });
@@ -325,10 +345,9 @@ export function ConnectWizard(props: ConnectWizardProps) {
       return;
     }
     const normalized = slug.trim().toLowerCase();
-    if (!normalized) {
-      setSlugCheck(null);
-      return;
-    }
+    // A result is only about the name it checked: drop it as soon as the input changes.
+    setSlugCheck(null);
+    if (!normalized) return;
     let stopped = false;
     const timer = setTimeout(() => {
       void (async () => {
@@ -336,7 +355,11 @@ export function ConnectWizard(props: ConnectWizardProps) {
           const result = await connectSlugCheckAction(normalized);
           if (stopped) return;
           if (result.ok) {
-            setSlugCheck(result.available ? { available: true, suggestions: [] } : { available: false, reason: result.reason ?? "暂不可用", suggestions: result.suggestions ?? [] });
+            setSlugCheck(
+              result.available
+                ? { slug: normalized, available: true, suggestions: [] }
+                : { slug: normalized, available: false, reason: result.reason ?? "暂不可用", suggestions: result.suggestions ?? [] },
+            );
           } else {
             setSlugCheck(null);
           }
@@ -433,7 +456,8 @@ export function ConnectWizard(props: ConnectWizardProps) {
 
   const provision = () => {
     const normalized = slug.trim().toLowerCase();
-    if (!slugCheck?.available || !normalized) return;
+    // Only the name that was checked: the choice is permanent.
+    if (!slugCheck?.available || !normalized || slugCheck.slug !== normalized) return;
     startTransition(async () => {
       try {
         const result = await connectProvisionAction(normalized);
@@ -567,6 +591,14 @@ export function ConnectWizard(props: ConnectWizardProps) {
         }
         setOrder((current) => (current?.orderId === abandoned ? null : current));
         setNotice({ text: "已不再等待这笔订单，可以重新选择时长。", tone: "muted" });
+        // Nothing watches that order any more: pick up the account as it is now, in case it was
+        // paid after all.
+        const accountResult = await connectAccountAction();
+        if (accountResult.state === "linked") {
+          setAccount(accountResult.account);
+          setAccountUnavailable(false);
+          setStep(stepForAccount(accountResult.account, props.hasTunnelToken, props.boundHostname));
+        }
       } catch (error) {
         setNotice({ text: friendlyError(error), tone: "danger" });
       }
@@ -574,6 +606,10 @@ export function ConnectWizard(props: ConnectWizardProps) {
   };
 
   const unlink = () => {
+    // Stop a probe still waiting for the name to answer: its result is no longer this page's.
+    probeGeneration.current += 1;
+    if (probeTimer.current) clearTimeout(probeTimer.current);
+    setTunnelStarting(false);
     startTransition(async () => {
       try {
         const result = await connectUnlinkAction();
@@ -596,12 +632,21 @@ export function ConnectWizard(props: ConnectWizardProps) {
   };
 
   const stepTitle = ["未连接", "等你确认", "选时长", "选名字", "接入"][step - 1];
+  const orderWaiting = order ? (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
+      <p className="panel-note" role="status" style={{ margin: 0 }}>
+        等待支付结果…{" "}
+        <a href={order.checkoutUrl} target="_blank" rel="noopener noreferrer">打开微信支付页面</a>
+      </p>
+      <button type="button" className="ghost-button" onClick={abandonOrder} disabled={busy}>不付了</button>
+    </div>
+  ) : null;
   return (
     <div style={{ marginTop: 16 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
         <strong>{props.compact ? "Mediary Connect" : stepTitle}</strong>
         {!props.compact ? <span className="panel-note">第 {step} 步，共 5 步</span> : null}
-        {linked ? <button type="button" className="ghost-button" onClick={unlink} disabled={busy}>断开</button> : null}
+        {linked ? <button type="button" className="ghost-button" onClick={unlink} disabled={busy || tunnelStarting}>断开</button> : null}
       </div>
 
       {step === 1 ? (
@@ -633,6 +678,8 @@ export function ConnectWizard(props: ConnectWizardProps) {
             <div>
               <p className="panel-note" role="status">暂时读不到 Mediary Connect 账号信息。</p>
               <button type="button" className="secondary-button" onClick={retryAccount} disabled={busy}>重试</button>
+              {/* A payment page opened earlier must stay reachable while the account read fails. */}
+              {order ? orderWaiting : null}
             </div>
           ) : <>
           <p className="panel-note">{account?.expiresAt ? `当前到期时间：${formatExpiry(account.expiresAt)}` : "选择一段使用时长，付款后继续。"}</p>
@@ -650,15 +697,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
               重新接入
             </button>
           ) : null}
-          {order ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
-              <p className="panel-note" role="status" style={{ margin: 0 }}>
-                等待支付结果…{" "}
-                <a href={order.checkoutUrl} target="_blank" rel="noopener noreferrer">打开微信支付页面</a>
-              </p>
-              <button type="button" className="ghost-button" onClick={abandonOrder} disabled={busy}>不付了</button>
-            </div>
-          ) : null}
+          {order ? orderWaiting : null}
           </>}
         </div>
       ) : null}
@@ -674,7 +713,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
           <p className="panel-note">选定后不可更改、永久保留（到期也不会被别人拿走）。</p>
           {slugCheck ? <p className="panel-note" role="status" style={{ color: slugCheck.available ? "var(--accent)" : "var(--danger, #e5484d)" }}>{slugCheck.available ? "这个名字可以用。" : connectSlugReasonText(slugCheck.reason)}</p> : null}
           {slugCheck?.suggestions?.length ? <p className="panel-note">可以试试：{slugCheck.suggestions.join("、")}</p> : null}
-          <button className="primary-button" type="button" onClick={provision} disabled={busy || !slugCheck?.available}>确定</button>
+          <button className="primary-button" type="button" onClick={provision} disabled={busy || !slugCheck?.available || slugCheck.slug !== slug.trim().toLowerCase()}>确定</button>
         </div>
       ) : null}
 

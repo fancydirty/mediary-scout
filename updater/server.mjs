@@ -47,7 +47,8 @@ const TUNNEL_KILL_WAIT_MS = 5_000;
 // Compose output kept for logTail; only the end matters, and a noisy daemon must not grow us.
 const TUNNEL_OUTPUT_LIMIT = 1024 * 1024;
 const TUNNEL_TOKEN_RE = /^[A-Za-z0-9+/=_-]{20,4096}$/;
-const TUNNEL_HOSTNAME_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/;
+// Same contract as the web (remote-access / connect-client): DNS labels, alphabetic TLD.
+const TUNNEL_HOSTNAME_RE = /^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
 // Same set connect.sh sends to its DOCKER_MIRROR hint, plus a few other pull-side errors.
 const PULL_MARKERS = [
   "failed to fetch anonymous token",
@@ -243,7 +244,8 @@ export async function performTunnel(input, deps = {}) {
   // report it as on: put .env back. Best effort; the compose failure is still the answer.
   const rollBack = async () => {
     try {
-      await deps.restoreTunnelEnv?.(repoDir, written?.backup ?? null);
+      // Only if .env still holds what this run wrote: an edit made meanwhile stays.
+      await deps.restoreTunnelEnv?.(repoDir, written?.backup ?? null, undefined, written?.installed);
     } catch {
       // .env keeps the new values; the page still shows the failure and offers 重新接入.
     }

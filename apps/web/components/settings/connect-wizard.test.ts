@@ -23,6 +23,25 @@ describe("ConnectWizard reachability probe after 接入", () => {
   });
 });
 
+describe("ConnectWizard with a payment page open while the account cannot be read", () => {
+  it("still offers the payment page and 不付了 next to 重试", () => {
+    const html = renderToStaticMarkup(
+      createElement(ConnectWizard, {
+        linked: true,
+        email: "a@b.c",
+        pending: null,
+        account: null,
+        hasTunnelToken: false,
+        passwordSet: true,
+        pendingOrder: { orderId: "ord_1", checkoutUrl: "https://pay.example/ord_1" },
+      }),
+    );
+    expect(html).toContain("暂时读不到 Mediary Connect 账号信息");
+    expect(html).toContain('href="https://pay.example/ord_1"');
+    expect(html).toMatch(/<button[^>]*>不付了<\/button>/);
+  });
+});
+
 describe("ConnectWizard while waiting for the email confirmation", () => {
   it("offers a way back to use another address or send again", () => {
     const html = renderToStaticMarkup(

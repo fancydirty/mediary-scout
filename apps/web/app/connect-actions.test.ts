@@ -65,7 +65,16 @@ vi.mock("../lib/connect-link-store", () => ({
   clearConnectPendingOrder: vi.fn(async () => { state.order = null; state.cleared.push("order"); }),
 }));
 
-import { createConnectCheckout, exchangeClaimCode, getConnectAccount, getConnectOrderStatus, issueClaimCode, pollInstanceLink, revokeInstanceLink } from "../lib/connect-client";
+import {
+  createConnectCheckout,
+  exchangeClaimCode,
+  getConnectAccount,
+  getConnectOrderStatus,
+  issueClaimCode,
+  pollInstanceLink,
+  provisionConnectSlug,
+  revokeInstanceLink,
+} from "../lib/connect-client";
 import { scoutConnectBaseUrl } from "../lib/remote-access";
 import { startTunnel } from "../lib/updater-client";
 import { getConnectLinkPending, setConnectBinding } from "../lib/connect-link-store";
@@ -77,6 +86,7 @@ import {
   connectCheckoutAction,
   connectOrderStatusAction,
   connectPollLinkAction,
+  connectProvisionAction,
   connectUnlinkAction,
 } from "./connect-actions";
 
@@ -365,7 +375,46 @@ describe("a credential Connect no longer accepts", () => {
   });
 });
 
+describe("connectProvisionAction", () => {
+  it("carries on with the name Connect already gave this account (a lost response, or picked in the console)", async () => {
+    vi.mocked(provisionConnectSlug).mockResolvedValueOnce({ ok: false, reason: "already_provisioned", message: "x" });
+    vi.mocked(getConnectAccount).mockResolvedValueOnce({
+      ok: true,
+      email: "owner@example.com",
+      active: true,
+      expiresAt: null,
+      endpoint: { slug: "family", hostname: "family.mediaryconnect.app", status: "active" },
+      checkoutOpen: true,
+      tiers: [],
+    });
+    expect(await connectProvisionAction("family")).toEqual({ ok: true, hostname: "family.mediaryconnect.app" });
+  });
+
+  it("still reports already_provisioned when the account shows no name", async () => {
+    vi.mocked(provisionConnectSlug).mockResolvedValueOnce({ ok: false, reason: "already_provisioned", message: "x" });
+    const result = await connectProvisionAction("family");
+    expect(result).toMatchObject({ ok: false, reason: "already_provisioned" });
+  });
+});
+
 describe("pending order", () => {
+  it("does not give up on an order that is already paid, so it cannot be bought twice", async () => {
+    state.order = { orderId: "ord_1", checkoutUrl: "https://pay.example/ord_1" };
+    for (const status of ["paid_unfulfilled", "fulfilled"] as const) {
+      vi.mocked(getConnectOrderStatus).mockResolvedValueOnce({ ok: true, status });
+      const result = await connectAbandonOrderAction("ord_1");
+      expect(result.ok).toBe(false);
+      expect(state.order).toEqual({ orderId: "ord_1", checkoutUrl: "https://pay.example/ord_1" });
+    }
+  });
+
+  it("keeps the order when its state cannot be read right now", async () => {
+    state.order = { orderId: "ord_1", checkoutUrl: "https://pay.example/ord_1" };
+    vi.mocked(getConnectOrderStatus).mockResolvedValueOnce({ ok: false, reason: "unreachable", message: "x" });
+    expect((await connectAbandonOrderAction("ord_1")).ok).toBe(false);
+    expect(state.order).not.toBeNull();
+  });
+
   it("remembers the order a checkout created with its payment page, so a reloaded page can keep checking it", async () => {
     await connectCheckoutAction("year");
     expect(state.order).toEqual({ orderId: "ord_1", checkoutUrl: "https://pay.example/order" });
@@ -380,6 +429,7 @@ describe("pending order", () => {
   });
 
   it("gives up waiting on an order only when it is still the stored one", async () => {
+    vi.mocked(getConnectOrderStatus).mockResolvedValue({ ok: true, status: "pending" });
     state.order = { orderId: "ord_new", checkoutUrl: "https://pay.example/ord_new" };
     expect(await connectAbandonOrderAction("ord_old")).toEqual({ ok: true });
     expect(state.order?.orderId).toBe("ord_new");

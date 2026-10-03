@@ -267,6 +267,17 @@ describe("connect-client", () => {
     expect(exchanged).toEqual({ ok: true, hostname: "my-name.mediaryconnect.app", token: "tunnel-token" });
   });
 
+  it("rejects an exchanged hostname the rest of the app could not use", async () => {
+    // Same hostname contract as remote-access: the last label is an alphabetic TLD.
+    for (const hostname of ["a.b", "name.example.1"]) {
+      const exchanged = await exchangeClaimCode("claim-code", {
+        baseUrl: BASE,
+        fetchImpl: fetchOnce(() => {}, { hostname, token: "tunnel-token" }),
+      });
+      expect(exchanged.ok).toBe(false);
+    }
+  });
+
   it("maps generic Connect failures without echoing secrets", async () => {
     const secret = `${CREDENTIAL}-do-not-echo`;
     const unauthorized = await getConnectAccount(secret, {

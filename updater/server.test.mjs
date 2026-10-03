@@ -1319,6 +1319,9 @@ describe("POST /tunnel", () => {
       JSON.stringify({ token: "a".repeat(20), hostname: "a..example.com" }),
       JSON.stringify({ token: "a".repeat(20), hostname: "has space.com" }),
       JSON.stringify({ token: "a".repeat(20), hostname: "example.com." }),
+      // Same contract as the web: the last label is an alphabetic TLD.
+      JSON.stringify({ token: "a".repeat(20), hostname: "a.b" }),
+      JSON.stringify({ token: "a".repeat(20), hostname: "name.example.1" }),
       JSON.stringify({ token: "a".repeat(20), hostname: `${longLabel}.com` }),
       JSON.stringify({ token: "a".repeat(20) }),
       JSON.stringify({ hostname: "a.example.com" }),
@@ -1355,9 +1358,9 @@ describe("POST /tunnel", () => {
         method: "POST",
         path: "/tunnel",
         token: "t0k3n",
-        body: JSON.stringify({ token, hostname: "a.b" }),
+        body: JSON.stringify({ token, hostname: "a.example.com" }),
       });
-      expect(Buffer.byteLength(JSON.stringify({ token, hostname: "a.b" }))).toBeGreaterThan(1024);
+      expect(Buffer.byteLength(JSON.stringify({ token, hostname: "a.example.com" }))).toBeGreaterThan(1024);
       expect(accepted.status).toBe(200);
       expect(JSON.parse(accepted.body)).toEqual({ ok: true });
     });
@@ -1515,7 +1518,7 @@ describe("POST /tunnel", () => {
         method: "POST",
         path: "/tunnel",
         token: "t0k3n",
-        body: tunnelBody(tricky, "a.b"),
+        body: tunnelBody(tricky, "a.example.com"),
       });
       expect(response.status).toBe(502);
       expect(response.body).not.toContain(tricky);
@@ -1581,12 +1584,13 @@ describe("performTunnel .env rollback", () => {
     const deps = (code) => ({
       repoDir: "/repo",
       composeProject: async () => "scout",
-      writeTunnelEnv: () => ({ backup: "/repo/.env.bak-tunnel-x" }),
-      restoreTunnelEnv: (dir, backup) => restored.push([dir, backup]),
+      writeTunnelEnv: () => ({ backup: "/repo/.env.bak-tunnel-x", installed: "TUNNEL_TOKEN=x\n" }),
+      restoreTunnelEnv: (dir, backup, fsDeps, installed) => restored.push([dir, backup, installed]),
       runCompose: async () => ({ code, output: "boom\n" }),
     });
     expect((await performTunnel({ token: TUNNEL_TOKEN, hostname: "a.example.com" }, deps(1))).ok).toBe(false);
-    expect(restored).toEqual([["/repo", "/repo/.env.bak-tunnel-x"]]);
+    // Rolls back only if .env is still what this run wrote.
+    expect(restored).toEqual([["/repo", "/repo/.env.bak-tunnel-x", "TUNNEL_TOKEN=x\n"]]);
     expect((await performTunnel({ token: TUNNEL_TOKEN, hostname: "a.example.com" }, deps(0))).ok).toBe(true);
     expect(restored).toHaveLength(1);
   });

@@ -83,7 +83,7 @@ describe("writeTunnelEnv", () => {
         chowns.push({ path, uid, gid });
       },
     });
-    expect(result).toEqual({ backup: null });
+    expect(result).toEqual({ backup: null, installed: `TUNNEL_TOKEN=${TOKEN}\nMEDIARY_CONNECT_HOSTNAME=${HOST}\n` });
     expect(readFileSync(join(dir, ".env"), "utf8")).toBe(
       `TUNNEL_TOKEN=${TOKEN}\nMEDIARY_CONNECT_HOSTNAME=${HOST}\n`,
     );
@@ -109,7 +109,7 @@ describe("writeTunnelEnv", () => {
       },
     });
     const backup = join(dir, ".env.bak-tunnel-20261003-040506-99");
-    expect(result).toEqual({ backup });
+    expect(result.backup).toBe(backup);
     expect(readFileSync(backup).equals(Buffer.from(old))).toBe(true);
     expect(statSync(backup).mode & 0o777).toBe(0o600);
     expect(statSync(envPath).mode & 0o777).toBe(0o640);
@@ -204,6 +204,35 @@ describe("restoreTunnelEnv", () => {
     expect(readFileSync(envPath, "utf8")).toBe(old);
     expect(statSync(envPath).mode & 0o777).toBe(0o640);
     expect(readdirSync(dir).filter((name) => name.startsWith(".env.tmp"))).toEqual([]);
+  });
+
+  it("leaves an .env someone edited while the tunnel was starting, instead of rolling it back", () => {
+    const dir = makeRepo();
+    const envPath = join(dir, ".env");
+    writeBytes(envPath, "WEB_PORT=3300\n");
+    const written = writeTunnelEnv(dir, { token: TOKEN, hostname: HOST }, { chownSync() {} });
+    writeBytes(envPath, "WEB_PORT=3301\nEDITED=1\n");
+    expect(restoreTunnelEnv(dir, written.backup, { chownSync() {} }, written.installed)).toBe(false);
+    expect(readFileSync(envPath, "utf8")).toBe("WEB_PORT=3301\nEDITED=1\n");
+  });
+
+  it("does not delete an .env it created once someone has changed it", () => {
+    const dir = makeRepo();
+    const envPath = join(dir, ".env");
+    const written = writeTunnelEnv(dir, { token: TOKEN, hostname: HOST }, { chownSync() {} });
+    writeBytes(envPath, "MINE=1\n");
+    expect(restoreTunnelEnv(dir, written.backup, { chownSync() {} }, written.installed)).toBe(false);
+    expect(readFileSync(envPath, "utf8")).toBe("MINE=1\n");
+  });
+
+  it("rolls back when .env is still exactly what it wrote", () => {
+    const dir = makeRepo();
+    const envPath = join(dir, ".env");
+    writeBytes(envPath, "WEB_PORT=3300\n");
+    const written = writeTunnelEnv(dir, { token: TOKEN, hostname: HOST }, { chownSync() {} });
+    expect(written.installed).toBe(`WEB_PORT=3300\nTUNNEL_TOKEN=${TOKEN}\nMEDIARY_CONNECT_HOSTNAME=${HOST}\n`);
+    expect(restoreTunnelEnv(dir, written.backup, { chownSync() {} }, written.installed)).toBe(true);
+    expect(readFileSync(envPath, "utf8")).toBe("WEB_PORT=3300\n");
   });
 
   it("removes a .env it created itself", () => {

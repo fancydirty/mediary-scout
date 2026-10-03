@@ -204,6 +204,16 @@ export async function connectCheckoutAction(
 export async function connectAbandonOrderAction(orderId: string): Promise<{ ok: true } | Refusal> {
   const refused = await commonGuard();
   if (refused) return refused;
+  const credential = await getConnectInstanceCredential();
+  if (credential) {
+    // Never drop an order that is already paid: the buttons would come back and the same time
+    // could be bought twice.
+    const status = await getConnectOrderStatus(credential, orderId);
+    if (!status.ok) return { ok: false, message: `${clientMessage(status)}现在查不到这笔订单，稍后再点「不付了」。` };
+    if (status.status === "paid_unfulfilled" || status.status === "fulfilled") {
+      return { ok: false, message: "这笔订单已经付款，正在开通，请稍等。" };
+    }
+  }
   if ((await getConnectPendingOrder())?.orderId === orderId) await clearConnectPendingOrder();
   return { ok: true };
 }
@@ -250,6 +260,12 @@ export async function connectProvisionAction(slug: string) {
   if (!credential) return { ok: false as const, message: "请先连接 Mediary Connect。" };
   const result = await provisionConnectSlug(credential, slug.trim().toLowerCase());
   if (result.ok) return { ok: true as const, hostname: result.hostname };
+  if (result.reason === "already_provisioned") {
+    // The name exists already: an earlier 确定 whose answer was lost, or one picked in the
+    // console. Carry on with it instead of leaving the page on this step.
+    const account = await getConnectAccount(credential);
+    if (account.ok && account.endpoint) return { ok: true as const, hostname: account.endpoint.hostname };
+  }
   return { ok: false as const, reason: result.reason, message: clientMessage(result) };
 }
 
