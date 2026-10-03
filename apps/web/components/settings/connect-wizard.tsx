@@ -278,6 +278,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
           // Connect no longer accepts this instance's credential; the action forgot it and the order.
           settling = true;
           setOrder(null);
+          setFallbackCommand(null);
           setLinked(false);
           setAccount(null);
           setAccountUnavailable(false);
@@ -633,8 +634,10 @@ export function ConnectWizard(props: ConnectWizardProps) {
         setPending(null);
         setAccount(null);
         setAccountUnavailable(false);
-        // The order belonged to the account just unlinked: stop waiting for it.
+        // The order belonged to the account just unlinked: stop waiting for it. A connect.sh
+        // command from a failed 接入 is that account's too, and stays valid for 15 minutes.
         setOrder(null);
+        setFallbackCommand(null);
         setStep(1);
         setNotice({ text: "已断开 Mediary Connect。", tone: "success" });
       } catch (error) {
