@@ -61,6 +61,31 @@ describe("session cookie (魔法链接登录态)", () => {
     expect(parsed).toEqual({ ok: false, reason: "absent" });
   });
 
+  it("uses the __Host- prefix, which no sibling subdomain can plant on the apex", async () => {
+    // A <slug>.<root> page may set `Domain=<root>` cookies; browsers refuse that for
+    // __Host- names, which must stay host-only, Secure and Path=/.
+    expect(SESSION_COOKIE).toBe("__Host-mc_session");
+    const cookie = await buildSessionCookie("act_123", { secret: SECRET, ttlMs: 3600_000 });
+    expect(cookie.startsWith("__Host-mc_session=")).toBe(true);
+    expect(cookie).not.toMatch(/domain=/i);
+    expect(clearSessionCookie().startsWith("__Host-mc_session=;")).toBe(true);
+  });
+
+  it("ignores a plain mc_session cookie even when the browser lists it first", async () => {
+    // Chrome sends a sibling's `mc_session=…; Domain=<root>; Path=/api` ahead of the
+    // apex's own cookie on /api requests.
+    const now = 1_800_000_000_000;
+    const victim = sessionCookieValue(await buildSessionCookie("act_victim", { secret: SECRET, ttlMs: 3600_000, now }));
+    const planted = sessionCookieValue(await buildSessionCookie("act_attacker", { secret: SECRET, ttlMs: 3600_000, now }));
+    const parsed = await parseSessionCookie(`mc_session=${planted}; ${SESSION_COOKIE}=${victim}`, {
+      secret: SECRET,
+      now: now + 1000,
+    });
+    expect(parsed).toEqual({ ok: true, accountId: "act_victim" });
+    const plantedOnly = await parseSessionCookie(`mc_session=${planted}`, { secret: SECRET, now: now + 1000 });
+    expect(plantedOnly).toEqual({ ok: false, reason: "absent" });
+  });
+
   it("clearSessionCookie expires the cookie", () => {
     const cookie = clearSessionCookie();
     expect(cookie).toContain(`${SESSION_COOKIE}=`);

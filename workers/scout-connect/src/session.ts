@@ -3,9 +3,15 @@ import { signToken, verifyToken } from "./signed-token.js";
 /**
  * 登录态 Cookie。值就是一个 purpose="login" 的 signed-token,subject=accountId。
  * 复用 signed-token 的 HMAC + 过期,不落库(与魔法链接同一套机制)。
+ *
+ * 名字必须带 __Host- 前缀:用户实例在 <slug>.<root> 上、内容由实例主人控制,
+ * 那里的页面能种 `Domain=<root>` 的 cookie。种一个 `mc_session=<他自己的登录>;
+ * Path=/api`,浏览器会把它排在主站自己的 cookie 前面,访客在主站上的操作就
+ * 记到别人账号上。__Host- 名字只能是 host-only + Secure + Path=/,浏览器拒绝
+ * 任何带 Domain 的写法,兄弟子域种不进来;不带前缀的同名 cookie 一律不认。
  */
 
-export const SESSION_COOKIE = "mc_session";
+export const SESSION_COOKIE = "__Host-mc_session";
 
 export interface BuildSessionOptions {
   secret: string;

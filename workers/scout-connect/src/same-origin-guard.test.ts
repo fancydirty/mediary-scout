@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createMemoryConnectDb, type ConnectDb } from "./db.js";
-import { buildSessionCookie } from "./session.js";
+import { buildSessionCookie, SESSION_COOKIE, sessionCookieValue } from "./session.js";
 import { handleRequest, type RouteDeps } from "./routes.js";
 import type { CfApi } from "./cf-api.js";
 import type { WaffoApi } from "./waffo-api.js";
@@ -160,6 +160,28 @@ describe("session-cookie POSTs reject other origins (sibling <slug> subdomains)"
     const cookie = await payingAccount(db);
     const res = await handleRequest(post("/api/checkout", { cookie, "sec-fetch-site": "cross-site" }, { tier: "quarter" }), deps);
     expect(res.status).toBe(403);
+  });
+
+  it("a session cookie planted by a sibling subdomain cannot switch the account", async () => {
+    // The sibling sets `mc_session=<its own login>; Domain=<root>; Path=/api`, which the
+    // browser lists first. The victim's own same-origin click must still act as the victim.
+    const { db, deps } = setup();
+    const victim = sessionCookieValue(await payingAccount(db, "act_victim"));
+    const attacker = sessionCookieValue(await payingAccount(db, "act_attacker"));
+    await db.insertEndpoint({
+      id: "ep_attacker", invite_id: null, slug: "attacker", hostname: "attacker.mediaryconnect.app",
+      cf_tunnel_id: "tid-attacker", cf_access_app_id: null, cf_access_policy_id: null,
+      cf_dns_record_id: "rec-attacker", status: "active", token_sha256: "x",
+      token_ciphertext: null, token_shown_at: null, last_seen_at: null,
+      created_at: NOW, revoked_at: null, account_id: "act_attacker", grace_until: null, suspended_at: null, purge_after: null,
+    });
+    const res = await handleRequest(post("/api/claim-code", {
+      cookie: `mc_session=${attacker}; ${SESSION_COOKIE}=${victim}`,
+      origin: HOST,
+      "sec-fetch-site": "same-origin",
+    }), deps);
+    // The victim has no instance yet; a 200 here would be a claim code for the attacker's tunnel.
+    expect(res.status).toBe(404);
   });
 
   it("still serves this origin's own pages", async () => {

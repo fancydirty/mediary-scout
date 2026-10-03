@@ -89,7 +89,7 @@ f.addEventListener("submit",async(e)=>{
     if(tsEl) payload.turnstile_token=tsEl.value;
     const res=await fetch("/api/auth/magic",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)});
     if(res.status===202){
-      msg.textContent="已发送。请查收邮件（含垃圾箱），点击链接即可登录。";
+      msg.textContent="已发送。请查收邮件（含垃圾箱），点开链接后在页面上确认即可登录。";
       msg.className="msg ok";
       msg.hidden=false;
     }else{
