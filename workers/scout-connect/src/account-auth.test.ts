@@ -31,6 +31,30 @@ describe("resolveAccount", () => {
     expect(touch).toHaveBeenCalledWith("icr_1", NOW);
   });
 
+  it("accepts the Bearer scheme in any letter case, as HTTP allows", async () => {
+    const db = {
+      getActiveInstanceCredentialBySha: vi.fn(async () => ({
+        id: "icr_1",
+        account_id: "act_1",
+        credential_sha256: "sha",
+        link_request_id: "ilr_1",
+        created_at: NOW,
+        last_used_at: null,
+        revoked_at: null,
+      })),
+      touchInstanceCredential: vi.fn(async () => {}),
+    };
+    for (const scheme of ["bearer", "BEARER", "bEaReR"]) {
+      const result = await resolveAccount(
+        new Request("https://mediaryconnect.app/api/account", {
+          headers: { authorization: `${scheme} ${CREDENTIAL}` },
+        }),
+        { db, sessionSecret: SECRET, now: () => NOW } as never,
+      );
+      expect(result).toEqual({ ok: true, accountId: "act_1", via: "bearer" });
+    }
+  });
+
   it("does not fall back to a valid cookie when a bearer is invalid", async () => {
     const cookie = await buildSessionCookie("act_cookie", {
       secret: SECRET,

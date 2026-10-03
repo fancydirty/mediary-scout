@@ -177,8 +177,9 @@ describe("instance-link confirmation and polling", () => {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pollSecret: data.pollSecret }),
     }), deps)).status).toBe(410);
 
+    // The scheme is case-insensitive, as on the account endpoints.
     const revoke = await handleRequest(new Request(`${BASE}/api/instance-link/revoke`, {
-      method: "POST", headers: { authorization: `Bearer ${approved.credential}` },
+      method: "POST", headers: { authorization: `bearer ${approved.credential}` },
     }), deps);
     expect(revoke.status).toBe(200);
     expect((await handleRequest(new Request(`${BASE}/api/instance-link/revoke`, {

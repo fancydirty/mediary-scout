@@ -8,6 +8,7 @@ import { signToken, verifyToken } from "./signed-token.js";
 import { buildSessionCookie } from "./session.js";
 import { EMAIL_MAX_LENGTH, EMAIL_RE } from "./validation.js";
 import { instanceLinkPage } from "./html/instance-link-page.js";
+import { instanceCredentialFromAuthorization } from "./account-auth.js";
 import { newId } from "./ids.js";
 
 const INSTANCE_LINK_TTL_MS = 30 * 60_000;
@@ -260,10 +261,9 @@ export async function pollInstanceLink(request: Request, deps: RouteDeps): Promi
 /** 吊销实例凭据。 */
 export async function revokeInstanceLink(request: Request, deps: RouteDeps): Promise<Response> {
   assertSameOriginRequest(request, new URL(request.url));
-  const auth = request.headers.get("authorization") ?? "";
-  const match = /^Bearer\s+(ic_[A-Za-z0-9_-]{43,})$/.exec(auth);
-  if (match === null) throw new HttpError(401, "unauthorized");
-  const row = await deps.db.getActiveInstanceCredentialBySha(await sha256Hex(match[1]!));
+  const credential = instanceCredentialFromAuthorization(request.headers.get("authorization") ?? "");
+  if (credential === null) throw new HttpError(401, "unauthorized");
+  const row = await deps.db.getActiveInstanceCredentialBySha(await sha256Hex(credential));
   if (row === null) throw new HttpError(401, "unauthorized");
   await deps.db.revokeInstanceCredential(row.id, deps.now());
   return json({ ok: true }, 200, { noStore: true });
