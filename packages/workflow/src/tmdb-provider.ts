@@ -111,13 +111,17 @@ async function fetchViaAccessChain(
         return { ok: true, value };
       } catch (error) {
         lastError = error;
-        if (!(error instanceof TmdbHttpError && error.status === 404)) {
+        const notFound = error instanceof TmdbHttpError && error.status === 404;
+        if (!notFound) {
           allErrorsWereNotFound = false;
         }
         if (isTimeout(error)) {
           sawTimeout = true;
         }
-        deadAccesses?.add(accessKey(access));
+        // A 404 is this resource's answer, not a dead hop — the access responded.
+        if (!notFound) {
+          deadAccesses?.add(accessKey(access));
+        }
       }
     }
     return { ok: false };

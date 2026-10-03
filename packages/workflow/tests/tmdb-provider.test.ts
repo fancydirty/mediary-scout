@@ -992,6 +992,30 @@ describe("TmdbMetadataProvider multi-access fallback", () => {
     expect(proxyHits).toBe(0);
   });
 
+  it("does not remember a 404 as a dead access — the access answered, only the resource is missing (Copilot #306)", async () => {
+    // A deleted season 404s on every access, and the episode-group fallback then
+    // makes more calls through the same provider. Remembering those 404s as dead
+    // left only the first access to answer marked alive, so a later transient
+    // failure on it skipped the still-healthy proxy.
+    const provider = new TmdbMetadataProvider({
+      accesses: [
+        { baseURL: "https://primary.example/3", readToken: "userkey" },
+        { baseURL: "https://proxy.example" },
+      ],
+      fetchJson: async (url) => {
+        if (url.includes("movie/404?")) throw new TmdbNotFoundError("TMDB HTTP 404");
+        if (url.includes("movie/503?") && url.startsWith("https://primary.example")) {
+          throw new TmdbHttpError("TMDB HTTP 503", 503);
+        }
+        return movieJson(278);
+      },
+    });
+    await expect(provider.getMovieDetails(404)).rejects.toBeInstanceOf(TmdbNotFoundError);
+    await provider.getMovieDetails(550);
+    // The primary hiccups; the proxy must still be in the chain.
+    await expect(provider.getMovieDetails(503)).resolves.toMatchObject({ id: 278 });
+  });
+
   it("sends Authorization only when the access has a readToken", async () => {
     const seen: Array<Record<string, string>> = [];
     const provider = new TmdbMetadataProvider({
