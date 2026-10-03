@@ -409,6 +409,33 @@ async function exerciseInstanceLinkDb(db: ConnectDb): Promise<void> {
 }
 
 describe("instance link DB methods", () => {
+  async function exerciseInstanceLinkRetention(db: ConnectDb): Promise<void> {
+    await db.insertInstanceLinkRequest(makeInstanceLinkRequest({
+      id: "ilr_old_1", poll_secret_sha256: "poll-old-1", expires_at: "2026-10-01T00:00:00.000Z",
+    }));
+    await db.insertInstanceLinkRequest(makeInstanceLinkRequest({
+      id: "ilr_old_2", poll_secret_sha256: "poll-old-2", expires_at: "2026-10-02T00:00:00.000Z", status: "approved",
+    }));
+    await db.insertInstanceLinkRequest(makeInstanceLinkRequest({
+      id: "ilr_recent", poll_secret_sha256: "poll-recent", expires_at: "2026-10-04T00:00:00.000Z", status: "delivered",
+    }));
+    expect(await db.deleteInstanceLinkRequestsExpiredBefore("2026-10-03T00:00:00.000Z", 1)).toBe(1);
+    expect(await db.getInstanceLinkRequestById("ilr_old_1")).toBeNull();
+    expect(await db.getInstanceLinkRequestById("ilr_old_2")).not.toBeNull();
+    expect(await db.getInstanceLinkRequestById("ilr_recent")).not.toBeNull();
+    expect(await db.deleteInstanceLinkRequestsExpiredBefore("2026-10-03T00:00:00.000Z", 100)).toBe(1);
+    expect(await db.getInstanceLinkRequestById("ilr_old_2")).toBeNull();
+  }
+
+  it("retains only recent instance-link requests in memory", async () => {
+    await exerciseInstanceLinkRetention(createMemoryConnectDb());
+  });
+
+  it("retains only recent instance-link requests in D1", async () => {
+    const { db } = createSqliteConnectDb();
+    await exerciseInstanceLinkRetention(db);
+  });
+
   type DeliveryDb = ConnectDb & {
     deliverInstanceCredential(input: {
       requestId: string;

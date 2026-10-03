@@ -224,6 +224,53 @@ describe("instance-link confirmation and polling", () => {
     expect(await deps.db.getActiveInstanceCredentialBySha(await sha256Hex(credential))).not.toBeNull();
   });
 
+  it("allows approved delivery during the five-minute grace window", async () => {
+    const { deps, sent } = setup();
+    let now = NOW;
+    deps.now = () => now;
+    const data = await startData(deps);
+    const token = new URL(sent[0]!.details.url).searchParams.get("t")!;
+    now = "2026-10-03T00:29:59.000Z";
+    await handleRequest(new Request(`${BASE}/link`, {
+      method: "POST", headers: { "content-type": "application/json", origin: BASE, "sec-fetch-site": "same-origin" },
+      body: JSON.stringify({ t: token }),
+    }), deps);
+    now = "2026-10-03T00:31:00.000Z";
+    const response = await handleRequest(new Request(`${BASE}/api/instance-link/poll`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pollSecret: data.pollSecret }),
+    }), deps);
+    expect(response.status).toBe(200);
+  });
+
+  it("expires approved delivery after the five-minute grace window", async () => {
+    const { deps, sent } = setup();
+    let now = NOW;
+    deps.now = () => now;
+    const data = await startData(deps);
+    const token = new URL(sent[0]!.details.url).searchParams.get("t")!;
+    now = "2026-10-03T00:29:59.000Z";
+    await handleRequest(new Request(`${BASE}/link`, {
+      method: "POST", headers: { "content-type": "application/json", origin: BASE, "sec-fetch-site": "same-origin" },
+      body: JSON.stringify({ t: token }),
+    }), deps);
+    const baseDb = deps.db;
+    let delivered = false;
+    deps.db = {
+      ...baseDb,
+      async deliverInstanceCredential(input) {
+        delivered = true;
+        return baseDb.deliverInstanceCredential(input);
+      },
+    };
+    now = "2026-10-03T00:36:00.000Z";
+    const response = await handleRequest(new Request(`${BASE}/api/instance-link/poll`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pollSecret: data.pollSecret }),
+    }), deps);
+    expect(response.status).toBe(410);
+    expect(await response.json()).toEqual({ status: "expired" });
+    expect(delivered).toBe(false);
+  });
+
   it("revokes the previous credential when the same account links again", async () => {
     const { deps, sent } = setup();
     let now = NOW;

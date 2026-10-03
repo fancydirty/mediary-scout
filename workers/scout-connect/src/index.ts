@@ -100,6 +100,50 @@ function routeDeps(env: Env, waffoApi: WaffoApi | undefined, scheduled = false):
   };
 }
 
+// 连接请求过期 7 天后删掉:轮询早就拿不到东西,留着只是攒邮箱和 IP。
+const INSTANCE_LINK_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+const INSTANCE_LINK_RETENTION_BATCH = 1000;
+
+export async function runScheduledMaintenance(
+  deps: RouteDeps,
+  options: { live: boolean; resendApiKey?: string | undefined },
+): Promise<void> {
+  const nowMs = Date.parse(deps.now());
+  const retention = Number.isFinite(nowMs)
+    ? deps.db
+        .deleteInstanceLinkRequestsExpiredBefore(
+          new Date(nowMs - INSTANCE_LINK_RETENTION_MS).toISOString(),
+          INSTANCE_LINK_RETENTION_BATCH,
+        )
+        .catch((error) => {
+          console.error("instance-link retention failed:", error instanceof Error ? error.message : String(error));
+        })
+    : Promise.resolve(console.error("instance-link retention skipped: invalid time"));
+  await Promise.all([
+    retention,
+    sweepExpiredEndpoints({
+      db: deps.db,
+      cf: deps.cf,
+      now: deps.now,
+      newAuditId: deps.newAuditId,
+      // dry-run 时不需要发信器(sweep 只在 live 且配置了时才调它)。
+      // 没配 RESEND key 时即便 live 也只是邮件发不出去,回收照走。
+      sendEmail:
+        options.resendApiKey === undefined || options.resendApiKey.trim() === ""
+          ? undefined
+          : createEmailSender(options.resendApiKey),
+      live: options.live,
+    }).catch((error) => {
+      // 顶层兜底:任一轮失败不能让 cron 静默消失 —— 记录日志,下一轮再试。
+      console.error("expiry sweep failed:", error instanceof Error ? error.message : String(error));
+    }),
+    reconcileWaffoOrders(deps).catch((error) => {
+      // 同一轮的 Waffo 对账失败也只影响下一轮,不能吞掉其它 cron 工作。
+      console.error("Waffo reconciliation scan failed:", error instanceof Error ? error.message : String(error));
+    }),
+  ]);
+}
+
 export default {
   // 到期巡检。cron 触发时**默认 dry-run**:只把「将做什么」写进审计,
   // 不真删 DNS/隧道、不发邮件。EXPIRY_SWEEP_LIVE=true 才开真删 ——
@@ -108,28 +152,10 @@ export default {
     const waffoApi = createWaffoFromEnv(env);
     const deps = routeDeps(env, waffoApi, true);
     ctx.waitUntil(
-      Promise.all([
-        sweepExpiredEndpoints({
-          db: deps.db,
-          cf: deps.cf,
-          now: deps.now,
-          newAuditId: deps.newAuditId,
-          // dry-run 时不需要发信器(sweep 只在 live 且配置了时才调它)。
-          // 没配 RESEND key 时即便 live 也只是邮件发不出去,回收照走。
-          sendEmail:
-            env.RESEND_API_KEY === undefined || env.RESEND_API_KEY.trim() === ""
-              ? undefined
-              : createEmailSender(env.RESEND_API_KEY),
-          live: env.EXPIRY_SWEEP_LIVE === "true",
-        }).catch((error) => {
-          // 顶层兜底:任一轮失败不能让 cron 静默消失 —— 记录日志,下一轮再试。
-          console.error("expiry sweep failed:", error instanceof Error ? error.message : String(error));
-        }),
-        reconcileWaffoOrders(deps).catch((error) => {
-          // 同一轮的 Waffo 对账失败也只影响下一轮,不能吞掉其它 cron 工作。
-          console.error("Waffo reconciliation scan failed:", error instanceof Error ? error.message : String(error));
-        }),
-      ]),
+      runScheduledMaintenance(deps, {
+        live: env.EXPIRY_SWEEP_LIVE === "true",
+        resendApiKey: env.RESEND_API_KEY,
+      }),
     );
   },
   async fetch(request: Request, env: Env): Promise<Response> {

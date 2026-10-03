@@ -11,6 +11,7 @@ import { instanceLinkPage } from "./html/instance-link-page.js";
 import { newId } from "./ids.js";
 
 const INSTANCE_LINK_TTL_MS = 30 * 60_000;
+const INSTANCE_LINK_APPROVED_GRACE_MS = 5 * 60_000;
 const VERIFY_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 const B64URL_RE = /^[A-Za-z0-9_-]+$/;
 
@@ -206,6 +207,12 @@ export async function pollInstanceLink(request: Request, deps: RouteDeps): Promi
   // delivered 是终态，不能再返回 slow_down。
   if (row.status === "delivered") return json({ status: "delivered" }, 410, { noStore: true });
   if (row.status === "pending" && Date.parse(now) >= Date.parse(row.expires_at)) {
+    return json({ status: "expired" }, 410, { noStore: true });
+  }
+  if (
+    row.status === "approved" &&
+    Date.parse(now) >= Date.parse(row.expires_at) + INSTANCE_LINK_APPROVED_GRACE_MS
+  ) {
     return json({ status: "expired" }, 410, { noStore: true });
   }
   // approved 请求必须走交付 CAS，并发失败者返回 delivered。

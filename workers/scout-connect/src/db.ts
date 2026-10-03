@@ -261,6 +261,7 @@ export interface ConnectDb {
   insertInstanceLinkRequest(row: InstanceLinkRequestRow): Promise<void>;
   getInstanceLinkRequestById(id: string): Promise<InstanceLinkRequestRow | null>;
   getInstanceLinkRequestByPollSecretSha(sha: string): Promise<InstanceLinkRequestRow | null>;
+  deleteInstanceLinkRequestsExpiredBefore(cutoffIso: string, limit: number): Promise<number>;
   approveInstanceLinkRequest(id: string, accountId: string, nowIso: string): Promise<boolean>;
   touchInstanceLinkPoll(id: string, nowIso: string): Promise<boolean>;
   insertInstanceCredential(row: InstanceCredentialRow): Promise<void>;
@@ -908,6 +909,23 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
         .bind(sha)
         .first<RawRow>();
       return row === null ? null : mapInstanceLinkRequest(row);
+    },
+
+    async deleteInstanceLinkRequestsExpiredBefore(cutoffIso, limit) {
+      if (limit <= 0) return 0;
+      const result = (await d1
+        .prepare(
+          `DELETE FROM instance_link_requests
+            WHERE id IN (
+              SELECT id FROM instance_link_requests
+               WHERE expires_at < ?
+               ORDER BY expires_at ASC, id ASC
+               LIMIT ?
+            )`,
+        )
+        .bind(cutoffIso, limit)
+        .run()) as { meta?: { changes?: number } };
+      return result.meta?.changes ?? 0;
     },
 
     async approveInstanceLinkRequest(id, accountId, nowIso) {
@@ -1705,6 +1723,16 @@ export function createMemoryConnectDb(): ConnectDb {
         if (row.poll_secret_sha256 === sha) return { ...row };
       }
       return null;
+    },
+
+    async deleteInstanceLinkRequestsExpiredBefore(cutoffIso, limit) {
+      if (limit <= 0) return 0;
+      const expired = [...instanceLinkRequests.values()]
+        .filter((row) => row.expires_at < cutoffIso)
+        .sort((a, b) => a.expires_at.localeCompare(b.expires_at) || a.id.localeCompare(b.id))
+        .slice(0, limit);
+      for (const row of expired) instanceLinkRequests.delete(row.id);
+      return expired.length;
     },
 
     async approveInstanceLinkRequest(id, accountId, nowIso) {
