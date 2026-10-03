@@ -127,6 +127,12 @@ describe("buildAgentPrompt", () => {
     expect(out).toContain("/login");
     // The compose deploy dir IS the git clone in a standard install.
     expect(out).not.toContain("不要碰任何 git 源码克隆");
+    // Older instances (before the LAN-only fix) still let a remote visitor set the first
+    // password, so the agent must get the user's confirmation BEFORE writing credentials
+    // or starting the tunnel, not after.
+    const confirmAt = out.indexOf("等用户回复确认访问密码已设好");
+    expect(confirmAt).toBeGreaterThan(-1);
+    expect(confirmAt).toBeLessThan(out.indexOf("第 1 步·写凭证"));
     const manual = buildAgentPromptOrManual({ hostname: "h.example.com", tunnelToken: "a\nb" });
     expect(manual).not.toContain("首次打开时设置");
     expect(manual).toContain("局域网");
