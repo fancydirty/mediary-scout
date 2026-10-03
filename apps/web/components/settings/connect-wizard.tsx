@@ -69,6 +69,22 @@ export function stepForAccount(account: ConnectAccountView, hasTunnelToken: bool
   return hasTunnelToken ? 3 : 5;
 }
 
+/** Expiry in China time, like the rest of the app: the server (often UTC in Docker) and the
+ *  browser must render the same text, or hydration mismatches and the time jumps. */
+function formatExpiry(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(date);
+}
+
 function initialStep(props: ConnectWizardProps): Step {
   if (!props.linked) return props.pending ? 2 : 1;
   if (!props.account) return 3;
@@ -224,7 +240,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
             if (props.hasTunnelToken) {
               setStep(3);
               setNotice({
-                text: `续期成功，新的到期时间：${accountResult.account.expiresAt ? new Date(accountResult.account.expiresAt).toLocaleString("zh-CN") : "待确认"}`,
+                text: `续期成功，新的到期时间：${accountResult.account.expiresAt ? formatExpiry(accountResult.account.expiresAt) : "待确认"}`,
                 tone: "success",
               });
             } else {
@@ -542,7 +558,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
               <button type="button" className="secondary-button" onClick={retryAccount} disabled={busy}>重试</button>
             </div>
           ) : <>
-          <p className="panel-note">{account?.expiresAt ? `当前到期时间：${new Date(account.expiresAt).toLocaleString("zh-CN")}` : "选择一段使用时长，付款后继续。"}</p>
+          <p className="panel-note">{account?.expiresAt ? `当前到期时间：${formatExpiry(account.expiresAt)}` : "选择一段使用时长，付款后继续。"}</p>
           {!account?.checkoutOpen ? <p className="panel-note" role="status">现在暂时不能购买，请稍后再试。</p> : null}
           <div style={{ display: "grid", gap: 8 }}>
             {tiers.map((tier) => (

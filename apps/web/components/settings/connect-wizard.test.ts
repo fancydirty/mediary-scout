@@ -10,6 +10,36 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ConnectWizard, connectSlugReasonText, nextLinkPollDelayMs, stepForAccount } from "./connect-wizard";
 
+describe("ConnectWizard expiry time", () => {
+  it("renders the expiry in China time whatever timezone the server runs in, so hydration matches", () => {
+    const previous = process.env.TZ;
+    process.env.TZ = "UTC";
+    try {
+      const html = renderToStaticMarkup(
+        createElement(ConnectWizard, {
+          linked: true,
+          email: "a@b.c",
+          pending: null,
+          account: {
+            email: "a@b.c",
+            active: true,
+            expiresAt: "2027-01-03T16:15:29.000Z",
+            endpoint: { slug: "x", hostname: "x.mediaryconnect.app", status: "active" },
+            checkoutOpen: true,
+            tiers: [],
+          },
+          hasTunnelToken: true,
+          passwordSet: true,
+        }),
+      );
+      expect(html).toContain("当前到期时间：2027/01/04 00:15");
+    } finally {
+      if (previous === undefined) delete process.env.TZ;
+      else process.env.TZ = previous;
+    }
+  });
+});
+
 describe("ConnectWizard access password on the 接入 step", () => {
   const render = (passwordSet: boolean | "unknown") =>
     renderToStaticMarkup(
