@@ -8,6 +8,7 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { writeTunnelEnv } from "./tunnel-env.mjs";
 
 // Same shape as apps/web/lib/release-version.ts TAG_RE, plus that file's calendar check
 // (v2026.02.31 matches the pattern and is still not a date). Keep the two in sync.
@@ -34,6 +35,20 @@ const RECOVERED_MESSAGE = "上次更新没成功，之后已经恢复正常，�
 const RESTORE_FOLDER_CHANGED_MESSAGE =
   "更新被中断了，之后部署目录被人手动换过版本，更新助手没有再改动它。请在部署目录运行 ./scripts/deploy.sh，跑起来之后就能再更新。";
 const MAX_BODY = 1024;
+const TUNNEL_MAX_BODY = 8192;
+const TUNNEL_COMPOSE_TIMEOUT_MS = 10 * 60 * 1000;
+const TUNNEL_TOKEN_RE = /^[A-Za-z0-9+/=_-]{20,4096}$/;
+const TUNNEL_HOSTNAME_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/;
+const PULL_MARKERS = [
+  "failed to resolve reference",
+  "pull access denied",
+  "tls handshake timeout",
+  "connection reset by peer",
+  "i/o timeout",
+  "toomanyrequests",
+];
+const PROJECT_LOOKUP_FAILURE = "读不到 compose 项目名，没有启动隧道。";
+const ENV_WRITE_FAILURE = "写入 .env 失败，配置没有改动。";
 
 export function isReleaseTag(value) {
   if (typeof value !== "string") return false;
@@ -101,6 +116,126 @@ export function readLimitedBody(stream, limit = MAX_BODY) {
     stream.on("end", () => finish({ body: Buffer.concat(chunks).toString("utf8") }));
     stream.on("error", () => finish({ error: "too_big" }));
   });
+}
+
+function redactToken(output, token) {
+  const text = typeof output === "string" ? output : "";
+  if (typeof token !== "string" || token.length === 0) return text;
+  return text.split(token).join("[redacted]");
+}
+
+function classifyComposeOutput(output) {
+  const haystack = output.toLowerCase();
+  return PULL_MARKERS.some((marker) => haystack.includes(marker)) ? "pull_failed" : "compose_failed";
+}
+
+function lastLines(output, count) {
+  const text = String(output).replace(/\n$/, "");
+  if (text.length === 0) return "";
+  return text.split("\n").slice(-count).join("\n");
+}
+
+/** Same inspect the update script uses, so the tunnel joins this stack instead of starting a second one. */
+export async function readComposeProject(dockerText, host = hostname()) {
+  const raw = await dockerText([
+    "inspect",
+    "-f",
+    '{{ index .Config.Labels "com.docker.compose.project" }}',
+    host,
+  ]);
+  const project = String(raw ?? "").trim();
+  if (!project) throw new Error("compose project unavailable");
+  return project;
+}
+
+export function runComposeTunnel(args, deps = {}) {
+  const spawnFn = deps.spawn ?? spawn;
+  const setTimer = deps.setTimeout ?? setTimeout;
+  const clearTimer = deps.clearTimeout ?? clearTimeout;
+  const timeoutMs = deps.timeoutMs ?? TUNNEL_COMPOSE_TIMEOUT_MS;
+  return new Promise((resolve) => {
+    const child = spawnFn("docker", args, { stdio: ["ignore", "pipe", "pipe"] });
+    child.stdin?.end();
+    let output = "";
+    let settled = false;
+    let timer;
+    const finish = (code, timedOut) => {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) clearTimer(timer);
+      resolve({ code, output, timedOut });
+    };
+    timer = setTimer(() => {
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // Already exited.
+      }
+      finish(1, true);
+    }, timeoutMs);
+    const take = (chunk) => {
+      output += chunk.toString();
+    };
+    child.stdout?.on("data", take);
+    child.stderr?.on("data", take);
+    child.on("error", () => finish(1, false));
+    child.on("close", (code) => finish(typeof code === "number" ? code : 1, false));
+  });
+}
+
+export async function performTunnel(input, deps = {}) {
+  const repoDir = deps.repoDir ?? process.env.UPDATER_REPO_DIR ?? "/repo";
+  let project;
+  try {
+    project = await deps.composeProject();
+    if (typeof project !== "string" || project.trim() === "") throw new Error("empty project");
+    project = project.trim();
+  } catch {
+    return { ok: false, reason: "compose_failed", logTail: PROJECT_LOOKUP_FAILURE };
+  }
+  try {
+    await deps.writeTunnelEnv(repoDir, { token: input.token, hostname: input.hostname });
+  } catch {
+    return { ok: false, reason: "compose_failed", logTail: ENV_WRITE_FAILURE };
+  }
+  // --no-deps keeps web up: recreating it would cut off a download that is still running.
+  const argv = [
+    "compose",
+    "-p",
+    project,
+    "--project-directory",
+    repoDir,
+    "--profile",
+    "tunnel",
+    "up",
+    "-d",
+    "--no-deps",
+    "cloudflared",
+  ];
+  let result;
+  try {
+    result = await deps.runCompose(argv);
+  } catch {
+    return { ok: false, reason: "compose_failed", logTail: "启动 cloudflared 失败。" };
+  }
+  const output = redactToken(result && result.output, input.token);
+  const timedOut = Boolean(result && result.timedOut);
+  const code = result && typeof result.code === "number" ? result.code : 1;
+  if (code === 0 && !timedOut) return { ok: true };
+  return { ok: false, reason: classifyComposeOutput(output), logTail: lastLines(output, 40) };
+}
+
+function parseTunnelBody(raw) {
+  let value;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!value || typeof value !== "object") return null;
+  if (typeof value.token !== "string" || typeof value.hostname !== "string") return null;
+  if (!TUNNEL_TOKEN_RE.test(value.token) || !TUNNEL_HOSTNAME_RE.test(value.hostname)) return null;
+  return { token: value.token, hostname: value.hostname };
 }
 
 /** Write-then-rename in the same directory: a kill mid-write never leaves a truncated
@@ -394,6 +529,25 @@ export function createUpdater(opts) {
       });
       return { accepted: true };
     },
+    // Same slot as an update: either job makes the other answer busy. Nothing here is written
+    // into the persisted update status.
+    tunnel(input) {
+      if (job) return { accepted: false, reason: "busy" };
+      const done = Promise.resolve()
+        .then(() =>
+          performTunnel(input, {
+            repoDir: opts.repoDir,
+            writeTunnelEnv: opts.writeTunnelEnv,
+            composeProject: opts.composeProject,
+            runCompose: opts.runCompose,
+          }),
+        )
+        .finally(() => {
+          job = null;
+        });
+      job = done;
+      return { accepted: true, done };
+    },
     idle: () => job ?? Promise.resolve(),
   };
 }
@@ -442,8 +596,49 @@ export function createUpdaterHttp(updater, token) {
         });
       return;
     }
+    if (req.method === "POST" && req.url === "/tunnel") {
+      readLimitedBody(req, TUNNEL_MAX_BODY)
+        .then(async (result) => {
+          if (result.error) {
+            sendJson(res, 400, { ok: false, reason: "invalid_input" });
+            return;
+          }
+          const parsed = parseTunnelBody(result.body);
+          if (!parsed) {
+            sendJson(res, 400, { ok: false, reason: "invalid_input" });
+            return;
+          }
+          const outcome = updater.tunnel(parsed);
+          if (!outcome.accepted) {
+            sendJson(res, 409, { ok: false, reason: "busy" });
+            return;
+          }
+          try {
+            const applied = await outcome.done;
+            if (applied && applied.ok === true) {
+              sendJson(res, 200, { ok: true }, parsed.token);
+              return;
+            }
+            const reason = applied && applied.reason === "pull_failed" ? "pull_failed" : "compose_failed";
+            const logTail = applied && typeof applied.logTail === "string" ? applied.logTail : "";
+            sendJson(res, 502, { ok: false, reason, logTail }, parsed.token);
+          } catch {
+            sendJson(res, 502, { ok: false, reason: "compose_failed", logTail: ENV_WRITE_FAILURE }, parsed.token);
+          }
+        })
+        .catch(() => {
+          if (!res.headersSent) res.writeHead(400).end();
+        });
+      return;
+    }
     res.writeHead(404).end();
   };
+}
+
+function sendJson(res, status, payload, secret) {
+  let body = JSON.stringify(payload);
+  if (typeof secret === "string" && secret.length > 0) body = body.split(secret).join("[redacted]");
+  res.writeHead(status, { "content-type": "application/json" }).end(body);
 }
 
 /** Runs run-update.sh with a release tag, or with ["rollback" | "restore", commit]. */
@@ -513,14 +708,16 @@ if (isDirectRun()) {
     now: () => new Date().toISOString(),
     waitPollMs: 30_000,
     waitLimitMs: 2 * 60 * 60 * 1000,
+    repoDir: process.env.UPDATER_REPO_DIR ?? "/repo",
+    writeTunnelEnv,
+    composeProject: () => readComposeProject(dockerText),
+    runCompose: (argv) => runComposeTunnel(argv),
     // The commit the running web container was built from (its BUILD_COMMIT). Async with a
     // timeout on both calls: the recheck skips a round while the last one is still running,
     // so one hung docker call must not stop it for good.
     servingCommit: async () => {
       try {
-        const project = (
-          await dockerText(["inspect", "-f", '{{ index .Config.Labels "com.docker.compose.project" }}', hostname()])
-        ).trim();
+        const project = await readComposeProject(dockerText);
         const commit = (
           await dockerText([
             "compose",

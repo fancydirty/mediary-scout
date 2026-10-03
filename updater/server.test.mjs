@@ -1,12 +1,20 @@
+import { EventEmitter, once } from "node:events";
 import { createServer, request as httpRequest } from "node:http";
-import { once } from "node:events";
 import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { hostname as machineHostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
 import { parseReleaseTag } from "../apps/web/lib/release-version.ts";
-import { createUpdater, createUpdaterHttp, interpretBusyResponse, isReleaseTag, readLimitedBody } from "./server.mjs";
+import {
+  createUpdater,
+  createUpdaterHttp,
+  interpretBusyResponse,
+  isReleaseTag,
+  readComposeProject,
+  readLimitedBody,
+  runComposeTunnel,
+} from "./server.mjs";
 
 const SAMPLES = [
   "v2026.09.28",
@@ -58,6 +66,10 @@ function make(opts = {}) {
     waitPollMs: 1,
     waitLimitMs: opts.waitLimitMs ?? 1000,
     repoCommit: () => "a".repeat(40),
+    repoDir: opts.repoDir,
+    writeTunnelEnv: opts.writeTunnelEnv,
+    composeProject: opts.composeProject,
+    runCompose: opts.runCompose,
   });
   return { updater, dir };
 }
@@ -1252,5 +1264,385 @@ describe("updater http", () => {
     });
     await updater.idle();
     expect(updater.status().phase).toBe("done");
+  });
+});
+
+const TUNNEL_TOKEN = "abcdefghijklmnopqrst+/_=-XYZ0123456789";
+const TUNNEL_HOST = "home.mediaryconnect.app";
+
+function tunnelBody(token = TUNNEL_TOKEN, hostname = TUNNEL_HOST) {
+  return JSON.stringify({ token, hostname });
+}
+
+describe("POST /tunnel", () => {
+  it("rejects a missing bearer before it reads the tunnel request", async () => {
+    let writes = 0;
+    const { updater } = make({
+      writeTunnelEnv() {
+        writes += 1;
+      },
+    });
+    await withServer(updater, "t0k3n", async (port) => {
+      const response = await call(port, { method: "POST", path: "/tunnel", body: tunnelBody() });
+      expect(response.status).toBe(401);
+      expect(response.body).not.toContain(TUNNEL_TOKEN);
+    });
+    expect(writes).toBe(0);
+  });
+
+  it("rejects bad json and illegal token or hostname values", async () => {
+    let writes = 0;
+    const { updater } = make({
+      repoDir: "/repo",
+      composeProject: async () => "scout",
+      writeTunnelEnv() {
+        writes += 1;
+      },
+      runCompose: async () => ({ code: 0, output: "" }),
+    });
+    const longLabel = `a${"b".repeat(62)}c`;
+    const bodies = [
+      "{",
+      "",
+      "null",
+      "[]",
+      JSON.stringify({ token: "a".repeat(19), hostname: "a.example.com" }),
+      JSON.stringify({ token: "a".repeat(4097), hostname: "a.example.com" }),
+      JSON.stringify({ token: `${"a".repeat(20)} `, hostname: "a.example.com" }),
+      JSON.stringify({ token: `${"a".repeat(20)}\nextra`, hostname: "a.example.com" }),
+      JSON.stringify({ token: `${"a".repeat(19)}$`, hostname: "a.example.com" }),
+      JSON.stringify({ token: "a".repeat(20), hostname: "localhost" }),
+      JSON.stringify({ token: "a".repeat(20), hostname: "Not.Lower.Case" }),
+      JSON.stringify({ token: "a".repeat(20), hostname: "-bad.example.com" }),
+      JSON.stringify({ token: "a".repeat(20), hostname: "bad-.example.com" }),
+      JSON.stringify({ token: "a".repeat(20), hostname: "a..example.com" }),
+      JSON.stringify({ token: "a".repeat(20), hostname: "has space.com" }),
+      JSON.stringify({ token: "a".repeat(20), hostname: "example.com." }),
+      JSON.stringify({ token: "a".repeat(20), hostname: `${longLabel}.com` }),
+      JSON.stringify({ token: "a".repeat(20) }),
+      JSON.stringify({ hostname: "a.example.com" }),
+      JSON.stringify({ token: 12345678901234567890, hostname: "a.example.com" }),
+    ];
+    await withServer(updater, "t0k3n", async (port) => {
+      for (const body of bodies) {
+        const response = await call(port, { method: "POST", path: "/tunnel", token: "t0k3n", body });
+        expect(response.status).toBe(400);
+        expect(JSON.parse(response.body)).toEqual({ ok: false, reason: "invalid_input" });
+        expect(response.body).not.toContain("a".repeat(19));
+      }
+    });
+    expect(writes).toBe(0);
+  });
+
+  it("rejects a body larger than 8192 bytes and still accepts one past the update cap", async () => {
+    let writes = 0;
+    const { updater } = make({
+      repoDir: "/repo",
+      composeProject: async () => "scout",
+      writeTunnelEnv() {
+        writes += 1;
+      },
+      runCompose: async () => ({ code: 0, output: "" }),
+    });
+    const oversized = "x".repeat(8193);
+    const token = "a".repeat(1500);
+    await withServer(updater, "t0k3n", async (port) => {
+      const tooBig = await call(port, { method: "POST", path: "/tunnel", token: "t0k3n", body: oversized });
+      expect(tooBig.status).toBe(400);
+      expect(JSON.parse(tooBig.body)).toEqual({ ok: false, reason: "invalid_input" });
+      const accepted = await call(port, {
+        method: "POST",
+        path: "/tunnel",
+        token: "t0k3n",
+        body: JSON.stringify({ token, hostname: "a.b" }),
+      });
+      expect(Buffer.byteLength(JSON.stringify({ token, hostname: "a.b" }))).toBeGreaterThan(1024);
+      expect(accepted.status).toBe(200);
+      expect(JSON.parse(accepted.body)).toEqual({ ok: true });
+    });
+    expect(writes).toBe(1);
+  });
+
+  it("returns 409 while an update is in flight and does not start the tunnel", async () => {
+    let release = () => {};
+    let writes = 0;
+    const { updater } = make({
+      runUpdate: () => new Promise((resolve) => {
+        release = () => resolve(0);
+      }),
+      writeTunnelEnv() {
+        writes += 1;
+      },
+      runCompose: async () => ({ code: 0, output: "" }),
+    });
+    expect(updater.start("v2026.10.02").accepted).toBe(true);
+    try {
+      await withServer(updater, "t0k3n", async (port) => {
+        const response = await call(port, { method: "POST", path: "/tunnel", token: "t0k3n", body: tunnelBody() });
+        expect(response.status).toBe(409);
+        expect(JSON.parse(response.body)).toEqual({ ok: false, reason: "busy" });
+      });
+    } finally {
+      release();
+    }
+    await updater.idle();
+    expect(writes).toBe(0);
+  });
+
+  it("reports busy to start() and to a second tunnel while the first tunnel job is in flight", async () => {
+    const { updater } = make({
+      repoDir: "/repo",
+      composeProject: async () => "scout",
+      writeTunnelEnv() {},
+      runCompose: async () => ({ code: 0, output: "" }),
+    });
+    const first = updater.tunnel({ token: TUNNEL_TOKEN, hostname: TUNNEL_HOST });
+    expect(first.accepted).toBe(true);
+    expect(updater.tunnel({ token: TUNNEL_TOKEN, hostname: TUNNEL_HOST })).toEqual({ accepted: false, reason: "busy" });
+    expect(updater.start("v2026.10.02")).toEqual({ accepted: false, reason: "busy" });
+    await first.done;
+    expect(updater.status().phase).toBe("idle");
+    expect(updater.start("v2026.10.02").accepted).toBe(true);
+    await updater.idle();
+  });
+
+  it("writes .env before starting only cloudflared, and does not touch the update status", async () => {
+    const calls = [];
+    const { updater, dir } = make({
+      repoDir: "/srv/mediary",
+      composeProject: async () => {
+        calls.push({ op: "project" });
+        return "scout";
+      },
+      writeTunnelEnv(repoDir, input) {
+        calls.push({ op: "write", repoDir, input });
+      },
+      runCompose(argv) {
+        calls.push({ op: "compose", argv });
+        return { code: 0, output: "cloudflared up\n" };
+      },
+    });
+    await withServer(updater, "t0k3n", async (port) => {
+      const response = await call(port, {
+        method: "POST",
+        path: "/tunnel",
+        token: "t0k3n",
+        body: JSON.stringify({ token: "a".repeat(4096), hostname: `my-name.${"a".repeat(61)}b.com` }),
+      });
+      expect(response.status).toBe(200);
+      expect(JSON.parse(response.body)).toEqual({ ok: true });
+    });
+    expect(calls.map((call) => call.op)).toEqual(["project", "write", "compose"]);
+    expect(calls[1]).toEqual({
+      op: "write",
+      repoDir: "/srv/mediary",
+      input: { token: "a".repeat(4096), hostname: `my-name.${"a".repeat(61)}b.com` },
+    });
+    expect(calls[2].argv).toEqual([
+      "compose",
+      "-p",
+      "scout",
+      "--project-directory",
+      "/srv/mediary",
+      "--profile",
+      "tunnel",
+      "up",
+      "-d",
+      "--no-deps",
+      "cloudflared",
+    ]);
+    expect(updater.status().phase).toBe("idle");
+    expect(() => readFileSync(join(dir, "status.json"), "utf8")).toThrow();
+  });
+
+  it("classifies pull failures, redacts the token, and keeps only the last 40 lines", async () => {
+    const lines = ["failed to resolve reference", TUNNEL_TOKEN, ...Array.from({ length: 43 }, (_, index) => `line ${index} ${TUNNEL_TOKEN}`)];
+    const { updater } = make({
+      repoDir: "/repo",
+      composeProject: async () => "scout",
+      writeTunnelEnv() {},
+      runCompose: async () => ({ code: 1, output: lines.join("\n") }),
+    });
+    await withServer(updater, "t0k3n", async (port) => {
+      const response = await call(port, { method: "POST", path: "/tunnel", token: "t0k3n", body: tunnelBody() });
+      expect(response.status).toBe(502);
+      expect(response.body).not.toContain(TUNNEL_TOKEN);
+      const payload = JSON.parse(response.body);
+      expect(payload).toEqual({
+        ok: false,
+        reason: "pull_failed",
+        logTail: lines.slice(-40).join("\n").split(TUNNEL_TOKEN).join("[redacted]"),
+      });
+      expect(payload.logTail).not.toContain("failed to resolve reference");
+    });
+  });
+
+  it.each([
+    ["pull access denied"],
+    ["TLS handshake timeout"],
+    ["connection reset by peer"],
+    ["I/O timeout"],
+    ["TooManyRequests"],
+  ])("classifies %s as pull_failed", async (marker) => {
+    const { updater } = make({
+      repoDir: "/repo",
+      composeProject: async () => "scout",
+      writeTunnelEnv() {},
+      runCompose: async () => ({ code: 2, output: `oops\n${marker}\n` }),
+    });
+    await withServer(updater, "t0k3n", async (port) => {
+      const response = await call(port, { method: "POST", path: "/tunnel", token: "t0k3n", body: tunnelBody() });
+      expect(JSON.parse(response.body).reason).toBe("pull_failed");
+      expect(response.status).toBe(502);
+    });
+  });
+
+  it("classifies other compose failures, including a token that merely contains a pull phrase", async () => {
+    const tricky = "xxtoomanyrequestsyy12";
+    const { updater } = make({
+      repoDir: "/repo",
+      composeProject: async () => "scout",
+      writeTunnelEnv() {},
+      runCompose: async () => ({ code: 1, output: `boom ${tricky}\n` }),
+    });
+    await withServer(updater, "t0k3n", async (port) => {
+      const response = await call(port, {
+        method: "POST",
+        path: "/tunnel",
+        token: "t0k3n",
+        body: tunnelBody(tricky, "a.b"),
+      });
+      expect(response.status).toBe(502);
+      expect(response.body).not.toContain(tricky);
+      expect(JSON.parse(response.body)).toEqual({
+        ok: false,
+        reason: "compose_failed",
+        logTail: "boom [redacted]",
+      });
+    });
+  });
+
+  it("returns compose_failed when the project lookup or the .env write fails, without the token or a stack", async () => {
+    const projectUpdater = make({
+      repoDir: "/repo",
+      composeProject: async () => {
+        throw new Error(`inspect failed ${TUNNEL_TOKEN}\n    at readComposeProject`);
+      },
+      writeTunnelEnv() {
+        throw new Error("writer should not run");
+      },
+      runCompose() {
+        throw new Error("runner should not run");
+      },
+    });
+    const writeUpdater = make({
+      repoDir: "/repo",
+      composeProject: async () => "scout",
+      writeTunnelEnv() {
+        throw new Error(`disk full ${TUNNEL_TOKEN}\n    at writeTunnelEnv`);
+      },
+      runCompose() {
+        throw new Error("runner should not run");
+      },
+    });
+    await withServer(projectUpdater.updater, "t0k3n", async (port) => {
+      const response = await call(port, { method: "POST", path: "/tunnel", token: "t0k3n", body: tunnelBody() });
+      expect(response.status).toBe(502);
+      expect(response.body).not.toContain(TUNNEL_TOKEN);
+      expect(JSON.parse(response.body)).toEqual({
+        ok: false,
+        reason: "compose_failed",
+        logTail: "读不到 compose 项目名，没有启动隧道。",
+      });
+    });
+    await withServer(writeUpdater.updater, "t0k3n", async (port) => {
+      const response = await call(port, { method: "POST", path: "/tunnel", token: "t0k3n", body: tunnelBody() });
+      expect(response.status).toBe(502);
+      expect(response.body).not.toContain(TUNNEL_TOKEN);
+      expect(response.body).not.toContain("disk full");
+      expect(response.body).not.toContain("writeTunnelEnv");
+      expect(JSON.parse(response.body)).toEqual({
+        ok: false,
+        reason: "compose_failed",
+        logTail: "写入 .env 失败，配置没有改动。",
+      });
+    });
+  });
+});
+
+describe("tunnel compose runner", () => {
+  it("reads the compose project from the same container label as an update", async () => {
+    const calls = [];
+    await expect(readComposeProject(async () => " \n")).rejects.toThrow();
+    const project = await readComposeProject(async (args) => {
+      calls.push(args);
+      return " scout \n";
+    });
+    expect(project).toBe("scout");
+    expect(calls).toEqual([
+      ["inspect", "-f", '{{ index .Config.Labels "com.docker.compose.project" }}', machineHostname()],
+    ]);
+  });
+
+  it("spawns docker with stdin closed and kills the child at 10 minutes", async () => {
+    const child = new EventEmitter();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    const killed = [];
+    child.kill = (signal) => killed.push(signal);
+    let seen;
+    let armed;
+    let cleared = false;
+    const pending = runComposeTunnel(
+      ["compose", "-p", "scout", "--project-directory", "/repo", "--profile", "tunnel", "up", "-d", "--no-deps", "cloudflared"],
+      {
+        spawn(command, args, options) {
+          seen = { command, args, options };
+          return child;
+        },
+        setTimeout(fn, ms) {
+          armed = { fn, ms };
+          return 1;
+        },
+        clearTimeout() {
+          cleared = true;
+        },
+      },
+    );
+    expect(seen).toEqual({
+      command: "docker",
+      args: [
+        "compose",
+        "-p",
+        "scout",
+        "--project-directory",
+        "/repo",
+        "--profile",
+        "tunnel",
+        "up",
+        "-d",
+        "--no-deps",
+        "cloudflared",
+      ],
+      options: { stdio: ["ignore", "pipe", "pipe"] },
+    });
+    expect(armed.ms).toBe(10 * 60 * 1000);
+    child.stdout.write(`still pulling ${TUNNEL_TOKEN}\n`);
+    armed.fn();
+    await expect(pending).resolves.toEqual({ code: 1, output: `still pulling ${TUNNEL_TOKEN}\n`, timedOut: true });
+    expect(killed).toEqual(["SIGTERM"]);
+    expect(cleared).toBe(true);
+  });
+});
+
+describe("updater image", () => {
+  it("copies every local module server.mjs imports", () => {
+    const source = readFileSync(new URL("./server.mjs", import.meta.url), "utf8");
+    const dockerfile = readFileSync(new URL("./Dockerfile", import.meta.url), "utf8");
+    const imported = [...source.matchAll(/from\s+["'](\.\/[^"']+)["']/g)].map((match) => match[1].replace(/^\.\//, ""));
+    expect(imported).toContain("tunnel-env.mjs");
+    const copyLine = dockerfile.split("\n").find((line) => line.startsWith("COPY "));
+    const copied = copyLine.replace(/^COPY\s+/, "").replace(/\s+\.\/\s*$/, "").split(/\s+/);
+    for (const file of imported) expect(copied).toContain(file);
   });
 });
