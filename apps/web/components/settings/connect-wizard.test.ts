@@ -8,7 +8,7 @@ vi.mock("../../app/connect-actions", () => ({}));
 
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { ConnectWizard, connectSlugReasonText, nextLinkPollDelayMs, stepForAccount } from "./connect-wizard";
+import { ConnectWizard, connectSlugReasonText, nextLinkPollDelayMs, paymentOutcome, stepForAccount } from "./connect-wizard";
 
 describe("ConnectWizard expiry time", () => {
   it("renders the expiry in China time whatever timezone the server runs in, so hydration matches", () => {
@@ -107,6 +107,32 @@ describe("ConnectWizard step after the account is read", () => {
 
   it("offers renewal once this instance already has its tunnel", () => {
     expect(stepForAccount(account({}), true)).toBe(3);
+  });
+});
+
+describe("ConnectWizard after a payment is confirmed", () => {
+  const account = (endpoint: { slug: string; hostname: string; status: string } | null) => ({
+    email: "a@b.c",
+    active: true,
+    expiresAt: "2027-01-03T00:00:00.000Z",
+    endpoint,
+    checkoutOpen: true,
+    tiers: [],
+  });
+  const endpoint = { slug: "x", hostname: "x.mediaryconnect.app", status: "active" };
+
+  it("reports a renewal and stays put when this instance's tunnel serves the account's name", () => {
+    expect(paymentOutcome(account(endpoint), true)).toEqual({ step: 3, renewal: true });
+  });
+
+  it("asks for a name when the account has none, even if an old tunnel token is still here", () => {
+    // Another account linked, or the old name was reclaimed after expiry.
+    expect(paymentOutcome(account(null), true)).toEqual({ step: 4, renewal: false });
+  });
+
+  it("goes on to name or 接入 for a first purchase", () => {
+    expect(paymentOutcome(account(null), false)).toEqual({ step: 4, renewal: false });
+    expect(paymentOutcome(account(endpoint), false)).toEqual({ step: 5, renewal: false });
   });
 });
 

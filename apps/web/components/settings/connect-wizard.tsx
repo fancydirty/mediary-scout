@@ -69,6 +69,15 @@ export function stepForAccount(account: ConnectAccountView, hasTunnelToken: bool
   return hasTunnelToken ? 3 : 5;
 }
 
+/**
+ * Where a confirmed payment leads. It is a renewal only when this instance's tunnel already
+ * serves the account's name; a leftover token with no name on the account (another account
+ * linked, or the name reclaimed after expiry) still has to pick a name.
+ */
+export function paymentOutcome(account: ConnectAccountView, hasTunnelToken: boolean): { step: Step; renewal: boolean } {
+  return { step: stepForAccount(account, hasTunnelToken), renewal: hasTunnelToken && account.endpoint !== null };
+}
+
 /** Expiry in China time, like the rest of the app: the server (often UTC in Docker) and the
  *  browser must render the same text, or hydration mismatches and the time jumps. */
 function formatExpiry(iso: string): string {
@@ -237,16 +246,16 @@ export function ConnectWizard(props: ConnectWizardProps) {
           if (accountResult.state === "linked") {
             setAccount(accountResult.account);
             setAccountUnavailable(false);
-            if (props.hasTunnelToken) {
-              setStep(3);
-              setNotice({
-                text: `续期成功，新的到期时间：${accountResult.account.expiresAt ? formatExpiry(accountResult.account.expiresAt) : "待确认"}`,
-                tone: "success",
-              });
-            } else {
-              setStep(accountResult.account.endpoint ? 5 : 4);
-              setNotice({ text: "付款已确认。", tone: "success" });
-            }
+            const outcome = paymentOutcome(accountResult.account, props.hasTunnelToken);
+            setStep(outcome.step);
+            setNotice(
+              outcome.renewal
+                ? {
+                    text: `续期成功，新的到期时间：${accountResult.account.expiresAt ? formatExpiry(accountResult.account.expiresAt) : "待确认"}`,
+                    tone: "success",
+                  }
+                : { text: "付款已确认。", tone: "success" },
+            );
           } else if (accountResult.state === "unlinked") {
             setLinked(false);
             setAccount(null);

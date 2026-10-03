@@ -206,6 +206,15 @@ describe("connectBindAction", () => {
     });
   });
 
+  it("says the updater is busy with an update or another 接入, not only an update", async () => {
+    vi.mocked(startTunnel).mockResolvedValue({ ok: false, reason: "busy" });
+    expect(await connectBindAction()).toEqual({
+      ok: false,
+      reason: "busy",
+      message: "更新助手正在忙（更新版本或另一次接入），等它结束再点「接入」。",
+    });
+  });
+
   it("uses actionable Chinese messages for invalid and compose failures", async () => {
     vi.mocked(startTunnel).mockResolvedValue({ ok: false, reason: "invalid_input" });
     expect(await connectBindAction()).toEqual({

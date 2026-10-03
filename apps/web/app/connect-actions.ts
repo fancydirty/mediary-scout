@@ -273,7 +273,10 @@ export async function connectBindAction(): Promise<ConnectBindResult> {
       command: `curl -fsSL ${connectOrigin()}/connect.sh | sh -s -- ${claim.code}`,
     };
   }
-  if (started.reason === "busy") return { ok: false, reason: "busy", message: "正在更新版本，等更新结束再接入。" };
+  if (started.reason === "busy") {
+    // The updater runs updates and 接入 through one lock.
+    return { ok: false, reason: "busy", message: "更新助手正在忙（更新版本或另一次接入），等它结束再点「接入」。" };
+  }
   if (started.reason === "pull_failed") {
     return { ok: false, reason: "pull_failed", message: "拉取隧道镜像失败。可以在 .env 里加 DOCKER_MIRROR=docker.1ms.run 后再试。" };
   }
