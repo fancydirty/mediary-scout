@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({
   credential: "ic_revoked" as string | null,
   email: "owner@example.com" as string | null,
-  order: "ord_1" as string | null,
+  order: { orderId: "ord_1", checkoutUrl: "https://pay.example/ord_1" } as { orderId: string; checkoutUrl: string } | null,
   accountAnswer: "unauthorized" as "unauthorized" | "linked",
 }));
 
@@ -68,7 +68,7 @@ function findWizardProps(node: ReactNode): Record<string, unknown> | null {
 beforeEach(() => {
   state.credential = "ic_revoked";
   state.email = "owner@example.com";
-  state.order = "ord_1";
+  state.order = { orderId: "ord_1", checkoutUrl: "https://pay.example/ord_1" };
   state.accountAnswer = "unauthorized";
 });
 
@@ -76,13 +76,17 @@ describe("RemoteAccessSection", () => {
   it("shows the wizard as not linked when Connect just rejected the stored credential", async () => {
     const tree = await RemoteAccessSection({ searchParams: Promise.resolve({}) });
     const props = findWizardProps(tree);
-    expect(props).toMatchObject({ linked: false, email: null, pendingOrderId: null });
+    expect(props).toMatchObject({ linked: false, email: null, pendingOrder: null });
   });
 
   it("passes the stored link through when Connect still accepts it", async () => {
     state.accountAnswer = "linked";
     const tree = await RemoteAccessSection({ searchParams: Promise.resolve({}) });
     const props = findWizardProps(tree);
-    expect(props).toMatchObject({ linked: true, email: "owner@example.com", pendingOrderId: "ord_1" });
+    expect(props).toMatchObject({
+      linked: true,
+      email: "owner@example.com",
+      pendingOrder: { orderId: "ord_1", checkoutUrl: "https://pay.example/ord_1" },
+    });
   });
 });

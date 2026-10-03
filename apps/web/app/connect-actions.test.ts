@@ -8,7 +8,7 @@ const state = vi.hoisted(() => ({
   credential: "ic_secret",
   email: "owner@example.com",
   pending: null as unknown,
-  order: "ord_1" as string | null,
+  order: null as { orderId: string; checkoutUrl: string } | null,
   stored: [] as Array<[string, string]>,
   cleared: [] as string[],
   headers: new Headers({ host: "scout.local:3000", "x-forwarded-proto": "https" }),
@@ -28,6 +28,7 @@ vi.mock("../lib/workflow-runtime", () => ({
 vi.mock("../lib/settings-attention-server", () => ({ resolveCurrentIsOwner: vi.fn(async () => state.owner) }));
 vi.mock("../lib/remote-access", () => ({
   scoutConnectBaseUrl: vi.fn(() => "https://connect.example"),
+  instanceEnvFingerprint: vi.fn(() => "env-fp"),
 }));
 vi.mock("../lib/connect-client", () => ({
   startInstanceLink: vi.fn(async () => ({ ok: true, pollSecret: "poll", verifyCode: "ABCD", expiresAt: "2026-10-03T00:00:00Z" })),
@@ -52,12 +53,15 @@ vi.mock("../lib/connect-link-store", () => ({
   getConnectLinkPending: vi.fn(async () => state.pending),
   setConnectLinkPending: vi.fn(async (v: unknown) => { state.pending = v; state.stored.push(["pending", JSON.stringify(v)]); }),
   clearConnectLinkPending: vi.fn(async () => { state.pending = null; state.cleared.push("pending"); }),
-  setConnectBinding: vi.fn(async (v: { token: string; hostname: string; boundAt: string }) => {
-    state.stored.push(["tunnel", v.token], ["hostname", v.hostname], ["boundAt", v.boundAt]);
+  setConnectBinding: vi.fn(async (v: { token: string; hostname: string; envFingerprint: string }) => {
+    state.stored.push(["tunnel", v.token], ["hostname", v.hostname], ["envFingerprint", v.envFingerprint]);
   }),
   getConnectTunnelToken: vi.fn(async () => null),
   getConnectPendingOrder: vi.fn(async () => state.order),
-  setConnectPendingOrder: vi.fn(async (v: string) => { state.order = v; state.stored.push(["order", v]); }),
+  setConnectPendingOrder: vi.fn(async (v: { orderId: string; checkoutUrl: string }) => {
+    state.order = v;
+    state.stored.push(["order", v.orderId], ["checkoutUrl", v.checkoutUrl]);
+  }),
   clearConnectPendingOrder: vi.fn(async () => { state.order = null; state.cleared.push("order"); }),
 }));
 
@@ -65,7 +69,15 @@ import { createConnectCheckout, exchangeClaimCode, getConnectAccount, getConnect
 import { scoutConnectBaseUrl } from "../lib/remote-access";
 import { startTunnel } from "../lib/updater-client";
 import { getConnectLinkPending, setConnectBinding } from "../lib/connect-link-store";
-import { connectAccountAction, connectBindAction, connectCheckoutAction, connectOrderStatusAction, connectPollLinkAction, connectUnlinkAction } from "./connect-actions";
+import {
+  connectAbandonOrderAction,
+  connectAccountAction,
+  connectBindAction,
+  connectCheckoutAction,
+  connectOrderStatusAction,
+  connectPollLinkAction,
+  connectUnlinkAction,
+} from "./connect-actions";
 
 beforeEach(() => {
   state.demo = false;
@@ -75,7 +87,7 @@ beforeEach(() => {
   state.credential = "ic_secret";
   state.email = "owner@example.com";
   state.pending = null;
-  state.order = "ord_1";
+  state.order = null;
   state.stored = [];
   state.cleared = [];
   state.headers = new Headers({ host: "scout.local:3000", "x-forwarded-proto": "https" });
@@ -153,8 +165,8 @@ describe("connectBindAction", () => {
     expect(vi.mocked(setConnectBinding).mock.invocationCallOrder[0]).toBeGreaterThan(
       vi.mocked(startTunnel).mock.invocationCallOrder[0]!,
     );
-    const boundAt = state.stored.find(([key]) => key === "boundAt")?.[1];
-    expect(Number.isFinite(Date.parse(boundAt ?? ""))).toBe(true);
+    // Records which env web was running with, so the binding outlives a restart with that env.
+    expect(state.stored).toContainEqual(["envFingerprint", "env-fp"]);
   });
 
   it.each(["no_updater", "busy", "pull_failed", "compose_failed", "invalid_input"] as const)(
@@ -222,6 +234,16 @@ describe("connectUnlinkAction", () => {
     expect(state.cleared).toContain("credential");
   });
 
+  it("does not forget a credential another tab stored while the revoke was in flight", async () => {
+    vi.mocked(revokeInstanceLink).mockImplementationOnce(async () => {
+      state.credential = "ic_newer";
+      return { ok: true };
+    });
+    expect(await connectUnlinkAction()).toEqual({ ok: true });
+    expect(state.credential).toBe("ic_newer");
+    expect(state.cleared).not.toContain("credential");
+  });
+
   it("keeps the credential when Connect could not be reached, so 断开 can be retried", async () => {
     vi.mocked(revokeInstanceLink).mockResolvedValueOnce({ ok: false, reason: "unreachable", message: "x" });
     const result = await connectUnlinkAction();
@@ -232,6 +254,7 @@ describe("connectUnlinkAction", () => {
 
 describe("a credential Connect no longer accepts", () => {
   it("is forgotten with its email and its pending order when the account is read", async () => {
+    state.order = { orderId: "ord_1", checkoutUrl: "https://pay.example/order" };
     vi.mocked(getConnectAccount).mockResolvedValueOnce({ ok: false, reason: "unauthorized", message: "x" });
     expect(await connectAccountAction()).toEqual({ state: "unlinked" });
     expect(state.cleared).toEqual(expect.arrayContaining(["credential", "email", "order"]));
@@ -244,6 +267,26 @@ describe("a credential Connect no longer accepts", () => {
     expect(state.cleared).toEqual(expect.arrayContaining(["credential", "email", "order"]));
   });
 
+  it("leaves a newer credential alone when another tab linked while the account read was in flight", async () => {
+    vi.mocked(getConnectAccount).mockImplementationOnce(async () => {
+      state.credential = "ic_newer";
+      return { ok: false, reason: "unauthorized", message: "x" };
+    });
+    await connectAccountAction();
+    expect(state.credential).toBe("ic_newer");
+    expect(state.cleared).toEqual([]);
+  });
+
+  it("leaves a newer credential alone when another tab linked while the order check was in flight", async () => {
+    vi.mocked(getConnectOrderStatus).mockImplementationOnce(async () => {
+      state.credential = "ic_newer";
+      return { ok: false, reason: "unauthorized", message: "x" };
+    });
+    await connectOrderStatusAction("ord_1");
+    expect(state.credential).toBe("ic_newer");
+    expect(state.cleared).toEqual([]);
+  });
+
   it("is kept when the order check failed for another reason, so polling can retry", async () => {
     vi.mocked(getConnectOrderStatus).mockResolvedValueOnce({ ok: false, reason: "unreachable", message: "x" });
     const result = await connectOrderStatusAction("ord_1");
@@ -254,25 +297,42 @@ describe("a credential Connect no longer accepts", () => {
 });
 
 describe("pending order", () => {
-  it("remembers the order a checkout created, so a reloaded page can keep checking it", async () => {
+  it("remembers the order a checkout created with its payment page, so a reloaded page can keep checking it", async () => {
     await connectCheckoutAction("year");
-    expect(state.stored).toContainEqual(["order", "ord_1"]);
+    expect(state.order).toEqual({ orderId: "ord_1", checkoutUrl: "https://pay.example/order" });
+  });
+
+  it("refuses a second checkout while an order is still waiting for payment", async () => {
+    state.order = { orderId: "ord_0", checkoutUrl: "https://pay.example/ord_0" };
+    const result = await connectCheckoutAction("quarter");
+    expect(result.ok).toBe(false);
+    expect(createConnectCheckout).not.toHaveBeenCalled();
+    expect(state.order).toEqual({ orderId: "ord_0", checkoutUrl: "https://pay.example/ord_0" });
+  });
+
+  it("gives up waiting on an order only when it is still the stored one", async () => {
+    state.order = { orderId: "ord_new", checkoutUrl: "https://pay.example/ord_new" };
+    expect(await connectAbandonOrderAction("ord_old")).toEqual({ ok: true });
+    expect(state.order?.orderId).toBe("ord_new");
+    expect(await connectAbandonOrderAction("ord_new")).toEqual({ ok: true });
+    expect(state.order).toBeNull();
   });
 
   it("keeps a newer order another tab created while an older one settled", async () => {
-    state.order = "ord_new";
+    state.order = { orderId: "ord_new", checkoutUrl: "https://pay.example/ord_new" };
     vi.mocked(getConnectOrderStatus).mockResolvedValueOnce({ ok: true, status: "closed" });
     await connectOrderStatusAction("ord_old");
     expect(state.cleared).not.toContain("order");
   });
 
   it("forgets the order once it is fulfilled, closed or expired, and keeps it while pending", async () => {
+    state.order = { orderId: "ord_1", checkoutUrl: "https://pay.example/order" };
     vi.mocked(getConnectOrderStatus).mockResolvedValueOnce({ ok: true, status: "pending" });
     await connectOrderStatusAction("ord_1");
     expect(state.cleared).not.toContain("order");
     for (const status of ["fulfilled", "closed", "expired"] as const) {
       state.cleared = [];
-      state.order = "ord_1";
+      state.order = { orderId: "ord_1", checkoutUrl: "https://pay.example/order" };
       vi.mocked(getConnectOrderStatus).mockResolvedValueOnce({ ok: true, status });
       await connectOrderStatusAction("ord_1");
       expect(state.cleared).toContain("order");

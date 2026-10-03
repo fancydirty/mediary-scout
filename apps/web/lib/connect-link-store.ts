@@ -6,12 +6,18 @@ export const CONNECT_ACCOUNT_EMAIL_KEY = "connect_account_email";
 /** The pending link request as one JSON value: its fields belong together, and two tabs
  *  starting a link at once must not leave one request's poll secret next to another's code. */
 export const CONNECT_LINK_PENDING_KEY = "connect_link_pending";
-/** The checkout order this page is waiting on, so a reload keeps checking it. */
+/** The checkout order this page is waiting on (id and payment page, as one JSON value), so a
+ *  reload keeps checking it and can still open its payment page. */
 export const CONNECT_PENDING_ORDER_KEY = "connect_pending_order";
 export const CONNECT_TUNNEL_TOKEN_KEY = "connect_tunnel_token";
 export const CONNECT_HOSTNAME_KEY = "connect_hostname";
-/** When the stored token/hostname were last bound from this page (ISO). */
-export const CONNECT_BOUND_AT_KEY = "connect_bound_at";
+/** Fingerprint of the env web was running with when the stored token/hostname were bound. */
+export const CONNECT_BOUND_ENV_KEY = "connect_bound_env";
+
+export interface ConnectPendingOrder {
+  orderId: string;
+  checkoutUrl: string;
+}
 
 export interface ConnectLinkPending {
   email: string;
@@ -95,12 +101,25 @@ export async function clearConnectLinkPending(): Promise<void> {
   await clearValue(CONNECT_LINK_PENDING_KEY);
 }
 
-export function getConnectPendingOrder(): Promise<string | null> {
-  return getValue(CONNECT_PENDING_ORDER_KEY);
+export async function getConnectPendingOrder(): Promise<ConnectPendingOrder | null> {
+  const raw = await getValue(CONNECT_PENDING_ORDER_KEY);
+  if (!raw) return null;
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (typeof value !== "object" || value === null) return null;
+    const { orderId, checkoutUrl } = value as Record<string, unknown>;
+    if ([orderId, checkoutUrl].some((field) => typeof field !== "string" || field.trim() === "")) return null;
+    return { orderId, checkoutUrl } as ConnectPendingOrder;
+  } catch {
+    return null;
+  }
 }
 
-export function setConnectPendingOrder(orderId: string): Promise<void> {
-  return setValue(CONNECT_PENDING_ORDER_KEY, orderId);
+export async function setConnectPendingOrder(value: ConnectPendingOrder): Promise<void> {
+  await getWorkflowRepository().setSetting(
+    CONNECT_PENDING_ORDER_KEY,
+    JSON.stringify({ orderId: value.orderId, checkoutUrl: value.checkoutUrl }),
+  );
 }
 
 export function clearConnectPendingOrder(): Promise<void> {
@@ -131,14 +150,14 @@ export function clearConnectHostname(): Promise<void> {
   return clearValue(CONNECT_HOSTNAME_KEY);
 }
 
-export function getConnectBoundAt(): Promise<string | null> {
-  return getValue(CONNECT_BOUND_AT_KEY);
+export function getConnectBoundEnv(): Promise<string | null> {
+  return getValue(CONNECT_BOUND_ENV_KEY);
 }
 
-/** A tunnel the updater just started. The time goes last: it is what lets these values
- *  supersede the env a running web process was started with (see remote-access.ts). */
-export async function setConnectBinding(binding: { token: string; hostname: string; boundAt: string }): Promise<void> {
+/** A tunnel the updater just started. The fingerprint goes last: it is what lets these values
+ *  supersede the env web is running with (see remote-access.ts). */
+export async function setConnectBinding(binding: { token: string; hostname: string; envFingerprint: string }): Promise<void> {
   await setValue(CONNECT_TUNNEL_TOKEN_KEY, binding.token);
   await setValue(CONNECT_HOSTNAME_KEY, binding.hostname);
-  await setValue(CONNECT_BOUND_AT_KEY, binding.boundAt);
+  await setValue(CONNECT_BOUND_ENV_KEY, binding.envFingerprint);
 }

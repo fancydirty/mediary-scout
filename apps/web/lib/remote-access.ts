@@ -1,4 +1,5 @@
-import { getConnectBoundAt, getConnectHostname, getConnectTunnelToken } from "./connect-link-store";
+import { createHash } from "node:crypto";
+import { getConnectBoundEnv, getConnectHostname, getConnectTunnelToken } from "./connect-link-store";
 export { remoteFirstSetupNotice, type LoginBootstrap } from "./remote-access-copy";
 
 /**
@@ -238,21 +239,31 @@ export function instanceTunnelToken(): string | undefined {
 }
 
 /**
- * A binding made from the settings page after this web process started beats the env the
- * process was started with: 「重新接入」 rewrites .env and recreates only cloudflared, so
- * process.env still holds the old values. Once web restarts, its env already contains what
- * the updater wrote (or whatever a person put in .env since), and env wins again.
+ * Fingerprint of the tunnel env web is running with (token and hostname, normalized). A binding
+ * made from the settings page records it, see `storedBindingIsCurrent`.
  */
-async function storedBindingIsNewer(): Promise<boolean> {
-  const boundAt = Date.parse((await getConnectBoundAt()) ?? "");
-  return Number.isFinite(boundAt) && boundAt > Date.now() - process.uptime() * 1_000;
+export function instanceEnvFingerprint(): string {
+  const token = process.env.TUNNEL_TOKEN?.trim() ?? "";
+  const hostname = process.env.MEDIARY_CONNECT_HOSTNAME?.trim().toLowerCase() ?? "";
+  return createHash("sha256").update(`${token}\n${hostname}`).digest("hex");
+}
+
+/**
+ * A binding made from the settings page beats the env web is running with for as long as that
+ * env is unchanged: 「接入」 rewrites .env and recreates only cloudflared, and restarting web
+ * (crash, host reboot) keeps the env its container was created with. Only recreating web from
+ * .env (an update, connect.sh, docker compose up) changes its env, and then the env wins.
+ */
+async function storedBindingIsCurrent(): Promise<boolean> {
+  const boundEnv = await getConnectBoundEnv();
+  return boundEnv !== null && boundEnv === instanceEnvFingerprint();
 }
 
 /** Resolve the token without requiring a web-container restart after in-app binding. */
 export async function resolveInstanceTunnelToken(): Promise<string | undefined> {
   const stored = (await getConnectTunnelToken())?.trim() || undefined;
-  if (stored && (await storedBindingIsNewer())) return stored;
-  return instanceTunnelToken() ?? stored;
+  if (stored && (await storedBindingIsCurrent())) return stored;
+  return instanceTunnelToken();
 }
 
 /**
@@ -296,12 +307,13 @@ function parseInstanceConnectHostname(value: string | null | undefined): string 
 
 /** Resolve the hostname without requiring a web-container restart after in-app binding. */
 export async function resolveInstanceConnectHostname(): Promise<string | null> {
-  const stored = parseInstanceConnectHostname(await getConnectHostname());
-  if (stored && (await storedBindingIsNewer())) return stored;
-  // A non-empty env setting stays authoritative even when malformed: return the same null the
-  // sync reader returns instead of silently shadowing an invalid deployment configuration.
-  if (process.env.MEDIARY_CONNECT_HOSTNAME?.trim()) return instanceConnectHostname();
-  return stored;
+  if (await storedBindingIsCurrent()) {
+    const stored = parseInstanceConnectHostname(await getConnectHostname());
+    if (stored) return stored;
+  }
+  // Otherwise the env, even when malformed: the same null the sync reader returns, instead of
+  // silently shadowing an invalid deployment configuration.
+  return instanceConnectHostname();
 }
 
 /**

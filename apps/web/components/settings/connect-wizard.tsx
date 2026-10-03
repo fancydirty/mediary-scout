@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
+  connectAbandonOrderAction,
   connectAccountAction,
   connectBindAction,
   connectCheckoutAction,
@@ -29,8 +30,8 @@ export type ConnectWizardProps = {
   passwordSet: boolean | "unknown";
   multiUser?: boolean;
   compact?: boolean;
-  /** A checkout this instance is still waiting on (kept across reloads). */
-  pendingOrderId?: string | null;
+  /** A checkout this instance is still waiting on, with its payment page (kept across reloads). */
+  pendingOrder?: { orderId: string; checkoutUrl: string } | null;
 };
 
 type Step = 1 | 2 | 3 | 4 | 5;
@@ -95,8 +96,8 @@ export function ConnectWizard(props: ConnectWizardProps) {
   const [busy, startTransition] = useTransition();
   const [slug, setSlug] = useState("");
   const [slugCheck, setSlugCheck] = useState<{ available: boolean; reason?: string; suggestions: string[] } | null>(null);
-  const [orderId, setOrderId] = useState<string | null>(props.pendingOrderId ?? null);
-  const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
+  const [order, setOrder] = useState<{ orderId: string; checkoutUrl: string } | null>(props.pendingOrder ?? null);
+  const orderId = order?.orderId ?? null;
   const [tunnelStarting, setTunnelStarting] = useState(false);
   const [fallbackCommand, setFallbackCommand] = useState<string | null>(null);
   const [password, setPassword] = useState("");
@@ -110,8 +111,8 @@ export function ConnectWizard(props: ConnectWizardProps) {
     setAccountUnavailable(props.linked && props.account === null);
     setPasswordSet(props.passwordSet);
     setStep(initialStep(props));
-    setOrderId(props.pendingOrderId ?? null);
-  }, [props.linked, props.email, props.pending, props.account, props.hasTunnelToken, props.passwordSet, props.pendingOrderId]);
+    setOrder(props.pendingOrder ?? null);
+  }, [props.linked, props.email, props.pending, props.account, props.hasTunnelToken, props.passwordSet, props.pendingOrder]);
 
   useEffect(() => {
     if (step !== 2 || !pending) return;
@@ -201,7 +202,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
         if (!result.ok && "unlinked" in result) {
           // Connect no longer accepts this instance's credential; the action forgot it and the order.
           settling = true;
-          setOrderId(null);
+          setOrder(null);
           setLinked(false);
           setAccount(null);
           setAccountUnavailable(false);
@@ -216,7 +217,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
           // cleanup's `stopped` would drop every update below (the wizard then sat on step 3).
           const accountResult = await connectAccountAction();
           if (stopped) return;
-          setOrderId(null);
+          setOrder(null);
           if (accountResult.state === "linked") {
             setAccount(accountResult.account);
             setAccountUnavailable(false);
@@ -242,7 +243,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
           }
         } else if (["closed", "expired"].includes(result.status)) {
           settling = true;
-          setOrderId(null);
+          setOrder(null);
           setNotice({ text: "这笔订单已关闭，请重新选择时长。", tone: "danger" });
         }
       } catch (error) {
@@ -354,17 +355,14 @@ export function ConnectWizard(props: ConnectWizardProps) {
           setNotice({ text: result.message, tone: "danger" });
           return;
         }
-        const popupBlocked = !popup;
         if (popup) {
           popup.opener = null;
           popup.location.href = result.checkoutUrl;
-          setCheckoutUrl(null);
+          setNotice({ text: "已打开微信支付页面，付款完成后这里会自动继续。", tone: "muted" });
         } else {
-          setCheckoutUrl(result.checkoutUrl);
           setNotice({ text: "浏览器拦截了新窗口，请点击下面的链接完成支付。", tone: "danger" });
         }
-        setOrderId(result.orderId);
-        if (!popupBlocked) setNotice({ text: "已打开微信支付页面，付款完成后这里会自动继续。", tone: "muted" });
+        setOrder({ orderId: result.orderId, checkoutUrl: result.checkoutUrl });
       } catch (error) {
         popup?.close();
         setNotice({ text: friendlyError(error), tone: "danger" });
@@ -466,6 +464,24 @@ export function ConnectWizard(props: ConnectWizardProps) {
     });
   };
 
+  const abandonOrder = () => {
+    if (!order) return;
+    const abandoned = order.orderId;
+    startTransition(async () => {
+      try {
+        const result = await connectAbandonOrderAction(abandoned);
+        if (!result.ok) {
+          setNotice({ text: result.message, tone: "danger" });
+          return;
+        }
+        setOrder((current) => (current?.orderId === abandoned ? null : current));
+        setNotice({ text: "已不再等待这笔订单，可以重新选择时长。", tone: "muted" });
+      } catch (error) {
+        setNotice({ text: friendlyError(error), tone: "danger" });
+      }
+    });
+  };
+
   const unlink = () => {
     startTransition(async () => {
       try {
@@ -479,8 +495,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
         setAccount(null);
         setAccountUnavailable(false);
         // The order belonged to the account just unlinked: stop waiting for it.
-        setOrderId(null);
-        setCheckoutUrl(null);
+        setOrder(null);
         setStep(1);
         setNotice({ text: "已断开 Mediary Connect。", tone: "success" });
       } catch (error) {
@@ -533,17 +548,24 @@ export function ConnectWizard(props: ConnectWizardProps) {
             {tiers.map((tier) => (
               <div key={tier.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, border: "1px solid var(--border)", borderRadius: 8, padding: "10px 12px" }}>
                 <span><strong>{tier.label}</strong><span className="panel-note"> · {tier.months} 个月 · ¥{tier.price.replace(/\.00$/, "")}</span>{tier.featured ? <span className="hub-badge tone-green" style={{ marginLeft: 8 }}>推荐</span> : null}</span>
-                <button className="primary-button" type="button" onClick={() => buy(tier.id)} disabled={busy || !account?.checkoutOpen}>微信支付</button>
+                <button className="primary-button" type="button" onClick={() => buy(tier.id)} disabled={busy || !account?.checkoutOpen || order !== null}>微信支付</button>
               </div>
             ))}
           </div>
-          {checkoutUrl ? <p className="panel-note" role="status"><a href={checkoutUrl} target="_blank" rel="noopener noreferrer">点击打开微信支付页面</a></p> : null}
           {props.compact && account?.endpoint ? (
             <button type="button" className="secondary-button" style={{ marginTop: 10 }} onClick={() => setStep(5)} disabled={busy}>
               重新接入
             </button>
           ) : null}
-          {orderId ? <p className="panel-note" role="status">等待支付结果…</p> : null}
+          {order ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
+              <p className="panel-note" role="status" style={{ margin: 0 }}>
+                等待支付结果…{" "}
+                <a href={order.checkoutUrl} target="_blank" rel="noopener noreferrer">打开微信支付页面</a>
+              </p>
+              <button type="button" className="ghost-button" onClick={abandonOrder} disabled={busy}>不付了</button>
+            </div>
+          ) : null}
           </>}
         </div>
       ) : null}

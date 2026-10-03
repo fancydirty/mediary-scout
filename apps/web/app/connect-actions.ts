@@ -34,7 +34,7 @@ import {
   setConnectLinkPending,
   setConnectPendingOrder,
 } from "../lib/connect-link-store";
-import { scoutConnectBaseUrl } from "../lib/remote-access";
+import { instanceEnvFingerprint, scoutConnectBaseUrl } from "../lib/remote-access";
 import { startTunnel } from "../lib/updater-client";
 import { resolveRequestOriginOrNull } from "../lib/request-origin";
 import { testRemoteAccessConnectionAction } from "./actions";
@@ -56,8 +56,13 @@ function clientMessage(result: { message?: string; reason?: string }): string {
   return result.message || "操作没完成，请稍后再试。";
 }
 
-/** Forget the credential and everything tied to its account (email, the order being waited on). */
-async function forgetConnectAccount(): Promise<void> {
+/**
+ * Forget the credential a request was made with, and everything tied to its account (email, the
+ * order being waited on) — unless another tab stored a different credential while that request
+ * was in flight.
+ */
+async function forgetConnectAccount(used: string): Promise<void> {
+  if ((await getConnectInstanceCredential()) !== used) return;
   await clearConnectInstanceCredential();
   await clearConnectAccountEmail();
   await clearConnectPendingOrder();
@@ -136,7 +141,7 @@ export async function connectAccountAction(): Promise<ConnectAccountResult> {
   const result = await getConnectAccount(credential);
   if (!result.ok) {
     if (result.reason === "unauthorized") {
-      await forgetConnectAccount();
+      await forgetConnectAccount(credential);
       return { state: "unlinked" };
     }
     return { state: "error", message: clientMessage(result) };
@@ -152,6 +157,11 @@ export async function connectCheckoutAction(
   if (refused) return refused;
   const credential = await getConnectInstanceCredential();
   if (!credential) return { ok: false, message: "请先连接 Mediary Connect。" };
+  // One order at a time: a second one would replace the only handle this page checks, and paying
+  // the first would then go unnoticed here. (Checked again by every tab, not just this button.)
+  if (await getConnectPendingOrder()) {
+    return { ok: false, message: "上一笔订单还在等待支付：付完款，或点「不付了」后再选。" };
+  }
   // Behind a reverse proxy (or the tunnel) the browser's address is the forwarded host,
   // not the internal Host header; without a usable host, Connect keeps its own success page.
   const origin = resolveRequestOriginOrNull(await headers());
@@ -160,8 +170,20 @@ export async function connectCheckoutAction(
   if (!result.ok) return { ok: false, message: clientMessage(result) };
   // A reload (or finishing payment in the other tab) must not lose the only handle that makes
   // this page check the order, and with it Connect's compensation path.
-  await setConnectPendingOrder(result.orderId);
+  await setConnectPendingOrder({ orderId: result.orderId, checkoutUrl: result.checkoutUrl });
   return { ok: true, checkoutUrl: result.checkoutUrl, orderId: result.orderId };
+}
+
+/**
+ * Stop waiting on an unpaid order so another one can be started. Nothing is cancelled at Waffo:
+ * if it is paid after all, Connect still credits it (webhook, daily reconciliation) and the
+ * account shows the time on the next read.
+ */
+export async function connectAbandonOrderAction(orderId: string): Promise<{ ok: true } | Refusal> {
+  const refused = await commonGuard();
+  if (refused) return refused;
+  if ((await getConnectPendingOrder())?.orderId === orderId) await clearConnectPendingOrder();
+  return { ok: true };
 }
 
 export async function connectOrderStatusAction(orderId: string) {
@@ -172,7 +194,7 @@ export async function connectOrderStatusAction(orderId: string) {
   const result = await getConnectOrderStatus(credential, orderId);
   if (!result.ok) {
     if (result.reason === "unauthorized") {
-      await forgetConnectAccount();
+      await forgetConnectAccount(credential);
       return { ok: false as const, unlinked: true as const, message: "Mediary Connect 连接已失效，请重新连接。" };
     }
     return { ok: false as const, message: clientMessage(result) };
@@ -180,7 +202,7 @@ export async function connectOrderStatusAction(orderId: string) {
   // Only forget the order this answer is about: another tab may have started a newer one.
   if (
     (result.status === "fulfilled" || result.status === "closed" || result.status === "expired") &&
-    (await getConnectPendingOrder()) === orderId
+    (await getConnectPendingOrder())?.orderId === orderId
   ) {
     await clearConnectPendingOrder();
   }
@@ -241,7 +263,7 @@ export async function connectBindAction(): Promise<ConnectBindResult> {
   if (started.ok) {
     // Only now: a stored token makes the page report the tunnel as on. After a failed start
     // the wizard stays on 接入; after the connect.sh fallback, web reads the token from .env.
-    await setConnectBinding({ token: exchanged.token, hostname: exchanged.hostname, boundAt: new Date().toISOString() });
+    await setConnectBinding({ token: exchanged.token, hostname: exchanged.hostname, envFingerprint: instanceEnvFingerprint() });
     return { ok: true };
   }
   if (started.reason === "no_updater") {
@@ -279,9 +301,12 @@ export async function connectUnlinkAction(): Promise<{ ok: true } | Refusal> {
     if (!revoked.ok && revoked.reason !== "unauthorized") {
       return { ok: false, message: `${clientMessage(revoked)}没有断开，稍后再点一次「断开」。` };
     }
+    // Including its pending order: the next account must not inherit it.
+    await forgetConnectAccount(credential);
+  } else {
+    await clearConnectAccountEmail();
+    await clearConnectPendingOrder();
   }
-  // Including its pending order: the next account must not inherit it.
-  await forgetConnectAccount();
   await clearConnectLinkPending();
   return { ok: true };
 }

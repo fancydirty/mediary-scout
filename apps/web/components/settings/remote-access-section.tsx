@@ -85,7 +85,7 @@ export async function RemoteAccessSection({
   // the email and the pending order.
   const linked = (await getConnectInstanceCredential()) !== null;
   const linkedEmail = await getConnectAccountEmail();
-  const pendingOrderId = linked ? await getConnectPendingOrder() : null;
+  const pendingOrder = linked ? await getConnectPendingOrder() : null;
   const passwordState = await hasLoginPassword();
 
   // 「上次报到」只在 active 态有意义 —— 降级态本来就是「拿不到状态」,
@@ -123,7 +123,7 @@ export async function RemoteAccessSection({
           hasTunnelToken={false}
           passwordSet={passwordState}
           multiUser={isMultiUserEnabled()}
-          pendingOrderId={pendingOrderId}
+          pendingOrder={pendingOrder}
         />
 
         <div
@@ -278,7 +278,7 @@ export async function RemoteAccessSection({
         hasTunnelToken={Boolean(localToken)}
         passwordSet={passwordState}
         multiUser={isMultiUserEnabled()}
-        pendingOrderId={pendingOrderId}
+        pendingOrder={pendingOrder}
       />
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>

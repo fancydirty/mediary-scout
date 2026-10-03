@@ -14,7 +14,7 @@ vi.mock("./workflow-runtime", () => ({
 
 import {
   CONNECT_ACCOUNT_EMAIL_KEY,
-  CONNECT_BOUND_AT_KEY,
+  CONNECT_BOUND_ENV_KEY,
   CONNECT_HOSTNAME_KEY,
   CONNECT_INSTANCE_CREDENTIAL_KEY,
   CONNECT_LINK_PENDING_KEY,
@@ -27,7 +27,7 @@ import {
   clearConnectHostname,
   clearConnectTunnelToken,
   getConnectAccountEmail,
-  getConnectBoundAt,
+  getConnectBoundEnv,
   getConnectHostname,
   getConnectInstanceCredential,
   getConnectLinkPending,
@@ -89,15 +89,15 @@ describe("connect tunnel binding", () => {
     vi.clearAllMocks();
   });
 
-  it("writes token, hostname, then the bound time last, and reads the time back", async () => {
-    await setConnectBinding({ token: " tok ", hostname: "a.example.com", boundAt: "2026-10-03T14:00:00.000Z" });
+  it("writes token, hostname, then the env fingerprint last, and reads the fingerprint back", async () => {
+    await setConnectBinding({ token: " tok ", hostname: "a.example.com", envFingerprint: "fp-1" });
     expect(repository.setSetting.mock.calls).toEqual([
       [CONNECT_TUNNEL_TOKEN_KEY, "tok"],
       [CONNECT_HOSTNAME_KEY, "a.example.com"],
-      [CONNECT_BOUND_AT_KEY, "2026-10-03T14:00:00.000Z"],
+      [CONNECT_BOUND_ENV_KEY, "fp-1"],
     ]);
-    repository.getSetting.mockResolvedValueOnce(" 2026-10-03T14:00:00.000Z ");
-    expect(await getConnectBoundAt()).toBe("2026-10-03T14:00:00.000Z");
+    repository.getSetting.mockResolvedValueOnce(" fp-1 ");
+    expect(await getConnectBoundEnv()).toBe("fp-1");
   });
 });
 
@@ -128,12 +128,22 @@ describe("pending link and order are single settings", () => {
     expect(repository.deleteSetting.mock.calls).toEqual([[CONNECT_LINK_PENDING_KEY]]);
   });
 
-  it("remembers and forgets a pending order id", async () => {
-    await setConnectPendingOrder("ord_1");
-    expect(repository.setSetting).toHaveBeenCalledWith(CONNECT_PENDING_ORDER_KEY, "ord_1");
-    repository.getSetting.mockResolvedValueOnce("ord_1");
-    expect(await getConnectPendingOrder()).toBe("ord_1");
+  it("remembers a pending order with its payment page as one value, and forgets it", async () => {
+    const order = { orderId: "ord_1", checkoutUrl: "https://pay.example/ord_1" };
+    await setConnectPendingOrder(order);
+    expect(repository.setSetting).toHaveBeenCalledTimes(1);
+    const [key, value] = repository.setSetting.mock.calls[0]!;
+    expect(key).toBe(CONNECT_PENDING_ORDER_KEY);
+    repository.getSetting.mockResolvedValueOnce(value);
+    expect(await getConnectPendingOrder()).toEqual(order);
     await clearConnectPendingOrder();
     expect(repository.deleteSetting).toHaveBeenCalledWith(CONNECT_PENDING_ORDER_KEY);
+  });
+
+  it("treats an unreadable pending order as none", async () => {
+    repository.getSetting.mockResolvedValueOnce("ord_1");
+    expect(await getConnectPendingOrder()).toBeNull();
+    repository.getSetting.mockResolvedValueOnce(JSON.stringify({ orderId: "ord_1" }));
+    expect(await getConnectPendingOrder()).toBeNull();
   });
 });
