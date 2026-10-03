@@ -27,6 +27,8 @@ export type ConnectWizardProps = {
   pending: ConnectWizardPending | null;
   account: ConnectAccountView | null;
   hasTunnelToken: boolean;
+  /** The name this instance's tunnel serves, when known (MEDIARY_CONNECT_HOSTNAME or a binding). */
+  boundHostname?: string | null;
   passwordSet: boolean | "unknown";
   multiUser?: boolean;
   compact?: boolean;
@@ -61,21 +63,42 @@ export function nextLinkPollDelayMs(currentMs: number, intervalSec: number | und
   return slowDown ? Math.min(Math.max(currentMs, base) + 2_000, 10_000) : base;
 }
 
+/**
+ * Whether this instance's tunnel serves the account's name. A token alone only says some tunnel
+ * is set up: after 断开 and linking another account it still serves the old name. An instance
+ * that does not know its hostname (connected by an older connect.sh) is trusted as before.
+ */
+function tunnelServesAccount(account: ConnectAccountView, hasTunnelToken: boolean, boundHostname: string | null | undefined): boolean {
+  if (!hasTunnelToken || account.endpoint === null) return false;
+  return !boundHostname || boundHostname === account.endpoint.hostname;
+}
+
 /** Where a linked instance continues, from the account it just read. An account that already
  *  paid and picked a name on the website goes straight to connecting. */
-export function stepForAccount(account: ConnectAccountView, hasTunnelToken: boolean): Step {
+export function stepForAccount(
+  account: ConnectAccountView,
+  hasTunnelToken: boolean,
+  boundHostname?: string | null,
+): Step {
   if (!account.active) return 3;
   if (!account.endpoint) return 4;
-  return hasTunnelToken ? 3 : 5;
+  return tunnelServesAccount(account, hasTunnelToken, boundHostname) ? 3 : 5;
 }
 
 /**
  * Where a confirmed payment leads. It is a renewal only when this instance's tunnel already
- * serves the account's name; a leftover token with no name on the account (another account
- * linked, or the name reclaimed after expiry) still has to pick a name.
+ * serves the account's name; otherwise (no name yet, or the tunnel serves another account's
+ * name) the wizard goes on to pick a name or to 接入.
  */
-export function paymentOutcome(account: ConnectAccountView, hasTunnelToken: boolean): { step: Step; renewal: boolean } {
-  return { step: stepForAccount(account, hasTunnelToken), renewal: hasTunnelToken && account.endpoint !== null };
+export function paymentOutcome(
+  account: ConnectAccountView,
+  hasTunnelToken: boolean,
+  boundHostname?: string | null,
+): { step: Step; renewal: boolean } {
+  return {
+    step: stepForAccount(account, hasTunnelToken, boundHostname),
+    renewal: tunnelServesAccount(account, hasTunnelToken, boundHostname),
+  };
 }
 
 /** Expiry in China time, like the rest of the app: the server (often UTC in Docker) and the
@@ -97,7 +120,7 @@ function formatExpiry(iso: string): string {
 function initialStep(props: ConnectWizardProps): Step {
   if (!props.linked) return props.pending ? 2 : 1;
   if (!props.account) return 3;
-  return stepForAccount(props.account, props.hasTunnelToken);
+  return stepForAccount(props.account, props.hasTunnelToken, props.boundHostname);
 }
 
 function friendlyError(error: unknown): string {
@@ -137,7 +160,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
     setPasswordSet(props.passwordSet);
     setStep(initialStep(props));
     setOrder(props.pendingOrder ?? null);
-  }, [props.linked, props.email, props.pending, props.account, props.hasTunnelToken, props.passwordSet, props.pendingOrder]);
+  }, [props.linked, props.email, props.pending, props.account, props.hasTunnelToken, props.boundHostname, props.passwordSet, props.pendingOrder]);
 
   useEffect(() => {
     if (step !== 2 || !pending) return;
@@ -159,7 +182,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
             if (accountResult.state === "linked") {
               setAccount(accountResult.account);
               setAccountUnavailable(false);
-              setStep(stepForAccount(accountResult.account, props.hasTunnelToken));
+              setStep(stepForAccount(accountResult.account, props.hasTunnelToken, props.boundHostname));
             } else if (accountResult.state === "unlinked") {
               setLinked(false);
               setStep(1);
@@ -190,7 +213,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
             setLinked(true);
             setAccount(accountResult.account);
             setAccountUnavailable(false);
-            setStep(stepForAccount(accountResult.account, props.hasTunnelToken));
+            setStep(stepForAccount(accountResult.account, props.hasTunnelToken, props.boundHostname));
           } else {
             setStep(1);
           }
@@ -237,16 +260,17 @@ export function ConnectWizard(props: ConnectWizardProps) {
           // Keep polling: a passing network error must not strand a paid order.
           setNotice({ text: result.message, tone: "danger" });
         } else if (result.status === "fulfilled") {
-          settling = true;
           // Read the account before clearing orderId: clearing it re-runs this effect, and the
           // cleanup's `stopped` would drop every update below (the wizard then sat on step 3).
+          // Settled only once the read came back: if it throws, the next poll tries again.
           const accountResult = await connectAccountAction();
           if (stopped) return;
+          settling = true;
           setOrder(null);
           if (accountResult.state === "linked") {
             setAccount(accountResult.account);
             setAccountUnavailable(false);
-            const outcome = paymentOutcome(accountResult.account, props.hasTunnelToken);
+            const outcome = paymentOutcome(accountResult.account, props.hasTunnelToken, props.boundHostname);
             setStep(outcome.step);
             setNotice(
               outcome.renewal
@@ -343,7 +367,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
         }
         setAccount(result.account);
         setAccountUnavailable(false);
-        setStep(stepForAccount(result.account, props.hasTunnelToken));
+        setStep(stepForAccount(result.account, props.hasTunnelToken, props.boundHostname));
       } catch (error) {
         setAccountUnavailable(true);
         setNotice({ text: friendlyError(error), tone: "danger" });

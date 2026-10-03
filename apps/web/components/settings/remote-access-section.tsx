@@ -275,6 +275,7 @@ export async function RemoteAccessSection({
         pending={pending}
         account={connectAccount}
         hasTunnelToken={Boolean(localToken)}
+        boundHostname={localHostname}
         passwordSet={passwordState}
         multiUser={isMultiUserEnabled()}
         pendingOrder={pendingOrder}

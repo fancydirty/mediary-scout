@@ -110,6 +110,32 @@ describe("ConnectWizard step after the account is read", () => {
   });
 });
 
+describe("ConnectWizard when this instance's tunnel serves another name", () => {
+  const account = {
+    email: "a@b.c",
+    active: true,
+    expiresAt: "2027-01-03T00:00:00.000Z",
+    endpoint: { slug: "new", hostname: "new.mediaryconnect.app", status: "active" },
+    checkoutOpen: true,
+    tiers: [],
+  };
+
+  it("goes to 接入 for the linked account's name instead of treating the old tunnel as its own", () => {
+    expect(stepForAccount(account, true, "old.mediaryconnect.app")).toBe(5);
+    expect(paymentOutcome(account, true, "old.mediaryconnect.app")).toEqual({ step: 5, renewal: false });
+  });
+
+  it("treats the tunnel as the account's own when the names match", () => {
+    expect(stepForAccount(account, true, "new.mediaryconnect.app")).toBe(3);
+    expect(paymentOutcome(account, true, "new.mediaryconnect.app")).toEqual({ step: 3, renewal: true });
+  });
+
+  it("keeps trusting the tunnel when this instance does not know its name (connected by an older connect.sh)", () => {
+    expect(stepForAccount(account, true, null)).toBe(3);
+    expect(paymentOutcome(account, true, null)).toEqual({ step: 3, renewal: true });
+  });
+});
+
 describe("ConnectWizard after a payment is confirmed", () => {
   const account = (endpoint: { slug: string; hostname: string; status: string } | null) => ({
     email: "a@b.c",
