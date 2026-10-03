@@ -1317,10 +1317,12 @@ async function accountRoute(request: Request, deps: RouteDeps): Promise<Response
   const entitlements = await deps.db.listEntitlements(account.id);
   const expiresAt = latestExpiry(entitlements);
   const endpoint = await deps.db.getActiveEndpointByAccountId(account.id);
+  // Only tiers whose Waffo product is configured: /api/checkout refuses the others.
+  const tiers = Object.values(PAYMENT_TIERS).filter((tier) => (waffoProductId(deps, tier) ?? "").trim() !== "");
   let checkoutOpen = false;
   try {
     assertWaffoRuntime(request, deps);
-    checkoutOpen = true;
+    checkoutOpen = tiers.length > 0;
   } catch {
     // The account endpoint is still useful when checkout is not configured;
     // report the gate as a boolean instead of surfacing a 503.
@@ -1335,7 +1337,7 @@ async function accountRoute(request: Request, deps: RouteDeps): Promise<Response
         ? null
         : { slug: endpoint.slug, hostname: endpoint.hostname, status: endpoint.status },
       checkoutOpen,
-      tiers: Object.values(PAYMENT_TIERS).map((tier) => ({
+      tiers: tiers.map((tier) => ({
         id: tier.id,
         label: tier.label,
         months: tier.months,

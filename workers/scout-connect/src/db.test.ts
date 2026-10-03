@@ -468,6 +468,37 @@ describe("instance link DB methods", () => {
     expect(await db.getActiveInstanceCredentialBySha(credential.credential_sha256)).toMatchObject({ id: credential.id });
   }
 
+  async function exerciseSameInstantRedelivery(db: DeliveryDb): Promise<void> {
+    // Two polls of one request that read the same clock: the loser inserts nothing and must not
+    // revoke the credential the winner already handed out.
+    const request = makeInstanceLinkRequest({ id: "ilr_same_ms", poll_secret_sha256: "poll-sha-same-ms" });
+    await db.insertInstanceLinkRequest(request);
+    await db.approveInstanceLinkRequest(request.id, "act_1", "2026-10-03T00:01:00.000Z");
+    const at = "2026-10-03T00:02:00.000Z";
+    const credential = makeInstanceCredential({
+      id: "icr_winner",
+      link_request_id: request.id,
+      credential_sha256: "credential-sha-winner",
+      created_at: at,
+    });
+    expect(await db.deliverInstanceCredential({ requestId: request.id, credential, nowIso: at })).toBe(true);
+    expect(await db.deliverInstanceCredential({
+      requestId: request.id,
+      credential: { ...credential, id: "icr_loser", credential_sha256: "credential-sha-loser" },
+      nowIso: at,
+    })).toBe(false);
+    expect(await db.getActiveInstanceCredentialBySha("credential-sha-winner")).toMatchObject({ id: "icr_winner" });
+  }
+
+  it("keeps the delivered credential when the same request is delivered again in the same instant, in memory", async () => {
+    await exerciseSameInstantRedelivery(createMemoryConnectDb() as DeliveryDb);
+  });
+
+  it("keeps the delivered credential when the same request is delivered again in the same instant, in D1", async () => {
+    const { db } = createSqliteConnectDb();
+    await exerciseSameInstantRedelivery(db as DeliveryDb);
+  });
+
   it("delivers an instance credential atomically in memory", async () => {
     await exerciseAtomicDelivery(createMemoryConnectDb() as DeliveryDb);
   });

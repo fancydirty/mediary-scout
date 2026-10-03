@@ -6,7 +6,11 @@ import { buildSessionCookie } from "./session.js";
 const NOW = "2026-10-03T00:00:00.000Z";
 const SECRET = "a".repeat(64);
 
-function deps(db: ConnectDb, configured = true): RouteDeps {
+function deps(
+  db: ConnectDb,
+  configured = true,
+  products: { quarter: string; year: string; two_years: string } = { quarter: "q", year: "y", two_years: "2y" },
+): RouteDeps {
   return {
     db,
     cf: {} as never,
@@ -28,7 +32,7 @@ function deps(db: ConnectDb, configured = true): RouteDeps {
           waffoApi: {} as never,
           waffoEnvironment: "test" as const,
           waffoStoreId: "store",
-          waffoProducts: { quarter: "q", year: "y", two_years: "2y" },
+          waffoProducts: products,
         }
       : {}),
   };
@@ -85,5 +89,23 @@ describe("GET /api/account", () => {
     const response = await handleRequest(new Request("https://dev.example/api/account", { headers: { cookie } }), deps(db, false));
     expect(response.status).toBe(200);
     expect((await response.json()) as Record<string, unknown>).toMatchObject({ checkoutOpen: false });
+  });
+
+  it("lists only tiers with a configured Waffo product, and stays closed when none is", async () => {
+    const db = createMemoryConnectDb();
+    const cookie = await accountCookie(db);
+    const partial = await handleRequest(
+      new Request("https://dev.example/api/account", { headers: { cookie } }),
+      deps(db, true, { quarter: "", year: "y", two_years: "  " }),
+    );
+    expect(await partial.json()).toMatchObject({
+      checkoutOpen: true,
+      tiers: [{ id: "year", label: "年度", months: 12, price: "108.00", featured: true }],
+    });
+    const none = await handleRequest(
+      new Request("https://dev.example/api/account", { headers: { cookie } }),
+      deps(db, true, { quarter: "", year: "", two_years: "" }),
+    );
+    expect(await none.json()).toMatchObject({ checkoutOpen: false, tiers: [] });
   });
 });

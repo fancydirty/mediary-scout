@@ -1009,18 +1009,20 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
       // Keep the credential this batch inserted, not the newest by created_at: a slower poll can
       // commit after a faster one with an earlier clock read, and must not hand out a credential
       // its own batch just revoked. The last delivery to commit wins; the instance holding the
-      // other one sees 401 on its next call and links again.
+      // other one sees 401 on its next call and links again. Rotate only when this batch's insert
+      // happened (the id is fresh, so the row exists only then): a losing poll of the same request
+      // must not revoke what the winner already handed out.
       const rotate = d1
         .prepare(
           `UPDATE instance_credentials SET revoked_at = ?
             WHERE account_id = ? AND revoked_at IS NULL
               AND id <> ?
               AND EXISTS (
-                SELECT 1 FROM instance_link_requests
-                 WHERE id = ? AND status = 'delivered' AND delivered_at = ?
+                SELECT 1 FROM instance_credentials
+                 WHERE id = ? AND link_request_id = ?
               )`,
         )
-        .bind(nowIso, credential.account_id, credential.id, requestId, nowIso);
+        .bind(nowIso, credential.account_id, credential.id, credential.id, requestId);
       try {
         const results = await d1.batch([insert, markDelivered, rotate]);
         const marked = (results[1] as { meta?: { changes?: number } } | undefined)?.meta?.changes;

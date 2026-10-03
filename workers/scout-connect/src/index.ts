@@ -103,6 +103,15 @@ function routeDeps(env: Env, waffoApi: WaffoApi | undefined, scheduled = false):
 // 连接请求过期 7 天后删掉:轮询早就拿不到东西,留着只是攒邮箱和 IP。
 const INSTANCE_LINK_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const INSTANCE_LINK_RETENTION_BATCH = 1000;
+// 一轮最多删 10 批:积压超过一万条时剩下的留给第二天,不让一次 cron 跑太久。
+const INSTANCE_LINK_RETENTION_MAX_BATCHES = 10;
+
+async function deleteExpiredInstanceLinkRequests(deps: RouteDeps, cutoffIso: string): Promise<void> {
+  for (let batch = 0; batch < INSTANCE_LINK_RETENTION_MAX_BATCHES; batch += 1) {
+    const deleted = await deps.db.deleteInstanceLinkRequestsExpiredBefore(cutoffIso, INSTANCE_LINK_RETENTION_BATCH);
+    if (deleted < INSTANCE_LINK_RETENTION_BATCH) return;
+  }
+}
 
 export async function runScheduledMaintenance(
   deps: RouteDeps,
@@ -110,11 +119,7 @@ export async function runScheduledMaintenance(
 ): Promise<void> {
   const nowMs = Date.parse(deps.now());
   const retention = Number.isFinite(nowMs)
-    ? deps.db
-        .deleteInstanceLinkRequestsExpiredBefore(
-          new Date(nowMs - INSTANCE_LINK_RETENTION_MS).toISOString(),
-          INSTANCE_LINK_RETENTION_BATCH,
-        )
+    ? deleteExpiredInstanceLinkRequests(deps, new Date(nowMs - INSTANCE_LINK_RETENTION_MS).toISOString())
         .catch((error) => {
           console.error("instance-link retention failed:", error instanceof Error ? error.message : String(error));
         })
