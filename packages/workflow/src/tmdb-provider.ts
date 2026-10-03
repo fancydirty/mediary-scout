@@ -494,35 +494,28 @@ async function seasonFromEpisodeGroupFallback(input: {
   seasonNumber: number;
   originalError: TmdbNotFoundError;
 }): Promise<TmdbSeasonDetails> {
-  try {
-    const summaries = await input.metadataProvider.getTvEpisodeGroups(input.tmdbId);
-    const groupDetails = await Promise.all(
-      summaries.map(async (summary) => ({ summary, details: await input.metadataProvider.getTvEpisodeGroup(summary.id) })),
-    );
-    const preferredTypes = new Set([1, 6, 7]);
-    const subgroups = groupDetails.flatMap(({ summary, details }) =>
-      details.groups.map((group) => ({
-        group,
-        preferred: preferredTypes.has(summary.type ?? details.type ?? 0),
-      })),
-    );
-    const namedMatches = subgroups.filter(({ group }) => seasonGroupNameMatches(group.name, input.seasonNumber));
-    const matches = (namedMatches.length > 0 ? namedMatches : subgroups.filter(({ group }) => group.order === input.seasonNumber));
-    const preferredMatches = matches.filter((match) => match.preferred);
-    const selected = (preferredMatches.length > 0 ? preferredMatches : matches);
-    if (selected.length !== 1) {
-      throw input.originalError;
-    }
-    const episodes = [...selected[0]!.group.episodes]
-      .sort((left, right) => (left.order ?? Number.MAX_SAFE_INTEGER) - (right.order ?? Number.MAX_SAFE_INTEGER))
-      .map((episode, index) => ({ episode_number: index + 1, air_date: episode.air_date ?? null }));
-    return { season_number: input.seasonNumber, episodes };
-  } catch (error) {
-    if (error === input.originalError) {
-      throw error;
-    }
+  // Fetch failures propagate as themselves: a transient error must not read as "this season is gone".
+  const summaries = await input.metadataProvider.getTvEpisodeGroups(input.tmdbId);
+  const groupDetails = await Promise.all(
+    summaries.map(async (summary) => ({ summary, details: await input.metadataProvider.getTvEpisodeGroup(summary.id) })),
+  );
+  const preferredTypes = new Set([1, 6, 7]);
+  // Match by name only: a subgroup's order is its position in the group (a Specials subgroup shifts it),
+  // so it cannot identify a season on its own.
+  const matches = groupDetails.flatMap(({ summary, details }) =>
+    details.groups
+      .filter((group) => seasonGroupNameMatches(group.name, input.seasonNumber))
+      .map((group) => ({ group, preferred: preferredTypes.has(summary.type ?? details.type ?? 0) })),
+  );
+  const preferredMatches = matches.filter((match) => match.preferred);
+  const selected = preferredMatches.length > 0 ? preferredMatches : matches;
+  if (selected.length !== 1) {
     throw input.originalError;
   }
+  const episodes = [...selected[0]!.group.episodes]
+    .sort((left, right) => (left.order ?? Number.MAX_SAFE_INTEGER) - (right.order ?? Number.MAX_SAFE_INTEGER))
+    .map((episode, index) => ({ episode_number: index + 1, air_date: episode.air_date ?? null }));
+  return { season_number: input.seasonNumber, episodes };
 }
 
 function seasonGroupNameMatches(name: string, seasonNumber: number): boolean {

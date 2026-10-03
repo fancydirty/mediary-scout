@@ -339,6 +339,8 @@ describe("TmdbMetadataProvider", () => {
     ["has no episode groups", { results: [] }],
     ["has no matching subgroup", { results: [{ id: "group", type: 1, groups: [{ name: "Bonus", order: 9, episodes: [] }] }] }],
     ["has two matching subgroups", { results: [{ id: "group", type: 1, groups: [{ name: "Season 2", order: 2, episodes: [] }, { name: "第 2 季", order: 2, episodes: [] }] }] }],
+    // A subgroup's order is its position in the group, not a season number (a Specials subgroup shifts it).
+    ["only has an order that equals the season", { results: [{ id: "group", type: 1, groups: [{ name: "Part 1", order: 1, episodes: [] }, { name: "Part 2", order: 2, episodes: [] }] }] }],
   ])("rethrows the original not-found error when the episode-group fallback %s", async (_label, groups) => {
     const provider = new TmdbMetadataProvider({
       readToken: "token",
@@ -375,6 +377,29 @@ describe("TmdbMetadataProvider", () => {
         metadataProvider: provider,
       }),
     ).rejects.toBeInstanceOf(TmdbNotFoundError);
+  });
+
+  it("surfaces an episode-group fetch failure instead of disguising it as a deleted season", async () => {
+    const provider = new TmdbMetadataProvider({
+      readToken: "token",
+      fetchJson: async (url) => {
+        if (url.includes("/tv/283428?")) {
+          return {
+            id: 283428, name: "冰之城墙", original_name: "冰之城墙", first_air_date: "2026-04-02", number_of_episodes: 28,
+            overview: "", poster_path: null, backdrop_path: null, last_episode_to_air: null,
+            seasons: [{ season_number: 1, episode_count: 28 }],
+          };
+        }
+        if (url.includes("/tv/283428/season/2?")) throw new TmdbHttpError("TMDB request failed with HTTP 404", 404);
+        if (url.includes("/tv/283428/episode_groups?")) throw new TmdbHttpError("TMDB request failed with HTTP 503", 503);
+        throw new Error(`Unexpected URL ${url}`);
+      },
+    });
+    const attempt = prepareTrackingTarget({ tmdbId: 283428, mediaType: "tv", seasonNumber: 2, qualityPreference: "4K", metadataProvider: provider });
+    await expect(attempt).rejects.toThrow(/failed/i);
+    await expect(
+      prepareTrackingTarget({ tmdbId: 283428, mediaType: "tv", seasonNumber: 2, qualityPreference: "4K", metadataProvider: provider }),
+    ).rejects.not.toBeInstanceOf(TmdbNotFoundError);
   });
 
   it("does not try episode groups when the requested season still exists", async () => {
