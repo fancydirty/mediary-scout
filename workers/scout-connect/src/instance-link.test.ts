@@ -91,6 +91,44 @@ describe("instance-link start", () => {
 });
 
 describe("instance-link confirmation and polling", () => {
+  it("atomically throttles concurrent pending polls", async () => {
+    const { deps } = setup();
+    const data = await startData(deps);
+    const baseDb = deps.db;
+    const stored = await baseDb.getInstanceLinkRequestByPollSecretSha(await sha256Hex(data.pollSecret));
+    expect(stored).not.toBeNull();
+    expect(await baseDb.touchInstanceLinkPoll(stored!.id, "2026-10-02T23:59:00.000Z")).toBe(true);
+    const concurrent = 20;
+    let reads = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let successfulTouches = 0;
+    deps.db = {
+      ...baseDb,
+      async getInstanceLinkRequestByPollSecretSha(sha) {
+        const row = await baseDb.getInstanceLinkRequestByPollSecretSha(sha);
+        reads += 1;
+        if (reads === concurrent) release();
+        if (reads <= concurrent) await gate;
+        return row;
+      },
+      async touchInstanceLinkPoll(id, nowIso) {
+        const changed = await baseDb.touchInstanceLinkPoll(id, nowIso);
+        if (changed) successfulTouches += 1;
+        return changed;
+      },
+    };
+    const request = () => handleRequest(new Request(`${BASE}/api/instance-link/poll`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pollSecret: data.pollSecret }),
+    }), deps);
+    const responses = await Promise.all(Array.from({ length: concurrent }, request));
+    expect(responses.filter((response) => response.status === 200)).toHaveLength(1);
+    expect(responses.filter((response) => response.status === 429)).toHaveLength(concurrent - 1);
+    expect(successfulTouches).toBe(1);
+  });
+
   it("renders a pending page, confirms same-origin, delivers exactly once, and revokes", async () => {
     const { deps, sent } = setup();
     const data = await startData(deps);
@@ -133,6 +171,8 @@ describe("instance-link confirmation and polling", () => {
 
   it("revokes the previous credential when the same account links again", async () => {
     const { deps, sent } = setup();
+    let now = NOW;
+    deps.now = () => now;
     const first = await startData(deps);
     const firstToken = new URL(sent[0]!.details.url).searchParams.get("t")!;
     await handleRequest(new Request(`${BASE}/link`, {
@@ -144,6 +184,7 @@ describe("instance-link confirmation and polling", () => {
     }), deps);
     const firstCredential = (await firstPoll.json() as { credential: string }).credential;
 
+    now = "2026-10-03T00:00:01.000Z";
     const second = await startData(deps, "alice@example.com");
     const secondToken = new URL(sent[1]!.details.url).searchParams.get("t")!;
     await handleRequest(new Request(`${BASE}/link`, {

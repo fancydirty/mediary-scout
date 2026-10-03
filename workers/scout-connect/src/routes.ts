@@ -46,7 +46,7 @@ import {
 } from "./waffo-service.js";
 import { PAYMENT_TIERS, resolvePaymentTier, canTransitionPaymentOrder } from "./payment-order.js";
 import { isWaffoNotApprovedError } from "./waffo-api.js";
-import { resolveAccount, type AccountAuthDb } from "./account-auth.js";
+import { resolveAccount } from "./account-auth.js";
 import {
   startInstanceLink,
   instanceLinkLanding,
@@ -740,7 +740,7 @@ async function resolveRouteAccount(
   deps: RouteDeps,
 ): ReturnType<typeof resolveAccount> {
   return resolveAccount(request, {
-    db: deps.db as unknown as AccountAuthDb,
+    db: deps.db,
     sessionSecret: deps.sessionSecret,
     now: deps.now,
   });

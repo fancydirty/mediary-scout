@@ -1,10 +1,10 @@
-import type { ConnectDb, InstanceCredentialRow, InstanceLinkRequestRow } from "./db.js";
+import type { InstanceCredentialRow, InstanceLinkRequestRow } from "./db.js";
 import type { RouteDeps } from "./routes.js";
 import { assertSameOriginRequest, readJsonBody, upsertAccount } from "./routes.js";
 import { HttpError, htmlPage, json } from "./http.js";
 import { checkRateLimit, SIGNUP_EMAIL_RATE_LIMIT, SIGNUP_IP_RATE_LIMIT, SIGNUP_RATE_WINDOW_MS } from "./rate-limit.js";
 import { sha256Hex } from "./crypto-token.js";
-import { signToken, verifyToken, type TokenPurpose } from "./signed-token.js";
+import { signToken, verifyToken } from "./signed-token.js";
 import { buildSessionCookie } from "./session.js";
 import { EMAIL_MAX_LENGTH, EMAIL_RE } from "./validation.js";
 import { instanceLinkPage } from "./html/instance-link-page.js";
@@ -14,31 +14,6 @@ const INSTANCE_LINK_TTL_MS = 30 * 60_000;
 const VERIFY_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 const B64URL_RE = /^[A-Za-z0-9_-]+$/;
 
-interface InstanceLinkDb extends ConnectDb {
-  insertInstanceLinkRequest(row: InstanceLinkRequestRow): Promise<void>;
-  getInstanceLinkRequestById(id: string): Promise<InstanceLinkRequestRow | null>;
-  getInstanceLinkRequestByPollSecretSha(sha: string): Promise<InstanceLinkRequestRow | null>;
-  approveInstanceLinkRequest(id: string, accountId: string, nowIso: string): Promise<boolean>;
-  markInstanceLinkDelivered(id: string, nowIso: string): Promise<boolean>;
-  touchInstanceLinkPoll(id: string, nowIso: string): Promise<void>;
-  insertInstanceCredential(row: InstanceCredentialRow): Promise<void>;
-  revokeOtherInstanceCredentials(accountId: string, keepId: string, nowIso: string): Promise<void>;
-  getActiveInstanceCredentialBySha(sha: string): Promise<InstanceCredentialRow | null>;
-  revokeInstanceCredential(id: string, nowIso: string): Promise<void>;
-  touchInstanceCredential(id: string, nowIso: string): Promise<void>;
-}
-
-type InstanceLinkDeps = RouteDeps & {
-  sendInstanceLinkEmail: (
-    to: string,
-    details: { url: string; verifyCode: string; requestIp: string; requestedAt: string },
-  ) => Promise<void>;
-};
-
-function dbOf(deps: RouteDeps): InstanceLinkDb {
-  return deps.db as InstanceLinkDb;
-}
-
 function randomBytesBase64Url(size: number): string {
   const bytes = new Uint8Array(size);
   crypto.getRandomValues(bytes);
@@ -46,8 +21,6 @@ function randomBytesBase64Url(size: number): string {
   for (const b of bytes) binary += String.fromCharCode(b);
   return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
 }
-
-
 
 function verifyCode(): string {
   const bytes = new Uint8Array(4);
@@ -85,16 +58,9 @@ async function instanceLinkRateLimited(request: Request, email: string, deps: Ro
   return !emailResult.allowed;
 }
 
-function instanceLinkTokenPurpose(): TokenPurpose {
-  // TokenPurpose gains this member with the instance-link migration. Keeping the
-  // cast here allows the module to be loaded against an older worker during a
-  // rolling deploy; verifyToken still rejects it until the matching code lands.
-  return "instance-link" as TokenPurpose;
-}
-
 async function signInstanceLinkToken(id: string, deps: RouteDeps): Promise<string> {
   return signToken(
-    { purpose: instanceLinkTokenPurpose(), subject: id },
+    { purpose: "instance-link", subject: id },
     { key: deps.sessionSecret, ttlMs: INSTANCE_LINK_TTL_MS, now: Date.parse(deps.now()) },
   );
 }
@@ -105,23 +71,21 @@ async function verifyInstanceLinkToken(
 ): Promise<{ subject: string; expired: boolean } | null> {
   const result = await verifyToken(token, {
     key: deps.sessionSecret,
-    expectPurpose: instanceLinkTokenPurpose(),
+    expectPurpose: "instance-link",
     now: Date.parse(deps.now()),
   });
   if (result.ok) return { subject: result.subject, expired: false };
   if (result.reason !== "expired") return null;
-  // The signed token and the database request expire together. Verify the
-  // signature once more at the epoch so a valid, expired token can reach the
-  // row-level 410 response without accepting a forged subject.
+  // 到期链接也要返回行级 410，但仍先验签。
   const expiredResult = await verifyToken(token, {
     key: deps.sessionSecret,
-    expectPurpose: instanceLinkTokenPurpose(),
+    expectPurpose: "instance-link",
     now: 0,
   });
   return expiredResult.ok ? { subject: expiredResult.subject, expired: true } : null;
 }
 
-/** POST /api/instance-link/start. */
+/** 发起实例连接。 */
 export async function startInstanceLink(request: Request, deps: RouteDeps): Promise<Response> {
   assertSameOriginRequest(request, new URL(request.url));
   const body = await readJsonBody(request);
@@ -151,30 +115,30 @@ export async function startInstanceLink(request: Request, deps: RouteDeps): Prom
     delivered_at: null,
     last_polled_at: null,
   };
-  await dbOf(deps).insertInstanceLinkRequest(row);
+  await deps.db.insertInstanceLinkRequest(row);
   const origin = deps.waffoEnvironment === "test"
     ? new URL(request.url).origin
     : `https://${deps.rootDomain.trim().toLowerCase()}`;
   const token = await signInstanceLinkToken(row.id, deps);
   const url = `${origin}/link?t=${encodeURIComponent(token)}`;
   try {
-    await (deps as InstanceLinkDeps).sendInstanceLinkEmail(email, {
+    await deps.sendInstanceLinkEmail(email, {
       url,
       verifyCode: row.verify_code,
       requestIp: row.request_ip ?? "",
       requestedAt: row.created_at,
     });
   } catch {
-    // Sender logs the non-secret status; link start stays enumeration-safe.
+    // 发信失败不改变 202 结果。
   }
   return json({ pollSecret, verifyCode: row.verify_code, expiresAt, interval: 3 }, 202, { noStore: true });
 }
 
-/** GET /link confirmation page. */
+/** 显示连接确认页。 */
 export async function instanceLinkLanding(url: URL, deps: RouteDeps): Promise<Response> {
   const token = await verifyInstanceLinkToken(url.searchParams.get("t") ?? "", deps);
   if (token === null) return htmlPage(instanceLinkPage({ kind: "invalid" }), { noStore: true });
-  const row = await dbOf(deps).getInstanceLinkRequestById(token.subject);
+  const row = await deps.db.getInstanceLinkRequestById(token.subject);
   if (row === null) {
     return htmlPage(instanceLinkPage({ kind: "invalid" }), { noStore: true });
   }
@@ -196,27 +160,25 @@ export async function instanceLinkLanding(url: URL, deps: RouteDeps): Promise<Re
   );
 }
 
-/** POST /link confirmation action. */
+/** 确认实例连接。 */
 export async function confirmInstanceLink(request: Request, deps: RouteDeps): Promise<Response> {
   assertSameOriginRequest(request, new URL(request.url));
   const body = await readJsonBody(request);
   const token = typeof body.t === "string" ? body.t.trim() : "";
   const verified = await verifyInstanceLinkToken(token, deps);
   if (verified === null) throw new HttpError(400, "invalid or expired link");
-  const db = dbOf(deps);
-  const row = await db.getInstanceLinkRequestById(verified.subject);
+  const row = await deps.db.getInstanceLinkRequestById(verified.subject);
   if (row === null) throw new HttpError(400, "invalid or expired link");
   if (row.status !== "pending") throw new HttpError(409, "already_confirmed");
   if (verified.expired || Date.parse(deps.now()) >= Date.parse(row.expires_at)) {
     throw new HttpError(410, "expired");
   }
-  // routes.ts owns the race-safe account upsert; this path is only reachable after
-  // the mailbox proof, so it also updates the console session like magic login.
+  // 邮箱已验证，复用登录账号并建立控制台会话。
   const account = await upsertAccount(row.email, deps);
-  await db.updateAccountLastLogin(account.id, deps.now());
-  const approved = await db.approveInstanceLinkRequest(verified.subject, account.id, deps.now());
+  await deps.db.updateAccountLastLogin(account.id, deps.now());
+  const approved = await deps.db.approveInstanceLinkRequest(verified.subject, account.id, deps.now());
   if (!approved) {
-    const latest = await db.getInstanceLinkRequestById(verified.subject);
+    const latest = await deps.db.getInstanceLinkRequestById(verified.subject);
     if (latest !== null && Date.parse(deps.now()) >= Date.parse(latest.expires_at)) {
       throw new HttpError(410, "expired");
     }
@@ -232,40 +194,45 @@ export async function confirmInstanceLink(request: Request, deps: RouteDeps): Pr
   return response;
 }
 
-/** POST /api/instance-link/poll. */
+/** 轮询连接状态。 */
 export async function pollInstanceLink(request: Request, deps: RouteDeps): Promise<Response> {
   assertSameOriginRequest(request, new URL(request.url));
   const body = await readJsonBody(request);
   const secret = typeof body.pollSecret === "string" ? body.pollSecret : "";
   if (!secret || !B64URL_RE.test(secret)) return json({ status: "unknown" }, 404, { noStore: true });
-  const db = dbOf(deps);
-  const row = await db.getInstanceLinkRequestByPollSecretSha(await sha256Hex(secret));
+  let row = await deps.db.getInstanceLinkRequestByPollSecretSha(await sha256Hex(secret));
   if (row === null) return json({ status: "unknown" }, 404, { noStore: true });
   const now = deps.now();
-  // Once delivered, the one-time result is terminal; never turn a second poll
-  // into slow_down and accidentally reveal whether delivery happened.
+  // delivered 是终态，不能再返回 slow_down。
   if (row.status === "delivered") return json({ status: "delivered" }, 410, { noStore: true });
   if (row.status === "pending" && Date.parse(now) >= Date.parse(row.expires_at)) {
     return json({ status: "expired" }, 410, { noStore: true });
   }
-  // Approved requests must all reach the delivery CAS: a concurrent loser is
-  // required to report the terminal delivered state rather than slow_down.
-  if (row.status !== "approved" && row.last_polled_at !== null) {
-    const elapsed = Date.parse(now) - Date.parse(row.last_polled_at);
-    if (Number.isFinite(elapsed) && elapsed >= 0 && elapsed < 2_000) {
-      return json({ status: "slow_down" }, 429, { noStore: true });
+  // approved 请求必须走交付 CAS，并发失败者返回 delivered。
+  if (row.status === "pending") {
+    const touched = await deps.db.touchInstanceLinkPoll(row.id, now);
+    if (!touched) {
+      const latest = await deps.db.getInstanceLinkRequestById(row.id);
+      if (latest === null || latest.status === "delivered") {
+        return json({ status: "delivered" }, 410, { noStore: true });
+      }
+      if (latest.status === "pending") {
+        if (Date.parse(now) >= Date.parse(latest.expires_at)) {
+          return json({ status: "expired" }, 410, { noStore: true });
+        }
+        return json({ status: "slow_down" }, 429, { noStore: true });
+      }
+      row = latest;
+    } else {
+      return json({ status: "pending" }, 200, { noStore: true });
     }
   }
-  await db.touchInstanceLinkPoll(row.id, now);
-  if (row.status === "pending") {
-    return json({ status: "pending" }, 200, { noStore: true });
-  }
-  const delivered = await db.markInstanceLinkDelivered(row.id, now);
+  const delivered = await deps.db.markInstanceLinkDelivered(row.id, now);
   if (!delivered) return json({ status: "delivered" }, 410, { noStore: true });
   if (row.account_id === null) throw new HttpError(500, "instance link missing account");
   const credential = `ic_${randomBytesBase64Url(32)}`;
   const credentialId = newId("icr");
-  await db.insertInstanceCredential({
+  await deps.db.insertInstanceCredential({
     id: credentialId,
     account_id: row.account_id,
     credential_sha256: await sha256Hex(credential),
@@ -274,26 +241,18 @@ export async function pollInstanceLink(request: Request, deps: RouteDeps): Promi
     last_used_at: null,
     revoked_at: null,
   });
-  await db.revokeOtherInstanceCredentials(row.account_id, credentialId, now);
+  await deps.db.revokeOtherInstanceCredentials(row.account_id, credentialId, now);
   return json({ status: "approved", credential, email: row.email }, 200, { noStore: true });
 }
 
-/** POST /api/instance-link/revoke. */
+/** 吊销实例凭据。 */
 export async function revokeInstanceLink(request: Request, deps: RouteDeps): Promise<Response> {
   assertSameOriginRequest(request, new URL(request.url));
   const auth = request.headers.get("authorization") ?? "";
   const match = /^Bearer\s+(ic_[A-Za-z0-9_-]{43,})$/.exec(auth);
   if (match === null) throw new HttpError(401, "unauthorized");
-  const db = dbOf(deps);
-  const row = await db.getActiveInstanceCredentialBySha(await sha256Hex(match[1]!));
+  const row = await deps.db.getActiveInstanceCredentialBySha(await sha256Hex(match[1]!));
   if (row === null) throw new HttpError(401, "unauthorized");
-  await db.revokeInstanceCredential(row.id, deps.now());
+  await deps.db.revokeInstanceCredential(row.id, deps.now());
   return json({ ok: true }, 200, { noStore: true });
 }
-
-// Kept exported for focused tests and for dispatchers that prefer verb-neutral names.
-export const handleInstanceLinkStart = startInstanceLink;
-export const handleInstanceLinkLanding = instanceLinkLanding;
-export const handleInstanceLinkConfirm = confirmInstanceLink;
-export const handleInstanceLinkPoll = pollInstanceLink;
-export const handleInstanceLinkRevoke = revokeInstanceLink;

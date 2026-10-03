@@ -13,6 +13,7 @@ describe("instanceLinkPage", () => {
     expect(html).toContain("a&lt;img src=x onerror=alert(1)&gt;@example.com");
     expect(html).toContain("请核对实例页面上显示的也是 7K3P");
     expect(html).toContain("只有你自己刚在实例的「设置 → 远程访问」里点了连接");
+    expect(html).toContain("2026-10-03 08:00（北京时间）");
     expect(html).toContain('fetch("/link",{method:"POST"');
     expect(html).not.toContain("<form");
     expect(html).not.toContain("secret-token");

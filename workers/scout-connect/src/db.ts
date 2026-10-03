@@ -263,7 +263,7 @@ export interface ConnectDb {
   getInstanceLinkRequestByPollSecretSha(sha: string): Promise<InstanceLinkRequestRow | null>;
   approveInstanceLinkRequest(id: string, accountId: string, nowIso: string): Promise<boolean>;
   markInstanceLinkDelivered(id: string, nowIso: string): Promise<boolean>;
-  touchInstanceLinkPoll(id: string, nowIso: string): Promise<void>;
+  touchInstanceLinkPoll(id: string, nowIso: string): Promise<boolean>;
   insertInstanceCredential(row: InstanceCredentialRow): Promise<void>;
   revokeOtherInstanceCredentials(accountId: string, keepId: string, nowIso: string): Promise<void>;
   getActiveInstanceCredentialBySha(sha: string): Promise<InstanceCredentialRow | null>;
@@ -932,10 +932,17 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
     },
 
     async touchInstanceLinkPoll(id, nowIso) {
-      await d1
-        .prepare(`UPDATE instance_link_requests SET last_polled_at = ? WHERE id = ?`)
-        .bind(nowIso, id)
-        .run();
+      const cutoff = new Date(Date.parse(nowIso) - 2_000).toISOString();
+      const result = (await d1
+        .prepare(
+          `UPDATE instance_link_requests
+              SET last_polled_at = ?
+            WHERE id = ? AND status = 'pending'
+              AND (last_polled_at IS NULL OR last_polled_at <= ?)`,
+        )
+        .bind(nowIso, id, cutoff)
+        .run()) as { meta?: { changes?: number } };
+      return (result.meta?.changes ?? 0) > 0;
     },
 
     async insertInstanceCredential(row) {
@@ -960,10 +967,17 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
     async revokeOtherInstanceCredentials(accountId, keepId, nowIso) {
       await d1
         .prepare(
-          `UPDATE instance_credentials SET revoked_at = ?
-            WHERE account_id = ? AND id <> ? AND revoked_at IS NULL`,
+          `WITH kept AS (
+             SELECT created_at FROM instance_credentials WHERE id = ? AND account_id = ?
+           )
+           UPDATE instance_credentials SET revoked_at = ?
+            WHERE account_id = ? AND revoked_at IS NULL
+              AND (
+                created_at < (SELECT created_at FROM kept)
+                OR (created_at = (SELECT created_at FROM kept) AND id < ?)
+              )`,
         )
-        .bind(nowIso, accountId, keepId)
+        .bind(keepId, accountId, nowIso, accountId, keepId)
         .run();
     },
 
@@ -1676,7 +1690,11 @@ export function createMemoryConnectDb(): ConnectDb {
 
     async touchInstanceLinkPoll(id, nowIso) {
       const row = instanceLinkRequests.get(id);
-      if (row !== undefined) row.last_polled_at = nowIso;
+      if (row === undefined || row.status !== "pending") return false;
+      const cutoffMs = Date.parse(nowIso) - 2_000;
+      if (row.last_polled_at !== null && Date.parse(row.last_polled_at) > cutoffMs) return false;
+      row.last_polled_at = nowIso;
+      return true;
     },
 
     async insertInstanceCredential(row) {
@@ -1694,8 +1712,12 @@ export function createMemoryConnectDb(): ConnectDb {
     },
 
     async revokeOtherInstanceCredentials(accountId, keepId, nowIso) {
+      const kept = instanceCredentials.get(keepId);
+      if (kept === undefined || kept.account_id !== accountId) return;
       for (const row of instanceCredentials.values()) {
-        if (row.account_id === accountId && row.id !== keepId && row.revoked_at === null) {
+        const createdBeforeKept =
+          row.created_at < kept.created_at || (row.created_at === kept.created_at && row.id < kept.id);
+        if (row.account_id === accountId && row.revoked_at === null && createdBeforeKept) {
           row.revoked_at = nowIso;
         }
       }

@@ -12,9 +12,11 @@ describe("createInstanceLinkSender", () => {
       expect(payload.subject).toBe("确认连接你的 Mediary Scout 实例");
       expect(payload.text).toContain("验证码：7K3P");
       expect(payload.text).toContain("192.0.2.8");
+      expect(payload.text).toContain("2026-10-03 08:00（北京时间）");
       expect(payload.html).toContain("&lt;script&gt;");
       expect(payload.html).not.toContain('<script>');
       expect(payload.html).toContain("7K3P");
+      expect(payload.html).toContain("2026-10-03 08:00（北京时间）");
       return new Response(null, { status: 202 });
     });
     vi.stubGlobal("fetch", fetchMock);

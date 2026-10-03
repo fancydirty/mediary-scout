@@ -1,11 +1,12 @@
 import { BRAND_BAR, BRAND_CSS, esc, FAVICON_LINK, THEME_BASE, THEME_TOKENS } from "./theme.js";
+import { formatBeijingTime } from "../instance-link-time.js";
 
 export type InstanceLinkPageState =
   | { kind: "invalid" }
   | { kind: "confirmed" }
   | { kind: "pending"; email: string; verifyCode: string; requestIp: string; requestedAt: string };
 
-/** Confirmation page for an instance-link email. The signed token stays in the URL only. */
+/** 实例连接确认页，签名 token 只留在地址栏。 */
 export function instanceLinkPage(state: InstanceLinkPageState): string {
   if (state.kind === "invalid") {
     return messagePage("链接已失效，请回到实例页面重新发起。", "连接链接已失效");
@@ -42,7 +43,7 @@ ${BRAND_BAR}
 <div class="panel">
 <p class="email">${esc(state.email)}</p>
 <p class="code" aria-label="验证码">${esc(state.verifyCode)}</p>
-<p class="meta">请核对实例页面上显示的也是 ${esc(state.verifyCode)}<br>请求 IP：${esc(state.requestIp || "未知")}<br>请求时间：${esc(state.requestedAt)}</p>
+<p class="meta">请核对实例页面上显示的也是 ${esc(state.verifyCode)}<br>请求 IP：${esc(state.requestIp || "未知")}<br>请求时间：${esc(formatBeijingTime(state.requestedAt))}</p>
 <p class="warning">只有你自己刚在实例的「设置 → 远程访问」里点了连接，才点确认；不是你发起的就关掉这个页面。</p>
 <button id="btn" type="button">确认连接</button>
 <p class="msg" id="msg" hidden></p>

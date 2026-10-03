@@ -1,3 +1,5 @@
+import { formatBeijingTime } from "./instance-link-time.js";
+
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
 const FROM = "Mediary Connect <noreply@mediaryconnect.app>";
 
@@ -14,7 +16,7 @@ export interface InstanceLinkEmailDetails {
   requestedAt: string;
 }
 
-/** Sends the instance-link confirmation email through Resend. */
+/** 通过 Resend 发送实例连接确认邮件。 */
 export function createInstanceLinkSender(
   apiKey: string,
 ): (to: string, details: InstanceLinkEmailDetails) => Promise<void> {
@@ -22,7 +24,8 @@ export function createInstanceLinkSender(
     const safeUrl = escapeHtml(details.url);
     const safeCode = escapeHtml(details.verifyCode);
     const safeIp = escapeHtml(details.requestIp || "未知");
-    const safeAt = escapeHtml(details.requestedAt);
+    const requestedAt = formatBeijingTime(details.requestedAt);
+    const safeAt = escapeHtml(requestedAt);
     const res = await fetch(RESEND_ENDPOINT, {
       method: "POST",
       signal: AbortSignal.timeout(5_000),
@@ -38,7 +41,7 @@ export function createInstanceLinkSender(
           `有人请求连接你的 Mediary Scout 实例。\n\n` +
           `验证码：${details.verifyCode}\n` +
           `请求 IP：${details.requestIp || "未知"}\n` +
-          `请求时间：${details.requestedAt}\n\n` +
+          `请求时间：${requestedAt}\n\n` +
           `请在 30 分钟内打开下面的链接确认连接：\n${details.url}\n\n` +
           `不是你发起的请忽略这封邮件。`,
         html:

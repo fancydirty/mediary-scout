@@ -368,7 +368,8 @@ async function exerciseInstanceLinkDb(db: ConnectDb): Promise<void> {
   const expired = makeInstanceLinkRequest({ id: "ilr_expired", poll_secret_sha256: "poll-sha-expired" });
   await db.insertInstanceLinkRequest(expired);
   expect(await db.approveInstanceLinkRequest(expired.id, "act_1", "2026-10-03T00:30:00.001Z")).toBe(false);
-  await db.touchInstanceLinkPoll(expired.id, "2026-10-03T00:20:00.000Z");
+  expect(await db.touchInstanceLinkPoll(expired.id, "2026-10-03T00:20:00.000Z")).toBe(true);
+  expect(await db.touchInstanceLinkPoll(expired.id, "2026-10-03T00:20:00.001Z")).toBe(false);
   expect(await db.getInstanceLinkRequestById(expired.id)).toMatchObject({
     last_polled_at: "2026-10-03T00:20:00.000Z",
   });
@@ -405,6 +406,30 @@ async function exerciseInstanceLinkDb(db: ConnectDb): Promise<void> {
 }
 
 describe("instance link DB methods", () => {
+  async function exerciseCredentialRotationOrdering(db: ConnectDb): Promise<void> {
+    const createdAt = "2026-10-03T00:01:00.000Z";
+    await db.insertInstanceCredential(
+      makeInstanceCredential({
+        id: "icr_a",
+        credential_sha256: "credential-sha-a",
+        created_at: createdAt,
+      }),
+    );
+    await db.insertInstanceCredential(
+      makeInstanceCredential({
+        id: "icr_b",
+        credential_sha256: "credential-sha-b",
+        created_at: createdAt,
+      }),
+    );
+
+    await db.revokeOtherInstanceCredentials("act_1", "icr_a", "2026-10-03T00:02:00.000Z");
+    await db.revokeOtherInstanceCredentials("act_1", "icr_b", "2026-10-03T00:02:01.000Z");
+
+    expect(await db.getActiveInstanceCredentialBySha("credential-sha-a")).toBeNull();
+    expect(await db.getActiveInstanceCredentialBySha("credential-sha-b")).toMatchObject({ id: "icr_b" });
+  }
+
   it("memory implementation preserves request and credential CAS semantics", async () => {
     await exerciseInstanceLinkDb(createMemoryConnectDb());
   });
@@ -412,6 +437,15 @@ describe("instance link DB methods", () => {
   it("D1 implementation preserves request and credential CAS semantics", async () => {
     const { db } = createSqliteConnectDb();
     await exerciseInstanceLinkDb(db);
+  });
+
+  it("keeps only the later credential when rotations interleave in memory", async () => {
+    await exerciseCredentialRotationOrdering(createMemoryConnectDb());
+  });
+
+  it("keeps only the later credential when rotations interleave in D1", async () => {
+    const { db } = createSqliteConnectDb();
+    await exerciseCredentialRotationOrdering(db);
   });
 });
 
