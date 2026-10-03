@@ -365,7 +365,11 @@ d. 登录身份默认走 One-time PIN(邮箱一次性验证码);若登录页提�
 
 ### 方式三:Mediary Connect（付费托管隧道）
 
-不想自己买域名、配 Cloudflare 的话,[Mediary Connect](https://mediaryconnect.app) 给你一个 `https://<你选的名字>.mediaryconnect.app`:
+不想自己买域名、配 Cloudflare 的话,[Mediary Connect](https://mediaryconnect.app) 给你一个 `https://<你选的名字>.mediaryconnect.app`。
+
+**最省事:在实例里点完。** 局域网打开「设置 → 远程访问」:填邮箱 → 去邮箱点「确认连接」(核对邮件里的确认码和页面上的一样)→ 选时长,新标签页里微信付款 → 选名字 → 设好访问密码后点「接入」。实例自己取隧道凭据,由更新助手写 `.env`、启动 `cloudflared`(不重启 `web`,正在跑的下载不受影响),页面等到外网能打开才显示「已接通」。一键接入要用新版更新助手:更新助手不会跟着一键更新升级,老部署先在部署目录跑一次 `./scripts/deploy.sh`(或 `docker compose up -d --build updater`);没有新版更新助手时,页面会给出下面第 3 步那条命令,复制到部署目录跑就行。
+
+不想在实例里操作,也可以走控制台:
 
 1. **先在局域网设好访问密码**:打开 `http://<主机IP>:<端口>/login`(端口默认 3000,改过 `WEB_PORT` 就用那个)设一个。它是远程访问唯一的门禁;第一次设置只能在局域网里做。
 2. 在 mediaryconnect.app 用邮箱登录 → 控制台选时长(微信支付)→ 选一个名字。
