@@ -237,7 +237,10 @@ export interface ConnectDb {
   insertPaymentOrder(row: PaymentOrderRow): Promise<PaymentOrderRow>;
   getPaymentOrderById(id: string): Promise<PaymentOrderRow | null>;
   getPaymentOrderByOutTradeNo(outTradeNo: string): Promise<PaymentOrderRow | null>;
-  countPaymentOrdersForAccountSince(accountId: string, sinceIso: string): Promise<number>;
+  insertPaymentOrderWithinDailyLimit(
+    row: PaymentOrderRow,
+    options: { sinceIso: string; limit: number },
+  ): Promise<boolean>;
   /** Waffo reconciliation scan: recent orders that still need payment/refund compensation. */
   listPaymentOrdersForReconciliation(
     provider: PaymentOrderRow["provider"],
@@ -846,12 +849,43 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
       return row === null ? null : mapPaymentOrder(row);
     },
 
-    async countPaymentOrdersForAccountSince(accountId, sinceIso) {
-      const row = await d1
-        .prepare(`SELECT COUNT(*) AS count FROM payment_orders WHERE account_id = ? AND created_at >= ?`)
-        .bind(accountId, sinceIso)
-        .first<{ count?: number }>();
-      return row?.count ?? 0;
+    async insertPaymentOrderWithinDailyLimit(row, options) {
+      const result = (await d1
+        .prepare(
+          `INSERT INTO payment_orders
+             (id, checkout_token_sha256, account_id, provider, out_trade_no, trade_no,
+              waffo_session_id, waffo_order_id, months, total_amount, status, created_at, expires_at, paid_at, fulfilled_at,
+              closed_at, refunded_at, refund_request_no, last_notify_id, last_queried_at)
+           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            WHERE (SELECT COUNT(*) FROM payment_orders WHERE account_id = ? AND created_at >= ?) < ?`,
+        )
+        .bind(
+          row.id,
+          row.checkout_token_sha256,
+          row.account_id,
+          row.provider,
+          row.out_trade_no,
+          row.trade_no,
+          row.waffo_session_id ?? null,
+          row.waffo_order_id ?? null,
+          row.months,
+          row.total_amount,
+          row.status,
+          row.created_at,
+          row.expires_at,
+          row.paid_at,
+          row.fulfilled_at,
+          row.closed_at,
+          row.refunded_at,
+          row.refund_request_no,
+          row.last_notify_id,
+          row.last_queried_at,
+          row.account_id,
+          options.sinceIso,
+          options.limit,
+        )
+        .run()) as { meta?: { changes?: number } };
+      return result.meta?.changes === 1;
     },
 
     async listPaymentOrdersForReconciliation(provider, options) {
@@ -1438,12 +1472,31 @@ export function createMemoryConnectDb(): ConnectDb {
       return null;
     },
 
-    async countPaymentOrdersForAccountSince(accountId, sinceIso) {
+    async insertPaymentOrderWithinDailyLimit(order, options) {
       let count = 0;
-      for (const row of paymentOrders.values()) {
-        if (row.account_id === accountId && row.created_at >= sinceIso) count += 1;
+      for (const existingRow of paymentOrders.values()) {
+        if (existingRow.account_id === order.account_id && existingRow.created_at >= options.sinceIso) count += 1;
       }
-      return count;
+      if (count >= options.limit) return false;
+      if (paymentOrders.has(order.id)) {
+        throw new Error(`UNIQUE constraint failed: payment_orders.id (${order.id})`);
+      }
+      for (const existing of paymentOrders.values()) {
+        if (existing.checkout_token_sha256 === order.checkout_token_sha256) {
+          throw new Error("UNIQUE constraint failed: payment_orders.checkout_token_sha256");
+        }
+        if (existing.out_trade_no === order.out_trade_no) {
+          throw new Error("UNIQUE constraint failed: payment_orders.out_trade_no");
+        }
+        if (order.trade_no !== null && existing.trade_no === order.trade_no) {
+          throw new Error("UNIQUE constraint failed: payment_orders.trade_no");
+        }
+        if (order.refund_request_no !== null && existing.refund_request_no === order.refund_request_no) {
+          throw new Error("UNIQUE constraint failed: payment_orders.refund_request_no");
+        }
+      }
+      paymentOrders.set(order.id, { ...order });
+      return true;
     },
 
     async listPaymentOrdersForReconciliation(provider, options) {

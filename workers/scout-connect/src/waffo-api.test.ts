@@ -137,6 +137,34 @@ describe("Waffo checkout adapter", () => {
     });
   });
 
+  it("accepts only HTTPS checkout URLs from the provider response", async () => {
+    const config = {
+      merchantId: "merchant", storeId: "store", environment: "test" as const, privateKey: "key",
+      productQuarter: "PROD_Q", productYear: "PROD_Y", productTwoYears: "PROD_2Y",
+    };
+    for (const checkoutUrl of ["javascript:alert(1)", "http://checkout.test/session", "not a URL"]) {
+      const client: WaffoSdkClient = {
+        checkout: { createSession: vi.fn(async () => ({ checkoutUrl, sessionId: "cs_bad", expiresAt: "2026-10-02T10:00:00.000Z" })) },
+        graphql: { query: vi.fn() },
+      };
+      const api = createWaffoApi({ ...config, client });
+      await expect(api.createSession({
+        productId: "PROD_Q", successUrl: "http://localhost/payment-success?order=ord_1",
+        orderMerchantExternalId: "MC_URL", metadata: { orderId: "ord_1" }, expiresInSeconds: 1800,
+        language: "zh-Hans",
+      })).rejects.toMatchObject({ code: "WAFFO_INVALID_RESPONSE" });
+    }
+    const goodClient: WaffoSdkClient = {
+      checkout: { createSession: vi.fn(async () => ({ checkoutUrl: "https://checkout.test/session", sessionId: "cs_good", expiresAt: "2026-10-02T10:00:00.000Z" })) },
+      graphql: { query: vi.fn() },
+    };
+    await expect(createWaffoApi({ ...config, client: goodClient }).createSession({
+      productId: "PROD_Q", successUrl: "http://localhost/payment-success?order=ord_1",
+      orderMerchantExternalId: "MC_URL_GOOD", metadata: { orderId: "ord_1" }, expiresInSeconds: 1800,
+      language: "zh-Hans",
+    })).resolves.toMatchObject({ checkoutUrl: "https://checkout.test/session" });
+  });
+
   it("classifies an unapproved production store error", async () => {
     const error = Object.assign(new Error("Store is not approved for production payments"), {
       status: 403,

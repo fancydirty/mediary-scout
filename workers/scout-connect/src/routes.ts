@@ -814,11 +814,8 @@ async function createWaffoCheckout(request: Request, deps: RouteDeps): Promise<R
   const nowMs = Date.parse(now);
   if (!Number.isFinite(nowMs)) throw new HttpError(500, "server time unavailable");
   const sinceIso = new Date(nowMs - 24 * 60 * 60 * 1000).toISOString();
-  if ((await deps.db.countPaymentOrdersForAccountSince(account.id, sinceIso)) >= WAFFO_CHECKOUT_DAILY_LIMIT) {
-    return json({ error: "too_many_checkouts" }, 429, { noStore: true });
-  }
   const externalId = newWaffoExternalId(deps);
-  const order = await deps.db.insertPaymentOrder({
+  const order = {
     id: newPaymentOrderId(deps),
     checkout_token_sha256: await sha256Hex(externalId),
     account_id: account.id,
@@ -839,7 +836,10 @@ async function createWaffoCheckout(request: Request, deps: RouteDeps): Promise<R
     refund_request_no: null,
     last_notify_id: null,
     last_queried_at: null,
-  });
+  } satisfies PaymentOrderRow;
+  if (!(await deps.db.insertPaymentOrderWithinDailyLimit(order, { sinceIso, limit: WAFFO_CHECKOUT_DAILY_LIMIT }))) {
+    return json({ error: "too_many_checkouts" }, 429, { noStore: true });
+  }
   try {
     const sessionResult = await api.createSession({
       productId,

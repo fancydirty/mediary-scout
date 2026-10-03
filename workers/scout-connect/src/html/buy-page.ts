@@ -37,6 +37,11 @@ ${tier.featured ? '<span class="badge">最划算</span>' : ""}
           return;
         }
         var data = await response.json();
+        if (response.status === 429) {
+          status.textContent = "发起支付的次数太多了，请过几个小时再试；需要帮助请联系我们。";
+          setBusy(false);
+          return;
+        }
         if (response.status === 503) {
           status.textContent = "结账暂未开放，请稍后再试或联系我们。";
           setBusy(false);

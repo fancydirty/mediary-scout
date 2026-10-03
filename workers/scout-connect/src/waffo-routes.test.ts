@@ -3,7 +3,7 @@ import { handleRequest, reconcileWaffoOrders, type RouteDeps } from "./routes.js
 import { createMemoryConnectDb, type ConnectDb } from "./db.js";
 import { buildSessionCookie } from "./session.js";
 import type { CfApi } from "./cf-api.js";
-import type { WaffoApi, WaffoWebhookEvent } from "./waffo-api.js";
+import { createWaffoApi, type WaffoApi, type WaffoSdkClient, type WaffoWebhookEvent } from "./waffo-api.js";
 
 const NOW = "2026-10-02T10:00:00.000Z";
 const SECRET = "f".repeat(64);
@@ -145,6 +145,25 @@ describe("Waffo checkout routes", () => {
     expect(await rejected.json()).toEqual({ error: "checkout_not_open" });
   });
 
+  it("rejects a non-HTTPS provider checkout URL without storing a session id", async () => {
+    const db = createMemoryConnectDb();
+    const cookie = await loggedIn(db);
+    const client: WaffoSdkClient = {
+      checkout: { createSession: vi.fn(async () => ({ checkoutUrl: "javascript:alert(1)", sessionId: "cs_bad", expiresAt: "2026-10-02T10:30:00.000Z" })) },
+      graphql: { query: vi.fn() },
+    };
+    const waffoApi = createWaffoApi({
+      merchantId: "merchant", storeId: "store", environment: "test", privateKey: "key",
+      productQuarter: "PROD_Q", productYear: "PROD_Y", productTwoYears: "PROD_2Y", client,
+    });
+    const response = await handleRequest(new Request("https://dev.example/api/checkout", {
+      method: "POST", body: JSON.stringify({ tier: "quarter" }), headers: { cookie, "content-type": "application/json" },
+    }), deps(db, { newWaffoExternalId: () => "MC_BAD_URL", waffoApi }));
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: "checkout_unavailable" });
+    expect((await db.getPaymentOrderByOutTradeNo("MC_BAD_URL"))?.waffo_session_id).toBeNull();
+  });
+
   it("returns 429 and does not create a Waffo session after 20 recent checkouts", async () => {
     const db = createMemoryConnectDb();
     const cookie = await loggedIn(db);
@@ -192,6 +211,19 @@ describe("Waffo checkout routes", () => {
     }), deps(db, { waffoApi: api({ createSession }) }));
     expect(response.status).toBe(200);
     expect(createSession).toHaveBeenCalledOnce();
+  });
+
+  it("atomically caps concurrent checkout attempts at 20 per account", async () => {
+    const db = createMemoryConnectDb();
+    const cookie = await loggedIn(db);
+    const createSession = vi.fn(async () => ({ checkoutUrl: "https://checkout.test/concurrent", sessionId: "cs_concurrent", expiresAt: "2026-10-02T10:30:00.000Z" }));
+    const routeDeps = deps(db, { waffoApi: api({ createSession }) });
+    const responses = await Promise.all(Array.from({ length: 25 }, () => handleRequest(new Request("https://dev.example/api/checkout", {
+      method: "POST", body: JSON.stringify({ tier: "quarter" }), headers: { cookie, "content-type": "application/json" },
+    }), routeDeps)));
+    expect(responses.filter((response) => response.status === 200)).toHaveLength(20);
+    expect(responses.filter((response) => response.status === 429)).toHaveLength(5);
+    expect(createSession).toHaveBeenCalledTimes(20);
   });
 });
 

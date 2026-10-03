@@ -24,6 +24,12 @@ describe("buyPage (Waffo checkout)", () => {
     expect(html).toMatch(/location\.assign\(data\.checkoutUrl\)/);
   });
 
+  it("explains the checkout rate limit", () => {
+    const html = buyPage({ waffoConfigured: true });
+    expect(html).toContain("response.status === 429");
+    expect(html).toContain("发起支付的次数太多了，请过几个小时再试；需要帮助请联系我们。");
+  });
+
   it("fails visibly and disables purchase when server-side Waffo is not configured", () => {
     const html = buyPage({ waffoConfigured: false });
     expect(html).toContain("结账暂未开放");

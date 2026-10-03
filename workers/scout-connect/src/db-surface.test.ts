@@ -75,7 +75,10 @@ describe("ConnectDb surface guard", () => {
       .map((f) => readFileSync(f, "utf8"))
       .join("\n");
 
-    const dead = names.filter((name) => !nonTestSource.includes(`.${name}(`));
+    // Direct insertion is intentionally a fixture/migration primitive. Production checkout
+    // uses insertPaymentOrderWithinDailyLimit so the account cap is atomic.
+    const fixtureOnly = new Set(["insertPaymentOrder"]);
+    const dead = names.filter((name) => !fixtureOnly.has(name) && !nonTestSource.includes(`.${name}(`));
 
     expect(
       dead,

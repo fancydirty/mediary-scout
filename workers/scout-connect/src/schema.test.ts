@@ -1491,21 +1491,28 @@ describe("migration 0007 — Waffo payment orders", () => {
     const db = createD1ConnectDb(d1Over(sqlite));
     sqlite.prepare("INSERT INTO accounts(id,email,created_at) VALUES(?,?,?)").run("act_limit", "limit@example.com", "2026-10-01T00:00:00.000Z");
     sqlite.prepare("INSERT INTO accounts(id,email,created_at) VALUES(?,?,?)").run("act_other", "other@example.com", "2026-10-01T00:00:00.000Z");
-    await db.insertPaymentOrder({
-      id: "ord_count_boundary", checkout_token_sha256: "sha_count_boundary", account_id: "act_limit", provider: "waffo",
-      out_trade_no: "MC_COUNT_BOUNDARY", trade_no: null, waffo_session_id: null, waffo_order_id: null,
-      months: 3, total_amount: "45.00", status: "created", created_at: "2026-10-01T10:00:00.000Z",
-      expires_at: "2026-10-01T10:30:00.000Z", paid_at: null, fulfilled_at: null, closed_at: null,
+    const makeOrder = (id: string, accountId: string, createdAt: string): PaymentOrderRow => ({
+      id, checkout_token_sha256: `sha_${id}`, account_id: accountId, provider: "waffo",
+      out_trade_no: `MC_${id}`, trade_no: null, waffo_session_id: null, waffo_order_id: null,
+      months: 3, total_amount: "45.00", status: "created", created_at: createdAt,
+      expires_at: "2026-10-02T10:30:00.000Z", paid_at: null, fulfilled_at: null, closed_at: null,
       refunded_at: null, refund_request_no: null, last_notify_id: null, last_queried_at: null,
     });
-    await db.insertPaymentOrder({
-      id: "ord_count_other", checkout_token_sha256: "sha_count_other", account_id: "act_other", provider: "waffo",
-      out_trade_no: "MC_COUNT_OTHER", trade_no: null, waffo_session_id: null, waffo_order_id: null,
-      months: 3, total_amount: "45.00", status: "created", created_at: "2026-10-01T10:00:00.000Z",
-      expires_at: "2026-10-01T10:30:00.000Z", paid_at: null, fulfilled_at: null, closed_at: null,
+    for (let i = 0; i < 19; i += 1) {
+      await db.insertPaymentOrder(makeOrder(`ord_count_recent_${i}`, "act_limit", "2026-10-02T09:00:00.000Z"));
+    }
+    await db.insertPaymentOrder(makeOrder("ord_count_old", "act_limit", "2026-10-01T09:59:59.999Z"));
+    await db.insertPaymentOrder(makeOrder("ord_count_other", "act_other", "2026-10-02T09:00:00.000Z"));
+    const candidate: PaymentOrderRow = {
+      id: "ord_count_candidate", checkout_token_sha256: "sha_count_candidate", account_id: "act_limit", provider: "waffo",
+      out_trade_no: "MC_COUNT_CANDIDATE", trade_no: null, waffo_session_id: null, waffo_order_id: null,
+      months: 3, total_amount: "45.00", status: "created", created_at: "2026-10-02T10:00:00.000Z",
+      expires_at: "2026-10-02T10:30:00.000Z", paid_at: null, fulfilled_at: null, closed_at: null,
       refunded_at: null, refund_request_no: null, last_notify_id: null, last_queried_at: null,
-    });
-    expect(await db.countPaymentOrdersForAccountSince("act_limit", "2026-10-01T10:00:00.000Z")).toBe(1);
+    };
+    expect(await db.insertPaymentOrderWithinDailyLimit(candidate, { sinceIso: "2026-10-01T10:00:00.000Z", limit: 20 })).toBe(true);
+    const blocked = { ...candidate, id: "ord_count_blocked", checkout_token_sha256: "sha_count_blocked", out_trade_no: "MC_COUNT_BLOCKED" };
+    expect(await db.insertPaymentOrderWithinDailyLimit(blocked, { sinceIso: "2026-10-01T10:00:00.000Z", limit: 20 })).toBe(false);
   });
 
   it("is D1-safe and documents migrate-before-deploy", () => {

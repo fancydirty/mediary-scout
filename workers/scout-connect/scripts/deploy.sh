@@ -74,8 +74,8 @@ fi
 
 NOW_ISO=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
 if ! ALIPAY_OPEN_RESULT=$(env -u CF_API_TOKEN npx wrangler d1 execute scout-connect --remote --json \
-  --command "SELECT COUNT(*) AS count FROM payment_orders WHERE provider = 'alipay' AND status IN ('created','form_issued','pending') AND expires_at > '$NOW_ISO';"); then
-  echo "❌ 无法查询未过期支付宝订单，停止部署。" >&2
+  --command "SELECT COUNT(*) AS count FROM payment_orders WHERE provider = 'alipay' AND (status = 'paid' OR (status IN ('created','form_issued','pending') AND expires_at > '$NOW_ISO'));"); then
+  echo "❌ 无法查询未完结的支付宝订单，停止部署。" >&2
   exit 1
 fi
 if ! ALIPAY_OPEN_COUNT=$(printf '%s' "$ALIPAY_OPEN_RESULT" | node -e '
@@ -106,12 +106,12 @@ process.stdin.on("end", () => {
   }
 });
 '); then
-  echo "❌ 无法解析未过期支付宝订单数量，停止部署。" >&2
+  echo "❌ 无法解析未完结的支付宝订单数量，停止部署。" >&2
   exit 1
 fi
 echo "→ Alipay payable-order cutover guard: $ALIPAY_OPEN_COUNT"
 if [ "$ALIPAY_OPEN_COUNT" -gt 0 ]; then
-  echo "❌ 仍有 $ALIPAY_OPEN_COUNT 个未过期支付宝订单可支付；本次发布移除了支付宝 notify/query 路由，请等待这些订单过期。" >&2
+  echo "❌ 仍有 $ALIPAY_OPEN_COUNT 个支付宝订单没完结（未过期可支付，或已付款未开通）；本次发布移除了支付宝 notify/query 路由，先等可支付订单过期、把已付款的开通完再部署。" >&2
   exit 1
 fi
 

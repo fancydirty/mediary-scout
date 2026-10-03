@@ -879,7 +879,9 @@ describe("payment-order and provider-neutral entitlement persistence", () => {
     await db.insertPaymentOrder({ ...base, id: "ord_limit_boundary", checkout_token_sha256: "sha_limit_boundary", out_trade_no: "MC_LIMIT_BOUNDARY", created_at: "2026-10-01T10:00:00.000Z" });
     await db.insertPaymentOrder({ ...base, id: "ord_limit_old", checkout_token_sha256: "sha_limit_old", out_trade_no: "MC_LIMIT_OLD", created_at: "2026-10-01T09:59:59.999Z" });
     await db.insertPaymentOrder({ ...base, id: "ord_other_account", checkout_token_sha256: "sha_other_account", out_trade_no: "MC_OTHER_ACCOUNT", account_id: "act_other" });
-    expect(await db.countPaymentOrdersForAccountSince("act_limit", "2026-10-01T10:00:00.000Z")).toBe(2);
+    const candidate = { ...base, id: "ord_limit_candidate", checkout_token_sha256: "sha_limit_candidate", out_trade_no: "MC_LIMIT_CANDIDATE" };
+    expect(await db.insertPaymentOrderWithinDailyLimit(candidate, { sinceIso: "2026-10-01T10:00:00.000Z", limit: 2 })).toBe(false);
+    expect(await db.getPaymentOrderById(candidate.id)).toBeNull();
   });
 
   it("round-trips and updates an Alipay order by every server-owned key", async () => {

@@ -218,8 +218,16 @@ export function isWaffoNotApprovedError(error: unknown): boolean {
 
 function normalizeSession(value: unknown): WaffoCheckoutSession {
   const record = asRecord(value);
+  const checkoutUrl = requiredString(record?.checkoutUrl, "checkoutUrl").trim();
+  try {
+    if (new URL(checkoutUrl).protocol !== "https:") {
+      throw new Error("not HTTPS");
+    }
+  } catch {
+    throw new WaffoApiError("WAFFO_INVALID_RESPONSE", "Waffo response checkoutUrl must be HTTPS");
+  }
   return {
-    checkoutUrl: requiredString(record?.checkoutUrl, "checkoutUrl"),
+    checkoutUrl,
     sessionId: requiredString(record?.sessionId, "sessionId"),
     expiresAt: requiredString(record?.expiresAt, "expiresAt"),
   };
