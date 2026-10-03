@@ -27,6 +27,7 @@ import {
   clearConnectPendingOrder,
   getConnectInstanceCredential,
   getConnectLinkPending,
+  getConnectPendingOrder,
   setConnectAccountEmail,
   setConnectBinding,
   setConnectInstanceCredential,
@@ -176,7 +177,11 @@ export async function connectOrderStatusAction(orderId: string) {
     }
     return { ok: false as const, message: clientMessage(result) };
   }
-  if (result.status === "fulfilled" || result.status === "closed" || result.status === "expired") {
+  // Only forget the order this answer is about: another tab may have started a newer one.
+  if (
+    (result.status === "fulfilled" || result.status === "closed" || result.status === "expired") &&
+    (await getConnectPendingOrder()) === orderId
+  ) {
     await clearConnectPendingOrder();
   }
   return { ok: true as const, status: result.status };

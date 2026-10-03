@@ -8,6 +8,7 @@ const state = vi.hoisted(() => ({
   credential: "ic_secret",
   email: "owner@example.com",
   pending: null as unknown,
+  order: "ord_1" as string | null,
   stored: [] as Array<[string, string]>,
   cleared: [] as string[],
   headers: new Headers({ host: "scout.local:3000", "x-forwarded-proto": "https" }),
@@ -55,8 +56,9 @@ vi.mock("../lib/connect-link-store", () => ({
     state.stored.push(["tunnel", v.token], ["hostname", v.hostname], ["boundAt", v.boundAt]);
   }),
   getConnectTunnelToken: vi.fn(async () => null),
-  setConnectPendingOrder: vi.fn(async (v: string) => { state.stored.push(["order", v]); }),
-  clearConnectPendingOrder: vi.fn(async () => { state.cleared.push("order"); }),
+  getConnectPendingOrder: vi.fn(async () => state.order),
+  setConnectPendingOrder: vi.fn(async (v: string) => { state.order = v; state.stored.push(["order", v]); }),
+  clearConnectPendingOrder: vi.fn(async () => { state.order = null; state.cleared.push("order"); }),
 }));
 
 import { createConnectCheckout, exchangeClaimCode, getConnectAccount, getConnectOrderStatus, issueClaimCode, revokeInstanceLink } from "../lib/connect-client";
@@ -73,6 +75,7 @@ beforeEach(() => {
   state.credential = "ic_secret";
   state.email = "owner@example.com";
   state.pending = null;
+  state.order = "ord_1";
   state.stored = [];
   state.cleared = [];
   state.headers = new Headers({ host: "scout.local:3000", "x-forwarded-proto": "https" });
@@ -256,12 +259,20 @@ describe("pending order", () => {
     expect(state.stored).toContainEqual(["order", "ord_1"]);
   });
 
+  it("keeps a newer order another tab created while an older one settled", async () => {
+    state.order = "ord_new";
+    vi.mocked(getConnectOrderStatus).mockResolvedValueOnce({ ok: true, status: "closed" });
+    await connectOrderStatusAction("ord_old");
+    expect(state.cleared).not.toContain("order");
+  });
+
   it("forgets the order once it is fulfilled, closed or expired, and keeps it while pending", async () => {
     vi.mocked(getConnectOrderStatus).mockResolvedValueOnce({ ok: true, status: "pending" });
     await connectOrderStatusAction("ord_1");
     expect(state.cleared).not.toContain("order");
     for (const status of ["fulfilled", "closed", "expired"] as const) {
       state.cleared = [];
+      state.order = "ord_1";
       vi.mocked(getConnectOrderStatus).mockResolvedValueOnce({ ok: true, status });
       await connectOrderStatusAction("ord_1");
       expect(state.cleared).toContain("order");
