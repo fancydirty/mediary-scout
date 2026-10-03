@@ -526,15 +526,17 @@ describe("instance link DB methods", () => {
         }),
         nowIso: createdAt,
       });
-    if (newerFirst) {
-      await deliver(requestB, "icr_b", "2026-10-03T00:02:00.000Z");
-      await deliver(requestA, "icr_a", "2026-10-03T00:01:00.000Z");
-    } else {
-      await deliver(requestA, "icr_a", "2026-10-03T00:01:00.000Z");
-      await deliver(requestB, "icr_b", "2026-10-03T00:02:00.000Z");
-    }
-    expect(await db.getActiveInstanceCredentialBySha("credential-sha-icr_a")).toBeNull();
-    expect(await db.getActiveInstanceCredentialBySha("credential-sha-icr_b")).toMatchObject({ id: "icr_b" });
+    // A slower poll can commit after a faster one even though its clock read is earlier. Whatever
+    // the order, a delivery that reports success must hand out a credential that is still active,
+    // and the account keeps exactly one: the one delivered last.
+    const [first, last] = newerFirst
+      ? [{ request: requestB, id: "icr_b", at: "2026-10-03T00:02:00.000Z" }, { request: requestA, id: "icr_a", at: "2026-10-03T00:01:00.000Z" }]
+      : [{ request: requestA, id: "icr_a", at: "2026-10-03T00:01:00.000Z" }, { request: requestB, id: "icr_b", at: "2026-10-03T00:02:00.000Z" }];
+    expect(await deliver(first.request, first.id, first.at)).toBe(true);
+    expect(await db.getActiveInstanceCredentialBySha(`credential-sha-${first.id}`)).toMatchObject({ id: first.id });
+    expect(await deliver(last.request, last.id, last.at)).toBe(true);
+    expect(await db.getActiveInstanceCredentialBySha(`credential-sha-${last.id}`)).toMatchObject({ id: last.id });
+    expect(await db.getActiveInstanceCredentialBySha(`credential-sha-${first.id}`)).toBeNull();
   }
 
   it("memory implementation preserves request and credential CAS semantics", async () => {
@@ -546,20 +548,20 @@ describe("instance link DB methods", () => {
     await exerciseInstanceLinkDb(db);
   });
 
-  it("keeps only the newest credential for older-then-newer memory delivery", async () => {
+  it("keeps only the credential delivered last for older-then-newer memory delivery", async () => {
     await exerciseCredentialRotationOrdering(createMemoryConnectDb() as DeliveryDb, false);
   });
 
-  it("keeps only the newest credential for newer-then-older memory delivery", async () => {
+  it("keeps only the credential delivered last for newer-then-older memory delivery", async () => {
     await exerciseCredentialRotationOrdering(createMemoryConnectDb() as DeliveryDb, true);
   });
 
-  it("keeps only the newest credential for older-then-newer D1 delivery", async () => {
+  it("keeps only the credential delivered last for older-then-newer D1 delivery", async () => {
     const { db } = createSqliteConnectDb();
     await exerciseCredentialRotationOrdering(db as DeliveryDb, false);
   });
 
-  it("keeps only the newest credential for newer-then-older D1 delivery", async () => {
+  it("keeps only the credential delivered last for newer-then-older D1 delivery", async () => {
     const { db } = createSqliteConnectDb();
     await exerciseCredentialRotationOrdering(db as DeliveryDb, true);
   });

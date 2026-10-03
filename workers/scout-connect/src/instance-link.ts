@@ -129,8 +129,10 @@ export async function startInstanceLink(request: Request, deps: RouteDeps): Prom
       requestIp: row.request_ip ?? "",
       requestedAt: row.created_at,
     });
-  } catch {
-    // 发信失败不改变 202 结果。
+  } catch (error) {
+    // 发信失败不改变 202 结果。非 2xx 由 sender 自己记日志；fetch 直接抛错（DNS、超时）只有这里
+    // 能看见。日志里不放邮箱和链接。
+    console.error("instance link email failed:", error instanceof Error ? `${error.name}: ${error.message}` : "unknown error");
   }
   return json({ pollSecret, verifyCode: row.verify_code, expiresAt, interval: 3 }, 202, { noStore: true });
 }

@@ -1006,22 +1006,21 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
             WHERE id = ? AND status = 'approved'`,
         )
         .bind(nowIso, requestId);
+      // Keep the credential this batch inserted, not the newest by created_at: a slower poll can
+      // commit after a faster one with an earlier clock read, and must not hand out a credential
+      // its own batch just revoked. The last delivery to commit wins; the instance holding the
+      // other one sees 401 on its next call and links again.
       const rotate = d1
         .prepare(
           `UPDATE instance_credentials SET revoked_at = ?
             WHERE account_id = ? AND revoked_at IS NULL
-              AND id <> (
-                SELECT id FROM instance_credentials
-                 WHERE account_id = ?
-                 ORDER BY created_at DESC, id DESC
-                 LIMIT 1
-              )
+              AND id <> ?
               AND EXISTS (
                 SELECT 1 FROM instance_link_requests
                  WHERE id = ? AND status = 'delivered' AND delivered_at = ?
               )`,
         )
-        .bind(nowIso, credential.account_id, credential.account_id, requestId, nowIso);
+        .bind(nowIso, credential.account_id, credential.id, requestId, nowIso);
       try {
         const results = await d1.batch([insert, markDelivered, rotate]);
         const marked = (results[1] as { meta?: { changes?: number } } | undefined)?.meta?.changes;
@@ -1781,15 +1780,9 @@ export function createMemoryConnectDb(): ConnectDb {
       instanceCredentials.set(credential.id, { ...credential });
       request.status = "delivered";
       request.delivered_at = nowIso;
-      let newest: InstanceCredentialRow | null = null;
+      // Same rule as D1: the credential handed out now is the account's only active one.
       for (const row of instanceCredentials.values()) {
-        if (row.account_id !== credential.account_id || row.revoked_at !== null) continue;
-        if (newest === null || row.created_at > newest.created_at || (row.created_at === newest.created_at && row.id > newest.id)) {
-          newest = row;
-        }
-      }
-      for (const row of instanceCredentials.values()) {
-        if (row.account_id === credential.account_id && row.revoked_at === null && newest !== null && row.id !== newest.id) {
+        if (row.account_id === credential.account_id && row.revoked_at === null && row.id !== credential.id) {
           row.revoked_at = nowIso;
         }
       }

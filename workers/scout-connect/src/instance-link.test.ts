@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createMemoryConnectDb } from "./db.js";
 import { handleRequest, type RouteDeps } from "./routes.js";
 import { sha256Hex } from "./crypto-token.js";
@@ -83,10 +83,23 @@ describe("instance-link start", () => {
     expect(await deps.db.getAccountByEmail("alice@example.com")).toBeNull();
   });
 
-  it("still returns 202 when email delivery fails", async () => {
+  it("still returns 202 when email delivery fails, and logs why without the address or link", async () => {
     const { deps } = setup();
-    deps.sendInstanceLinkEmail = async () => { throw new Error("mail down"); };
-    expect((await start(deps)).status).toBe(202);
+    let link = "";
+    deps.sendInstanceLinkEmail = async (_to, details) => {
+      link = details.url;
+      throw new TypeError("fetch failed");
+    };
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      expect((await start(deps)).status).toBe(202);
+      const logged = errors.mock.calls.map((args) => args.map(String).join(" ")).join("\n");
+      expect(logged).toContain("fetch failed");
+      expect(logged).not.toContain("alice@example.com");
+      expect(logged).not.toContain(new URL(link).searchParams.get("t")!);
+    } finally {
+      errors.mockRestore();
+    }
   });
 });
 
