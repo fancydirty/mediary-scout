@@ -132,8 +132,9 @@ if ! printf '%s' "$BUY" | grep -q "微信支付"; then
   echo "❌ 线上 /buy 不是微信支付购买页，部署未生效或页面异常。" >&2
   exit 1
 fi
-if printf '%s' "$BUY" | grep -q "结账暂未开放"; then
-  echo "❌ Waffo 结账未开放。检查 WAFFO_PRIVATE_KEY 与 wrangler.jsonc 中的 Waffo vars。" >&2
+# 只有配置齐全时页面才带结账脚本；不能 grep「结账暂未开放」——开放页脚本的 503 分支里也有这句。
+if ! printf '%s' "$BUY" | grep -qF 'fetch("/api/checkout"'; then
+  echo "❌ Waffo 结账未开放（/buy 没有结账脚本）。检查 WAFFO_PRIVATE_KEY 与 wrangler.jsonc 中的 Waffo vars。" >&2
   exit 1
 fi
 WEBHOOK=$(curl -s -o /dev/null -w "%{http_code}" -X POST   https://mediaryconnect.app/api/waffo/webhook   -H "content-type: application/json" -d '')

@@ -1,5 +1,7 @@
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { buyPage } from "./html/buy-page.js";
 
 const deployScript = readFileSync(new URL("../scripts/deploy.sh", import.meta.url), "utf8");
 
@@ -19,5 +21,30 @@ describe("deploy cutover guard", () => {
       "provider = 'alipay' AND (status = 'paid' OR (status IN ('created','form_issued','pending') AND expires_at > '$NOW_ISO'))",
     );
     expect(deployScript).toContain("已付款未开通");
+  });
+});
+
+describe("post-deploy /buy self-check", () => {
+  // Run the script's own /buy checks against the real rendered pages. The open page's inline
+  // script carries the 503 message too, so a text grep for it can never tell open from closed.
+  function buyChecksPass(html: string): boolean {
+    const start = deployScript.indexOf('if ! printf \'%s\' "$BUY" | grep -q "微信支付"');
+    const end = deployScript.indexOf("WEBHOOK=$(");
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    try {
+      execFileSync("sh", ["-c", `set -eu\nBUY=$1\n${deployScript.slice(start, end)}`, "sh", html], { stdio: "pipe" });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  it("passes the page served when Waffo is configured", () => {
+    expect(buyChecksPass(buyPage({ waffoConfigured: true }))).toBe(true);
+  });
+
+  it("fails the page served when Waffo is not configured", () => {
+    expect(buyChecksPass(buyPage({ waffoConfigured: false }))).toBe(false);
   });
 });
