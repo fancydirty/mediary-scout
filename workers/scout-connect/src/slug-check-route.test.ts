@@ -90,6 +90,37 @@ describe("GET /api/slug/check", () => {
     expect(body.suggestions!.length).toBeGreaterThan(0);
   });
 
+  // An instance on the older wizard knows nothing about `restorable`: it shows the name form and
+  // only submits a name the check calls available. The account's own restorable name must pass,
+  // or the owner can only pick a new name and the reserved one is retired for good.
+  it("reports the account's own restorable slug as available, but not an admin-revoked one", async () => {
+    const d = deps();
+    const row = (id: string, slug: string, accountId: string, reason: "expired" | "admin") => ({
+      id, invite_id: null, slug, hostname: `${slug}.mediaryconnect.app`,
+      cf_tunnel_id: "t", cf_access_app_id: null, cf_access_policy_id: null,
+      cf_dns_record_id: "d", status: "revoked" as const, token_sha256: `x-${id}`,
+      token_ciphertext: null, token_shown_at: null, last_seen_at: null,
+      created_at: "2026-01-01T00:00:00.000Z", revoked_at: "2026-02-01T00:00:00.000Z", account_id: accountId,
+      grace_until: null, suspended_at: null, purge_after: null, revoke_reason: reason,
+    });
+    await d.db.insertAccount({ id: "act_1", email: "owner@example.com", paddle_customer_id: null, created_at: "2026-01-01T00:00:00.000Z", last_login_at: null });
+    await d.db.insertEndpoint(row("ep_own", "fam", "act_1", "expired"));
+    await d.db.insertAccount({ id: "act_2", email: "other@example.com", paddle_customer_id: null, created_at: "2026-01-01T00:00:00.000Z", last_login_at: null });
+    await d.db.insertEndpoint(row("ep_other", "bob", "act_2", "expired"));
+    const check = async (s: string) => {
+      const res = await handleRequest(new Request(`${BASE}/api/slug/check?s=${s}`, { headers: { cookie: await cookie() } }), d);
+      return (await res.json()) as { available: boolean; reason?: string };
+    };
+    expect(await check("fam")).toEqual({ available: true });
+    expect((await check("bob")).reason).toBe("taken");
+
+    const admin = deps();
+    await admin.db.insertAccount({ id: "act_1", email: "owner@example.com", paddle_customer_id: null, created_at: "2026-01-01T00:00:00.000Z", last_login_at: null });
+    await admin.db.insertEndpoint(row("ep_admin", "fam", "act_1", "admin"));
+    const res = await handleRequest(new Request(`${BASE}/api/slug/check?s=fam`, { headers: { cookie: await cookie() } }), admin);
+    expect(((await res.json()) as { reason?: string }).reason).toBe("taken");
+  });
+
   it("reserved slug returns unavailable", async () => {
     const res = await handleRequest(
       new Request(`${BASE}/api/slug/check?s=admin`, { headers: { cookie: await cookie() } }),

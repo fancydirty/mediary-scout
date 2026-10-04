@@ -1329,8 +1329,11 @@ async function slugCheckRoute(url: URL, request: Request, deps: RouteDeps): Prom
   // 占用判定查所有状态的行(含 revoked/purged):slug 永久保留不释放(决策 #9)。
   // rootDomain normalize:与本文件别处一致(CONNECT_ROOT_DOMAIN 可能带空白/大小写)。
   const domain = deps.rootDomain.trim().toLowerCase();
+  // 账号自己可恢复的旧名字不算占用:旧版实例向导不认识 restorable,只会提交查重说可用的名字,
+  // 这里说「已占用」,它的主人就只能另起名字,原地址从此恢复不了。提交这个名字走的就是恢复。
+  const ownRestorable = await deps.db.getRestorableEndpointByAccountId(accountAuth.accountId);
   const isTaken: IsTaken = async (s) =>
-    (await deps.db.findEndpointBySlugOrHostname(s, `${s}.${domain}`)) !== null;
+    s !== ownRestorable?.slug && (await deps.db.findEndpointBySlugOrHostname(s, `${s}.${domain}`)) !== null;
   const result = await checkSlug(slug, isTaken);
   return json(result, 200, { noStore: true });
 }
