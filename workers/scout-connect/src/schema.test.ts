@@ -1645,47 +1645,61 @@ describe("migration 0009 — endpoint revoke reason", () => {
     expect(columns(migrated, "endpoints")).toContain("revoke_reason");
   });
 
-  it("backfills refunded only for revoked rows of accounts with a refunded payment order", () => {
+  it("backfills refunded only when revoked_at falls within 10 minutes after that order's refunded_at", () => {
     const sqlite = migratedTo0008();
+    const refundedAt = "2026-10-03T05:14:43.963Z";
     const insertAccount = sqlite.prepare(
       "INSERT INTO accounts(id,email,created_at) VALUES(?,?,?)",
     );
-    insertAccount.run("act_a", "a@example.com", "2026-10-01T00:00:00.000Z");
-    insertAccount.run("act_b", "b@example.com", "2026-10-01T00:00:00.000Z");
-    insertAccount.run("act_c", "c@example.com", "2026-10-01T00:00:00.000Z");
+    for (const id of ["act_close", "act_later", "act_before", "act_plain", "act_live", "act_failed"]) {
+      insertAccount.run(id, `${id}@example.com`, "2026-10-01T00:00:00.000Z");
+    }
     const insertOrder = sqlite.prepare(
       `INSERT INTO payment_orders
-        (id,checkout_token_sha256,account_id,provider,out_trade_no,trade_no,months,total_amount,status,created_at,expires_at)
+        (id,checkout_token_sha256,account_id,provider,out_trade_no,trade_no,months,total_amount,status,created_at,expires_at,refunded_at)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+    );
+    const order = (
+      id: string,
+      accountId: string,
+      status: string,
+      refunded: string | null,
+    ): void => {
+      insertOrder.run(
+        id, `sha_${id}`, accountId, "waffo", `MC_${id}`, null, 3, "45.00", status,
+        "2026-10-01T00:00:00.000Z", "2026-10-01T00:30:00.000Z", refunded,
+      );
+    };
+    order("ord_close", "act_close", "refunded", refundedAt);
+    order("ord_later", "act_later", "refunded", refundedAt);
+    order("ord_before", "act_before", "refunded", refundedAt);
+    order("ord_plain", "act_plain", "fulfilled", null);
+    order("ord_live", "act_live", "refunded", refundedAt);
+    order("ord_failed", "act_failed", "refunded", refundedAt);
+    const insertEp = sqlite.prepare(
+      `INSERT INTO endpoints(id,invite_id,slug,hostname,cf_tunnel_id,cf_dns_record_id,status,token_sha256,account_id,created_at,revoked_at)
        VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
     );
-    insertOrder.run(
-      "ord_a", "sha_a", "act_a", "waffo", "MC_A", null, 3, "45.00", "refunded",
-      "2026-10-01T00:00:00.000Z", "2026-10-01T00:30:00.000Z",
-    );
-    insertOrder.run(
-      "ord_b", "sha_b", "act_b", "waffo", "MC_B", null, 3, "45.00", "fulfilled",
-      "2026-10-01T00:00:00.000Z", "2026-10-01T00:30:00.000Z",
-    );
-    insertOrder.run(
-      "ord_c", "sha_c", "act_c", "waffo", "MC_C", null, 3, "45.00", "refunded",
-      "2026-10-01T00:00:00.000Z", "2026-10-01T00:30:00.000Z",
-    );
-    const insertEp = sqlite.prepare(
-      `INSERT INTO endpoints(id,invite_id,slug,hostname,cf_tunnel_id,cf_dns_record_id,status,token_sha256,account_id,created_at)
-       VALUES(?,?,?,?,?,?,?,?,?,?)`,
-    );
-    insertEp.run(
-      "ep_a", null, "fam-a", "fam-a.mediaryconnect.app", "tun", "dns", "revoked", "sha", "act_a",
-      "2026-10-01T00:00:00.000Z",
-    );
-    insertEp.run(
-      "ep_b", null, "fam-b", "fam-b.mediaryconnect.app", "tun", "dns", "revoked", "sha", "act_b",
-      "2026-10-01T00:00:00.000Z",
-    );
-    insertEp.run(
-      "ep_c", null, "fam-c", "fam-c.mediaryconnect.app", "tun", "dns", "active", "sha", "act_c",
-      "2026-10-01T00:00:00.000Z",
-    );
+    const ep = (
+      id: string,
+      accountId: string,
+      status: string,
+      revokedAt: string | null,
+    ): void => {
+      insertEp.run(
+        id, null, id, `${id}.mediaryconnect.app`, "tun", "dns", status, "sha", accountId,
+        "2026-10-01T00:00:00.000Z", revokedAt,
+      );
+    };
+    // 2s after the refund: the same request that recorded it (production gap was ~2s).
+    ep("ep_close", "act_close", "revoked", "2026-10-03T05:14:45.963Z");
+    // 3 days later: an admin/abuse revoke on an account that once had a refund.
+    ep("ep_later", "act_later", "revoked", "2026-10-06T05:14:43.963Z");
+    ep("ep_before", "act_before", "revoked", "2026-10-03T05:14:41.963Z");
+    ep("ep_plain", "act_plain", "revoked", "2026-10-03T05:14:45.963Z");
+    ep("ep_live", "act_live", "active", null);
+    // revoke_failed has no revoked_at, so the window cannot match.
+    ep("ep_failed", "act_failed", "revoke_failed", null);
 
     sqlite.exec(MIGRATION9_SQL);
 
@@ -1693,9 +1707,21 @@ describe("migration 0009 — endpoint revoke reason", () => {
       (sqlite.prepare("SELECT revoke_reason FROM endpoints WHERE id = ?").get(id) as {
         revoke_reason: string | null;
       }).revoke_reason;
-    expect(reason("ep_a")).toBe("refunded");
-    expect(reason("ep_b")).toBeNull();
-    expect(reason("ep_c")).toBeNull();
+    expect({
+      close: reason("ep_close"),
+      later: reason("ep_later"),
+      before: reason("ep_before"),
+      plain: reason("ep_plain"),
+      live: reason("ep_live"),
+      failed: reason("ep_failed"),
+    }).toEqual({
+      close: "refunded",
+      later: null,
+      before: null,
+      plain: null,
+      live: null,
+      failed: null,
+    });
   });
 });
 
@@ -1899,5 +1925,61 @@ describe("D1 revoke_reason — real SQLite", () => {
       }),
     ).toBe(false);
     expect((await db.getEndpointById("ep_dead"))?.status).toBe("revoked");
+  });
+
+  it("finishFailedRevoke flips only the captured revoke_failed row", async () => {
+    const { db } = freshDb(SCHEMA_SQL);
+    const at = "2026-10-04T00:00:00.000Z";
+    await db.insertEndpoint(
+      postAccessEndpoint({
+        id: "ep_fail",
+        invite_id: null,
+        slug: "fail",
+        hostname: "fail.mediaryconnect.app",
+        status: "revoke_failed",
+        revoke_reason: "refunded",
+        revoked_at: null,
+        cf_tunnel_id: "t-old",
+      }),
+    );
+    await db.insertEndpoint(
+      postAccessEndpoint({
+        id: "ep_live",
+        invite_id: null,
+        slug: "live",
+        hostname: "live.mediaryconnect.app",
+        status: "active",
+        revoke_reason: null,
+        cf_tunnel_id: "t-live",
+      }),
+    );
+    await db.insertEndpoint(
+      postAccessEndpoint({
+        id: "ep_dead",
+        invite_id: null,
+        slug: "dead",
+        hostname: "dead.mediaryconnect.app",
+        status: "revoked",
+        revoke_reason: "admin",
+        revoked_at: "2026-09-01T00:00:00.000Z",
+        cf_tunnel_id: "t-dead",
+      }),
+    );
+
+    expect(await db.finishFailedRevoke({ id: "ep_live", cfTunnelId: "t-live", at })).toBe(false);
+    expect((await db.getEndpointById("ep_live"))?.status).toBe("active");
+    expect(await db.finishFailedRevoke({ id: "ep_dead", cfTunnelId: "t-dead", at })).toBe(false);
+    expect((await db.getEndpointById("ep_dead"))?.revoke_reason).toBe("admin");
+    expect(await db.finishFailedRevoke({ id: "missing", cfTunnelId: "t-old", at })).toBe(false);
+    expect(await db.finishFailedRevoke({ id: "ep_fail", cfTunnelId: "t-other", at })).toBe(false);
+    expect((await db.getEndpointById("ep_fail"))?.status).toBe("revoke_failed");
+    expect(await db.finishFailedRevoke({ id: "ep_fail", cfTunnelId: "t-old", at })).toBe(true);
+    expect(await db.getEndpointById("ep_fail")).toMatchObject({
+      status: "revoked",
+      revoked_at: at,
+      revoke_reason: "refunded",
+      cf_tunnel_id: "t-old",
+    });
+    expect(await db.finishFailedRevoke({ id: "ep_fail", cfTunnelId: "t-old", at })).toBe(false);
   });
 });

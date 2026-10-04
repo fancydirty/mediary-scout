@@ -233,6 +233,10 @@ export interface ConnectDb {
     cfDnsRecordId: string;
     tokenSha256: string;
   }): Promise<boolean>;
+  /** Finishes a failed revoke whose old Cloudflare resources were just deleted. Matches only the row
+   *  as captured (still revoke_failed with that old tunnel), so it never touches a row another request
+   *  has meanwhile restored. True when THIS call flipped it. */
+  finishFailedRevoke(input: { id: string; cfTunnelId: string; at: string }): Promise<boolean>;
   /** Best-effort row removal for orphan compensation (no-op when absent). */
   deleteEndpoint(endpointId: string): Promise<void>;
   insertAudit(row: AuditRow): Promise<void>;
@@ -726,6 +730,17 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
         if (e instanceof Error && e.message.includes("UNIQUE constraint failed")) return false;
         throw e;
       }
+    },
+
+    async finishFailedRevoke(input) {
+      const result = (await d1
+        .prepare(
+          `UPDATE endpoints SET status = 'revoked', revoked_at = ?
+            WHERE id = ? AND status = 'revoke_failed' AND cf_tunnel_id = ?`,
+        )
+        .bind(input.at, input.id, input.cfTunnelId)
+        .run()) as { meta?: { changes?: number } };
+      return (result.meta?.changes ?? 0) === 1;
     },
 
     async deleteEndpoint(endpointId) {
@@ -1648,6 +1663,15 @@ export function createMemoryConnectDb(): ConnectDb {
       row.last_seen_at = null;
       row.revoked_at = null;
       row.revoke_reason = null;
+      return true;
+    },
+
+    async finishFailedRevoke(input) {
+      const row = endpoints.get(input.id);
+      if (row === undefined) return false;
+      if (row.status !== "revoke_failed" || row.cf_tunnel_id !== input.cfTunnelId) return false;
+      row.status = "revoked";
+      row.revoked_at = input.at;
       return true;
     },
 

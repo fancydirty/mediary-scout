@@ -428,6 +428,64 @@ describe("memory ConnectDb", () => {
     expect((await db.getEndpointById("ep_dead"))?.status).toBe("revoked");
   });
 
+  it("finishFailedRevoke flips only the captured revoke_failed row", async () => {
+    const db = createMemoryConnectDb();
+    const at = "2026-10-04T00:00:00.000Z";
+    await db.insertEndpoint(
+      makeEndpoint({
+        id: "ep_fail",
+        invite_id: null,
+        slug: "fail",
+        hostname: "fail.example",
+        account_id: "act_1",
+        status: "revoke_failed",
+        revoke_reason: "refunded",
+        revoked_at: null,
+        cf_tunnel_id: "t-old",
+      }),
+    );
+    await db.insertEndpoint(
+      makeEndpoint({
+        id: "ep_live",
+        invite_id: null,
+        slug: "live",
+        hostname: "live.example",
+        account_id: "act_2",
+        status: "active",
+        revoke_reason: null,
+        cf_tunnel_id: "t-live",
+      }),
+    );
+    await db.insertEndpoint(
+      makeEndpoint({
+        id: "ep_dead",
+        invite_id: null,
+        slug: "dead",
+        hostname: "dead.example",
+        account_id: "act_3",
+        status: "revoked",
+        revoke_reason: "admin",
+        revoked_at: "2026-09-01T00:00:00.000Z",
+        cf_tunnel_id: "t-dead",
+      }),
+    );
+
+    expect(await db.finishFailedRevoke({ id: "ep_live", cfTunnelId: "t-live", at })).toBe(false);
+    expect((await db.getEndpointById("ep_live"))?.status).toBe("active");
+    expect(await db.finishFailedRevoke({ id: "ep_dead", cfTunnelId: "t-dead", at })).toBe(false);
+    expect((await db.getEndpointById("ep_dead"))?.revoke_reason).toBe("admin");
+    expect(await db.finishFailedRevoke({ id: "ep_fail", cfTunnelId: "t-other", at })).toBe(false);
+    expect((await db.getEndpointById("ep_fail"))?.status).toBe("revoke_failed");
+    expect(await db.finishFailedRevoke({ id: "ep_fail", cfTunnelId: "t-old", at })).toBe(true);
+    expect(await db.getEndpointById("ep_fail")).toMatchObject({
+      status: "revoked",
+      revoked_at: at,
+      revoke_reason: "refunded",
+      cf_tunnel_id: "t-old",
+    });
+    expect(await db.finishFailedRevoke({ id: "ep_fail", cfTunnelId: "t-old", at })).toBe(false);
+  });
+
   it("insertAudit roundtrips via listAudits", async () => {
     const db = createMemoryConnectDb();
     const audit: AuditRow = {

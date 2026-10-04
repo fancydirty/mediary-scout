@@ -5,10 +5,26 @@ import { AT_CAPACITY_MESSAGE, CAPACITY_LIMIT } from "./capacity.js";
 import type { CfApi } from "./cf-api.js";
 import { restoreEndpoint, type RestoreDeps } from "./restore.js";
 
+vi.mock("./crypto-token.js", async () => {
+  const actual = await vi.importActual<typeof import("./crypto-token.js")>("./crypto-token.js");
+  return {
+    ...actual,
+    sha256Hex: vi.fn((value: string) => actual.sha256Hex(value)),
+  };
+});
+
 const NOW = "2026-10-04T00:00:00.000Z";
 const FUTURE = "2027-07-28T12:00:00.000Z";
 
-function fakeCf(calls: string[], opts: { dnsThrows?: boolean; deleteTunnelThrows?: boolean } = {}): CfApi {
+function fakeCf(
+  calls: string[],
+  opts: {
+    dnsThrows?: boolean;
+    deleteTunnelThrows?: boolean;
+    deleteDnsThrows?: boolean;
+    deleteAccessThrows?: boolean;
+  } = {},
+): CfApi {
   return {
     async createTunnel(name) {
       calls.push(`createTunnel:${name}`);
@@ -34,8 +50,12 @@ function fakeCf(calls: string[], opts: { dnsThrows?: boolean; deleteTunnelThrows
     },
     async deleteDnsRecord(recordId) {
       calls.push(`deleteDns:${recordId}`);
+      if (opts.deleteDnsThrows) throw new Error("delete dns boom");
     },
-    async deleteAccessApp() {},
+    async deleteAccessApp(appId) {
+      calls.push(`deleteAccess:${appId}`);
+      if (opts.deleteAccessThrows) throw new Error("delete access boom");
+    },
   };
 }
 
@@ -124,6 +144,7 @@ describe("restoreEndpoint", () => {
       previous_tunnel_id: "t-old",
       tunnel_id: "tid-scout-fam",
       previous_reason: "expired",
+      previous_status: "revoked",
     });
   });
 
@@ -188,28 +209,133 @@ describe("restoreEndpoint", () => {
         revoke_reason: "refunded",
         cf_tunnel_id: "t-old",
         cf_dns_record_id: "dns-old",
+        cf_access_app_id: "app-old",
       }),
     );
     const calls: string[] = [];
     await restoreEndpoint({ accountId: "A", deps: deps(db, fakeCf(calls)) });
-    expect(calls.indexOf("deleteDns:dns-old")).toBeGreaterThanOrEqual(0);
-    expect(calls.indexOf("deleteTunnel:t-old")).toBeGreaterThan(calls.indexOf("deleteDns:dns-old"));
-    expect(calls.indexOf("createTunnel:scout-fam")).toBeGreaterThan(calls.indexOf("deleteTunnel:t-old"));
+    expect(calls).toEqual([
+      "deleteAccess:app-old",
+      "deleteDns:dns-old",
+      "deleteTunnel:t-old",
+      "createTunnel:scout-fam",
+      "ingress:tid-scout-fam",
+      "dns:fam",
+    ]);
     expect((await db.getEndpointById("ep_old"))?.status).toBe("active");
+    const audits = await db.listAudits();
+    expect(audits.map((item) => item.action)).not.toContain("endpoint.revoke");
+    const audit = audits.find((item) => item.action === "endpoint.restore");
+    expect(JSON.parse(audit?.detail_json ?? "{}")).toMatchObject({
+      previous_tunnel_id: "t-old",
+      previous_reason: "refunded",
+      previous_status: "revoke_failed",
+    });
   });
 
-  it("stops with restore cleanup failed when that cleanup still fails, and keeps the row revoke_failed", async () => {
+  it("stops with restore cleanup failed when a captured delete fails, and keeps the row revoke_failed", async () => {
     const db = createMemoryConnectDb();
     await seedAccount(db, "A", FUTURE);
     await db.insertEndpoint(
-      endpoint({ id: "ep_old", slug: "fam", account_id: "A", status: "revoke_failed", revoke_reason: "refunded" }),
+      endpoint({
+        id: "ep_old",
+        slug: "fam",
+        account_id: "A",
+        status: "revoke_failed",
+        revoke_reason: "refunded",
+        cf_tunnel_id: "t-old",
+        cf_dns_record_id: "dns-old",
+        cf_access_app_id: "app-old",
+        revoked_at: null,
+      }),
     );
     const calls: string[] = [];
     await expect(
-      restoreEndpoint({ accountId: "A", deps: deps(db, fakeCf(calls, { deleteTunnelThrows: true })) }),
+      restoreEndpoint({ accountId: "A", deps: deps(db, fakeCf(calls, { deleteDnsThrows: true })) }),
     ).rejects.toThrow("restore cleanup failed");
-    expect(calls.some((call) => call.startsWith("createTunnel:"))).toBe(false);
+    expect(calls).toEqual(["deleteAccess:app-old", "deleteDns:dns-old", "deleteTunnel:t-old"]);
     expect((await db.getEndpointById("ep_old"))?.status).toBe("revoke_failed");
+    expect((await db.getEndpointById("ep_old"))?.revoke_reason).toBe("refunded");
+    expect((await db.listAudits()).map((item) => item.action)).not.toContain("endpoint.revoke_failed");
+  });
+
+  it("throws already provisioned when another request restored the row during cleanup, without deleting the new tunnel", async () => {
+    const db = createMemoryConnectDb();
+    await seedAccount(db, "A", FUTURE);
+    await db.insertEndpoint(
+      endpoint({
+        id: "ep_old",
+        slug: "fam",
+        account_id: "A",
+        status: "revoke_failed",
+        revoke_reason: "refunded",
+        cf_tunnel_id: "t-old",
+        cf_dns_record_id: "dns-old",
+      }),
+    );
+    const calls: string[] = [];
+    const cf = fakeCf(calls);
+    const deleteTunnel = cf.deleteTunnel.bind(cf);
+    cf.deleteTunnel = async (tunnelId: string) => {
+      await deleteTunnel(tunnelId);
+      if (tunnelId !== "t-old") return;
+      await db.markEndpointRevoked("ep_old", NOW, "refunded");
+      await db.reactivateEndpoint({
+        id: "ep_old",
+        accountId: "A",
+        cfTunnelId: "t-new",
+        cfDnsRecordId: "dns-new",
+        tokenSha256: "sha-new",
+      });
+    };
+    await expect(restoreEndpoint({ accountId: "A", deps: deps(db, cf) })).rejects.toThrow(
+      "already provisioned",
+    );
+    expect(calls).not.toContain("deleteTunnel:t-new");
+    expect(calls).not.toContain("deleteDns:dns-new");
+    expect(calls.some((call) => call.startsWith("createTunnel:"))).toBe(false);
+    expect(await db.getEndpointById("ep_old")).toMatchObject({
+      status: "active",
+      cf_tunnel_id: "t-new",
+      cf_dns_record_id: "dns-new",
+    });
+  });
+
+  it("restores when another request already finished the same cleanup", async () => {
+    const db = createMemoryConnectDb();
+    await seedAccount(db, "A", FUTURE);
+    await db.insertEndpoint(
+      endpoint({
+        id: "ep_old",
+        slug: "fam",
+        account_id: "A",
+        status: "revoke_failed",
+        revoke_reason: "refunded",
+        cf_tunnel_id: "t-old",
+        cf_dns_record_id: "dns-old",
+      }),
+    );
+    const calls: string[] = [];
+    const cf = fakeCf(calls);
+    const deleteTunnel = cf.deleteTunnel.bind(cf);
+    cf.deleteTunnel = async (tunnelId: string) => {
+      await deleteTunnel(tunnelId);
+      if (tunnelId === "t-old") await db.markEndpointRevoked("ep_old", NOW, "refunded");
+    };
+    await restoreEndpoint({ accountId: "A", deps: deps(db, cf) });
+    expect(calls).toEqual([
+      "deleteDns:dns-old",
+      "deleteTunnel:t-old",
+      "createTunnel:scout-fam",
+      "ingress:tid-scout-fam",
+      "dns:fam",
+    ]);
+    expect((await db.getEndpointById("ep_old"))?.status).toBe("active");
+    expect((await db.listAudits()).map((item) => item.action)).toEqual(["endpoint.restore"]);
+    expect(JSON.parse((await db.listAudits())[0]?.detail_json ?? "{}")).toMatchObject({
+      previous_status: "revoke_failed",
+      previous_tunnel_id: "t-old",
+    });
   });
 
   it("checks capacity before creating anything", async () => {
@@ -279,5 +405,20 @@ describe("restoreEndpoint", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it("discards the new DNS record and tunnel when hashing the token rejects", async () => {
+    vi.mocked(sha256Hex).mockRejectedValueOnce(new Error("hash boom"));
+    const db = createMemoryConnectDb();
+    await seedAccount(db, "A", FUTURE);
+    await db.insertEndpoint(endpoint({ id: "ep_old", slug: "fam", account_id: "A" }));
+    const calls: string[] = [];
+    await expect(restoreEndpoint({ accountId: "A", deps: deps(db, fakeCf(calls)) })).rejects.toThrow(
+      "hash boom",
+    );
+    expect(calls).toContain("deleteDns:rec-fam");
+    expect(calls).toContain("deleteTunnel:tid-scout-fam");
+    expect((await db.getEndpointById("ep_old"))?.status).toBe("revoked");
+    expect((await db.getEndpointById("ep_old"))?.cf_tunnel_id).toBe("t-old");
   });
 });

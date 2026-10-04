@@ -238,7 +238,7 @@ npx wrangler d1 execute scout-connect --remote \
 | `0002-waitlist-survey.sql` | Adds nullable `waitlist.survey_json TEXT` for `POST /waitlist/survey`. Single additive `ALTER` (no rebuild; pre-existing rows read back NULL). Migrate before deploying. Wrong order no longer takes the funnel down — `insertWaitlist` falls back to the legacy column list and the survey route answers 503 — but degraded means exactly that: signups land without the column and their survey submits fail until this runs. |
 | `0006-alipay-payment-orders.sql` | Historical payment order shape. Existing legacy rows remain readable. |
 | `0007-waffo-payment-orders.sql` | Rebuilds `payment_orders` so the `waffo` provider and Waffo session/order evidence are accepted while preserving historical rows and indexes. Required before deploying the Waffo Worker. |
-| `0009-endpoint-revoke-reason.sql` | Adds nullable `endpoints.revoke_reason`. Backfills `refunded` only on revoked or revoke-failed rows whose account has a refunded payment order. Other pre-existing revoked rows stay NULL and are not self-restorable. Apply before deploying the restore Worker. |
+| `0009-endpoint-revoke-reason.sql` | Adds nullable `endpoints.revoke_reason`. Backfills `refunded` only when `revoked_at` falls within 10 minutes after a refunded order's `refunded_at` for the same account (a refund revoke is that same request: `refunded_at`, then `revokeEndpoint`). A later admin revoke, a revoke before the refund, a `revoke_failed` row (`revoked_at` NULL), and an active row stay NULL and are not self-restorable. Apply before deploying the restore Worker. |
 
 Notes on writing migrations here:
 
@@ -290,7 +290,8 @@ refund removed the last paid time, or `admin` for a manual revoke. After the
 account pays again, `POST /api/provision` with that same slug brings the same
 row back: a new tunnel and DNS record, the slug and hostname unchanged. An
 admin revoke cannot be restored by the owner. Rows revoked before migration
-0009 stay unrestorable unless the backfill marked them `refunded`.
+0009 stay unrestorable unless the backfill marked them `refunded`, and that
+backfill only matches a revoke within 10 minutes after the order's `refunded_at`.
 
 **Invite someone** (admin page `https://mediaryconnect.app/admin`):
 1. Paste `ADMIN_TOKEN`, create invite with their email (+ optional slug).

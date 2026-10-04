@@ -1,6 +1,7 @@
 import "server-only";
 
 import { scoutConnectBaseUrl } from "./remote-access";
+import { normalizeTunnelId } from "./connect-tunnel";
 
 const CONNECT_TIMEOUT_MS = 10_000;
 const CONNECT_PROVISION_TIMEOUT_MS = 30_000;
@@ -29,7 +30,8 @@ export type ConnectFailureReason =
   | "already_provisioned"
   | "slug_taken"
   | "no_endpoint"
-  | "not_found";
+  | "not_found"
+  | "restore_cleanup_failed";
 
 export type ConnectFailure = {
   ok: false;
@@ -154,6 +156,8 @@ function messageFor(reason: ConnectFailureReason): string {
       return "请先购买有效时长。";
     case "at_capacity":
       return "暂时售罄，请稍后再试。";
+    case "restore_cleanup_failed":
+      return "暂时恢复不了，请过几分钟再试；一直不行请联系我们。";
     case "already_provisioned":
       return "这个账号已经有一个域名。";
     case "slug_taken":
@@ -345,6 +349,7 @@ function apiErrorReason(value: unknown): ConnectFailureReason | null {
     "bad slug": "bad_slug",
     "already provisioned": "already_provisioned",
     "slug taken": "slug_taken",
+    "restore cleanup failed": "restore_cleanup_failed",
   };
   return reasons[value.error] ?? null;
 }
@@ -412,7 +417,11 @@ export async function getConnectAccount(credential: string, options: ConnectClie
   if (result.response.status === 200 && isAccount(result.body)) {
     const { endpoint, restorable } = result.body;
     const normalizedEndpoint = endpoint === null ? null : { ...endpoint };
-    if (normalizedEndpoint && !nonEmptyString(normalizedEndpoint.tunnelId)) delete normalizedEndpoint.tunnelId;
+    if (normalizedEndpoint) {
+      const tunnelId = normalizeTunnelId(normalizedEndpoint.tunnelId);
+      if (tunnelId) normalizedEndpoint.tunnelId = tunnelId;
+      else delete normalizedEndpoint.tunnelId;
+    }
     return {
       ok: true,
       ...result.body,
@@ -503,7 +512,7 @@ export async function provisionConnectSlug(
   }
   if (result.response.status === 503) {
     const reason = apiErrorReason(result.body);
-    if (reason === "at_capacity") return failure(reason);
+    if (reason === "at_capacity" || reason === "restore_cleanup_failed") return failure(reason);
   }
   return statusFailure(result.response, result.body);
 }

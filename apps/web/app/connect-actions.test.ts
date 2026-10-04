@@ -437,6 +437,19 @@ describe("connectProvisionAction", () => {
     const result = await connectProvisionAction("family");
     expect(result).toMatchObject({ ok: false, reason: "already_provisioned" });
   });
+
+  it("passes the restore cleanup failure message through to the wizard", async () => {
+    vi.mocked(provisionConnectSlug).mockResolvedValueOnce({
+      ok: false,
+      reason: "restore_cleanup_failed",
+      message: "暂时恢复不了，请过几分钟再试；一直不行请联系我们。",
+    });
+    expect(await connectProvisionAction("family")).toEqual({
+      ok: false,
+      reason: "restore_cleanup_failed",
+      message: "暂时恢复不了，请过几分钟再试；一直不行请联系我们。",
+    });
+  });
 });
 
 describe("pending order", () => {

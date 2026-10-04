@@ -1,7 +1,6 @@
 import { AT_CAPACITY_MESSAGE, CAPACITY_LIMIT } from "./capacity.js";
 import { sha256Hex } from "./crypto-token.js";
 import { isEntitlementActive, latestExpiry } from "./entitlement.js";
-import { revokeEndpoint } from "./revoke.js";
 import { createTunnelResources } from "./tunnel-resources.js";
 import type { CfApi } from "./cf-api.js";
 import type { ConnectDb } from "./db.js";
@@ -30,32 +29,54 @@ export async function restoreEndpoint(input: {
     throw new Error("no active entitlement");
   }
   if ((await db.getActiveEndpointByAccountId(accountId)) !== null) throw new Error("already provisioned");
-  let endpoint = await db.getRestorableEndpointByAccountId(accountId);
+  const endpoint = await db.getRestorableEndpointByAccountId(accountId);
   if (endpoint === null) throw new Error("nothing to restore");
   const previousReason = endpoint.revoke_reason;
+  const previousStatus = endpoint.status;
 
   if (endpoint.status === "revoke_failed") {
     // Cloudflare may still hold the old tunnel or DNS record; a second CNAME for the same name
-    // would be refused. Finish that revoke first (deletes are 404-idempotent).
-    try {
-      await revokeEndpoint({
-        endpointId: endpoint.id,
-        reason: endpoint.revoke_reason ?? "expired",
-        deps: { cf, db, now: deps.now, newAuditId: deps.newAuditId, actor: "system" },
-      });
-    } catch {
-      throw new Error("restore cleanup failed");
+    // would be refused. Delete only the ids this request captured. revokeEndpoint re-reads the
+    // row and would delete a tunnel a concurrent restore has already installed.
+    // Deletes are 404-idempotent in the cf client. Attempt every captured resource; one failure
+    // must not skip the rest, and any failure leaves the row revoke_failed.
+    const accessAppId = endpoint.cf_access_app_id;
+    const dnsRecordId = endpoint.cf_dns_record_id;
+    const tunnelId = endpoint.cf_tunnel_id;
+    const failures: unknown[] = [];
+    const attempt = async (fn: () => Promise<void>): Promise<void> => {
+      try {
+        await fn();
+      } catch (e) {
+        failures.push(e);
+      }
+    };
+    if (accessAppId) await attempt(() => cf.deleteAccessApp(accessAppId));
+    await attempt(() => cf.deleteDnsRecord(dnsRecordId));
+    await attempt(() => cf.deleteTunnel(tunnelId));
+    if (failures.length > 0) throw new Error("restore cleanup failed");
+    const finished = await db.finishFailedRevoke({
+      id: endpoint.id,
+      cfTunnelId: tunnelId,
+      at: deps.now(),
+    });
+    if (!finished) {
+      const current = await db.getEndpointById(endpoint.id);
+      // Another request finished this same cleanup. Carry on and install a new tunnel.
+      if (current === null || current.status !== "revoked" || current.cf_tunnel_id !== tunnelId) {
+        throw new Error("already provisioned");
+      }
     }
-    endpoint = (await db.getEndpointById(endpoint.id)) ?? endpoint;
-    if (endpoint.status !== "revoked") throw new Error("restore cleanup failed");
   }
 
   if ((await db.countLiveEndpoints()) >= CAPACITY_LIMIT) throw new Error(AT_CAPACITY_MESSAGE);
 
   const resources = await createTunnelResources(cf, endpoint.slug, endpoint.hostname);
-  const tokenSha256 = await sha256Hex(resources.token);
   let restored = false;
   try {
+    // Same post-CF invariant as provisionEndpoint: hashing sits inside the rollback,
+    // so a rejection discards the DNS record and tunnel that already exist.
+    const tokenSha256 = await sha256Hex(resources.token);
     restored = await db.reactivateEndpoint({
       id: endpoint.id,
       accountId,
@@ -86,6 +107,7 @@ export async function restoreEndpoint(input: {
         previous_tunnel_id: endpoint.cf_tunnel_id,
         tunnel_id: resources.tunnelId,
         previous_reason: previousReason,
+        previous_status: previousStatus,
       }),
     });
   } catch (e) {
