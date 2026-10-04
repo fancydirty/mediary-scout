@@ -42,8 +42,8 @@ ${BRAND_BAR}
 <section class="hero"><p class="eyebrow">INSTANCE LINK</p><h1>确认连接</h1><p class="hint">有人请求把下面这个实例连接到你的 Mediary Connect 账户：</p></section>
 <div class="panel">
 <p class="email">${esc(state.email)}</p>
-<p class="code" aria-label="验证码">${esc(state.verifyCode)}</p>
-<p class="meta">请核对实例页面上显示的也是 ${esc(state.verifyCode)}<br>请求 IP：${esc(state.requestIp || "未知")}<br>请求时间：${esc(formatBeijingTime(state.requestedAt))}</p>
+<p class="code" aria-label="核对码">${esc(state.verifyCode)}</p>
+<p class="meta">请核对实例页面上显示的核对码也是 ${esc(state.verifyCode)}<br>请求 IP：${esc(state.requestIp || "未知")}<br>请求时间：${esc(formatBeijingTime(state.requestedAt))}</p>
 <p class="warning">只有你自己刚在实例的「设置 → 远程访问」里点了连接，才点确认；不是你发起的就关掉这个页面。</p>
 <button id="btn" type="button">确认连接</button>
 <p class="msg" id="msg" role="status" aria-live="polite" hidden></p>

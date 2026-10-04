@@ -10,7 +10,12 @@ describe("createInstanceLinkSender", () => {
       expect(payload.from).toContain("Mediary Connect");
       expect(payload.to).toEqual(["alice@example.com"]);
       expect(payload.subject).toBe("确认连接你的 Mediary Scout 实例");
-      expect(payload.text).toContain("验证码：7K3P");
+      // A code to compare with the instance page, not one to type in anywhere: say so.
+      expect(payload.text).toContain("核对码：7K3P");
+      expect(payload.text).toContain("请先确认实例「设置 → 远程访问」页面上显示的也是这个核对码");
+      expect(payload.html).toContain("请先确认实例「设置 → 远程访问」页面上显示的也是这个核对码");
+      expect(payload.text).not.toContain("验证码");
+      expect(payload.html).not.toContain("验证码");
       expect(payload.text).toContain("192.0.2.8");
       expect(payload.text).toContain("2026-10-03 08:00（北京时间）");
       expect(payload.html).toContain("&lt;script&gt;");

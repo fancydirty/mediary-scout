@@ -729,10 +729,9 @@ export function ConnectWizard(props: ConnectWizardProps) {
 
       {step === 2 && pending ? (
         <div>
-          <p className="panel-note">我们给 <strong>{pending.email}</strong> 发了一封邮件。在任何设备上打开邮件点「确认连接」，这里会自动继续。</p>
-          <p style={{ margin: "8px 0", fontSize: "1.25rem", fontWeight: 700 }}>确认码：{pending.verifyCode}</p>
+          <p className="panel-note">我们给 <strong>{pending.email}</strong> 发了一封邮件。在任何设备上打开它，看邮件里的核对码和下面这个一样，再点「确认连接」，这里会自动继续。</p>
+          <p style={{ margin: "8px 0", fontSize: "1.25rem", fontWeight: 700 }}>核对码：{pending.verifyCode}</p>
           <p className="panel-note">30 分钟内有效。</p>
-          <p className="panel-note">如果不是你刚在这台实例里发起的，请忽略这封邮件。</p>
           {/* A mistyped address or a mail that never arrives must not lock the page for 30 minutes. */}
           <button type="button" className="ghost-button" onClick={cancelLink} disabled={busy}>换个邮箱或重新发送</button>
         </div>

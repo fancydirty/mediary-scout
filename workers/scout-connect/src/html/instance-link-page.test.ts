@@ -66,7 +66,9 @@ describe("instanceLinkPage", () => {
       requestedAt: "2026-10-03T00:00:00.000Z",
     });
     expect(html).toContain("a&lt;img src=x onerror=alert(1)&gt;@example.com");
-    expect(html).toContain("请核对实例页面上显示的也是 7K3P");
+    expect(html).toContain("请核对实例页面上显示的核对码也是 7K3P");
+    expect(html).toContain('aria-label="核对码"');
+    expect(html).not.toContain("验证码");
     expect(html).toContain("只有你自己刚在实例的「设置 → 远程访问」里点了连接");
     expect(html).toContain("2026-10-03 08:00（北京时间）");
     expect(html).toContain('id="msg" role="status" aria-live="polite"');

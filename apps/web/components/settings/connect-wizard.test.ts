@@ -54,7 +54,10 @@ describe("ConnectWizard while waiting for the email confirmation", () => {
         passwordSet: true,
       }),
     );
-    expect(html).toContain("确认码：ABCD");
+    // Same name as in the email and on the confirm page, and it says what to do with it.
+    expect(html).toContain("核对码：ABCD");
+    expect(html).toContain("看邮件里的核对码和下面这个一样，再点「确认连接」");
+    expect(html).not.toContain("确认码");
     expect(html).toMatch(/<button[^>]*>换个邮箱或重新发送<\/button>/);
   });
 });
