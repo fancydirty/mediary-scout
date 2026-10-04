@@ -456,6 +456,68 @@ describe("drainQueueOnce — several queued runs at once (the 同时处理 setti
     expect(await drain).toBe(3);
   });
 
+  /** runNext whose `heldCall`-th claim waits until the test releases it. */
+  function holdClaim(q: ReturnType<typeof fakeQueue>, heldCall: number) {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const state = { calls: 0, release: () => release() };
+    const runNext = vi.fn(async (claim?: QueueClaimOptions) => {
+      state.calls += 1;
+      if (state.calls === heldCall) await held;
+      return q.runNext(claim);
+    });
+    return { runNext, state };
+  }
+
+  it("looks again when the run on a skipped drive finished while a claim was looking, instead of ending the tick", async () => {
+    const q = fakeQueue([
+      { id: "a1", drive: "cs_a" },
+      { id: "a2", drive: "cs_a" },
+    ]);
+    const { runNext, state } = holdClaim(q, 2);
+    const runScheduled = vi.fn(async () => void q.events.push("sweep"));
+    const drain = drainQueueOnce({ runNext, runScheduled, concurrency: async () => 2, pollMs: 1, sleep: poll });
+
+    await until(() => state.calls === 2); // this claim skips cs_a: a1 is going
+    q.finish("a1");
+    await until(() => q.events.includes("finish a1"));
+    state.release(); // comes back empty-handed, with a1's drive still skipped
+    await until(() => q.events.includes("start a2") || q.events.includes("sweep"));
+    expect(q.events).toEqual(["start a1", "finish a1", "start a2"]); // not the sweep first
+    q.finish("a2");
+    expect(await drain).toBe(2);
+    expect(q.events.at(-1)).toBe("sweep");
+  });
+
+  it("looks again at once when that happens while other runs are still going", async () => {
+    const q = fakeQueue([
+      { id: "a1", drive: "cs_a" },
+      { id: "b", drive: "cs_b" },
+      { id: "a2", drive: "cs_a" },
+    ]);
+    const { runNext, state } = holdClaim(q, 3);
+    const drain = drainQueueOnce({
+      runNext,
+      runScheduled: async () => undefined,
+      concurrency: async () => 3,
+      pollMs: 1,
+      // Never wakes by itself: only a run finishing makes the drain look again.
+      sleep: () => new Promise<void>(() => undefined),
+    });
+
+    await until(() => state.calls === 3); // this claim skips cs_a and cs_b
+    q.finish("a1");
+    await until(() => q.events.includes("finish a1"));
+    state.release();
+    await until(() => q.events.includes("start a2"));
+    expect(q.events).toEqual(["start a1", "start b", "finish a1", "start a2"]); // b still going
+    q.finish("b");
+    q.finish("a2");
+    expect(await drain).toBe(3);
+  });
+
   it("with the setting at 1 runs one after another, as before", async () => {
     const q = fakeQueue([
       { id: "a", drive: "cs_a" },

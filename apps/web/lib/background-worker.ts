@@ -99,7 +99,9 @@ async function readConcurrency(deps: DrainDeps): Promise<number> {
  * run going, and a run with no bound drive (it lands on the account's default drive,
  * not known here) only starts when nothing else runs. While runs are going it looks at
  * the queue again every `pollMs`, so a 获取 clicked on another drive starts right away
- * instead of waiting for the run in front of it. A throw stops new claims for this
+ * instead of waiting for the run in front of it. A claim that comes back empty after a
+ * run on a drive it skipped has finished looks again at once, so the drain never stops
+ * on an out-of-date skip list. A throw stops new claims for this
  * drain; the runs already going finish. Returns how many runs were started.
  */
 async function drainQueue(deps: DrainDeps): Promise<number> {
@@ -115,8 +117,10 @@ async function drainQueue(deps: DrainDeps): Promise<number> {
   // One claim at a time, so the next claim already sees this one's drive as busy.
   // Settles as soon as a run is claimed (it keeps going in `running`), or once
   // runNext returns without claiming; the bookkeeping is done before it settles.
+  // "stale": nothing claimed, but a run on a drive it skipped finished while it was
+  // looking, so what it skipped may be claimable now.
   const claimOne = () =>
-    new Promise<boolean>((settleClaim) => {
+    new Promise<"claimed" | "idle" | "stale">((settleClaim) => {
       const excludeConnectedStorageIds = [...busyDrives];
       const excludeUnbound = running.size > 0;
       let claimedDrive: string | null | undefined;
@@ -130,7 +134,7 @@ async function drainQueue(deps: DrainDeps): Promise<number> {
               claimedDrive = connectedStorageId;
               if (connectedStorageId === null) unboundRunning = true;
               else busyDrives.add(connectedStorageId);
-              settleClaim(true);
+              settleClaim("claimed");
             },
           }),
         )
@@ -149,7 +153,8 @@ async function drainQueue(deps: DrainDeps): Promise<number> {
           if (claimedDrive === null) unboundRunning = false;
           else if (claimedDrive !== undefined) busyDrives.delete(claimedDrive);
           running.delete(job);
-          settleClaim(ran || claimedDrive !== undefined);
+          if (ran || claimedDrive !== undefined) settleClaim("claimed");
+          else settleClaim(excludeConnectedStorageIds.some((drive) => !busyDrives.has(drive)) ? "stale" : "idle");
         });
       running.add(job);
     });
@@ -157,8 +162,9 @@ async function drainQueue(deps: DrainDeps): Promise<number> {
   for (;;) {
     const limit = await readConcurrency(deps);
     while (!failed && !unboundRunning && running.size < limit && started < maxDrains) {
-      if (!(await claimOne())) break;
-      started += 1;
+      const outcome = await claimOne();
+      if (outcome === "idle") break;
+      if (outcome === "claimed") started += 1;
     }
     if (running.size === 0) break;
     await Promise.race([...running, sleep(pollMs)]);
