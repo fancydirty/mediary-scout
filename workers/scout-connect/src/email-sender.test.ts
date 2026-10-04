@@ -11,9 +11,12 @@ describe("expiryReminderText", () => {
     expect(text).toContain("2026-08-06");
     expect(text).toContain("还有 7 天");
     expect(text).toContain("7 天宽限期");
-    // 收回后不会自动接回：续期后要在控制台点恢复，再接入一次。
+    // 提醒发出时地址还在用：宽限期满前续期什么都不用做；
+    // 只有宽限期满、地址被收回之后再续期，才要在控制台点恢复，再接入一次。
+    expect(text).toContain("宽限期满前续期,一切照旧");
     expect(text).toContain("回收隧道");
-    expect(text).toContain("续期后在控制台点「恢复原地址」");
+    expect(text).toContain("那之后续期,在控制台点「恢复原地址」");
+    expect(text).not.toContain("续期后在控制台点「恢复原地址」");
     expect(text).not.toContain("需重跑一次一行接入命令");
     expect(text).toContain("alice.mediaryconnect.app");
     expect(text).toContain("/pricing");
