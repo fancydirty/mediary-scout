@@ -7,6 +7,7 @@ import {
   clearSingleUserPassword,
   requireAuthenticatedAccountId,
   isRemoteRequest,
+  UnauthenticatedAccountError,
 } from "../../../../lib/workflow-runtime";
 
 /**
@@ -50,7 +51,15 @@ export async function POST(request: NextRequest) {
     );
   }
   if (passwordState !== false) {
-    await requireAuthenticatedAccountId();
+    try {
+      await requireAuthenticatedAccountId();
+    } catch (error) {
+      // 外网没登录就来改密/清密：是 401，不是服务器出错。
+      if (error instanceof UnauthenticatedAccountError) {
+        return NextResponse.json({ error: error.message }, { status: 401 });
+      }
+      throw error;
+    }
   }
 
   if (body.clear === true) {
