@@ -76,6 +76,7 @@ describe("ConnectWizard expiry time", () => {
             endpoint: { slug: "x", hostname: "x.mediaryconnect.app", status: "active" },
             checkoutOpen: true,
             tiers: [],
+            restorable: null,
           },
           hasTunnelToken: true,
           passwordSet: true,
@@ -103,6 +104,7 @@ describe("ConnectWizard access password on the 接入 step", () => {
           endpoint: { slug: "x", hostname: "x.mediaryconnect.app", status: "active" },
           checkoutOpen: true,
           tiers: [],
+          restorable: null,
         },
         hasTunnelToken: false,
         passwordSet,
@@ -139,6 +141,7 @@ describe("ConnectWizard step after the account is read", () => {
     endpoint: { slug: "x", hostname: "x.mediaryconnect.app", status: "active" },
     checkoutOpen: true,
     tiers: [],
+    restorable: null,
     ...over,
   });
 
@@ -167,6 +170,7 @@ describe("ConnectWizard when this instance's tunnel serves another name", () => 
     endpoint: { slug: "new", hostname: "new.mediaryconnect.app", status: "active" },
     checkoutOpen: true,
     tiers: [],
+    restorable: null,
   };
 
   it("goes to 接入 for the linked account's name instead of treating the old tunnel as its own", () => {
@@ -193,6 +197,7 @@ describe("ConnectWizard after a payment is confirmed", () => {
     endpoint,
     checkoutOpen: true,
     tiers: [],
+    restorable: null,
   });
   const endpoint = { slug: "x", hostname: "x.mediaryconnect.app", status: "active" };
 
@@ -225,5 +230,46 @@ describe("ConnectWizard link polling delay", () => {
     expect(nextLinkPollDelayMs(3_000, undefined, false)).toBe(3_000);
     expect(nextLinkPollDelayMs(3_000, 0, false)).toBe(3_000);
     expect(nextLinkPollDelayMs(3_000, 600, false)).toBe(10_000);
+  });
+});
+
+describe("ConnectWizard after the address was restored with a new tunnel", () => {
+  const account = {
+    email: "a@b.c", active: true, expiresAt: "2027-01-03T00:00:00.000Z",
+    endpoint: { slug: "fam", hostname: "fam.mediaryconnect.app", status: "active", tunnelId: "new-tunnel" },
+    checkoutOpen: true, tiers: [], restorable: null,
+  };
+
+  it("goes to 接入 when this instance's token belongs to the old tunnel, even though the name matches", () => {
+    expect(stepForAccount(account, true, "fam.mediaryconnect.app", "old-tunnel")).toBe(5);
+    expect(paymentOutcome(account, true, "fam.mediaryconnect.app", "old-tunnel")).toEqual({ step: 5, renewal: false });
+  });
+
+  it("treats the tunnel as its own when the tunnel ids match", () => {
+    expect(stepForAccount(account, true, "fam.mediaryconnect.app", "NEW-TUNNEL")).toBe(3);
+  });
+
+  it("falls back to the name when either tunnel id is unknown", () => {
+    expect(stepForAccount(account, true, "fam.mediaryconnect.app", null)).toBe(3);
+    expect(stepForAccount({ ...account, endpoint: { slug: "fam", hostname: "fam.mediaryconnect.app", status: "active" } }, true, "fam.mediaryconnect.app", "old-tunnel")).toBe(3);
+  });
+});
+
+describe("ConnectWizard with a reserved address to restore", () => {
+  const restorableAccount = {
+    email: "a@b.c", active: true, expiresAt: "2027-01-03T00:00:00.000Z", endpoint: null,
+    checkoutOpen: true, tiers: [], restorable: { slug: "fam", hostname: "fam.mediaryconnect.app" },
+  };
+
+  it("offers 恢复原地址 on the name step instead of the name input", () => {
+    const html = renderToStaticMarkup(createElement(ConnectWizard, { linked: true, email: "a@b.c", pending: null, account: restorableAccount, hasTunnelToken: false, passwordSet: true }));
+    expect(html).toContain("fam.mediaryconnect.app");
+    expect(html).toContain("恢复原地址");
+    expect(html).not.toContain('aria-label="专属名字"');
+  });
+
+  it("tells an expired account the address comes back after paying", () => {
+    const html = renderToStaticMarkup(createElement(ConnectWizard, { linked: true, email: "a@b.c", pending: null, account: { ...restorableAccount, active: false }, hasTunnelToken: false, passwordSet: true }));
+    expect(html).toContain("付款后可恢复原地址 fam.mediaryconnect.app");
   });
 });

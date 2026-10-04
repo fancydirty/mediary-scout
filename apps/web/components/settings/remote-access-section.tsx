@@ -14,6 +14,7 @@ import { PasswordChangeForm } from "../password-change-form";
 import { RemoteAccessTestButton } from "./remote-access-test-button";
 import { ConnectWizard, type ConnectWizardPending } from "./connect-wizard";
 import { connectAccountAction } from "../../app/connect-actions";
+import { tunnelIdFromToken } from "../../lib/connect-tunnel";
 import { getConnectAccountEmail, getConnectInstanceCredential, getConnectLinkPending, getConnectPendingOrder } from "../../lib/connect-link-store";
 
 /**
@@ -68,6 +69,7 @@ export async function RemoteAccessSection({
   // 只求值一次:重复调用会重跑校验,理论上还可能在同一次渲染里读到不同 env。
   const localHostname = await resolveInstanceConnectHostname();
   const localToken = await resolveInstanceTunnelToken();
+  const boundTunnelId = tunnelIdFromToken(localToken);
   const state = await resolveRemoteAccessState({
     token: localToken,
     hostname: localHostname,
@@ -276,6 +278,7 @@ export async function RemoteAccessSection({
         account={connectAccount}
         hasTunnelToken={Boolean(localToken)}
         boundHostname={localHostname}
+        boundTunnelId={boundTunnelId}
         passwordSet={passwordState}
         multiUser={isMultiUserEnabled()}
         pendingOrder={pendingOrder}

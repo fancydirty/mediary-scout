@@ -142,7 +142,32 @@ describe("connect-client", () => {
         account,
       ),
     });
-    expect(result).toEqual({ ok: true, ...account });
+    expect(result).toEqual({ ok: true, ...account, restorable: null });
+  });
+
+  it("keeps the tunnel id and the restorable address when Connect sends them", async () => {
+    const account = {
+      email: "owner@example.com", active: true, expiresAt: null,
+      endpoint: { slug: "fam", hostname: "fam.mediaryconnect.app", status: "active", tunnelId: "new-tunnel" },
+      checkoutOpen: true, tiers: [], restorable: null,
+    };
+    for (const body of [account, { ...account, endpoint: null, restorable: { slug: "fam", hostname: "fam.mediaryconnect.app" } }]) {
+      expect(await getConnectAccount(CREDENTIAL, { baseUrl: BASE, fetchImpl: fetchOnce(() => {}, body) })).toEqual({ ok: true, ...body });
+    }
+  });
+
+  it("drops malformed new fields instead of failing the whole account (older or odd Connect)", async () => {
+    const endpoint = { slug: "fam", hostname: "fam.mediaryconnect.app", status: "active" };
+    const account = { email: "owner@example.com", active: true, expiresAt: null, endpoint, checkoutOpen: true, tiers: [] };
+    for (const tunnelId of [undefined, 42, "", "   ", null, {}]) {
+      for (const restorable of [undefined, null, { slug: 1 }, { slug: "fam", hostname: "bad host" }, { slug: " ", hostname: "fam.mediaryconnect.app" }]) {
+        const result = await getConnectAccount(CREDENTIAL, {
+          baseUrl: BASE, fetchImpl: fetchOnce(() => {}, { ...account, endpoint: { ...endpoint, tunnelId }, restorable }),
+        });
+        expect(result).toEqual({ ok: true, ...account, restorable: null });
+        if (result.ok) expect(result.endpoint?.tunnelId).toBeUndefined();
+      }
+    }
   });
 
   it("creates checkout with tier and return URL", async () => {

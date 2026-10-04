@@ -54,6 +54,8 @@ export interface ConnectEndpoint {
   slug: string;
   hostname: string;
   status: string;
+  /** Cloudflare tunnel id; absent from older Connect versions. */
+  tunnelId?: string;
 }
 
 export interface ConnectAccount {
@@ -63,6 +65,8 @@ export interface ConnectAccount {
   endpoint: ConnectEndpoint | null;
   checkoutOpen: boolean;
   tiers: ConnectTier[];
+  /** The address this account can get back after renewing, when it has none live. */
+  restorable: { slug: string; hostname: string } | null;
 }
 
 export type StartInstanceLinkResult =
@@ -255,7 +259,7 @@ function isPollPending(value: unknown): value is { status: "pending" } {
   return record(value) && value.status === "pending";
 }
 
-function isAccount(value: unknown): value is ConnectAccount {
+function isAccount(value: unknown): value is Omit<ConnectAccount, "restorable"> & { restorable?: unknown } {
   if (!record(value) || !nonEmptyString(value.email) || typeof value.active !== "boolean" || typeof value.checkoutOpen !== "boolean") {
     return false;
   }
@@ -405,7 +409,19 @@ export async function getConnectAccount(credential: string, options: ConnectClie
   if (result.response.status === 429) return failure("rate_limited");
   const bodyError = bodyFailure(result);
   if (bodyError) return bodyError;
-  if (result.response.status === 200 && isAccount(result.body)) return { ok: true, ...result.body };
+  if (result.response.status === 200 && isAccount(result.body)) {
+    const { endpoint, restorable } = result.body;
+    const normalizedEndpoint = endpoint === null ? null : { ...endpoint };
+    if (normalizedEndpoint && !nonEmptyString(normalizedEndpoint.tunnelId)) delete normalizedEndpoint.tunnelId;
+    return {
+      ok: true,
+      ...result.body,
+      endpoint: normalizedEndpoint,
+      restorable: record(restorable) && nonEmptyString(restorable.slug) && isConnectHostname(restorable.hostname)
+        ? { slug: restorable.slug, hostname: restorable.hostname }
+        : null,
+    };
+  }
   return statusFailure(result.response, result.body);
 }
 

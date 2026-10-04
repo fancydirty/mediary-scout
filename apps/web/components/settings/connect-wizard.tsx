@@ -30,6 +30,8 @@ export type ConnectWizardProps = {
   hasTunnelToken: boolean;
   /** The name this instance's tunnel serves, when known (MEDIARY_CONNECT_HOSTNAME or a binding). */
   boundHostname?: string | null;
+  /** The tunnel id decoded from this instance's token, null when unknown. */
+  boundTunnelId?: string | null;
   passwordSet: boolean | "unknown";
   multiUser?: boolean;
   compact?: boolean;
@@ -69,8 +71,11 @@ export function nextLinkPollDelayMs(currentMs: number, intervalSec: number | und
  * is set up: after 断开 and linking another account it still serves the old name. An instance
  * that does not know its hostname (connected by an older connect.sh) is trusted as before.
  */
-function tunnelServesAccount(account: ConnectAccountView, hasTunnelToken: boolean, boundHostname: string | null | undefined): boolean {
+function tunnelServesAccount(account: ConnectAccountView, hasTunnelToken: boolean, boundHostname: string | null | undefined, boundTunnelId?: string | null): boolean {
   if (!hasTunnelToken || account.endpoint === null) return false;
+  // A restored address keeps its name but gets a new tunnel: compare tunnels when both are known.
+  const accountTunnel = account.endpoint.tunnelId?.toLowerCase();
+  if (accountTunnel && boundTunnelId) return accountTunnel === boundTunnelId.toLowerCase();
   return !boundHostname || boundHostname === account.endpoint.hostname;
 }
 
@@ -80,10 +85,11 @@ export function stepForAccount(
   account: ConnectAccountView,
   hasTunnelToken: boolean,
   boundHostname?: string | null,
+  boundTunnelId?: string | null,
 ): Step {
   if (!account.active) return 3;
   if (!account.endpoint) return 4;
-  return tunnelServesAccount(account, hasTunnelToken, boundHostname) ? 3 : 5;
+  return tunnelServesAccount(account, hasTunnelToken, boundHostname, boundTunnelId) ? 3 : 5;
 }
 
 /**
@@ -95,10 +101,11 @@ export function paymentOutcome(
   account: ConnectAccountView,
   hasTunnelToken: boolean,
   boundHostname?: string | null,
+  boundTunnelId?: string | null,
 ): { step: Step; renewal: boolean } {
   return {
-    step: stepForAccount(account, hasTunnelToken, boundHostname),
-    renewal: tunnelServesAccount(account, hasTunnelToken, boundHostname),
+    step: stepForAccount(account, hasTunnelToken, boundHostname, boundTunnelId),
+    renewal: tunnelServesAccount(account, hasTunnelToken, boundHostname, boundTunnelId),
   };
 }
 
@@ -128,7 +135,7 @@ function formatExpiry(iso: string): string {
 function initialStep(props: ConnectWizardProps): Step {
   if (!props.linked) return props.pending ? 2 : 1;
   if (!props.account) return 3;
-  return stepForAccount(props.account, props.hasTunnelToken, props.boundHostname);
+  return stepForAccount(props.account, props.hasTunnelToken, props.boundHostname, props.boundTunnelId);
 }
 
 function friendlyError(error: unknown): string {
@@ -173,7 +180,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
     setOrder(props.pendingOrder ?? null);
     // A connect.sh command belongs to the account it was issued for.
     if (!props.linked) setFallbackCommand(null);
-  }, [props.linked, props.email, props.pending, props.account, props.hasTunnelToken, props.boundHostname, props.passwordSet, props.pendingOrder]);
+  }, [props.linked, props.email, props.pending, props.account, props.hasTunnelToken, props.boundHostname, props.boundTunnelId, props.passwordSet, props.pendingOrder]);
 
   useEffect(() => {
     if (step !== 2 || !pending) return;
@@ -195,7 +202,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
             if (accountResult.state === "linked") {
               setAccount(accountResult.account);
               setAccountUnavailable(false);
-              setStep(stepForAccount(accountResult.account, props.hasTunnelToken, props.boundHostname));
+              setStep(stepForAccount(accountResult.account, props.hasTunnelToken, props.boundHostname, props.boundTunnelId));
             } else if (accountResult.state === "unlinked") {
               setLinked(false);
               setStep(1);
@@ -236,7 +243,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
             if (accountResult?.state === "linked") {
               setAccount(accountResult.account);
               setAccountUnavailable(false);
-              setStep(stepForAccount(accountResult.account, props.hasTunnelToken, props.boundHostname));
+              setStep(stepForAccount(accountResult.account, props.hasTunnelToken, props.boundHostname, props.boundTunnelId));
             } else {
               setAccountUnavailable(true);
               setStep(3);
@@ -296,7 +303,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
           if (accountResult.state === "linked") {
             setAccount(accountResult.account);
             setAccountUnavailable(false);
-            setStep(stepForAccount(accountResult.account, props.hasTunnelToken, props.boundHostname));
+            setStep(stepForAccount(accountResult.account, props.hasTunnelToken, props.boundHostname, props.boundTunnelId));
           } else if (accountResult.state === "unlinked") {
             resetToUnlinked("Mediary Connect 连接已失效，请重新连接。");
           } else {
@@ -320,7 +327,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
           if (accountResult.state === "linked") {
             setAccount(accountResult.account);
             setAccountUnavailable(false);
-            const outcome = paymentOutcome(accountResult.account, props.hasTunnelToken, props.boundHostname);
+            const outcome = paymentOutcome(accountResult.account, props.hasTunnelToken, props.boundHostname, props.boundTunnelId);
             setStep(outcome.step);
             setNotice(
               outcome.renewal
@@ -427,7 +434,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
         }
         setAccount(result.account);
         setAccountUnavailable(false);
-        setStep(stepForAccount(result.account, props.hasTunnelToken, props.boundHostname));
+        setStep(stepForAccount(result.account, props.hasTunnelToken, props.boundHostname, props.boundTunnelId));
       } catch (error) {
         setAccountUnavailable(true);
         setNotice({ text: friendlyError(error), tone: "danger" });
@@ -493,13 +500,10 @@ export function ConnectWizard(props: ConnectWizardProps) {
     });
   };
 
-  const provision = () => {
-    const normalized = slug.trim().toLowerCase();
-    // Only the name that was checked: the choice is permanent.
-    if (!slugCheck?.available || !normalized || slugCheck.slug !== normalized) return;
+  const submitName = (slug: string, successText: (hostname: string) => string) => {
     startTransition(async () => {
       try {
-        const result = await connectProvisionAction(normalized);
+        const result = await connectProvisionAction(slug);
         if (!result.ok) {
           if (isUnlinked(result)) {
             resetToUnlinked(result.message);
@@ -508,13 +512,25 @@ export function ConnectWizard(props: ConnectWizardProps) {
           setNotice({ text: "reason" in result && result.reason === "slug_taken" ? "刚被别人抢先占用了，换一个吧。" : result.message, tone: "danger" });
           return;
         }
-        setAccount((current) => current ? { ...current, endpoint: { slug: normalized, hostname: result.hostname, status: "active" } } : current);
+        setAccount((current) => current ? { ...current, restorable: null, endpoint: { slug, hostname: result.hostname, status: "active" } } : current);
         setStep(5);
-        setNotice({ text: `已选好名字：${result.hostname}`, tone: "success" });
+        setNotice({ text: successText(result.hostname), tone: "success" });
       } catch (error) {
         setNotice({ text: friendlyError(error), tone: "danger" });
       }
     });
+  };
+
+  const provision = () => {
+    const normalized = slug.trim().toLowerCase();
+    // Only the name that was checked: the choice is permanent.
+    if (!slugCheck?.available || !normalized || slugCheck.slug !== normalized) return;
+    submitName(normalized, (hostname) => `已选好名字：${hostname}`);
+  };
+
+  const restore = () => {
+    if (!account?.restorable) return;
+    submitName(account.restorable.slug, (hostname) => `已恢复：${hostname}，接着点「接入」。`);
   };
 
   const setAccessPassword = () => {
@@ -645,7 +661,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
         if (accountResult.state === "linked") {
           setAccount(accountResult.account);
           setAccountUnavailable(false);
-          setStep(stepForAccount(accountResult.account, props.hasTunnelToken, props.boundHostname));
+          setStep(stepForAccount(accountResult.account, props.hasTunnelToken, props.boundHostname, props.boundTunnelId));
         }
       } catch (error) {
         setNotice({ text: friendlyError(error), tone: "danger" });
@@ -733,6 +749,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
             </div>
           ) : <>
           <p className="panel-note">{account?.expiresAt ? `当前到期时间：${formatExpiry(account.expiresAt)}` : "选择一段使用时长，付款后继续。"}</p>
+          {account?.restorable ? <p className="panel-note">付款后可恢复原地址 {account.restorable.hostname}。</p> : null}
           {!account?.checkoutOpen ? <p className="panel-note" role="status">现在暂时不能购买，请稍后再试。</p> : null}
           <div style={{ display: "grid", gap: 8 }}>
             {tiers.map((tier) => (
@@ -753,6 +770,12 @@ export function ConnectWizard(props: ConnectWizardProps) {
       ) : null}
 
       {step === 4 ? (
+        account?.restorable ? (
+          <div style={{ maxWidth: 500 }}>
+            <p className="panel-note">你的专属地址 <strong>{account.restorable.hostname}</strong> 还为你保留着。恢复后再接入一次即可。</p>
+            <button className="primary-button" type="button" onClick={restore} disabled={busy}>恢复原地址</button>
+          </div>
+        ) : (
         <div style={{ maxWidth: 500 }}>
           <p className="panel-note">给这台实例选一个专属名字，最终地址是「名字.mediaryconnect.app」。</p>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -765,6 +788,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
           {slugCheck?.suggestions?.length ? <p className="panel-note">可以试试：{slugCheck.suggestions.join("、")}</p> : null}
           <button className="primary-button" type="button" onClick={provision} disabled={busy || !slugCheck?.available || slugCheck.slug !== slug.trim().toLowerCase()}>确定</button>
         </div>
+        )
       ) : null}
 
       {step === 5 ? (

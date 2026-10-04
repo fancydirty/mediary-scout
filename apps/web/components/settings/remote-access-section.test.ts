@@ -74,6 +74,16 @@ beforeEach(() => {
 });
 
 describe("RemoteAccessSection", () => {
+  it("passes the tunnel id decoded from the resolved local token to the connected wizard", async () => {
+    const { resolveInstanceTunnelToken, resolveRemoteAccessState } = await import("../../lib/remote-access");
+    const id = "6f5a3c2e-1b4d-4e8f-9a0b-1c2d3e4f5a6b";
+    vi.mocked(resolveInstanceTunnelToken).mockResolvedValueOnce(Buffer.from(JSON.stringify({ t: id })).toString("base64"));
+    vi.mocked(resolveRemoteAccessState).mockResolvedValueOnce({ kind: "active_degraded" });
+    state.accountAnswer = "linked";
+    const props = findWizardProps(await RemoteAccessSection({ searchParams: Promise.resolve({}) }));
+    expect(props).toMatchObject({ hasTunnelToken: true, boundTunnelId: id });
+  });
+
   it("starts the Connect account read before waiting on the tunnel status, so two slow calls do not add up", async () => {
     const { connectAccountAction } = await import("../../app/connect-actions");
     const { resolveRemoteAccessState } = await import("../../lib/remote-access");

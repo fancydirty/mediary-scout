@@ -159,7 +159,8 @@ export type ConnectAccountView = {
   email: string;
   active: boolean;
   expiresAt: string | null;
-  endpoint: { slug: string; hostname: string; status: string } | null;
+  endpoint: { slug: string; hostname: string; status: string; tunnelId?: string } | null;
+  restorable: { slug: string; hostname: string } | null;
   checkoutOpen: boolean;
   tiers: Array<{ id: "quarter" | "year" | "two_years"; label: string; months: number; price: string; featured: boolean }>;
 };

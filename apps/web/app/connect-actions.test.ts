@@ -427,6 +427,7 @@ describe("connectProvisionAction", () => {
       endpoint: { slug: "family", hostname: "family.mediaryconnect.app", status: "active" },
       checkoutOpen: true,
       tiers: [],
+      restorable: null,
     });
     expect(await connectProvisionAction("family")).toEqual({ ok: true, hostname: "family.mediaryconnect.app" });
   });
