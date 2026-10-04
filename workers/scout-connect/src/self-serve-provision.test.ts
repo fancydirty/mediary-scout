@@ -492,6 +492,39 @@ describe("控制台在满容量时的呈现", () => {
     expect(html).not.toContain("暂时无法分配新地址");
   });
 
+  // 账号自己那条清理失败的旧地址也算进配额（revoke_failed 偏保守计入），但恢复会先删掉它的
+  // 旧资源再数配额，所以不能因为它把恢复入口藏成「售罄」。
+  it("满容量里含账号自己可恢复的 revoke_failed 地址时，仍给「恢复这个地址」", async () => {
+    const { deps, db } = setup();
+    await seedAccount(db, "act_c4", "2027-01-01T00:00:00.000Z");
+    await fillEndpoints(db, 989);
+    await db.insertEndpoint({
+      id: "ep_c4",
+      invite_id: null,
+      slug: "fam",
+      hostname: "fam.mediaryconnect.app",
+      cf_tunnel_id: "t_old",
+      cf_access_app_id: null,
+      cf_access_policy_id: null,
+      cf_dns_record_id: "d_old",
+      status: "revoke_failed",
+      token_sha256: "sha_old",
+      token_ciphertext: null,
+      token_shown_at: null,
+      last_seen_at: null,
+      created_at: NOW,
+      revoked_at: null,
+      account_id: "act_c4",
+      grace_until: null,
+      suspended_at: null,
+      purge_after: null,
+      revoke_reason: "expired",
+    });
+    const html = await console_(db, deps, "act_c4");
+    expect(html).toContain('id="restore"');
+    expect(html, "不该渲染售罄分支").not.toContain("隧道配额已满");
+  });
+
   // 已开通用户不受配额影响 —— 满容量也不该干扰他的接入区。
   it("已开通用户在满容量时仍看到自己的接入区", async () => {
     const calls: string[] = [];

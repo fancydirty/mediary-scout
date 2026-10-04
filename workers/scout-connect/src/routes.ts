@@ -1465,8 +1465,11 @@ async function consoleRoute(request: Request, deps: RouteDeps): Promise<Response
   const now = deps.now();
   const eligibleToProvision =
     endpoint === null && isEntitlementActive(latestExpiry(entitlements), now);
+  // 账号自己那条清理失败的旧地址被 countLiveEndpoints 偏保守计入；恢复会先删它的旧资源再数配额，
+  // 这里也不算它，否则正好满额时会把能成功的恢复藏成「售罄」。
+  const ownRevokeFailed = restorable?.status === "revoke_failed" ? 1 : 0;
   const atCapacity = eligibleToProvision
-    ? (await deps.db.countLiveEndpoints()) >= CAPACITY_LIMIT
+    ? (await deps.db.countLiveEndpoints()) - ownRevokeFailed >= CAPACITY_LIMIT
     : false;
   const url = new URL(request.url);
   return htmlPage(
