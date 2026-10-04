@@ -208,12 +208,21 @@ describe("合规页与 Waffo 支付现实的一致性", () => {
     expect(en).toContain("when you claim your hostname");
   });
 
-  it("所有本轮修改页的 Last updated 都是切换日期(terms / pricing 10-03 又改过访问密码的说法)", () => {
-    const LATER: Record<string, string> = { terms: "2026-10-03", pricing: "2026-10-03" };
+  it("所有本轮修改页的 Last updated 都是切换日期(terms / pricing 10-04 又改过续期恢复的说法)", () => {
+    const LATER: Record<string, string> = { terms: "2026-10-04", pricing: "2026-10-04" };
     for (const key of ALL) {
       const date = LATER[key] ?? "2026-10-02";
       expect(compliancePage(key, "en")).toContain(`Last updated: ${date}`);
       expect(compliancePage(key, "zh")).toContain(`最后更新:${date}`);
+    }
+  });
+
+  it("续期恢复的说法与产品一致:付款后点「恢复原地址」再接入,不是只重跑接入命令", () => {
+    for (const key of ["terms", "pricing"] as const) {
+      const md = COMPLIANCE_MARKDOWN[key];
+      expect(md, key).not.toContain("重跑一次一行接入命令");
+      expect(md, key).not.toContain("re-run the one-line setup command");
+      expect(md, key).toContain("恢复原地址");
     }
   });
 

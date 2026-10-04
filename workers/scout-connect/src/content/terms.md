@@ -2,9 +2,9 @@
 
 ## 服务条款
 
-Last updated: 2026-10-03
+Last updated: 2026-10-04
 
-最后更新:2026-10-03
+最后更新:2026-10-04
 
 ## What the service is
 
@@ -37,13 +37,13 @@ Mediary Connect 为自托管的 Mediary Scout 实例提供远程访问通道:一
 ## 付费与时长
 
 - The service is billed as **prepaid time**: you buy several months of access, get an email reminder before expiry, and are **never auto-charged**.
-- After expiry there is a 7-day grace period (service continues); when grace ends, the hostname stops resolving and the tunnel is reclaimed immediately to free capacity. Renewing later restores the same slug — you re-run the one-line setup command once to bring the tunnel back up.
-- Your slug is kept permanently and is never released to others; on renewal you re-run the one-line setup command to bring the tunnel back up with the same address.
+- After expiry there is a 7-day grace period (service continues); when grace ends, the hostname stops resolving and the tunnel is reclaimed immediately to free capacity. Renewing later restores the same slug: after paying, click 恢复原地址 (Restore) in the console (or in your instance's Settings → Remote access), then connect once more to bring the tunnel back up.
+- Your slug is kept permanently and is never released to others; after renewing you restore it and connect once more, and the tunnel comes back up with the same address.
 - See the [Refund Policy](https://mediaryconnect.app/refund). Waffo.com Limited is the merchant of record, processes one-time WeChat Pay payments, and sends the receipt. No automatic renewal is created.
 
 - 服务按**预付时长**计费:付费购买若干个月的访问权,到期前会邮件提醒续期,**不会自动扣款**。
-- 到期后有 7 天宽限期(服务照常);宽限期满域名停止解析,并**立即回收隧道**以释放配额。之后续期,slug 原样恢复,需重跑一次一行接入命令让隧道重新上线。
-- 你的 slug 永久保留,永不释放给他人;续期后重跑一次一行接入命令,即可以同一地址恢复。
+- 到期后有 7 天宽限期(服务照常);宽限期满域名停止解析,并**立即回收隧道**以释放配额。之后续期,slug 原样恢复:付款后在控制台(或实例的「设置 → 远程访问」)点「恢复原地址」,再接入一次让隧道重新上线。
+- 你的 slug 永久保留,永不释放给他人;续期后恢复原地址、再接入一次,即可以同一地址恢复。
 - 退款见[退款政策](https://mediaryconnect.app/refund)。Waffo.com Limited 是记录商户,通过微信支付一次性收款并发送付款凭证,不会开通自动续费。
 
 ## Service level

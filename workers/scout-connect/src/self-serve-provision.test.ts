@@ -494,7 +494,7 @@ describe("控制台在满容量时的呈现", () => {
 
   // 账号自己那条清理失败的旧地址也算进配额（revoke_failed 偏保守计入），但恢复会先删掉它的
   // 旧资源再数配额，所以不能因为它把恢复入口藏成「售罄」。
-  it("满容量里含账号自己可恢复的 revoke_failed 地址时，仍给「恢复这个地址」", async () => {
+  it("满容量里含账号自己可恢复的 revoke_failed 地址时，仍给「恢复原地址」", async () => {
     const { deps, db } = setup();
     await seedAccount(db, "act_c4", "2027-01-01T00:00:00.000Z");
     await fillEndpoints(db, 989);

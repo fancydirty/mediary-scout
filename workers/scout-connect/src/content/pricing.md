@@ -2,9 +2,9 @@
 
 ## 定价
 
-Last updated: 2026-10-03
+Last updated: 2026-10-04
 
-最后更新:2026-10-03
+最后更新:2026-10-04
 
 ## Prepaid time, never auto-charged
 
@@ -52,11 +52,11 @@ Prices are in CNY. Checkout is handled by **Waffo.com Limited**, our merchant of
 
 - A **7-day grace period** after expiry, service as usual, with in-app and email renewal reminders;
 - After grace, the hostname stops resolving (your instance itself is unaffected);
-- When grace ends, the tunnel is reclaimed immediately to free capacity. Your slug is **never released to others** — renewing restores the same address (you re-run the one-line setup command once to bring the tunnel back up).
+- When grace ends, the tunnel is reclaimed immediately to free capacity. Your slug is **never released to others** — renewing restores the same address (after paying, click 恢复原地址 (Restore) in the console or in your instance's settings, then connect once more to bring the tunnel back up).
 
 - 到期后 **7 天宽限期**,服务照常,站内与邮件提醒续期;
 - 宽限期后域名停止解析(你的实例本身不受任何影响);
-- 宽限期满即回收隧道以释放配额;你的 slug **永不释放给他人** —— 续期后地址原样恢复(需重跑一次一行接入命令让隧道重新上线)。
+- 宽限期满即回收隧道以释放配额;你的 slug **永不释放给他人** —— 续期后地址原样恢复(付款后在控制台或实例设置里点「恢复原地址」,再接入一次让隧道重新上线)。
 
 ## Buying: you log in first
 

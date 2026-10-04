@@ -224,7 +224,7 @@ ${t.featured ? `<span class="tier-tag">推荐</span>` : ""}
 <p class="step">恢复地址</p>
 <p class="lead">恢复后再接入一次即可</p>
 <p class="lead-sub">会为这个地址重新开一条隧道。恢复后这里会给出接入命令，或在实例的「设置 → 远程访问」里点「接入」。</p>
-<button class="btn" id="restore" type="button">恢复这个地址</button>
+<button class="btn" id="restore" type="button">恢复原地址</button>
 <p class="msg" id="restoremsg" hidden></p>
 </div>`;
   }
@@ -350,7 +350,7 @@ function relativeZh(iso: string | null, now: number): string | null {
   return "很久以前";
 }
 
-/** 有可恢复地址时的「恢复这个地址」按钮:同 slug 走 /api/provision,成功刷新进接入面板。 */
+/** 有可恢复地址时的「恢复原地址」按钮:同 slug 走 /api/provision,成功刷新进接入面板。 */
 function restoreScript(slug: string): string {
   return `<script type="module">
 const btn=document.getElementById("restore"),msg=document.getElementById("restoremsg");

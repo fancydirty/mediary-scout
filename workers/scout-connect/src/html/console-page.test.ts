@@ -306,6 +306,8 @@ describe("console page — restore a reserved address", () => {
     expect(html).toContain("fam.mediaryconnect.app");
     expect(html).toContain('id="restore"');
     expect(html).toContain("还为你保留着");
+    // Same label as the expiry email and the instance wizard tell people to look for.
+    expect(html).toContain(">恢复原地址</button>");
     expect(html).not.toContain('id="slug"');
     expect(html).toContain('JSON.stringify({slug:"fam"})');
   });
