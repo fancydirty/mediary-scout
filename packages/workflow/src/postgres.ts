@@ -33,6 +33,7 @@ import {
   titleBlockFilter,
   type PersistedWorkflowRunSnapshot,
   type PersistWorkflowRunSnapshotInput,
+  type QueuedRunDriveFilter,
   type ReserveWorkflowRunInput,
   type TrackedSeasonState,
   validateWorkflowRunSnapshot,
@@ -591,17 +592,32 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
   async claimNextQueuedWorkflowRun(input: {
     kind: WorkflowKind;
     now: string;
-  }): Promise<PersistedWorkflowRunSnapshot | null> {
+  } & QueuedRunDriveFilter): Promise<PersistedWorkflowRunSnapshot | null> {
     const claimedRunId = await this.withTransaction(async (client) => {
+      // Drive filter. A run with no bound drive (the unscoped sentinel; NULL on rows written
+      // before the sentinel) is never hidden by the drive list: `NULL <> ALL(...)` is NULL,
+      // so the IS NULL is spelled out.
+      const params: unknown[] = [input.kind, input.now];
+      let driveClause = "";
+      const busyDrives = input.excludeConnectedStorageIds ?? [];
+      if (busyDrives.length > 0) {
+        params.push([...busyDrives]);
+        driveClause += ` AND (connected_storage_id IS NULL OR connected_storage_id <> ALL($${params.length}::text[]))`;
+      }
+      if (input.excludeUnbound === true) {
+        params.push(UNSCOPED_STORAGE);
+        driveClause += ` AND connected_storage_id IS NOT NULL AND connected_storage_id <> $${params.length}`;
+      }
       // Lock exactly one FIFO-ready row. Under READ COMMITTED a plain read followed
       // by upsert lets two workers see and claim the same queued run; SKIP LOCKED
       // instead lets the second worker move on without waiting for duplicate work.
       const result = await client.query<{ payload: WorkflowRun }>(
         "SELECT payload FROM workflow_runs " +
           "WHERE payload->>'kind' = $1 AND payload->>'status' = 'queued' " +
-          "AND (payload->>'nextAttemptAt' IS NULL OR payload->>'nextAttemptAt' <= $2) " +
-          "ORDER BY payload->>'startedAt' ASC LIMIT 1 FOR UPDATE SKIP LOCKED",
-        [input.kind, input.now],
+          "AND (payload->>'nextAttemptAt' IS NULL OR payload->>'nextAttemptAt' <= $2)" +
+          driveClause +
+          " ORDER BY payload->>'startedAt' ASC LIMIT 1 FOR UPDATE SKIP LOCKED",
+        params,
       );
       const queuedRun = result.rows[0]?.payload;
       if (!queuedRun) {

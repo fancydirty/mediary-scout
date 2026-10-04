@@ -1,5 +1,6 @@
 import type { LanguageModel } from "ai";
-import type { TrackedSeasonState, WorkflowRepository } from "./repository.js";
+import type { QueueClaimOptions, TrackedSeasonState, WorkflowRepository } from "./repository.js";
+import { claimNextQueuedRun } from "./repository.js";
 import type { AuditEvent, EpisodeState, TrackedSeason } from "./domain.js";
 import { syncSeasonAgainstMetadata } from "./season-sync.js";
 import type { ResourceProvider, StorageExecutor } from "./ports.js";
@@ -196,12 +197,14 @@ export async function runQueuedReplaceRequest(
     resolveAccountContext?: ResolveAccountWorkerContext;
     onAuthErrorFreeze?: (storageId: string, reason: string) => Promise<void>;
     mayStartRun?: MayStartRun;
+    /** The worker's drive filter and claim callback when queued runs go side by side. */
+    claim?: QueueClaimOptions;
   },
 ): Promise<QueuedType2WorkerResult> {
   const now = input.now ?? (() => new Date().toISOString());
   const repository = input.repository;
   if (input.mayStartRun && !input.mayStartRun()) return { status: "idle" };
-  const claimed = await repository.claimNextQueuedWorkflowRun({ kind: "replace_request", now: now() });
+  const claimed = await claimNextQueuedRun(repository, "replace_request", now(), input.claim);
   if (!claimed) return { status: "idle" };
   const runId = claimed.workflowRun.id;
   const work: UserMessageScope = {

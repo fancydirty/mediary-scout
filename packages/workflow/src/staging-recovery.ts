@@ -1,7 +1,8 @@
 import type { LanguageModel } from "ai";
 import type { MediaTitle, WorkflowRun } from "./domain.js";
 import type { ResourceProvider, StorageExecutor } from "./ports.js";
-import type { WorkflowRepository } from "./repository.js";
+import type { QueueClaimOptions, WorkflowRepository } from "./repository.js";
+import { claimNextQueuedRun } from "./repository.js";
 import { drivePacer, type DriveClock } from "./drive-pacer.js";
 import { runStagingRecoveryV2AndPersist } from "./runner-v2.js";
 import { brandWritesOnlyListedDirectories } from "./storage-brands.js";
@@ -74,11 +75,13 @@ export async function runQueuedStagingRecovery(
     mayStartRun?: MayStartRun;
     /** Paces the drive calls made before the agent starts. Tests pass a fake one. */
     clock?: DriveClock;
+    /** The worker's drive filter and claim callback when queued runs go side by side. */
+    claim?: QueueClaimOptions;
   },
 ): Promise<QueuedType2WorkerResult> {
   const now = input.now ?? (() => new Date().toISOString());
   if (input.mayStartRun && !input.mayStartRun()) return { status: "idle" };
-  const claimed = await input.repository.claimNextQueuedWorkflowRun({ kind: "staging_recovery", now: now() });
+  const claimed = await claimNextQueuedRun(input.repository, "staging_recovery", now(), input.claim);
   if (!claimed) return { status: "idle" };
   try {
     // Claim already flipped the run to running. A throw here must take the

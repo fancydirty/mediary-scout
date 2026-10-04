@@ -6,8 +6,8 @@ import { savePatrolConcurrencyAction } from "../app/actions";
 import { runAction } from "../lib/run-action";
 
 /**
- * 巡检同时处理几部作品。和时间点 chips 一样即改即存，失败回滚；范围由服务端
- * action 再校验一遍。
+ * 同时处理几部作品，巡检和手动获取共用这个数。和时间点 chips 一样即改即存，失败回滚；
+ * 范围由服务端 action 再校验一遍。
  */
 export function PatrolConcurrencyForm({ initial, max }: { initial: number; max: number }) {
   const [value, setValue] = useState(initial);
@@ -45,7 +45,7 @@ export function PatrolConcurrencyForm({ initial, max }: { initial: number; max: 
     <div className="push-form" style={{ marginTop: 16 }}>
       <div className="setting-row">
         <label htmlFor="patrol-concurrency" className="push-help">
-          同时巡检
+          同时处理
         </label>
         <select
           id="patrol-concurrency"
@@ -64,7 +64,7 @@ export function PatrolConcurrencyForm({ initial, max }: { initial: number; max: 
         {isPending ? <LoaderCircle size={14} className="spin" aria-hidden /> : null}
       </div>
       <p className="panel-note" style={{ marginTop: 10 }}>
-        放在不同网盘上的作品才会一起跑；同一块网盘上的仍是一部接一部，免得触发网盘风控。调高后 AI 模型也会同时收到多路请求，免费模型容易撞到限额。
+        巡检和手动点的「获取」都按这个数：放在不同网盘上的作品才会一起跑；同一块网盘上的仍是一部接一部，免得触发网盘风控。调高后 AI 模型也会同时收到多路请求，免费模型容易撞到限额。
       </p>
       {note ? (
         <p className="panel-note" style={{ marginTop: 6 }}>

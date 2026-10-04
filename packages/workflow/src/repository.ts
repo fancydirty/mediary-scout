@@ -59,6 +59,60 @@ import { normalizeScope, scopeMatches, type ScopeArg, type WorkflowScope } from 
  */
 export const UNSCOPED_STORAGE = "__unscoped__";
 
+/** Which queued runs the worker may claim while others are running. */
+export interface QueuedRunDriveFilter {
+  /** Skip runs on these drives: they already have a run going. Never hides a run
+   *  with no bound drive (that one is excludeUnbound's job). */
+  excludeConnectedStorageIds?: readonly string[];
+  /** Skip runs with no bound drive: they land on their account's default drive,
+   *  which is not known here, so the worker only starts one when nothing else runs. */
+  excludeUnbound?: boolean;
+}
+
+/** How the worker claims when several queued runs may go side by side. */
+export interface QueueClaimOptions extends QueuedRunDriveFilter {
+  /** Told the claimed run and its drive right after the claim, before the run starts,
+   *  so the worker counts that drive as busy for its next claim. */
+  onClaimed?: (claimed: { workflowRunId: string; connectedStorageId: string | null }) => void;
+}
+
+/** claimNextQueuedWorkflowRun with the worker's claim options. Every queued runner
+ *  claims through this, so the options reach the repository whatever the kind. */
+export async function claimNextQueuedRun(
+  repository: Pick<WorkflowRepository, "claimNextQueuedWorkflowRun">,
+  kind: WorkflowKind,
+  now: string,
+  claim: QueueClaimOptions | undefined,
+): Promise<PersistedWorkflowRunSnapshot | null> {
+  const claimed = await repository.claimNextQueuedWorkflowRun({
+    kind,
+    now,
+    ...(claim?.excludeConnectedStorageIds === undefined ? {} : { excludeConnectedStorageIds: claim.excludeConnectedStorageIds }),
+    ...(claim?.excludeUnbound === undefined ? {} : { excludeUnbound: claim.excludeUnbound }),
+  });
+  if (claimed) {
+    claim?.onClaimed?.({ workflowRunId: claimed.workflowRun.id, connectedStorageId: claimed.connectedStorageId });
+  }
+  return claimed;
+}
+
+/** Whether `recordRunId` is run `runId` itself or one of its per-season records
+ *  (`${runId}_s${n}`, written by the series/replace/recovery runners). A queued run's
+ *  notifications ride on either. */
+export function isRunOrItsSeasonRecord(recordRunId: string, runId: string): boolean {
+  if (recordRunId === runId) return true;
+  const prefix = `${runId}_s`;
+  return recordRunId.startsWith(prefix) && /^\d+$/.test(recordRunId.slice(prefix.length));
+}
+
+/** Whether a queued run on `connectedStorageId` (null or the unscoped sentinel =
+ *  no bound drive) passes the worker's drive filter. */
+export function passesQueuedRunDriveFilter(connectedStorageId: string | null, filter: QueuedRunDriveFilter): boolean {
+  const drive = connectedStorageId === UNSCOPED_STORAGE ? null : connectedStorageId;
+  if (drive === null) return filter.excludeUnbound !== true;
+  return !(filter.excludeConnectedStorageIds ?? []).includes(drive);
+}
+
 /**
  * Composite key for per-(season, drive) episode buckets / lookups. A season's
  * episodes belong to a specific drive; keying only by season id would let one
@@ -219,11 +273,12 @@ export interface WorkflowRepository extends DeadLinkStore, AgentMemoryStore, Use
   ): Promise<PersistedWorkflowRunSnapshot | null>;
   /** Cross-account: the single-instance worker drains every account's queue.
    *  The returned snapshot carries `accountId` so the worker can load that
-   *  account's credentials. */
+   *  account's credentials. The drive filter (see QueuedRunDriveFilter) lets the
+   *  worker run several queued runs side by side without two on one drive. */
   claimNextQueuedWorkflowRun(input: {
     kind: WorkflowKind;
     now: string;
-  }): Promise<PersistedWorkflowRunSnapshot | null>;
+  } & QueuedRunDriveFilter): Promise<PersistedWorkflowRunSnapshot | null>;
   /**
    * Crash recovery on worker start. Each `running` run takes ONE of three exits,
    * checked in this order — an implementer of a new backend must preserve it:
@@ -1138,9 +1193,14 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
   async claimNextQueuedWorkflowRun(input: {
     kind: WorkflowKind;
     now: string;
-  }): Promise<PersistedWorkflowRunSnapshot | null> {
+  } & QueuedRunDriveFilter): Promise<PersistedWorkflowRunSnapshot | null> {
     const queuedRun = Array.from(this.workflowRuns.values())
-      .filter((snapshot) => snapshot.workflowRun.kind === input.kind && snapshot.workflowRun.status === "queued")
+      .filter(
+        (snapshot) =>
+          snapshot.workflowRun.kind === input.kind &&
+          snapshot.workflowRun.status === "queued" &&
+          passesQueuedRunDriveFilter(snapshot.connectedStorageId ?? null, input),
+      )
       .sort((a, b) => a.workflowRun.startedAt.localeCompare(b.workflowRun.startedAt))[0];
     if (!queuedRun) {
       return null;

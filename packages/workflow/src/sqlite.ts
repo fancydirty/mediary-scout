@@ -74,6 +74,7 @@ import {
   isPrunableFinishedRun,
   isQueueClaimableKind,
   isStaleActiveWorkflowRun,
+  passesQueuedRunDriveFilter,
   recoverOrphanRunningRun,
   reservationRequiresTrackedSeason,
   tearsDownTrackingOnCancel,
@@ -89,6 +90,7 @@ import {
 import type {
   PersistedWorkflowRunSnapshot,
   PersistWorkflowRunSnapshotInput,
+  QueuedRunDriveFilter,
   ReserveWorkflowRunInput,
   TrackedSeasonState,
   WorkflowRepository,
@@ -711,7 +713,7 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
   async claimNextQueuedWorkflowRun(input: {
     kind: WorkflowKind;
     now: string;
-  }): Promise<PersistedWorkflowRunSnapshot | null> {
+  } & QueuedRunDriveFilter): Promise<PersistedWorkflowRunSnapshot | null> {
     // Read the oldest claimable queued run and flip it to running INSIDE one
     // transaction so two ticks can't double-claim (single-writer + WAL make the
     // read+update atomic). claimableQueuedRuns applies the nextAttemptAt gate + FIFO.
@@ -719,7 +721,7 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
       // Prefilter to queued runs of this kind in SQL (json_extract) rather than
       // scanning every run each tick; claimableQueuedRuns then applies the
       // nextAttemptAt backoff gate + FIFO on that small set.
-      const queuedRun = claimableQueuedRuns(this.queuedRunsOfKind(input.kind), input.kind, input.now)[0];
+      const queuedRun = claimableQueuedRuns(this.queuedRunsOfKind(input.kind, input), input.kind, input.now)[0];
       if (!queuedRun) {
         return null;
       }
@@ -842,14 +844,16 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     return rows.map((row) => JSON.parse(row.payload) as WorkflowRun);
   }
 
-  private queuedRunsOfKind(kind: WorkflowKind): WorkflowRun[] {
+  private queuedRunsOfKind(kind: WorkflowKind, filter: QueuedRunDriveFilter): WorkflowRun[] {
     const rows = this.db
       .prepare(
-        "SELECT payload FROM workflow_runs " +
+        "SELECT payload, connected_storage_id FROM workflow_runs " +
           "WHERE json_extract(payload, '$.status') = 'queued' AND json_extract(payload, '$.kind') = ?",
       )
-      .all(kind) as Array<{ payload: string }>;
-    return rows.map((row) => JSON.parse(row.payload) as WorkflowRun);
+      .all(kind) as Array<{ payload: string; connected_storage_id: string | null }>;
+    return rows
+      .filter((row) => passesQueuedRunDriveFilter(row.connected_storage_id, filter))
+      .map((row) => JSON.parse(row.payload) as WorkflowRun);
   }
 
   private allWorkflowRunsForAccount(accountId: string): WorkflowRun[] {

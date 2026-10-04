@@ -1283,3 +1283,129 @@ describe("queueing on a drive whose login died names that drive's brand", () => 
     expect(await rt.queueCandidateTracking("tmdb_tv_1_s1", "cs_pan123_1")).toEqual(refusal);
   });
 });
+
+describe("runNextQueuedWorkflow — queued runs going side by side", () => {
+  // The worker's drain calls this once per claim, with its drive filter; several runs
+  // can be going at once. Harness as for runScheduledType3: in-memory SQLite, the
+  // queued runners and the push stubbed (no drive, no model, no network).
+  const idle = async () => ({ status: "idle" as const });
+  const stubs = {
+    runQueuedType2Workflow: vi.fn(idle),
+    runQueuedSeriesInitialization: vi.fn(idle),
+    runQueuedMovieAcquisition: vi.fn(idle),
+    runQueuedReplaceRequest: vi.fn(idle),
+    runQueuedStagingRecovery: vi.fn(idle),
+    enqueueUrgentReplaceRequests: vi.fn(async () => undefined),
+    sendPushNotifications: vi.fn(async () => undefined),
+  };
+  const prevPg = process.env.MEDIA_TRACK_POSTGRES_URL;
+  let rt: typeof import("./workflow-runtime");
+
+  const boot = async () => {
+    for (const stub of Object.values(stubs)) stub.mockReset();
+    for (const runner of [
+      stubs.runQueuedType2Workflow,
+      stubs.runQueuedSeriesInitialization,
+      stubs.runQueuedMovieAcquisition,
+      stubs.runQueuedReplaceRequest,
+      stubs.runQueuedStagingRecovery,
+    ]) {
+      runner.mockImplementation(idle);
+    }
+    process.env.MEDIA_TRACK_SQLITE_PATH = ":memory:";
+    delete process.env.MEDIA_TRACK_POSTGRES_URL;
+    vi.resetModules();
+    vi.doMock("@media-track/workflow", async () => {
+      const actual = await vi.importActual<typeof import("@media-track/workflow")>("@media-track/workflow");
+      return { ...actual, ...stubs };
+    });
+    rt = await import("./workflow-runtime");
+    return rt.getWorkflowRepository();
+  };
+
+  afterEach(() => {
+    vi.doUnmock("@media-track/workflow");
+    delete process.env.MEDIA_TRACK_SQLITE_PATH;
+    if (prevPg !== undefined) process.env.MEDIA_TRACK_POSTGRES_URL = prevPg;
+    vi.resetModules();
+  });
+
+  it("hands the drain's claim options to every queued runner", async () => {
+    await boot();
+    const claim = { excludeConnectedStorageIds: ["cs_115"], excludeUnbound: true, onClaimed: vi.fn() };
+
+    expect(await rt.runNextQueuedWorkflow(claim)).toEqual({ status: "idle" });
+    for (const runner of [
+      stubs.runQueuedType2Workflow,
+      stubs.runQueuedSeriesInitialization,
+      stubs.runQueuedMovieAcquisition,
+      stubs.runQueuedReplaceRequest,
+      stubs.runQueuedStagingRecovery,
+    ]) {
+      expect(runner).toHaveBeenCalledWith(expect.objectContaining({ claim }));
+    }
+  });
+
+  it("pushes only the finished run's notifications, not those of a run going beside it", async () => {
+    const repository = await boot();
+    const event = (id: string, workflowRunId: string) => ({
+      id,
+      workflowRunId,
+      kind: "movie_obtained",
+      title: id,
+      body: id,
+      createdAt: new Date().toISOString(),
+      trigger: "user" as const,
+    });
+    vi.spyOn(repository, "listRecentNotificationsWithAccount").mockResolvedValue([
+      { accountId: "acct_default", connectedStorageId: "cs_115", notification: event("n_115", "run_115") },
+      { accountId: "acct_default", connectedStorageId: "cs_guangya", notification: event("n_guangya", "run_guangya") },
+    ]);
+    stubs.runQueuedMovieAcquisition.mockImplementation(
+      async () => ({ status: "ran", workflowRunId: "run_115", workflowStatus: "succeeded" }) as never,
+    );
+
+    await rt.runNextQueuedWorkflow();
+
+    expect(stubs.sendPushNotifications).toHaveBeenCalledTimes(1);
+    expect(stubs.sendPushNotifications).toHaveBeenCalledWith(
+      expect.objectContaining({ notification: expect.objectContaining({ id: "n_115" }) }),
+    );
+  });
+
+  it("a series run pushes the notifications on its per-season record too", async () => {
+    // Series init saves its notifications on `${runId}_s${n}` (see runner-v2).
+    const repository = await boot();
+    const event = (id: string, workflowRunId: string) => ({
+      id,
+      workflowRunId,
+      kind: "series_initialized",
+      title: id,
+      body: id,
+      createdAt: new Date().toISOString(),
+      trigger: "user" as const,
+    });
+    vi.spyOn(repository, "listRecentNotificationsWithAccount").mockResolvedValue([
+      { accountId: "acct_default", connectedStorageId: "cs_115", notification: event("n_s1", "run_series_s1") },
+      { accountId: "acct_default", connectedStorageId: "cs_115", notification: event("n_lookalike", "run_series_sx") },
+      { accountId: "acct_default", connectedStorageId: "cs_quark", notification: event("n_other", "run_series2") },
+    ]);
+    stubs.runQueuedSeriesInitialization.mockImplementation(
+      async () => ({ status: "ran", workflowRunId: "run_series", workflowStatus: "succeeded" }) as never,
+    );
+
+    await rt.runNextQueuedWorkflow();
+
+    expect(stubs.sendPushNotifications).toHaveBeenCalledTimes(1);
+    expect(stubs.sendPushNotifications).toHaveBeenCalledWith(
+      expect.objectContaining({ notification: expect.objectContaining({ id: "n_s1" }) }),
+    );
+  });
+
+  it("reads the 同时处理 setting for the worker (1 when unset)", async () => {
+    const repository = await boot();
+    expect(await rt.getWorkerConcurrency()).toBe(1);
+    await repository.setSetting(rt.PATROL_CONCURRENCY_SETTING_KEY, "5");
+    expect(await rt.getWorkerConcurrency()).toBe(5);
+  });
+});

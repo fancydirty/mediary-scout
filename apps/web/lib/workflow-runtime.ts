@@ -64,6 +64,8 @@ import {
   parsePan123Uid,
   generateGuangYaDeviceId,
   GuangYaClient,
+  isRunOrItsSeasonRecord,
+  type QueueClaimOptions,
   type ResolveAccountWorkerContext,
   hashPassword,
   verifyPassword,
@@ -1002,17 +1004,20 @@ export function __resetPanSouHealthCacheForTests(): void {
   lastRecordedPanSouHealth.clear();
 }
 
-export async function runNextQueuedWorkflow() {
+/** Claim and run the next queued run. The in-process worker passes `claim` (its drive
+ *  filter and claim callback) so several runs can go at once, never two on one drive;
+ *  without it the oldest claimable run is taken, as before. */
+export async function runNextQueuedWorkflow(claim?: QueueClaimOptions) {
   // An update is about to replace this process: start nothing new. Queued runs stay
   // queued and run on the new version.
   if (isUpdateHoldActive(Date.now())) {
     return { status: "idle" as const };
   }
   // In flight for the updater's busy check, from here to the claim it guards.
-  return whileInFlight(runNextQueuedWorkflowNow);
+  return whileInFlight(() => runNextQueuedWorkflowNow(claim));
 }
 
-async function runNextQueuedWorkflowNow() {
+async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
   const repository = getWorkflowRepository();
   // §7 form B: the worker resolves each CLAIMED run's account credentials via
   // resolveAccountContext (claim-first), so bob's acquisition lands in bob's 115.
@@ -1031,6 +1036,7 @@ async function runNextQueuedWorkflowNow() {
   const resolveAccountContext = buildAccountContextResolver();
   const startedAt = new Date().toISOString();
   const onAuthErrorFreeze = (id: string, reason: string) => freezeConnectedStorage(id, reason);
+  const claimOption = claim === undefined ? {} : { claim };
   // Urgent user messages ("现在处理", written mid-run, or retry after a failure) get a
   // replace_request as soon as the queue is free — never waiting for the patrol.
   try {
@@ -1050,9 +1056,10 @@ async function runNextQueuedWorkflowNow() {
     resolveAccountContext,
     onAuthErrorFreeze,
     mayStartRun,
+    ...claimOption,
   });
   if (type2.status !== "idle") {
-    await pushNotificationsSince(repository, startedAt);
+    await pushNotificationsSince(repository, startedAt, { workflowRunId: type2.workflowRunId });
     return type2;
   }
   const series = await runQueuedSeriesInitialization({
@@ -1067,9 +1074,10 @@ async function runNextQueuedWorkflowNow() {
     resolveAccountContext,
     onAuthErrorFreeze,
     mayStartRun,
+    ...claimOption,
   });
   if (series.status !== "idle") {
-    await pushNotificationsSince(repository, startedAt);
+    await pushNotificationsSince(repository, startedAt, { workflowRunId: series.workflowRunId });
     return series;
   }
   const movie = await runQueuedMovieAcquisition({
@@ -1083,9 +1091,10 @@ async function runNextQueuedWorkflowNow() {
     resolveAccountContext,
     onAuthErrorFreeze,
     mayStartRun,
+    ...claimOption,
   });
   if (movie.status !== "idle") {
-    await pushNotificationsSince(repository, startedAt);
+    await pushNotificationsSince(repository, startedAt, { workflowRunId: movie.workflowRunId });
     return movie;
   }
   const replace = await runQueuedReplaceRequest({
@@ -1101,11 +1110,12 @@ async function runNextQueuedWorkflowNow() {
     resolveAccountContext,
     onAuthErrorFreeze,
     mayStartRun,
+    ...claimOption,
     // A work with 待换 episodes skips the patrol, where TMDB sync normally happens.
     ...syncOption(),
   });
   if (replace.status !== "idle") {
-    await pushNotificationsSince(repository, startedAt);
+    await pushNotificationsSince(repository, startedAt, { workflowRunId: replace.workflowRunId });
     return replace;
   }
   // Leftover staging heals itself. No notification and no push.
@@ -1119,6 +1129,7 @@ async function runNextQueuedWorkflowNow() {
     resolveAccountContext,
     onAuthErrorFreeze,
     mayStartRun,
+    ...claimOption,
   });
 }
 
@@ -1423,12 +1434,17 @@ export const PATROL_CONCURRENCY_SETTING_KEY = "patrol_max_concurrent_runs";
 export const DEFAULT_PATROL_CONCURRENCY = 1;
 export const MAX_PATROL_CONCURRENCY = 5;
 
-/** 巡检同时处理几部作品（1~5，默认 1 = 逐部）。同一块网盘上的作品始终逐部跑。 */
+/** 同时处理几部作品（1~5，默认 1 = 逐部），巡检和手动获取共用。同一块网盘上的作品始终逐部跑。 */
 export async function getPatrolConcurrency(
   repository: { getSetting(key: string): Promise<string | null> },
 ): Promise<number> {
   const value = Number((await repository.getSetting(PATROL_CONCURRENCY_SETTING_KEY))?.trim());
   return Number.isInteger(value) && value >= 1 && value <= MAX_PATROL_CONCURRENCY ? value : DEFAULT_PATROL_CONCURRENCY;
+}
+
+/** The in-process worker's limit on queued runs going at once (same setting as the patrol). */
+export async function getWorkerConcurrency(): Promise<number> {
+  return getPatrolConcurrency(getWorkflowRepository());
 }
 
 /**
@@ -1546,8 +1562,11 @@ async function pushNotificationsSince(
   targetRepository: WorkflowRepository,
   sinceIso: string,
   /** The sweep always sends its digest; a queue drain (a patrol-queued replace run)
-   *  skips one that would only say nothing changed (see scheduledDigestItems). */
-  opts: { sweep?: boolean } = {},
+   *  skips one that would only say nothing changed (see scheduledDigestItems).
+   *  `workflowRunId`: push only that run's notifications (its own record or its
+   *  per-season ones). A queued run passes its own id, since other runs going beside
+   *  it write notifications in the same window and each pushes its own when it finishes. */
+  opts: { sweep?: boolean; workflowRunId?: string } = {},
 ): Promise<void> {
   try {
     // Cross-account: the drain/sweep may have completed runs for several accounts.
@@ -1556,10 +1575,15 @@ async function pushNotificationsSince(
     // since is applied in the repository BEFORE the limit so a large sweep's
     // earliest notifications are not crowded out by newer already_current noise.
     // Cap is high enough for a full patrol of a large library; still bounded.
-    const recent = await targetRepository.listRecentNotificationsWithAccount({
-      since: sinceIso,
-      limit: 10_000,
-    });
+    const recent = (
+      await targetRepository.listRecentNotificationsWithAccount({
+        since: sinceIso,
+        limit: 10_000,
+      })
+    ).filter(
+      (entry) =>
+        opts.workflowRunId === undefined || isRunOrItsSeasonRecord(entry.notification.workflowRunId, opts.workflowRunId),
+    );
     if (recent.length === 0) {
       return;
     }

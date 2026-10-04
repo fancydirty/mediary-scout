@@ -11,10 +11,11 @@ import type {
   WorkflowStatus,
 } from "./domain.js";
 import type { ResourceProvider, StorageExecutor } from "./ports.js";
-import type { PersistedWorkflowRunSnapshot, WorkflowRepository } from "./repository.js";
+import type { PersistedWorkflowRunSnapshot, QueueClaimOptions, WorkflowRepository } from "./repository.js";
 import {
   AUTO_REQUEUE_BACKOFF_MS,
   AUTO_REQUEUE_MAX,
+  claimNextQueuedRun,
   failWorkflowRun,
   requeueWorkflowRunForRetry,
 } from "./repository.js";
@@ -349,15 +350,14 @@ export async function runQueuedType2Workflow(input: {
   resolveAccountContext?: ResolveAccountWorkerContext;
   onAuthErrorFreeze?: (storageId: string, reason: string) => Promise<void>;
   mayStartRun?: MayStartRun;
+  /** The worker's drive filter and claim callback when queued runs go side by side. */
+  claim?: QueueClaimOptions;
 }): Promise<QueuedType2WorkerResult> {
   const now = input.now ?? (() => new Date().toISOString());
   if (input.mayStartRun && !input.mayStartRun()) {
     return { status: "idle" };
   }
-  const claimed = await input.repository.claimNextQueuedWorkflowRun({
-    kind: "type2_init",
-    now: now(),
-  });
+  const claimed = await claimNextQueuedRun(input.repository, "type2_init", now(), input.claim);
   if (!claimed) {
     return { status: "idle" };
   }
@@ -1028,15 +1028,14 @@ export async function runQueuedMovieAcquisition(input: {
   resolveAccountContext?: ResolveAccountWorkerContext;
   onAuthErrorFreeze?: (storageId: string, reason: string) => Promise<void>;
   mayStartRun?: MayStartRun;
+  /** The worker's drive filter and claim callback when queued runs go side by side. */
+  claim?: QueueClaimOptions;
 }): Promise<QueuedType2WorkerResult> {
   const now = input.now ?? (() => new Date().toISOString());
   if (input.mayStartRun && !input.mayStartRun()) {
     return { status: "idle" };
   }
-  const claimed = await input.repository.claimNextQueuedWorkflowRun({
-    kind: "movie_init",
-    now: now(),
-  });
+  const claimed = await claimNextQueuedRun(input.repository, "movie_init", now(), input.claim);
   if (!claimed) {
     return { status: "idle" };
   }
@@ -1120,15 +1119,14 @@ export async function runQueuedSeriesInitialization(input: {
   resolveAccountContext?: ResolveAccountWorkerContext;
   onAuthErrorFreeze?: (storageId: string, reason: string) => Promise<void>;
   mayStartRun?: MayStartRun;
+  /** The worker's drive filter and claim callback when queued runs go side by side. */
+  claim?: QueueClaimOptions;
 }): Promise<QueuedType2WorkerResult> {
   const now = input.now ?? (() => new Date().toISOString());
   if (input.mayStartRun && !input.mayStartRun()) {
     return { status: "idle" };
   }
-  const claimed = await input.repository.claimNextQueuedWorkflowRun({
-    kind: "type1_package_init",
-    now: now(),
-  });
+  const claimed = await claimNextQueuedRun(input.repository, "type1_package_init", now(), input.claim);
   if (!claimed) {
     return { status: "idle" };
   }

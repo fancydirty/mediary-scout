@@ -1272,7 +1272,8 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
         over: {
           startedAt?: string;
           kind?: string;
-          connectedStorageId?: string;
+          /** null = a run with no bound drive. */
+          connectedStorageId?: string | null;
           nextAttemptAt?: string;
         } = {},
       ) => {
@@ -1280,7 +1281,7 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
         const seasonId = `season_${id}`;
         return {
           ...base,
-          connectedStorageId: over.connectedStorageId ?? `cs_${id}`,
+          connectedStorageId: over.connectedStorageId === undefined ? `cs_${id}` : over.connectedStorageId,
           season: { ...base.season, id: seasonId },
           workflowRun: {
             ...base.workflowRun,
@@ -1317,6 +1318,54 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
         // Both drained (now running) → a third claim finds nothing queued.
         const third = await repo.claimNextQueuedWorkflowRun({ kind: "type2_init", now });
         expect(third).toBeNull();
+      });
+
+      // The worker runs queued runs on different drives side by side, never two on one
+      // drive: it passes the drives that already have a run going.
+      it("skips queued runs on drives that already have a run going", async () => {
+        const repo = await fresh();
+        await repo.saveWorkflowRunSnapshot(
+          queued("on-busy", { startedAt: "2026-06-11T00:00:00.000Z", connectedStorageId: "cs_busy" }),
+        );
+        await repo.saveWorkflowRunSnapshot(
+          queued("on-free", { startedAt: "2026-06-11T00:05:00.000Z", connectedStorageId: "cs_free" }),
+        );
+        const now = "2026-06-11T01:00:00.000Z";
+
+        const claimed = await repo.claimNextQueuedWorkflowRun({
+          kind: "type2_init",
+          now,
+          excludeConnectedStorageIds: ["cs_busy"],
+        });
+        expect(claimed?.workflowRun.id).toBe("on-free");
+        expect(claimed?.connectedStorageId).toBe("cs_free");
+        expect(
+          await repo.claimNextQueuedWorkflowRun({ kind: "type2_init", now, excludeConnectedStorageIds: ["cs_busy"] }),
+        ).toBeNull();
+        // Skipped, not dropped: claimable again once its drive is free.
+        expect((await repo.claimNextQueuedWorkflowRun({ kind: "type2_init", now }))?.workflowRun.id).toBe("on-busy");
+      });
+
+      it("skips runs with no bound drive only when asked; a drive list never hides them", async () => {
+        const repo = await fresh();
+        await repo.saveWorkflowRunSnapshot(
+          queued("unbound", { startedAt: "2026-06-11T00:00:00.000Z", connectedStorageId: null }),
+        );
+        await repo.saveWorkflowRunSnapshot(
+          queued("bound", { startedAt: "2026-06-11T00:05:00.000Z", connectedStorageId: "cs_bound" }),
+        );
+        const now = "2026-06-11T01:00:00.000Z";
+
+        const bound = await repo.claimNextQueuedWorkflowRun({ kind: "type2_init", now, excludeUnbound: true });
+        expect(bound?.workflowRun.id).toBe("bound");
+        // NULL is not "in" a list: excluding other drives must still find the unbound run.
+        const unbound = await repo.claimNextQueuedWorkflowRun({
+          kind: "type2_init",
+          now,
+          excludeConnectedStorageIds: ["cs_other"],
+        });
+        expect(unbound?.workflowRun.id).toBe("unbound");
+        expect(unbound?.connectedStorageId).toBeNull();
       });
 
       it("claims an immediately-claimable run and does not pick a later gated one", async () => {

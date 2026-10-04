@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { QueueClaimOptions } from "@media-track/workflow";
 import { clearUpdateHold, inFlightCount, setUpdateHold } from "./update-hold";
 import {
   drainQueueOnce,
@@ -235,6 +236,27 @@ describe("startBackgroundWorker — the in-process worker loop (auto-drive)", ()
     expect(inFlightCount()).toBe(0);
   });
 
+  it("each tick drains with the runtime's concurrency: runs on two drives overlap", async () => {
+    const q = fakeQueue([
+      { id: "a", drive: "cs_a" },
+      { id: "b", drive: "cs_b" },
+    ]);
+    const runtime = {
+      recover: vi.fn(async () => 0),
+      runNext: q.runNext,
+      runScheduled: vi.fn(async () => undefined),
+      concurrency: vi.fn(async () => 2),
+    };
+    startBackgroundWorker({ pollMs: 1000, runtime });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(q.events).toEqual(["start a", "start b"]);
+    expect(runtime.runScheduled).not.toHaveBeenCalled();
+    q.finish("a");
+    q.finish("b");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(runtime.runScheduled).toHaveBeenCalledTimes(1);
+  });
+
   it("starts nothing while the update hold is on, and resumes once it is released", async () => {
     const runtime = {
       recover: vi.fn(async () => 0),
@@ -274,6 +296,7 @@ describe("defaultRuntime — 巡检调度接线（IGNORE_TIME_GATE 特例已退�
       runAutoUpdateIfDue: vi.fn(async () => undefined),
       recoverOrphanedRuns: vi.fn(async () => 0),
       workerHasConfiguredDrive: vi.fn(async () => true),
+      getWorkerConcurrency: vi.fn(async () => 1),
     }));
     const { defaultRuntime } = await import("./background-worker");
     const runtime = await defaultRuntime();
@@ -289,10 +312,31 @@ describe("defaultRuntime — 巡检调度接线（IGNORE_TIME_GATE 特例已退�
       runAutoUpdateIfDue,
       recoverOrphanedRuns: vi.fn(async () => 0),
       workerHasConfiguredDrive: vi.fn(async () => true),
+      getWorkerConcurrency: vi.fn(async () => 1),
     }));
     const { defaultRuntime } = await import("./background-worker");
     return defaultRuntime();
   }
+
+  it("runNext passes the drain's claim options on; concurrency reads the 同时处理 setting", async () => {
+    const runNextQueuedWorkflow = vi.fn(async () => ({ status: "idle" }));
+    const getWorkerConcurrency = vi.fn(async () => 4);
+    vi.resetModules();
+    vi.doMock("./workflow-runtime", () => ({
+      runNextQueuedWorkflow,
+      getWorkerConcurrency,
+      runScheduledType3: vi.fn(async () => ({ outcomes: [] })),
+      runAutoUpdateIfDue: vi.fn(async () => undefined),
+      recoverOrphanedRuns: vi.fn(async () => 0),
+      workerHasConfiguredDrive: vi.fn(async () => true),
+    }));
+    const { defaultRuntime } = await import("./background-worker");
+    const runtime = await defaultRuntime();
+    const claim: QueueClaimOptions = { excludeConnectedStorageIds: ["cs_a"], excludeUnbound: true };
+    await runtime.runNext(claim);
+    expect(runNextQueuedWorkflow).toHaveBeenCalledWith(claim);
+    expect(await runtime.concurrency?.()).toBe(4);
+  });
 
   it("autoUpdate → runAutoUpdateIfDue", async () => {
     const spy = vi.fn(async () => undefined);
@@ -308,6 +352,223 @@ describe("defaultRuntime — 巡检调度接线（IGNORE_TIME_GATE 特例已退�
       expect(spy).toHaveBeenCalledWith();
     } finally {
       delete process.env.MEDIA_TRACK_PATROL_IGNORE_TIME_GATE;
+    }
+  });
+});
+
+/**
+ * A fake queue for the drain: a claim honours the drive filter it is given and reports
+ * the claimed run's drive, then the run stays going until the test finishes it.
+ */
+function fakeQueue(initial: Array<{ id: string; drive: string | null }>) {
+  const queue = [...initial];
+  const events: string[] = [];
+  const finishers = new Map<string, () => void>();
+  const runNext = vi.fn(async (claim?: QueueClaimOptions) => {
+    const at = queue.findIndex((run) =>
+      run.drive === null
+        ? claim?.excludeUnbound !== true
+        : !(claim?.excludeConnectedStorageIds ?? []).includes(run.drive),
+    );
+    if (at === -1) return { status: "idle" };
+    const [run] = queue.splice(at, 1);
+    claim?.onClaimed?.({ workflowRunId: run!.id, connectedStorageId: run!.drive });
+    events.push(`start ${run!.id}`);
+    await new Promise<void>((resolve) => finishers.set(run!.id, resolve));
+    events.push(`finish ${run!.id}`);
+    return { status: "ran" };
+  });
+  return {
+    runNext,
+    events,
+    add: (run: { id: string; drive: string | null }) => void queue.push(run),
+    finish: (id: string) => finishers.get(id)!(),
+  };
+}
+
+const poll = () => new Promise<void>((resolve) => setTimeout(resolve, 1));
+async function until(condition: () => boolean): Promise<void> {
+  for (let i = 0; i < 500 && !condition(); i += 1) await poll();
+  expect(condition()).toBe(true);
+}
+/** Let the drain look at the queue a few more times. */
+async function settle(): Promise<void> {
+  for (let i = 0; i < 20; i += 1) await poll();
+}
+
+describe("drainQueueOnce — several queued runs at once (the 同时处理 setting)", () => {
+  it("runs queued runs on different drives side by side, up to the setting", async () => {
+    const q = fakeQueue([
+      { id: "a", drive: "cs_115" },
+      { id: "b", drive: "cs_guangya" },
+    ]);
+    const runScheduled = vi.fn(async () => undefined);
+    const drain = drainQueueOnce({ runNext: q.runNext, runScheduled, concurrency: async () => 2, pollMs: 1, sleep: poll });
+
+    await until(() => q.events.includes("start b"));
+    expect(q.events).toEqual(["start a", "start b"]); // b started while a is still going
+    q.finish("a");
+    q.finish("b");
+    expect(await drain).toBe(2);
+    expect(runScheduled).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts a run queued while another drive's run is going (护肝人 on 115, then on 光鸭)", async () => {
+    const q = fakeQueue([{ id: "115", drive: "cs_115" }]);
+    const drain = drainQueueOnce({
+      runNext: q.runNext,
+      runScheduled: async () => undefined,
+      concurrency: async () => 5,
+      pollMs: 1,
+      sleep: poll,
+    });
+
+    await until(() => q.events.includes("start 115"));
+    q.add({ id: "guangya", drive: "cs_guangya" });
+    await until(() => q.events.includes("start guangya"));
+    expect(q.events).toEqual(["start 115", "start guangya"]);
+    q.finish("115");
+    q.finish("guangya");
+    expect(await drain).toBe(2);
+  });
+
+  it("never runs two on the same drive: the second waits for the first", async () => {
+    const q = fakeQueue([
+      { id: "a1", drive: "cs_a" },
+      { id: "a2", drive: "cs_a" },
+      { id: "b", drive: "cs_b" },
+    ]);
+    const drain = drainQueueOnce({
+      runNext: q.runNext,
+      runScheduled: async () => undefined,
+      concurrency: async () => 3,
+      pollMs: 1,
+      sleep: poll,
+    });
+
+    await until(() => q.events.includes("start b"));
+    await settle();
+    expect(q.events).toEqual(["start a1", "start b"]);
+    q.finish("a1");
+    await until(() => q.events.includes("start a2"));
+    q.finish("b");
+    q.finish("a2");
+    expect(await drain).toBe(3);
+  });
+
+  it("with the setting at 1 runs one after another, as before", async () => {
+    const q = fakeQueue([
+      { id: "a", drive: "cs_a" },
+      { id: "b", drive: "cs_b" },
+    ]);
+    const drain = drainQueueOnce({
+      runNext: q.runNext,
+      runScheduled: async () => undefined,
+      concurrency: async () => 1,
+      pollMs: 1,
+      sleep: poll,
+    });
+
+    await until(() => q.events.includes("start a"));
+    await settle();
+    expect(q.events).toEqual(["start a"]);
+    q.finish("a");
+    await until(() => q.events.includes("start b"));
+    q.finish("b");
+    await drain;
+    expect(q.events).toEqual(["start a", "finish a", "start b", "finish b"]);
+  });
+
+  it("runs a run with no bound drive alone: nothing starts beside it, and it waits for the others", async () => {
+    const q = fakeQueue([
+      { id: "unbound", drive: null },
+      { id: "b", drive: "cs_b" },
+    ]);
+    const drain = drainQueueOnce({
+      runNext: q.runNext,
+      runScheduled: async () => undefined,
+      concurrency: async () => 3,
+      pollMs: 1,
+      sleep: poll,
+    });
+
+    await until(() => q.events.includes("start unbound"));
+    await settle();
+    expect(q.events).toEqual(["start unbound"]);
+    q.finish("unbound");
+    await until(() => q.events.includes("start b"));
+    q.add({ id: "unbound2", drive: null });
+    await settle();
+    expect(q.events).toEqual(["start unbound", "finish unbound", "start b"]);
+    q.finish("b");
+    await until(() => q.events.includes("start unbound2"));
+    q.finish("unbound2");
+    expect(await drain).toBe(3);
+  });
+
+  it("runs the daily sweep only after every drained run has finished", async () => {
+    const q = fakeQueue([
+      { id: "a", drive: "cs_a" },
+      { id: "b", drive: "cs_b" },
+    ]);
+    const runScheduled = vi.fn(async () => void q.events.push("sweep"));
+    const drain = drainQueueOnce({ runNext: q.runNext, runScheduled, concurrency: async () => 2, pollMs: 1, sleep: poll });
+
+    await until(() => q.events.includes("start b"));
+    q.finish("b");
+    await settle();
+    expect(runScheduled).not.toHaveBeenCalled();
+    q.finish("a");
+    await drain;
+    expect(q.events.at(-1)).toBe("sweep");
+    expect(q.events.indexOf("sweep")).toBeGreaterThan(q.events.indexOf("finish a"));
+  });
+
+  it("starts no more than the safety cap in one tick", async () => {
+    const q = fakeQueue([
+      { id: "a", drive: "cs_a" },
+      { id: "b", drive: "cs_b" },
+      { id: "c", drive: "cs_c" },
+    ]);
+    const drain = drainQueueOnce({
+      runNext: q.runNext,
+      runScheduled: async () => undefined,
+      concurrency: async () => 3,
+      maxDrains: 2,
+      pollMs: 1,
+      sleep: poll,
+    });
+
+    await until(() => q.events.includes("start b"));
+    await settle();
+    expect(q.events).toEqual(["start a", "start b"]);
+    q.finish("a");
+    q.finish("b");
+    expect(await drain).toBe(2);
+  });
+
+  it("a claim that throws starts nothing more; the run already going finishes and the sweep still runs", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const q = fakeQueue([{ id: "a", drive: "cs_a" }]);
+      let calls = 0;
+      const runNext = vi.fn(async (claim?: QueueClaimOptions) => {
+        calls += 1;
+        if (calls === 2) throw new Error("db down");
+        return q.runNext(claim);
+      });
+      const runScheduled = vi.fn(async () => undefined);
+      const drain = drainQueueOnce({ runNext, runScheduled, concurrency: async () => 3, pollMs: 1, sleep: poll });
+
+      await until(() => calls >= 2);
+      await settle();
+      expect(calls).toBe(2); // no claim after the failed one
+      q.finish("a");
+      expect(await drain).toBe(1);
+      expect(runScheduled).toHaveBeenCalledTimes(1);
+      expect(error).toHaveBeenCalledWith(expect.stringContaining("drain failed: db down"));
+    } finally {
+      error.mockRestore();
     }
   });
 });
