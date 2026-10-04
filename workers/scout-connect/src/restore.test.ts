@@ -386,6 +386,35 @@ describe("restoreEndpoint", () => {
     expect((await db.getEndpointById("ep_old"))?.status).toBe("revoked");
   });
 
+  it("answers already provisioned when a concurrent restore won and its CNAME blocks this one", async () => {
+    // Two restores read the same revoked row; the first creates the CNAME and reactivates the row,
+    // so the second's createDnsCname fails on the duplicate. That is the lost race, not a 500.
+    const db = createMemoryConnectDb();
+    await seedAccount(db, "A", FUTURE);
+    await db.insertEndpoint(endpoint({ id: "ep_old", slug: "fam", account_id: "A" }));
+    const calls: string[] = [];
+    const base = fakeCf(calls);
+    const cf: CfApi = {
+      ...base,
+      async createDnsCname(slug, tunnelId) {
+        await db.reactivateEndpoint({
+          id: "ep_old",
+          accountId: "A",
+          cfTunnelId: "t-winner",
+          cfDnsRecordId: "dns-winner",
+          tokenSha256: "sha-winner",
+        });
+        calls.push(`dns:${slug}`);
+        void tunnelId;
+        throw new Error("cf dns: record already exists");
+      },
+    };
+    await expect(restoreEndpoint({ accountId: "A", deps: deps(db, cf) })).rejects.toThrow("already provisioned");
+    // Only this request's own tunnel is cleaned up; the winner's DNS record and tunnel stay.
+    expect(calls.filter((call) => call.startsWith("delete"))).toEqual(["deleteTunnel:tid-scout-fam"]);
+    expect((await db.getEndpointById("ep_old"))?.cf_tunnel_id).toBe("t-winner");
+  });
+
   it("still returns the restored address when the audit write fails", async () => {
     const db = createMemoryConnectDb();
     await seedAccount(db, "A", FUTURE);

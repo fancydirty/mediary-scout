@@ -1,7 +1,7 @@
 import { AT_CAPACITY_MESSAGE, CAPACITY_LIMIT } from "./capacity.js";
 import { sha256Hex } from "./crypto-token.js";
 import { isEntitlementActive, latestExpiry } from "./entitlement.js";
-import { createTunnelResources } from "./tunnel-resources.js";
+import { createTunnelResources, type TunnelResources } from "./tunnel-resources.js";
 import type { CfApi } from "./cf-api.js";
 import type { ConnectDb } from "./db.js";
 
@@ -71,7 +71,15 @@ export async function restoreEndpoint(input: {
 
   if ((await db.countLiveEndpoints()) >= CAPACITY_LIMIT) throw new Error(AT_CAPACITY_MESSAGE);
 
-  const resources = await createTunnelResources(cf, endpoint.slug, endpoint.hostname);
+  let resources: TunnelResources;
+  try {
+    resources = await createTunnelResources(cf, endpoint.slug, endpoint.hostname);
+  } catch (e) {
+    // A concurrent restore of this row that got there first owns the CNAME, so ours fails on the
+    // duplicate. createTunnelResources already deleted our tunnel; report the lost race as such.
+    if ((await db.getEndpointById(endpoint.id))?.status === "active") throw new Error("already provisioned");
+    throw e;
+  }
   let restored = false;
   try {
     // Same post-CF invariant as provisionEndpoint: hashing sits inside the rollback,
