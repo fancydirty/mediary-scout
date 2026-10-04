@@ -80,6 +80,28 @@ export async function restoreEndpoint(input: {
     if ((await db.getEndpointById(endpoint.id))?.status === "active") throw new Error("already provisioned");
     throw e;
   }
+  // discard() swallows delete failures. Like provision.orphan, leave the new ids in an audit row so
+  // an operator can find leftovers; D1 may be what failed, so this is best effort too.
+  const rollBack = async (created: TunnelResources): Promise<void> => {
+    await created.discard();
+    try {
+      await db.insertAudit({
+        id: deps.newAuditId(),
+        at: deps.now(),
+        actor: "system",
+        action: "restore.orphan",
+        invite_id: null,
+        endpoint_id: endpoint.id,
+        detail_json: JSON.stringify({
+          hostname: endpoint.hostname,
+          cf_tunnel_id: created.tunnelId,
+          cf_dns_record_id: created.recordId,
+        }),
+      });
+    } catch {
+      // nothing more we can do
+    }
+  };
   let restored = false;
   try {
     // Same post-CF invariant as provisionEndpoint: hashing sits inside the rollback,
@@ -93,11 +115,11 @@ export async function restoreEndpoint(input: {
       tokenSha256,
     });
   } catch (e) {
-    await resources.discard();
+    await rollBack(resources);
     throw e;
   }
   if (!restored) {
-    await resources.discard();
+    await rollBack(resources);
     throw new Error("already provisioned");
   }
   // The row is the user's address. A failed audit must not roll it back: they paid and

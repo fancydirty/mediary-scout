@@ -415,6 +415,30 @@ describe("restoreEndpoint", () => {
     expect((await db.getEndpointById("ep_old"))?.cf_tunnel_id).toBe("t-winner");
   });
 
+  it("leaves an orphan audit with the new tunnel and DNS ids when the restore is rolled back", async () => {
+    // discard() is best effort: if its deletes fail, these ids are the operator's only handle on the
+    // leftovers (same as provision.orphan for a failed provisioning).
+    const db = createMemoryConnectDb();
+    await seedAccount(db, "A", FUTURE);
+    await db.insertEndpoint(endpoint({ id: "ep_old", slug: "fam", account_id: "A" }));
+    const failing: ConnectDb = {
+      ...db,
+      async reactivateEndpoint() {
+        throw new Error("d1 down");
+      },
+    };
+    await expect(
+      restoreEndpoint({ accountId: "A", deps: deps(failing, fakeCf([], { deleteTunnelThrows: true })) }),
+    ).rejects.toThrow("d1 down");
+    const orphan = (await db.listAudits()).find((audit) => audit.action === "restore.orphan");
+    expect(orphan?.endpoint_id).toBe("ep_old");
+    expect(JSON.parse(orphan?.detail_json ?? "{}")).toMatchObject({
+      hostname: "fam.mediaryconnect.app",
+      cf_tunnel_id: "tid-scout-fam",
+      cf_dns_record_id: "rec-fam",
+    });
+  });
+
   it("still returns the restored address when the audit write fails", async () => {
     const db = createMemoryConnectDb();
     await seedAccount(db, "A", FUTURE);
