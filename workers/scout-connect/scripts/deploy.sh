@@ -80,6 +80,14 @@ if ! env -u CF_API_TOKEN npx wrangler d1 execute scout-connect --remote \
   exit 1
 fi
 
+echo "→ production D1 revoke-reason schema preflight (read-only)"
+if ! env -u CF_API_TOKEN npx wrangler d1 execute scout-connect --remote \
+  --command "SELECT revoke_reason FROM endpoints LIMIT 0;" \
+  >/dev/null; then
+  echo "❌ 生产 D1 尚未应用 0009-endpoint-revoke-reason.sql；请先应用 0009，再部署。" >&2
+  exit 1
+fi
+
 NOW_ISO=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
 if ! ALIPAY_OPEN_RESULT=$(env -u CF_API_TOKEN npx wrangler d1 execute scout-connect --remote --json \
   --command "SELECT COUNT(*) AS count FROM payment_orders WHERE provider = 'alipay' AND (status = 'paid' OR (status IN ('created','form_issued','pending') AND expires_at > '$NOW_ISO'));"); then

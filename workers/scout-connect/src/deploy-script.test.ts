@@ -29,6 +29,12 @@ describe("deploy cutover guard", () => {
     expect(deployScript).toContain("尚未应用 0008-instance-links.sql");
     expect(deployScript).toContain("请先应用 0008");
   });
+
+  it("refuses deployment until the 0009 revoke_reason column exists", () => {
+    expect(deployScript).toContain("SELECT revoke_reason FROM endpoints LIMIT 0");
+    expect(deployScript).toContain("尚未应用 0009-endpoint-revoke-reason.sql");
+    expect(deployScript).toContain("请先应用 0009");
+  });
 });
 
 describe("post-deploy /buy self-check", () => {
