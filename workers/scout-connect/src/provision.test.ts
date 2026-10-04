@@ -266,7 +266,7 @@ describe("provisionEndpoint", () => {
       token_shown_at: null,
       created_at: NOW,
       revoked_at: null,
-      last_seen_at: null, account_id: null, grace_until: null, suspended_at: null, purge_after: null,
+      last_seen_at: null, account_id: null, grace_until: null, suspended_at: null, purge_after: null, revoke_reason: null,
     });
 
     await expect(

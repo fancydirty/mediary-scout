@@ -103,6 +103,7 @@ async function seed(
     grace_until: null,
     suspended_at: null,
     purge_after: null,
+    revoke_reason: null,
   } as never);
 }
 
@@ -286,6 +287,7 @@ describe("cron 回收的审计归因(Copilot round-3)", () => {
     expect(JSON.parse(revokeAudit!.detail_json || "{}"), "detail 可读").toBeTruthy();
     // actor 字段在 AuditRow 顶层,不在 detail_json
     expect(revokeAudit?.actor, "自动回收不该记成 admin").toBe("cron");
+    expect((await db.getEndpointById("ep1"))?.revoke_reason).toBe("expired");
   });
 
   it("回收失败的 revoke_failed 审计同样是 cron", async () => {

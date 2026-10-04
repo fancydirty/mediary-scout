@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createMemoryConnectDb, type ConnectDb } from "./db.js";
+import { createMemoryConnectDb, type ConnectDb, type EndpointRow } from "./db.js";
 import { handleRequest, type RouteDeps } from "./routes.js";
 import { buildSessionCookie } from "./session.js";
 
@@ -72,6 +72,7 @@ describe("GET /api/account", () => {
       active: true,
       expiresAt: "2027-01-03T00:00:00.000Z",
       endpoint: null,
+      restorable: null,
       checkoutOpen: true,
       tiers: [
         { id: "quarter", label: "季度", months: 3, price: "45.00", featured: false },
@@ -107,5 +108,94 @@ describe("GET /api/account", () => {
       deps(db, true, { quarter: "", year: "", two_years: "" }),
     );
     expect(await none.json()).toMatchObject({ checkoutOpen: false, tiers: [] });
+  });
+
+  function endpoint(overrides: Partial<EndpointRow> & Pick<EndpointRow, "id" | "slug" | "status">): EndpointRow {
+    return {
+      invite_id: null,
+      hostname: `${overrides.slug}.mediaryconnect.app`,
+      cf_tunnel_id: "tun-1",
+      cf_access_app_id: null,
+      cf_access_policy_id: null,
+      cf_dns_record_id: "dns-1",
+      token_sha256: "sha",
+      token_ciphertext: null,
+      token_shown_at: null,
+      last_seen_at: null,
+      created_at: NOW,
+      revoked_at: overrides.status === "active" ? null : "2026-09-01T00:00:00.000Z",
+      account_id: "act_1",
+      grace_until: null,
+      suspended_at: null,
+      purge_after: null,
+      revoke_reason: null,
+      ...overrides,
+    };
+  }
+
+  it("reports the live endpoint's tunnel id", async () => {
+    const db = createMemoryConnectDb();
+    const cookie = await accountCookie(db);
+    await db.insertEndpoint(endpoint({ id: "ep_live", slug: "fam", status: "active", cf_tunnel_id: "tun-live" }));
+    const body = (await (await handleRequest(
+      new Request("https://dev.example/api/account", { headers: { cookie } }),
+      deps(db),
+    )).json()) as { endpoint: { tunnelId?: string } | null };
+    expect(body.endpoint?.tunnelId).toBe("tun-live");
+  });
+
+  it("reports a restorable address when the account has no live endpoint, active or not", async () => {
+    const expired = createMemoryConnectDb();
+    const expiredCookie = await accountCookie(expired);
+    await expired.insertEntitlement({
+      id: "ent_old", account_id: "act_1", expires_at: "2026-01-01T00:00:00.000Z", source: "manual",
+      paddle_transaction_id: null, payment_provider: null, payment_transaction_id: null,
+      refunded_at: null, months: 3, created_at: NOW,
+    });
+    await expired.insertEndpoint(endpoint({ id: "ep_exp", slug: "fam", status: "revoked", revoke_reason: "expired" }));
+    const expiredBody = await (await handleRequest(
+      new Request("https://dev.example/api/account", { headers: { cookie: expiredCookie } }),
+      deps(expired),
+    )).json();
+    expect(expiredBody).toMatchObject({
+      active: false,
+      endpoint: null,
+      restorable: { slug: "fam", hostname: "fam.mediaryconnect.app" },
+    });
+
+    const current = createMemoryConnectDb();
+    const currentCookie = await accountCookie(current);
+    await current.insertEntitlement({
+      id: "ent_now", account_id: "act_1", expires_at: "2027-01-03T00:00:00.000Z", source: "manual",
+      paddle_transaction_id: null, payment_provider: null, payment_transaction_id: null,
+      refunded_at: null, months: 12, created_at: NOW,
+    });
+    await current.insertEndpoint(endpoint({ id: "ep_ref", slug: "fam", status: "revoked", revoke_reason: "refunded" }));
+    const currentBody = await (await handleRequest(
+      new Request("https://dev.example/api/account", { headers: { cookie: currentCookie } }),
+      deps(current),
+    )).json();
+    expect(currentBody).toMatchObject({
+      restorable: { slug: "fam", hostname: "fam.mediaryconnect.app" },
+    });
+
+    const admin = createMemoryConnectDb();
+    const adminCookie = await accountCookie(admin);
+    await admin.insertEndpoint(endpoint({ id: "ep_admin", slug: "fam", status: "revoked", revoke_reason: "admin" }));
+    expect(await (await handleRequest(
+      new Request("https://dev.example/api/account", { headers: { cookie: adminCookie } }),
+      deps(admin),
+    )).json()).toMatchObject({ restorable: null });
+
+    const live = createMemoryConnectDb();
+    const liveCookie = await accountCookie(live);
+    await live.insertEndpoint(endpoint({ id: "ep_live", slug: "fam", status: "active", revoke_reason: null }));
+    await live.insertEndpoint(endpoint({
+      id: "ep_old", slug: "old-fam", status: "revoked", revoke_reason: "expired", account_id: "act_1",
+    }));
+    expect(await (await handleRequest(
+      new Request("https://dev.example/api/account", { headers: { cookie: liveCookie } }),
+      deps(live),
+    )).json()).toMatchObject({ restorable: null });
   });
 });

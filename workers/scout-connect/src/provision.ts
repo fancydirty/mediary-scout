@@ -3,6 +3,7 @@ import { assertSlug } from "./slug.js";
 import { sha256Hex } from "./crypto-token.js";
 import { buildAgentPromptOrManual } from "./agent-prompt.js";
 import { isEntitlementActive, latestExpiry } from "./entitlement.js";
+import { createTunnelResources } from "./tunnel-resources.js";
 import type { CfApi } from "./cf-api.js";
 import type { ConnectDb } from "./db.js";
 
@@ -113,50 +114,8 @@ export async function provisionEndpoint(input: {
     throw new Error(AT_CAPACITY_MESSAGE);
   }
 
-  const { tunnelId, token } = await cf.createTunnel(`scout-${slug}`);
-
-  // Compensation invariant: deleteTunnel runs AT MOST once on any failure
-  // path. The inner dns catch deletes it, then rethrows into the outer catch,
-  // which must not delete it again.
-  let tunnelDeleted = false;
-  const deleteTunnelOnce = async (): Promise<void> => {
-    if (!tunnelDeleted) {
-      // Latch AFTER the await: a transient delete failure leaves the flag
-      // unset so a later catch can still retry (404-idempotent = safe).
-      await cf.deleteTunnel(tunnelId);
-      tunnelDeleted = true;
-    }
-  };
-
-  // Create tunnel ingress and DNS; no Access app.
-  //
-  // Compensation here is BEST EFFORT, matching the post-CF phase below: a
-  // failing deleteTunnel must never displace the failure that triggered the
-  // rollback, or the caller is told "delete tunnel boom" when the real problem
-  // was "cf dns boom". Note deleteTunnelOnce() latches only AFTER a successful
-  // await, so a transient failure in the inner catch leaves the flag unset and
-  // the outer catch retries it — deletion is 404-idempotent, so that is free.
-  let recordId: string;
-  try {
-    await cf.putTunnelIngress(tunnelId, hostname);
-    try {
-      ({ recordId } = await cf.createDnsCname(slug, tunnelId));
-    } catch (e) {
-      try {
-        await deleteTunnelOnce();
-      } catch {
-        // best-effort compensation — original error is what matters
-      }
-      throw e;
-    }
-  } catch (e) {
-    try {
-      await deleteTunnelOnce();
-    } catch {
-      // best-effort compensation — original error is what matters
-    }
-    throw e;
-  }
+  const resources = await createTunnelResources(cf, slug, hostname);
+  const { tunnelId, token, recordId } = resources;
 
   // Post-CF phase (crypto + persistence): all CF resources
   // (tunnel/ingress/access/dns) exist now. If anything here fails — including
@@ -192,6 +151,7 @@ export async function provisionEndpoint(input: {
       grace_until: null,
       suspended_at: null,
       purge_after: null,
+      revoke_reason: null,
     });
 
     if (origin.kind === "invite") {
@@ -248,16 +208,7 @@ export async function provisionEndpoint(input: {
         // D1 may be the failing component — nothing more we can do
       }
     }
-    try {
-      await cf.deleteDnsRecord(recordId);
-    } catch {
-      // best-effort compensation — original error is what matters
-    }
-    try {
-      await deleteTunnelOnce();
-    } catch {
-      // best-effort compensation
-    }
+    await resources.discard();
     try {
       await db.insertAudit({
         id: deps.newAuditId(),

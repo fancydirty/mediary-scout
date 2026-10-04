@@ -616,6 +616,14 @@ describe("Waffo webhook and status compensation", () => {
       paddle_transaction_id: null, payment_provider: "waffo", payment_transaction_id: order.out_trade_no,
       refunded_at: null, months: 3, created_at: "2026-09-01T00:00:00.000Z",
     });
+    await db.insertEndpoint({
+      id: "ep_refund", invite_id: null, slug: "fam", hostname: "fam.mediaryconnect.app",
+      cf_tunnel_id: "t-old", cf_access_app_id: null, cf_access_policy_id: null, cf_dns_record_id: "d-old",
+      status: "active", token_sha256: "sha", token_ciphertext: null, token_shown_at: null, last_seen_at: null,
+      created_at: NOW, revoked_at: null, account_id: "act_1", grace_until: null, suspended_at: null,
+      purge_after: null,
+      revoke_reason: null,
+    });
     const queryPayments = vi.fn(async () => [{
       id: "PAY_CRON_REFUND", orderId: "ORD", status: "succeeded",
       amount: { amount: "4500", currency: "CNY", display: "45.00" },
@@ -626,6 +634,9 @@ describe("Waffo webhook and status compensation", () => {
     expect(queryPayments).toHaveBeenCalledOnce();
     expect((await db.getPaymentOrderById(order.id))?.status).toBe("refunded");
     expect((await db.listEntitlements("act_1"))[0]?.refunded_at).toBe(NOW);
+    const endpoint = await db.getEndpointById("ep_refund");
+    expect(endpoint?.revoke_reason).toBe("refunded");
+    expect((await db.listAudits()).find((row) => row.action === "endpoint.revoke")?.actor).toBe("system");
   });
 
   it("cron leaves a fulfilled order with a succeeded non-refunded payment unchanged", async () => {

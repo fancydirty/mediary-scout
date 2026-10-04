@@ -1,14 +1,13 @@
 import type { CfApi } from "./cf-api.js";
-import type { ConnectDb } from "./db.js";
+import type { ConnectDb, RevokeReason } from "./db.js";
 
 export interface RevokeDeps {
   cf: CfApi;
   db: ConnectDb;
   now: () => string;
   newAuditId: () => string;
-  /** 审计归因。默认 "admin"(人工操作);cron 到期回收传 "cron" ——
-   *  否则自动回收的审计会被记成人工操作,误导排查。 */
-  actor?: "admin" | "cron";
+  /** 审计归因：admin = 人工操作；cron = 到期回收；system = 退款等自动流程。 */
+  actor?: "admin" | "cron" | "system";
 }
 
 export interface RevokeResult {
@@ -22,6 +21,8 @@ function errorMessage(e: unknown): string {
 
 export async function revokeEndpoint(input: {
   endpointId: string;
+  /** Why it is taken down. Decides whether the owner can restore it after renewing. */
+  reason: RevokeReason;
   deps: RevokeDeps;
 }): Promise<RevokeResult> {
   const { deps } = input;
@@ -76,7 +77,7 @@ export async function revokeEndpoint(input: {
   await attempt(() => cf.deleteTunnel(endpoint.cf_tunnel_id));
 
   if (failures.length === 0) {
-    await db.markEndpointRevoked(endpointId, deps.now());
+    await db.markEndpointRevoked(endpointId, deps.now(), input.reason);
     // 0004:自助行 invite_id 为 null,没有 invite 状态要翻。
     if (endpoint.invite_id !== null) {
       await db.updateInviteStatus(endpoint.invite_id, {
@@ -92,7 +93,7 @@ export async function revokeEndpoint(input: {
       action: "endpoint.revoke",
       invite_id: endpoint.invite_id,
       endpoint_id: endpointId,
-      detail_json: JSON.stringify({ hostname: endpoint.hostname }),
+      detail_json: JSON.stringify({ hostname: endpoint.hostname, reason: input.reason }),
     });
     return { endpointId, hostname: endpoint.hostname };
   }
@@ -101,7 +102,7 @@ export async function revokeEndpoint(input: {
   // later. Retrying is safe because cf-api deletes are 404-idempotent —
   // resources already deleted above simply come back as success.
   const firstError = failures[0];
-  await db.markEndpointRevokeFailed(endpointId);
+  await db.markEndpointRevokeFailed(endpointId, input.reason);
   await db.insertAudit({
     id: deps.newAuditId(),
     at: deps.now(),
@@ -111,6 +112,7 @@ export async function revokeEndpoint(input: {
     endpoint_id: endpointId,
     detail_json: JSON.stringify({
       hostname: endpoint.hostname,
+      reason: input.reason,
       errors: failures.map(errorMessage),
     }),
   });

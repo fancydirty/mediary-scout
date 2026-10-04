@@ -80,7 +80,7 @@ async function seedEndpoint(db: ConnectDb, accountId: string): Promise<void> {
     cf_tunnel_id: "tid-1", cf_access_app_id: null, cf_access_policy_id: null,
     cf_dns_record_id: "rec-1", status: "active", token_sha256: "x",
     token_ciphertext: null, token_shown_at: null, last_seen_at: null,
-    created_at: NOW, revoked_at: null, account_id: accountId, grace_until: null, suspended_at: null, purge_after: null,
+    created_at: NOW, revoked_at: null, account_id: accountId, grace_until: null, suspended_at: null, purge_after: null, revoke_reason: null,
   });
 }
 
@@ -256,7 +256,7 @@ describe("POST /api/claim/exchange (脚本凭码换 token,无 session)", () => {
     const { deps, db } = setup(cfCalls);
     await seedEndpoint(db, "act_1");
     const code = await issueCode(deps, "act_1");
-    await db.markEndpointRevoked("ep_1", NOW);
+    await db.markEndpointRevoked("ep_1", NOW, "expired");
     const res = await handleRequest(
       new Request(`${BASE}/api/claim/exchange`, {
         method: "POST", headers: { "content-type": "application/json" },

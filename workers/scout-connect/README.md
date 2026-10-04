@@ -83,7 +83,9 @@ log a visitor into its own account by linking its magic link.
 `GET /api/account` returns the account email, entitlement status, endpoint,
 checkout availability, and the configured payment tiers (only tiers whose Waffo
 product is set, so possibly fewer than three; `checkoutOpen` is false when there
-are none). `GET /api/orders/:id/status`,
+are none). A live endpoint includes its Cloudflare `tunnelId`. When the account
+has no live endpoint but can get its previous address back, `restorable` is
+`{ slug, hostname }`; otherwise it is null. `GET /api/orders/:id/status`,
 `GET /api/slug/check`, `POST /api/provision`, and `POST /api/claim-code` use the
 same authentication choices. Bearer checkout requests may include an `http:` or
 `https:` `returnUrl` of at most 400 characters without userinfo; cookie checkout
@@ -236,6 +238,7 @@ npx wrangler d1 execute scout-connect --remote \
 | `0002-waitlist-survey.sql` | Adds nullable `waitlist.survey_json TEXT` for `POST /waitlist/survey`. Single additive `ALTER` (no rebuild; pre-existing rows read back NULL). Migrate before deploying. Wrong order no longer takes the funnel down — `insertWaitlist` falls back to the legacy column list and the survey route answers 503 — but degraded means exactly that: signups land without the column and their survey submits fail until this runs. |
 | `0006-alipay-payment-orders.sql` | Historical payment order shape. Existing legacy rows remain readable. |
 | `0007-waffo-payment-orders.sql` | Rebuilds `payment_orders` so the `waffo` provider and Waffo session/order evidence are accepted while preserving historical rows and indexes. Required before deploying the Waffo Worker. |
+| `0009-endpoint-revoke-reason.sql` | Adds nullable `endpoints.revoke_reason`. Backfills `refunded` only on revoked or revoke-failed rows whose account has a refunded payment order. Other pre-existing revoked rows stay NULL and are not self-restorable. Apply before deploying the restore Worker. |
 
 Notes on writing migrations here:
 
@@ -280,6 +283,14 @@ other than the merchant, and a full refund of that payment.
 API refund ticket). The resulting `refund.succeeded` webhook removes the
 purchased time; when no time remains, the remote endpoint is revoked
 automatically. Partial refunds do not change the entitlement.
+
+**Restoring an address**: taking an address down records why.
+`revoke_reason` is `expired` when the grace period ends, `refunded` when a
+refund removed the last paid time, or `admin` for a manual revoke. After the
+account pays again, `POST /api/provision` with that same slug brings the same
+row back: a new tunnel and DNS record, the slug and hostname unchanged. An
+admin revoke cannot be restored by the owner. Rows revoked before migration
+0009 stay unrestorable unless the backfill marked them `refunded`.
 
 **Invite someone** (admin page `https://mediaryconnect.app/admin`):
 1. Paste `ADMIN_TOKEN`, create invite with their email (+ optional slug).

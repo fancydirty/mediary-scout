@@ -36,7 +36,9 @@ CREATE TABLE endpoints (
   -- P3: 到期处置三阶段时间戳(决策 #14)。migrations/0003.
   grace_until TEXT,
   suspended_at TEXT,
-  purge_after TEXT
+  purge_after TEXT,
+  -- 0009: 'expired' | 'refunded' | 'admin' | NULL —— 只有前两种允许续期后自助恢复。
+  revoke_reason TEXT
 );
 
 CREATE TABLE audit_events (

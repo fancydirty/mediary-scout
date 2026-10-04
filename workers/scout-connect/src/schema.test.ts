@@ -49,6 +49,10 @@ const MIGRATION8_SQL = readFileSync(
   new URL("../migrations/0008-instance-links.sql", import.meta.url),
   "utf8",
 );
+const MIGRATION9_SQL = readFileSync(
+  new URL("../migrations/0009-endpoint-revoke-reason.sql", import.meta.url),
+  "utf8",
+);
 
 // The production shape BEFORE this Worker version: schema.sql as of 884f4c4.
 // `cf_access_app_id` is NOT NULL and `last_seen_at` does not exist — exactly
@@ -162,7 +166,7 @@ function postAccessEndpoint(overrides: Partial<EndpointRow> = {}): EndpointRow {
     token_shown_at: null,
     last_seen_at: null,
     created_at: "2026-07-26T00:00:00.000Z",
-    revoked_at: null, account_id: null, grace_until: null, suspended_at: null, purge_after: null,
+    revoked_at: null, account_id: null, grace_until: null, suspended_at: null, purge_after: null, revoke_reason: null,
     ...overrides,
   };
 }
@@ -612,6 +616,9 @@ describe("migration 0001 — existing install against real SQLite", () => {
     halfMigrated.sqlite.exec(`ALTER TABLE endpoints ADD COLUMN grace_until TEXT`);
     halfMigrated.sqlite.exec(`ALTER TABLE endpoints ADD COLUMN suspended_at TEXT`);
     halfMigrated.sqlite.exec(`ALTER TABLE endpoints ADD COLUMN purge_after TEXT`);
+    // 0009's column is in today's INSERT list; it stays nullable so CRITICAL-2
+    // is still the NOT NULL on cf_access_app_id.
+    halfMigrated.sqlite.exec(`ALTER TABLE endpoints ADD COLUMN revoke_reason TEXT`);
     await expect(halfMigrated.db.insertEndpoint(postAccessEndpoint())).rejects.toThrow(
       /NOT NULL constraint failed: endpoints\.cf_access_app_id/i,
     );
@@ -624,6 +631,8 @@ describe("migration 0001 — existing install against real SQLite", () => {
     sqlite.exec(MIGRATION3_SQL);
     sqlite.exec(MIGRATION4_SQL);
     sqlite.exec(MIGRATION5_SQL);
+    // payment_orders (0006) is not on this chain; today's INSERT only needs the column.
+    sqlite.exec(`ALTER TABLE endpoints ADD COLUMN revoke_reason TEXT`);
 
     await expect(db.insertEndpoint(postAccessEndpoint())).resolves.toMatchObject({ id: "ep_1" });
     await db.updateEndpointLastSeen("ep_1", "2026-07-26T10:00:00.000Z");
@@ -732,6 +741,7 @@ describe("migration 0001 — existing install against real SQLite", () => {
     migrated.sqlite.exec(MIGRATION5_SQL);
     migrated.sqlite.exec(MIGRATION6_SQL);
     migrated.sqlite.exec(MIGRATION8_SQL);
+    migrated.sqlite.exec(MIGRATION9_SQL);
     const fresh = freshDb(SCHEMA_SQL);
 
     const shapeOf = (sqlite: Sqlite): unknown =>
@@ -834,6 +844,7 @@ describe("migration 0001 — legacy install that predates the waitlist table", (
     sqlite.exec(MIGRATION3_SQL);
     sqlite.exec(MIGRATION4_SQL);
     sqlite.exec(MIGRATION5_SQL);
+    sqlite.exec(`ALTER TABLE endpoints ADD COLUMN revoke_reason TEXT`);
 
     // This is what step 8's failure used to take down with it.
     await expect(db.insertEndpoint(postAccessEndpoint())).resolves.toMatchObject({ id: "ep_1" });
@@ -849,6 +860,7 @@ describe("migration 0001 — legacy install that predates the waitlist table", (
     migrated.sqlite.exec(MIGRATION5_SQL);
     migrated.sqlite.exec(MIGRATION6_SQL);
     migrated.sqlite.exec(MIGRATION8_SQL);
+    migrated.sqlite.exec(MIGRATION9_SQL);
     const fresh = freshDb(SCHEMA_SQL);
 
     const shapeOf = (sqlite: Sqlite, table: string): unknown =>
@@ -913,6 +925,7 @@ describe("migration 0002 — waitlist.survey_json against real SQLite", () => {
     migrated.sqlite.exec(MIGRATION5_SQL);
     migrated.sqlite.exec(MIGRATION6_SQL);
     migrated.sqlite.exec(MIGRATION8_SQL);
+    migrated.sqlite.exec(MIGRATION9_SQL);
     const fresh = freshDb(SCHEMA_SQL);
 
     const shapeOf = (sqlite: Sqlite, table: string): unknown =>
@@ -1216,6 +1229,7 @@ describe("migration 0006 — provider-neutral entitlements and Alipay orders", (
     sqlite.exec(MIGRATION6_SQL);
     sqlite.exec(MIGRATION7_SQL);
     sqlite.exec(MIGRATION8_SQL);
+    sqlite.exec(MIGRATION9_SQL);
     const db = createD1ConnectDb(d1Over(sqlite));
     await db.insertAccount({
       id: "act_rt",
@@ -1599,5 +1613,291 @@ describe("migration 0008 — instance links", () => {
     expect(columns(migrated.sqlite, "instance_credentials")).toEqual(
       columns(fresh, "instance_credentials"),
     );
+  });
+});
+
+describe("migration 0009 — endpoint revoke reason", () => {
+  function migratedTo0008(): Sqlite {
+    const sqlite = new Database(":memory:");
+    sqlite.exec(LEGACY_SCHEMA_SQL);
+    sqlite.exec(MIGRATION_SQL);
+    sqlite.exec(MIGRATION2_SQL);
+    sqlite.exec(MIGRATION3_SQL);
+    sqlite.exec(MIGRATION4_SQL);
+    sqlite.exec(MIGRATION5_SQL);
+    sqlite.exec(MIGRATION6_SQL);
+    sqlite.exec(MIGRATION7_SQL);
+    sqlite.exec(MIGRATION8_SQL);
+    return sqlite;
+  }
+
+  function columns(sqlite: Sqlite, table: string): string[] {
+    return (sqlite.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map(
+      (row) => row.name,
+    );
+  }
+
+  it("adds revoke_reason so a migrated database matches a fresh schema.sql", () => {
+    const migrated = migratedTo0008();
+    migrated.exec(MIGRATION9_SQL);
+    const fresh = freshDb(SCHEMA_SQL).sqlite;
+    expect(columns(migrated, "endpoints")).toEqual(columns(fresh, "endpoints"));
+    expect(columns(migrated, "endpoints")).toContain("revoke_reason");
+  });
+
+  it("backfills refunded only for revoked rows of accounts with a refunded payment order", () => {
+    const sqlite = migratedTo0008();
+    const insertAccount = sqlite.prepare(
+      "INSERT INTO accounts(id,email,created_at) VALUES(?,?,?)",
+    );
+    insertAccount.run("act_a", "a@example.com", "2026-10-01T00:00:00.000Z");
+    insertAccount.run("act_b", "b@example.com", "2026-10-01T00:00:00.000Z");
+    insertAccount.run("act_c", "c@example.com", "2026-10-01T00:00:00.000Z");
+    const insertOrder = sqlite.prepare(
+      `INSERT INTO payment_orders
+        (id,checkout_token_sha256,account_id,provider,out_trade_no,trade_no,months,total_amount,status,created_at,expires_at)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+    );
+    insertOrder.run(
+      "ord_a", "sha_a", "act_a", "waffo", "MC_A", null, 3, "45.00", "refunded",
+      "2026-10-01T00:00:00.000Z", "2026-10-01T00:30:00.000Z",
+    );
+    insertOrder.run(
+      "ord_b", "sha_b", "act_b", "waffo", "MC_B", null, 3, "45.00", "fulfilled",
+      "2026-10-01T00:00:00.000Z", "2026-10-01T00:30:00.000Z",
+    );
+    insertOrder.run(
+      "ord_c", "sha_c", "act_c", "waffo", "MC_C", null, 3, "45.00", "refunded",
+      "2026-10-01T00:00:00.000Z", "2026-10-01T00:30:00.000Z",
+    );
+    const insertEp = sqlite.prepare(
+      `INSERT INTO endpoints(id,invite_id,slug,hostname,cf_tunnel_id,cf_dns_record_id,status,token_sha256,account_id,created_at)
+       VALUES(?,?,?,?,?,?,?,?,?,?)`,
+    );
+    insertEp.run(
+      "ep_a", null, "fam-a", "fam-a.mediaryconnect.app", "tun", "dns", "revoked", "sha", "act_a",
+      "2026-10-01T00:00:00.000Z",
+    );
+    insertEp.run(
+      "ep_b", null, "fam-b", "fam-b.mediaryconnect.app", "tun", "dns", "revoked", "sha", "act_b",
+      "2026-10-01T00:00:00.000Z",
+    );
+    insertEp.run(
+      "ep_c", null, "fam-c", "fam-c.mediaryconnect.app", "tun", "dns", "active", "sha", "act_c",
+      "2026-10-01T00:00:00.000Z",
+    );
+
+    sqlite.exec(MIGRATION9_SQL);
+
+    const reason = (id: string): string | null =>
+      (sqlite.prepare("SELECT revoke_reason FROM endpoints WHERE id = ?").get(id) as {
+        revoke_reason: string | null;
+      }).revoke_reason;
+    expect(reason("ep_a")).toBe("refunded");
+    expect(reason("ep_b")).toBeNull();
+    expect(reason("ep_c")).toBeNull();
+  });
+});
+
+describe("D1 revoke_reason — real SQLite", () => {
+  const at = "2026-07-24T03:00:00.000Z";
+
+  it("markEndpointRevoked records the reason, and markEndpointRevokeFailed too", async () => {
+    const { db } = freshDb(SCHEMA_SQL);
+    await db.insertEndpoint(postAccessEndpoint({ id: "ep_1", revoke_reason: null }));
+    await db.insertEndpoint(
+      postAccessEndpoint({
+        id: "ep_2",
+        invite_id: "inv_2",
+        slug: "bob",
+        hostname: "bob.mediaryconnect.app",
+        revoke_reason: null,
+      }),
+    );
+    await db.markEndpointRevoked("ep_1", at, "expired");
+    const revoked = await db.getEndpointById("ep_1");
+    expect(revoked?.status).toBe("revoked");
+    expect(revoked?.revoked_at).toBe(at);
+    expect(revoked?.revoke_reason).toBe("expired");
+    await db.markEndpointRevokeFailed("ep_2", "refunded");
+    const failed = await db.getEndpointById("ep_2");
+    expect(failed?.status).toBe("revoke_failed");
+    expect(failed?.revoke_reason).toBe("refunded");
+  });
+
+  it("getRestorableEndpointByAccountId returns the account's newest row only when it was expired or refunded", async () => {
+    const { db } = freshDb(SCHEMA_SQL);
+    const seededAccounts = new Set<string>();
+    const seed = async (
+      id: string,
+      accountId: string,
+      slug: string,
+      status: EndpointRow["status"],
+      revokeReason: EndpointRow["revoke_reason"],
+      createdAt: string,
+    ): Promise<void> => {
+      if (!seededAccounts.has(accountId)) {
+        seededAccounts.add(accountId);
+        await db.insertAccount({
+          id: accountId,
+          email: `${accountId}@example.com`,
+          paddle_customer_id: null,
+          created_at: "2026-01-01T00:00:00.000Z",
+          last_login_at: null,
+        });
+      }
+      await db.insertEndpoint(
+        postAccessEndpoint({
+          id,
+          invite_id: null,
+          slug,
+          hostname: `${slug}.mediaryconnect.app`,
+          account_id: accountId,
+          status,
+          revoke_reason: revokeReason,
+          created_at: createdAt,
+        }),
+      );
+    };
+    await seed("ep_a_old", "act_a", "a-old", "revoked", "expired", "2026-01-01T00:00:00.000Z");
+    await seed("ep_a_new", "act_a", "a-new", "revoked", "admin", "2026-05-01T00:00:00.000Z");
+    await seed("ep_b", "act_b", "b-slug", "revoked", "expired", "2026-03-01T00:00:00.000Z");
+    await seed("ep_c", "act_c", "c-slug", "revoke_failed", "refunded", "2026-04-01T00:00:00.000Z");
+    await seed("ep_d", "act_d", "d-slug", "revoked", null, "2026-02-01T00:00:00.000Z");
+    await seed("ep_e_dead", "act_e", "e-dead", "revoked", "expired", "2026-01-15T00:00:00.000Z");
+    await seed("ep_e_live", "act_e", "e-live", "active", null, "2026-06-01T00:00:00.000Z");
+
+    expect(await db.getRestorableEndpointByAccountId("act_a")).toBeNull();
+    expect((await db.getRestorableEndpointByAccountId("act_b"))?.id).toBe("ep_b");
+    expect((await db.getRestorableEndpointByAccountId("act_c"))?.id).toBe("ep_c");
+    expect(await db.getRestorableEndpointByAccountId("act_d")).toBeNull();
+    expect(await db.getRestorableEndpointByAccountId("act_e")).toBeNull();
+  });
+
+  it("reactivateEndpoint flips only a revoked row of that account and clears the revoke fields", async () => {
+    const { db } = freshDb(SCHEMA_SQL);
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    await db.insertAccount({
+      id: "act_1",
+      email: "act_1@example.com",
+      paddle_customer_id: null,
+      created_at: createdAt,
+      last_login_at: null,
+    });
+    await db.insertEndpoint(
+      postAccessEndpoint({
+        id: "ep_1",
+        invite_id: null,
+        slug: "fam",
+        hostname: "fam.mediaryconnect.app",
+        account_id: "act_1",
+        status: "revoked",
+        revoke_reason: "expired",
+        revoked_at: "2026-06-01T00:00:00.000Z",
+        last_seen_at: "2026-05-01T00:00:00.000Z",
+        token_ciphertext: "cipher",
+        token_shown_at: "2026-04-01T00:00:00.000Z",
+        cf_access_app_id: "app_old",
+        cf_access_policy_id: "pol_old",
+        created_at: createdAt,
+      }),
+    );
+    expect(
+      await db.reactivateEndpoint({
+        id: "ep_1",
+        accountId: "act_1",
+        cfTunnelId: "t2",
+        cfDnsRecordId: "r2",
+        tokenSha256: "s2",
+      }),
+    ).toBe(true);
+    const row = await db.getEndpointById("ep_1");
+    expect(row).toMatchObject({
+      status: "active",
+      cf_tunnel_id: "t2",
+      cf_dns_record_id: "r2",
+      token_sha256: "s2",
+      revoked_at: null,
+      revoke_reason: null,
+      last_seen_at: null,
+      token_ciphertext: null,
+      token_shown_at: null,
+      cf_access_app_id: null,
+      cf_access_policy_id: null,
+      slug: "fam",
+      hostname: "fam.mediaryconnect.app",
+      created_at: createdAt,
+    });
+    expect(
+      await db.reactivateEndpoint({
+        id: "ep_1",
+        accountId: "act_1",
+        cfTunnelId: "t3",
+        cfDnsRecordId: "r3",
+        tokenSha256: "s3",
+      }),
+    ).toBe(false);
+    expect((await db.getEndpointById("ep_1"))?.cf_tunnel_id).toBe("t2");
+    expect(
+      await db.reactivateEndpoint({
+        id: "ep_1",
+        accountId: "act_other",
+        cfTunnelId: "t4",
+        cfDnsRecordId: "r4",
+        tokenSha256: "s4",
+      }),
+    ).toBe(false);
+    expect(
+      await db.reactivateEndpoint({
+        id: "missing",
+        accountId: "act_1",
+        cfTunnelId: "t5",
+        cfDnsRecordId: "r5",
+        tokenSha256: "s5",
+      }),
+    ).toBe(false);
+  });
+
+  it("reactivateEndpoint cannot create a second live row for the account", async () => {
+    const { db } = freshDb(SCHEMA_SQL);
+    await db.insertAccount({
+      id: "act_1",
+      email: "act_1@example.com",
+      paddle_customer_id: null,
+      created_at: "2026-01-01T00:00:00.000Z",
+      last_login_at: null,
+    });
+    await db.insertEndpoint(
+      postAccessEndpoint({
+        id: "ep_live",
+        invite_id: null,
+        slug: "live",
+        hostname: "live.mediaryconnect.app",
+        account_id: "act_1",
+        status: "active",
+        revoke_reason: null,
+      }),
+    );
+    await db.insertEndpoint(
+      postAccessEndpoint({
+        id: "ep_dead",
+        invite_id: null,
+        slug: "dead",
+        hostname: "dead.mediaryconnect.app",
+        account_id: "act_1",
+        status: "revoked",
+        revoke_reason: "expired",
+      }),
+    );
+    expect(
+      await db.reactivateEndpoint({
+        id: "ep_dead",
+        accountId: "act_1",
+        cfTunnelId: "t2",
+        cfDnsRecordId: "r2",
+        tokenSha256: "s2",
+      }),
+    ).toBe(false);
+    expect((await db.getEndpointById("ep_dead"))?.status).toBe("revoked");
   });
 });

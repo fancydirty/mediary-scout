@@ -660,8 +660,25 @@ describe("handleRequest", () => {
     const endpoint = await db.getEndpointById(endpointId ?? "");
     expect(endpoint?.status).toBe("revoked");
     expect(endpoint?.revoked_at).toBe(NOW);
+    expect(endpoint?.revoke_reason).toBe("admin");
     const invite = await db.getInviteById(endpoint?.invite_id ?? "");
     expect(invite?.status).toBe("revoked");
+  });
+
+  it("revoke retry of a failed expiry/refund cleanup keeps why the address was taken down", async () => {
+    // An admin finishing a failed cleanup is not an admin revoke: the owner must still be
+    // able to get the address back after renewing.
+    const { db, deps } = setup();
+    await seedProvisioned(deps);
+    const endpointId = (await db.listEndpoints())[0]?.id ?? "";
+    await db.markEndpointRevokeFailed(endpointId, "expired");
+
+    const res = await handleRequest(adminPost(`/api/admin/endpoints/${endpointId}/revoke`), deps);
+    expect(res.status).toBe(200);
+
+    const endpoint = await db.getEndpointById(endpointId);
+    expect(endpoint?.status).toBe("revoked");
+    expect(endpoint?.revoke_reason).toBe("expired");
   });
 
   it("GET /i/unknown → 链接无效 page", async () => {
@@ -2458,6 +2475,7 @@ describe("容量满时 admin invite 路径也必须是 503", () => {
         grace_until: null,
         suspended_at: null,
         purge_after: null,
+        revoke_reason: null,
       });
     }
     const createRes = await createInviteViaApi(deps, { email: "cap@example.com", slug: "capped" });

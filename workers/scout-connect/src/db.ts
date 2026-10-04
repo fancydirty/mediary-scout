@@ -37,7 +37,12 @@ export interface EndpointRow {
   grace_until: string | null;
   suspended_at: string | null;
   purge_after: string | null;
+  /** 0009: why it was taken down. Only 'expired' and 'refunded' may be restored by the owner. */
+  revoke_reason: RevokeReason | null;
 }
+
+/** Why an endpoint was taken down. 'admin' is never self-restorable. */
+export type RevokeReason = "expired" | "refunded" | "admin";
 
 /** P3: 付费账号。邮箱即身份;paddle_customer_id 内测手工开的为 null。 */
 export interface AccountRow {
@@ -215,8 +220,19 @@ export interface ConnectDb {
    * Returns true when THIS call performed the burn (won the race), false when
    * the token was already shown/burned — callers use this for once-only reveal.
    */
-  markEndpointRevoked(endpointId: string, at: string): Promise<void>;
-  markEndpointRevokeFailed(endpointId: string): Promise<void>;
+  markEndpointRevoked(endpointId: string, at: string, reason: RevokeReason): Promise<void>;
+  markEndpointRevokeFailed(endpointId: string, reason: RevokeReason): Promise<void>;
+  /** The account's newest endpoint when it was taken down for expiry or a refund and the account
+   *  has no live endpoint now; otherwise null. Rows revoked by an admin are never restorable. */
+  getRestorableEndpointByAccountId(accountId: string): Promise<EndpointRow | null>;
+  /** Brings a revoked row back with a new tunnel. True only when THIS call flipped it. */
+  reactivateEndpoint(input: {
+    id: string;
+    accountId: string;
+    cfTunnelId: string;
+    cfDnsRecordId: string;
+    tokenSha256: string;
+  }): Promise<boolean>;
   /** Best-effort row removal for orphan compensation (no-op when absent). */
   deleteEndpoint(endpointId: string): Promise<void>;
   insertAudit(row: AuditRow): Promise<void>;
@@ -372,6 +388,7 @@ function mapEndpoint(row: RawRow): EndpointRow {
     grace_until: (row.grace_until as string | null | undefined) ?? null,
     suspended_at: (row.suspended_at as string | null | undefined) ?? null,
     purge_after: (row.purge_after as string | null | undefined) ?? null,
+    revoke_reason: (row.revoke_reason as EndpointRow["revoke_reason"] | undefined) ?? null,
   };
 }
 
@@ -547,8 +564,8 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
       // 展开,测试绿、生产 account_id 丢失(spec 断点 #2 的「内存绿生产坏」)。
       await d1
         .prepare(
-          `INSERT INTO endpoints (id, invite_id, slug, hostname, cf_tunnel_id, cf_access_app_id, cf_access_policy_id, cf_dns_record_id, status, token_sha256, token_ciphertext, token_shown_at, last_seen_at, created_at, revoked_at, account_id, grace_until, suspended_at, purge_after)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO endpoints (id, invite_id, slug, hostname, cf_tunnel_id, cf_access_app_id, cf_access_policy_id, cf_dns_record_id, status, token_sha256, token_ciphertext, token_shown_at, last_seen_at, created_at, revoked_at, account_id, grace_until, suspended_at, purge_after, revoke_reason)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
           row.id,
@@ -570,6 +587,7 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
           row.grace_until,
           row.suspended_at,
           row.purge_after,
+          row.revoke_reason,
         )
         .run();
       return { ...row };
@@ -658,18 +676,56 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
       return row?.cnt ?? 0;
     },
 
-    async markEndpointRevoked(endpointId, at) {
+    async markEndpointRevoked(endpointId, at, reason) {
       await d1
-        .prepare(`UPDATE endpoints SET status = 'revoked', revoked_at = ? WHERE id = ?`)
-        .bind(at, endpointId)
+        .prepare(`UPDATE endpoints SET status = 'revoked', revoked_at = ?, revoke_reason = ? WHERE id = ?`)
+        .bind(at, reason, endpointId)
         .run();
     },
 
-    async markEndpointRevokeFailed(endpointId) {
+    async markEndpointRevokeFailed(endpointId, reason) {
       await d1
-        .prepare(`UPDATE endpoints SET status = 'revoke_failed' WHERE id = ?`)
-        .bind(endpointId)
+        .prepare(`UPDATE endpoints SET status = 'revoke_failed', revoke_reason = ? WHERE id = ?`)
+        .bind(reason, endpointId)
         .run();
+    },
+
+    async getRestorableEndpointByAccountId(accountId) {
+      const live = await d1
+        .prepare(`SELECT 1 AS x FROM endpoints WHERE account_id = ? AND status = 'active' LIMIT 1`)
+        .bind(accountId)
+        .first<RawRow>();
+      if (live !== null) return null;
+      const row = await d1
+        .prepare(`SELECT * FROM endpoints WHERE account_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`)
+        .bind(accountId)
+        .first<RawRow>();
+      if (row === null) return null;
+      const endpoint = mapEndpoint(row);
+      const restorable =
+        (endpoint.status === "revoked" || endpoint.status === "revoke_failed") &&
+        (endpoint.revoke_reason === "expired" || endpoint.revoke_reason === "refunded");
+      return restorable ? endpoint : null;
+    },
+
+    async reactivateEndpoint(input) {
+      try {
+        const result = (await d1
+          .prepare(
+            `UPDATE endpoints
+                SET status = 'active', cf_tunnel_id = ?, cf_dns_record_id = ?, token_sha256 = ?,
+                    cf_access_app_id = NULL, cf_access_policy_id = NULL, token_ciphertext = NULL,
+                    token_shown_at = NULL, last_seen_at = NULL, revoked_at = NULL, revoke_reason = NULL
+              WHERE id = ? AND account_id = ? AND status = 'revoked'`,
+          )
+          .bind(input.cfTunnelId, input.cfDnsRecordId, input.tokenSha256, input.id, input.accountId)
+          .run()) as { meta?: { changes?: number } };
+        return (result.meta?.changes ?? 0) === 1;
+      } catch (e) {
+        // idx_endpoints_account_live: another live row of this account appeared meanwhile.
+        if (e instanceof Error && e.message.includes("UNIQUE constraint failed")) return false;
+        throw e;
+      }
     },
 
     async deleteEndpoint(endpointId) {
@@ -1539,21 +1595,60 @@ export function createMemoryConnectDb(): ConnectDb {
       ).length;
     },
 
-    async markEndpointRevoked(endpointId, at) {
+    async markEndpointRevoked(endpointId, at, reason) {
       const row = endpoints.get(endpointId);
       if (row === undefined) {
         return;
       }
       row.status = "revoked";
       row.revoked_at = at;
+      row.revoke_reason = reason;
     },
 
-    async markEndpointRevokeFailed(endpointId) {
+    async markEndpointRevokeFailed(endpointId, reason) {
       const row = endpoints.get(endpointId);
       if (row === undefined) {
         return;
       }
       row.status = "revoke_failed";
+      row.revoke_reason = reason;
+    },
+
+    async getRestorableEndpointByAccountId(accountId) {
+      for (const row of endpoints.values()) {
+        if (row.account_id === accountId && row.status === "active") return null;
+      }
+      const rows = [...endpoints.values()].filter((row) => row.account_id === accountId);
+      rows.sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
+      const newest = rows[0];
+      if (newest === undefined) return null;
+      const restorable =
+        (newest.status === "revoked" || newest.status === "revoke_failed") &&
+        (newest.revoke_reason === "expired" || newest.revoke_reason === "refunded");
+      return restorable ? { ...newest } : null;
+    },
+
+    async reactivateEndpoint(input) {
+      const row = endpoints.get(input.id);
+      if (row === undefined) return false;
+      if (row.status !== "revoked" || row.account_id !== input.accountId) return false;
+      for (const other of endpoints.values()) {
+        if (other.id !== row.id && other.account_id === input.accountId && other.status === "active") {
+          return false;
+        }
+      }
+      row.status = "active";
+      row.cf_tunnel_id = input.cfTunnelId;
+      row.cf_dns_record_id = input.cfDnsRecordId;
+      row.token_sha256 = input.tokenSha256;
+      row.cf_access_app_id = null;
+      row.cf_access_policy_id = null;
+      row.token_ciphertext = null;
+      row.token_shown_at = null;
+      row.last_seen_at = null;
+      row.revoked_at = null;
+      row.revoke_reason = null;
+      return true;
     },
 
     async deleteEndpoint(endpointId) {

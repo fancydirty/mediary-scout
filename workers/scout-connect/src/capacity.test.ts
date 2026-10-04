@@ -52,6 +52,7 @@ function endpoint(over: Partial<EndpointRow>): EndpointRow {
     grace_until: over.grace_until ?? null,
     suspended_at: over.suspended_at ?? null,
     purge_after: null,
+    revoke_reason: null,
     ...over,
   } as EndpointRow;
 }

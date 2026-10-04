@@ -3,6 +3,7 @@ import type { AccountRow, ConnectDb, PaymentOrderRow } from "./db.js";
 import { HttpError, handleError, htmlPage, json } from "./http.js";
 import { requireAdmin } from "./auth.js";
 import { provisionEndpoint } from "./provision.js";
+import { restoreEndpoint } from "./restore.js";
 import { revokeEndpoint } from "./revoke.js";
 import { revealByCode } from "./reveal.js";
 import {
@@ -625,11 +626,16 @@ ${hreflang}
     const endpointId = decodeParam(revokeMatch[1] ?? "");
     // 404 (not 500) for a missing endpoint — the admin client distinguishes
     // "already gone" from "revoke failed".
-    if ((await deps.db.getEndpointById(endpointId)) === null) {
+    const existing = await deps.db.getEndpointById(endpointId);
+    if (existing === null) {
       throw new HttpError(404, "endpoint not found");
     }
+    // Retrying a failed cleanup finishes that revoke: keep why it happened, so an address taken
+    // down for expiry or a refund stays restorable after renewal.
+    const reason = existing.status === "revoke_failed" && existing.revoke_reason !== null ? existing.revoke_reason : "admin";
     const result = await revokeEndpoint({
       endpointId,
+      reason,
       deps: { cf: deps.cf, db: deps.db, now: deps.now, newAuditId: deps.newAuditId },
     });
     return json({ hostname: result.hostname, revoked: true });
@@ -758,6 +764,18 @@ async function selfServeProvision(request: Request, deps: RouteDeps): Promise<Re
   } catch (e) {
     throw new HttpError(400, e instanceof Error ? e.message : "invalid slug");
   }
+  const restorable = await deps.db.getRestorableEndpointByAccountId(accountAuth.accountId);
+  if (restorable !== null && restorable.slug === slug) {
+    try {
+      const result = await restoreEndpoint({
+        accountId: accountAuth.accountId,
+        deps: { cf: deps.cf, db: deps.db, now: deps.now, newAuditId: deps.newAuditId },
+      });
+      return json({ hostname: result.hostname }, 200, { noStore: true });
+    } catch (e) {
+      throw selfServeHttpError(e);
+    }
+  }
   try {
     const result = await provisionEndpoint({
       origin: { kind: "account", accountId: accountAuth.accountId },
@@ -776,39 +794,49 @@ async function selfServeProvision(request: Request, deps: RouteDeps): Promise<Re
     // 显式收窄一层,响应形状永远不含敏感字段。
     return json({ hostname: result.hostname }, 200, { noStore: true });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "";
-    // 无有效时长:语义上最诚实的 402(前端据此引导去 /pricing 续期/开通)。
-    if (msg.includes("no active entitlement")) {
-      throw new HttpError(402, "no active entitlement");
-    }
-    // 陈旧 session(账号已删)fail closed。
-    if (msg.includes("account not found")) {
-      throw new HttpError(401, "unauthorized");
-    }
-    // 一账号一 live endpoint:预检消息 + 部分唯一索引的 UNIQUE 兜底,两条路
-    // 归并为同一个 409 语义,body error 供前端区分于 slug 冲突。
-    if (
-      msg.includes("already provisioned") ||
-      msg.includes("UNIQUE constraint failed: endpoints.account_id")
-    ) {
-      throw new HttpError(409, "already provisioned");
-    }
-    // slug/hostname 冲突:预检消息与 UNIQUE 兜底同样归并(与 provisionInvite
-    // 的映射一致——绝不回显裸 UNIQUE 文本泄 schema)。
-    if (
-      msg.includes("already in use") ||
-      msg.includes("UNIQUE constraint failed: endpoints.slug") ||
-      msg.includes("UNIQUE constraint failed: endpoints.hostname")
-    ) {
-      throw new HttpError(409, "slug taken");
-    }
-    // 容量已满 → 503(共享 helper,见 capacity.ts:两条 provision 路由必须
-    // 用同一个判定,否则漏掉的那条会把容量满变成 500)。
-    if (isAtCapacityError(e)) {
-      throw new HttpError(503, "at capacity");
-    }
-    throw e;
+    throw selfServeHttpError(e);
   }
+}
+
+/** 开通和恢复共用的错误映射。恢复多两种：nothing to restore、restore cleanup failed。 */
+function selfServeHttpError(e: unknown): never {
+  const msg = e instanceof Error ? e.message : "";
+  // 无有效时长:语义上最诚实的 402(前端据此引导去 /pricing 续期/开通)。
+  if (msg.includes("no active entitlement")) {
+    throw new HttpError(402, "no active entitlement");
+  }
+  // 陈旧 session(账号已删)fail closed。
+  if (msg.includes("account not found")) {
+    throw new HttpError(401, "unauthorized");
+  }
+  // 一账号一 live endpoint:预检消息 + 部分唯一索引的 UNIQUE 兜底,两条路
+  // 归并为同一个 409 语义,body error 供前端区分于 slug 冲突。
+  // nothing to restore 同样是「现在不能再开一个地址」。
+  if (
+    msg.includes("already provisioned") ||
+    msg === "nothing to restore" ||
+    msg.includes("UNIQUE constraint failed: endpoints.account_id")
+  ) {
+    throw new HttpError(409, "already provisioned");
+  }
+  // slug/hostname 冲突:预检消息与 UNIQUE 兜底同样归并(与 provisionInvite
+  // 的映射一致——绝不回显裸 UNIQUE 文本泄 schema)。
+  if (
+    msg.includes("already in use") ||
+    msg.includes("UNIQUE constraint failed: endpoints.slug") ||
+    msg.includes("UNIQUE constraint failed: endpoints.hostname")
+  ) {
+    throw new HttpError(409, "slug taken");
+  }
+  if (msg === "restore cleanup failed") {
+    throw new HttpError(503, "restore cleanup failed");
+  }
+  // 容量已满 → 503(共享 helper,见 capacity.ts:两条 provision 路由必须
+  // 用同一个判定,否则漏掉的那条会把容量满变成 500)。
+  if (isAtCapacityError(e)) {
+    throw new HttpError(503, "at capacity");
+  }
+  throw e;
 }
 
 function randomHex(bytes: number): string {
@@ -1059,7 +1087,8 @@ async function applyWaffoRefund(order: PaymentOrderRow, deps: RouteDeps): Promis
     if (endpoint !== undefined) {
       await revokeEndpoint({
         endpointId: endpoint.id,
-        deps: { cf: deps.cf, db: deps.db, now: deps.now, newAuditId: deps.newAuditId, actor: "admin" },
+        reason: "refunded",
+        deps: { cf: deps.cf, db: deps.db, now: deps.now, newAuditId: deps.newAuditId, actor: "system" },
       });
     }
   }
@@ -1317,6 +1346,7 @@ async function accountRoute(request: Request, deps: RouteDeps): Promise<Response
   const entitlements = await deps.db.listEntitlements(account.id);
   const expiresAt = latestExpiry(entitlements);
   const endpoint = await deps.db.getActiveEndpointByAccountId(account.id);
+  const restorable = endpoint === null ? await deps.db.getRestorableEndpointByAccountId(account.id) : null;
   // Only tiers whose Waffo product is configured: /api/checkout refuses the others.
   const tiers = Object.values(PAYMENT_TIERS).filter((tier) => (waffoProductId(deps, tier) ?? "").trim() !== "");
   let checkoutOpen = false;
@@ -1335,7 +1365,8 @@ async function accountRoute(request: Request, deps: RouteDeps): Promise<Response
       expiresAt,
       endpoint: endpoint === null
         ? null
-        : { slug: endpoint.slug, hostname: endpoint.hostname, status: endpoint.status },
+        : { slug: endpoint.slug, hostname: endpoint.hostname, status: endpoint.status, tunnelId: endpoint.cf_tunnel_id },
+      restorable: restorable === null ? null : { slug: restorable.slug, hostname: restorable.hostname },
       checkoutOpen,
       tiers: tiers.map((tier) => ({
         id: tier.id,
@@ -1424,6 +1455,7 @@ async function consoleRoute(request: Request, deps: RouteDeps): Promise<Response
   // 该账号的 active endpoint(可能为 null:已付费但还没选 slug,或未开通)。
   // 控制台据此决定显示「选专属地址」入口还是「接入命令」提示词区。
   const endpoint = await deps.db.getActiveEndpointByAccountId(account.id);
+  const restorable = endpoint === null ? await deps.db.getRestorableEndpointByAccountId(account.id) : null;
   // 仅在「真的能走到 slug 表单」时才数配额,两个条件都要满足:
   //   1. 还没开通(已开通用户不受配额影响)
   //   2. 有有效时长(无时长的用户在 console-page 走早返回分支,压根用不到这个值)
@@ -1442,6 +1474,7 @@ async function consoleRoute(request: Request, deps: RouteDeps): Promise<Response
       account,
       entitlements,
       endpoint,
+      restorable: restorable === null ? null : { slug: restorable.slug, hostname: restorable.hostname },
       baseUrl: url.origin,
       rootDomain: deps.rootDomain.trim().toLowerCase(),
       now,

@@ -47,7 +47,7 @@ function makeEndpoint(overrides: Partial<EndpointRow> = {}): EndpointRow {
     token_shown_at: null,
     last_seen_at: null,
     created_at: "2026-07-24T00:00:00.000Z",
-    revoked_at: null, account_id: null, grace_until: null, suspended_at: null, purge_after: null,
+    revoked_at: null, account_id: null, grace_until: null, suspended_at: null, purge_after: null, revoke_reason: null,
     ...overrides,
   };
 }
@@ -174,7 +174,7 @@ describe("memory ConnectDb", () => {
         makeEndpoint({ id: "ep_2", invite_id: null, slug: "s2", hostname: "s2.x", account_id: "act_1" }),
       ),
     ).rejects.toThrow(/UNIQUE constraint failed: endpoints\.account_id/);
-    await db.markEndpointRevoked("ep_1", "2026-07-28T03:00:00.000Z");
+    await db.markEndpointRevoked("ep_1", "2026-07-28T03:00:00.000Z", "expired");
     await db.insertEndpoint(
       makeEndpoint({ id: "ep_3", invite_id: null, slug: "s3", hostname: "s3.x", account_id: "act_1" }),
     );
@@ -184,7 +184,7 @@ describe("memory ConnectDb", () => {
   it("markEndpointRevoked sets status revoked and revoked_at", async () => {
     const db = createMemoryConnectDb();
     await db.insertEndpoint(makeEndpoint());
-    await db.markEndpointRevoked("ep_1", "2026-07-24T03:00:00.000Z");
+    await db.markEndpointRevoked("ep_1", "2026-07-24T03:00:00.000Z", "expired");
     const row = await db.getEndpointById("ep_1");
     expect(row?.status).toBe("revoked");
     expect(row?.revoked_at).toBe("2026-07-24T03:00:00.000Z");
@@ -193,10 +193,239 @@ describe("memory ConnectDb", () => {
   it("markEndpointRevokeFailed sets status revoke_failed", async () => {
     const db = createMemoryConnectDb();
     await db.insertEndpoint(makeEndpoint());
-    await db.markEndpointRevokeFailed("ep_1");
+    await db.markEndpointRevokeFailed("ep_1", "expired");
     const row = await db.getEndpointById("ep_1");
     expect(row?.status).toBe("revoke_failed");
     expect(row?.revoked_at).toBeNull();
+  });
+
+  it("markEndpointRevoked records the reason, and markEndpointRevokeFailed too", async () => {
+    const db = createMemoryConnectDb();
+    const at = "2026-07-24T03:00:00.000Z";
+    await db.insertEndpoint(makeEndpoint({ id: "ep_1", revoke_reason: null }));
+    await db.insertEndpoint(
+      makeEndpoint({
+        id: "ep_2",
+        invite_id: "inv_2",
+        slug: "bob",
+        hostname: "bob.connect.example.com",
+        revoke_reason: null,
+      }),
+    );
+    await db.markEndpointRevoked("ep_1", at, "expired");
+    const revoked = await db.getEndpointById("ep_1");
+    expect(revoked?.status).toBe("revoked");
+    expect(revoked?.revoked_at).toBe(at);
+    expect(revoked?.revoke_reason).toBe("expired");
+    await db.markEndpointRevokeFailed("ep_2", "refunded");
+    const failed = await db.getEndpointById("ep_2");
+    expect(failed?.status).toBe("revoke_failed");
+    expect(failed?.revoke_reason).toBe("refunded");
+  });
+
+  it("getRestorableEndpointByAccountId returns the account's newest row only when it was expired or refunded", async () => {
+    const db = createMemoryConnectDb();
+    await db.insertEndpoint(
+      makeEndpoint({
+        id: "ep_a_old",
+        invite_id: null,
+        slug: "a-old",
+        hostname: "a-old.example",
+        account_id: "act_a",
+        status: "revoked",
+        revoke_reason: "expired",
+        created_at: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    await db.insertEndpoint(
+      makeEndpoint({
+        id: "ep_a_new",
+        invite_id: null,
+        slug: "a-new",
+        hostname: "a-new.example",
+        account_id: "act_a",
+        status: "revoked",
+        revoke_reason: "admin",
+        created_at: "2026-05-01T00:00:00.000Z",
+      }),
+    );
+    await db.insertEndpoint(
+      makeEndpoint({
+        id: "ep_b",
+        invite_id: null,
+        slug: "b",
+        hostname: "b.example",
+        account_id: "act_b",
+        status: "revoked",
+        revoke_reason: "expired",
+        created_at: "2026-03-01T00:00:00.000Z",
+      }),
+    );
+    await db.insertEndpoint(
+      makeEndpoint({
+        id: "ep_c",
+        invite_id: null,
+        slug: "c",
+        hostname: "c.example",
+        account_id: "act_c",
+        status: "revoke_failed",
+        revoke_reason: "refunded",
+        created_at: "2026-04-01T00:00:00.000Z",
+      }),
+    );
+    await db.insertEndpoint(
+      makeEndpoint({
+        id: "ep_d",
+        invite_id: null,
+        slug: "d",
+        hostname: "d.example",
+        account_id: "act_d",
+        status: "revoked",
+        revoke_reason: null,
+        created_at: "2026-02-01T00:00:00.000Z",
+      }),
+    );
+    await db.insertEndpoint(
+      makeEndpoint({
+        id: "ep_e_dead",
+        invite_id: null,
+        slug: "e-dead",
+        hostname: "e-dead.example",
+        account_id: "act_e",
+        status: "revoked",
+        revoke_reason: "expired",
+        created_at: "2026-01-15T00:00:00.000Z",
+      }),
+    );
+    await db.insertEndpoint(
+      makeEndpoint({
+        id: "ep_e_live",
+        invite_id: null,
+        slug: "e-live",
+        hostname: "e-live.example",
+        account_id: "act_e",
+        status: "active",
+        revoke_reason: null,
+        created_at: "2026-06-01T00:00:00.000Z",
+      }),
+    );
+
+    expect(await db.getRestorableEndpointByAccountId("act_a")).toBeNull();
+    expect((await db.getRestorableEndpointByAccountId("act_b"))?.id).toBe("ep_b");
+    expect((await db.getRestorableEndpointByAccountId("act_c"))?.id).toBe("ep_c");
+    expect(await db.getRestorableEndpointByAccountId("act_d")).toBeNull();
+    expect(await db.getRestorableEndpointByAccountId("act_e")).toBeNull();
+  });
+
+  it("reactivateEndpoint flips only a revoked row of that account and clears the revoke fields", async () => {
+    const db = createMemoryConnectDb();
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    await db.insertEndpoint(
+      makeEndpoint({
+        id: "ep_1",
+        invite_id: null,
+        slug: "fam",
+        hostname: "fam.mediaryconnect.app",
+        account_id: "act_1",
+        status: "revoked",
+        revoke_reason: "expired",
+        revoked_at: "2026-06-01T00:00:00.000Z",
+        last_seen_at: "2026-05-01T00:00:00.000Z",
+        token_ciphertext: "cipher",
+        token_shown_at: "2026-04-01T00:00:00.000Z",
+        cf_access_app_id: "app_old",
+        cf_access_policy_id: "pol_old",
+        created_at: createdAt,
+      }),
+    );
+    expect(
+      await db.reactivateEndpoint({
+        id: "ep_1",
+        accountId: "act_1",
+        cfTunnelId: "t2",
+        cfDnsRecordId: "r2",
+        tokenSha256: "s2",
+      }),
+    ).toBe(true);
+    const row = await db.getEndpointById("ep_1");
+    expect(row).toMatchObject({
+      status: "active",
+      cf_tunnel_id: "t2",
+      cf_dns_record_id: "r2",
+      token_sha256: "s2",
+      revoked_at: null,
+      revoke_reason: null,
+      last_seen_at: null,
+      token_ciphertext: null,
+      token_shown_at: null,
+      cf_access_app_id: null,
+      cf_access_policy_id: null,
+      slug: "fam",
+      hostname: "fam.mediaryconnect.app",
+      created_at: createdAt,
+    });
+    expect(
+      await db.reactivateEndpoint({
+        id: "ep_1",
+        accountId: "act_1",
+        cfTunnelId: "t3",
+        cfDnsRecordId: "r3",
+        tokenSha256: "s3",
+      }),
+    ).toBe(false);
+    expect((await db.getEndpointById("ep_1"))?.cf_tunnel_id).toBe("t2");
+    expect(
+      await db.reactivateEndpoint({
+        id: "ep_1",
+        accountId: "act_other",
+        cfTunnelId: "t4",
+        cfDnsRecordId: "r4",
+        tokenSha256: "s4",
+      }),
+    ).toBe(false);
+    expect(await db.reactivateEndpoint({
+      id: "missing",
+      accountId: "act_1",
+      cfTunnelId: "t5",
+      cfDnsRecordId: "r5",
+      tokenSha256: "s5",
+    })).toBe(false);
+  });
+
+  it("reactivateEndpoint cannot create a second live row for the account", async () => {
+    const db = createMemoryConnectDb();
+    await db.insertEndpoint(
+      makeEndpoint({
+        id: "ep_live",
+        invite_id: null,
+        slug: "live",
+        hostname: "live.example",
+        account_id: "act_1",
+        status: "active",
+        revoke_reason: null,
+      }),
+    );
+    await db.insertEndpoint(
+      makeEndpoint({
+        id: "ep_dead",
+        invite_id: null,
+        slug: "dead",
+        hostname: "dead.example",
+        account_id: "act_1",
+        status: "revoked",
+        revoke_reason: "expired",
+      }),
+    );
+    expect(
+      await db.reactivateEndpoint({
+        id: "ep_dead",
+        accountId: "act_1",
+        cfTunnelId: "t2",
+        cfDnsRecordId: "r2",
+        tokenSha256: "s2",
+      }),
+    ).toBe(false);
+    expect((await db.getEndpointById("ep_dead"))?.status).toBe("revoked");
   });
 
   it("insertAudit roundtrips via listAudits", async () => {
@@ -240,8 +469,8 @@ describe("memory ConnectDb", () => {
 
   it("mutations on nonexistent ids are silent no-ops (D1 UPDATE parity contract)", async () => {
     const db = createMemoryConnectDb();
-    await expect(db.markEndpointRevoked("nope", "2026-07-24T04:00:00.000Z")).resolves.toBeUndefined();
-    await expect(db.markEndpointRevokeFailed("nope")).resolves.toBeUndefined();
+    await expect(db.markEndpointRevoked("nope", "2026-07-24T04:00:00.000Z", "expired")).resolves.toBeUndefined();
+    await expect(db.markEndpointRevokeFailed("nope", "expired")).resolves.toBeUndefined();
     await expect(db.updateInviteStatus("nope", { status: "revoked" })).resolves.toBeUndefined();
     expect(await db.listEndpoints()).toHaveLength(0);
     expect(await db.listInvites()).toHaveLength(0);

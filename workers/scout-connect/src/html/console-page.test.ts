@@ -44,7 +44,7 @@ const endpoint: EndpointRow = {
   last_seen_at: null,
   created_at: NOW,
   revoked_at: null,
-  account_id: "act_1", grace_until: null, suspended_at: null, purge_after: null,
+  account_id: "act_1", grace_until: null, suspended_at: null, purge_after: null, revoke_reason: null,
 };
 
 function base(over: Partial<Parameters<typeof consolePage>[0]>) {
@@ -288,5 +288,59 @@ describe("无时长态 = Waffo 微信支付入口", () => {
     });
     expect(html).not.toContain("data-tier");
     expect(html).toContain("选择专属地址");
+  });
+});
+
+describe("console page — restore a reserved address", () => {
+  const tiers = [
+    { tierId: "quarter", months: 3, label: "季度", price: "¥45", featured: false, note: "3 个月" },
+  ];
+  const restorable = { slug: "fam", hostname: "fam.mediaryconnect.app" };
+
+  it("offers to restore the reserved address instead of the name form", () => {
+    const html = base({
+      entitlements: [ent("2027-01-01T00:00:00.000Z")],
+      endpoint: null,
+      restorable,
+    });
+    expect(html).toContain("fam.mediaryconnect.app");
+    expect(html).toContain('id="restore"');
+    expect(html).toContain("还为你保留着");
+    expect(html).not.toContain('id="slug"');
+    expect(html).toContain('JSON.stringify({slug:"fam"})');
+  });
+
+  it("tells an expired account its address comes back on renewal", () => {
+    const html = base({
+      entitlements: [ent("2026-01-01T00:00:00.000Z")],
+      endpoint: null,
+      now: "2026-08-01T00:00:00.000Z",
+      tiers,
+      restorable,
+    });
+    expect(html).toContain("续期后，<span class=\"addr\">fam.mediaryconnect.app</span> 会原样恢复。");
+    expect(html).not.toContain('id="restore"');
+  });
+
+  it("keeps the sold-out panel when at capacity even with a restorable address", () => {
+    const html = base({
+      entitlements: [ent("2027-01-01T00:00:00.000Z")],
+      endpoint: null,
+      atCapacity: true,
+      restorable,
+    });
+    expect(html).toContain("暂时售罄");
+    expect(html).not.toContain('id="restore"');
+    expect(html).not.toContain('id="slug"');
+  });
+
+  it("escapes the hostname", () => {
+    const html = base({
+      entitlements: [ent("2027-01-01T00:00:00.000Z")],
+      endpoint: null,
+      restorable: { slug: "fam", hostname: "fam.example/<script>alert(1)</script>" },
+    });
+    expect(html).not.toContain("fam.example/<script>alert(1)</script>");
+    expect(html).toContain("fam.example/&lt;script&gt;alert(1)&lt;/script&gt;");
   });
 });

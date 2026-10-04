@@ -49,7 +49,8 @@ export function expiryReminderText(input: {
     `你好,\n\n` +
     `${where}将于 ${input.expiryDate} 到期（还有 ${input.daysLeft} 天）。\n\n` +
     `到期后有 7 天宽限期,服务照常;宽限期满后域名会停止解析并回收隧道。` +
-    `你的 slug 永久保留——随时回来续期,地址原样恢复(需重跑一次一行接入命令)。\n\n` +
+    `你的地址永久为你保留——续期后在控制台点「恢复原地址」，再接入一次即可` +
+    `（容器版也可以在实例的 设置 → 远程访问 里完成）。\n\n` +
     `续期:https://mediaryconnect.app/pricing\n` +
     `控制台:https://mediaryconnect.app/login\n\n` +
     `—— Mediary Connect(由 DF Digital 运营,订单由 Waffo.com Limited 处理,使用微信支付)\n` +

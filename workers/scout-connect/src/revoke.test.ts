@@ -41,7 +41,7 @@ function makeEndpoint(overrides: Partial<EndpointRow> = {}): EndpointRow {
     token_shown_at: "2026-07-24T02:00:00.000Z",
     created_at: "2026-07-24T01:00:00.000Z",
     revoked_at: null,
-    last_seen_at: null, account_id: null, grace_until: null, suspended_at: null, purge_after: null,
+    last_seen_at: null, account_id: null, grace_until: null, suspended_at: null, purge_after: null, revoke_reason: null,
     ...overrides,
   };
 }
@@ -116,7 +116,7 @@ describe("revokeEndpoint", () => {
     const calls: string[] = [];
     const deps = makeDeps(db, makeFakeCf(calls));
 
-    const result = await revokeEndpoint({ endpointId: "ep_1", deps });
+    const result = await revokeEndpoint({ endpointId: "ep_1", reason: "admin", deps });
 
     expect(result).toEqual({
       endpointId: "ep_1",
@@ -144,6 +144,63 @@ describe("revokeEndpoint", () => {
     expect(audits[0]?.detail_json).toContain("alice.mediaryconnect.app");
   });
 
+  it("records the reason it was given, also when Cloudflare cleanup fails", async () => {
+    const db = createMemoryConnectDb();
+    await db.insertInvite(makeInvite());
+    await db.insertEndpoint(makeEndpoint());
+    const calls: string[] = [];
+    await revokeEndpoint({
+      endpointId: "ep_1",
+      reason: "expired",
+      deps: makeDeps(db, makeFakeCf(calls)),
+    });
+    expect((await db.getEndpointById("ep_1"))?.revoke_reason).toBe("expired");
+    const okAudit = (await db.listAudits())[0];
+    expect(JSON.parse(okAudit?.detail_json ?? "{}").reason).toBe("expired");
+
+    await db.insertInvite(makeInvite({ id: "inv_2", code: "code-2", email: "bob@example.com" }));
+    await db.insertEndpoint(
+      makeEndpoint({
+        id: "ep_2",
+        invite_id: "inv_2",
+        slug: "bob",
+        hostname: "bob.mediaryconnect.app",
+        cf_tunnel_id: "tid-2",
+        cf_dns_record_id: "rec-2",
+      }),
+    );
+    let auditN = 0;
+    const failDeps = makeDeps(db, makeFakeCf(calls, { failOn: "tunnel" }));
+    await expect(
+      revokeEndpoint({
+        endpointId: "ep_2",
+        reason: "refunded",
+        deps: { ...failDeps, newAuditId: () => `aud_fail_${++auditN}` },
+      }),
+    ).rejects.toThrow("cf delete tunnel boom");
+    const failed = await db.getEndpointById("ep_2");
+    expect(failed?.status).toBe("revoke_failed");
+    expect(failed?.revoke_reason).toBe("refunded");
+
+    await db.insertEndpoint(
+      makeEndpoint({
+        id: "ep_old",
+        invite_id: null,
+        slug: "old",
+        hostname: "old.mediaryconnect.app",
+        status: "revoked",
+        revoke_reason: "admin",
+        revoked_at: NOW,
+      }),
+    );
+    await revokeEndpoint({
+      endpointId: "ep_old",
+      reason: "expired",
+      deps: makeDeps(db, makeFakeCf(calls)),
+    });
+    expect((await db.getEndpointById("ep_old"))?.revoke_reason).toBe("admin");
+  });
+
   it("already revoked: returns hostname with zero cf calls and zero new audit rows", async () => {
     const db = createMemoryConnectDb();
     await db.insertInvite(makeInvite({ status: "revoked", slug: null, revoked_at: NOW }));
@@ -151,7 +208,7 @@ describe("revokeEndpoint", () => {
     const calls: string[] = [];
     const deps = makeDeps(db, makeFakeCf(calls));
 
-    const result = await revokeEndpoint({ endpointId: "ep_1", deps });
+    const result = await revokeEndpoint({ endpointId: "ep_1", reason: "admin", deps });
 
     expect(result).toEqual({
       endpointId: "ep_1",
@@ -172,7 +229,7 @@ describe("revokeEndpoint", () => {
     const calls: string[] = [];
     const deps = makeDeps(db, makeFakeCf(calls));
 
-    const result = await revokeEndpoint({ endpointId: "ep_1", deps });
+    const result = await revokeEndpoint({ endpointId: "ep_1", reason: "admin", deps });
 
     expect(result.hostname).toBe("alice.mediaryconnect.app");
     expect(calls).toHaveLength(0); // still no cf calls
@@ -189,7 +246,7 @@ describe("revokeEndpoint", () => {
     const calls: string[] = [];
     const deps = makeDeps(db, makeFakeCf(calls, { failOn: "access" }));
 
-    await expect(revokeEndpoint({ endpointId: "ep_1", deps })).rejects.toThrow(
+    await expect(revokeEndpoint({ endpointId: "ep_1", reason: "admin", deps })).rejects.toThrow(
       "cf delete access boom",
     );
 
@@ -225,7 +282,7 @@ describe("revokeEndpoint", () => {
     // succeeding on the retry as "already deleted" → 404 → success)
     const deps = makeDeps(db, makeFakeCf(calls, { failOn: "tunnel", failOnce: true }));
 
-    await expect(revokeEndpoint({ endpointId: "ep_1", deps })).rejects.toThrow(
+    await expect(revokeEndpoint({ endpointId: "ep_1", reason: "admin", deps })).rejects.toThrow(
       "cf delete tunnel boom",
     );
     expect((await db.getEndpointById("ep_1"))?.status).toBe("revoke_failed");
@@ -234,7 +291,7 @@ describe("revokeEndpoint", () => {
     // admin retries with the same (now healthy) cf — second run's deletes on
     // already-deleted access/dns return success without throwing
     const retryDeps = { ...deps, newAuditId: () => "aud_retry" };
-    const result = await revokeEndpoint({ endpointId: "ep_1", deps: retryDeps });
+    const result = await revokeEndpoint({ endpointId: "ep_1", reason: "admin", deps: retryDeps });
 
     expect(result).toEqual({
       endpointId: "ep_1",
@@ -261,7 +318,7 @@ describe("revokeEndpoint", () => {
     const calls: string[] = [];
     const deps = makeDeps(db, makeFakeCf(calls));
 
-    await expect(revokeEndpoint({ endpointId: "ep_missing", deps })).rejects.toThrow(
+    await expect(revokeEndpoint({ endpointId: "ep_missing", reason: "admin", deps })).rejects.toThrow(
       /not found/,
     );
     expect(calls).toHaveLength(0);

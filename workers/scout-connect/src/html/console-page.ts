@@ -43,6 +43,8 @@ export function consolePage(input: {
   /** 隧道配额是否已满(CF 1000 硬上限)。只影响「已付费未开通」态:满了就不给
    *  slug 表单,免得用户填完名字才吃 503。已开通用户完全不受影响。 */
   atCapacity?: boolean;
+  /** 到期或退款收回、账号自己还能要回来的地址。没有 active 行时才有。 */
+  restorable?: { slug: string; hostname: string } | null;
 }): string {
   const expiry = latestExpiry(input.entitlements);
   const active = isEntitlementActive(expiry, input.now);
@@ -167,16 +169,23 @@ function renderBody(
     atCapacity: boolean;
     /** 可下单档位(固定 Waffo 档位,空数组=购买通道未配置)。 */
     tiers: readonly PurchasableTier[];
+    /** 到期或退款收回、还能要回来的地址。 */
+    restorable?: { slug: string; hostname: string } | null;
   },
   active: boolean,
 ): string {
+  const renewalNote = input.restorable
+    ? `<p class="lead-sub">续期后，<span class="addr">${esc(input.restorable.hostname)}</span> 会原样恢复。</p>`
+    : "";
   if (!active) {
     if (input.tiers.length === 0) {
       // Waffo 配置未完整:不给假按钮,老实说不可用。
       return `<p class="sub">你还没有有效时长。</p>
-<p class="lead-sub">购买通道暂时不可用,请稍后再试或<a href="/contact">联系我们</a>。</p>`;
+<p class="lead-sub">购买通道暂时不可用,请稍后再试或<a href="/contact">联系我们</a>。</p>
+${renewalNote}`;
     }
     return `<p class="sub">你还没有有效时长。开通后即可为自托管实例生成专属远程访问地址。</p>
+${renewalNote}
 <p style="margin:14px 0 0;padding:12px 14px;border:1px solid #f59e0b;border-radius:10px;background:rgba(245,158,11,.08);color:var(--text);font-size:13px;line-height:1.7">
 付款会跳转到 Waffo 的微信支付页面。浏览器返回本站不代表已经到账，以服务端确认结果为准；请在付款确认页等待，不要重复付款。
 </p>
@@ -207,6 +216,16 @@ ${t.featured ? `<span class="tier-tag">推荐</span>` : ""}
 <p class="lead">隧道配额已满</p>
 <p class="lead-sub">我们的 Cloudflare 隧道配额（每账号上限 1000 条，所有套餐一致）已用尽，暂时无法为新实例分配地址。你的时长不会流失——配额释放后回到这里即可开通，我们也会邮件通知你。</p>
 <p class="lead-sub">如果不想等，14 天内可无条件全额退款：<a href="/refund">退款政策</a> · <a href="/contact">联系我们</a></p>
+</div>`;
+  }
+  if (input.endpoint === null && input.restorable) {
+    return `<p class="sub">你的专属地址 <span class="addr">${esc(input.restorable.hostname)}</span> 还为你保留着。</p>
+<div class="panel">
+<p class="step">恢复地址</p>
+<p class="lead">恢复后再接入一次即可</p>
+<p class="lead-sub">会为这个地址重新开一条隧道。恢复后这里会给出接入命令，或在实例的「设置 → 远程访问」里点「接入」。</p>
+<button class="btn" id="restore" type="button">恢复这个地址</button>
+<p class="msg" id="restoremsg" hidden></p>
 </div>`;
   }
   if (input.endpoint === null) {
@@ -331,6 +350,26 @@ function relativeZh(iso: string | null, now: number): string | null {
   return "很久以前";
 }
 
+/** 有可恢复地址时的「恢复这个地址」按钮:同 slug 走 /api/provision,成功刷新进接入面板。 */
+function restoreScript(slug: string): string {
+  return `<script type="module">
+const btn=document.getElementById("restore"),msg=document.getElementById("restoremsg");
+function fail(text){msg.textContent=text;msg.className="msg err";msg.hidden=false;btn.disabled=false;}
+btn.addEventListener("click",async()=>{
+  btn.disabled=true;msg.hidden=true;
+  try{
+    const res=await fetch("/api/provision",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({slug:${JSON.stringify(slug)}})});
+    if(res.ok){window.location.reload();return;}
+    if(res.status===401){fail("登录状态已过期。刷新页面重新登录后再试。");return;}
+    if(res.status===402){fail("时长还没生效。付款确认后刷新页面再试。");return;}
+    if(res.status===409){window.location.reload();return;}
+    if(res.status===503){fail("暂时恢复不了，请过几分钟再试；一直不行请联系我们。");return;}
+    fail("恢复没成功，请稍后再试；一直不行请联系我们。");
+  }catch{fail("网络请求没成功。检查网络后再试一次。");}
+});
+</script>`;
+}
+
 /** active 时才需要客户端脚本:有 endpoint → 取码/复制;无 endpoint → slug
  *  选择表单(实时查重 + 开通)。 */
 function renderScript(
@@ -340,6 +379,7 @@ function renderScript(
     rootDomain: string;
     atCapacity?: boolean;
     tiers?: readonly PurchasableTier[];
+    restorable?: { slug: string; hostname: string } | null;
   },
   active: boolean,
 ): string {
@@ -351,6 +391,7 @@ function renderScript(
   // 满容量时 renderBody 不渲染 #slug/#provision,注入表单脚本会对 null 调
   // addEventListener 直接抛错、整段脚本崩掉。条件必须与 renderBody 的分支一致。
   if (input.endpoint === null && input.atCapacity === true) return "";
+  if (input.endpoint === null && input.restorable) return restoreScript(input.restorable.slug);
   if (input.endpoint === null) return slugFormScript(input.rootDomain);
   return `<script type="module">
 const $=(id)=>document.getElementById(id);

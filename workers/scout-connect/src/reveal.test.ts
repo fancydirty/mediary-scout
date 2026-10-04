@@ -42,7 +42,7 @@ function makeEndpoint(overrides: Partial<EndpointRow> = {}): EndpointRow {
     token_shown_at: null,
     created_at: "2026-07-24T01:00:00.000Z",
     revoked_at: null,
-    last_seen_at: null, account_id: null, grace_until: null, suspended_at: null, purge_after: null,
+    last_seen_at: null, account_id: null, grace_until: null, suspended_at: null, purge_after: null, revoke_reason: null,
     ...overrides,
   };
 }
@@ -165,7 +165,7 @@ describe("revealByCode (P4: fetch token from CF, idempotent, no burn)", () => {
     const db = createMemoryConnectDb();
     await db.insertInvite(makeInvite());
     await db.insertEndpoint(makeEndpoint());
-    await db.markEndpointRevoked("ep_1", NOW);
+    await db.markEndpointRevoked("ep_1", NOW, "expired");
     const cfCalls: string[] = [];
     const outcome = await revealByCode({ code: "code-abc", deps: makeDeps(db, cfCalls) });
     expect(outcome).toEqual({ kind: "not_found" });

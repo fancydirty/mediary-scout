@@ -244,6 +244,111 @@ describe("POST /api/provision (自助开通)", () => {
     expect(ep?.invite_id).toBe("inv_1");
     expect(ep?.account_id).toBeNull();
   });
+
+  async function reclaimed(
+    db: ConnectDb,
+    accountId: string,
+    slug: string,
+    status: EndpointRow["status"] = "revoked",
+    revokeReason: EndpointRow["revoke_reason"] = "expired",
+  ): Promise<void> {
+    await db.insertEndpoint({
+      id: `ep_${accountId}_${slug}`,
+      invite_id: null,
+      slug,
+      hostname: `${slug}.mediaryconnect.app`,
+      cf_tunnel_id: "t-old",
+      cf_access_app_id: null,
+      cf_access_policy_id: null,
+      cf_dns_record_id: "dns-old",
+      status,
+      token_sha256: "old-sha",
+      token_ciphertext: null,
+      token_shown_at: null,
+      last_seen_at: null,
+      created_at: NOW,
+      revoked_at: NOW,
+      account_id: accountId,
+      grace_until: null,
+      suspended_at: null,
+      purge_after: null,
+      revoke_reason: revokeReason,
+    });
+  }
+
+  it("restores the account's own reclaimed address when it asks for that slug", async () => {
+    const { deps, db } = setup();
+    await seedAccount(db, "A", FUTURE);
+    await reclaimed(db, "A", "fam");
+    const res = await handleRequest(post("fam", await cookieFor("A")), deps);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ hostname: "fam.mediaryconnect.app" });
+    expect((await db.getEndpointById("ep_A_fam"))?.status).toBe("active");
+    expect(await db.listEndpoints()).toHaveLength(1);
+  });
+
+  it("still refuses another account's reclaimed slug as taken", async () => {
+    const { deps, db } = setup();
+    await seedAccount(db, "A", FUTURE);
+    await seedAccount(db, "B", FUTURE);
+    await reclaimed(db, "B", "fam");
+    const res = await handleRequest(post("fam", await cookieFor("A")), deps);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "slug taken" });
+  });
+
+  it("maps restore failures like provision failures", async () => {
+    const noTime = setup();
+    await seedAccount(noTime.db, "A", null);
+    await reclaimed(noTime.db, "A", "fam");
+    expect((await handleRequest(post("fam", await cookieFor("A")), noTime.deps)).status).toBe(402);
+
+    const live = setup();
+    await seedAccount(live.db, "A", FUTURE);
+    await reclaimed(live.db, "A", "fam");
+    await live.db.insertEndpoint({
+      id: "ep_live", invite_id: null, slug: "other", hostname: "other.mediaryconnect.app",
+      cf_tunnel_id: "t-live", cf_access_app_id: null, cf_access_policy_id: null, cf_dns_record_id: "d-live",
+      status: "active", token_sha256: "sha", token_ciphertext: null, token_shown_at: null, last_seen_at: null,
+      created_at: NOW, revoked_at: null, account_id: "A", grace_until: null, suspended_at: null,
+      purge_after: null,
+      revoke_reason: null,
+    });
+    const liveRes = await handleRequest(post("fam", await cookieFor("A")), live.deps);
+    expect(liveRes.status).toBe(409);
+    expect(await liveRes.json()).toEqual({ error: "already provisioned" });
+
+    const full = setup();
+    await seedAccount(full.db, "A", FUTURE);
+    await reclaimed(full.db, "A", "fam");
+    await fillEndpoints(full.db, 990);
+    const fullRes = await handleRequest(post("fam", await cookieFor("A")), full.deps);
+    expect(fullRes.status).toBe(503);
+    expect(await fullRes.json()).toEqual({ error: "at capacity" });
+
+    const dirty = setup();
+    dirty.deps.cf = {
+      ...dirty.deps.cf,
+      async deleteTunnel(tunnelId: string) {
+        throw new Error(`delete ${tunnelId}`);
+      },
+    };
+    await seedAccount(dirty.db, "A", FUTURE);
+    await reclaimed(dirty.db, "A", "fam", "revoke_failed", "refunded");
+    const dirtyRes = await handleRequest(post("fam", await cookieFor("A")), dirty.deps);
+    expect(dirtyRes.status).toBe(503);
+    expect(await dirtyRes.json()).toEqual({ error: "restore cleanup failed" });
+  });
+
+  it("works with the instance Bearer credential too", async () => {
+    const { deps, db } = setup();
+    await seedAccount(db, "act_1", FUTURE);
+    await reclaimed(db, "act_1", "fam");
+    const credential = await bearerFor(db);
+    const res = await handleRequest(postBearer("fam", credential), deps);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ hostname: "fam.mediaryconnect.app" });
+  });
 });
 
 /** 造 n 条占配额的 endpoint 行。用 insertEndpoint 直插,不走 CF。
@@ -277,6 +382,7 @@ async function fillEndpoints(
         grace_until: null,
         suspended_at: null,
         purge_after: null,
+        revoke_reason: null,
       });
   }
 }
