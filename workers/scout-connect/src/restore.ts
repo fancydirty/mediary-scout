@@ -10,7 +10,14 @@ export interface RestoreDeps {
   db: ConnectDb;
   now: () => string;
   newAuditId: () => string;
+  /** Pause between re-reads after a lost CNAME race. Defaults to setTimeout; tests inject their own. */
+  sleep?: (ms: number) => Promise<void>;
 }
+
+// A winner may already own the CNAME but not have run its D1 update yet: re-read a few times
+// before deciding the failure was our own (about 1.5 s on a real Cloudflare error).
+const LOST_RACE_REREADS = 3;
+const LOST_RACE_DELAY_MS = 500;
 
 /**
  * Renewal brings back the address an account lost to expiry or a refund: same slug and hostname
@@ -77,7 +84,11 @@ export async function restoreEndpoint(input: {
   } catch (e) {
     // A concurrent restore of this row that got there first owns the CNAME, so ours fails on the
     // duplicate. createTunnelResources already deleted our tunnel; report the lost race as such.
-    if ((await db.getEndpointById(endpoint.id))?.status === "active") throw new Error("already provisioned");
+    const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+    for (let reread = 0; reread <= LOST_RACE_REREADS; reread++) {
+      if ((await db.getEndpointById(endpoint.id))?.status === "active") throw new Error("already provisioned");
+      if (reread < LOST_RACE_REREADS) await sleep(LOST_RACE_DELAY_MS);
+    }
     throw e;
   }
   // discard() swallows delete failures. Like provision.orphan, leave the new ids in an audit row so

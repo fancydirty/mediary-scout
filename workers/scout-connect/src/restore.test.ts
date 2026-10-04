@@ -66,6 +66,8 @@ function deps(db: ConnectDb, cf: CfApi): RestoreDeps {
     db,
     now: () => NOW,
     newAuditId: () => `aud_${++n}`,
+    // No real waiting in tests; the lost-race tests inject their own.
+    sleep: async () => {},
   };
 }
 
@@ -413,6 +415,46 @@ describe("restoreEndpoint", () => {
     // Only this request's own tunnel is cleaned up; the winner's DNS record and tunnel stay.
     expect(calls.filter((call) => call.startsWith("delete"))).toEqual(["deleteTunnel:tid-scout-fam"]);
     expect((await db.getEndpointById("ep_old"))?.cf_tunnel_id).toBe("t-winner");
+  });
+
+  it("waits briefly for a winner that has its CNAME but has not reactivated the row yet", async () => {
+    // The winner's CNAME exists (ours fails on the duplicate) but its D1 update lands a moment later.
+    const db = createMemoryConnectDb();
+    await seedAccount(db, "A", FUTURE);
+    await db.insertEndpoint(endpoint({ id: "ep_old", slug: "fam", account_id: "A" }));
+    const calls: string[] = [];
+    const sleeps: number[] = [];
+    const restoreDeps: RestoreDeps = {
+      ...deps(db, fakeCf(calls, { dnsThrows: true })),
+      async sleep(ms) {
+        sleeps.push(ms);
+        await db.reactivateEndpoint({
+          id: "ep_old",
+          accountId: "A",
+          cfTunnelId: "t-winner",
+          cfDnsRecordId: "dns-winner",
+          tokenSha256: "sha-winner",
+        });
+      },
+    };
+    await expect(restoreEndpoint({ accountId: "A", deps: restoreDeps })).rejects.toThrow("already provisioned");
+    expect(sleeps.length).toBe(1);
+  });
+
+  it("still reports a real Cloudflare failure after the short wait", async () => {
+    const db = createMemoryConnectDb();
+    await seedAccount(db, "A", FUTURE);
+    await db.insertEndpoint(endpoint({ id: "ep_old", slug: "fam", account_id: "A" }));
+    const sleeps: number[] = [];
+    const restoreDeps: RestoreDeps = {
+      ...deps(db, fakeCf([], { dnsThrows: true })),
+      async sleep(ms) {
+        sleeps.push(ms);
+      },
+    };
+    await expect(restoreEndpoint({ accountId: "A", deps: restoreDeps })).rejects.toThrow("cf dns boom");
+    expect(sleeps.length).toBeGreaterThan(0);
+    expect((await db.getEndpointById("ep_old"))?.status).toBe("revoked");
   });
 
   it("leaves an orphan audit with the new tunnel and DNS ids when the restore is rolled back", async () => {
