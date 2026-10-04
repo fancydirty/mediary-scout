@@ -23,6 +23,10 @@ describe("deploy cutover guard", () => {
     expect(deployScript).toContain("已付款未开通");
   });
 
+  it("does not claim the real payment loop is still unproven (verified in production on 2026-10-03)", () => {
+    expect(deployScript).not.toContain("尚未证明真实收款闭环");
+  });
+
   it("refuses deployment until the 0008 instance-link tables exist", () => {
     expect(deployScript).toContain("SELECT id, poll_secret_sha256 FROM instance_link_requests LIMIT 0");
     expect(deployScript).toContain("SELECT id, credential_sha256 FROM instance_credentials LIMIT 0");

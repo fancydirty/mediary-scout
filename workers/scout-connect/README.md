@@ -274,10 +274,11 @@ idempotency key. A full refund removes that order's months and recomputes the
 expiry from the remaining unrefunded entitlements; access is revoked only when
 no paid time remains. Partial refunds are logged and do not remove access.
 
-The WeChat simulator only proves the integration. Production launch also
-requires KYB approval (`prodEnabled`), all three products published to
-production, the production webhook registered, a real payment by someone
-other than the merchant, and a full refund of that payment.
+The WeChat simulator only proves the integration. Production went live on
+2026-10-03 after KYB approval (`prodEnabled`), with all three products
+published and the production webhook registered; a real ¥45 payment and its
+full refund then went through the live webhook and order-query paths. Repeat
+that real payment and refund after changing the payment code.
 
 **Refunds**: issue refunds from the Waffo dashboard (or through the merchant
 API refund ticket). The resulting `refund.succeeded` webhook removes the
