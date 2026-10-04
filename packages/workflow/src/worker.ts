@@ -361,14 +361,15 @@ export async function runQueuedType2Workflow(input: {
   if (!claimed) {
     return { status: "idle" };
   }
-  const deps = await resolveWorkerDeps(
-    input.resolveAccountContext,
-    claimed.accountId,
-    claimed.connectedStorageId,
-    input,
-  );
-
+  // Inside the try: a throw here (drive gone, settings cleared, a DB blip) must end the
+  // claimed run through the failure handler, not leave it "running".
   try {
+    const deps = await resolveWorkerDeps(
+      input.resolveAccountContext,
+      claimed.accountId,
+      claimed.connectedStorageId,
+      input,
+    );
     const result = await runType2InitializationV2AndPersist({
       title: claimed.title,
       season: claimed.season,
@@ -1039,14 +1040,15 @@ export async function runQueuedMovieAcquisition(input: {
   if (!claimed) {
     return { status: "idle" };
   }
-  const deps = await resolveWorkerDeps(
-    input.resolveAccountContext,
-    claimed.accountId,
-    claimed.connectedStorageId,
-    input,
-  );
-
+  // Inside the try: a throw here (drive gone, settings cleared, a DB blip) must end the
+  // claimed run through the failure handler, not leave it "running".
   try {
+    const deps = await resolveWorkerDeps(
+      input.resolveAccountContext,
+      claimed.accountId,
+      claimed.connectedStorageId,
+      input,
+    );
     const result = await runMovieAcquisitionV2AndPersist({
       title: claimed.title,
       categoryParentId:
@@ -1130,20 +1132,20 @@ export async function runQueuedSeriesInitialization(input: {
   if (!claimed) {
     return { status: "idle" };
   }
-  const deps = await resolveWorkerDeps(
-    input.resolveAccountContext,
-    claimed.accountId,
-    claimed.connectedStorageId,
-    input,
-  );
-
   const queuedEvent = claimed.workflowRun.auditEvents.find(
     (event) => event.type === "series_init_queued",
   );
   const seasons = (queuedEvent?.data?.["seasons"] ??
     []) as AcquisitionSeasonScope[];
 
+  // Inside the try, as in the other queued runners.
   try {
+    const deps = await resolveWorkerDeps(
+      input.resolveAccountContext,
+      claimed.accountId,
+      claimed.connectedStorageId,
+      input,
+    );
     if (seasons.length === 0) {
       throw new Error(
         "Queued series initialization run is missing its season metadata",
