@@ -53,6 +53,10 @@ export async function revokeEndpoint(input: {
     return { endpointId, hostname: endpoint.hostname };
   }
 
+  // An admin takedown that failed at Cloudflare stays an admin revoke whoever finishes it (a later
+  // refund, the cron): admin-revoked addresses are never self-restorable, the other reasons are.
+  const reason: RevokeReason = endpoint.revoke_reason === "admin" ? "admin" : input.reason;
+
   // Delete order: access app → dns record → tunnel. A failure on one step
   // must NOT prevent the remaining deletes from being attempted — e.g. a
   // failed access-app delete still leaves a deletable tunnel. Failures are
@@ -77,7 +81,7 @@ export async function revokeEndpoint(input: {
   await attempt(() => cf.deleteTunnel(endpoint.cf_tunnel_id));
 
   if (failures.length === 0) {
-    await db.markEndpointRevoked(endpointId, deps.now(), input.reason);
+    await db.markEndpointRevoked(endpointId, deps.now(), reason);
     // 0004:自助行 invite_id 为 null,没有 invite 状态要翻。
     if (endpoint.invite_id !== null) {
       await db.updateInviteStatus(endpoint.invite_id, {
@@ -93,7 +97,7 @@ export async function revokeEndpoint(input: {
       action: "endpoint.revoke",
       invite_id: endpoint.invite_id,
       endpoint_id: endpointId,
-      detail_json: JSON.stringify({ hostname: endpoint.hostname, reason: input.reason }),
+      detail_json: JSON.stringify({ hostname: endpoint.hostname, reason }),
     });
     return { endpointId, hostname: endpoint.hostname };
   }
@@ -102,7 +106,7 @@ export async function revokeEndpoint(input: {
   // later. Retrying is safe because cf-api deletes are 404-idempotent —
   // resources already deleted above simply come back as success.
   const firstError = failures[0];
-  await db.markEndpointRevokeFailed(endpointId, input.reason);
+  await db.markEndpointRevokeFailed(endpointId, reason);
   await db.insertAudit({
     id: deps.newAuditId(),
     at: deps.now(),
@@ -112,7 +116,7 @@ export async function revokeEndpoint(input: {
     endpoint_id: endpointId,
     detail_json: JSON.stringify({
       hostname: endpoint.hostname,
-      reason: input.reason,
+      reason,
       errors: failures.map(errorMessage),
     }),
   });

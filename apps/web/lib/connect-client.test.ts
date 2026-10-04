@@ -171,7 +171,18 @@ describe("connect-client", () => {
     const endpoint = { slug: "fam", hostname: "fam.mediaryconnect.app", status: "active" };
     const account = { email: "owner@example.com", active: true, expiresAt: null, endpoint, checkoutOpen: true, tiers: [] };
     for (const tunnelId of [undefined, 42, "not-a-uuid", "", "   ", null, {}]) {
-      for (const restorable of [undefined, null, { slug: 1 }, { slug: "fam", hostname: "bad host" }, { slug: " ", hostname: "fam.mediaryconnect.app" }]) {
+      for (const restorable of [
+        undefined,
+        null,
+        { slug: 1 },
+        { slug: "fam", hostname: "bad host" },
+        { slug: " ", hostname: "fam.mediaryconnect.app" },
+        // Not a slug Connect would ever issue: the restore button would only ever get a 400.
+        { slug: "not valid!", hostname: "fam.mediaryconnect.app" },
+        { slug: "-fam", hostname: "-fam.mediaryconnect.app" },
+        // A valid slug that is not the hostname's: restoring it would provision a different address.
+        { slug: "fam", hostname: "other.mediaryconnect.app" },
+      ]) {
         const result = await getConnectAccount(CREDENTIAL, {
           baseUrl: BASE, fetchImpl: fetchOnce(() => {}, { ...account, endpoint: { ...endpoint, tunnelId }, restorable }),
         });

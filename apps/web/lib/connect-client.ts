@@ -292,6 +292,21 @@ function isAccount(value: unknown): value is Omit<ConnectAccount, "restorable"> 
   );
 }
 
+// Same rule as the Worker's SLUG_RE (workers/scout-connect/src/slug.ts).
+const CONNECT_SLUG_RE = /^(?:[a-z0-9]|[a-z0-9][a-z0-9-]{0,30}[a-z0-9])$/;
+
+/** A restorable address Connect would actually issue: a valid slug whose hostname is that slug's.
+ *  Anything else is ignored, so the wizard keeps the name form instead of a restore that cannot work. */
+function isRestorable(value: unknown): value is { slug: string; hostname: string } {
+  return (
+    record(value) &&
+    typeof value.slug === "string" &&
+    CONNECT_SLUG_RE.test(value.slug) &&
+    isConnectHostname(value.hostname) &&
+    value.hostname.startsWith(`${value.slug}.`)
+  );
+}
+
 function isCheckout(value: unknown): value is { checkoutUrl: string; orderId: string } {
   if (!record(value) || !nonEmptyString(value.orderId) || !nonEmptyString(value.checkoutUrl)) return false;
   try {
@@ -426,9 +441,7 @@ export async function getConnectAccount(credential: string, options: ConnectClie
       ok: true,
       ...result.body,
       endpoint: normalizedEndpoint,
-      restorable: record(restorable) && nonEmptyString(restorable.slug) && isConnectHostname(restorable.hostname)
-        ? { slug: restorable.slug, hostname: restorable.hostname }
-        : null,
+      restorable: isRestorable(restorable) ? { slug: restorable.slug, hostname: restorable.hostname } : null,
     };
   }
   return statusFailure(result.response, result.body);

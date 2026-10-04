@@ -144,6 +144,22 @@ describe("revokeEndpoint", () => {
     expect(audits[0]?.detail_json).toContain("alice.mediaryconnect.app");
   });
 
+  it("finishing a failed admin takedown keeps it an admin revoke, whatever the caller passes", async () => {
+    // A refund on an account whose abuse takedown failed at Cloudflare must not turn it into a
+    // refund revoke: refunded/expired addresses are self-restorable, admin ones never are.
+    const db = createMemoryConnectDb();
+    await db.insertInvite(makeInvite());
+    await db.insertEndpoint(makeEndpoint({ status: "revoke_failed", revoke_reason: "admin" }));
+    await revokeEndpoint({
+      endpointId: "ep_1",
+      reason: "refunded",
+      deps: makeDeps(db, makeFakeCf([])),
+    });
+    const row = await db.getEndpointById("ep_1");
+    expect(row?.status).toBe("revoked");
+    expect(row?.revoke_reason).toBe("admin");
+  });
+
   it("records the reason it was given, also when Cloudflare cleanup fails", async () => {
     const db = createMemoryConnectDb();
     await db.insertInvite(makeInvite());
