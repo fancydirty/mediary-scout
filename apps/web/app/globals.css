@@ -4329,6 +4329,11 @@ select.setting-control {
   font-weight: 600;
   color: var(--text);
 }
+/* 头部行尾的操作位（ServiceBlock 的 headerAction）：flex 行里推到最右；行太窄被
+ * wrap 到第二行时仍贴右，与胶囊同享行的 gap。 */
+.service-block-head-action {
+  margin-left: auto;
+}
 /* inline-block, not inline-flex: text-overflow needs a block container, and a
  * user-typed model id (「已配置 · accounts/fireworks/models/…」) must ellipsize
  * inside the panel instead of widening the page. Full text is in the title attr. */

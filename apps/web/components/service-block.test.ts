@@ -47,4 +47,20 @@ describe("ServiceBlock", () => {
     expect(html).toContain('<div class="service-block-head"><h3 class="service-block-name">A</h3></div>');
     expect(html).not.toContain("service-pill");
   });
+
+  it("renders headerAction inside the head-row tail slot (margin-left:auto) when given; omits it otherwise", () => {
+    const withAction = render({
+      name: "主模型",
+      pills: [{ label: "Kilo 免费池", tone: "on" }],
+      headerAction: createElement("button", { type: "button" }, "换回免费模型"),
+      summary: "s",
+      children: null,
+    });
+    expect(withAction).toContain(
+      '<div class="service-block-head-action"><button type="button">换回免费模型</button></div>',
+    );
+
+    const withoutAction = render({ name: "A", summary: "s", children: null });
+    expect(withoutAction).not.toContain("service-block-head-action");
+  });
 });
