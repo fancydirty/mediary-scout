@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { FREE_LLM_PRESET } from "@media-track/workflow";
 
 vi.mock("./demo-mode", () => ({ isDemoMode: vi.fn(() => false) }));
 vi.mock("./update-view-server", () => ({ loadUpdateView: vi.fn(async () => ({ available: null, current: { label: "v2026.09.28", tag: "v2026.09.28" } })) }));
@@ -6,6 +7,11 @@ vi.mock("./workflow-runtime", () => ({
   getAccountScopedSettings: vi.fn(() => ({ getSetting: async () => null })),
   getCurrentAccountId: vi.fn(async () => "acct_default"),
   getLlmConfig: vi.fn(async () => ({ baseURL: "https://llm.example", modelId: "m" })),
+  resolveAgentModelConfig: vi.fn(async () => ({
+    baseURL: "https://llm.example",
+    modelId: "m",
+    source: "db",
+  })),
   getWorkflowRepository: vi.fn(),
   isMultiUserEnabled: vi.fn(() => false),
   resolveIsDesktop: vi.fn(() => false),
@@ -28,6 +34,7 @@ import {
   getLlmConfig,
   getWorkflowRepository,
   isMultiUserEnabled,
+  resolveAgentModelConfig,
   resolveIsDesktop,
 } from "./workflow-runtime";
 
@@ -69,6 +76,13 @@ beforeEach(() => {
   (getLlmConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
     baseURL: "https://llm.example",
     modelId: "m",
+  });
+  // 生效配置与 DB 配置保持一致的自定义形态（已配置）；免费预设回落用例在
+  // 各测试里单独 override。
+  (resolveAgentModelConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+    baseURL: "https://llm.example",
+    modelId: "m",
+    source: "db",
   });
   (loadUpdateView as ReturnType<typeof vi.fn>).mockResolvedValue(VIEW_LATEST);
   (resolveIsDesktop as ReturnType<typeof vi.fn>).mockReturnValue(false);
@@ -281,6 +295,63 @@ describe("loadSettingsAttentionSummary — per-account state", () => {
     const summary = await loadSettingsAttentionSummary({});
     expect(summary).toEqual({ count: 0, severity: null, items: [] });
     expect(repository.listConnectedStorages).not.toHaveBeenCalled();
+  });
+});
+
+describe("missing_llm 判定口径 — 生效配置（resolveAgentModelConfig），非原始 DB 配置", () => {
+  it("零配置出厂态：DB/env 全空回落免费预设，不再报「还没配置 AI 模型」", async () => {
+    makeRepository([]);
+    // 原始 DB 配置就是空的（零配置出厂态）——若判定还看这层，就会误报。
+    (getLlmConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+      baseURL: undefined,
+      apiKey: undefined,
+      modelId: undefined,
+    });
+    // 生效配置与获取链路同源：DB+env 全空 → FREE_LLM_PRESET（Kilo 免费池）。
+    (resolveAgentModelConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FREE_LLM_PRESET,
+      source: "free-preset",
+    });
+
+    const summary = await loadSettingsAttentionSummary({});
+
+    expect(summary.items.map((i) => i.kind)).not.toContain("missing_llm");
+    expect(summary.count).toBe(0);
+  });
+
+  it("「只剩 API Key 的残留」形态（清空地址保存后）同样回落免费预设，不误报", async () => {
+    makeRepository([]);
+    (getLlmConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+      baseURL: undefined,
+      apiKey: "sk-leftover",
+      modelId: undefined,
+    });
+    (resolveAgentModelConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FREE_LLM_PRESET,
+      source: "free-preset",
+    });
+
+    const summary = await loadSettingsAttentionSummary({});
+
+    expect(summary.items.map((i) => i.kind)).not.toContain("missing_llm");
+  });
+
+  it("半截配置（有地址没模型名）真的无法构造模型 → 仍提醒", async () => {
+    makeRepository([]);
+    (getLlmConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+      baseURL: "https://llm.example",
+      apiKey: undefined,
+      modelId: undefined,
+    });
+    // 半截配置不回落（用户错误不得静默变成免费池），原样返回缺 modelId。
+    (resolveAgentModelConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+      baseURL: "https://llm.example",
+      source: "db",
+    });
+
+    const summary = await loadSettingsAttentionSummary({});
+
+    expect(summary.items.map((i) => i.kind)).toContain("missing_llm");
   });
 });
 
