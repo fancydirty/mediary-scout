@@ -55,6 +55,8 @@ export interface RunAcquisitionV2Request {
   /** Movie: the single scoped movie directory this task may write into. */
   targetMovieDirectoryId?: string;
   searchBudget?: number;
+  /** 预搜退避重试的等待毫秒数(sandbox 默认 PRESEARCH_RETRY_DELAY_MS)。测试注入 0。 */
+  presearchRetryDelayMs?: number;
   maxSteps?: number;
   preferredLanguage?: string;
   /** TMDB origin_country of the title — when it includes CN the movie prompt skips
@@ -329,6 +331,9 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     // fallbacks ("2026 电影") at the tool boundary so they never burn a search.
     titleTerms: [request.target.title, ...request.target.aliases],
     ...(request.searchBudget === undefined ? {} : { searchBudget: request.searchBudget }),
+    ...(request.presearchRetryDelayMs === undefined
+      ? {}
+      : { presearchRetryDelayMs: request.presearchRetryDelayMs }),
     ...(request.searchProfile === undefined ? {} : { searchProfile: request.searchProfile }),
     ...(memoryBinding ? { memory: memoryBinding } : {}),
     ...(protectExisting ? { protectExistingFiles: true } : {}),

@@ -52,12 +52,48 @@ const STRIP_NOTICE =
 /** Threshold for large snapshot digestion hint (病3). */
 const LARGE_SNAPSHOT_DIGEST_THRESHOLD = 10;
 
+/** 预搜(raw 预热)拿到**不可用**结果(unreachable / protocol_error 快照,或 provider
+ *  直接抛错)时的退避重试间隔。生产实测源抖动多在 60 秒内自愈(2026-09 前那次持续
+ *  11 天的 PanSou 抖动也是间歇的),5 秒窗口的救率高;重试仍坏就落首搜那份,不无限
+ *  重试。degraded / healthy 都是可用证据,一律不重试(重试只为救「真的拿不到」,不为
+ *  救「次优」——重试结果可能更坏,不得把可用结果换掉)。只作用于预搜路径——agent 的
+ *  searchResources 不自动重试(dedup 只信健康快照已给它自愈能力,agent 自己会
+ *  换词/重搜)。 */
+export const PRESEARCH_RETRY_DELAY_MS = 5000;
+
 /** Recorded (in place of "replaced") when the agent reports an episode replaced but a
  *  file it named for that episode is not in a target dir when it reports: still in
  *  staging (never moved beside the old one), or moved in and deleted since. The episode
  *  stays 待换 (moved in and reported again, it is upgraded). */
 const REPLACEMENT_NOT_IN_TARGET_NOTE =
   "新文件不在目标目录(季目录/电影目录)里:还在暂存,或移进去后又被删掉了。不算完成替换,本轮记为未找到,留待下次巡检。";
+
+/** 缓存快照能否当「已搜过」(dedup 的信任判据)。只有 healthy(含老快照缺字段)可信;
+ *  unreachable / protocol_error / degraded 都不信,跳过缓存重打真实源。
+ *
+ *  degraded 不信的理由:它是 fallback 救回的「部分证据」——主源仍坏,重搜很可能
+ *  拿回更全的结果;而且它的语义本身就是「证据不完整」,拿去当「已搜过、不会再变」
+ *  自相矛盾。代价是一次多余的重搜(罕见且低频),换来坏快照不再永久钉死关键词。
+ *
+ *  与 reportNoCoverage 的证据闸( isMergedSourceEvidenceUsable,degraded 算可用)
+ *  是两道边界,别互相抄:那边管「能不能报缺」——把 degraded 也拦会再也报不出真实
+ *  的「没有资源」;这边只管「缓存可不可信」。 */
+function isSnapshotHealthTrusted(snapshot: ResourceSnapshotV2): boolean {
+  return (snapshot.sourceHealth?.status ?? "healthy") === "healthy";
+}
+
+/** 快照算不算「有可用证据」——预搜重试的触发判据与落点择优都用它。
+ *  unreachable / protocol_error(或 provider 直接抛错)才是「真的拿不到」;degraded /
+ *  healthy(含老快照缺字段)都是可用证据,与 fallback-provider、reportNoCoverage 证据
+ *  闸( isSourceUsable / isMergedSourceEvidenceUsable)同一套「degraded=可用」分类学。
+ *  degraded 是 fallback 救回的可用快照(有候选):重试只为救「真的拿不到」,不为救
+ *  「次优」——重试结果可能更坏,不得把可用结果换掉。
+ *
+ *  与 isSnapshotHealthTrusted(healthy-only,dedup 信任闸)是两道边界,别互相抄:
+ *  那边管「缓存能不能当已搜过」,这边只管「结果值不值得为它退避重试/换掉手里的证据」。 */
+function isSnapshotEvidenceUsable(snapshot: ResourceSnapshotV2): boolean {
+  return isMergedSourceEvidenceUsable(snapshot.sourceHealth);
+}
 
 /**
  * 把快照的源健康态翻成给 agent 的祈使句警告。返回 undefined 表示证据完整
@@ -165,6 +201,8 @@ export interface TaskSandboxOptions {
   provider: ResourceProviderV2;
   /** Max distinct PanSou searches per task (the system's search budget). */
   searchBudget?: number;
+  /** 预搜退避重试的等待毫秒数(默认 PRESEARCH_RETRY_DELAY_MS)。测试注入 0。 */
+  presearchRetryDelayMs?: number;
   /** Scoped storage + the staging handle this task may transfer into. */
   storage?: StorageV2;
   stagingDirectoryId?: string;
@@ -328,6 +366,7 @@ export interface SearchHistoryEntry {
 export class TaskSandbox {
   private readonly provider: ResourceProviderV2;
   private readonly searchBudget: number;
+  private readonly presearchRetryDelayMs: number;
   private readonly storage: StorageV2 | undefined;
   private readonly stagingDirectoryId: string | undefined;
   /** TV: season number -> scoped Season directory (multi-season distribution). */
@@ -432,6 +471,7 @@ export class TaskSandbox {
     // subtitle fallback is on; otherwise the normal hard-8 (no reserve zone).
     this.searchBudget =
       options.searchBudget ?? (this.subtitleFallback ? MOVIE_SEARCH_BUDGET : MAX_DISTINCT_PLANNING_SEARCHES);
+    this.presearchRetryDelayMs = options.presearchRetryDelayMs ?? PRESEARCH_RETRY_DELAY_MS;
     this.softThreshold = this.subtitleFallback ? MOVIE_SEARCH_SOFT_THRESHOLD : undefined;
     this.storage = options.storage;
     this.stagingDirectoryId = options.stagingDirectoryId;
@@ -663,8 +703,14 @@ export class TaskSandbox {
     // or by system pre-warming), return the cached snapshot without hitting the
     // provider or consuming budget. This covers both agent re-searches and agent
     // searching a keyword that was pre-warmed.
+    //
+    // 但 dedup 只信任健康快照:缓存不健康(unreachable/protocol_error/degraded)时
+    // 不算「已搜过」,落到下方真实搜索重打 provider。事故原形:PanSou 抖动时的
+    // 「双源全挂 0 候选快照」被 dedup 永久钉死关键词,agent 复搜根本没打到已恢复的
+    // 源,一次瞬断被放大成「该片候选池永久丢失」(《猛攻》4K 大文件全程没被搜出)。
     const cachedSnapshot = this.snapshotByKeyword.get(normalized);
-    if (cachedSnapshot) {
+    const cachedUntrusted = cachedSnapshot !== undefined && !isSnapshotHealthTrusted(cachedSnapshot);
+    if (cachedSnapshot && !cachedUntrusted) {
       const count = (this.searchCountByKeyword.get(normalized) ?? 1) + 1;
       this.searchCountByKeyword.set(normalized, count);
       this.logSearch(effectiveKeyword, { outcome: "ok", snapshot: cachedSnapshot });
@@ -673,13 +719,10 @@ export class TaskSandbox {
         message: `重复搜索「${effectiveKeyword}」第 ${count} 次`,
         data: { keyword: effectiveKeyword, count },
       });
-      // 复搜命中的是同一份不健康快照,警告必须跟着一起回——否则 agent 第二次
-      // 看到的还是一个「干净的空结果」,照样会去 reportNoCoverage。审计不重复
-      // 记（search_dedup 已记录这次复搜）。
-      const cachedHealthWarning = sourceHealthWarning(cachedSnapshot.sourceHealth);
-      const dedupWarnings = cachedHealthWarning ? [...tabooWarnings, cachedHealthWarning] : [...tabooWarnings];
       // 复搜必须跟首搜讲同一个故事:同样的 ⚠ 标记、同样的说明。否则 agent 第二次
-      // 看到一份「干净」的快照,前一次的存疑提示就凭空消失了。
+      // 看到一份「干净」的快照,前一次的存疑提示就凭空消失了。(dedup 只可能命中
+      // 健康快照——不健康缓存走下方重搜路径——所以这里没有源健康警告可带。)
+      const dedupWarnings = [...tabooWarnings];
       const cachedView = presentSnapshotForAgent(cachedSnapshot);
       if (cachedView.legend) dedupWarnings.push(cachedView.legend);
       if (cachedView.allDroppedWarning) dedupWarnings.push(cachedView.allDroppedWarning);
@@ -693,25 +736,33 @@ export class TaskSandbox {
       };
     }
 
-    const decision = decideSearchGate({
-      normalizedKeyword: normalized,
-      seenKeywords: this.seenKeywords,
-      maxDistinctSearches: this.searchBudget,
-      ...(this.softThreshold === undefined ? {} : { softThreshold: this.softThreshold }),
-    });
+    // 源故障触发的重搜不是新的 distinct 搜索:跳过预算闸,下面也不进 seenKeywords
+    // ——重打已坏过一次的关键词不许吃掉 agent 的搜索名额。
+    //
+    // 免费重搜(不占预算的这些重搜)的狂搜兜底不在预算闸,而在 repetition-stop:
+    // 生产快照是内容寻址的、V2 视图又不带时间戳 → 同内容同 id → 同结果文本,
+    // 4 连相同就被 repetition-stop 收掉。若未来快照 id 引入随机性,需另设重搜上限。
+    const decision = cachedUntrusted
+      ? "fresh"
+      : decideSearchGate({
+          normalizedKeyword: normalized,
+          seenKeywords: this.seenKeywords,
+          maxDistinctSearches: this.searchBudget,
+          ...(this.softThreshold === undefined ? {} : { softThreshold: this.softThreshold }),
+        });
     if (decision === "duplicate") {
-      // This branch should now be unreachable since we check snapshotByKeyword above,
-      // but keep it for backward compatibility in case seenKeywords has an entry but
-      // snapshotByKeyword doesn't (should never happen in practice).
-      return { deduped: true, ...(notice ? { notice } : {}) };
-    }
-    if (decision === "exhausted") {
+      // 防御窗口:seenKeywords 有词、snapshotByKeyword 无快照。钉词已挪到成功
+      // 缓存之后(下方),正常流程不再产生这个状态;但旧「抛错钉死」就是这个形状
+      // (provider 抛错在缓存快照前就钉词,与坏快照钉死同一事故),一旦再现,
+      // 裸返回 {deduped:true} 会让 agent 既不打 provider 又拿不到任何证据、还
+      // 白烧一轮——所以兜底走真实搜索:该词已在 seenKeywords,预算计数不变。
+      console.warn(`[sandbox] duplicate keyword without cached snapshot keyword=${normalized} — falling back to a real search`);
+    } else if (decision === "exhausted") {
       this.logSearch(effectiveKeyword, { outcome: "refused", note: "search budget exhausted" });
       return { refused: this.budgetExhaustedMessage() };
     }
     // "fresh" and "reserve" both perform the search; "reserve" (movie 8+2) attaches
     // the note that flips the agent into last-resort subtitle-fallback mode.
-    this.seenKeywords.add(normalized);
     let snapshot: ResourceSnapshotV2;
     try {
       snapshot = await this.provider.search(effectiveKeyword);
@@ -721,7 +772,29 @@ export class TaskSandbox {
     }
     this.logSearch(effectiveKeyword, { outcome: "ok", snapshot });
     this.snapshotByKeyword.set(normalized, snapshot);
-    this.searchCountByKeyword.set(normalized, 1);
+    // 钉词只在成功缓存快照之后:provider 抛错不留痕(不进 seenKeywords、不占预算),
+    // agent 重试同词自然走真搜——重试真实失败是合理行为,而不是被 duplicate 裸
+    // 返回钉死(抛错钉死)。源故障重搜(缓存不健康)照旧不钉:它不是新的 distinct
+    // 搜索,不占 agent 的搜索名额。
+    if (!cachedUntrusted) this.seenKeywords.add(normalized);
+    // 预搜的那份(活期文档)就是被替换的坏快照时,viewResourceSnapshot 跟着换——
+    // 否则 agent 眼前的活期文档还是旧的坏快照。
+    if (this.rawSnapshot === cachedSnapshot) this.rawSnapshot = snapshot;
+    if (cachedUntrusted) {
+      // 这次是源故障触发的重搜:搜索次数照记(它是真实的一搜),预算未占(见上)。
+      this.searchCountByKeyword.set(normalized, (this.searchCountByKeyword.get(normalized) ?? 1) + 1);
+      this.auditEvents.push({
+        type: "search_health_retry",
+        message: `缓存快照不健康(${cachedSnapshot.sourceHealth?.status ?? "未知"})不予采信,已重搜「${effectiveKeyword}」的真实源`,
+        data: {
+          keyword: effectiveKeyword,
+          cachedStatus: cachedSnapshot.sourceHealth?.status ?? "unknown",
+          cachedCandidateCount: cachedSnapshot.candidates.length,
+        },
+      });
+    } else {
+      this.searchCountByKeyword.set(normalized, 1);
+    }
     this.observedSnapshots.set(snapshot.id, snapshot);
 
     // 病3: register a large fresh snapshot for later digestion hint. Store the
@@ -746,6 +819,20 @@ export class TaskSandbox {
       });
     }
     const searchWarnings = healthWarning ? [...tabooWarnings, healthWarning] : [...tabooWarnings];
+
+    // 源故障重搜要告知「缓存没被采信」——否则 agent 以为自己拿到的还是同一份旧证据。
+    // 旧候选不机械并进新快照(内容寻址 id / observedSnapshots 绑定不许被改写),
+    // 而是提示 agent 去对照自己此前拿到的那份(degraded 缓存常带候选,别丢线索)。
+    // 措辞是条件式:不健康缓存可能来自预搜、agent 还没读过(viewResourceSnapshot
+    // 没叫过、也不在其 searchResources 返回里),那种「仍在你此前的返回里」是假的。
+    if (cachedUntrusted) {
+      const oldCount = cachedSnapshot.candidates.length;
+      const oldSources = cachedSnapshot.sourceHealth?.unhealthySources.join("、") ?? "";
+      searchWarnings.unshift(
+        `上次搜索「${effectiveKeyword}」的缓存快照来自不健康的搜索源(${cachedSnapshot.sourceHealth?.status ?? "未知"}${oldSources ? `：${oldSources}` : ""}),不予采信;本次已重搜真实源,以下为新结果。` +
+          (oldCount > 0 ? `若你此前已读过该快照,上次有 ${oldCount} 条候选可对照;未读过则请以本次结果为准。` : ""),
+      );
+    }
 
     // 内部各表(snapshotByKeyword / observedSnapshots / rawSnapshot)保留原始快照;
     // 只有交给 agent 的这一份带 ⚠ 标记且不含原始分数。
@@ -2022,17 +2109,48 @@ export class TaskSandbox {
   /** Pre-warm a raw search (system-initiated, does NOT consume agent's distinct
    *  search budget). The snapshot is recorded in dedup/registry/observedSnapshots
    *  just like an agent search, so agent can later transferCandidate by id. Calling
-   *  this multiple times replaces the prior raw snapshot. */
+   *  this multiple times replaces the prior raw snapshot.
+   *
+   *  预搜拿到**不可用**结果(unreachable / protocol_error 快照,或 provider 直接抛错)时
+   *  退避 PRESEARCH_RETRY_DELAY_MS 后重试一次(源头自愈):预搜是整轮的证据底座,赶在
+   *  源抖动的瞬间落下没证据的空快照会被后续决策全程当真。重试只为救「真的拿不到」,
+   *  不为救「次优」:degraded/healthy 都是可用证据(degraded 有 fallback 救回的候选),
+   *  不重试——重试结果可能更坏,不得把可用结果换掉。
+   *  落点择优,重试只在可用时才落重试那份:重试可用→取重试那份;重试仍坏→落首搜那份
+   *  (不把手里那份换成更坏的结果);两次都抛→抛第二次的错(orchestrator 按「无预搜」
+   *  降级,agent 自己搜)。 */
   async primeRawSnapshot(keyword: string): Promise<void> {
     const normalized = normalizeSearchKeyword(keyword);
     // Perform the search WITHOUT marking it as seen by the agent (don't add to
     // seenKeywords) — so it doesn't consume the distinct search budget.
-    let snapshot: ResourceSnapshotV2;
+    let snapshot: ResourceSnapshotV2 | undefined;
+    let searchError: unknown;
     try {
       snapshot = await this.provider.search(keyword);
     } catch (error) {
-      this.logSearch(keyword, { outcome: "error", note: error instanceof Error ? error.message : String(error) });
-      throw error;
+      searchError = error;
+    }
+    if (snapshot === undefined || !isSnapshotEvidenceUsable(snapshot)) {
+      await new Promise((resolve) => setTimeout(resolve, this.presearchRetryDelayMs));
+      try {
+        const retried = await this.provider.search(keyword);
+        // 择优:重试可用才落重试那份;仍坏就落首搜那份——重试可能更坏,不得把手里
+        // 那份换成更坏的结果(首搜抛错时手里没有快照,重试返回什么落什么)。
+        if (snapshot === undefined || isSnapshotEvidenceUsable(retried)) {
+          snapshot = retried;
+          searchError = undefined;
+        }
+      } catch (error) {
+        // 首搜已有快照(只是不可用)→ 重试抛错就落首搜那份;两次都抛 → 抛第二次的错。
+        if (snapshot === undefined) searchError = error;
+      }
+    }
+    if (snapshot === undefined) {
+      this.logSearch(keyword, {
+        outcome: "error",
+        note: searchError instanceof Error ? searchError.message : String(searchError),
+      });
+      throw searchError;
     }
     this.logSearch(keyword, { outcome: "ok", snapshot });
 

@@ -159,8 +159,9 @@ describe("runAcquisitionV2 — raw snapshot pre-warming integration", () => {
     const provider: ResourceProvider = {
       search: async ({ keyword }) => {
         callCount += 1;
-        // 第一次(预热)抛错模拟 provider 故障
-        if (callCount === 1) {
+        // 预热首搜 + 退避重试(各一次)都抛错,模拟 provider 持续故障。
+        // 预搜现在会退避重试一次(源头自愈),所以「预热彻底失败」= 连挂两次。
+        if (callCount <= 2) {
           throw new Error("Provider unavailable");
         }
         // 后续 agent 自己搜索时正常返回
@@ -177,12 +178,13 @@ describe("runAcquisitionV2 — raw snapshot pre-warming integration", () => {
       target: { kind: "tv", title: "Show", aliases: [], seasons: [1], missingEpisodes: ["S01E01"], qualityPreference: "1080p" },
       stagingDirectoryId: "staging",
       targetSeasonDirectoryIds: { 1: "season" },
+      presearchRetryDelayMs: 0,
     });
 
     // 工作流应该成功完成(虽然没有预热)
     expect(result.coverage.missing).toEqual(["S01E01"]);
-    // agent 自己搜索了(callCount >= 2)
-    expect(callCount).toBeGreaterThanOrEqual(2);
+    // 预热尝试了两次(首搜 + 重试),agent 自己也搜索了
+    expect(callCount).toBeGreaterThanOrEqual(3);
   });
 
   it("movie task also gets raw snapshot pre-warming", async () => {

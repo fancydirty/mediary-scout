@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { buildSandboxToolSet } from "../src/acquisition-v2/agent-loop.js";
 import { TaskSandbox } from "../src/acquisition-v2/sandbox.js";
 import { FakeResourceProviderV2 } from "../src/acquisition-v2/fake-provider.js";
@@ -578,5 +578,216 @@ describe("candidate post dates reach both agent read paths", () => {
     expect(again.snapshot!.candidates[1]).toMatchObject({ id: "s1-2", linkHistory: note });
     expect(again.snapshot!.candidates[0]!.linkHistory).toBe(again.snapshot!.candidates[1]!.linkHistory);
     expect(again.snapshot!.candidates[2]).not.toHaveProperty("linkHistory");
+  });
+});
+
+describe("预搜退避重试（源头自愈：双源全挂先等 5 秒重试一次）", () => {
+  /** 按调用次序作答的 provider——最后一次之后重复末位。带调用计数器。 */
+  function sequencedProvider(
+    stops: Array<{
+      health?: { status: "healthy" | "degraded" | "unreachable" | "protocol_error"; unhealthySources: string[] };
+      candidates?: Array<{ id: string; title: string }>;
+      throws?: boolean;
+    }>,
+  ) {
+    let calls = 0;
+    return {
+      get calls() {
+        return calls;
+      },
+      async search(keyword: string) {
+        const stop = stops[Math.min(calls, stops.length - 1)]!;
+        calls += 1;
+        if (stop.throws) throw new Error("PROVIDER_ERROR: down");
+        return {
+          id: `s_${calls}`,
+          keyword,
+          candidates: stop.candidates ?? [],
+          ...(stop.health ? { sourceHealth: stop.health } : {}),
+        };
+      },
+    };
+  }
+
+  it("首搜不健康 → 等满 5 秒才重试一次，取到好结果", async () => {
+    // 生产实测源抖动多在 60 秒内自愈,5 秒退避窗口的救率高;这断言锁住
+    // 「真的等了 5 秒」和「只重试一次」,而不只是「多打了一次」。
+    vi.useFakeTimers();
+    try {
+      const provider = sequencedProvider([
+        { health: { status: "unreachable", unhealthySources: ["pansou"] } },
+        { health: { status: "healthy", unhealthySources: [] }, candidates: [{ id: "c1", title: "猛攻 4K" }] },
+      ]);
+      const sandbox = new TaskSandbox({ provider, titleTerms: ["猛攻"] });
+
+      const priming = sandbox.primeRawSnapshot("猛攻");
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(provider.calls).toBe(1);
+      expect(vi.getTimerCount()).toBe(1); // 退避计时器已挂上
+
+      await vi.advanceTimersByTimeAsync(4999);
+      expect(provider.calls).toBe(1); // 5 秒未到,不许提前重试
+
+      await vi.advanceTimersByTimeAsync(1);
+      await priming;
+      expect(provider.calls).toBe(2);
+      // 取到的是重试后的那份好结果。
+      expect(sandbox.viewResourceSnapshot().candidateCount).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("重试仍坏 → 落原样快照，只重试一次（不无限重试）", async () => {
+    vi.useFakeTimers();
+    try {
+      const provider = sequencedProvider([{ health: { status: "unreachable", unhealthySources: ["pansou"] } }]);
+      const sandbox = new TaskSandbox({ provider, titleTerms: ["猛攻"] });
+
+      const priming = sandbox.primeRawSnapshot("猛攻");
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(5000);
+      await priming;
+
+      expect(provider.calls).toBe(2); // 首搜 + 恰好一次重试
+      expect(vi.getTimerCount()).toBe(0); // 没有第三个计时器 = 不在无限重试
+      expect(sandbox.viewResourceSnapshot().candidateCount).toBe(0); // 坏快照照落,预搜不抛
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("首搜抛错也退避重试一次，第二次成功即取到", async () => {
+    vi.useFakeTimers();
+    try {
+      const provider = sequencedProvider([
+        { throws: true },
+        { health: { status: "healthy", unhealthySources: [] }, candidates: [{ id: "c1", title: "猛攻" }] },
+      ]);
+      const sandbox = new TaskSandbox({ provider, titleTerms: ["猛攻"] });
+
+      const priming = sandbox.primeRawSnapshot("猛攻");
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(5000);
+      await priming;
+
+      expect(provider.calls).toBe(2);
+      expect(sandbox.viewResourceSnapshot().candidateCount).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("健康的预搜一次到位，不退避（回归锁）", async () => {
+    const provider = sequencedProvider([
+      { health: { status: "healthy", unhealthySources: [] }, candidates: [{ id: "c1", title: "猛攻" }] },
+    ]);
+    const sandbox = new TaskSandbox({ provider, titleTerms: ["猛攻"] });
+
+    await sandbox.primeRawSnapshot("猛攻");
+
+    expect(provider.calls).toBe(1);
+  });
+
+  it("degraded 首搜是可用证据 → 不重试（0 次），落 degraded 那份，不被更坏的重试结果换掉", async () => {
+    // degraded 是 fallback 救回的可用证据（有候选）。重试只为救「真的拿不到」，不为
+    // 救「次优」——重试结果可能更坏：第二次若给出双挂空快照，绝不许它覆盖 degraded
+    // 的候选（Copilot finding 的原形）。
+    const provider = sequencedProvider([
+      { health: { status: "degraded", unhealthySources: ["pansou"] }, candidates: [{ id: "c1", title: "猛攻 4K" }] },
+      { health: { status: "unreachable", unhealthySources: ["pansou", "prowlarr"] }, candidates: [] },
+    ]);
+    const sandbox = new TaskSandbox({ provider, titleTerms: ["猛攻"] });
+
+    vi.useFakeTimers();
+    try {
+      const priming = sandbox.primeRawSnapshot("猛攻");
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(provider.calls).toBe(1); // 0 次重试
+      expect(vi.getTimerCount()).toBe(0); // 连退避计时器都没挂
+
+      await vi.advanceTimersByTimeAsync(5000); // 无事发生
+      await priming;
+      expect(provider.calls).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+    // 落的是 degraded 那份（有候选），不是不可用空快照
+    expect(sandbox.viewResourceSnapshot().candidateCount).toBe(1);
+  });
+
+  it("首搜不可用 + 重试仍坏 → 落首搜那份（择优：重试可能更坏，不覆盖手里的证据）", async () => {
+    // 生产里不可用快照都是 0 候选，落谁都无从分辨；这里用带候选的不可用快照（类型合法）
+    // 让「落首搜那份」可断言——落点规则不许依赖「坏快照必然空」的巧合。
+    vi.useFakeTimers();
+    try {
+      const provider = sequencedProvider([
+        { health: { status: "unreachable", unhealthySources: ["pansou"] }, candidates: [{ id: "c1", title: "猛攻 4K" }] },
+        { health: { status: "unreachable", unhealthySources: ["pansou", "prowlarr"] }, candidates: [] },
+      ]);
+      const sandbox = new TaskSandbox({ provider, titleTerms: ["猛攻"] });
+
+      const priming = sandbox.primeRawSnapshot("猛攻");
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(5000);
+      await priming;
+
+      expect(provider.calls).toBe(2); // 仍只重试恰好一次
+      expect(sandbox.viewResourceSnapshot().candidateCount).toBe(1); // 落首搜那份，不被更坏的重试换掉
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("首搜不可用 + 重试抛错 → 落首搜那份，预搜不抛（回归锁）", async () => {
+    vi.useFakeTimers();
+    try {
+      const provider = sequencedProvider([
+        { health: { status: "unreachable", unhealthySources: ["pansou"] }, candidates: [{ id: "c1", title: "猛攻 4K" }] },
+        { throws: true },
+      ]);
+      const sandbox = new TaskSandbox({ provider, titleTerms: ["猛攻"] });
+
+      const priming = sandbox.primeRawSnapshot("猛攻");
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(5000);
+      await priming;
+
+      expect(provider.calls).toBe(2);
+      expect(sandbox.viewResourceSnapshot().candidateCount).toBe(1); // 落首搜那份，不是抛给调用方
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("两次都抛 → 抛第二次的错（回归锁，orchestrator 按「无预搜」降级）", async () => {
+    vi.useFakeTimers();
+    try {
+      let calls = 0;
+      const provider = {
+        async search(): Promise<ResourceSnapshotV2> {
+          calls += 1;
+          throw new Error(calls === 1 ? "FIRST_BOOM" : "SECOND_BOOM");
+        },
+      };
+      const sandbox = new TaskSandbox({ provider, titleTerms: ["猛攻"] });
+
+      const priming = sandbox.primeRawSnapshot("猛攻");
+      // 处理器先挂上再推时钟：抛错发生在 advance 的中途，晚挂会先报 unhandled rejection。
+      const rejection = expect(priming).rejects.toThrow("SECOND_BOOM"); // 第二次的错，不是第一次的
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(5000);
+      await rejection;
+      expect(calls).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

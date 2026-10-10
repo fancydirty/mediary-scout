@@ -175,3 +175,58 @@ describe("FallbackResourceProvider", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 });
+
+describe("FallbackResourceProvider — 失败打 warn（可观测性）", () => {
+  it("成功 fallback：primary 失败打 1 条 warn，含源名/分类/关键词/runId", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const provider = new FallbackResourceProvider({
+        primary: { name: "user", provider: deadProvider() },
+        secondary: { name: "official", provider: okProvider("official") },
+      });
+      await provider.search({ keyword: "猛攻", workflowRunId: "run-1" });
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      const line = String(warn.mock.calls[0]![0]);
+      expect(line).toContain("user"); // 源名
+      expect(line).toContain("unreachable"); // 分类
+      expect(line).toContain("猛攻"); // 关键词
+      expect(line).toContain("run-1"); // workflowRunId
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("双源全挂：两条 warn，各自点名", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const provider = new FallbackResourceProvider({
+        primary: { name: "user", provider: deadProvider() },
+        secondary: { name: "official", provider: deadProvider() },
+      });
+      await provider.search({ keyword: "猛攻", workflowRunId: "run-1" });
+
+      expect(warn).toHaveBeenCalledTimes(2);
+      const lines = warn.mock.calls.map((c) => String(c[0]));
+      expect(lines.some((l) => l.includes("user"))).toBe(true);
+      expect(lines.some((l) => l.includes("official"))).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("primary 健康：不打 warn（别刷屏）", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const provider = new FallbackResourceProvider({
+        primary: { name: "user", provider: okProvider("user") },
+        secondary: { name: "official", provider: okProvider("official") },
+      });
+      await provider.search({ keyword: "k" });
+
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});

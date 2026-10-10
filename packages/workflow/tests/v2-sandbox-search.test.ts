@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { TaskSandbox } from "../src/acquisition-v2/sandbox.js";
 import { FakeResourceProviderV2 } from "../src/acquisition-v2/fake-provider.js";
 import { RealResourceProviderV2 } from "../src/acquisition-v2/real-provider-adapter.js";
@@ -514,15 +514,18 @@ describe("真适配器 → 沙箱 端到端：健康态不能在接缝处掉（T
 });
 
 describe("预搜(prime)路径也必须带上健康态警告（Task 9 生产主路径）", () => {
-  it("prime 时源就挂了：agent 复搜该词命中 dedup，警告仍随返回给它", async () => {
+  it("prime 时源就挂了：agent 复搜该词不再吃缓存，重搜真源且警告随返回给它", async () => {
     // 生产里系统会先 primeRawSnapshot，agent 被提示词引导去 viewResourceSnapshot。
-    // 当 prime 拿到 0 候选时，agent 通常会再 searchResources 同一个词 → 命中 dedup。
-    // 那条路径若不带警告，agent 看到的依旧是一个「干净的空结果」。
+    // 当 prime 拿到 0 候选时，agent 通常会再 searchResources 同一个词。事故里那条
+    // 路径命中 dedup、直接回了坏快照——agent 根本没打到已恢复的源,一次瞬断被放大成
+    // 「该片候选池永久丢失」。现在不健康缓存不算「已搜过」:复搜重打真源,警告照旧随返回。
+    let calls = 0;
     const sandbox = new TaskSandbox({
       provider: {
         async search(keyword: string) {
+          calls += 1;
           return {
-            id: `s_${keyword}`,
+            id: `s_${keyword}_${calls}`,
             keyword,
             candidates: [],
             sourceHealth: { status: "unreachable" as const, unhealthySources: ["pansou"] },
@@ -530,12 +533,15 @@ describe("预搜(prime)路径也必须带上健康态警告（Task 9 生产主�
         },
       },
       titleTerms: ["攻壳机动队"],
+      presearchRetryDelayMs: 0,
     });
 
     await sandbox.primeRawSnapshot("攻壳机动队");
+    const before = calls;
     const result = await sandbox.searchResources("攻壳机动队");
 
-    expect(result.deduped).toBe(true);
+    expect(result.deduped).not.toBe(true);
+    expect(calls).toBe(before + 1); // 复搜真打了 provider,不是回缓存
     const warning = (result.warnings ?? []).find((w) => w.includes("搜索源"));
     expect(warning).toBeDefined();
     expect(warning).toContain("pansou");
@@ -619,6 +625,7 @@ describe("证据全不健康时禁止上报「没有资源」（Task 10：从劝
         攻壳机动队: { health: { status: "unreachable", unhealthySources: ["pansou"] } },
       }),
       titleTerms: ["攻壳机动队"],
+      presearchRetryDelayMs: 0,
     });
     await sandbox.primeRawSnapshot("攻壳机动队");
 
@@ -735,5 +742,198 @@ describe("searchResources presents the prefilter to the agent", () => {
 
     expect(result.snapshot!.candidates[0]!.title).toBe("交锋 全24集");
     expect(result.warnings ?? []).not.toContain(JEV_UNCERTAIN_LEGEND);
+  });
+});
+
+describe("dedup 只信任健康快照（fallback 事故修复：坏快照不再永久钉死关键词）", () => {
+  /** 按调用次序作答的 provider——最后一次之后重复末位。带调用计数器。 */
+  function sequencedProvider(
+    stops: Array<{
+      health?: { status: "healthy" | "degraded" | "unreachable" | "protocol_error"; unhealthySources: string[] };
+      candidates?: Array<{ id: string; title: string }>;
+    }>,
+  ) {
+    let calls = 0;
+    return {
+      get calls() {
+        return calls;
+      },
+      async search(keyword: string) {
+        const stop = stops[Math.min(calls, stops.length - 1)]!;
+        calls += 1;
+        return {
+          id: `s_${calls}`,
+          keyword,
+          candidates: stop.candidates ?? [],
+          ...(stop.health ? { sourceHealth: stop.health } : {}),
+        };
+      },
+    };
+  }
+
+  it("缓存快照不健康 → 不当「已搜过」，重搜真打 provider（就是《猛攻》的原形）", async () => {
+    // 事故链:源抖动时搜回 0 候选快照 → agent 复搜同词被 dedup 挡回坏快照,
+    // 根本没打到已恢复的源 → 该片候选池永久丢失。这里锁死:复搜必须重打真源。
+    const provider = sequencedProvider([
+      { health: { status: "unreachable", unhealthySources: ["pansou"] } },
+      { health: { status: "healthy", unhealthySources: [] }, candidates: [{ id: "c1", title: "猛攻 4K REMUX" }] },
+    ]);
+    const sandbox = new TaskSandbox({ provider, searchBudget: 8, titleTerms: ["猛攻"] });
+
+    const first = await sandbox.searchResources("猛攻");
+    expect((first.warnings ?? []).some((w) => w.includes("搜索源"))).toBe(true);
+
+    const second = await sandbox.searchResources("猛攻");
+    expect(second.deduped).not.toBe(true);
+    expect(provider.calls).toBe(2); // 真打了 provider,不是回缓存
+    expect(second.snapshot?.candidates.map((c) => c.title)).toEqual(["猛攻 4K REMUX"]);
+    // 复搜要被告知「缓存没被采信」——否则 agent 以为自己又拿到同一份旧证据。
+    expect((second.warnings ?? []).some((w) => /不予采信|已重搜|不健康/.test(w))).toBe(true);
+    // 可观测:审计里留下一次「因不健康而重搜」。
+    expect(sandbox.auditTrail().some((e) => e.type === "search_health_retry")).toBe(true);
+  });
+
+  it("健康缓存（含缺省 sourceHealth）仍 dedup 不打 provider（回归锁）", async () => {
+    const healthy = sequencedProvider([{ health: { status: "healthy", unhealthySources: [] }, candidates: [{ id: "c1", title: "A" }] }]);
+    const a = new TaskSandbox({ provider: healthy, searchBudget: 8 });
+    await a.searchResources("kw");
+    const repeat = await a.searchResources("  KW ");
+    expect(repeat.deduped).toBe(true);
+    expect(healthy.calls).toBe(1);
+
+    const legacy = sequencedProvider([{ candidates: [{ id: "c1", title: "A" }] }]);
+    const b = new TaskSandbox({ provider: legacy, searchBudget: 8 });
+    await b.searchResources("kw");
+    const repeatB = await b.searchResources("kw");
+    expect(repeatB.deduped).toBe(true);
+    expect(legacy.calls).toBe(1);
+  });
+
+  it("degraded 缓存也不信 → 重搜；上次候选以提示带出（不机械合并）", async () => {
+    // degraded = fallback 救回的「部分证据」:主源仍坏,重搜很可能拿回更好的。
+    // 旧候选不机械并进新快照(内容寻址 id / observedSnapshots 绑定不许被改写),
+    // 而是在返回里提示 agent 去对照自己此前拿到的那份。
+    const provider = sequencedProvider([
+      { health: { status: "degraded", unhealthySources: ["pansou"] }, candidates: [{ id: "old1", title: "旧候选1" }, { id: "old2", title: "旧候选2" }] },
+      { health: { status: "healthy", unhealthySources: [] }, candidates: [{ id: "new1", title: "新候选" }] },
+    ]);
+    const sandbox = new TaskSandbox({ provider, searchBudget: 8 });
+
+    await sandbox.searchResources("猛攻");
+    const second = await sandbox.searchResources("猛攻");
+
+    expect(second.deduped).not.toBe(true);
+    expect(provider.calls).toBe(2);
+    expect(second.snapshot?.candidates.map((c) => c.title)).toEqual(["新候选"]);
+    // 旧的 2 条以提示形式带出,不丢线索。但措辞不许过度承诺:那份旧快照可能是
+    // 预搜落的、agent 还没读过(没 viewResourceSnapshot 也不在其 searchResources
+    // 返回里),所以是条件式——读过才对照,没读过以本次为准。
+    const warned = (second.warnings ?? []).join("\n");
+    expect(warned).toMatch(/2 条候选/);
+    expect(warned).toMatch(/若你此前已读过该快照/);
+    expect(warned).toMatch(/未读过则请以本次结果为准/);
+    expect(warned).not.toMatch(/仍在你此前的返回里/);
+  });
+
+  it("源故障重搜不消耗搜索预算（预搜坏快照场景）", async () => {
+    // 预搜落下的坏快照 + agent 复搜重打真源——复搜不是新的「distinct 搜索」,
+    // 不许吃掉预算名额(否则修一个 bug 换来预算被烧穿)。
+    const provider = sequencedProvider([
+      { health: { status: "unreachable", unhealthySources: ["pansou"] } }, // 预搜首搜
+      { health: { status: "unreachable", unhealthySources: ["pansou"] } }, // 预搜退避重试(仍坏,落原样)
+      { health: { status: "healthy", unhealthySources: [] }, candidates: [{ id: "c1", title: "猛攻 4K" }] }, // agent 复搜时源已恢复
+    ]);
+    const sandbox = new TaskSandbox({ provider, searchBudget: 8, titleTerms: ["猛攻"], presearchRetryDelayMs: 0 });
+
+    await sandbox.primeRawSnapshot("猛攻");
+    const result = await sandbox.searchResources("猛攻");
+    expect(result.deduped).not.toBe(true);
+    expect(result.snapshot?.candidates).toHaveLength(1);
+
+    // 预搜 + 重搜都没占名额:8 个全新词全部放行,第 9 个才拒。
+    for (let i = 0; i < 8; i++) {
+      expect((await sandbox.searchResources(`kw${i}`)).refused, `kw${i} 应放行`).toBeUndefined();
+    }
+    expect((await sandbox.searchResources("kw-final")).refused).toBeTruthy();
+  });
+});
+
+describe("抛错不钉死关键词（fallback 事故的另一半：抛错钉死）", () => {
+  it("provider 抛错 → 同词重搜真打 provider；成功后同词才 dedup（回归）", async () => {
+    // 事故原形:real-provider-adapter 的 DB 读失败就是 provider 抛错。旧契约把词
+    // 钉进 seenKeywords 在先,重试同词落 decision==="duplicate" 只拿裸
+    // {deduped:true}——不打 provider、无警告、还烧预算。新契约:抛错不留痕,
+    // 重试同词自然走真搜(重试真实失败是合理行为)。
+    let calls = 0;
+    const sandbox = new TaskSandbox({
+      provider: {
+        async search(keyword: string) {
+          calls += 1;
+          if (calls === 1) throw new Error("real-provider-adapter DB read failed");
+          return { id: `s_${keyword}`, keyword, candidates: [{ id: "c1", title: "Show" }] };
+        },
+      },
+      searchBudget: 8,
+    });
+
+    await expect(sandbox.searchResources("Show")).rejects.toThrow(/DB read failed/);
+
+    const retry = await sandbox.searchResources("Show");
+    expect(calls).toBe(2); // 重试真打了 provider,不是裸 deduped 挡回
+    expect(retry.deduped).not.toBe(true);
+    expect(retry.snapshot?.candidates).toHaveLength(1);
+
+    // 成功之后同词才 dedup——这是既有契约的回归锁。
+    const third = await sandbox.searchResources("Show");
+    expect(third.deduped).toBe(true);
+    expect(calls).toBe(2);
+  });
+
+  it("抛错的那次不占预算:失败的搜索不进 seenKeywords,8 个新词照旧搜满", async () => {
+    const sandbox = new TaskSandbox({
+      provider: {
+        async search(keyword: string) {
+          if (keyword === "bad") throw new Error("PanSou timeout");
+          return { id: `s_${keyword}`, keyword, candidates: [] };
+        },
+      },
+      searchBudget: 8,
+    });
+
+    await expect(sandbox.searchResources("bad")).rejects.toThrow(/PanSou timeout/);
+    // 抛错不钉词(也不占名额):8 个全新词全部放行,第 9 个才拒——旧契约下
+    // 「bad」已吃掉一个名额,只能放行 7 个。
+    for (let i = 0; i < 8; i++) {
+      expect((await sandbox.searchResources(`kw${i}`)).refused, `kw${i} 应放行`).toBeUndefined();
+    }
+    expect((await sandbox.searchResources("kw-final")).refused).toBeTruthy();
+    // 预算仍是硬闸:烧满后重试失败词同样被拒(没证据就是没证据)。
+    expect((await sandbox.searchResources("bad")).refused).toBeTruthy();
+  });
+
+  it("duplicate 兜底(有词无快照)走真搜并打警告,不回裸 {deduped:true}", async () => {
+    // 白盒构造「seenKeywords 有词、snapshotByKeyword 无快照」的防御窗口(钉词
+    // 不带快照)——旧「抛错钉死」事故就是这个形状:裸 {deduped:true} 会让 agent
+    // 既不打 provider 又拿不到任何证据、还白烧一轮。兜底必须真搜。
+    let calls = 0;
+    const sandbox = new TaskSandbox({
+      provider: {
+        async search(keyword: string) {
+          calls += 1;
+          return { id: `s_${keyword}`, keyword, candidates: [{ id: "c1", title: "Show" }] };
+        },
+      },
+      searchBudget: 8,
+    });
+    (sandbox as unknown as { seenKeywords: Set<string> }).seenKeywords.add("show");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const result = await sandbox.searchResources("Show");
+
+    expect(calls).toBe(1); // 真搜了,没被裸 deduped 挡回
+    expect(result.deduped).not.toBe(true);
+    expect(result.snapshot?.candidates).toHaveLength(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("duplicate keyword"));
+    warn.mockRestore();
   });
 });
