@@ -4,6 +4,10 @@ import {
   isTransientAcquisitionError,
 } from "../src/acquisition-v2/transient-error.js";
 
+// HTTP 状态类判定（429/5xx 文本 token + 5xx 正则 + 数值状态码）的显式开关 ——
+// 免费池专属恢复策略（Copilot r5 M）：缺省 false 时只认旧的连接类 pattern。
+const httpOn = { httpStatusClassified: true } as const;
+
 describe("isTransientAcquisitionError", () => {
   it("matches connection-class errors", () => {
     for (const msg of [
@@ -47,8 +51,10 @@ describe("isTransientAcquisitionError", () => {
   //
   // 免费池高峰的 429/5xx 会以传输层错误冒出来（AI SDK RetryError 的 message、
   // 网关直出的状态码短语）。它们与 socket 断连同类：等 1/5/15 分钟再跑大概率
-  // 就好，所以必须走自动退避重排，而不是终止失败。
-  it("matches HTTP throttle / server-fluctuation errors (429 / 5xx)", () => {
+  // 就好，所以必须走自动退避重排，而不是终止失败。但这是**免费池专属恢复
+  // 策略**（Copilot r5 M）：只有调用侧（worker 的免费档×LLM 分类器门控）显式
+  // 传 httpStatusClassified:true 时才生效 —— 下面的用例全部带开关。
+  it("matches HTTP throttle / server-fluctuation errors (429 / 5xx) when the flag is on", () => {
     for (const msg of [
       "Request failed with status code 429",
       "Failed after 3 attempts. Last error: Too Many Requests",
@@ -59,34 +65,34 @@ describe("isTransientAcquisitionError", () => {
       "502 Bad Gateway from upstream",
       "504 Gateway Timeout",
     ]) {
-      expect(isTransientAcquisitionError(new Error(msg)), msg).toBe(true);
+      expect(isTransientAcquisitionError(new Error(msg), 0, httpOn), msg).toBe(true);
     }
   });
 
-  it("detects a 429 wrapped in the error cause chain (AI SDK wrapping)", () => {
+  it("detects a 429 wrapped in the error cause chain (AI SDK wrapping) when the flag is on", () => {
     const inner = new Error("Too Many Requests");
     const outer = new Error("Failed after 3 attempts");
     (outer as { cause?: unknown }).cause = inner;
-    expect(isTransientAcquisitionError(outer)).toBe(true);
+    expect(isTransientAcquisitionError(outer, 0, httpOn)).toBe(true);
   });
 
   // Copilot r2 D：AI SDK 的 APICallError 把 HTTP 状态码放在数值字段 statusCode
   // 上，message 可能完全不含数字（如 "Request failed"）—— 只扫文本会漏退避。
   it("matches a numeric statusCode even when the message has no code (AI SDK APICallError shape)", () => {
-    expect(isTransientAcquisitionError({ statusCode: 503, message: "Request failed" })).toBe(true);
+    expect(isTransientAcquisitionError({ statusCode: 503, message: "Request failed" }, 0, httpOn)).toBe(true);
     const err = new Error("Request failed");
     (err as Error & { statusCode?: number }).statusCode = 503;
-    expect(isTransientAcquisitionError(err)).toBe(true);
+    expect(isTransientAcquisitionError(err, 0, httpOn)).toBe(true);
     const responseStatusOnly = new Error("Request failed");
     (responseStatusOnly as Error & { responseStatus?: number }).responseStatus = 429;
-    expect(isTransientAcquisitionError(responseStatusOnly)).toBe(true);
+    expect(isTransientAcquisitionError(responseStatusOnly, 0, httpOn)).toBe(true);
   });
 
   it("is FALSE for a numeric statusCode that is not transient (404 model retired)", () => {
-    expect(isTransientAcquisitionError({ statusCode: 404, message: "Request failed" })).toBe(false);
+    expect(isTransientAcquisitionError({ statusCode: 404, message: "Request failed" }, 0, httpOn)).toBe(false);
     const err = new Error("Request failed");
     (err as Error & { statusCode?: number }).statusCode = 404;
-    expect(isTransientAcquisitionError(err)).toBe(false);
+    expect(isTransientAcquisitionError(err, 0, httpOn)).toBe(false);
   });
 
   it("checks the numeric statusCode at every cause-chain node", () => {
@@ -94,7 +100,7 @@ describe("isTransientAcquisitionError", () => {
     (inner as Error & { statusCode?: number }).statusCode = 429;
     const outer = new Error("AI_CallError: request aborted");
     (outer as { cause?: unknown }).cause = inner;
-    expect(isTransientAcquisitionError(outer)).toBe(true);
+    expect(isTransientAcquisitionError(outer, 0, httpOn)).toBe(true);
   });
 
   // 404 / model-not-found 绝不是瞬时错：模型下架（免费池换模型）重试也不会好，
@@ -115,17 +121,17 @@ describe("isTransientAcquisitionError", () => {
   // statusCode 上进退避队列、写在 message 里却终止，同错不同形不同命。现在
   // 数值与文本两侧都排除 501。
   it("is FALSE for a numeric statusCode 501 (Not Implemented is permanent, never requeued)", () => {
-    expect(isTransientAcquisitionError({ statusCode: 501, message: "Not Implemented" })).toBe(false);
+    expect(isTransientAcquisitionError({ statusCode: 501, message: "Not Implemented" }, 0, httpOn)).toBe(false);
     const err = new Error("Request failed");
     (err as Error & { statusCode?: number }).statusCode = 501;
-    expect(isTransientAcquisitionError(err)).toBe(false);
+    expect(isTransientAcquisitionError(err, 0, httpOn)).toBe(false);
   });
 
   it("still requeues numeric statusCode 503 (regression: the 501 carve-out must not swallow the 5xx band)", () => {
-    expect(isTransientAcquisitionError({ statusCode: 503, message: "Request failed" })).toBe(true);
+    expect(isTransientAcquisitionError({ statusCode: 503, message: "Request failed" }, 0, httpOn)).toBe(true);
     const responseStatusOnly = new Error("Request failed");
     (responseStatusOnly as Error & { responseStatus?: number }).responseStatus = 503;
-    expect(isTransientAcquisitionError(responseStatusOnly)).toBe(true);
+    expect(isTransientAcquisitionError(responseStatusOnly, 0, httpOn)).toBe(true);
   });
 
   // ---- Copilot r3 B：message-only 5xx 全段（Cloudflare 520/522/524 带）——
@@ -139,24 +145,55 @@ describe("isTransientAcquisitionError", () => {
       "HTTP 522 Connection timed out (Cloudflare)",
       "Origin error 524",
     ]) {
-      expect(isTransientAcquisitionError(new Error(msg)), msg).toBe(true);
+      expect(isTransientAcquisitionError(new Error(msg), 0, httpOn), msg).toBe(true);
     }
   });
 
   it("is FALSE for a message whose only 5xx token is 501 (message side mirrors the numeric carve-out)", () => {
-    expect(isTransientAcquisitionError(new Error("HTTP 501"))).toBe(false);
+    expect(isTransientAcquisitionError(new Error("HTTP 501"), 0, httpOn)).toBe(false);
   });
 
   it("is FALSE for longer numbers that merely contain 5xx digits (word boundaries)", () => {
-    expect(isTransientAcquisitionError(new Error("fileId 50345 not found"))).toBe(false);
-    expect(isTransientAcquisitionError(new Error("任务 5030 号处理失败"))).toBe(false);
+    expect(isTransientAcquisitionError(new Error("fileId 50345 not found"), 0, httpOn)).toBe(false);
+    expect(isTransientAcquisitionError(new Error("任务 5030 号处理失败"), 0, httpOn)).toBe(false);
   });
 
   it("treats a standalone 503 inside business text as transient — the documented bounded cost", () => {
     // 有界代价的如实断言：「任务 503 处理失败」的 503 是独立三位 token → 退避。
     // 最多多吃 3 次 1/5/15min 退避后仍会终止失败，不会把失败藏成永久重试
     // （见实现侧注释的保守性论证）。
-    expect(isTransientAcquisitionError(new Error("任务 503 处理失败"))).toBe(true);
+    expect(isTransientAcquisitionError(new Error("任务 503 处理失败"), 0, httpOn)).toBe(true);
+  });
+
+  // ---- Copilot r5 M：HTTP 状态类判定分层门控（免费池专属）----
+  //
+  // 缺省（不传 opts）时只认旧的连接类 pattern —— BYO 模型、网盘/搜索源等非
+  // LLM 的 429/5xx 失败维持既有保守分类（不退避重排），spec 承诺「已配置
+  // （DB/env）用户行为不变」。只有调用侧确认「免费预设 × LLM 类错误」后传
+  // httpStatusClassified:true 才追加 HTTP 状态判定。
+  it("WITHOUT the flag, HTTP status shapes are NOT transient (legacy connection-class only)", () => {
+    for (const [label, error] of [
+      ["429 text", new Error("Request failed with status code 429")] as const,
+      ["rate-limit phrase", new Error("Too Many Requests")] as const,
+      ["5xx text", new Error("Service Unavailable (HTTP 503)")] as const,
+      ["Cloudflare 5xx text", new Error("HTTP 520 from gateway")] as const,
+      ["numeric statusCode", { statusCode: 503, message: "Request failed" }] as const,
+      ["numeric 429 on an Error", Object.assign(new Error("Request failed"), { statusCode: 429 })] as const,
+      ["numeric status in cause chain", (() => {
+        const inner = Object.assign(new Error("Request failed"), { statusCode: 429 });
+        const outer = new Error("AI_CallError: request aborted");
+        (outer as { cause?: unknown }).cause = inner;
+        return outer;
+      })()] as const,
+    ]) {
+      expect(isTransientAcquisitionError(error), label).toBe(false);
+    }
+  });
+
+  it("the flag only ADDS classifications — connection-class errors stay transient with or without it", () => {
+    expect(isTransientAcquisitionError(new Error("fetch failed"))).toBe(true);
+    expect(isTransientAcquisitionError(new Error("read ECONNRESET"), 0, httpOn)).toBe(true);
+    expect(isTransientAcquisitionError(new Error("Cannot connect to API: socket disconnected"), 0, httpOn)).toBe(true);
   });
 
   // ---- Copilot r3 C：状态提取 helper 的契约（transient 与 agent-error 共用）----

@@ -322,7 +322,9 @@ describe("handleWorkflowRunFailure — 免费档失败文案（isFreeLlmPreset �
     const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
     const out = await handleWorkflowRunFailure({
       claimed: snapshot(),
-      error: new Error("Request failed with status code 429"),
+      // isLlmRateLimitError 命中形态（AI SDK APICallError 的数值 statusCode）：
+      // 免费档 × LLM 类错误才解锁 HTTP 状态退避（Copilot r5 M）。
+      error: Object.assign(new Error("Request failed with status code 429"), { statusCode: 429 }),
       repository: { saveWorkflowRunSnapshot: save },
       now,
       llmConfig: { ...FREE_LLM_PRESET },
@@ -376,7 +378,66 @@ describe("handleWorkflowRunFailure — 免费档失败文案（isFreeLlmPreset �
     });
     const report = save.mock.calls[0]![0].notifications[0]?.report;
     expect(report?.lines[0]).not.toContain("Kilo");
-    expect(report?.lines[0]).toBe("网络中断,已自动重试 3 次仍失败");
+    // Copilot r5 M：BYO 的 LLM 429 不再进退避（HTTP 状态判定是免费池专属），
+    // count=3 也不会出现「已自动重试」措辞 —— agnostic 的「获取失败」。
+    expect(report?.lines[0]).toBe("获取失败");
+  });
+
+  // ---- Copilot r5 M：HTTP 状态退避收窄为「免费预设 × LLM 类错误」专属 ----
+  //
+  // 免费池 429/5xx 的退避重排是免费档专属恢复策略（spec：已配置 DB/env 的
+  // 用户行为不变）。BYO 与非 LLM（网盘/搜索源）的 429/5xx 维持既有保守连接
+  // 类分类 —— 不重排，直接终止失败。
+  it("BYO model + the SAME numeric LLM 429 → NOT requeued (legacy behavior, spec 承诺不变)", async () => {
+    const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
+    const out = await handleWorkflowRunFailure({
+      claimed: snapshot(),
+      error: Object.assign(new Error("Request failed with status code 429"), { statusCode: 429 }),
+      repository: { saveWorkflowRunSnapshot: save },
+      now,
+      llmConfig: { baseURL: "https://api.deepseek.com/v1", modelId: "deepseek-chat" },
+    });
+    expect(out.status).toBe("failed");
+    const saved = save.mock.calls[0]![0];
+    expect(saved.workflowRun.status).toBe("failed");
+    expect(saved.workflowRun.autoRequeueCount).toBeUndefined();
+  });
+
+  it("free preset + a NON-LLM 5xx (brand error carrying statusCode 503) → NOT requeued", async () => {
+    const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
+    const out = await handleWorkflowRunFailure({
+      claimed: snapshot(),
+      // PAN115 品牌错误（isLlm* 分类器被品牌 marker 短路）+ 数值 statusCode 503：
+      // 若 HTTP 状态判定不门控，这个网盘 5xx 会被免费池的恢复策略吃进退避。
+      error: Object.assign(new Error("PAN115_LIST_FAILED: 服务器繁忙,请稍后再试"), { statusCode: 503 }),
+      repository: { saveWorkflowRunSnapshot: save },
+      now,
+      llmConfig: { ...FREE_LLM_PRESET },
+    });
+    expect(out.status).toBe("failed");
+    const saved = save.mock.calls[0]![0];
+    expect(saved.workflowRun.status).toBe("failed");
+    expect(saved.workflowRun.autoRequeueCount).toBeUndefined();
+    // 网盘错不冒充 Kilo 挂了：agnostic 文案。
+    expect(saved.notifications[0]?.report?.lines[0]).toBe("获取失败");
+  });
+
+  it("connection-class (fetch failed) stays requeued for ANY tier (regression, 旧行为不变)", async () => {
+    for (const llmConfig of [
+      undefined,
+      { ...FREE_LLM_PRESET },
+      { baseURL: "https://api.deepseek.com/v1", modelId: "deepseek-chat" },
+    ]) {
+      const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
+      const out = await handleWorkflowRunFailure({
+        claimed: snapshot(),
+        error: new Error("fetch failed"),
+        repository: { saveWorkflowRunSnapshot: save },
+        now,
+        ...(llmConfig === undefined ? {} : { llmConfig }),
+      });
+      expect(out.status, JSON.stringify(llmConfig ?? "absent")).toBe("auto_requeued");
+    }
   });
 
   it("free preset + a NON-LLM error keeps the AGNOSTIC copy (网盘错不冒充 Kilo 挂了)", async () => {
@@ -402,7 +463,8 @@ describe("handleWorkflowRunFailure — 免费档失败文案（isFreeLlmPreset �
       now,
     });
     const report = save.mock.calls[0]![0].notifications[0]?.report;
-    expect(report?.lines[0]).toBe("网络中断,已自动重试 3 次仍失败");
+    // 看不到配置 → 不猜免费档：HTTP 状态退避不生效，不重试，agnostic 文案。
+    expect(report?.lines[0]).toBe("获取失败");
     expect(report?.lines.join("\n")).not.toContain("Kilo");
   });
 

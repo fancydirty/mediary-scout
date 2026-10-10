@@ -1,12 +1,20 @@
 /**
  * Conservative classifier: TRUE only for clear connectivity/transport failures
- * (DNS, TLS, socket, timeout, fetch-layer) and HTTP-level backpressure
- * (429 rate limit / 5xx service fluctuation — the free-pool Kilo spikes).
- * Everything else — "no coverage", validation, agent give-up, 404/model-not-found
- * — is FALSE so it terminates as `failed` and is NOT auto-requeued (we never
- * re-spam the queue for a genuine no-resource result, and a retired model stays
- * retired no matter how many times we retry). Recurses through the `cause`
- * chain (AI SDK / fetch wrap the real error).
+ * (DNS, TLS, socket, timeout, fetch-layer). Everything else — "no coverage",
+ * validation, agent give-up, 404/model-not-found — is FALSE so it terminates as
+ * `failed` and is NOT auto-requeued (we never re-spam the queue for a genuine
+ * no-resource result, and a retired model stays retired no matter how many
+ * times we retry). Recurses through the `cause` chain (AI SDK / fetch wrap the
+ * real error).
+ *
+ * HTTP-level backpressure (429 rate limit / 5xx service fluctuation — the
+ * free-pool Kilo spikes) is a SEPARATE, opt-in layer (Copilot r5 M): it only
+ * runs when the caller passes `opts.httpStatusClassified === true`. That
+ * recovery strategy belongs to the factory free preset's LLM failures — BYO
+ * users and non-LLM (drive/search-source) failures keep the conservative
+ * connection-class classification, so their behavior is unchanged (spec:
+ * 已配置 DB/env 用户行为不变). The worker gates the flag on
+ * isFreeLlmPreset(llmConfig) × isLlm*Error(error) — see handleWorkflowRunFailure.
  */
 const TRANSIENT_PATTERNS = [
   "econnreset",
@@ -23,18 +31,25 @@ const TRANSIENT_PATTERNS = [
   "secure tls connection",
   "timeout",
   "network error",
-  // ---- HTTP 限流 / 服务端波动（免费池 Kilo 高峰 429/5xx，2026-10）----
-  //
-  // 保守性论证：messageOf 只看 error 对象的 name+message（或裸抛的 string），
-  // 分类输入是传输层抛出的错误，不是候选标题/剧情简介那类业务文本 —— 候选
-  // 内容活在 tool result 和 DB 字段里，不会被 isTransientAcquisitionError 拿来
-  // 匹配。这些 token（"429"/"too many requests"/"rate limit"）是 HTTP 状态码
-  // 及其标准短语，只出现在 LLM/HTTP 传输层的报错消息中。残剩的误报面（业务
-  // 错误文本碰巧带独立的三位 5xx token，如「第 503 集」）代价有界：多吃最多
-  // 3 次 1/5/15min 退避重排后仍会终止失败，不会把失败藏成永久重试。
-  //
-  // 5xx 的 message 侧不走这里的子串枚举，由下面的词边界正则统一提取（见
-  // messageHasTransient5xx）。
+];
+
+// ---- HTTP 限流 / 服务端波动（免费池 Kilo 高峰 429/5xx，2026-10）----
+//
+// 免费池专属恢复策略（spec）：只随 opts.httpStatusClassified 显式开启，缺省
+// 不生效 —— BYO 模型、网盘/搜索源等非 LLM 的 429/5xx 维持既有保守连接类
+// 分类，不进 1/5/15 分钟退避重排。
+//
+// 保守性论证：messageOf 只看 error 对象的 name+message（或裸抛的 string），
+// 分类输入是传输层抛出的错误，不是候选标题/剧情简介那类业务文本 —— 候选
+// 内容活在 tool result 和 DB 字段里，不会被 isTransientAcquisitionError 拿来
+// 匹配。这些 token（"429"/"too many requests"/"rate limit"）是 HTTP 状态码
+// 及其标准短语，只出现在 LLM/HTTP 传输层的报错消息中。残剩的误报面（业务
+// 错误文本碰巧带独立的三位 5xx token，如「第 503 集」）代价有界：多吃最多
+// 3 次 1/5/15min 退避重排后仍会终止失败，不会把失败藏成永久重试。
+//
+// 5xx 的 message 侧不走这里的子串枚举，由下面的词边界正则统一提取（见
+// messageHasTransient5xx）。
+const HTTP_STATUS_TEXT_PATTERNS = [
   "429",
   "too many requests",
   "rate limit",
@@ -107,20 +122,40 @@ function carriesTransientHttpStatus(error: unknown): boolean {
   return isTransientHttpStatus(extractHttpStatus(error));
 }
 
-export function isTransientAcquisitionError(error: unknown, depth = 0): boolean {
+/** 分层门控的开关（Copilot r5 M）：`httpStatusClassified` 缺省 false 时只认
+ *  旧的连接类 pattern（BYO / 非 LLM 失败的既有行为）；true 时才追加 HTTP
+ *  状态类判定（文本 token + 5xx 词边界正则 + 数值 statusCode/responseStatus）。
+ *  调用侧（worker 失败处理）只在「免费预设 × LLM 类错误」时传 true。 */
+export interface TransientClassificationOptions {
+  httpStatusClassified?: boolean;
+}
+
+export function isTransientAcquisitionError(
+  error: unknown,
+  depth = 0,
+  opts?: TransientClassificationOptions,
+): boolean {
   if (error === null || error === undefined || depth > 5) {
     return false;
   }
-  if (carriesTransientHttpStatus(error)) {
+  const httpStatusClassified = opts?.httpStatusClassified === true;
+  if (httpStatusClassified && carriesTransientHttpStatus(error)) {
     return true;
   }
   const msg = messageOf(error);
   if (TRANSIENT_PATTERNS.some((pattern) => msg.includes(pattern))) {
     return true;
   }
-  if (messageHasTransient5xx(msg)) {
-    return true;
+  if (httpStatusClassified) {
+    if (HTTP_STATUS_TEXT_PATTERNS.some((pattern) => msg.includes(pattern))) {
+      return true;
+    }
+    if (messageHasTransient5xx(msg)) {
+      return true;
+    }
   }
   const cause = (error as { cause?: unknown }).cause;
-  return cause === undefined ? false : isTransientAcquisitionError(cause, depth + 1);
+  return cause === undefined
+    ? false
+    : isTransientAcquisitionError(cause, depth + 1, opts);
 }

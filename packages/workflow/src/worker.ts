@@ -166,8 +166,10 @@ export interface AccountWorkerContext {
   resourceProvider?: ResourceProvider;
   model?: LanguageModel;
   /** The config (baseURL/modelId only, never the key) that built `model`.
-   *  Informational: the worker consults it ONLY to pick the free-preset failure
-   *  copy (isFreeLlmPreset) — it never affects execution. Absent → agnostic copy. */
+   *  Informational: the worker consults it only for free-preset-gated
+   *  presentation/recovery (isFreeLlmPreset — failure copy, and the HTTP-status
+   *  transient layer of the free pool's backoff, Copilot r5 M) — it never
+   *  affects execution. Absent → agnostic copy. */
   llmConfig?: { baseURL?: string; modelId?: string };
   preferredLanguage?: string;
   qualityPreference?: "high" | "medium";
@@ -288,8 +290,10 @@ export async function handleWorkflowRunFailure(input: {
    *  matching the success path (stampReplaceNotification). */
   notificationTrigger?: "user" | "scheduled";
   /** The effective LLM config of the model THIS run used (base or per-account
-   *  resolver). Consulted ONLY for the free-preset failure copy (isFreeLlmPreset);
-   *  never affects execution. Absent → agnostic copy. */
+   *  resolver). Consulted ONLY for free-preset-gated presentation/recovery — the
+   *  failure copy (isFreeLlmPreset) and the HTTP-status transient layer (429/5xx
+   *  backoff is the free pool's recovery strategy, Copilot r5 M); never affects
+   *  execution. Absent → agnostic copy + legacy connection-class transient. */
   llmConfig?: { baseURL?: string; modelId?: string };
 }): Promise<{ status: "auto_requeued" | "failed"; workflowRunId: string; errorMessage: string }> {
   const { claimed, error, repository } = input;
@@ -301,7 +305,23 @@ export async function handleWorkflowRunFailure(input: {
   // any logging stay accurate.
   const errorMessage = describeAgentRunError(error);
   const priorCount = claimed.workflowRun.autoRequeueCount ?? 0;
-  const transient = isTransientAcquisitionError(error);
+  // HTTP 状态类退避（429/5xx）是免费池专属恢复策略（spec：已配置 DB/env 的
+  // 用户行为不变）：仅当「当前生效配置 == 出厂免费预设（isFreeLlmPreset）且
+  // 错误能明确识别为 LLM 调用失败（agent-error.ts 的 isLlm* 分类器任一命中，
+  // 网盘/PanSou/Prowlarr 等非 LLM 上游被短路）」时，才让 transient 判定追加
+  // HTTP 状态类匹配。BYO 与非 LLM 的 429/5xx 维持既有保守连接类分类 ——
+  // Kilo 免费池的恢复策略不扩大到别人的失败上（Copilot r5 M）。
+  const httpStatusClassified =
+    isFreeLlmPreset(input.llmConfig ?? {}) &&
+    (isLlmModelGoneError(error) ||
+      isLlmRateLimitError(error) ||
+      isLlmAuthError(error) ||
+      isLlmServerError(error));
+  const transient = isTransientAcquisitionError(
+    error,
+    0,
+    httpStatusClassified ? { httpStatusClassified: true } : undefined,
+  );
   const willRetry = transient && priorCount < AUTO_REQUEUE_MAX;
 
   // A staging dir that survived the harness cleanup on this failed body rides on
