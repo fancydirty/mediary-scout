@@ -48,6 +48,13 @@ export class FallbackResourceProvider implements ResourceProvider {
         : "unreachable"
       : primary.status;
 
+    // 可观测性:主源失败必须出声(即使备源救回)。此前失败只体现在返回值的
+    // sourceHealth 里,日志一片安静——一次源抖动放大成候选池丢失时无从追查。
+    // 形制跟随 worker.ts 的 console.warn([标签] 键=值…)。
+    console.warn(
+      `[fallback] search source failed source=${this.primary.name} class=${primaryStatus} keyword=${input.keyword} workflowRunId=${input.workflowRunId ?? "adhoc"}`,
+    );
+
     const secondary = await attempt(this.secondary.provider, input);
     if (secondary.ok && isUsable(secondary.snapshot)) {
       // 搜索成功了,但主源坏着 —— 用 degraded 把这件事带出去。
@@ -61,6 +68,14 @@ export class FallbackResourceProvider implements ResourceProvider {
     }
 
     // 两个都不可用:给出明确的故障快照,而不是一个看起来像「没找到」的空快照。
+    const secondaryStatus: "unreachable" | "protocol_error" = secondary.ok
+      ? secondary.snapshot.sourceHealth?.status === "protocol_error"
+        ? "protocol_error"
+        : "unreachable"
+      : secondary.status;
+    console.warn(
+      `[fallback] search source failed source=${this.secondary.name} class=${secondaryStatus} keyword=${input.keyword} workflowRunId=${input.workflowRunId ?? "adhoc"}`,
+    );
     const base = secondary.ok ? secondary.snapshot : primary.ok ? primary.snapshot : null;
     return {
       id: base?.id ?? `fallback_unreachable_${input.workflowRunId ?? "adhoc"}`,
@@ -70,14 +85,7 @@ export class FallbackResourceProvider implements ResourceProvider {
       createdAt: base?.createdAt ?? new Date().toISOString(),
       sourceHealth: mergeSourceHealth([
         { status: primaryStatus, source: this.primary.name },
-        {
-          status: secondary.ok
-            ? secondary.snapshot.sourceHealth?.status === "protocol_error"
-              ? "protocol_error"
-              : "unreachable"
-            : secondary.status,
-          source: this.secondary.name,
-        },
+        { status: secondaryStatus, source: this.secondary.name },
       ]),
     };
   }

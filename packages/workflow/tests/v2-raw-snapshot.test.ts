@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { buildSandboxToolSet } from "../src/acquisition-v2/agent-loop.js";
 import { TaskSandbox } from "../src/acquisition-v2/sandbox.js";
 import { FakeResourceProviderV2 } from "../src/acquisition-v2/fake-provider.js";
@@ -578,5 +578,117 @@ describe("candidate post dates reach both agent read paths", () => {
     expect(again.snapshot!.candidates[1]).toMatchObject({ id: "s1-2", linkHistory: note });
     expect(again.snapshot!.candidates[0]!.linkHistory).toBe(again.snapshot!.candidates[1]!.linkHistory);
     expect(again.snapshot!.candidates[2]).not.toHaveProperty("linkHistory");
+  });
+});
+
+describe("预搜退避重试（源头自愈：双源全挂先等 5 秒重试一次）", () => {
+  /** 按调用次序作答的 provider——最后一次之后重复末位。带调用计数器。 */
+  function sequencedProvider(
+    stops: Array<{
+      health?: { status: "healthy" | "degraded" | "unreachable" | "protocol_error"; unhealthySources: string[] };
+      candidates?: Array<{ id: string; title: string }>;
+      throws?: boolean;
+    }>,
+  ) {
+    let calls = 0;
+    return {
+      get calls() {
+        return calls;
+      },
+      async search(keyword: string) {
+        const stop = stops[Math.min(calls, stops.length - 1)]!;
+        calls += 1;
+        if (stop.throws) throw new Error("PROVIDER_ERROR: down");
+        return {
+          id: `s_${calls}`,
+          keyword,
+          candidates: stop.candidates ?? [],
+          ...(stop.health ? { sourceHealth: stop.health } : {}),
+        };
+      },
+    };
+  }
+
+  it("首搜不健康 → 等满 5 秒才重试一次，取到好结果", async () => {
+    // 生产实测源抖动多在 60 秒内自愈,5 秒退避窗口的救率高;这断言锁住
+    // 「真的等了 5 秒」和「只重试一次」,而不只是「多打了一次」。
+    vi.useFakeTimers();
+    try {
+      const provider = sequencedProvider([
+        { health: { status: "unreachable", unhealthySources: ["pansou"] } },
+        { health: { status: "healthy", unhealthySources: [] }, candidates: [{ id: "c1", title: "猛攻 4K" }] },
+      ]);
+      const sandbox = new TaskSandbox({ provider, titleTerms: ["猛攻"] });
+
+      const priming = sandbox.primeRawSnapshot("猛攻");
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(provider.calls).toBe(1);
+      expect(vi.getTimerCount()).toBe(1); // 退避计时器已挂上
+
+      await vi.advanceTimersByTimeAsync(4999);
+      expect(provider.calls).toBe(1); // 5 秒未到,不许提前重试
+
+      await vi.advanceTimersByTimeAsync(1);
+      await priming;
+      expect(provider.calls).toBe(2);
+      // 取到的是重试后的那份好结果。
+      expect(sandbox.viewResourceSnapshot().candidateCount).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("重试仍坏 → 落原样快照，只重试一次（不无限重试）", async () => {
+    vi.useFakeTimers();
+    try {
+      const provider = sequencedProvider([{ health: { status: "unreachable", unhealthySources: ["pansou"] } }]);
+      const sandbox = new TaskSandbox({ provider, titleTerms: ["猛攻"] });
+
+      const priming = sandbox.primeRawSnapshot("猛攻");
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(5000);
+      await priming;
+
+      expect(provider.calls).toBe(2); // 首搜 + 恰好一次重试
+      expect(vi.getTimerCount()).toBe(0); // 没有第三个计时器 = 不在无限重试
+      expect(sandbox.viewResourceSnapshot().candidateCount).toBe(0); // 坏快照照落,预搜不抛
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("首搜抛错也退避重试一次，第二次成功即取到", async () => {
+    vi.useFakeTimers();
+    try {
+      const provider = sequencedProvider([
+        { throws: true },
+        { health: { status: "healthy", unhealthySources: [] }, candidates: [{ id: "c1", title: "猛攻" }] },
+      ]);
+      const sandbox = new TaskSandbox({ provider, titleTerms: ["猛攻"] });
+
+      const priming = sandbox.primeRawSnapshot("猛攻");
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(5000);
+      await priming;
+
+      expect(provider.calls).toBe(2);
+      expect(sandbox.viewResourceSnapshot().candidateCount).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("健康的预搜一次到位，不退避（回归锁）", async () => {
+    const provider = sequencedProvider([
+      { health: { status: "healthy", unhealthySources: [] }, candidates: [{ id: "c1", title: "猛攻" }] },
+    ]);
+    const sandbox = new TaskSandbox({ provider, titleTerms: ["猛攻"] });
+
+    await sandbox.primeRawSnapshot("猛攻");
+
+    expect(provider.calls).toBe(1);
   });
 });
