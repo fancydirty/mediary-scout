@@ -52,9 +52,11 @@ const STRIP_NOTICE =
 /** Threshold for large snapshot digestion hint (病3). */
 const LARGE_SNAPSHOT_DIGEST_THRESHOLD = 10;
 
-/** 预搜(raw 预热)拿到坏结果(不健康快照/抛错)时的退避重试间隔。生产实测源抖动
- *  多在 60 秒内自愈(2026-09 前那次持续 11 天的 PanSou 抖动也是间歇的),5 秒窗口
- *  的救率高;重试仍坏就落原样快照,不无限重试。只作用于预搜路径——agent 的
+/** 预搜(raw 预热)拿到**不可用**结果(unreachable / protocol_error 快照,或 provider
+ *  直接抛错)时的退避重试间隔。生产实测源抖动多在 60 秒内自愈(2026-09 前那次持续
+ *  11 天的 PanSou 抖动也是间歇的),5 秒窗口的救率高;重试仍坏就落首搜那份,不无限
+ *  重试。degraded / healthy 都是可用证据,一律不重试(重试只为救「真的拿不到」,不为
+ *  救「次优」——重试结果可能更坏,不得把可用结果换掉)。只作用于预搜路径——agent 的
  *  searchResources 不自动重试(dedup 只信健康快照已给它自愈能力,agent 自己会
  *  换词/重搜)。 */
 export const PRESEARCH_RETRY_DELAY_MS = 5000;
@@ -78,6 +80,19 @@ const REPLACEMENT_NOT_IN_TARGET_NOTE =
  *  的「没有资源」;这边只管「缓存可不可信」。 */
 function isSnapshotHealthTrusted(snapshot: ResourceSnapshotV2): boolean {
   return (snapshot.sourceHealth?.status ?? "healthy") === "healthy";
+}
+
+/** 快照算不算「有可用证据」——预搜重试的触发判据与落点择优都用它。
+ *  unreachable / protocol_error(或 provider 直接抛错)才是「真的拿不到」;degraded /
+ *  healthy(含老快照缺字段)都是可用证据,与 fallback-provider、reportNoCoverage 证据
+ *  闸( isSourceUsable / isMergedSourceEvidenceUsable)同一套「degraded=可用」分类学。
+ *  degraded 是 fallback 救回的可用快照(有候选):重试只为救「真的拿不到」,不为救
+ *  「次优」——重试结果可能更坏,不得把可用结果换掉。
+ *
+ *  与 isSnapshotHealthTrusted(healthy-only,dedup 信任闸)是两道边界,别互相抄:
+ *  那边管「缓存能不能当已搜过」,这边只管「结果值不值得为它退避重试/换掉手里的证据」。 */
+function isSnapshotEvidenceUsable(snapshot: ResourceSnapshotV2): boolean {
+  return isMergedSourceEvidenceUsable(snapshot.sourceHealth);
 }
 
 /**
@@ -2096,10 +2111,14 @@ export class TaskSandbox {
    *  just like an agent search, so agent can later transferCandidate by id. Calling
    *  this multiple times replaces the prior raw snapshot.
    *
-   *  预搜拿到坏结果(不健康快照,或 provider 直接抛错)时退避 PRESEARCH_RETRY_DELAY_MS
-   *  后重试一次(源头自愈):预搜是整轮的证据底座,赶在源抖动的瞬间落下坏快照会被
-   *  后续决策全程当真。重试仍坏就落原样快照,不无限重试;两次都抛才抛给调用方
-   *  (orchestrator 按「无预搜」降级,agent 自己搜)。 */
+   *  预搜拿到**不可用**结果(unreachable / protocol_error 快照,或 provider 直接抛错)时
+   *  退避 PRESEARCH_RETRY_DELAY_MS 后重试一次(源头自愈):预搜是整轮的证据底座,赶在
+   *  源抖动的瞬间落下没证据的空快照会被后续决策全程当真。重试只为救「真的拿不到」,
+   *  不为救「次优」:degraded/healthy 都是可用证据(degraded 有 fallback 救回的候选),
+   *  不重试——重试结果可能更坏,不得把可用结果换掉。
+   *  落点择优,重试只在可用时才落重试那份:重试可用→取重试那份;重试仍坏→落首搜那份
+   *  (不把手里那份换成更坏的结果);两次都抛→抛第二次的错(orchestrator 按「无预搜」
+   *  降级,agent 自己搜)。 */
   async primeRawSnapshot(keyword: string): Promise<void> {
     const normalized = normalizeSearchKeyword(keyword);
     // Perform the search WITHOUT marking it as seen by the agent (don't add to
@@ -2111,13 +2130,18 @@ export class TaskSandbox {
     } catch (error) {
       searchError = error;
     }
-    if (snapshot === undefined || !isSnapshotHealthTrusted(snapshot)) {
+    if (snapshot === undefined || !isSnapshotEvidenceUsable(snapshot)) {
       await new Promise((resolve) => setTimeout(resolve, this.presearchRetryDelayMs));
       try {
-        snapshot = await this.provider.search(keyword);
-        searchError = undefined;
+        const retried = await this.provider.search(keyword);
+        // 择优:重试可用才落重试那份;仍坏就落首搜那份——重试可能更坏,不得把手里
+        // 那份换成更坏的结果(首搜抛错时手里没有快照,重试返回什么落什么)。
+        if (snapshot === undefined || isSnapshotEvidenceUsable(retried)) {
+          snapshot = retried;
+          searchError = undefined;
+        }
       } catch (error) {
-        // 首搜已有快照(只是不健康)→ 重试抛错就落首搜那份;两次都抛 → 抛第二次的错。
+        // 首搜已有快照(只是不可用)→ 重试抛错就落首搜那份;两次都抛 → 抛第二次的错。
         if (snapshot === undefined) searchError = error;
       }
     }
