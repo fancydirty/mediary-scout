@@ -2758,11 +2758,18 @@ async function getWorkerStorageParents(
 /** Resolve the live agent model config the SAME way the worker builds it: DB
  *  (pass an account-scoped repo) → .env (AGENT_MODEL_* with XIAOMI_MIMO_* as a
  *  back-compat fallback) → 出厂免费预设 FREE_LLM_PRESET（Kilo 免费池，issue #52
- *  之后的兜底层）。三键全空（未设或空串，含 .env.example 照抄形态）时回落免费预设，
- *  所以 baseURL/modelId 永远有可用值 —— 未配置的自部署实例开箱即用；半截配置（如
- *  只有 baseURL）照旧原样返回，由下游 llmConfigError fail-fast（用户错误不静默变
- *  免费池）。Shared by getAgentModel and testLlmConnectionAction so the Settings
- *  「测试连接」exercises exactly what acquisitions use.
+ *  之后的兜底层）。回落只看 baseURL 与 modelId：两者都空（未设或空串，含
+ *  .env.example 照抄形态）即视为无自定义配置、回落免费预设，所以 baseURL/modelId
+ *  永远有可用值 —— 未配置的自部署实例开箱即用。apiKey 不参与回落判定，理由：
+ *  ①key 没有独立意义，url/model 双空=没配自己的服务（设置页「清空地址保存」后
+ *  DB 只剩 blank-keep 的 key，正是这个形态，不能再让它阻断回落）；②回落分支返回
+ *  FREE_LLM_PRESET 且不携带 apiKey —— 残留 key 属于用户自配服务（如 DeepSeek），
+ *  绝不能作为 Authorization 头发给 Kilo 免费池第三方（免费池本就无 key 调用）。
+ *  注意 env 层的 createAgentModelFromEnv 维持「三键全空」判定不动 —— env 是运维
+ *  显式配置，语义不同。半截配置（baseURL/modelId 只有一边非空）照旧原样返回，
+ *  由下游 llmConfigError fail-fast（用户错误不静默变免费池）。Shared by
+ *  getAgentModel and testLlmConnectionAction so the Settings 「测试连接」exercises
+ *  exactly what acquisitions use.
  *
  *  `source` 标记生效值来自哪一层（DB 层参与了任何一项就算 db）：设置页（Task 4）
  *  用它判定免费档（"free-preset"）与「来自环境变量」的呈现，不用再跑一次 predicate。 */
@@ -2774,9 +2781,10 @@ export async function resolveAgentModelConfig(
   const apiKey = llm.apiKey ?? env.AGENT_MODEL_API_KEY ?? env.XIAOMI_MIMO_API_KEY;
   const baseURL = llm.baseURL ?? env.AGENT_MODEL_BASE_URL ?? env.XIAOMI_MIMO_BASE_URL;
   const modelId = llm.modelId ?? env.AGENT_MODEL_ID ?? env.XIAOMI_MIMO_MODEL_ID;
-  // 出厂回落（与 createAgentModelFromEnv 同语义）：只对「三键全空」回落。
+  // 出厂回落：只看 baseURL 与 modelId（都比 env 层的「三键全空」宽一档，理由见上）。
   const blank = (value: string | undefined) => value === undefined || value.trim() === "";
-  if (blank(apiKey) && blank(baseURL) && blank(modelId)) {
+  if (blank(baseURL) && blank(modelId)) {
+    // 不带 apiKey：FREE_LLM_PRESET 本就只有 baseURL/modelId，残留 key 就地丢弃（②）。
     return { ...FREE_LLM_PRESET, source: "free-preset" };
   }
   const source =

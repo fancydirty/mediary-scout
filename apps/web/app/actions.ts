@@ -571,12 +571,13 @@ export async function saveLlmConfigAction(input: {
     // would otherwise silently store a wrong value (大误会).
     const baseURL = normalizeLlmBaseUrl(input.baseURL);
     // 清空服务地址 = 放弃自定义配置：没有 baseURL 的 modelId 无意义，留着只会
-    // 制造半截行 —— resolveAgentModelConfig 只对「三键全空」回落出厂免费预设，
-    // 半截配置照原样返回、下游 llmConfigError fail-fast。所以 baseURL 为空时把
-    // modelId 一并写空（整行清空 → 解析层回落 Kilo 免费池），让设置页「清空地址
-    // 保存即恢复默认」的文案为真（免费态表单预填预设值，用户通常只清地址）。
-    // baseURL 非空时行为不变：modelId 照用户输入（trim）存。API Key 语义不动
-    // （blank-keep，见下）。
+    // 制造半截行 —— resolveAgentModelConfig 对「url/model 双空」回落出厂免费预设
+    // （apiKey 不参与判定，见其注释），半截配置照原样返回、下游 llmConfigError
+    // fail-fast。所以 baseURL 为空时把 modelId 一并写空（整行清空 → 解析层回落
+    // Kilo 免费池，残留 key 也会被回落分支丢弃），让设置页「清空地址保存即恢复
+    // 默认」的文案为真（免费态表单预填预设值，用户通常只清地址）。baseURL 非空
+    // 时行为不变：modelId 照用户输入（trim）存。API Key 语义不动（blank-keep，
+    // 见下）。
     await repository.setAccountSetting(accountId, LLM_BASE_URL_SETTING_KEY, baseURL);
     await repository.setAccountSetting(accountId, LLM_MODEL_ID_SETTING_KEY, baseURL ? input.modelId.trim() : "");
     // Only overwrite the key when the user actually typed a new one — a blank

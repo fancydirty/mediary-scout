@@ -150,9 +150,31 @@ describe("resolveAgentModelConfig（DB → env → 出厂免费预设）", () =>
     expect(cfg.modelId).toBe(FREE_LLM_PRESET.modelId);
   });
 
+  it("DB 只剩残留 apiKey（url/model 空，「清空地址保存」后 key blank-keep 的形态）→ 照样回落免费预设，且返回对象不含 apiKey 键", async () => {
+    const cfg = await resolveAgentModelConfig(repoMap({ [LLM_API_KEY_SETTING_KEY]: "sk-residual" }), cast({}));
+    // toEqual 严格断言：多出的 apiKey 键（值非 undefined）会让它失败。
+    expect(cfg).toEqual({
+      baseURL: FREE_LLM_PRESET.baseURL,
+      modelId: FREE_LLM_PRESET.modelId,
+      source: "free-preset",
+    });
+    // 残留 key 属于用户自配服务（如 DeepSeek），绝不能作为 Authorization 头发给
+    // Kilo 免费池第三方 —— 回落分支必须丢弃它。
+    expect("apiKey" in cfg).toBe(false);
+    expect(isFreeLlmPreset(cfg)).toBe(true);
+  });
+
   it("半截配置（只有 baseURL）不回落 —— 原样返回，交给下游 llmConfigError fail-fast（用户错误不静默变免费池）", async () => {
     const cfg = await resolveAgentModelConfig(repoMap({}), cast({ AGENT_MODEL_BASE_URL: "https://half.example/v1" }));
     expect(cfg).toEqual({ baseURL: "https://half.example/v1", source: "env" });
+  });
+
+  it("DB 半截（baseURL 有、modelId 空）同样不回落 —— 原样返回（半截用户错误仍 fail-fast，回归保护）", async () => {
+    const cfg = await resolveAgentModelConfig(
+      repoMap({ [LLM_BASE_URL_SETTING_KEY]: "https://half.example/v1" }),
+      cast({}),
+    );
+    expect(cfg).toEqual({ baseURL: "https://half.example/v1", source: "db" });
   });
 });
 
