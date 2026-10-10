@@ -67,3 +67,77 @@ describe("restoreFreeLlmAction", () => {
     expect(await repo.getAccountSetting("acct_other", "llm_model_id")).toBe("deepseek-chat");
   });
 });
+
+/** 设置页免费态 details 文案的承诺：「清空地址保存即恢复默认」。免费态表单
+ *  预填出厂值，用户只清空 Base URL 保存时，modelId 仍带着预填的预设模型名
+ *  一起提交 —— saveLlmConfigAction 必须落库成整行清空（baseURL 与 modelId
+ *  双双空）。只清 baseURL 留下 modelId 会得到半截配置：resolveAgentModelConfig
+ *  只对「三键全空」回落免费预设，半截照原样返回、下游 llmConfigError
+ *  fail-fast，文案就成了假话（task-4 报告疑虑 1，review 拍板修法）。 */
+describe("saveLlmConfigAction 清空地址保存即恢复默认", () => {
+  let repo: InMemoryWorkflowRepository;
+  let actions: typeof import("./actions");
+  let runtime: typeof import("../lib/workflow-runtime");
+  const accountId = "acct_default";
+
+  beforeEach(async () => {
+    delete process.env.MEDIA_TRACK_DEMO_MODE;
+    repo = new InMemoryWorkflowRepository();
+    vi.resetModules();
+    vi.doMock("../lib/workflow-runtime", async () => {
+      const actual = await vi.importActual<typeof import("../lib/workflow-runtime")>("../lib/workflow-runtime");
+      return {
+        ...actual,
+        getWorkflowRepository: () => repo,
+        getCurrentAccountId: async () => accountId,
+      };
+    });
+    actions = await import("./actions");
+    runtime = await import("../lib/workflow-runtime");
+  });
+
+  // 与设置页同一读法：account-scoped facade + 显式空 env（不掺本进程环境变量）。
+  const resolve = async () => {
+    const scoped = runtime.getAccountScopedSettings(accountId, repo);
+    return runtime.resolveAgentModelConfig(scoped, {} as unknown as NodeJS.ProcessEnv);
+  };
+
+  it("出厂态表单只清空 Base URL 保存（modelId 仍传预设模型名）→ 双双清空，回落免费预设", async () => {
+    expect(
+      await actions.saveLlmConfigAction({ baseURL: "", modelId: FREE_LLM_PRESET.modelId, apiKey: "" }),
+    ).toEqual({ success: true });
+
+    // DB 整行清空：{baseURL:"", modelId:预设名} 这种半截行就是本次修的 bug。
+    expect(await repo.getAccountSetting(accountId, "llm_base_url")).toBeFalsy();
+    expect(await repo.getAccountSetting(accountId, "llm_model_id")).toBeFalsy();
+    const resolved = await resolve();
+    expect(isFreeLlmPreset(resolved)).toBe(true);
+    expect(resolved).toMatchObject({ baseURL: FREE_LLM_PRESET.baseURL, modelId: FREE_LLM_PRESET.modelId });
+  });
+
+  it("自带态（deepseek）只清空 Base URL（含纯空白）→ 同样双双清空，回落免费预设", async () => {
+    await repo.setAccountSetting(accountId, "llm_base_url", "https://api.deepseek.com/v1");
+    await repo.setAccountSetting(accountId, "llm_model_id", "deepseek-chat");
+
+    expect(
+      await actions.saveLlmConfigAction({ baseURL: "   ", modelId: "deepseek-chat", apiKey: "" }),
+    ).toEqual({ success: true });
+
+    expect(await repo.getAccountSetting(accountId, "llm_base_url")).toBeFalsy();
+    expect(await repo.getAccountSetting(accountId, "llm_model_id")).toBeFalsy();
+    expect(isFreeLlmPreset(await resolve())).toBe(true);
+  });
+
+  it("baseURL 非空时行为不变：baseURL 走 normalize、modelId 照用户输入（trim）存", async () => {
+    expect(
+      await actions.saveLlmConfigAction({
+        baseURL: "https://api.deepseek.com/v1/",
+        modelId: "  deepseek-chat  ",
+        apiKey: "",
+      }),
+    ).toEqual({ success: true });
+
+    expect(await repo.getAccountSetting(accountId, "llm_base_url")).toBe("https://api.deepseek.com/v1");
+    expect(await repo.getAccountSetting(accountId, "llm_model_id")).toBe("deepseek-chat");
+  });
+});
