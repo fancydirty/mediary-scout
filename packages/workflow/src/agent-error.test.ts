@@ -4,6 +4,8 @@ import {
   LLM_AUTH_GUIDANCE,
   LLM_RATE_LIMIT_GUIDANCE,
   describeAgentRunError,
+  isLlmModelGoneError,
+  isLlmServerError,
   summarizeErrorForNotification,
 } from "./agent-error.js";
 
@@ -223,6 +225,84 @@ describe("describeAgentRunError — does NOT misclassify netdisk (brand) auth er
   it("does NOT map a bare numeric 401 in an unrelated message to the guidance", () => {
     const msg = "HTTP 401 while fetching subtitle index";
     expect(describeAgentRunError(new Error(msg))).toBe(msg);
+  });
+});
+
+// ---- 免费档失败文案的两个判定器（isFreeLlmPreset 档位下的 LLM 错误识别）----
+//
+// worker 的免费档文案只在这两个判定器（加上已有的 isLlmRateLimitError /
+// isLlmAuthError）命中时启用；识别不了就退回 agnostic 文案。口径与既有分类器
+// 同款保守：非 LLM 上游（网盘品牌、PanSou/Prowlarr 搜索源）一律短路为 false。
+describe("isLlmModelGoneError — 免费池模型下架（404 / model not found）", () => {
+  it("matches 'model not found' gateway text", () => {
+    expect(isLlmModelGoneError(new Error("Model not found: nvidia/nemotron-3-ultra-550b-a55b:free"))).toBe(true);
+  });
+
+  it("matches 'model_not_found' snake-case API text", () => {
+    expect(isLlmModelGoneError(new Error("error, model_not_found"))).toBe(true);
+  });
+
+  it("matches 'no such model' / 'model does not exist' phrasing", () => {
+    expect(isLlmModelGoneError(new Error("no such model on gateway"))).toBe(true);
+    expect(isLlmModelGoneError(new Error("The model does not exist"))).toBe(true);
+  });
+
+  it("detects model-gone wrapped in the error cause chain (AI SDK wrapping)", () => {
+    const inner = new Error("model not found");
+    const outer = new Error("Failed after 3 attempts");
+    (outer as { cause?: unknown }).cause = inner;
+    expect(isLlmModelGoneError(outer)).toBe(true);
+  });
+
+  it("does NOT match a bare 404 statusCode (dead netdisk share links 404 constantly)", () => {
+    // 网盘死分享链是常态 404；裸 statusCode 404 不能当「模型下架」。
+    const deadShare = Object.assign(new Error("QUARK_FETCH_FAILED: share cancelled"), { statusCode: 404 });
+    expect(isLlmModelGoneError(deadShare)).toBe(false);
+  });
+
+  it("does NOT match a netdisk/搜索源 error that mentions a model-ish word", () => {
+    expect(isLlmModelGoneError(new Error("PanSou search failed: upstream model route not found"))).toBe(false);
+  });
+
+  it("returns false for ordinary acquisition errors", () => {
+    expect(isLlmModelGoneError(new Error("no coverage found"))).toBe(false);
+    expect(isLlmModelGoneError(new Error("Too Many Requests"))).toBe(false);
+    expect(isLlmModelGoneError(undefined)).toBe(false);
+  });
+});
+
+describe("isLlmServerError — LLM 网关 5xx（服务波动）", () => {
+  it("matches a 5xx statusCode APICallError-shaped error", () => {
+    for (const statusCode of [500, 502, 503, 504]) {
+      const err = Object.assign(new Error("Internal Server Error"), { statusCode });
+      expect(isLlmServerError(err), `statusCode ${statusCode}`).toBe(true);
+    }
+  });
+
+  it("matches standard 5xx phrases in the message", () => {
+    expect(isLlmServerError(new Error("service unavailable"))).toBe(true);
+    expect(isLlmServerError(new Error("bad gateway"))).toBe(true);
+    expect(isLlmServerError(new Error("internal server error"))).toBe(true);
+  });
+
+  it("detects a 5xx wrapped in the error cause chain", () => {
+    const inner = Object.assign(new Error("service unavailable"), { statusCode: 503 });
+    const outer = new Error("Failed after 3 attempts");
+    (outer as { cause?: unknown }).cause = inner;
+    expect(isLlmServerError(outer)).toBe(true);
+  });
+
+  it("short-circuits non-LLM upstreams (netdisk brand / PanSou / Prowlarr)", () => {
+    // Prowlarr 搜索源 503 带 "prowlarr" 前缀 —— 不是 Kilo 的锅。
+    expect(isLlmServerError(new Error("Prowlarr search failed with HTTP 503"))).toBe(false);
+    // 网盘品牌限流/5xx 同理。
+    expect(isLlmServerError(Object.assign(new Error("PAN115_REQUEST_FAILED: 请求失败"), { statusCode: 502 }))).toBe(false);
+  });
+
+  it("returns false for 4xx and ordinary errors", () => {
+    expect(isLlmServerError(Object.assign(new Error("not found"), { statusCode: 404 }))).toBe(false);
+    expect(isLlmServerError(new Error("no coverage found"))).toBe(false);
+    expect(isLlmServerError(undefined)).toBe(false);
   });
 });
 

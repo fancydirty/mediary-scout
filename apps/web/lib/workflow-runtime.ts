@@ -939,7 +939,7 @@ export function buildAccountContextResolver(): ResolveAccountWorkerContext {
     // specific drive it was queued onto.
     const scoped = getAccountScopedSettings(accountId);
     const parents = await getWorkerStorageParents(accountId, connectedStorageId);
-    const { model, preferredLanguage, qualityPreference } = await getAgentModel(scoped);
+    const { model, llmConfig, preferredLanguage, qualityPreference } = await getAgentModel(scoped);
     // The run's drive brand selects its resource sources (quark→PanSou quark-only;
     // 115→PanSou+Prowlarr). null when no drive resolves → default 115 fallback.
     const driveProvider =
@@ -961,6 +961,10 @@ export function buildAccountContextResolver(): ResolveAccountWorkerContext {
       resourceProvider: await getWorkerResourceProvider(scoped, driveProvider, accountId),
       storageProvider: driveProvider,
       model,
+      // The worker uses this ONLY to pick the free-preset failure copy for THIS
+      // account's acquisitions (isFreeLlmPreset) — multi-user accounts each get
+      // their own Kilo/BYO verdict.
+      llmConfig,
       ...(assrtToken === undefined ? {} : { assrtToken }),
       ...(jevJudge === undefined ? {} : { jevJudge }),
       agentMemory,
@@ -1030,7 +1034,7 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
   // The user's language preference is standing context baked into the agent
   // instance (one global preference), so every workflow — movie, series, type2,
   // anime — searches with it. No per-workflow plumbing.
-  const { model, preferredLanguage, qualityPreference } = await getAgentModel(getAccountScopedSettings(accountId));
+  const { model, llmConfig, preferredLanguage, qualityPreference } = await getAgentModel(getAccountScopedSettings(accountId));
   const language = preferredLanguage === undefined ? {} : { preferredLanguage };
   const quality = qualityPreference === undefined ? {} : { qualityPreference };
   const storage = await getWorkerStorageExecutor(accountId);
@@ -1051,6 +1055,10 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
     resourceProvider: await getWorkerResourceProvider(),
     storage,
     model,
+    // Free-tier failure copy (Task 5): lets the worker's failure handler run
+    // isFreeLlmPreset on the BASE model config; per-account runs override via
+    // resolveAccountContext's llmConfig.
+    llmConfig,
     ...language,
     ...quality,
     storageParentDirectoryId: parents.tv,
@@ -1069,6 +1077,10 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
     resourceProvider: await getWorkerResourceProvider(),
     storage,
     model,
+    // Free-tier failure copy (Task 5): lets the worker's failure handler run
+    // isFreeLlmPreset on the BASE model config; per-account runs override via
+    // resolveAccountContext's llmConfig.
+    llmConfig,
     ...language,
     ...quality,
     storageParentDirectoryId: parents.tv,
@@ -1087,6 +1099,10 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
     resourceProvider: await getWorkerResourceProvider(),
     storage,
     model,
+    // Free-tier failure copy (Task 5): lets the worker's failure handler run
+    // isFreeLlmPreset on the BASE model config; per-account runs override via
+    // resolveAccountContext's llmConfig.
+    llmConfig,
     ...language,
     ...quality,
     moviesParentDirectoryId: parents.movies,
@@ -1104,6 +1120,10 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
     resourceProvider: await getWorkerResourceProvider(),
     storage,
     model,
+    // Free-tier failure copy (Task 5): lets the worker's failure handler run
+    // isFreeLlmPreset on the BASE model config; per-account runs override via
+    // resolveAccountContext's llmConfig.
+    llmConfig,
     ...language,
     ...quality,
     storageParentDirectoryId: parents.tv,
@@ -1126,6 +1146,10 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
     resourceProvider: await getWorkerResourceProvider(),
     storage,
     model,
+    // Free-tier failure copy (Task 5): lets the worker's failure handler run
+    // isFreeLlmPreset on the BASE model config; per-account runs override via
+    // resolveAccountContext's llmConfig.
+    llmConfig,
     ...language,
     ...quality,
     resolveAccountContext,
@@ -2832,6 +2856,10 @@ async function getAgentModel(repository: {
   getSetting(key: string): Promise<string | null>;
 }): Promise<{
   model: ReturnType<typeof createAgentModelFromEnv>;
+  /** The config that built `model` (baseURL/modelId only — NEVER the apiKey: the
+   *  worker only needs it to run isFreeLlmPreset for the free-tier failure copy).
+   *  The stub (fake adapter) path carries the resolved values all the same. */
+  llmConfig: { baseURL?: string; modelId?: string };
   preferredLanguage: string | undefined;
   qualityPreference: "high" | "medium" | undefined;
 }> {
@@ -2868,7 +2896,13 @@ async function getAgentModel(repository: {
     model = adapter === "vercel-ai" ? createAgentModel(resolved) : createStubAcquisitionModel();
     agentModelCache.set(signature, model);
   }
-  return { model, preferredLanguage, qualityPreference };
+  // Deliberately WITHOUT apiKey (see return type): the worker's llmConfig is a
+  // display/copy hint (isFreeLlmPreset), not a credential carrier.
+  const llmConfig = {
+    ...(baseURL === undefined ? {} : { baseURL }),
+    ...(modelId === undefined ? {} : { modelId }),
+  };
+  return { model, llmConfig, preferredLanguage, qualityPreference };
 }
 
 function fakeTransferOutcomes() {

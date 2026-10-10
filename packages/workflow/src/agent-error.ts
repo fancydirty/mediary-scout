@@ -210,6 +210,89 @@ export function isLlmRateLimitError(error: unknown, depth = 0): boolean {
   return cause === undefined ? false : isLlmRateLimitError(cause, depth + 1);
 }
 
+// 搜索源（非 LLM 的 HTTP 上游）：PanSou/Prowlarr 的报错前缀。免费档失败文案要
+// 点名 Kilo，把搜索源的 4xx/5xx 说成「Kilo 池不可用」会把用户引向完全错误的
+// 方向 —— 与 BRAND_*_MARKERS 同款短路教训。
+const NON_LLM_UPSTREAM_MARKERS = ["pansou", "prowlarr"];
+
+/** True if this error (one node, name+message) is a NON-LLM upstream error — a
+ *  netdisk brand error OR a search-source (PanSou/Prowlarr) error. Such errors
+ *  must never be reported as an AI-模型 problem. */
+function isNonLlmUpstreamError(error: unknown): boolean {
+  if (isBrandError(error)) {
+    return true;
+  }
+  const msg = messageOf(error);
+  return NON_LLM_UPSTREAM_MARKERS.some((marker) => msg.includes(marker));
+}
+
+// Model-retired markers (case-insensitive). A gateway that dropped the model
+// says one of these. Deliberately NOT a bare "404" substring and NOT a bare
+// statusCode-404 match: dead netdisk share links 404 constantly (a dead-link
+// error carries statusCode 404), and misreading those as「模型下架」would point
+// the user at 设置 → AI 模型 for a dead-link problem. Only the unambiguous
+// model-gone phrasing counts.
+const MODEL_GONE_PATTERNS = [
+  "model not found",
+  "model_not_found",
+  "no such model",
+  "model does not exist",
+];
+
+/**
+ * True if `error` (or anything in its `cause` chain) is an LLM「模型下架」failure —
+ * the free pool swapped its lineup and the configured model id no longer resolves.
+ * Used ONLY to pick the free-tier「内置免费模型已失效」failure copy; a non-LLM
+ * upstream short-circuits to false. Recursion-bounded.
+ */
+export function isLlmModelGoneError(error: unknown, depth = 0): boolean {
+  if (error === null || error === undefined || depth > 5) {
+    return false;
+  }
+  if (isNonLlmUpstreamError(error)) {
+    return false;
+  }
+  const msg = messageOf(error);
+  if (MODEL_GONE_PATTERNS.some((pattern) => msg.includes(pattern))) {
+    return true;
+  }
+  const cause = (error as { cause?: unknown }).cause;
+  return cause === undefined ? false : isLlmModelGoneError(cause, depth + 1);
+}
+
+// LLM gateway 5xx phrases (case-insensitive, via messageOf). Paired with the
+// statusCode 500-599 range on APICallError-shaped nodes.
+const LLM_SERVER_ERROR_PATTERNS = [
+  "internal server error",
+  "bad gateway",
+  "service unavailable",
+];
+
+/**
+ * True if `error` (or anything in its `cause` chain) is an LLM gateway server
+ * fluctuation: a 5xx statusCode, or a standard 5xx phrase in the message. Used
+ * ONLY to pick the free-tier「Kilo 公共免费池暂时不可用」failure copy; a non-LLM
+ * upstream (netdisk / PanSou / Prowlarr) short-circuits to false. Recursion-bounded.
+ */
+export function isLlmServerError(error: unknown, depth = 0): boolean {
+  if (error === null || error === undefined || depth > 5) {
+    return false;
+  }
+  if (isNonLlmUpstreamError(error)) {
+    return false;
+  }
+  const status = statusCodeOf(error);
+  if (status !== undefined && status >= 500 && status <= 599) {
+    return true;
+  }
+  const msg = messageOf(error);
+  if (LLM_SERVER_ERROR_PATTERNS.some((pattern) => msg.includes(pattern))) {
+    return true;
+  }
+  const cause = (error as { cause?: unknown }).cause;
+  return cause === undefined ? false : isLlmServerError(cause, depth + 1);
+}
+
 /**
  * Map a captured agent-run error to a USER-FACING message. LLM auth/401 and
  * rate-limit/429 failures become actionable, provider-agnostic guidance; every
