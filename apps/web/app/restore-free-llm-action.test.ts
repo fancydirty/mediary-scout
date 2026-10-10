@@ -72,7 +72,7 @@ describe("restoreFreeLlmAction", () => {
  *  预填出厂值，用户只清空 Base URL 保存时，modelId 仍带着预填的预设模型名
  *  一起提交 —— saveLlmConfigAction 必须落库成整行清空（baseURL 与 modelId
  *  双双空）。只清 baseURL 留下 modelId 会得到半截配置：resolveAgentModelConfig
- *  只对「三键全空」回落免费预设，半截照原样返回、下游 llmConfigError
+ *  只对「baseURL 与 modelId 双空」回落免费预设，半截照原样返回、下游 llmConfigError
  *  fail-fast，文案就成了假话（task-4 报告疑虑 1，review 拍板修法）。 */
 describe("saveLlmConfigAction 清空地址保存即恢复默认", () => {
   let repo: InMemoryWorkflowRepository;

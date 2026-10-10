@@ -164,6 +164,27 @@ describe("resolveAgentModelConfig（DB → env → 出厂免费预设）", () =>
     expect(isFreeLlmPreset(cfg)).toBe(true);
   });
 
+  it("DB 存预设地址+模型名、apiKey 是残留（「换回免费模型」按钮写库后的形态）→ 返回预设值且不带 apiKey 键", async () => {
+    const cfg = await resolveAgentModelConfig(
+      repoMap({
+        [LLM_BASE_URL_SETTING_KEY]: FREE_LLM_PRESET.baseURL,
+        [LLM_MODEL_ID_SETTING_KEY]: FREE_LLM_PRESET.modelId,
+        [LLM_API_KEY_SETTING_KEY]: "sk-x",
+      }),
+      cast({}),
+    );
+    // toEqual 严格断言：多出的 apiKey 键（值非 undefined）会让它失败。生效值
+    // 等于免费池预设时，blank-keep 的残留 key 不得作为 Authorization 头发给
+    // Kilo 第三方免费池 —— 非回落分支必须同样丢弃它（回落分支已在上一用例覆盖）。
+    expect(cfg).toEqual({
+      baseURL: FREE_LLM_PRESET.baseURL,
+      modelId: FREE_LLM_PRESET.modelId,
+      source: "db",
+    });
+    expect("apiKey" in cfg).toBe(false);
+    expect(isFreeLlmPreset(cfg)).toBe(true);
+  });
+
   it("半截配置（只有 baseURL）不回落 —— 原样返回，交给下游 llmConfigError fail-fast（用户错误不静默变免费池）", async () => {
     const cfg = await resolveAgentModelConfig(repoMap({}), cast({ AGENT_MODEL_BASE_URL: "https://half.example/v1" }));
     expect(cfg).toEqual({ baseURL: "https://half.example/v1", source: "env" });

@@ -27,6 +27,7 @@ import {
   createAgentModelFromEnv,
   createStubAcquisitionModel,
   FREE_LLM_PRESET,
+  isFreeLlmPreset,
   llmConfigError,
   formatDailyDigestPushText,
   scheduledDigestItems,
@@ -2764,7 +2765,10 @@ async function getWorkerStorageParents(
  *  ①key 没有独立意义，url/model 双空=没配自己的服务（设置页「清空地址保存」后
  *  DB 只剩 blank-keep 的 key，正是这个形态，不能再让它阻断回落）；②回落分支返回
  *  FREE_LLM_PRESET 且不携带 apiKey —— 残留 key 属于用户自配服务（如 DeepSeek），
- *  绝不能作为 Authorization 头发给 Kilo 免费池第三方（免费池本就无 key 调用）。
+ *  绝不能作为 Authorization 头发给 Kilo 免费池第三方（免费池本就无 key 调用）；
+ *  ③非回落分支同样防 —— 生效 baseURL/modelId 逐字等于免费预设（isFreeLlmPreset，
+ *  「换回免费模型」按钮写库后的形态）时也不携带 apiKey，DB 里的 key 原样保留、
+ *  供用户换回自带服务时复用（丢弃只发生在本函数的返回值，不动库）。
  *  注意 env 层的 createAgentModelFromEnv 维持「三键全空」判定不动 —— env 是运维
  *  显式配置，语义不同。半截配置（baseURL/modelId 只有一边非空）照旧原样返回，
  *  由下游 llmConfigError fail-fast（用户错误不静默变免费池）。Shared by
@@ -2789,8 +2793,17 @@ export async function resolveAgentModelConfig(
   }
   const source =
     llm.apiKey !== undefined || llm.baseURL !== undefined || llm.modelId !== undefined ? "db" : "env";
+  // 生效配置逐字等于免费池预设（无论值来自 DB 还是 env —— 前者即「换回免费
+  // 模型」按钮写库后的形态：地址+模型名来自预设、key 是 blank-keep 留下的残留）
+  // → 与回落分支同样不携带 apiKey：残留 key 属于用户自带服务（如 DeepSeek），
+  // 不得作为 Authorization 头发给 Kilo 第三方免费池。丢弃只发生在返回值，
+  // DB 里的 key 原样保留，供用户换回自带服务时复用。
+  const presetValued = isFreeLlmPreset({
+    ...(baseURL === undefined ? {} : { baseURL }),
+    ...(modelId === undefined ? {} : { modelId }),
+  });
   return {
-    ...(apiKey === undefined ? {} : { apiKey }),
+    ...(apiKey === undefined || presetValued ? {} : { apiKey }),
     ...(baseURL === undefined ? {} : { baseURL }),
     ...(modelId === undefined ? {} : { modelId }),
     source,
@@ -2829,7 +2842,8 @@ async function getAgentModel(repository: {
   const qualityPreference = await getQualityPreference(repository);
 
   // Resolve the live model config the SAME way the test action does (shared
-  // resolver) — DB-first, then .env, then the shipped free preset (三键全空回落).
+  // resolver) — DB-first, then .env, then the shipped free preset
+  // (baseURL+modelId 双空回落，key 不参与判定).
   const resolved = await resolveAgentModelConfig(repository, env);
   const { apiKey, baseURL, modelId } = resolved;
   // Fail-fast pre-check (issue #49): on the live (vercel-ai) path, if baseURL or
