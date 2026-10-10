@@ -122,6 +122,28 @@ function carriesTransientHttpStatus(error: unknown): boolean {
   return isTransientHttpStatus(extractHttpStatus(error));
 }
 
+/**
+ * 单个 cause 链节点是否命中「HTTP 状态类」形态 —— 即门控（httpStatusClassified）
+ * 开启后 isTransientAcquisitionError 在该节点上追加判定的全部状态特征：
+ * 数值 statusCode/responseStatus 为瞬时状态（429/5xx、501 排除），或 message
+ * 带 429/"too many requests"/"rate limit" 文本，或含独立三位 5xx token。
+ *
+ * 导出给 agent-error.ts 的 isLlmHttpStatusError（免费档退避门控，Copilot r6 M）
+ * 复用：门控识别的形态必须与被门控的能力同源 —— 单一来源，不再抄第二份
+ * 正则（此前门控分类器比被门控能力窄，message-only 的 "…status code 429" /
+ * "HTTP 520" 过不了门，免费池真 LLM 错直接终止不退避）。
+ */
+export function nodeCarriesHttpStatusShape(error: unknown): boolean {
+  if (carriesTransientHttpStatus(error)) {
+    return true;
+  }
+  const msg = messageOf(error);
+  if (HTTP_STATUS_TEXT_PATTERNS.some((pattern) => msg.includes(pattern))) {
+    return true;
+  }
+  return messageHasTransient5xx(msg);
+}
+
 /** 分层门控的开关（Copilot r5 M）：`httpStatusClassified` 缺省 false 时只认
  *  旧的连接类 pattern（BYO / 非 LLM 失败的既有行为）；true 时才追加 HTTP
  *  状态类判定（文本 token + 5xx 词边界正则 + 数值 statusCode/responseStatus）。
@@ -139,20 +161,15 @@ export function isTransientAcquisitionError(
     return false;
   }
   const httpStatusClassified = opts?.httpStatusClassified === true;
-  if (httpStatusClassified && carriesTransientHttpStatus(error)) {
+  // 门控开启后的状态类判定走 nodeCarriesHttpStatusShape（与 agent-error.ts 的
+  // 门控形态判定共用同一实现，口径不漂移）。与连接类 pattern 是纯布尔或，
+  // 检查先后不影响结果。
+  if (httpStatusClassified && nodeCarriesHttpStatusShape(error)) {
     return true;
   }
   const msg = messageOf(error);
   if (TRANSIENT_PATTERNS.some((pattern) => msg.includes(pattern))) {
     return true;
-  }
-  if (httpStatusClassified) {
-    if (HTTP_STATUS_TEXT_PATTERNS.some((pattern) => msg.includes(pattern))) {
-      return true;
-    }
-    if (messageHasTransient5xx(msg)) {
-      return true;
-    }
   }
   const cause = (error as { cause?: unknown }).cause;
   return cause === undefined

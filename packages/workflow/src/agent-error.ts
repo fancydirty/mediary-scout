@@ -17,7 +17,9 @@
 // 状态码提取与退避闸门（isTransientAcquisitionError）共用：AI SDK 的
 // statusCode 与 fetch 封装的 responseStatus 都认 —— 免费档 headline 判定与
 // transient 重试判定对同一个错误形状看到同一个状态码（Copilot r3 C）。
-import { extractHttpStatus } from "./acquisition-v2/transient-error.js";
+// r6 M 起 nodeCarriesHttpStatusShape 也从这里来：门控（isLlmHttpStatusError）
+// 与被门控的 transient 状态类判定共用同一形态实现，不再各写一份。
+import { extractHttpStatus, nodeCarriesHttpStatusShape } from "./acquisition-v2/transient-error.js";
 
 /**
  * The model's own content moderation cut the reply before anything was transferred.
@@ -286,6 +288,35 @@ export function isLlmServerError(error: unknown, depth = 0): boolean {
   }
   const cause = (error as { cause?: unknown }).cause;
   return cause === undefined ? false : isLlmServerError(cause, depth + 1);
+}
+
+/**
+ * True if `error` (or anything in its `cause` chain) carries the HTTP-status
+ * SHAPE the gated transient layer actually matches — including the message-only
+ * forms the isLlm* phrase classifiers deliberately miss ("Request failed with
+ * status code 429", "HTTP 520 from gateway"): a bare 429 substring, a standalone
+ * 5xx token, or a numeric statusCode/responseStatus in the transient range.
+ * The shape check delegates to transient-error's nodeCarriesHttpStatusShape
+ * (single source of truth), so the gate can never be narrower than the gated
+ * capability again (Copilot r6 M).
+ *
+ * A non-LLM upstream (netdisk brand / PanSou / Prowlarr) short-circuits to
+ * false on any chain node — a drive's or search source's 5xx does not enter
+ * the free pool's 1/5/15 backoff just because it carries a status token.
+ * Recursion-bounded.
+ */
+export function isLlmHttpStatusError(error: unknown, depth = 0): boolean {
+  if (error === null || error === undefined || depth > 5) {
+    return false;
+  }
+  if (isNonLlmUpstreamError(error)) {
+    return false;
+  }
+  if (nodeCarriesHttpStatusShape(error)) {
+    return true;
+  }
+  const cause = (error as { cause?: unknown }).cause;
+  return cause === undefined ? false : isLlmHttpStatusError(cause, depth + 1);
 }
 
 /**

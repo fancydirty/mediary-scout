@@ -4,6 +4,7 @@ import {
   LLM_AUTH_GUIDANCE,
   LLM_RATE_LIMIT_GUIDANCE,
   describeAgentRunError,
+  isLlmHttpStatusError,
   isLlmModelGoneError,
   isLlmServerError,
   summarizeErrorForNotification,
@@ -317,6 +318,51 @@ describe("isLlmServerError — LLM 网关 5xx（服务波动）", () => {
     expect(isLlmServerError(Object.assign(new Error("not found"), { statusCode: 404 }))).toBe(false);
     expect(isLlmServerError(new Error("no coverage found"))).toBe(false);
     expect(isLlmServerError(undefined)).toBe(false);
+  });
+});
+
+describe("isLlmHttpStatusError — message-only 状态形态（免费档退避门控，Copilot r6 M）", () => {
+  // 与 isLlmServerError 的分工：那边是「免费档失败文案」的短语分类器（刻意
+  // 不认裸数字），这边是 worker 退避门控的形态判定 —— 必须与 transient 层
+  // （httpStatusClassified 开启后）实际匹配的形态同源（transient-error.ts 的
+  // nodeCarriesHttpStatusShape），message-only 的 LLM 错才不会过不了门。
+  it("matches a message-only 'status code 429' (no numeric field — axios-style wrapper)", () => {
+    expect(isLlmHttpStatusError(new Error("Request failed with status code 429"))).toBe(true);
+  });
+
+  it("matches a message-only 'HTTP 520' gateway token (Cloudflare-style, 词边界)", () => {
+    expect(isLlmHttpStatusError(new Error("HTTP 520 from gateway"))).toBe(true);
+    expect(isLlmHttpStatusError(new Error("gateway returned 503 after retry"))).toBe(true);
+  });
+
+  it("matches the numeric shapes too (statusCode/responseStatus 429/5xx — 与 transient 层同刀口)", () => {
+    expect(isLlmHttpStatusError(Object.assign(new Error("Request failed"), { statusCode: 429 }))).toBe(true);
+    expect(isLlmHttpStatusError(Object.assign(new Error("Request failed"), { responseStatus: 503 }))).toBe(true);
+  });
+
+  it("does NOT match 501 / 4xx-only / plain errors（与被门控能力同一刀口，不开空门）", () => {
+    expect(isLlmHttpStatusError(new Error("HTTP 501 Not Implemented"))).toBe(false);
+    expect(isLlmHttpStatusError(Object.assign(new Error("Not Found"), { statusCode: 404 }))).toBe(false);
+    expect(isLlmHttpStatusError(new Error("no coverage found"))).toBe(false);
+    expect(isLlmHttpStatusError(new Error("fileId 50345 任务 5030 号"))).toBe(false);
+    expect(isLlmHttpStatusError(undefined)).toBe(false);
+  });
+
+  it("short-circuits netdisk brand errors carrying a 5xx in text or numeric field", () => {
+    expect(isLlmHttpStatusError(new Error("PAN115_LIST_FAILED: HTTP 503 服务器繁忙"))).toBe(false);
+    expect(isLlmHttpStatusError(Object.assign(new Error("PAN115_REQUEST_FAILED: 请求失败"), { statusCode: 502 }))).toBe(false);
+  });
+
+  it("short-circuits search-source (PanSou/Prowlarr) 5xx errors", () => {
+    expect(isLlmHttpStatusError(new Error("PanSou search failed with HTTP 502"))).toBe(false);
+    expect(isLlmHttpStatusError(new Error("Prowlarr query returned HTTP 520"))).toBe(false);
+  });
+
+  it("detects the shape wrapped in the error cause chain (AI SDK wrapping)", () => {
+    const inner = new Error("Request failed with status code 429");
+    const outer = new Error("Failed after 3 attempts");
+    (outer as { cause?: unknown }).cause = inner;
+    expect(isLlmHttpStatusError(outer)).toBe(true);
   });
 });
 

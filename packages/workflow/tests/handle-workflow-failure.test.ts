@@ -422,6 +422,73 @@ describe("handleWorkflowRunFailure — 免费档失败文案（isFreeLlmPreset �
     expect(saved.notifications[0]?.report?.lines[0]).toBe("获取失败");
   });
 
+  // ---- Copilot r6 M：门控识别 message-only 状态形态（形态对齐被门控能力） ----
+  //
+  // isLlm* 分类器刻意不认裸 429 子串、5xx 只认数值 statusCode/标准短语，但
+  // transient 开关打开后匹配的是「文本 429 / 独立 5xx token」那套形态 —— 门控
+  // 比被门控的能力窄，message-only 的免费池 LLM 错（axios 风格 "Request failed
+  // with status code 429"、网关 "HTTP 520 from gateway"）过不了门：真 LLM 错
+  // 直接终止，不进 1/5/15 退避。isLlmHttpStatusError（状态特征 × 非 LLM 排除）
+  // 补齐这个缺口；网盘/搜索源的 5xx 仍被排除挡在门外。
+  it("free preset + message-only 'Request failed with status code 429' → requeued（门控看见 transient 会命中的形态）", async () => {
+    const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
+    const out = await handleWorkflowRunFailure({
+      claimed: snapshot(),
+      // 没有 statusCode/responseStatus 数值字段 —— 状态只活在 message 里。
+      error: new Error("Request failed with status code 429"),
+      repository: { saveWorkflowRunSnapshot: save },
+      now,
+      llmConfig: { ...FREE_LLM_PRESET },
+    });
+    expect(out.status).toBe("auto_requeued");
+    expect(save.mock.calls[0]![0].workflowRun.autoRequeueCount).toBe(1);
+    expect(save.mock.calls[0]![0].workflowRun.nextAttemptAt).toBeDefined();
+  });
+
+  it("free preset + message-only 'HTTP 520 from gateway' → requeued（Cloudflare 式 5xx token）", async () => {
+    const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
+    const out = await handleWorkflowRunFailure({
+      claimed: snapshot(),
+      error: new Error("HTTP 520 from gateway"),
+      repository: { saveWorkflowRunSnapshot: save },
+      now,
+      llmConfig: { ...FREE_LLM_PRESET },
+    });
+    expect(out.status).toBe("auto_requeued");
+    expect(save.mock.calls[0]![0].workflowRun.autoRequeueCount).toBe(1);
+  });
+
+  it("free preset + PAN115 brand error with a bare 5xx token in TEXT → NOT requeued（非 LLM 排除保留，回归）", async () => {
+    const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
+    const out = await handleWorkflowRunFailure({
+      claimed: snapshot(),
+      // message-only 形态 + 品牌 marker：扩门控不能把网盘 5xx 吃进免费池退避。
+      error: new Error("PAN115_LIST_FAILED: HTTP 503 服务器繁忙"),
+      repository: { saveWorkflowRunSnapshot: save },
+      now,
+      llmConfig: { ...FREE_LLM_PRESET },
+    });
+    expect(out.status).toBe("failed");
+    const saved = save.mock.calls[0]![0];
+    expect(saved.workflowRun.status).toBe("failed");
+    expect(saved.workflowRun.autoRequeueCount).toBeUndefined();
+  });
+
+  it("BYO model + message-only 'Request failed with status code 429' → NOT requeued（回归，spec 承诺不变）", async () => {
+    const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
+    const out = await handleWorkflowRunFailure({
+      claimed: snapshot(),
+      error: new Error("Request failed with status code 429"),
+      repository: { saveWorkflowRunSnapshot: save },
+      now,
+      llmConfig: { baseURL: "https://api.deepseek.com/v1", modelId: "deepseek-chat" },
+    });
+    expect(out.status).toBe("failed");
+    const saved = save.mock.calls[0]![0];
+    expect(saved.workflowRun.status).toBe("failed");
+    expect(saved.workflowRun.autoRequeueCount).toBeUndefined();
+  });
+
   it("connection-class (fetch failed) stays requeued for ANY tier (regression, 旧行为不变)", async () => {
     for (const llmConfig of [
       undefined,

@@ -25,6 +25,7 @@ import { stagingFailureAuditEvents } from "./acquisition-v2/directory-lifecycle.
 import {
   describeAgentRunError,
   isLlmAuthError,
+  isLlmHttpStatusError,
   isLlmModelGoneError,
   isLlmRateLimitError,
   isLlmServerError,
@@ -307,16 +308,22 @@ export async function handleWorkflowRunFailure(input: {
   const priorCount = claimed.workflowRun.autoRequeueCount ?? 0;
   // HTTP 状态类退避（429/5xx）是免费池专属恢复策略（spec：已配置 DB/env 的
   // 用户行为不变）：仅当「当前生效配置 == 出厂免费预设（isFreeLlmPreset）且
-  // 错误能明确识别为 LLM 调用失败（agent-error.ts 的 isLlm* 分类器任一命中，
-  // 网盘/PanSou/Prowlarr 等非 LLM 上游被短路）」时，才让 transient 判定追加
-  // HTTP 状态类匹配。BYO 与非 LLM 的 429/5xx 维持既有保守连接类分类 ——
-  // Kilo 免费池的恢复策略不扩大到别人的失败上（Copilot r5 M）。
+  // 错误能明确识别为 LLM 调用失败」时，才让 transient 判定追加 HTTP 状态类
+  // 匹配。识别 = agent-error.ts 的 isLlm* 分类器任一命中，**或**
+  // isLlmHttpStatusError —— message-only 的状态形态（"Request failed with
+  // status code 429" / "HTTP 520 from gateway"，isLlm* 的短语/数值分类器
+  // 刻意不认裸数字）与 transient 层（开关打开后）实际匹配的形态同源
+  // （nodeCarriesHttpStatusShape），保证门控不再比被门控的能力窄（Copilot
+  // r6 M）。非 LLM 排除保留：网盘/PanSou/Prowlarr 的 429/5xx 不因此进门，
+  // BYO 维持既有保守连接类分类 —— Kilo 免费池的恢复策略不扩大到别人的
+  // 失败上（Copilot r5 M）。
   const httpStatusClassified =
     isFreeLlmPreset(input.llmConfig ?? {}) &&
     (isLlmModelGoneError(error) ||
       isLlmRateLimitError(error) ||
       isLlmAuthError(error) ||
-      isLlmServerError(error));
+      isLlmServerError(error) ||
+      isLlmHttpStatusError(error));
   const transient = isTransientAcquisitionError(
     error,
     0,
