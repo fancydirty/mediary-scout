@@ -704,13 +704,10 @@ export class TaskSandbox {
         message: `重复搜索「${effectiveKeyword}」第 ${count} 次`,
         data: { keyword: effectiveKeyword, count },
       });
-      // 复搜命中的是同一份不健康快照,警告必须跟着一起回——否则 agent 第二次
-      // 看到的还是一个「干净的空结果」,照样会去 reportNoCoverage。审计不重复
-      // 记（search_dedup 已记录这次复搜）。
-      const cachedHealthWarning = sourceHealthWarning(cachedSnapshot.sourceHealth);
-      const dedupWarnings = cachedHealthWarning ? [...tabooWarnings, cachedHealthWarning] : [...tabooWarnings];
       // 复搜必须跟首搜讲同一个故事:同样的 ⚠ 标记、同样的说明。否则 agent 第二次
-      // 看到一份「干净」的快照,前一次的存疑提示就凭空消失了。
+      // 看到一份「干净」的快照,前一次的存疑提示就凭空消失了。(dedup 只可能命中
+      // 健康快照——不健康缓存走下方重搜路径——所以这里没有源健康警告可带。)
+      const dedupWarnings = [...tabooWarnings];
       const cachedView = presentSnapshotForAgent(cachedSnapshot);
       if (cachedView.legend) dedupWarnings.push(cachedView.legend);
       if (cachedView.allDroppedWarning) dedupWarnings.push(cachedView.allDroppedWarning);
@@ -726,6 +723,10 @@ export class TaskSandbox {
 
     // 源故障触发的重搜不是新的 distinct 搜索:跳过预算闸,下面也不进 seenKeywords
     // ——重打已坏过一次的关键词不许吃掉 agent 的搜索名额。
+    //
+    // 免费重搜(不占预算的这些重搜)的狂搜兜底不在预算闸,而在 repetition-stop:
+    // 生产快照是内容寻址的、V2 视图又不带时间戳 → 同内容同 id → 同结果文本,
+    // 4 连相同就被 repetition-stop 收掉。若未来快照 id 引入随机性,需另设重搜上限。
     const decision = cachedUntrusted
       ? "fresh"
       : decideSearchGate({
@@ -735,19 +736,18 @@ export class TaskSandbox {
           ...(this.softThreshold === undefined ? {} : { softThreshold: this.softThreshold }),
         });
     if (decision === "duplicate") {
-      // This branch should now be unreachable since we check snapshotByKeyword above,
-      // but keep it for backward compatibility in case seenKeywords has an entry but
-      // snapshotByKeyword doesn't (should never happen in practice).
-      return { deduped: true, ...(notice ? { notice } : {}) };
-    }
-    if (decision === "exhausted") {
+      // 防御窗口:seenKeywords 有词、snapshotByKeyword 无快照。钉词已挪到成功
+      // 缓存之后(下方),正常流程不再产生这个状态;但旧「抛错钉死」就是这个形状
+      // (provider 抛错在缓存快照前就钉词,与坏快照钉死同一事故),一旦再现,
+      // 裸返回 {deduped:true} 会让 agent 既不打 provider 又拿不到任何证据、还
+      // 白烧一轮——所以兜底走真实搜索:该词已在 seenKeywords,预算计数不变。
+      console.warn(`[sandbox] duplicate keyword without cached snapshot keyword=${normalized} — falling back to a real search`);
+    } else if (decision === "exhausted") {
       this.logSearch(effectiveKeyword, { outcome: "refused", note: "search budget exhausted" });
       return { refused: this.budgetExhaustedMessage() };
     }
     // "fresh" and "reserve" both perform the search; "reserve" (movie 8+2) attaches
     // the note that flips the agent into last-resort subtitle-fallback mode.
-    // 源故障重搜不计预算(见上):不进 seenKeywords。
-    if (!cachedUntrusted) this.seenKeywords.add(normalized);
     let snapshot: ResourceSnapshotV2;
     try {
       snapshot = await this.provider.search(effectiveKeyword);
@@ -757,6 +757,11 @@ export class TaskSandbox {
     }
     this.logSearch(effectiveKeyword, { outcome: "ok", snapshot });
     this.snapshotByKeyword.set(normalized, snapshot);
+    // 钉词只在成功缓存快照之后:provider 抛错不留痕(不进 seenKeywords、不占预算),
+    // agent 重试同词自然走真搜——重试真实失败是合理行为,而不是被 duplicate 裸
+    // 返回钉死(抛错钉死)。源故障重搜(缓存不健康)照旧不钉:它不是新的 distinct
+    // 搜索,不占 agent 的搜索名额。
+    if (!cachedUntrusted) this.seenKeywords.add(normalized);
     // 预搜的那份(活期文档)就是被替换的坏快照时,viewResourceSnapshot 跟着换——
     // 否则 agent 眼前的活期文档还是旧的坏快照。
     if (this.rawSnapshot === cachedSnapshot) this.rawSnapshot = snapshot;
@@ -803,12 +808,14 @@ export class TaskSandbox {
     // 源故障重搜要告知「缓存没被采信」——否则 agent 以为自己拿到的还是同一份旧证据。
     // 旧候选不机械并进新快照(内容寻址 id / observedSnapshots 绑定不许被改写),
     // 而是提示 agent 去对照自己此前拿到的那份(degraded 缓存常带候选,别丢线索)。
+    // 措辞是条件式:不健康缓存可能来自预搜、agent 还没读过(viewResourceSnapshot
+    // 没叫过、也不在其 searchResources 返回里),那种「仍在你此前的返回里」是假的。
     if (cachedUntrusted) {
       const oldCount = cachedSnapshot.candidates.length;
       const oldSources = cachedSnapshot.sourceHealth?.unhealthySources.join("、") ?? "";
       searchWarnings.unshift(
         `上次搜索「${effectiveKeyword}」的缓存快照来自不健康的搜索源(${cachedSnapshot.sourceHealth?.status ?? "未知"}${oldSources ? `：${oldSources}` : ""}),不予采信;本次已重搜真实源,以下为新结果。` +
-          (oldCount > 0 ? `上次那份快照共 ${oldCount} 条候选,仍在你此前的返回里,可对照。` : ""),
+          (oldCount > 0 ? `若你此前已读过该快照,上次有 ${oldCount} 条候选可对照;未读过则请以本次结果为准。` : ""),
       );
     }
 

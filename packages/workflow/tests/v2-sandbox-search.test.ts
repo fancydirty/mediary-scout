@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { TaskSandbox } from "../src/acquisition-v2/sandbox.js";
 import { FakeResourceProviderV2 } from "../src/acquisition-v2/fake-provider.js";
 import { RealResourceProviderV2 } from "../src/acquisition-v2/real-provider-adapter.js";
@@ -825,8 +825,14 @@ describe("dedup 只信任健康快照（fallback 事故修复：坏快照不再�
     expect(second.deduped).not.toBe(true);
     expect(provider.calls).toBe(2);
     expect(second.snapshot?.candidates.map((c) => c.title)).toEqual(["新候选"]);
-    // 旧的 2 条以提示形式带出,不丢线索。
-    expect((second.warnings ?? []).join("\n")).toMatch(/2 条候选/);
+    // 旧的 2 条以提示形式带出,不丢线索。但措辞不许过度承诺:那份旧快照可能是
+    // 预搜落的、agent 还没读过(没 viewResourceSnapshot 也不在其 searchResources
+    // 返回里),所以是条件式——读过才对照,没读过以本次为准。
+    const warned = (second.warnings ?? []).join("\n");
+    expect(warned).toMatch(/2 条候选/);
+    expect(warned).toMatch(/若你此前已读过该快照/);
+    expect(warned).toMatch(/未读过则请以本次结果为准/);
+    expect(warned).not.toMatch(/仍在你此前的返回里/);
   });
 
   it("源故障重搜不消耗搜索预算（预搜坏快照场景）", async () => {
@@ -849,5 +855,85 @@ describe("dedup 只信任健康快照（fallback 事故修复：坏快照不再�
       expect((await sandbox.searchResources(`kw${i}`)).refused, `kw${i} 应放行`).toBeUndefined();
     }
     expect((await sandbox.searchResources("kw-final")).refused).toBeTruthy();
+  });
+});
+
+describe("抛错不钉死关键词（fallback 事故的另一半：抛错钉死）", () => {
+  it("provider 抛错 → 同词重搜真打 provider；成功后同词才 dedup（回归）", async () => {
+    // 事故原形:real-provider-adapter 的 DB 读失败就是 provider 抛错。旧契约把词
+    // 钉进 seenKeywords 在先,重试同词落 decision==="duplicate" 只拿裸
+    // {deduped:true}——不打 provider、无警告、还烧预算。新契约:抛错不留痕,
+    // 重试同词自然走真搜(重试真实失败是合理行为)。
+    let calls = 0;
+    const sandbox = new TaskSandbox({
+      provider: {
+        async search(keyword: string) {
+          calls += 1;
+          if (calls === 1) throw new Error("real-provider-adapter DB read failed");
+          return { id: `s_${keyword}`, keyword, candidates: [{ id: "c1", title: "Show" }] };
+        },
+      },
+      searchBudget: 8,
+    });
+
+    await expect(sandbox.searchResources("Show")).rejects.toThrow(/DB read failed/);
+
+    const retry = await sandbox.searchResources("Show");
+    expect(calls).toBe(2); // 重试真打了 provider,不是裸 deduped 挡回
+    expect(retry.deduped).not.toBe(true);
+    expect(retry.snapshot?.candidates).toHaveLength(1);
+
+    // 成功之后同词才 dedup——这是既有契约的回归锁。
+    const third = await sandbox.searchResources("Show");
+    expect(third.deduped).toBe(true);
+    expect(calls).toBe(2);
+  });
+
+  it("抛错的那次不占预算:失败的搜索不进 seenKeywords,8 个新词照旧搜满", async () => {
+    const sandbox = new TaskSandbox({
+      provider: {
+        async search(keyword: string) {
+          if (keyword === "bad") throw new Error("PanSou timeout");
+          return { id: `s_${keyword}`, keyword, candidates: [] };
+        },
+      },
+      searchBudget: 8,
+    });
+
+    await expect(sandbox.searchResources("bad")).rejects.toThrow(/PanSou timeout/);
+    // 抛错不钉词(也不占名额):8 个全新词全部放行,第 9 个才拒——旧契约下
+    // 「bad」已吃掉一个名额,只能放行 7 个。
+    for (let i = 0; i < 8; i++) {
+      expect((await sandbox.searchResources(`kw${i}`)).refused, `kw${i} 应放行`).toBeUndefined();
+    }
+    expect((await sandbox.searchResources("kw-final")).refused).toBeTruthy();
+    // 预算仍是硬闸:烧满后重试失败词同样被拒(没证据就是没证据)。
+    expect((await sandbox.searchResources("bad")).refused).toBeTruthy();
+  });
+
+  it("duplicate 兜底(有词无快照)走真搜并打警告,不回裸 {deduped:true}", async () => {
+    // 白盒构造「seenKeywords 有词、snapshotByKeyword 无快照」的防御窗口(钉词
+    // 不带快照)——旧「抛错钉死」事故就是这个形状:裸 {deduped:true} 会让 agent
+    // 既不打 provider 又拿不到任何证据、还白烧一轮。兜底必须真搜。
+    let calls = 0;
+    const sandbox = new TaskSandbox({
+      provider: {
+        async search(keyword: string) {
+          calls += 1;
+          return { id: `s_${keyword}`, keyword, candidates: [{ id: "c1", title: "Show" }] };
+        },
+      },
+      searchBudget: 8,
+    });
+    (sandbox as unknown as { seenKeywords: Set<string> }).seenKeywords.add("show");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const result = await sandbox.searchResources("Show");
+
+    expect(calls).toBe(1); // 真搜了,没被裸 deduped 挡回
+    expect(result.deduped).not.toBe(true);
+    expect(result.snapshot?.candidates).toHaveLength(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("duplicate keyword"));
+    warn.mockRestore();
   });
 });
