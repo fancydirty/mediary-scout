@@ -33,8 +33,9 @@ const ENV_SOURCE_PILL: ServicePill = { label: "来自环境变量", tone: "neutr
 /** 主模型：baseURL / modelId 是 resolveAgentModelConfig 的生效值（DB → AGENT_MODEL_* →
  *  XIAOMI_MIMO_* → 出厂免费预设）；fromEnv = 其中非空的一项是 env 补的（DB 那格留空）。
  *  Key 不参与判定 —— 本地模型 Key 可留空（与面板导语一致）。
- *  fromFreePreset = 调用方用 isFreeLlmPreset(effectiveLlm)（即 source === "free-preset"）
- *  算好传入（单一事实源在 resolveAgentModelConfig）：DB 和 env 都空、吃到出厂免费预设时，
+ *  fromFreePreset = 调用方用 isFreeLlmPreset(effectiveLlm) 按生效 baseURL/modelId
+ *  逐字比较算好传入（不等于 source === "free-preset"：「换回免费模型」按钮写库后
+ *  source 是 db，但值仍逐字等于预设，同样算免费档）：DB 和 env 都空、吃到出厂免费预设时，
  *  只报一颗「Kilo 免费池」—— 预设的 baseURL/modelId 是我们写死的，展示出来只是噪音；
  *  也无意叠「来自环境变量」（预设不是 env 补的）。 */
 export function llmPills(input: { baseURL: string; modelId: string; fromEnv: boolean; fromFreePreset?: boolean }): ServicePill[] {

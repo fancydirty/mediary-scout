@@ -5,11 +5,11 @@ import { queueCandidateSeries, queueCandidateTracking, reserveCandidate } from "
 import { assertNotDemo } from "../lib/demo-mode";
 
 /**
- * Acquire-time LLM pre-check (issue #52) — RETIRED with the shipped free preset:
- * 三键全空时 resolveAgentModelConfig 已回落 FREE_LLM_PRESET，「未配置 AI 模型」
- * 不再是获取前的可达失败，acquireLlmPreflightError 恒返回 null（详见其注释）。
- * 保留本函数与全部调用点（llm_not_configured 状态枚举、前端分支零改动），
- * 恒走 null 快路；函数与枚举的清理另开 PR。
+ * Acquire-time LLM pre-check (issue #52) — NARROWED with the shipped free preset:
+ * 零配置时 resolveAgentModelConfig 回落 FREE_LLM_PRESET，不再拦截（开箱即用）；
+ * acquireLlmPreflightError 只拦半截配置（baseURL/modelId 一空一非空）——那种
+ * run 入队后会在 claim 前死于 llmConfigError 且无人收尸（ghost run），所以在
+ * 点击时用同一条文案友好拦下（详见其注释）。
  */
 async function acquireLlmNotConfigured(): Promise<RequestTrackingActionResult | null> {
   const { getCurrentAccountId, acquireLlmPreflightError } = await import("../lib/workflow-runtime");
@@ -621,7 +621,7 @@ export async function testLlmConnectionAction(): Promise<{ ok: boolean; message:
       "../lib/workflow-runtime"
     );
     const accountId = await getCurrentAccountId();
-    // Resolve EXACTLY as the worker does (account-scoped → env). No default endpoint.
+    // Resolve EXACTLY as the worker does (account-scoped → env → 出厂免费预设回落).
     const cfg = await resolveAgentModelConfig(getAccountScopedSettings(accountId));
     const { createAgentModel, llmConfigError } = await import("@media-track/workflow");
     // BYO + agnostic: baseURL + 模型 are required; API Key is optional (keyless

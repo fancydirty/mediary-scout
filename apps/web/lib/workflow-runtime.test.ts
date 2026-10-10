@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { FREE_LLM_PRESET, isFreeLlmPreset } from "@media-track/workflow";
+import { FREE_LLM_PRESET, isFreeLlmPreset, llmConfigError } from "@media-track/workflow";
 import {
   acquireLlmPreflightError,
   resolveAgentModelConfig,
@@ -199,17 +199,18 @@ describe("resolveAgentModelConfig（DB → env → 出厂免费预设）", () =>
   });
 });
 
-describe("acquireLlmPreflightError（已退役：免费预设兜底后恒 null，不再拦截任何获取）", () => {
+describe("acquireLlmPreflightError（收窄：免费预设兜底后只拦半截配置，零配置不拦）", () => {
   const configured = repoMap({
     [LLM_BASE_URL_SETTING_KEY]: "https://api.example.com/v1",
     [LLM_MODEL_ID_SETTING_KEY]: "gpt-4o-mini",
   });
   const unconfigured = repoMap({});
+  const liveEnv = { MEDIA_TRACK_AGENT_ADAPTER: "vercel-ai" } as unknown as NodeJS.ProcessEnv;
 
-  it("live (vercel-ai) + unconfigured → null（出厂免费预设兜底，issue #52 的门退役）", async () => {
+  it("live (vercel-ai) + unconfigured → null（出厂免费预设兜底，开箱即用不拦）", async () => {
     const message = await acquireLlmPreflightError({
       settings: unconfigured,
-      env: { MEDIA_TRACK_AGENT_ADAPTER: "vercel-ai" } as unknown as NodeJS.ProcessEnv,
+      env: liveEnv,
     });
     expect(message).toBeNull();
   });
@@ -217,7 +218,43 @@ describe("acquireLlmPreflightError（已退役：免费预设兜底后恒 null�
   it("live (vercel-ai) + fully configured → null", async () => {
     const message = await acquireLlmPreflightError({
       settings: configured,
-      env: { MEDIA_TRACK_AGENT_ADAPTER: "vercel-ai" } as unknown as NodeJS.ProcessEnv,
+      env: liveEnv,
+    });
+    expect(message).toBeNull();
+  });
+
+  it("live (vercel-ai) + DB 半截（baseURL 有、modelId 空）→ 返回 llmConfigError 文案（点击时友好拦截，杜绝 ghost run）", async () => {
+    const message = await acquireLlmPreflightError({
+      settings: repoMap({ [LLM_BASE_URL_SETTING_KEY]: "https://half.example/v1" }),
+      env: liveEnv,
+    });
+    expect(message).toBe(llmConfigError({ baseURL: "https://half.example/v1" }));
+    expect(message).toContain("未配置 AI 模型");
+  });
+
+  it("live (vercel-ai) + DB 半截镜像（modelId 有、baseURL 空）→ 同样拦截", async () => {
+    const message = await acquireLlmPreflightError({
+      settings: repoMap({ [LLM_MODEL_ID_SETTING_KEY]: "orphan-model" }),
+      env: liveEnv,
+    });
+    expect(message).toBe(llmConfigError({ modelId: "orphan-model" }));
+  });
+
+  it("live (vercel-ai) + env 半截（baseURL 有、modelId 空）→ 同样拦截（半截可能来自任一层）", async () => {
+    const message = await acquireLlmPreflightError({
+      settings: unconfigured,
+      env: {
+        MEDIA_TRACK_AGENT_ADAPTER: "vercel-ai",
+        AGENT_MODEL_BASE_URL: "https://half-env.example/v1",
+      } as unknown as NodeJS.ProcessEnv,
+    });
+    expect(message).toBe(llmConfigError({ baseURL: "https://half-env.example/v1" }));
+  });
+
+  it("fake/demo adapter + 半截配置 → null (no LLM needed, never blocks)", async () => {
+    const message = await acquireLlmPreflightError({
+      settings: repoMap({ [LLM_BASE_URL_SETTING_KEY]: "https://half.example/v1" }),
+      env: { MEDIA_TRACK_AGENT_ADAPTER: "fake" } as unknown as NodeJS.ProcessEnv,
     });
     expect(message).toBeNull();
   });

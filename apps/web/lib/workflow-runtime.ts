@@ -1140,16 +1140,15 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
     await pushNotificationsSince(repository, startedAt, { workflowRunId: replace.workflowRunId });
     return replace;
   }
-  // Leftover staging heals itself. No notification and no push.
+  // Leftover staging heals itself. No notification and no push — which also means
+  // no llmConfig here: staging recovery's failure path never reaches the
+  // free-preset copy (handleWorkflowRunFailure goes silent for staging_recovery),
+  // so the param would be dead weight.
   return runQueuedStagingRecovery({
     repository,
     resourceProvider: await getWorkerResourceProvider(),
     storage,
     model,
-    // Free-tier failure copy (Task 5): lets the worker's failure handler run
-    // isFreeLlmPreset on the BASE model config; per-account runs override via
-    // resolveAccountContext's llmConfig.
-    llmConfig,
     ...language,
     ...quality,
     resolveAccountContext,
@@ -2834,12 +2833,16 @@ export async function resolveAgentModelConfig(
   };
 }
 
-/** RETIRED — issue #52 的获取预检门随出厂免费预设退役，恒返回 null：三键全空时
- *  resolveAgentModelConfig 已回落 FREE_LLM_PRESET，「未配置 AI 模型」不再是获取前
- *  可达的失败，预检没有可拦的东西了（半截配置这种用户错误仍在 worker 的
- *  getAgentModel / 设置页「测试连接」处 fail-fast，不在点击获取时拦）。保留函数与
- *  actions.ts 的 4 处调用点不动，避免 llm_not_configured 状态枚举与前端分支的连锁
- *  改动；函数本体与调用点的清理另开 PR。Settings/env 参数保留供既有测试注入。 */
+/** Acquire-time LLM pre-check (issue #52)，随出厂免费预设收窄：对**生效配置**
+ *  （resolveAgentModelConfig：DB → env → FREE_LLM_PRESET 回落）跑 llmConfigError。
+ *  零配置 → 回落补齐 baseURL/modelId → 校验通过 → 返 null 不拦（开箱即用语义
+ *  保留，#52 原先拦的「完全没配」场景已不存在）；半截配置（DB 或 env 的
+ *  baseURL/modelId 一空一非空——saveLlmConfigAction 允许存这种行）→ 回落不
+ *  触发（回落只认两键全空）→ 返回可行动文案，点击获取时友好拦截。不拦的话
+ *  run 会入队，单用户（默认账号）路径的 getAgentModel 在 claim 之前抛
+ *  llmConfigError，异常传出 drain（background-worker 只 console.error）→ run
+ *  永久 queued、无失败卡、无通知 —— ghost run。fake/demo adapter 不需要 LLM
+ *  → 恒 null（永不拦 demo/fake）。签名与 actions.ts 的调用点保持不变。 */
 export async function acquireLlmPreflightError(
   arg:
     | string
@@ -2848,8 +2851,13 @@ export async function acquireLlmPreflightError(
         env?: NodeJS.ProcessEnv;
       },
 ): Promise<string | null> {
-  void arg; // 已退役：不读配置、不看 adapter，恒不拦截
-  return null;
+  const settings = typeof arg === "string" ? getAccountScopedSettings(arg) : arg.settings;
+  const env = typeof arg === "string" ? process.env : arg.env ?? process.env;
+  if (env.MEDIA_TRACK_AGENT_ADAPTER !== "vercel-ai") {
+    return null;
+  }
+  const resolved = await resolveAgentModelConfig(settings, env);
+  return llmConfigError(resolved);
 }
 
 async function getAgentModel(repository: {
