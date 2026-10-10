@@ -150,6 +150,13 @@ export function createAgentModelFromEnv(env: NodeJS.ProcessEnv = process.env): L
   if (apiKey !== undefined) options.apiKey = apiKey;
   if (baseURL !== undefined) options.baseURL = baseURL;
   if (modelId !== undefined) options.modelId = modelId;
+  // 生效配置等于免费池预设（Copilot r4 High）→ 残留 key 就地丢弃，不得发给
+  // Kilo 第三方免费池。与 web 解析层 resolveAgentModelConfig 守同一不变量
+  // （生效值==预设 → 返回值不带 key）：残留 key 属于用户自带服务（如
+  // DeepSeek），作为 Authorization/api-key 头发给免费池既无意义又泄露。
+  // 本工厂服务直接读 env 的调用方（worker 直连 / CLI / §6a 脚本），不能只靠
+  // web 层防护。回落分支无需处理 —— FREE_LLM_PRESET 本身无 key。
+  if (isFreeLlmPreset(options)) delete options.apiKey;
   const { providerSettings, modelId: id } = createAgentProviderConfig(options);
   return createOpenAICompatible(providerSettings)(id);
 }

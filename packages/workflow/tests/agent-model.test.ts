@@ -182,6 +182,37 @@ describe("agent-model — the live OpenAI-compatible (BYO) LanguageModel factory
     expect((model as { modelId?: string }).modelId).toBe(FREE_LLM_PRESET.modelId);
   });
 
+  // Copilot r4 High：env 显式配置的 baseURL/modelId 逐字等于 FREE_LLM_PRESET
+  // 且带非空 key —— 三键非全空 → 不走回落分支 → key 被拷进 options → 以
+  // Authorization Bearer + api-key 两个鉴权头发给 Kilo。web 解析层
+  // （resolveAgentModelConfig）已守同一不变量（生效值==预设 → 丢 key），env
+  // 直连工厂服务 worker 直连 / CLI / §6a 脚本，必须同样防护：
+  // preset-valued configs never carry a key。
+  it("drops a residual apiKey when env EXPLICITLY equals the free preset (never send a key to the free pool)", () => {
+    const model = createAgentModelFromEnv({
+      AGENT_MODEL_API_KEY: "sk-residual",
+      AGENT_MODEL_BASE_URL: FREE_LLM_PRESET.baseURL,
+      AGENT_MODEL_ID: FREE_LLM_PRESET.modelId,
+    } as NodeJS.ProcessEnv);
+    expect((model as { modelId?: string }).modelId).toBe(FREE_LLM_PRESET.modelId);
+    const endpoint = (
+      model as unknown as {
+        config: { url: (o: { path: string }) => string };
+      }
+    ).config.url({ path: "/chat/completions" });
+    expect(endpoint).toBe(`${FREE_LLM_PRESET.baseURL}/chat/completions`);
+    // 免费池无 key：残留 key 不得以任何鉴权头发给 Kilo。@ai-sdk 2.0.48 会把
+    // 头名规范化为小写（authorization），大小写两种形态都要断言到。
+    const headers = (
+      model as unknown as {
+        config: { headers: () => Record<string, string> };
+      }
+    ).config.headers();
+    expect(headers["Authorization"]).toBeUndefined();
+    expect(headers["authorization"]).toBeUndefined();
+    expect(headers["api-key"]).toBeUndefined();
+  });
+
   // 半截 env 是用户错误，不该静默变成免费池（行为与改动前一致）。
   it("still throws on a HALF-configured env (baseURL without modelId)", () => {
     expect(() =>
