@@ -185,6 +185,23 @@ describe("resolveAgentModelConfig（DB → env → 出厂免费预设）", () =>
     expect(isFreeLlmPreset(cfg)).toBe(true);
   });
 
+  // Copilot r2 B：与 agent-model.ts 的 createAgentModelFromEnv 同一条规则 —— env
+  // 内部 modern→legacy 兜底必须 blank-aware：.env.example 的空串 AGENT_MODEL_*
+  // 不能遮蔽有值的 XIAOMI_MIMO_*（否则免费预设回落把 legacy 配置静默换 Kilo）。
+  // DB→env 的 ?? 语义不动（DB 值 undefined 才看 env）。
+  it("env 层空串 AGENT_MODEL_* 不遮蔽 legacy XIAOMI_MIMO_*（每对取第一个非空白值）", async () => {
+    const cfg = await resolveAgentModelConfig(
+      repoMap({}),
+      cast({
+        AGENT_MODEL_BASE_URL: "",
+        AGENT_MODEL_ID: "",
+        XIAOMI_MIMO_BASE_URL: "https://x/v1",
+        XIAOMI_MIMO_MODEL_ID: "m",
+      }),
+    );
+    expect(cfg).toEqual({ baseURL: "https://x/v1", modelId: "m", source: "env" });
+  });
+
   it("半截配置（只有 baseURL）不回落 —— 原样返回，交给下游 llmConfigError fail-fast（用户错误不静默变免费池）", async () => {
     const cfg = await resolveAgentModelConfig(repoMap({}), cast({ AGENT_MODEL_BASE_URL: "https://half.example/v1" }));
     expect(cfg).toEqual({ baseURL: "https://half.example/v1", source: "env" });

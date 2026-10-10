@@ -67,6 +67,33 @@ describe("isTransientAcquisitionError", () => {
     expect(isTransientAcquisitionError(outer)).toBe(true);
   });
 
+  // Copilot r2 D：AI SDK 的 APICallError 把 HTTP 状态码放在数值字段 statusCode
+  // 上，message 可能完全不含数字（如 "Request failed"）—— 只扫文本会漏退避。
+  it("matches a numeric statusCode even when the message has no code (AI SDK APICallError shape)", () => {
+    expect(isTransientAcquisitionError({ statusCode: 503, message: "Request failed" })).toBe(true);
+    const err = new Error("Request failed");
+    (err as Error & { statusCode?: number }).statusCode = 503;
+    expect(isTransientAcquisitionError(err)).toBe(true);
+    const responseStatusOnly = new Error("Request failed");
+    (responseStatusOnly as Error & { responseStatus?: number }).responseStatus = 429;
+    expect(isTransientAcquisitionError(responseStatusOnly)).toBe(true);
+  });
+
+  it("is FALSE for a numeric statusCode that is not transient (404 model retired)", () => {
+    expect(isTransientAcquisitionError({ statusCode: 404, message: "Request failed" })).toBe(false);
+    const err = new Error("Request failed");
+    (err as Error & { statusCode?: number }).statusCode = 404;
+    expect(isTransientAcquisitionError(err)).toBe(false);
+  });
+
+  it("checks the numeric statusCode at every cause-chain node", () => {
+    const inner = new Error("Request failed");
+    (inner as Error & { statusCode?: number }).statusCode = 429;
+    const outer = new Error("AI_CallError: request aborted");
+    (outer as { cause?: unknown }).cause = inner;
+    expect(isTransientAcquisitionError(outer)).toBe(true);
+  });
+
   // 404 / model-not-found 绝不是瞬时错：模型下架（免费池换模型）重试也不会好，
   // 必须终止失败走 fail-loud 文案（worker 侧另有「内置免费模型已失效」指引）。
   it("is FALSE for 404 / model-not-found (model retired is not transient)", () => {

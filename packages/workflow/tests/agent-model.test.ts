@@ -126,6 +126,26 @@ describe("agent-model — the live OpenAI-compatible (BYO) LanguageModel factory
     expect((fallback as { modelId?: string }).modelId).toBe("mimo-v2.5-pro");
   });
 
+  // Copilot r2 A：出厂 .env.example 带三个空串 AGENT_MODEL_* 键 —— 部署若同时
+  // 保留有值的 XIAOMI_MIMO_*，空 modern 键不能遮蔽 legacy 值。?? 链把空串当
+  // 有效值，会让「三键全空→免费预设」判定把 legacy 配置静默换成 Kilo；每对
+  // modern/legacy 键必须取第一个非空白值。
+  it("blank AGENT_MODEL_* strings do NOT shadow a configured XIAOMI_MIMO_* env (first non-blank wins)", () => {
+    const model = createAgentModelFromEnv({
+      AGENT_MODEL_BASE_URL: "",
+      AGENT_MODEL_ID: "",
+      XIAOMI_MIMO_BASE_URL: "https://x/v1",
+      XIAOMI_MIMO_MODEL_ID: "m",
+    } as NodeJS.ProcessEnv);
+    expect((model as { modelId?: string }).modelId).toBe("m");
+    const endpoint = (
+      model as unknown as {
+        config: { url: (o: { path: string }) => string };
+      }
+    ).config.url({ path: "/chat/completions" });
+    expect(endpoint).toBe("https://x/v1/chat/completions");
+  });
+
   // 出厂回落（免费内置模型）：env 三键全空（未设或空串）→ 不再抛「未配置」，
   // 构造 Kilo 免费池模型。@ai-sdk/openai-compatible 把 endpoint 藏在私有
   // config.url 里 —— 从 model 上取它来断言 provider baseURL 真的是 Kilo 网关。

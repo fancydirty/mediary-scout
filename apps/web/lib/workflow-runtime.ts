@@ -28,6 +28,7 @@ import {
   createStubAcquisitionModel,
   FREE_LLM_PRESET,
   isFreeLlmPreset,
+  isBlankEnvValue,
   llmConfigError,
   formatDailyDigestPushText,
   scheduledDigestItems,
@@ -2805,12 +2806,20 @@ export async function resolveAgentModelConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<{ apiKey?: string; baseURL?: string; modelId?: string; source: "db" | "env" | "free-preset" }> {
   const llm = await getLlmConfig(repository);
-  const apiKey = llm.apiKey ?? env.AGENT_MODEL_API_KEY ?? env.XIAOMI_MIMO_API_KEY;
-  const baseURL = llm.baseURL ?? env.AGENT_MODEL_BASE_URL ?? env.XIAOMI_MIMO_BASE_URL;
-  const modelId = llm.modelId ?? env.AGENT_MODEL_ID ?? env.XIAOMI_MIMO_MODEL_ID;
+  // env 内部的 modern→legacy 兜底 blank-aware（Copilot r2 B）：出厂 .env.example
+  // 带三个空串 AGENT_MODEL_* 键，与有值的 XIAOMI_MIMO_* 并存时空串不能遮蔽
+  // legacy 值 —— 否则下面的免费预设回落会把用户的 legacy 服务静默换成 Kilo。
+  // 与 agent-model.ts 的 createAgentModelFromEnv 同一条规则（isBlankEnvValue
+  // 自 @media-track/workflow 导入，单一谓词，无跨包复制体）。DB→env 的 ??
+  // 不动：DB 值 undefined 才看 env 是既有语义（DB 空串已在 getLlmConfig 归一为
+  // undefined）。
+  const pickEnvValue = (modern: string | undefined, legacy: string | undefined): string | undefined =>
+    isBlankEnvValue(modern) ? legacy : modern;
+  const apiKey = llm.apiKey ?? pickEnvValue(env.AGENT_MODEL_API_KEY, env.XIAOMI_MIMO_API_KEY);
+  const baseURL = llm.baseURL ?? pickEnvValue(env.AGENT_MODEL_BASE_URL, env.XIAOMI_MIMO_BASE_URL);
+  const modelId = llm.modelId ?? pickEnvValue(env.AGENT_MODEL_ID, env.XIAOMI_MIMO_MODEL_ID);
   // 出厂回落：只看 baseURL 与 modelId（都比 env 层的「三键全空」宽一档，理由见上）。
-  const blank = (value: string | undefined) => value === undefined || value.trim() === "";
-  if (blank(baseURL) && blank(modelId)) {
+  if (isBlankEnvValue(baseURL) && isBlankEnvValue(modelId)) {
     // 不带 apiKey：FREE_LLM_PRESET 本就只有 baseURL/modelId，残留 key 就地丢弃（②）。
     return { ...FREE_LLM_PRESET, source: "free-preset" };
   }

@@ -58,9 +58,35 @@ function messageOf(error: unknown): string {
   return "";
 }
 
+/**
+ * HTTP 状态码的数值判定比文本扫描稳：AI SDK 的 APICallError 把状态码放在
+ * 数值字段 `statusCode` 上，message 可能完全不含数字（如
+ * `{statusCode: 503, message: "Request failed"}`）—— 只扫文本就漏退避；反之
+ * `responseStatus` 是部分 fetch 封装用的同义字段，一并认。只认 number（字符串
+ * 形态的 "503" 已被文本模式覆盖）且只认 429 与 5xx（与上面文本模式的保守口径
+ * 一致：4xx 里只有 429 是「等一下再试」，404/401 重试也不会好）。数值相等
+ * 不会像子串那样被业务文本（「第 503 集」）误触发。
+ */
+function isTransientHttpStatus(code: unknown): boolean {
+  return typeof code === "number" && (code === 429 || (code >= 500 && code < 600));
+}
+
+/** 一个 cause 链节点上是否带瞬时的 HTTP 状态码字段（APICallError.statusCode /
+ *  fetch 封装的 responseStatus）。 */
+function carriesTransientHttpStatus(error: unknown): boolean {
+  if (error === null || typeof error !== "object") {
+    return false;
+  }
+  const { statusCode, responseStatus } = error as { statusCode?: unknown; responseStatus?: unknown };
+  return isTransientHttpStatus(statusCode) || isTransientHttpStatus(responseStatus);
+}
+
 export function isTransientAcquisitionError(error: unknown, depth = 0): boolean {
   if (error === null || error === undefined || depth > 5) {
     return false;
+  }
+  if (carriesTransientHttpStatus(error)) {
+    return true;
   }
   const msg = messageOf(error);
   if (TRANSIENT_PATTERNS.some((pattern) => msg.includes(pattern))) {

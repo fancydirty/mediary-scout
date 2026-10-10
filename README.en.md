@@ -56,7 +56,7 @@ Open `http://<host>:3000` and configure it in Settings. Later updates are one cl
 | Multi-user | No | Yes |
 | Phone / remote access | This machine only | Tailscale / Cloudflare Tunnel |
 
-Either way, bringing your own OpenAI-compatible AI model endpoint is an optional upgrade (the key stays in your own instance). Without a configured AI model, the app defaults to Kilo Code's free public model pool (no signup needed; search queries are sent to Kilo and its upstream model providers). Metadata works out of the box. Resource search uses PanSou: Docker bundles one, the desktop app defaults to a public instance you can swap for your own in Settings; Prowlarr can be added for magnets.
+Either way, bringing your own OpenAI-compatible AI model endpoint is an optional upgrade (the key stays in your own instance). Without a configured AI model, the app defaults to Kilo Code's free public model pool (no signup needed; the acquisition conversation context - search queries, task and message content, candidate results, file names - is sent to Kilo and its upstream model providers). Metadata works out of the box. Resource search uses PanSou: Docker bundles one, the desktop app defaults to a public instance you can swap for your own in Settings; Prowlarr can be added for magnets.
 
 ## Supported drives
 

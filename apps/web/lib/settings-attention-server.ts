@@ -1,6 +1,7 @@
 import {
   getStorageBrand,
   isRegisteredStorageProvider,
+  llmConfigError,
   resolveWorkspaceFromParam,
   type WorkflowRepository,
 } from "@media-track/workflow";
@@ -99,6 +100,9 @@ export async function loadSettingsAttentionSummary(options?: {
   // 依然存在（baseURL/modelId 永远有值）——看原始 DB 配置（getLlmConfig）会把
   // 开箱即用的出厂态误报成「还没配置 AI 模型」。提醒只剩一个真语义：生效配置
   // 真的无法构造模型（半截配置：只有地址没模型名，回落分支不接这种用户错误）。
+  // 判定用 llmConfigError === null（Copilot r2 C）：Boolean(baseURL && modelId)
+  // 会把纯空白串当 truthy —— 空白 baseURL + 有值 modelId 的形态会被误标
+  // configured、抑制提醒，而获取链路的 llmConfigError 会拒绝这种配置。
   const [llm, isOwner] = await Promise.all([
     resolveAgentModelConfig(getAccountScopedSettings(accountId)),
     resolveIsOwner(repository, accountId),
@@ -142,7 +146,7 @@ export async function loadSettingsAttentionSummary(options?: {
       status: drive.status,
     })),
     brandLabel,
-    llmConfigured: Boolean(llm.baseURL && llm.modelId),
+    llmConfigured: llmConfigError(llm) === null,
     searchSource: { custom: customSearchSource, reachable: searchSourceReachable },
     availableUpdate,
     ...(workspace.activeStorageId ? { activeStorageId: workspace.activeStorageId } : {}),

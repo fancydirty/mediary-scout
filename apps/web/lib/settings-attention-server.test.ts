@@ -353,6 +353,22 @@ describe("missing_llm 判定口径 — 生效配置（resolveAgentModelConfig）
 
     expect(summary.items.map((i) => i.kind)).toContain("missing_llm");
   });
+
+  // Copilot r2 C：Boolean(baseURL && modelId) 把空白串当 truthy —— baseURL 是
+  // 纯空白 + modelId 有值的形态会被误标 configured、抑制提醒，而获取链路的
+  // llmConfigError 会拒绝这种配置。判定必须与 llmConfigError 同口径。
+  it("空白串 baseURL + 有值 modelId（llmConfigError 拒绝的形态）→ 仍报 missing_llm", async () => {
+    makeRepository([]);
+    (resolveAgentModelConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+      baseURL: "   ",
+      modelId: "m",
+      source: "db",
+    });
+
+    const summary = await loadSettingsAttentionSummary({});
+
+    expect(summary.items.map((i) => i.kind)).toContain("missing_llm");
+  });
 });
 
 describe("resolveCurrentIsOwner — single-user mode", () => {

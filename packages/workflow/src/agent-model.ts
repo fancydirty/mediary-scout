@@ -110,15 +110,28 @@ export function createAgentModel(options: AgentModelOptions = {}): LanguageModel
 
 /** An env value counts as「没配置」when it is unset OR blank — the shipped
  *  .env.example has three EMPTY-STRING AGENT_MODEL_* keys, and a copied-verbatim
- *  env file must still fall back to the free preset (not throw「未配置」). */
-function isBlankEnvValue(value: string | undefined): boolean {
+ *  env file must still fall back to the free preset (not throw「未配置」).
+ *  EXPORTED because apps/web's resolveAgentModelConfig reuses the same
+ *  blank-awareness for its env-layer modern→legacy pick (one predicate, no
+ *  cross-package copy drifting apart). */
+export function isBlankEnvValue(value: string | undefined): boolean {
   return value === undefined || value.trim() === "";
+}
+
+/** env 层 modern→legacy 兜底取「第一个非空白值」：出厂 .env.example 带三个空串
+ *  AGENT_MODEL_* 键，部署若同时保留有值的 XIAOMI_MIMO_*，`??` 会把空串当有效值、
+ *  遮蔽 legacy 配置（免费预设回落随之把用户的 legacy 服务静默换成 Kilo）。 */
+function pickEnvValue(modern: string | undefined, legacy: string | undefined): string | undefined {
+  return isBlankEnvValue(modern) ? legacy : modern;
 }
 
 /**
  * Build the live LanguageModel from env. Reads AGENT_MODEL_* with XIAOMI_MIMO_*
  * as the fallback (back-compat: existing instances that set the legacy keys keep
- * working). Same precedence the web/worker and interrogation use.
+ * working). Same precedence the web/worker and interrogation use. The env-layer
+ * modern→legacy pick is BLANK-AWARE (pickEnvValue): an empty-string modern key
+ * (the .env.example pattern) is「没配置」, not a value — it must not shadow a
+ * configured legacy key.
  *
  * 出厂回落：三键全空（未设或空串，含 .env.example 形态）时回落
  * FREE_LLM_PRESET（Kilo 免费池），不再抛「未配置」。半截 env（如有 baseURL
@@ -127,9 +140,9 @@ function isBlankEnvValue(value: string | undefined): boolean {
  * 不动（显式 options 缺值仍 fail-fast）。
  */
 export function createAgentModelFromEnv(env: NodeJS.ProcessEnv = process.env): LanguageModel {
-  const apiKey = env.AGENT_MODEL_API_KEY ?? env.XIAOMI_MIMO_API_KEY;
-  const baseURL = env.AGENT_MODEL_BASE_URL ?? env.XIAOMI_MIMO_BASE_URL;
-  const modelId = env.AGENT_MODEL_ID ?? env.XIAOMI_MIMO_MODEL_ID;
+  const apiKey = pickEnvValue(env.AGENT_MODEL_API_KEY, env.XIAOMI_MIMO_API_KEY);
+  const baseURL = pickEnvValue(env.AGENT_MODEL_BASE_URL, env.XIAOMI_MIMO_BASE_URL);
+  const modelId = pickEnvValue(env.AGENT_MODEL_ID, env.XIAOMI_MIMO_MODEL_ID);
   if (isBlankEnvValue(apiKey) && isBlankEnvValue(baseURL) && isBlankEnvValue(modelId)) {
     return createAgentModel(FREE_LLM_PRESET);
   }
