@@ -4329,6 +4329,40 @@ select.setting-control {
   font-weight: 600;
   color: var(--text);
 }
+/* 头部行尾的操作位（ServiceBlock 的 headerAction）：flex 行里推到最右；行太窄被
+ * wrap 到第二行时仍贴右，与胶囊同享行的 gap。 */
+.service-block-head-action {
+  margin-left: auto;
+}
+/* 「换回免费模型」（ServiceBlock.headerAction）：主模型块标题行尾的描边小按钮，
+ * mockup 定稿样式（描边胶囊、透明底、软色文字）。次级动作，不与保存按钮争视觉
+ * 权重；hover 才点亮描边提示可点。 */
+.restore-free-llm-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-pill);
+  font-size: 11.5px;
+  line-height: 1.4;
+  background: transparent;
+  color: var(--text-soft);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.restore-free-llm-button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.restore-free-llm-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.restore-free-llm-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
 /* inline-block, not inline-flex: text-overflow needs a block container, and a
  * user-typed model id (「已配置 · accounts/fireworks/models/…」) must ellipsize
  * inside the panel instead of widening the page. Full text is in the title attr. */

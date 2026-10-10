@@ -10,9 +10,16 @@
  *
  * `describeAgentRunError` maps an LLM auth/401 failure onto an actionable,
  * provider-agnostic Chinese message; every other error passes through unchanged so
- * "no coverage" / transfer failures read exactly as before. It does NOT touch the
- * original error — logs keep the raw detail.
+ * "no coverage" / transfer failures read exactly as before. It does NOT touch
+ * the original error — logs keep the raw detail.
  */
+
+// 状态码提取与退避闸门（isTransientAcquisitionError）共用：AI SDK 的
+// statusCode 与 fetch 封装的 responseStatus 都认 —— 免费档 headline 判定与
+// transient 重试判定对同一个错误形状看到同一个状态码（Copilot r3 C）。
+// r6 M 起 nodeCarriesHttpStatusShape 也从这里来：门控（isLlmHttpStatusError）
+// 与被门控的 transient 状态类判定共用同一形态实现，不再各写一份。
+import { extractHttpStatus, nodeCarriesHttpStatusShape } from "./acquisition-v2/transient-error.js";
 
 /**
  * The model's own content moderation cut the reply before anything was transferred.
@@ -129,16 +136,6 @@ function messageOf(error: unknown): string {
   return "";
 }
 
-function statusCodeOf(error: unknown): number | undefined {
-  if (error !== null && typeof error === "object") {
-    const code = (error as { statusCode?: unknown }).statusCode;
-    if (typeof code === "number") {
-      return code;
-    }
-  }
-  return undefined;
-}
-
 /** True if this error (one node, name+message) is a netdisk brand auth error —
  *  which must NEVER be reported as an AI-模型 auth failure. */
 function isBrandAuthError(error: unknown): boolean {
@@ -161,7 +158,7 @@ export function isLlmAuthError(error: unknown, depth = 0): boolean {
   if (isBrandAuthError(error)) {
     return false;
   }
-  const status = statusCodeOf(error);
+  const status = extractHttpStatus(error);
   if (status === 401 || status === 403) {
     return true;
   }
@@ -199,7 +196,7 @@ export function isLlmRateLimitError(error: unknown, depth = 0): boolean {
   if (isBrandError(error)) {
     return false;
   }
-  if (statusCodeOf(error) === 429) {
+  if (extractHttpStatus(error) === 429) {
     return true;
   }
   const msg = messageOf(error);
@@ -208,6 +205,118 @@ export function isLlmRateLimitError(error: unknown, depth = 0): boolean {
   }
   const cause = (error as { cause?: unknown }).cause;
   return cause === undefined ? false : isLlmRateLimitError(cause, depth + 1);
+}
+
+// 搜索源（非 LLM 的 HTTP 上游）：PanSou/Prowlarr 的报错前缀。免费档失败文案要
+// 点名 Kilo，把搜索源的 4xx/5xx 说成「Kilo 池不可用」会把用户引向完全错误的
+// 方向 —— 与 BRAND_*_MARKERS 同款短路教训。
+const NON_LLM_UPSTREAM_MARKERS = ["pansou", "prowlarr"];
+
+/** True if this error (one node, name+message) is a NON-LLM upstream error — a
+ *  netdisk brand error OR a search-source (PanSou/Prowlarr) error. Such errors
+ *  must never be reported as an AI-模型 problem. */
+function isNonLlmUpstreamError(error: unknown): boolean {
+  if (isBrandError(error)) {
+    return true;
+  }
+  const msg = messageOf(error);
+  return NON_LLM_UPSTREAM_MARKERS.some((marker) => msg.includes(marker));
+}
+
+// Model-retired markers (case-insensitive). A gateway that dropped the model
+// says one of these. Deliberately NOT a bare "404" substring and NOT a bare
+// statusCode-404 match: dead netdisk share links 404 constantly (a dead-link
+// error carries statusCode 404), and misreading those as「模型下架」would point
+// the user at 设置 → AI 模型 for a dead-link problem. Only the unambiguous
+// model-gone phrasing counts.
+const MODEL_GONE_PATTERNS = [
+  "model not found",
+  "model_not_found",
+  "no such model",
+  "model does not exist",
+];
+
+/**
+ * True if `error` (or anything in its `cause` chain) is an LLM「模型下架」failure —
+ * the free pool swapped its lineup and the configured model id no longer resolves.
+ * Used ONLY to pick the free-tier「内置免费模型已失效」failure copy; a non-LLM
+ * upstream short-circuits to false. Recursion-bounded.
+ */
+export function isLlmModelGoneError(error: unknown, depth = 0): boolean {
+  if (error === null || error === undefined || depth > 5) {
+    return false;
+  }
+  if (isNonLlmUpstreamError(error)) {
+    return false;
+  }
+  const msg = messageOf(error);
+  if (MODEL_GONE_PATTERNS.some((pattern) => msg.includes(pattern))) {
+    return true;
+  }
+  const cause = (error as { cause?: unknown }).cause;
+  return cause === undefined ? false : isLlmModelGoneError(cause, depth + 1);
+}
+
+// LLM gateway 5xx phrases (case-insensitive, via messageOf). Paired with the
+// statusCode 500-599 range on APICallError-shaped nodes.
+const LLM_SERVER_ERROR_PATTERNS = [
+  "internal server error",
+  "bad gateway",
+  "service unavailable",
+];
+
+/**
+ * True if `error` (or anything in its `cause` chain) is an LLM gateway server
+ * fluctuation: a 5xx statusCode, or a standard 5xx phrase in the message. Used
+ * ONLY to pick the free-tier「Kilo 公共免费池暂时不可用」failure copy; a non-LLM
+ * upstream (netdisk / PanSou / Prowlarr) short-circuits to false. Recursion-bounded.
+ */
+export function isLlmServerError(error: unknown, depth = 0): boolean {
+  if (error === null || error === undefined || depth > 5) {
+    return false;
+  }
+  if (isNonLlmUpstreamError(error)) {
+    return false;
+  }
+  const status = extractHttpStatus(error);
+  if (status !== null && status >= 500 && status <= 599) {
+    return true;
+  }
+  const msg = messageOf(error);
+  if (LLM_SERVER_ERROR_PATTERNS.some((pattern) => msg.includes(pattern))) {
+    return true;
+  }
+  const cause = (error as { cause?: unknown }).cause;
+  return cause === undefined ? false : isLlmServerError(cause, depth + 1);
+}
+
+/**
+ * True if `error` (or anything in its `cause` chain) carries the HTTP-status
+ * SHAPE the gated transient layer actually matches — including the message-only
+ * forms the isLlm* phrase classifiers deliberately miss ("Request failed with
+ * status code 429", "HTTP 520 from gateway"): a bare 429 substring, a standalone
+ * 5xx token, or a numeric statusCode/responseStatus in the transient range.
+ * The shape check delegates to transient-error's nodeCarriesHttpStatusShape
+ * (single source of truth), so the gate can never be narrower than the gated
+ * capability again (Copilot r6 M).
+ *
+ * A non-LLM upstream (netdisk brand / PanSou / Prowlarr) short-circuits to
+ * false on any chain node — a drive's or search source's 5xx does not enter
+ * the free pool's 1/5/15 backoff just because it carries a status token.
+ * Recursion-bounded.
+ */
+export function isLlmHttpStatusError(error: unknown, depth = 0): boolean {
+  if (error === null || error === undefined || depth > 5) {
+    return false;
+  }
+  if (isNonLlmUpstreamError(error)) {
+    return false;
+  }
+  if (nodeCarriesHttpStatusShape(error)) {
+    return true;
+  }
+  const cause = (error as { cause?: unknown }).cause;
+  return cause === undefined ? false : isLlmHttpStatusError(cause, depth + 1);
 }
 
 /**

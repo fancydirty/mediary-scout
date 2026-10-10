@@ -3,7 +3,12 @@ import type { MediaTitle, TrackedSeason, WorkflowRun } from "../src/domain.js";
 import type { PersistedWorkflowRunSnapshot, PersistWorkflowRunSnapshotInput } from "../src/repository.js";
 import { QuarkAuthError } from "../src/quark-cookie-client.js";
 import { attachStagingLeaks } from "../src/acquisition-v2/directory-lifecycle.js";
-import { handleWorkflowRunFailure } from "../src/worker.js";
+import { FREE_LLM_PRESET } from "../src/agent-model.js";
+import {
+  FREE_LLM_MODEL_GONE_LINE,
+  FREE_LLM_POOL_FAILURE_LINE,
+  handleWorkflowRunFailure,
+} from "../src/worker.js";
 
 const title: MediaTitle = {
   id: "tmdb_movie_1",
@@ -290,6 +295,253 @@ describe("handleWorkflowRunFailure", () => {
       }),
     ).resolves.toMatchObject({ status: "failed" });
     expect(onAuthErrorFreeze).not.toHaveBeenCalled();
+  });
+});
+
+describe("handleWorkflowRunFailure — 免费档失败文案（isFreeLlmPreset 档位分叉）", () => {
+  // 免费池 429 是 transient：重试期间走既有「网络波动·第 N 次自动重试」通知
+  // （无需新文案），这里只验「重试耗尽后」的终态首行点名 Kilo。
+  it("free preset + 429 with retries EXHAUSTED → 首行换成 Kilo 免费池文案", async () => {
+    const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
+    const out = await handleWorkflowRunFailure({
+      claimed: snapshot({ autoRequeueCount: 3 }),
+      error: new Error("Failed after 3 attempts. Last error: Too Many Requests"),
+      repository: { saveWorkflowRunSnapshot: save },
+      now,
+      llmConfig: { ...FREE_LLM_PRESET },
+    });
+    expect(out.status).toBe("failed");
+    const report = save.mock.calls[0]![0].notifications[0]?.report;
+    expect(report?.status).toBe("failed");
+    expect(report?.lines[0]).toBe(FREE_LLM_POOL_FAILURE_LINE);
+    // 免费池文案替换的是首行；重试耗尽的「网络中断」措辞不再出现（429 不是网络中断）。
+    expect(report?.lines.join("\n")).not.toContain("网络中断");
+  });
+
+  it("free preset + 429 UNDER the cap still auto-requeues with the plain retrying lines", async () => {
+    const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
+    const out = await handleWorkflowRunFailure({
+      claimed: snapshot(),
+      // isLlmRateLimitError 命中形态（AI SDK APICallError 的数值 statusCode）：
+      // 免费档 × LLM 类错误才解锁 HTTP 状态退避（Copilot r5 M）。
+      error: Object.assign(new Error("Request failed with status code 429"), { statusCode: 429 }),
+      repository: { saveWorkflowRunSnapshot: save },
+      now,
+      llmConfig: { ...FREE_LLM_PRESET },
+    });
+    expect(out.status).toBe("auto_requeued");
+    const report = save.mock.calls[0]![0].notifications[0]?.report;
+    expect(report?.status).toBe("retrying");
+    expect(report?.lines.join("\n")).toContain("网络波动");
+    expect(report?.lines.join("\n")).not.toContain("Kilo");
+  });
+
+  it("free preset + model not found → 「内置免费模型已失效」文案，且不 transient（不重排）", async () => {
+    const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
+    const out = await handleWorkflowRunFailure({
+      claimed: snapshot(),
+      error: new Error("Model not found: nvidia/nemotron-3-ultra-550b-a55b:free"),
+      repository: { saveWorkflowRunSnapshot: save },
+      now,
+      llmConfig: { ...FREE_LLM_PRESET },
+    });
+    // 模型下架重试也不会好：404/model-not-found 不是 transient，直接终止。
+    expect(out.status).toBe("failed");
+    expect(save.mock.calls[0]![0].workflowRun.status).toBe("failed");
+    expect(save.mock.calls[0]![0].workflowRun.autoRequeueCount).toBeUndefined();
+    const report = save.mock.calls[0]![0].notifications[0]?.report;
+    expect(report?.lines[0]).toBe(FREE_LLM_MODEL_GONE_LINE);
+  });
+
+  it("free preset + LLM 5xx (service fluctuation) → Kilo 免费池文案", async () => {
+    const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
+    // 5xx 是 transient：耗尽重试后到达终态。
+    await handleWorkflowRunFailure({
+      claimed: snapshot({ autoRequeueCount: 3 }),
+      error: Object.assign(new Error("service unavailable"), { statusCode: 503 }),
+      repository: { saveWorkflowRunSnapshot: save },
+      now,
+      llmConfig: { ...FREE_LLM_PRESET },
+    });
+    const report = save.mock.calls[0]![0].notifications[0]?.report;
+    expect(report?.lines[0]).toBe(FREE_LLM_POOL_FAILURE_LINE);
+  });
+
+  it("BYO model (自带服务) keeps the AGNOSTIC copy even on an LLM 429 — 不点名厂商", async () => {
+    const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
+    await handleWorkflowRunFailure({
+      claimed: snapshot({ autoRequeueCount: 3 }),
+      error: new Error("Failed after 3 attempts. Last error: Too Many Requests"),
+      repository: { saveWorkflowRunSnapshot: save },
+      now,
+      llmConfig: { baseURL: "https://api.deepseek.com/v1", modelId: "deepseek-chat" },
+    });
+    const report = save.mock.calls[0]![0].notifications[0]?.report;
+    expect(report?.lines[0]).not.toContain("Kilo");
+    // Copilot r5 M：BYO 的 LLM 429 不再进退避（HTTP 状态判定是免费池专属），
+    // count=3 也不会出现「已自动重试」措辞 —— agnostic 的「获取失败」。
+    expect(report?.lines[0]).toBe("获取失败");
+  });
+
+  // ---- Copilot r5 M：HTTP 状态退避收窄为「免费预设 × LLM 类错误」专属 ----
+  //
+  // 免费池 429/5xx 的退避重排是免费档专属恢复策略（spec：已配置 DB/env 的
+  // 用户行为不变）。BYO 与非 LLM（网盘/搜索源）的 429/5xx 维持既有保守连接
+  // 类分类 —— 不重排，直接终止失败。
+  it("BYO model + the SAME numeric LLM 429 → NOT requeued (legacy behavior, spec 承诺不变)", async () => {
+    const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
+    const out = await handleWorkflowRunFailure({
+      claimed: snapshot(),
+      error: Object.assign(new Error("Request failed with status code 429"), { statusCode: 429 }),
+      repository: { saveWorkflowRunSnapshot: save },
+      now,
+      llmConfig: { baseURL: "https://api.deepseek.com/v1", modelId: "deepseek-chat" },
+    });
+    expect(out.status).toBe("failed");
+    const saved = save.mock.calls[0]![0];
+    expect(saved.workflowRun.status).toBe("failed");
+    expect(saved.workflowRun.autoRequeueCount).toBeUndefined();
+  });
+
+  it("free preset + a NON-LLM 5xx (brand error carrying statusCode 503) → NOT requeued", async () => {
+    const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
+    const out = await handleWorkflowRunFailure({
+      claimed: snapshot(),
+      // PAN115 品牌错误（isLlm* 分类器被品牌 marker 短路）+ 数值 statusCode 503：
+      // 若 HTTP 状态判定不门控，这个网盘 5xx 会被免费池的恢复策略吃进退避。
+      error: Object.assign(new Error("PAN115_LIST_FAILED: 服务器繁忙,请稍后再试"), { statusCode: 503 }),
+      repository: { saveWorkflowRunSnapshot: save },
+      now,
+      llmConfig: { ...FREE_LLM_PRESET },
+    });
+    expect(out.status).toBe("failed");
+    const saved = save.mock.calls[0]![0];
+    expect(saved.workflowRun.status).toBe("failed");
+    expect(saved.workflowRun.autoRequeueCount).toBeUndefined();
+    // 网盘错不冒充 Kilo 挂了：agnostic 文案。
+    expect(saved.notifications[0]?.report?.lines[0]).toBe("获取失败");
+  });
+
+  // ---- Copilot r6 M：门控识别 message-only 状态形态（形态对齐被门控能力） ----
+  //
+  // isLlm* 分类器刻意不认裸 429 子串、5xx 只认数值 statusCode/标准短语，但
+  // transient 开关打开后匹配的是「文本 429 / 独立 5xx token」那套形态 —— 门控
+  // 比被门控的能力窄，message-only 的免费池 LLM 错（axios 风格 "Request failed
+  // with status code 429"、网关 "HTTP 520 from gateway"）过不了门：真 LLM 错
+  // 直接终止，不进 1/5/15 退避。isLlmHttpStatusError（状态特征 × 非 LLM 排除）
+  // 补齐这个缺口；网盘/搜索源的 5xx 仍被排除挡在门外。
+  it("free preset + message-only 'Request failed with status code 429' → requeued（门控看见 transient 会命中的形态）", async () => {
+    const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
+    const out = await handleWorkflowRunFailure({
+      claimed: snapshot(),
+      // 没有 statusCode/responseStatus 数值字段 —— 状态只活在 message 里。
+      error: new Error("Request failed with status code 429"),
+      repository: { saveWorkflowRunSnapshot: save },
+      now,
+      llmConfig: { ...FREE_LLM_PRESET },
+    });
+    expect(out.status).toBe("auto_requeued");
+    expect(save.mock.calls[0]![0].workflowRun.autoRequeueCount).toBe(1);
+    expect(save.mock.calls[0]![0].workflowRun.nextAttemptAt).toBeDefined();
+  });
+
+  it("free preset + message-only 'HTTP 520 from gateway' → requeued（Cloudflare 式 5xx token）", async () => {
+    const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
+    const out = await handleWorkflowRunFailure({
+      claimed: snapshot(),
+      error: new Error("HTTP 520 from gateway"),
+      repository: { saveWorkflowRunSnapshot: save },
+      now,
+      llmConfig: { ...FREE_LLM_PRESET },
+    });
+    expect(out.status).toBe("auto_requeued");
+    expect(save.mock.calls[0]![0].workflowRun.autoRequeueCount).toBe(1);
+  });
+
+  it("free preset + PAN115 brand error with a bare 5xx token in TEXT → NOT requeued（非 LLM 排除保留，回归）", async () => {
+    const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
+    const out = await handleWorkflowRunFailure({
+      claimed: snapshot(),
+      // message-only 形态 + 品牌 marker：扩门控不能把网盘 5xx 吃进免费池退避。
+      error: new Error("PAN115_LIST_FAILED: HTTP 503 服务器繁忙"),
+      repository: { saveWorkflowRunSnapshot: save },
+      now,
+      llmConfig: { ...FREE_LLM_PRESET },
+    });
+    expect(out.status).toBe("failed");
+    const saved = save.mock.calls[0]![0];
+    expect(saved.workflowRun.status).toBe("failed");
+    expect(saved.workflowRun.autoRequeueCount).toBeUndefined();
+  });
+
+  it("BYO model + message-only 'Request failed with status code 429' → NOT requeued（回归，spec 承诺不变）", async () => {
+    const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
+    const out = await handleWorkflowRunFailure({
+      claimed: snapshot(),
+      error: new Error("Request failed with status code 429"),
+      repository: { saveWorkflowRunSnapshot: save },
+      now,
+      llmConfig: { baseURL: "https://api.deepseek.com/v1", modelId: "deepseek-chat" },
+    });
+    expect(out.status).toBe("failed");
+    const saved = save.mock.calls[0]![0];
+    expect(saved.workflowRun.status).toBe("failed");
+    expect(saved.workflowRun.autoRequeueCount).toBeUndefined();
+  });
+
+  it("connection-class (fetch failed) stays requeued for ANY tier (regression, 旧行为不变)", async () => {
+    for (const llmConfig of [
+      undefined,
+      { ...FREE_LLM_PRESET },
+      { baseURL: "https://api.deepseek.com/v1", modelId: "deepseek-chat" },
+    ]) {
+      const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
+      const out = await handleWorkflowRunFailure({
+        claimed: snapshot(),
+        error: new Error("fetch failed"),
+        repository: { saveWorkflowRunSnapshot: save },
+        now,
+        ...(llmConfig === undefined ? {} : { llmConfig }),
+      });
+      expect(out.status, JSON.stringify(llmConfig ?? "absent")).toBe("auto_requeued");
+    }
+  });
+
+  it("free preset + a NON-LLM error keeps the AGNOSTIC copy (网盘错不冒充 Kilo 挂了)", async () => {
+    const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
+    await handleWorkflowRunFailure({
+      claimed: snapshot(),
+      error: new Error("QUARK_TRANSFER_FAILED: dead share"),
+      repository: { saveWorkflowRunSnapshot: save },
+      now,
+      llmConfig: { ...FREE_LLM_PRESET },
+    });
+    const report = save.mock.calls[0]![0].notifications[0]?.report;
+    expect(report?.lines[0]).toBe("获取失败");
+    expect(report?.lines.join("\n")).not.toContain("Kilo");
+  });
+
+  it("absent llmConfig → agnostic copy (worker cannot see the config → never guess free tier)", async () => {
+    const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
+    await handleWorkflowRunFailure({
+      claimed: snapshot({ autoRequeueCount: 3 }),
+      error: new Error("Failed after 3 attempts. Last error: Too Many Requests"),
+      repository: { saveWorkflowRunSnapshot: save },
+      now,
+    });
+    const report = save.mock.calls[0]![0].notifications[0]?.report;
+    // 看不到配置 → 不猜免费档：HTTP 状态退避不生效，不重试，agnostic 文案。
+    expect(report?.lines[0]).toBe("获取失败");
+    expect(report?.lines.join("\n")).not.toContain("Kilo");
+  });
+
+  it("the two free-tier copy lines are the approved verbatim texts (含全角标点)", () => {
+    expect(FREE_LLM_POOL_FAILURE_LINE).toBe(
+      "AI 模型调用失败：Kilo 公共免费池暂时不可用（限速或服务波动）。可稍后重试，或在 设置 → AI 模型 换成自己的服务。",
+    );
+    expect(FREE_LLM_MODEL_GONE_LINE).toBe(
+      "内置免费模型已失效（Kilo 池变动）。请到 设置 → AI 模型 换一个模型或换成自己的服务。",
+    );
   });
 });
 

@@ -69,6 +69,21 @@ describe("llmPills（输入 = resolveAgentModelConfig 的生效值）", () => {
       input: { baseURL: "", modelId: "", fromEnv: true },
       want: [{ label: "未配置", tone: "off" }],
     },
+    {
+      name: "fromFreePreset=true → 单颗 Kilo 免费池 (on)，不显示预设的 modelId",
+      input: { baseURL: "https://free.example.com/v1", modelId: "kilo-free", fromEnv: false, fromFreePreset: true },
+      want: [{ label: "Kilo 免费池", tone: "on" }],
+    },
+    {
+      name: "fromFreePreset=true 时不叠 来自环境变量（免费预设不是 env 补的）",
+      input: { baseURL: "https://free.example.com/v1", modelId: "kilo-free", fromEnv: true, fromFreePreset: true },
+      want: [{ label: "Kilo 免费池", tone: "on" }],
+    },
+    {
+      name: "显式 fromFreePreset=false → 与不传等价，走原判定",
+      input: { baseURL: "https://x/v1", modelId: "mimo-v2.5-pro", fromEnv: false, fromFreePreset: false },
+      want: [{ label: "已配置 · mimo-v2.5-pro", tone: "on" }],
+    },
   ])("$name", ({ input, want }) => {
     expect(llmPills(input)).toEqual(want);
   });

@@ -223,6 +223,9 @@ export async function runQueuedReplaceRequest(
   /** A TV message this run carries names no (in-scope) episode: its episodes are read
    *  from the words, so the reply says whether any came out (see UserMessageReply.unidentified). */
   let untaggedTvMessage = false;
+  // The config of the model this run ENDED UP using (per-account resolver may
+  // override the base) — captured for the failure handler's free-tier copy.
+  let resolvedLlmConfig: { baseURL?: string; modelId?: string } | undefined;
   try {
     messages = await repository.claimUserMessages({ ...work, runId, now: now() });
     const states = await workStates(repository, work);
@@ -330,6 +333,7 @@ export async function runQueuedReplaceRequest(
       routineIfNothingReplaced: messages.length === 0,
     };
     const deps = await resolveWorkerDeps(input.resolveAccountContext, claimed.accountId, claimed.connectedStorageId, input);
+    resolvedLlmConfig = deps.llmConfig;
     const common = {
       resourceProvider: deps.resourceProvider,
       storage: deps.storage,
@@ -407,6 +411,7 @@ export async function runQueuedReplaceRequest(
         // success path (see stampReplaceNotification / the `notice.trigger` above); a user
         // request keeps its individual "user" push.
         notificationTrigger: queuedBy(claimed.workflowRun.auditEvents) === "patrol" ? "scheduled" : "user",
+        ...(resolvedLlmConfig === undefined ? {} : { llmConfig: resolvedLlmConfig }),
         ...(input.onAuthErrorFreeze === undefined ? {} : { onAuthErrorFreeze: input.onAuthErrorFreeze }),
       });
       requeued = handled.status === "auto_requeued";

@@ -26,6 +26,9 @@ import {
   createAgentModel,
   createAgentModelFromEnv,
   createStubAcquisitionModel,
+  FREE_LLM_PRESET,
+  isFreeLlmPreset,
+  isBlankEnvValue,
   llmConfigError,
   formatDailyDigestPushText,
   scheduledDigestItems,
@@ -937,7 +940,7 @@ export function buildAccountContextResolver(): ResolveAccountWorkerContext {
     // specific drive it was queued onto.
     const scoped = getAccountScopedSettings(accountId);
     const parents = await getWorkerStorageParents(accountId, connectedStorageId);
-    const { model, preferredLanguage, qualityPreference } = await getAgentModel(scoped);
+    const { model, llmConfig, preferredLanguage, qualityPreference } = await getAgentModel(scoped);
     // The run's drive brand selects its resource sources (quark→PanSou quark-only;
     // 115→PanSou+Prowlarr). null when no drive resolves → default 115 fallback.
     const driveProvider =
@@ -959,6 +962,10 @@ export function buildAccountContextResolver(): ResolveAccountWorkerContext {
       resourceProvider: await getWorkerResourceProvider(scoped, driveProvider, accountId),
       storageProvider: driveProvider,
       model,
+      // The worker uses this ONLY to pick the free-preset failure copy for THIS
+      // account's acquisitions (isFreeLlmPreset) — multi-user accounts each get
+      // their own Kilo/BYO verdict.
+      llmConfig,
       ...(assrtToken === undefined ? {} : { assrtToken }),
       ...(jevJudge === undefined ? {} : { jevJudge }),
       agentMemory,
@@ -1028,7 +1035,7 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
   // The user's language preference is standing context baked into the agent
   // instance (one global preference), so every workflow — movie, series, type2,
   // anime — searches with it. No per-workflow plumbing.
-  const { model, preferredLanguage, qualityPreference } = await getAgentModel(getAccountScopedSettings(accountId));
+  const { model, llmConfig, preferredLanguage, qualityPreference } = await getAgentModel(getAccountScopedSettings(accountId));
   const language = preferredLanguage === undefined ? {} : { preferredLanguage };
   const quality = qualityPreference === undefined ? {} : { qualityPreference };
   const storage = await getWorkerStorageExecutor(accountId);
@@ -1049,6 +1056,10 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
     resourceProvider: await getWorkerResourceProvider(),
     storage,
     model,
+    // Free-tier failure copy (Task 5): lets the worker's failure handler run
+    // isFreeLlmPreset on the BASE model config; per-account runs override via
+    // resolveAccountContext's llmConfig.
+    llmConfig,
     ...language,
     ...quality,
     storageParentDirectoryId: parents.tv,
@@ -1067,6 +1078,10 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
     resourceProvider: await getWorkerResourceProvider(),
     storage,
     model,
+    // Free-tier failure copy (Task 5): lets the worker's failure handler run
+    // isFreeLlmPreset on the BASE model config; per-account runs override via
+    // resolveAccountContext's llmConfig.
+    llmConfig,
     ...language,
     ...quality,
     storageParentDirectoryId: parents.tv,
@@ -1085,6 +1100,10 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
     resourceProvider: await getWorkerResourceProvider(),
     storage,
     model,
+    // Free-tier failure copy (Task 5): lets the worker's failure handler run
+    // isFreeLlmPreset on the BASE model config; per-account runs override via
+    // resolveAccountContext's llmConfig.
+    llmConfig,
     ...language,
     ...quality,
     moviesParentDirectoryId: parents.movies,
@@ -1102,6 +1121,10 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
     resourceProvider: await getWorkerResourceProvider(),
     storage,
     model,
+    // Free-tier failure copy (Task 5): lets the worker's failure handler run
+    // isFreeLlmPreset on the BASE model config; per-account runs override via
+    // resolveAccountContext's llmConfig.
+    llmConfig,
     ...language,
     ...quality,
     storageParentDirectoryId: parents.tv,
@@ -1118,7 +1141,10 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
     await pushNotificationsSince(repository, startedAt, { workflowRunId: replace.workflowRunId });
     return replace;
   }
-  // Leftover staging heals itself. No notification and no push.
+  // Leftover staging heals itself. No notification and no push — which also means
+  // no llmConfig here: staging recovery's failure path never reaches the
+  // free-preset copy (handleWorkflowRunFailure goes silent for staging_recovery),
+  // so the param would be dead weight.
   return runQueuedStagingRecovery({
     repository,
     resourceProvider: await getWorkerResourceProvider(),
@@ -2756,34 +2782,76 @@ async function getWorkerStorageParents(
  */
 /** Resolve the live agent model config the SAME way the worker builds it: DB
  *  (pass an account-scoped repo) → .env (AGENT_MODEL_* with XIAOMI_MIMO_* as a
- *  back-compat fallback) → undefined. There is NO built-in default endpoint —
- *  baseURL/modelId must be configured (truly BYO, issue #49). Shared by
- *  getAgentModel and testLlmConnectionAction so the Settings「测试连接」exercises
- *  exactly what acquisitions use. */
+ *  back-compat fallback) → 出厂免费预设 FREE_LLM_PRESET（Kilo 免费池，issue #52
+ *  之后的兜底层）。回落只看 baseURL 与 modelId：两者都空（未设或空串，含
+ *  .env.example 照抄形态）即视为无自定义配置、回落免费预设，所以 baseURL/modelId
+ *  永远有可用值 —— 未配置的自部署实例开箱即用。apiKey 不参与回落判定，理由：
+ *  ①key 没有独立意义，url/model 双空=没配自己的服务（设置页「清空地址保存」后
+ *  DB 只剩 blank-keep 的 key，正是这个形态，不能再让它阻断回落）；②回落分支返回
+ *  FREE_LLM_PRESET 且不携带 apiKey —— 残留 key 属于用户自配服务（如 DeepSeek），
+ *  绝不能作为 Authorization 头发给 Kilo 免费池第三方（免费池本就无 key 调用）；
+ *  ③非回落分支同样防 —— 生效 baseURL/modelId 逐字等于免费预设（isFreeLlmPreset，
+ *  「换回免费模型」按钮写库后的形态）时也不携带 apiKey，DB 里的 key 原样保留、
+ *  供用户换回自带服务时复用（丢弃只发生在本函数的返回值，不动库）。
+ *  注意 env 层的 createAgentModelFromEnv 维持「三键全空」判定不动 —— env 是运维
+ *  显式配置，语义不同。半截配置（baseURL/modelId 只有一边非空）照旧原样返回，
+ *  由下游 llmConfigError fail-fast（用户错误不静默变免费池）。Shared by
+ *  getAgentModel and testLlmConnectionAction so the Settings 「测试连接」exercises
+ *  exactly what acquisitions use.
+ *
+ *  `source` 标记生效值来自哪一层（DB 层参与了任何一项就算 db）：设置页（Task 4）
+ *  用它判定免费档（"free-preset"）与「来自环境变量」的呈现，不用再跑一次 predicate。 */
 export async function resolveAgentModelConfig(
   repository: { getSetting(key: string): Promise<string | null> },
   env: NodeJS.ProcessEnv = process.env,
-): Promise<{ apiKey?: string; baseURL?: string; modelId?: string }> {
+): Promise<{ apiKey?: string; baseURL?: string; modelId?: string; source: "db" | "env" | "free-preset" }> {
   const llm = await getLlmConfig(repository);
-  const apiKey = llm.apiKey ?? env.AGENT_MODEL_API_KEY ?? env.XIAOMI_MIMO_API_KEY;
-  const baseURL = llm.baseURL ?? env.AGENT_MODEL_BASE_URL ?? env.XIAOMI_MIMO_BASE_URL;
-  const modelId = llm.modelId ?? env.AGENT_MODEL_ID ?? env.XIAOMI_MIMO_MODEL_ID;
-  return {
-    ...(apiKey === undefined ? {} : { apiKey }),
+  // env 内部的 modern→legacy 兜底 blank-aware（Copilot r2 B）：出厂 .env.example
+  // 带三个空串 AGENT_MODEL_* 键，与有值的 XIAOMI_MIMO_* 并存时空串不能遮蔽
+  // legacy 值 —— 否则下面的免费预设回落会把用户的 legacy 服务静默换成 Kilo。
+  // 与 agent-model.ts 的 createAgentModelFromEnv 同一条规则（isBlankEnvValue
+  // 自 @media-track/workflow 导入，单一谓词，无跨包复制体）。DB→env 的 ??
+  // 不动：DB 值 undefined 才看 env 是既有语义（DB 空串已在 getLlmConfig 归一为
+  // undefined）。
+  const pickEnvValue = (modern: string | undefined, legacy: string | undefined): string | undefined =>
+    isBlankEnvValue(modern) ? legacy : modern;
+  const apiKey = llm.apiKey ?? pickEnvValue(env.AGENT_MODEL_API_KEY, env.XIAOMI_MIMO_API_KEY);
+  const baseURL = llm.baseURL ?? pickEnvValue(env.AGENT_MODEL_BASE_URL, env.XIAOMI_MIMO_BASE_URL);
+  const modelId = llm.modelId ?? pickEnvValue(env.AGENT_MODEL_ID, env.XIAOMI_MIMO_MODEL_ID);
+  // 出厂回落：只看 baseURL 与 modelId（都比 env 层的「三键全空」宽一档，理由见上）。
+  if (isBlankEnvValue(baseURL) && isBlankEnvValue(modelId)) {
+    // 不带 apiKey：FREE_LLM_PRESET 本就只有 baseURL/modelId，残留 key 就地丢弃（②）。
+    return { ...FREE_LLM_PRESET, source: "free-preset" };
+  }
+  const source =
+    llm.apiKey !== undefined || llm.baseURL !== undefined || llm.modelId !== undefined ? "db" : "env";
+  // 生效配置逐字等于免费池预设（无论值来自 DB 还是 env —— 前者即「换回免费
+  // 模型」按钮写库后的形态：地址+模型名来自预设、key 是 blank-keep 留下的残留）
+  // → 与回落分支同样不携带 apiKey：残留 key 属于用户自带服务（如 DeepSeek），
+  // 不得作为 Authorization 头发给 Kilo 第三方免费池。丢弃只发生在返回值，
+  // DB 里的 key 原样保留，供用户换回自带服务时复用。
+  const presetValued = isFreeLlmPreset({
     ...(baseURL === undefined ? {} : { baseURL }),
     ...(modelId === undefined ? {} : { modelId }),
+  });
+  return {
+    ...(apiKey === undefined || presetValued ? {} : { apiKey }),
+    ...(baseURL === undefined ? {} : { baseURL }),
+    ...(modelId === undefined ? {} : { modelId }),
+    source,
   };
 }
 
-/** Acquire-time LLM pre-check (issue #52): the friendly "configure your model"
- *  message if a LIVE (vercel-ai) acquisition can't run for lack of LLM config,
- *  else null. Resolves config EXACTLY as the worker's getAgentModel does
- *  (account-scoped DB → .env) and reuses the SAME llmConfigError predicate, so a
- *  click that would only die later in the worker is caught NOW — no doomed run is
- *  enqueued, no failed card piles up in 活动. The fake/demo adapter never needs an
- *  LLM → always null (never blocks demo/fake). Common case (configured) → null →
- *  callers behave byte-identically to before (purely additive). Settings/env are
- *  injectable for unit tests; production calls pass the current account id. */
+/** Acquire-time LLM pre-check (issue #52)，随出厂免费预设收窄：对**生效配置**
+ *  （resolveAgentModelConfig：DB → env → FREE_LLM_PRESET 回落）跑 llmConfigError。
+ *  零配置 → 回落补齐 baseURL/modelId → 校验通过 → 返 null 不拦（开箱即用语义
+ *  保留，#52 原先拦的「完全没配」场景已不存在）；半截配置（DB 或 env 的
+ *  baseURL/modelId 一空一非空——saveLlmConfigAction 允许存这种行）→ 回落不
+ *  触发（回落只认两键全空）→ 返回可行动文案，点击获取时友好拦截。不拦的话
+ *  run 会入队，单用户（默认账号）路径的 getAgentModel 在 claim 之前抛
+ *  llmConfigError，异常传出 drain（background-worker 只 console.error）→ run
+ *  永久 queued、无失败卡、无通知 —— ghost run。fake/demo adapter 不需要 LLM
+ *  → 恒 null（永不拦 demo/fake）。签名与 actions.ts 的调用点保持不变。 */
 export async function acquireLlmPreflightError(
   arg:
     | string
@@ -2805,6 +2873,10 @@ async function getAgentModel(repository: {
   getSetting(key: string): Promise<string | null>;
 }): Promise<{
   model: ReturnType<typeof createAgentModelFromEnv>;
+  /** The config that built `model` (baseURL/modelId only — NEVER the apiKey: the
+   *  worker only needs it to run isFreeLlmPreset for the free-tier failure copy).
+   *  The stub (fake adapter) path carries the resolved values all the same. */
+  llmConfig: { baseURL?: string; modelId?: string };
   preferredLanguage: string | undefined;
   qualityPreference: "high" | "medium" | undefined;
 }> {
@@ -2815,15 +2887,18 @@ async function getAgentModel(repository: {
   const qualityPreference = await getQualityPreference(repository);
 
   // Resolve the live model config the SAME way the test action does (shared
-  // resolver) — DB-first, then .env. No built-in default endpoint.
+  // resolver) — DB-first, then .env, then the shipped free preset
+  // (baseURL+modelId 双空回落，key 不参与判定).
   const resolved = await resolveAgentModelConfig(repository, env);
   const { apiKey, baseURL, modelId } = resolved;
   // Fail-fast pre-check (issue #49): on the live (vercel-ai) path, if baseURL or
-  // modelId is missing the run would die on its first model call (or hit the
-  // author endpoint keyless → 401). Throw the actionable, agnostic guidance NOW
-  // — before building/using the model — so the user gets guidance at 获取 time
-  // instead of a raw failure after a long agent run. apiKey may be empty (keyless
-  // local LLM is valid); the fake/stub adapter never needs a model config.
+  // modelId is missing the run would die on its first model call. With the free
+  // preset fallback this only trips on HALF-configured setups (e.g. a baseURL
+  // without a modelId) — a user error that must not silently become the free
+  // pool. Throw the actionable, agnostic guidance NOW — before building/using
+  // the model — so the user gets guidance at 获取 time instead of a raw failure
+  // after a long agent run. apiKey may be empty (keyless local LLM is valid);
+  // the fake/stub adapter never needs a model config.
   if (adapter === "vercel-ai") {
     const configError = llmConfigError(resolved);
     if (configError) {
@@ -2838,7 +2913,13 @@ async function getAgentModel(repository: {
     model = adapter === "vercel-ai" ? createAgentModel(resolved) : createStubAcquisitionModel();
     agentModelCache.set(signature, model);
   }
-  return { model, preferredLanguage, qualityPreference };
+  // Deliberately WITHOUT apiKey (see return type): the worker's llmConfig is a
+  // display/copy hint (isFreeLlmPreset), not a credential carrier.
+  const llmConfig = {
+    ...(baseURL === undefined ? {} : { baseURL }),
+    ...(modelId === undefined ? {} : { modelId }),
+  };
+  return { model, llmConfig, preferredLanguage, qualityPreference };
 }
 
 function fakeTransferOutcomes() {
