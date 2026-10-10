@@ -25,14 +25,18 @@ export function RestoreFreeLlmButton() {
         () => restoreFreeLlmAction(),
         (msg) => setError(`❌ ${msg}`),
       );
-      if (!r.ok) return;
-      const res = r.value;
-      if (!res.success) {
-        setError(`❌ ${res.message ?? "换回失败"}`);
-      } else {
-        setError(null);
+      if (r.ok) {
+        const res = r.value;
+        if (!res.success) {
+          setError(`❌ ${res.message ?? "换回失败"}`);
+        } else {
+          setError(null);
+        }
       }
-      // 失败也要刷新复位（按钮不会卡在 pending；胶囊跟随服务端真相）。
+      // 异常路径不提前 return（runAction 注释警告的收尾陷阱）：断网可能发生在
+      // 服务端已落库之后（响应丢失），router.refresh() 让胶囊、表单预填、按钮
+      // 去留对齐服务端真相，不停留在旧的自带模型态；错误提示 4s 自清，不会
+      // 永久停留。
       router.refresh();
       setTimeout(() => setError(null), 4000);
     });

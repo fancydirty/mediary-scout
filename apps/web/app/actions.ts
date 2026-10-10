@@ -610,7 +610,11 @@ export async function restoreFreeLlmAction(): Promise<PushSettingsActionResult> 
     await repository.setAccountSetting(accountId, LLM_MODEL_ID_SETTING_KEY, FREE_LLM_PRESET.modelId);
     return { success: true };
   } catch (error) {
-    return { success: false, message: `换回失败：${String(error)}` };
+    // 内部细节（DB 报错、堆栈、路径）不回传浏览器 —— 与 web 端 runAction 的
+    // 泛化错误边界同一思路（那边也是刻意丢掉异常只给固定文案）。原始错误进
+    // 服务端日志供排查。
+    console.error(`[restore-free-llm-action] failed: ${error instanceof Error ? error.message : String(error)}`);
+    return { success: false, message: "换回失败，请稍后重试" };
   }
 }
 

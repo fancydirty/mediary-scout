@@ -42,7 +42,7 @@ describe("isTransientAcquisitionError", () => {
 
   // ---- HTTP 限流/服务端波动（免费池 Kilo 高峰 429/5xx，2026-10）----
   //
-  // 免费池高峰的 429/503 会以传输层错误冒出来（AI SDK RetryError 的 message、
+  // 免费池高峰的 429/5xx 会以传输层错误冒出来（AI SDK RetryError 的 message、
   // 网关直出的状态码短语）。它们与 socket 断连同类：等 1/5/15 分钟再跑大概率
   // 就好，所以必须走自动退避重排，而不是终止失败。
   it("matches HTTP throttle / server-fluctuation errors (429 / 5xx)", () => {
@@ -52,6 +52,9 @@ describe("isTransientAcquisitionError", () => {
       "rate limit exceeded, retry after 60s",
       "Service Unavailable (HTTP 503)",
       "503 Bad Gateway from upstream",
+      "Request failed with status code 500",
+      "502 Bad Gateway from upstream",
+      "504 Gateway Timeout",
     ]) {
       expect(isTransientAcquisitionError(new Error(msg)), msg).toBe(true);
     }
