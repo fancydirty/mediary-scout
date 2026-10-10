@@ -583,6 +583,28 @@ export async function saveLlmConfigAction(input: {
   }
 }
 
+/** 一键换回出厂免费模型：把 FREE_LLM_PRESET 写进本账号 settings（与
+ *  saveLlmConfigAction 同一落点），让生效配置立即回到出厂免费档。已存的
+ *  API Key 不动 —— 免费池无 key 直连用不到它，用户以后再换成自己的服务时
+ *  key 还在（与 saveLlmConfigAction 的 blank-keep 语义一致）。 */
+export async function restoreFreeLlmAction(): Promise<PushSettingsActionResult> {
+  assertNotDemo();
+  try {
+    const { FREE_LLM_PRESET, normalizeLlmBaseUrl } = await import("@media-track/workflow");
+    const { getWorkflowRepository, getCurrentAccountId, LLM_BASE_URL_SETTING_KEY, LLM_MODEL_ID_SETTING_KEY } =
+      await import("../lib/workflow-runtime");
+    const repository = getWorkflowRepository();
+    const accountId = await getCurrentAccountId();
+    // baseURL 走与 saveLlmConfigAction 相同的 normalize，保证写库值与
+    // resolveAgentModelConfig 回落形态逐字一致（isFreeLlmPreset 按此比较）。
+    await repository.setAccountSetting(accountId, LLM_BASE_URL_SETTING_KEY, normalizeLlmBaseUrl(FREE_LLM_PRESET.baseURL));
+    await repository.setAccountSetting(accountId, LLM_MODEL_ID_SETTING_KEY, FREE_LLM_PRESET.modelId);
+    return { success: true };
+  } catch (error) {
+    return { success: false, message: `换回失败：${String(error)}` };
+  }
+}
+
 export async function testLlmConnectionAction(): Promise<{ ok: boolean; message: string }> {
   try {
     assertNotDemo();

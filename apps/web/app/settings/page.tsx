@@ -11,6 +11,7 @@ import { PushNotificationForm } from "../../components/push-notification-form";
 import { PreferredLanguageForm } from "../../components/preferred-language-form";
 import { QualityPreferenceForm } from "../../components/quality-preference-form";
 import { LlmConfigForm } from "../../components/llm-config-form";
+import { RestoreFreeLlmButton } from "../../components/restore-free-llm-button";
 import { TmdbApiKeyForm } from "../../components/tmdb-api-key-form";
 import { AssrtTokenForm } from "../../components/assrt-token-form";
 import { ProwlarrConfigForm } from "../../components/prowlarr-config-form";
@@ -75,7 +76,7 @@ import {
   resolveGlobalWorkspace,
   resolveIsDesktop,
 } from "../../lib/workflow-runtime";
-import { brandSupportsProwlarr, brandsSupportingProwlarr, getStorageBrand, isRegisteredStorageProvider } from "@media-track/workflow";
+import { brandSupportsProwlarr, brandsSupportingProwlarr, FREE_LLM_PRESET, getStorageBrand, isFreeLlmPreset, isRegisteredStorageProvider } from "@media-track/workflow";
 import { isDemoMode } from "../../lib/demo-mode";
 
 export default function SettingsPage({
@@ -310,13 +311,20 @@ async function LlmConfigSection() {
   const modelId = (await repository.getSetting(LLM_MODEL_ID_SETTING_KEY)) ?? "";
   const apiKeySet = Boolean((await repository.getSetting(LLM_API_KEY_SETTING_KEY))?.trim());
   // The form shows the DB values; the pill shows what acquisitions will actually use —
-  // the worker's own resolver (DB → AGENT_MODEL_* → XIAOMI_MIMO_*). fromEnv: a
-  // non-blank effective value was filled in by env because its DB field is blank.
+  // the worker's own resolver (DB → AGENT_MODEL_* → XIAOMI_MIMO_* → 出厂免费预设).
   const effectiveLlm = await resolveAgentModelConfig(repository);
+  // 免费档判定用 spec 的 predicate（生效值逐字 == 出厂预设），不只看 source：
+  // 「换回免费模型」把预设写进 DB 后 source 是 "db"，但界面必须回到出厂态
+  // （胶囊「Kilo 免费池」、表单预填、无按钮）——spec e2e 第 2 步就断言这个。
+  const fromFreePreset = isFreeLlmPreset(effectiveLlm);
+  // fromEnv: a non-blank effective value was filled in by env because its DB field is blank.
+  // 免费档不算 env 补的（预设是我们写死的）：isEnvBackedValue 对「DB 空 + 预设生效值」
+  // 会误报 true，以前免费态胶囊错误地叠「来自环境变量」就是这么来的。
   const llmFromEnv =
-    isEnvBackedValue(baseURL, effectiveLlm.baseURL) ||
-    isEnvBackedValue(modelId, effectiveLlm.modelId) ||
-    (!apiKeySet && Boolean(effectiveLlm.apiKey?.trim()));
+    !fromFreePreset &&
+    (isEnvBackedValue(baseURL, effectiveLlm.baseURL) ||
+      isEnvBackedValue(modelId, effectiveLlm.modelId) ||
+      (!apiKeySet && Boolean(effectiveLlm.apiKey?.trim())));
   // Jev lives here, not under 资源提供商: it is not a resource SOURCE, it is a second
   // AI service (with its own key) that assists the main model. One read, one rule:
   // getJevConfig applies DB→env fallback; isJevPrefilterActive is the same go/no-go
@@ -359,15 +367,42 @@ async function LlmConfigSection() {
           baseURL: effectiveLlm.baseURL ?? "",
           modelId: effectiveLlm.modelId ?? "",
           fromEnv: llmFromEnv,
+          fromFreePreset,
         })}
-        summary="任意 OpenAI 兼容服务，必填；Key 只存你本机。"
-        details={
-          <p>
-            自带你自己的 key——它只存在你这台机器的数据库里，作者看不到。未配置时获取会失败；本地模型 Key 可留空。留空 API Key 不会改动已保存的值。
-          </p>
+        summary={
+          fromFreePreset
+            ? "任意 OpenAI 兼容服务；当前用的是内置免费默认值，可直接改成自己的。"
+            : "任意 OpenAI 兼容服务；Key 只存你本机。"
         }
+        details={
+          fromFreePreset ? (
+            <p>
+              当前生效的内置免费默认值来自 Kilo Code 公共免费模型池：无需注册、不用填
+              Key；每小时限 200 次请求，模型为 NVIDIA Nemotron 550B（100 万 token
+              上下文）。该池由第三方提供，可能限速或变动，不保证一直可用。清空地址保存即恢复默认。
+            </p>
+          ) : (
+            <p>
+              自带你自己的 key——它只存在你这台机器的数据库里，作者看不到。未配置时回落内置免费模型；本地模型
+              Key 可留空。留空 API Key 不会改动已保存的值。
+            </p>
+          )
+        }
+        headerAction={fromFreePreset ? undefined : <RestoreFreeLlmButton />}
       >
-        <LlmConfigForm baseURL={baseURL} modelId={modelId} apiKeySet={apiKeySet} />
+        {/* 出厂态表单预填：DB 空时展示预设的真实值（可改）。只在免费档预填 ——
+            env 层在供值时（DB 空、source=env）保持显示 DB 空值，预填会把预设冻进
+            账号行、盖掉 env 层（同下方 Jev override 不预填继承值的理由）。
+            key 绑定服务端初始值：保存/「换回免费模型」后的 router.refresh() 会让
+            useState 的旧值让位给服务端真相 —— 否则点完换回按钮表单还留着旧服务地址，
+            用户再点一次保存就把旧配置悄悄写回去了（走查实证过这个陷阱）。输入过程
+            不会触发（props 只在 action 成功 + refresh 后才变）。 */}
+        <LlmConfigForm
+          key={`${fromFreePreset ? FREE_LLM_PRESET.baseURL : baseURL}|${fromFreePreset ? FREE_LLM_PRESET.modelId : modelId}`}
+          baseURL={fromFreePreset ? FREE_LLM_PRESET.baseURL : baseURL}
+          modelId={fromFreePreset ? FREE_LLM_PRESET.modelId : modelId}
+          apiKeySet={apiKeySet}
+        />
       </ServiceBlock>
       <ServiceBlock
         name="Jev 候选预筛"
