@@ -10,17 +10,33 @@ import type { LanguageModel } from "ai";
  * interrogation script uses it too. Restored here as a focused, dependency-light
  * module (no dead agent attached).
  *
- * Truly BYO + model-AGNOSTIC (issue #49): the self-hoster supplies their own
- * OpenAI-compatible endpoint (Settings → AI 模型 / env). `baseURL` + `modelId` are
- * REQUIRED — the factory invents NO default endpoint. `apiKey` is OPTIONAL: cloud
- * services need it (sent as the `api-key` header); keyless local LLMs
- * (ollama / LM Studio) legitimately omit it. There is NO silent author default.
+ * BYO + model-AGNOSTIC (issue #49): the self-hoster supplies their own
+ * OpenAI-compatible endpoint (Settings → AI 模型 / env). For EXPLICIT config
+ * `baseURL` + `modelId` are REQUIRED — the factory invents no endpoint of its
+ * own. `apiKey` is OPTIONAL: cloud services need it (sent as the `api-key`
+ * header); keyless local LLMs (ollama / LM Studio) legitimately omit it.
+ *
+ * 出厂免费预设（FREE_LLM_PRESET，Kilo Code 公共免费池）：env 三键全空时
+ * createAgentModelFromEnv 回落该预设，未配置的自部署实例开箱即用。这取代了
+ * 旧的「绝不给默认值」设计（issue #49 反对的是 *静默* 作者默认）：出厂值是
+ * 知情显式的 —— 设置页可见、可改、可一键换回，免费档失败文案会点名 Kilo。
  *
  * A bare model (no `response_format`) is all the V2 agent needs — it uses the AI
  * SDK tool-loop with zod inputSchemas, never structured output.
  */
 
 const DEFAULT_PROVIDER_NAME = "agent-model";
+
+/**
+ * 出厂免费模型预设（Kilo Code 公共免费模型池，无 key 直连）。值逐字固定 ——
+ * 改动要走设计复核并随发版更新（Kilo 下架该模型时换默认值即可修）。baseURL
+ * 保持 normalize 后形态（无尾斜杠、无 /chat/completions 后缀），isFreeLlmPreset
+ * 按此逐字比较。后续 web 层（设置页预填 / 胶囊 / 失败文案）都从这里取值。
+ */
+export const FREE_LLM_PRESET: { readonly baseURL: string; readonly modelId: string } = {
+  baseURL: "https://api.kilo.ai/api/gateway",
+  modelId: "nvidia/nemotron-3-ultra-550b-a55b:free",
+};
 
 export interface AgentModelOptions {
   apiKey?: string;
@@ -90,16 +106,32 @@ export function createAgentModel(options: AgentModelOptions = {}): LanguageModel
   return createOpenAICompatible(providerSettings)(modelId);
 }
 
+/** An env value counts as「没配置」when it is unset OR blank — the shipped
+ *  .env.example has three EMPTY-STRING AGENT_MODEL_* keys, and a copied-verbatim
+ *  env file must still fall back to the free preset (not throw「未配置」). */
+function isBlankEnvValue(value: string | undefined): boolean {
+  return value === undefined || value.trim() === "";
+}
+
 /**
  * Build the live LanguageModel from env. Reads AGENT_MODEL_* with XIAOMI_MIMO_*
  * as the fallback (back-compat: existing instances that set the legacy keys keep
  * working). Same precedence the web/worker and interrogation use.
+ *
+ * 出厂回落：三键全空（未设或空串，含 .env.example 形态）时回落
+ * FREE_LLM_PRESET（Kilo 免费池），不再抛「未配置」。半截 env（如有 baseURL
+ * 没 modelId、或只有 apiKey）行为不变 —— 照旧触发 llmConfigError：那是用户
+ * 错误，不该静默变成免费池。回落发生在 llmConfigError 调用之前，后者本体
+ * 不动（显式 options 缺值仍 fail-fast）。
  */
 export function createAgentModelFromEnv(env: NodeJS.ProcessEnv = process.env): LanguageModel {
-  const options: AgentModelOptions = {};
   const apiKey = env.AGENT_MODEL_API_KEY ?? env.XIAOMI_MIMO_API_KEY;
   const baseURL = env.AGENT_MODEL_BASE_URL ?? env.XIAOMI_MIMO_BASE_URL;
   const modelId = env.AGENT_MODEL_ID ?? env.XIAOMI_MIMO_MODEL_ID;
+  if (isBlankEnvValue(apiKey) && isBlankEnvValue(baseURL) && isBlankEnvValue(modelId)) {
+    return createAgentModel(FREE_LLM_PRESET);
+  }
+  const options: AgentModelOptions = {};
   if (apiKey !== undefined) options.apiKey = apiKey;
   if (baseURL !== undefined) options.baseURL = baseURL;
   if (modelId !== undefined) options.modelId = modelId;
@@ -120,6 +152,22 @@ export function normalizeLlmBaseUrl(raw: string): string {
   s = s.replace(/\/chat\/completions$/i, "");
   s = s.replace(/\/+$/, "");
   return s;
+}
+
+/**
+ * 判定一份 LLM 配置是否（等价于）出厂免费预设：baseURL 过 normalizeLlmBaseUrl、
+ * modelId 过 trim 后与 FREE_LLM_PRESET 逐字比较 —— 不做模糊/近名匹配，判定
+ * 「免费用了 Kilo」必须精确（它决定胶囊、失败文案、换回按钮的呈现）。任一
+ * 输入 blank → false：blank 不是任何确定的配置。设置页与 worker 失败文案
+ * （后续任务）都用它区分免费档与用户自带模型。
+ */
+export function isFreeLlmPreset(cfg: { baseURL?: string; modelId?: string }): boolean {
+  const baseURL = normalizeLlmBaseUrl(cfg.baseURL ?? "");
+  const modelId = (cfg.modelId ?? "").trim();
+  if (baseURL === "" || modelId === "") {
+    return false;
+  }
+  return baseURL === FREE_LLM_PRESET.baseURL && modelId === FREE_LLM_PRESET.modelId;
 }
 
 // Invisible codepoints not covered by the regex \s class: zero-width space,
