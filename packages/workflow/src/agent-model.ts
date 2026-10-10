@@ -5,10 +5,12 @@ import type { LanguageModel } from "ai";
  * The live acquisition agent model factory — a bare OpenAI-compatible
  * LanguageModel that drives the V2 sandbox tool-loop. This was lost in Phase 8
  * (764ae19) when the dead structured-output agent (`ai-sdk-agent.ts`) was deleted
- * wholesale; but the FACTORY is live — `apps/web` `getAgentModel` calls
- * createAgentModelFromEnv for every real (vercel-ai) run, and the §6a
- * interrogation script uses it too. Restored here as a focused, dependency-light
- * module (no dead agent attached).
+ * wholesale; but the FACTORY is live — `apps/web`'s `getAgentModel` resolves the
+ * effective config itself (resolveAgentModelConfig: DB → env → FREE_LLM_PRESET)
+ * and builds the model with `createAgentModel(resolved)`; the env factory
+ * (createAgentModelFromEnv) mainly serves callers that read env directly — the
+ * worker/CLI paths and the §6a interrogation scripts. Restored here as a focused,
+ * dependency-light module (no dead agent attached).
  *
  * BYO + model-AGNOSTIC (issue #49): the self-hoster supplies their own
  * OpenAI-compatible endpoint (Settings → AI 模型 / env). For EXPLICIT config

@@ -26,6 +26,7 @@ import {
   createAgentModel,
   createAgentModelFromEnv,
   createStubAcquisitionModel,
+  FREE_LLM_PRESET,
   llmConfigError,
   formatDailyDigestPushText,
   scheduledDigestItems,
@@ -2756,34 +2757,44 @@ async function getWorkerStorageParents(
  */
 /** Resolve the live agent model config the SAME way the worker builds it: DB
  *  (pass an account-scoped repo) → .env (AGENT_MODEL_* with XIAOMI_MIMO_* as a
- *  back-compat fallback) → undefined. There is NO built-in default endpoint —
- *  baseURL/modelId must be configured (truly BYO, issue #49). Shared by
- *  getAgentModel and testLlmConnectionAction so the Settings「测试连接」exercises
- *  exactly what acquisitions use. */
+ *  back-compat fallback) → 出厂免费预设 FREE_LLM_PRESET（Kilo 免费池，issue #52
+ *  之后的兜底层）。三键全空（未设或空串，含 .env.example 照抄形态）时回落免费预设，
+ *  所以 baseURL/modelId 永远有可用值 —— 未配置的自部署实例开箱即用；半截配置（如
+ *  只有 baseURL）照旧原样返回，由下游 llmConfigError fail-fast（用户错误不静默变
+ *  免费池）。Shared by getAgentModel and testLlmConnectionAction so the Settings
+ *  「测试连接」exercises exactly what acquisitions use.
+ *
+ *  `source` 标记生效值来自哪一层（DB 层参与了任何一项就算 db）：设置页（Task 4）
+ *  用它判定免费档（"free-preset"）与「来自环境变量」的呈现，不用再跑一次 predicate。 */
 export async function resolveAgentModelConfig(
   repository: { getSetting(key: string): Promise<string | null> },
   env: NodeJS.ProcessEnv = process.env,
-): Promise<{ apiKey?: string; baseURL?: string; modelId?: string }> {
+): Promise<{ apiKey?: string; baseURL?: string; modelId?: string; source: "db" | "env" | "free-preset" }> {
   const llm = await getLlmConfig(repository);
   const apiKey = llm.apiKey ?? env.AGENT_MODEL_API_KEY ?? env.XIAOMI_MIMO_API_KEY;
   const baseURL = llm.baseURL ?? env.AGENT_MODEL_BASE_URL ?? env.XIAOMI_MIMO_BASE_URL;
   const modelId = llm.modelId ?? env.AGENT_MODEL_ID ?? env.XIAOMI_MIMO_MODEL_ID;
+  // 出厂回落（与 createAgentModelFromEnv 同语义）：只对「三键全空」回落。
+  const blank = (value: string | undefined) => value === undefined || value.trim() === "";
+  if (blank(apiKey) && blank(baseURL) && blank(modelId)) {
+    return { ...FREE_LLM_PRESET, source: "free-preset" };
+  }
+  const source =
+    llm.apiKey !== undefined || llm.baseURL !== undefined || llm.modelId !== undefined ? "db" : "env";
   return {
     ...(apiKey === undefined ? {} : { apiKey }),
     ...(baseURL === undefined ? {} : { baseURL }),
     ...(modelId === undefined ? {} : { modelId }),
+    source,
   };
 }
 
-/** Acquire-time LLM pre-check (issue #52): the friendly "configure your model"
- *  message if a LIVE (vercel-ai) acquisition can't run for lack of LLM config,
- *  else null. Resolves config EXACTLY as the worker's getAgentModel does
- *  (account-scoped DB → .env) and reuses the SAME llmConfigError predicate, so a
- *  click that would only die later in the worker is caught NOW — no doomed run is
- *  enqueued, no failed card piles up in 活动. The fake/demo adapter never needs an
- *  LLM → always null (never blocks demo/fake). Common case (configured) → null →
- *  callers behave byte-identically to before (purely additive). Settings/env are
- *  injectable for unit tests; production calls pass the current account id. */
+/** RETIRED — issue #52 的获取预检门随出厂免费预设退役，恒返回 null：三键全空时
+ *  resolveAgentModelConfig 已回落 FREE_LLM_PRESET，「未配置 AI 模型」不再是获取前
+ *  可达的失败，预检没有可拦的东西了（半截配置这种用户错误仍在 worker 的
+ *  getAgentModel / 设置页「测试连接」处 fail-fast，不在点击获取时拦）。保留函数与
+ *  actions.ts 的 4 处调用点不动，避免 llm_not_configured 状态枚举与前端分支的连锁
+ *  改动；函数本体与调用点的清理另开 PR。Settings/env 参数保留供既有测试注入。 */
 export async function acquireLlmPreflightError(
   arg:
     | string
@@ -2792,13 +2803,8 @@ export async function acquireLlmPreflightError(
         env?: NodeJS.ProcessEnv;
       },
 ): Promise<string | null> {
-  const settings = typeof arg === "string" ? getAccountScopedSettings(arg) : arg.settings;
-  const env = typeof arg === "string" ? process.env : arg.env ?? process.env;
-  if (env.MEDIA_TRACK_AGENT_ADAPTER !== "vercel-ai") {
-    return null;
-  }
-  const resolved = await resolveAgentModelConfig(settings, env);
-  return llmConfigError(resolved);
+  void arg; // 已退役：不读配置、不看 adapter，恒不拦截
+  return null;
 }
 
 async function getAgentModel(repository: {
@@ -2815,15 +2821,17 @@ async function getAgentModel(repository: {
   const qualityPreference = await getQualityPreference(repository);
 
   // Resolve the live model config the SAME way the test action does (shared
-  // resolver) — DB-first, then .env. No built-in default endpoint.
+  // resolver) — DB-first, then .env, then the shipped free preset (三键全空回落).
   const resolved = await resolveAgentModelConfig(repository, env);
   const { apiKey, baseURL, modelId } = resolved;
   // Fail-fast pre-check (issue #49): on the live (vercel-ai) path, if baseURL or
-  // modelId is missing the run would die on its first model call (or hit the
-  // author endpoint keyless → 401). Throw the actionable, agnostic guidance NOW
-  // — before building/using the model — so the user gets guidance at 获取 time
-  // instead of a raw failure after a long agent run. apiKey may be empty (keyless
-  // local LLM is valid); the fake/stub adapter never needs a model config.
+  // modelId is missing the run would die on its first model call. With the free
+  // preset fallback this only trips on HALF-configured setups (e.g. a baseURL
+  // without a modelId) — a user error that must not silently become the free
+  // pool. Throw the actionable, agnostic guidance NOW — before building/using
+  // the model — so the user gets guidance at 获取 time instead of a raw failure
+  // after a long agent run. apiKey may be empty (keyless local LLM is valid);
+  // the fake/stub adapter never needs a model config.
   if (adapter === "vercel-ai") {
     const configError = llmConfigError(resolved);
     if (configError) {

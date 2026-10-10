@@ -5,14 +5,11 @@ import { queueCandidateSeries, queueCandidateTracking, reserveCandidate } from "
 import { assertNotDemo } from "../lib/demo-mode";
 
 /**
- * Acquire-time LLM pre-check (issue #52). Returns a not-started result carrying
- * the friendly "未配置 AI 模型" message when a live (vercel-ai) acquisition can't
- * run for lack of LLM config — so the click does NOT enqueue a doomed run that
- * would only fail later in the worker (no wasted spin, no failed card in 活动).
- * Returns null when an LLM is configured (common case → unchanged behavior) or on
- * the fake/demo adapter (never needs an LLM → never blocked). Shared by every
- * acquire entry point. Resolves config the SAME way the worker does
- * (account-scoped DB → env), via acquireLlmPreflightError.
+ * Acquire-time LLM pre-check (issue #52) — RETIRED with the shipped free preset:
+ * 三键全空时 resolveAgentModelConfig 已回落 FREE_LLM_PRESET，「未配置 AI 模型」
+ * 不再是获取前的可达失败，acquireLlmPreflightError 恒返回 null（详见其注释）。
+ * 保留本函数与全部调用点（llm_not_configured 状态枚举、前端分支零改动），
+ * 恒走 null 快路；函数与枚举的清理另开 PR。
  */
 async function acquireLlmNotConfigured(): Promise<RequestTrackingActionResult | null> {
   const { getCurrentAccountId, acquireLlmPreflightError } = await import("../lib/workflow-runtime");

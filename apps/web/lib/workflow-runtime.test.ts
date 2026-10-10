@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { FREE_LLM_PRESET, isFreeLlmPreset } from "@media-track/workflow";
 import {
   acquireLlmPreflightError,
+  resolveAgentModelConfig,
   customDirNamesFromEnv,
   isCookieSecure,
   getLlmConfig,
@@ -21,6 +23,7 @@ import {
   resolveIsDesktop,
   getTmdbAccesses,
   LLM_BASE_URL_SETTING_KEY,
+  LLM_API_KEY_SETTING_KEY,
   LLM_MODEL_ID_SETTING_KEY,
   PROWLARR_API_KEY_SETTING_KEY,
   PROWLARR_BASE_URL_SETTING_KEY,
@@ -86,22 +89,89 @@ describe("getLlmConfig", () => {
   });
 });
 
-describe("acquireLlmPreflightError (点击获取时的 LLM 预检)", () => {
+describe("resolveAgentModelConfig（DB → env → 出厂免费预设）", () => {
+  const cast = (m: Record<string, string>) => m as unknown as NodeJS.ProcessEnv;
+
+  it("DB 有值 → DB 值生效（env 不参与），source db", async () => {
+    const cfg = await resolveAgentModelConfig(
+      repoMap({
+        [LLM_BASE_URL_SETTING_KEY]: "https://db.example/v1",
+        [LLM_MODEL_ID_SETTING_KEY]: "db-model",
+        [LLM_API_KEY_SETTING_KEY]: "sk-db",
+      }),
+      cast({ AGENT_MODEL_BASE_URL: "https://env.example/v1", AGENT_MODEL_ID: "env-model" }),
+    );
+    expect(cfg).toEqual({
+      apiKey: "sk-db",
+      baseURL: "https://db.example/v1",
+      modelId: "db-model",
+      source: "db",
+    });
+  });
+
+  it("DB 空、env 有值（含 legacy XIAOMI_MIMO_*）→ env 值生效，source env", async () => {
+    const cfg = await resolveAgentModelConfig(
+      repoMap({}),
+      cast({ AGENT_MODEL_BASE_URL: "https://env.example/v1", XIAOMI_MIMO_MODEL_ID: "legacy-model" }),
+    );
+    expect(cfg).toEqual({ baseURL: "https://env.example/v1", modelId: "legacy-model", source: "env" });
+  });
+
+  it("DB 只补了一项（如只有 key）、其余靠 env → source db（DB 层参与了就算 db）", async () => {
+    const cfg = await resolveAgentModelConfig(
+      repoMap({ [LLM_API_KEY_SETTING_KEY]: "sk-db" }),
+      cast({ AGENT_MODEL_BASE_URL: "https://env.example/v1", AGENT_MODEL_ID: "env-model" }),
+    );
+    expect(cfg).toEqual({
+      apiKey: "sk-db",
+      baseURL: "https://env.example/v1",
+      modelId: "env-model",
+      source: "db",
+    });
+  });
+
+  it("DB 空 + env 空 → 回落出厂免费预设（keyless），source free-preset", async () => {
+    const cfg = await resolveAgentModelConfig(repoMap({}), cast({}));
+    expect(cfg).toEqual({
+      baseURL: FREE_LLM_PRESET.baseURL,
+      modelId: FREE_LLM_PRESET.modelId,
+      source: "free-preset",
+    });
+    // 回落结果必须能被 isFreeLlmPreset 判成免费档 —— 设置页胶囊/失败文案（Task 4）靠它。
+    expect(isFreeLlmPreset(cfg)).toBe(true);
+  });
+
+  it("env 三键是空串/空白（.env.example 照抄形态）→ 也照样回落免费预设", async () => {
+    const cfg = await resolveAgentModelConfig(
+      repoMap({}),
+      cast({ AGENT_MODEL_API_KEY: "", AGENT_MODEL_BASE_URL: "   " }),
+    );
+    expect(cfg.source).toBe("free-preset");
+    expect(cfg.modelId).toBe(FREE_LLM_PRESET.modelId);
+  });
+
+  it("半截配置（只有 baseURL）不回落 —— 原样返回，交给下游 llmConfigError fail-fast（用户错误不静默变免费池）", async () => {
+    const cfg = await resolveAgentModelConfig(repoMap({}), cast({ AGENT_MODEL_BASE_URL: "https://half.example/v1" }));
+    expect(cfg).toEqual({ baseURL: "https://half.example/v1", source: "env" });
+  });
+});
+
+describe("acquireLlmPreflightError（已退役：免费预设兜底后恒 null，不再拦截任何获取）", () => {
   const configured = repoMap({
     [LLM_BASE_URL_SETTING_KEY]: "https://api.example.com/v1",
     [LLM_MODEL_ID_SETTING_KEY]: "gpt-4o-mini",
   });
   const unconfigured = repoMap({});
 
-  it("live (vercel-ai) + unconfigured → the friendly 未配置 message (blocks enqueue)", async () => {
+  it("live (vercel-ai) + unconfigured → null（出厂免费预设兜底，issue #52 的门退役）", async () => {
     const message = await acquireLlmPreflightError({
       settings: unconfigured,
       env: { MEDIA_TRACK_AGENT_ADAPTER: "vercel-ai" } as unknown as NodeJS.ProcessEnv,
     });
-    expect(message).toContain("未配置 AI 模型");
+    expect(message).toBeNull();
   });
 
-  it("live (vercel-ai) + fully configured → null (common case, unchanged behavior)", async () => {
+  it("live (vercel-ai) + fully configured → null", async () => {
     const message = await acquireLlmPreflightError({
       settings: configured,
       env: { MEDIA_TRACK_AGENT_ADAPTER: "vercel-ai" } as unknown as NodeJS.ProcessEnv,
