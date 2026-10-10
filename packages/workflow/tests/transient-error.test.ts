@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { isTransientAcquisitionError } from "../src/acquisition-v2/transient-error.js";
+import {
+  extractHttpStatus,
+  isTransientAcquisitionError,
+} from "../src/acquisition-v2/transient-error.js";
 
 describe("isTransientAcquisitionError", () => {
   it("matches connection-class errors", () => {
@@ -104,5 +107,66 @@ describe("isTransientAcquisitionError", () => {
     ]) {
       expect(isTransientAcquisitionError(new Error(msg)), msg).toBe(false);
     }
+  });
+
+  // ---- Copilot r3 A：501（Not Implemented）是服务端配置/实现问题，永久错误 ——
+  //
+  // 数值分支原来写成 500≤code<600，把 501 也吞进去 —— 同一个 501，带在
+  // statusCode 上进退避队列、写在 message 里却终止，同错不同形不同命。现在
+  // 数值与文本两侧都排除 501。
+  it("is FALSE for a numeric statusCode 501 (Not Implemented is permanent, never requeued)", () => {
+    expect(isTransientAcquisitionError({ statusCode: 501, message: "Not Implemented" })).toBe(false);
+    const err = new Error("Request failed");
+    (err as Error & { statusCode?: number }).statusCode = 501;
+    expect(isTransientAcquisitionError(err)).toBe(false);
+  });
+
+  it("still requeues numeric statusCode 503 (regression: the 501 carve-out must not swallow the 5xx band)", () => {
+    expect(isTransientAcquisitionError({ statusCode: 503, message: "Request failed" })).toBe(true);
+    const responseStatusOnly = new Error("Request failed");
+    (responseStatusOnly as Error & { responseStatus?: number }).responseStatus = 503;
+    expect(isTransientAcquisitionError(responseStatusOnly)).toBe(true);
+  });
+
+  // ---- Copilot r3 B：message-only 5xx 全段（Cloudflare 520/522/524 带）——
+  //
+  // 文本匹配原来只枚举 "500"/"502"/"503"/"504" 子串，message 含 "HTTP 520"
+  // （Cloudflare 网关常见 520/522/524）不匹配 → 不退避。现在改为词边界正则
+  // 提取独立三位 5xx token，同样排除 501。
+  it("matches any standalone 3-digit 5xx token in the message (520/522/524 Cloudflare band)", () => {
+    for (const msg of [
+      "HTTP 520 from gateway",
+      "HTTP 522 Connection timed out (Cloudflare)",
+      "Origin error 524",
+    ]) {
+      expect(isTransientAcquisitionError(new Error(msg)), msg).toBe(true);
+    }
+  });
+
+  it("is FALSE for a message whose only 5xx token is 501 (message side mirrors the numeric carve-out)", () => {
+    expect(isTransientAcquisitionError(new Error("HTTP 501"))).toBe(false);
+  });
+
+  it("is FALSE for longer numbers that merely contain 5xx digits (word boundaries)", () => {
+    expect(isTransientAcquisitionError(new Error("fileId 50345 not found"))).toBe(false);
+    expect(isTransientAcquisitionError(new Error("任务 5030 号处理失败"))).toBe(false);
+  });
+
+  it("treats a standalone 503 inside business text as transient — the documented bounded cost", () => {
+    // 有界代价的如实断言：「任务 503 处理失败」的 503 是独立三位 token → 退避。
+    // 最多多吃 3 次 1/5/15min 退避后仍会终止失败，不会把失败藏成永久重试
+    // （见实现侧注释的保守性论证）。
+    expect(isTransientAcquisitionError(new Error("任务 503 处理失败"))).toBe(true);
+  });
+
+  // ---- Copilot r3 C：状态提取 helper 的契约（transient 与 agent-error 共用）----
+  it("extractHttpStatus reads statusCode and responseStatus (statusCode wins), null otherwise", () => {
+    expect(extractHttpStatus({ statusCode: 503 })).toBe(503);
+    expect(extractHttpStatus({ responseStatus: 429 })).toBe(429);
+    expect(extractHttpStatus({ statusCode: 503, responseStatus: 500 })).toBe(503);
+    expect(extractHttpStatus(new Error("no status fields"))).toBeNull();
+    expect(extractHttpStatus("HTTP 500")).toBeNull();
+    expect(extractHttpStatus(null)).toBeNull();
+    expect(extractHttpStatus(undefined)).toBeNull();
   });
 });

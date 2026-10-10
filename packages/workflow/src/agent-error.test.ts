@@ -279,6 +279,20 @@ describe("isLlmServerError — LLM 网关 5xx（服务波动）", () => {
     }
   });
 
+  // Copilot r3 C：transient 退避读 statusCode+responseStatus 两个字段，headline
+  // 分类器原先只读 statusCode —— `{responseStatus:503}` 会被退避重试耗尽，之后
+  // 文案却掉回 agnostic 网络标题而不是 Kilo 指引。两处现在共用 transient-error
+  // 的 extractHttpStatus，口径不再漂移。
+  it("matches a 5xx responseStatus (fetch-wrapper field) — status extraction shared with transient-error", () => {
+    const err = Object.assign(new Error("Request failed"), { responseStatus: 503 });
+    expect(isLlmServerError(err)).toBe(true);
+  });
+
+  it("does NOT match a 4xx responseStatus (only 5xx/429 are LLM-call failures)", () => {
+    const err = Object.assign(new Error("Not Found"), { responseStatus: 404 });
+    expect(isLlmServerError(err)).toBe(false);
+  });
+
   it("matches standard 5xx phrases in the message", () => {
     expect(isLlmServerError(new Error("service unavailable"))).toBe(true);
     expect(isLlmServerError(new Error("bad gateway"))).toBe(true);

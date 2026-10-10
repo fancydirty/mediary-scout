@@ -10,9 +10,14 @@
  *
  * `describeAgentRunError` maps an LLM auth/401 failure onto an actionable,
  * provider-agnostic Chinese message; every other error passes through unchanged so
- * "no coverage" / transfer failures read exactly as before. It does NOT touch the
- * original error — logs keep the raw detail.
+ * "no coverage" / transfer failures read exactly as before. It does NOT touch
+ * the original error — logs keep the raw detail.
  */
+
+// 状态码提取与退避闸门（isTransientAcquisitionError）共用：AI SDK 的
+// statusCode 与 fetch 封装的 responseStatus 都认 —— 免费档 headline 判定与
+// transient 重试判定对同一个错误形状看到同一个状态码（Copilot r3 C）。
+import { extractHttpStatus } from "./acquisition-v2/transient-error.js";
 
 /**
  * The model's own content moderation cut the reply before anything was transferred.
@@ -129,16 +134,6 @@ function messageOf(error: unknown): string {
   return "";
 }
 
-function statusCodeOf(error: unknown): number | undefined {
-  if (error !== null && typeof error === "object") {
-    const code = (error as { statusCode?: unknown }).statusCode;
-    if (typeof code === "number") {
-      return code;
-    }
-  }
-  return undefined;
-}
-
 /** True if this error (one node, name+message) is a netdisk brand auth error —
  *  which must NEVER be reported as an AI-模型 auth failure. */
 function isBrandAuthError(error: unknown): boolean {
@@ -161,7 +156,7 @@ export function isLlmAuthError(error: unknown, depth = 0): boolean {
   if (isBrandAuthError(error)) {
     return false;
   }
-  const status = statusCodeOf(error);
+  const status = extractHttpStatus(error);
   if (status === 401 || status === 403) {
     return true;
   }
@@ -199,7 +194,7 @@ export function isLlmRateLimitError(error: unknown, depth = 0): boolean {
   if (isBrandError(error)) {
     return false;
   }
-  if (statusCodeOf(error) === 429) {
+  if (extractHttpStatus(error) === 429) {
     return true;
   }
   const msg = messageOf(error);
@@ -281,8 +276,8 @@ export function isLlmServerError(error: unknown, depth = 0): boolean {
   if (isNonLlmUpstreamError(error)) {
     return false;
   }
-  const status = statusCodeOf(error);
-  if (status !== undefined && status >= 500 && status <= 599) {
+  const status = extractHttpStatus(error);
+  if (status !== null && status >= 500 && status <= 599) {
     return true;
   }
   const msg = messageOf(error);
