@@ -56,6 +56,32 @@ describe("restoreFreeLlmAction", () => {
     expect(isFreeLlmPreset(resolved)).toBe(true);
   });
 
+  it("第二次写库（modelId）抛错 → 返回失败，且第一个 key 补偿回滚旧值，不留半切换状态", async () => {
+    // 两次 setSetting 之间失败：baseURL 已被覆盖成 Kilo、modelId 仍旧值 ——
+    // 无回滚就是持续生效的混合配置（用户不重试不自愈）。
+    let failModelIdWrites = false;
+    class ModelIdWriteBoom extends InMemoryWorkflowRepository {
+      override async setAccountSetting(accountId: string, key: string, value: string): Promise<void> {
+        if (failModelIdWrites && key === "llm_model_id") throw new Error("model-id write boom");
+        return super.setAccountSetting(accountId, key, value);
+      }
+    }
+    repo = new ModelIdWriteBoom();
+    await repo.setAccountSetting(accountId, "llm_base_url", "https://api.deepseek.com/v1");
+    await repo.setAccountSetting(accountId, "llm_model_id", "deepseek-chat");
+    failModelIdWrites = true;
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    expect(await actions.restoreFreeLlmAction()).toEqual({ success: false, message: "换回失败，请稍后重试" });
+
+    // 补偿回滚生效：baseURL 回到旧值（不是停在 Kilo），modelId 未被改动。
+    expect(await repo.getAccountSetting(accountId, "llm_base_url")).toBe("https://api.deepseek.com/v1");
+    expect(await repo.getAccountSetting(accountId, "llm_model_id")).toBe("deepseek-chat");
+    // 原始错误照旧进服务端日志（回滚不得掩盖它）。
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
   it("只写当前账号的行，别的账号配置不受影响", async () => {
     await repo.setAccountSetting("acct_other", "llm_base_url", "https://api.deepseek.com");
     await repo.setAccountSetting("acct_other", "llm_model_id", "deepseek-chat");

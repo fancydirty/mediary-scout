@@ -598,18 +598,45 @@ export async function saveLlmConfigAction(input: {
  *  key 还在（与 saveLlmConfigAction 的 blank-keep 语义一致）。 */
 export async function restoreFreeLlmAction(): Promise<PushSettingsActionResult> {
   assertNotDemo();
+  // 覆盖前记旧值，用于失败时的补偿回滚：两次 setSetting（baseURL、modelId）之间
+  // 若第二次失败，baseURL 已是 Kilo、modelId 仍旧值 —— 持续生效的混合配置，用户
+  // 不重试就不会自愈。选补偿回滚而非 repository 事务：现有 repository 只有逐 key
+  // setSetting，为这相邻两次写加批量事务 API 超出本 PR 范围；两次写之间失败概率
+  // 极低，回滚已把后果从「持续混合配置」降为「无变化」。undefined = 连旧值都没
+  // 读到（import/账号解析就失败，第一写从未发生）→ 没有可回滚的状态，别乱写库。
+  let previousBaseUrl: string | null | undefined;
   try {
     const { FREE_LLM_PRESET, normalizeLlmBaseUrl } = await import("@media-track/workflow");
     const { getWorkflowRepository, getCurrentAccountId, LLM_BASE_URL_SETTING_KEY, LLM_MODEL_ID_SETTING_KEY } =
       await import("../lib/workflow-runtime");
     const repository = getWorkflowRepository();
     const accountId = await getCurrentAccountId();
+    previousBaseUrl = await repository.getAccountSetting(accountId, LLM_BASE_URL_SETTING_KEY);
     // baseURL 走与 saveLlmConfigAction 相同的 normalize，保证写库值与
     // resolveAgentModelConfig 回落形态逐字一致（isFreeLlmPreset 按此比较）。
     await repository.setAccountSetting(accountId, LLM_BASE_URL_SETTING_KEY, normalizeLlmBaseUrl(FREE_LLM_PRESET.baseURL));
     await repository.setAccountSetting(accountId, LLM_MODEL_ID_SETTING_KEY, FREE_LLM_PRESET.modelId);
     return { success: true };
   } catch (error) {
+    // 第一写之后失败 → best-effort 把 baseURL 写回旧值。旧值为 null（从未配置）
+    // 时写空串：getLlmConfig 把空串归一为 undefined，与 null 等价（saveLlmConfigAction
+    // 的「整行清空」同一语义）。回滚自身失败只进日志，绝不掩盖/替换原始错误。
+    if (previousBaseUrl !== undefined) {
+      try {
+        const { getWorkflowRepository, getCurrentAccountId, LLM_BASE_URL_SETTING_KEY } = await import(
+          "../lib/workflow-runtime"
+        );
+        await getWorkflowRepository().setAccountSetting(
+          await getCurrentAccountId(),
+          LLM_BASE_URL_SETTING_KEY,
+          previousBaseUrl ?? "",
+        );
+      } catch (rollbackError) {
+        console.error(
+          `[restore-free-llm-action] rollback failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+        );
+      }
+    }
     // 内部细节（DB 报错、堆栈、路径）不回传浏览器 —— 与 web 端 runAction 的
     // 泛化错误边界同一思路（那边也是刻意丢掉异常只给固定文案）。原始错误进
     // 服务端日志供排查。
