@@ -72,7 +72,8 @@ export function LibraryQuickFind({
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     // 中文输入法用 Enter 确认候选词也会走到这里——那是选字，不是导航/清空。
-    if (event.nativeEvent.isComposing) return;
+    // WebKit 变体：compositionend 先于 keydown 时 keyCode 229 是文档化兜底。
+    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
     if (event.key === "Enter") {
       const href = soleMatchHref();
       if (href) router.push(href);
@@ -111,7 +112,7 @@ export function LibraryQuickFind({
             aria-label="在库中查找"
             placeholder="在库中查找…"
           />
-          {query !== "" ? (
+          {query.trim() !== "" ? (
             <button
               type="button"
               className="search-box-compact-clear"
@@ -123,7 +124,7 @@ export function LibraryQuickFind({
           ) : null}
         </div>
       </div>
-      {query !== "" ? <p className="panel-note">匹配 {totalCount} 部</p> : null}
+      {query.trim() !== "" ? <p className="panel-note">匹配 {totalCount} 部</p> : null}
       {mode === "category" ? (
         <div style={{ marginBottom: 16, display: "flex", gap: 8 }}>
           <Link
@@ -152,7 +153,7 @@ export function LibraryQuickFind({
           </Link>
         </div>
       ) : null}
-      {totalCount === 0 && query !== "" ? (
+      {totalCount === 0 && query.trim() !== "" ? (
         <div className="quiet-state compact">
           <TriangleAlert size={22} aria-hidden />
           <strong>没找到『{query}』</strong>

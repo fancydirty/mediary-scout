@@ -8,6 +8,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * props are picked off the directly-returned element tree (the
  * remote-access-section.test.ts precedent). Markup assertions render the
  * fresh tree to static HTML, service-block.test.ts style.
+ *
+ * 假 useState 是单槽的——组件将来加第二个 useState 会让全部交互测试静默串槽，届时改按调用次序分配。
  */
 const h = vi.hoisted(() => ({
   query: "" as string,
@@ -83,12 +85,14 @@ function typeQuery(props: Props, value: string) {
   });
 }
 
-function pressKey(props: Props, key: string, isComposing = false) {
+function pressKey(props: Props, key: string, isComposing = false, keyCode = 0) {
   const input = find(LibraryQuickFind(props), (element) => element.type === "input");
   expect(input).not.toBeNull();
-  (input!.props as { onKeyDown: (event: { key: string; nativeEvent: { isComposing: boolean } }) => void }).onKeyDown({
+  (input!.props as {
+    onKeyDown: (event: { key: string; nativeEvent: { isComposing: boolean; keyCode: number } }) => void;
+  }).onKeyDown({
     key,
-    nativeEvent: { isComposing },
+    nativeEvent: { isComposing, keyCode },
   });
 }
 
@@ -210,6 +214,28 @@ describe("LibraryQuickFind — home 模式", () => {
 
     pressKey(p, "Enter");
     expect(h.push).toHaveBeenCalledTimes(1);
+  });
+
+  it("WebKit 变体：isComposing 已复位但 keyCode 229 的 Enter 同样不触发直达", () => {
+    const p = props();
+    typeQuery(p, "猛攻");
+    pressKey(p, "Enter", false, 229);
+    expect(h.push).not.toHaveBeenCalled();
+
+    pressKey(p, "Enter", false, 13);
+    expect(h.push).toHaveBeenCalledTimes(1);
+  });
+
+  it("纯空白 query 按未输入处理：全量墙、无计数、无 ✕、非 0 匹配空态", () => {
+    const p = props();
+    typeQuery(p, "   ");
+    const markup = html(p);
+    expect(markup).toContain("获取中 2");
+    expect(markup).toContain("猛攻");
+    expect(markup).toContain("黄泉的使者");
+    expect(markup).not.toContain("匹配 ");
+    expect(markup).not.toContain("没找到");
+    expect(markup).not.toContain('aria-label="清空查找"');
   });
 
   it("0 匹配显示「没找到『××』」+清空按钮；清空后恢复完整视图", () => {
