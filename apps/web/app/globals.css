@@ -425,11 +425,15 @@ p {
 .search-box-compact-clear {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   background: transparent;
   border: none;
   color: var(--text-muted);
   cursor: pointer;
   padding: 2px;
+  /* 命中区不小于 WCAG 2.5.8 的 24×24 触摸最小尺寸（图标仍 14px）。 */
+  min-width: 24px;
+  min-height: 24px;
   flex-shrink: 0;
   font-family: inherit;
 }
