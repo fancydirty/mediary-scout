@@ -63,10 +63,11 @@ export function LibraryQuickFind({
   const matchedInProgress = filterLibraryEntries(scopedInProgress, query);
   const totalCount = matchedWall.length + matchedInProgress.length;
 
-  // Enter 直达：query 时 filtered 总数恰好 1 → 海报卡同一链接进详情页。
+  // Enter 直达：query 时可达（非「获取中」占位）匹配恰好 1 且总匹配恰好 1 → 海报卡同一链接进详情页。
+  // 唯一匹配是「获取中」占位（aria-disabled「完成后可进入」）时不导航——Enter 不绕过该契约。
   const soleMatchHref = (): string | null => {
-    if (query.trim() === "" || totalCount !== 1) return null;
-    const sole = matchedWall[0] ?? matchedInProgress[0];
+    if (query.trim() === "" || totalCount !== 1 || matchedWall.length !== 1) return null;
+    const sole = matchedWall[0];
     return sole ? showHref(sole.tmdbId, "library", storageId, sole.type) : null;
   };
 
@@ -124,7 +125,11 @@ export function LibraryQuickFind({
           ) : null}
         </div>
       </div>
-      {query.trim() !== "" ? <p className="panel-note">匹配 {totalCount} 部</p> : null}
+      {query.trim() !== "" ? (
+        <p className="panel-note" aria-live="polite" aria-atomic="true">
+          匹配 {totalCount} 部
+        </p>
+      ) : null}
       {mode === "category" ? (
         <div style={{ marginBottom: 16, display: "flex", gap: 8 }}>
           <Link

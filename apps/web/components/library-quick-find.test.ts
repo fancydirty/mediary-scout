@@ -206,6 +206,44 @@ describe("LibraryQuickFind — home 模式", () => {
     expect(h.push).not.toHaveBeenCalled();
   });
 
+  it("唯一匹配是「获取中」占位时 Enter 不导航（占位卡不可进入）", () => {
+    const p = props();
+    typeQuery(p, "追风少年"); // 只命中获取中的占位标题
+    expect(html(p)).toContain("匹配 1 部");
+    pressKey(p, "Enter");
+    expect(h.push).not.toHaveBeenCalled();
+  });
+
+  it("可达 1 + 获取中 1（总 2）不导航；唯一可达匹配才直达", () => {
+    const p: Props = {
+      wallEntries: [entry({ tmdbId: 110, title: "追风行动", type: "movie" })],
+      inProgressTitles: [ip({ tmdbId: 210, title: "追风" })],
+      storageId: undefined,
+      mode: "home",
+    };
+    typeQuery(p, "追风");
+    pressKey(p, "Enter");
+    expect(h.push).not.toHaveBeenCalled();
+
+    typeQuery(p, "追风行动");
+    pressKey(p, "Enter");
+    expect(h.push).toHaveBeenCalledTimes(1);
+    expect(h.push).toHaveBeenCalledWith("/show/110?from=library&t=movie");
+  });
+
+  it("匹配计数带 aria-live=polite，过滤结果数变化可被辅助技术播报", () => {
+    const p = props();
+    typeQuery(p, "猛攻");
+    const count = find(
+      LibraryQuickFind(p),
+      (element) =>
+        element.type === "p" &&
+        String((element.props as { className?: string }).className ?? "").includes("panel-note"),
+    );
+    expect(count).not.toBeNull();
+    expect((count!.props as Record<string, unknown>)["aria-live"]).toBe("polite");
+  });
+
   it("中文输入法确认词的 Enter 不触发直达（isComposing）", () => {
     const p = props();
     typeQuery(p, "猛攻");
