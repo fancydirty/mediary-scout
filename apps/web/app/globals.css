@@ -1359,6 +1359,9 @@ p {
   }
 
   .search-box-compact {
+    /* 上方 .search-box 的 flex:1 把 flex-basis 压成 0%，会吃掉这里的 width:100%，
+       查找框挤在标题行右侧缩成小条不换行——flex:none 让 width 生效、换到标题下方。 */
+    flex: none;
     width: 100%;
   }
 
