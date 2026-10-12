@@ -10,11 +10,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * fresh tree to static HTML, service-block.test.ts style.
  *
  * 假 useState 是单槽的——组件将来加第二个 useState 会让全部交互测试静默串槽，届时改按调用次序分配。
+ * 假 useRef 固定返回假 input ref（current.focus 是 spy）——清空后焦点回搜索框就断言它。
  */
-const h = vi.hoisted(() => ({
-  query: "" as string,
-  push: vi.fn(),
-}));
+const h = vi.hoisted(() => {
+  const focus = vi.fn();
+  return {
+    query: "" as string,
+    push: vi.fn(),
+    focus,
+    inputRef: { current: { focus } },
+  };
+});
 
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
@@ -26,6 +32,7 @@ vi.mock("react", async (importOriginal) => {
         h.query = typeof next === "function" ? next(h.query) : next;
       },
     ],
+    useRef: () => h.inputRef,
   };
 });
 
@@ -161,6 +168,7 @@ describe("LibraryQuickFind — home 模式", () => {
   beforeEach(() => {
     h.query = "";
     h.push.mockClear();
+    h.focus.mockClear();
   });
 
   it("query 空 → 原布局：获取中行 + 分类行（空行隐藏），无计数/清空按钮", () => {
@@ -306,6 +314,25 @@ describe("LibraryQuickFind — home 模式", () => {
     clickButton(p, "清空查找");
     expect(h.query).toBe("");
     expect(html(p)).toContain("黄泉的使者");
+  });
+
+  it("清空统一走 clearQuery：✕、0 匹配清空、Esc 清空后焦点回搜索框", () => {
+    const p = props();
+
+    typeQuery(p, "猛攻");
+    clickButton(p, "清空查找");
+    expect(h.query).toBe("");
+    expect(h.focus).toHaveBeenCalledTimes(1);
+
+    typeQuery(p, "无此片");
+    clickClearInEmptyState(p);
+    expect(h.query).toBe("");
+    expect(h.focus).toHaveBeenCalledTimes(2);
+
+    typeQuery(p, "猛攻");
+    pressKey(p, "Escape");
+    expect(h.query).toBe("");
+    expect(h.focus).toHaveBeenCalledTimes(3);
   });
 });
 

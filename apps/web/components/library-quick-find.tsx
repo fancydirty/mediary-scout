@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, type JSX, type KeyboardEvent } from "react";
+import { useRef, useState, type JSX, type KeyboardEvent } from "react";
 import { CalendarClock, CheckCircle2, Clock3, LoaderCircle, Search, TriangleAlert, X } from "lucide-react";
 // Client components must take the /scope subpath, not the barrel — the barrel
 // drags pg/postgres into the client bundle (see request-state.tsx).
@@ -42,6 +42,14 @@ export function LibraryQuickFind({
 }): JSX.Element {
   const router = useRouter();
   const [query, setQuery] = useState("");
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // 清空统一入口：清完把焦点还给搜索框（✕/0 匹配清空按钮随后会 unmount，
+  // 不接住焦点就掉回 document）。
+  const clearQuery = () => {
+    setQuery("");
+    inputRef.current?.focus();
+  };
 
   // category 模式：先按现有 filter（complete/tracking/partial）过滤，再按 query 过滤。
   const scopedWall =
@@ -79,7 +87,7 @@ export function LibraryQuickFind({
       const href = soleMatchHref();
       if (href) router.push(href);
     } else if (event.key === "Escape") {
-      setQuery("");
+      clearQuery();
     }
   };
 
@@ -107,6 +115,7 @@ export function LibraryQuickFind({
         <div className="search-box search-box-compact">
           <Search size={16} aria-hidden />
           <input
+            ref={inputRef}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={onKeyDown}
@@ -118,7 +127,7 @@ export function LibraryQuickFind({
               type="button"
               className="search-box-compact-clear"
               aria-label="清空查找"
-              onClick={() => setQuery("")}
+              onClick={clearQuery}
             >
               <X size={14} aria-hidden />
             </button>
@@ -162,7 +171,7 @@ export function LibraryQuickFind({
         <div className="quiet-state compact">
           <TriangleAlert size={22} aria-hidden />
           <strong>没找到『{query}』</strong>
-          <button type="button" className="secondary-button" onClick={() => setQuery("")}>
+          <button type="button" className="secondary-button" onClick={clearQuery}>
             清空
           </button>
         </div>
