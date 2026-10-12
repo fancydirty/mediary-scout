@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { Suspense } from "react";
-import { CalendarClock, CheckCircle2, Clock3, Library, LoaderCircle, TriangleAlert } from "lucide-react";
+import { Library, TriangleAlert } from "lucide-react";
 import { AcquiringPoller } from "../components/acquiring-poller";
 import { AppSidebar } from "../components/app-sidebar";
 import { RequestTrackButton } from "../components/request-track-button";
 import { AcquireProgressBadge } from "../components/acquire-progress-badge";
 import { DemoSessionLibrary } from "../components/demo-session-library";
+import { LibraryQuickFind } from "../components/library-quick-find";
 import { RememberQuery } from "../components/search-memory";
 import { SearchForm } from "../components/search-form";
 import { SeasonRequestMenu } from "../components/season-request-menu";
@@ -14,12 +15,7 @@ import { ConnectNoticeBanner } from "../components/connect-notice-banner";
 import { GitHubNameplate } from "../components/github-nameplate";
 import type { TrendingKind } from "../lib/trending";
 import { getSearchView } from "../lib/search-page";
-import {
-  getInProgressTitles,
-  getLibraryWall,
-  type InProgressTitle,
-  type LibraryWallEntry,
-} from "../lib/title-hub";
+import { getInProgressTitles, getLibraryWall } from "../lib/title-hub";
 import {
   ensureDemoSeeded,
   getActiveWorkspaceScope,
@@ -442,245 +438,22 @@ async function LibrarySurface({ mediaType, filter, storageId }: { mediaType: str
     );
   }
 
-  // Homepage: every type as a horizontal row, with in-progress titles shown
-  // inline (as 获取中 cards) alongside the landed ones — plus the dedicated
-  // 获取中 row at the very top.
-  if (mediaType === "all") {
-    const byType = (type: "movie" | "tv" | "anime") => ({
-      inProgressTitles: inProgress.filter((title) => title.type === type),
-      wallEntries: wall.filter((entry) => entry.type === type),
-    });
-    return (
-      <section className="library-surface">
-        <div className="section-heading library-heading">
-          <div>
-            <h1>我的媒体库</h1>
-          </div>
-        </div>
-
-        {inProgress.length > 0 ? <AcquiringPoller /> : null}
-        <InProgressRow titles={inProgress} />
-
-        <CategoryRow label="电影" type="movie" {...byType("movie")} storageId={storageId} />
-        <CategoryRow label="电视剧" type="tv" {...byType("tv")} storageId={storageId} />
-        <CategoryRow label="动漫" type="anime" {...byType("anime")} storageId={storageId} />
-      </section>
-    );
-  }
-
-  // Category detail page
-  const filteredWall = wall.filter((entry) => {
-    // Type filter
-    if (mediaType === "movie" && entry.type !== "movie") return false;
-    if (mediaType === "tv" && entry.type !== "tv") return false;
-    if (mediaType === "anime" && entry.type !== "anime") return false;
-    // State filter
-    if (filter === "complete") return entry.state === "complete";
-    if (filter === "tracking") return entry.state === "tracking";
-    if (filter === "partial") return entry.state === "partial";
-    return true;
-  });
-
-  const typeLabel = mediaType === "movie" ? "电影" : mediaType === "tv" ? "电视剧" : "动漫";
-  const libBasePath = workspaceBasePath(storageId);
-  const trackingCount = wall
-    .filter((entry) => entry.type === mediaType)
-    .filter((entry) => entry.state === "tracking" || entry.state === "partial").length;
-
+  // The type param is always one of the three (every link generates it that way);
+  // anything else falls back to the rows overview.
+  const category = mediaType === "movie" || mediaType === "tv" || mediaType === "anime" ? mediaType : null;
   return (
     <section className="library-surface">
-      <div className="section-heading library-heading">
-        <div>
-          <h1>
-            <Link href={`${libBasePath}?tab=library`} style={{ marginRight: 12, opacity: 0.6 }}>
-              ‹
-            </Link>
-            {typeLabel}
-          </h1>
-          <p>{trackingCount > 0 && `${trackingCount} 部正在追踪`}</p>
-        </div>
-      </div>
-
-      <div style={{ marginBottom: 16, display: "flex", gap: 8 }}>
-        <Link
-          className={`filter-pill ${filter === "all" ? "is-active" : ""}`}
-          href={`${libBasePath}?tab=library&type=${mediaType}&filter=all`}
-        >
-          全部
-        </Link>
-        <Link
-          className={`filter-pill ${filter === "complete" ? "is-active" : ""}`}
-          href={`${libBasePath}?tab=library&type=${mediaType}&filter=complete`}
-        >
-          已完结
-        </Link>
-        <Link
-          className={`filter-pill ${filter === "tracking" ? "is-active" : ""}`}
-          href={`${libBasePath}?tab=library&type=${mediaType}&filter=tracking`}
-        >
-          追更中
-        </Link>
-        <Link
-          className={`filter-pill ${filter === "partial" ? "is-active" : ""}`}
-          href={`${libBasePath}?tab=library&type=${mediaType}&filter=partial`}
-        >
-          有缺集
-        </Link>
-      </div>
-
       {inProgress.length > 0 ? <AcquiringPoller /> : null}
-      <InProgressRow titles={inProgress.filter((title) => title.type === mediaType)} />
-
-      <div className="poster-wall">
-        {filteredWall.map((entry) => (
-          <PosterCard entry={entry} activeStorageId={storageId} key={entry.tmdbId} />
-        ))}
-      </div>
+      <LibraryQuickFind
+        wallEntries={wall}
+        inProgressTitles={inProgress}
+        storageId={storageId}
+        mode={category ? "category" : "home"}
+        mediaType={category ?? undefined}
+        filter={filter === "complete" || filter === "tracking" || filter === "partial" ? filter : "all"}
+      />
     </section>
   );
-}
-
-function CategoryRow({
-  label,
-  type,
-  inProgressTitles,
-  wallEntries,
-  storageId,
-}: {
-  label: string;
-  type: string;
-  inProgressTitles: InProgressTitle[];
-  wallEntries: LibraryWallEntry[];
-  storageId?: string | undefined;
-}) {
-  const count = inProgressTitles.length + wallEntries.length;
-  if (count === 0) {
-    return null;
-  }
-  return (
-    <div className="category-section">
-      <Link className="category-header" href={`${workspaceBasePath(storageId)}?tab=library&type=${type}&filter=all`}>
-        <h2>
-          {label} {count}
-        </h2>
-        <span className="category-arrow">›</span>
-      </Link>
-      <div className="poster-row">
-        {inProgressTitles.map((title) => (
-          <InProgressCard title={title} key={`ip_${title.tmdbId}`} />
-        ))}
-        {wallEntries.map((entry) => (
-          <PosterCard entry={entry} activeStorageId={storageId} key={entry.tmdbId} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function InProgressRow({ titles }: { titles: InProgressTitle[] }) {
-  if (titles.length === 0) {
-    return null;
-  }
-  return (
-    <div className="category-section">
-      <div className="category-header is-static">
-        <h2>获取中 {titles.length}</h2>
-      </div>
-      <div className="poster-row">
-        {titles.map((title) => (
-          <InProgressCard title={title} key={title.tmdbId} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function InProgressCard({ title }: { title: InProgressTitle }) {
-  return (
-    <div className="wall-card is-loading" aria-disabled title="获取中，完成后可进入">
-      <span className="wall-poster">
-        {title.posterPath ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={`https://image.tmdb.org/t/p/w342${title.posterPath}`} alt="" loading="lazy" />
-        ) : (
-          <span className="poster-fallback">{title.title.slice(0, 4)}</span>
-        )}
-        <span className="wall-loading-overlay">
-          <LoaderCircle size={20} className="spin" aria-hidden />
-          <span>获取中</span>
-        </span>
-      </span>
-      <span className="wall-copy">
-        <strong>{title.title}</strong>
-        <span>{title.year} · 正在获取</span>
-      </span>
-    </div>
-  );
-}
-
-function PosterCard({ entry, activeStorageId }: { entry: LibraryWallEntry; activeStorageId?: string | undefined }) {
-  // Completeness and "still airing" are orthogonal: a 缺集 title whose latest
-  // season is still releasing shows BOTH ⚠️有缺集 and 追更中 (斗破苍穹), so the
-  // blue/indigo "在更" signal isn't swallowed by the warning (parity with 达顿牧场).
-  const badges =
-    entry.state === "reserved"
-      ? [{ tone: "blue", icon: CalendarClock, label: "预定（未上映）" }]
-      : entry.state === "complete"
-        ? [{ tone: "green", icon: CheckCircle2, label: "已全部入库" }]
-        : entry.state === "tracking"
-          ? [{ tone: "indigo", icon: Clock3, label: "追更中" }]
-          : [
-              { tone: "amber", icon: TriangleAlert, label: "有缺集" },
-              ...(entry.airing ? [{ tone: "indigo", icon: Clock3, label: "追更中" }] : []),
-            ];
-
-  return (
-    <Link className="wall-card" href={showHref(entry.tmdbId, "library", activeStorageId, entry.type)}>
-      <span className="wall-poster">
-        {entry.posterPath ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={`https://image.tmdb.org/t/p/w342${entry.posterPath}`} alt="" loading="lazy" />
-        ) : (
-          <span className="poster-fallback">{entry.title.slice(0, 4)}</span>
-        )}
-        <span className="wall-states">
-          {badges.map((badge) => {
-            const BadgeIcon = badge.icon;
-            return (
-              <span className={`wall-state tone-${badge.tone}`} title={badge.label} key={badge.label}>
-                <BadgeIcon size={13} aria-hidden />
-              </span>
-            );
-          })}
-        </span>
-      </span>
-      <span className="wall-copy">
-        <strong>{entry.title}</strong>
-        <span>
-          {/* A movie has no seasons/episodes; reserved ones name the release date.
-              Series show 已获取/已播/共 (e.g. 6/6/9) so 6/6 of a 9-ep season no
-              longer reads as "100% complete". */}
-          {entry.type === "movie"
-            ? entry.state === "reserved"
-              ? `预定 · ${formatReleaseDate(entry.releaseDate)}上映`
-              : entry.year
-            : `${entry.year} · ${entry.seasonCount} 季 · ${entry.obtainedEpisodes}/${entry.totalAiredEpisodes}/${entry.totalEpisodes} 集`}
-        </span>
-      </span>
-    </Link>
-  );
-}
-
-/** "2026-12-16" → "12月16日"; falls back to the year when only a year is known. */
-function formatReleaseDate(releaseDate: string | null): string {
-  if (!releaseDate) {
-    return "";
-  }
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(releaseDate);
-  if (!match) {
-    return releaseDate;
-  }
-  return `${Number(match[2])}月${Number(match[3])}日`;
 }
 
 function SearchResultsSkeleton() {

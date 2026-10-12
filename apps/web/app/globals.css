@@ -406,6 +406,38 @@ p {
   width: 320px;
 }
 
+/* 媒体库标题行的盘内快速查找框（.search-box 小变体，LibraryQuickFind）。 */
+.search-box-compact {
+  width: 230px;
+  height: 36px;
+  padding: 0 12px;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.search-box-compact input {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+
+/* 清空按钮仅 query 非空时渲染。 */
+.search-box-compact-clear {
+  display: inline-flex;
+  align-items: center;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px;
+  flex-shrink: 0;
+  font-family: inherit;
+}
+
+.search-box-compact-clear:hover {
+  color: var(--text);
+}
+
 .search-box input::placeholder {
   color: var(--text-muted);
 }
@@ -1317,6 +1349,16 @@ p {
 
   .search-box input,
   .search-box-large input {
+    width: 100%;
+  }
+
+  /* 媒体库查找框换行到标题行下方（860px 断点惯例）。 */
+  .library-find-heading {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .search-box-compact {
     width: 100%;
   }
 
