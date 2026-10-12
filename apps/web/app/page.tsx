@@ -31,6 +31,13 @@ import { shouldShowConnectNotice } from "../lib/connect-notice";
 import { showHref } from "@media-track/workflow";
 import type { SearchCandidateCard, TrackedSeasonState } from "@media-track/workflow";
 
+/** Workspace base path: "/" is the account's primary drive, "/w/<id>" a
+ *  specific drive. Library links must route within the current workspace —
+ *  hardcoding "/" silently jumps to the primary drive from any other drive. */
+function workspaceBasePath(storageId?: string): string {
+  return storageId ? `/w/${storageId}` : "/";
+}
+
 export default function Page({
   searchParams,
 }: {
@@ -89,7 +96,7 @@ async function HomeSurface({
   // Tree model: keep searches inside the ACTIVE workspace so an acquisition lands
   // on the drive you're viewing — not silently on the primary drive. Root route
   // (no storageId) posts to "/" as before.
-  const basePath = storageId ? `/w/${storageId}` : "/";
+  const basePath = workspaceBasePath(storageId);
   const driveCount = await getRegisteredDriveCount();
 
   // Connect notice: only on the root home page (no storageId), only on search tab
@@ -475,6 +482,7 @@ async function LibrarySurface({ mediaType, filter, storageId }: { mediaType: str
   });
 
   const typeLabel = mediaType === "movie" ? "电影" : mediaType === "tv" ? "电视剧" : "动漫";
+  const libBasePath = workspaceBasePath(storageId);
   const trackingCount = wall
     .filter((entry) => entry.type === mediaType)
     .filter((entry) => entry.state === "tracking" || entry.state === "partial").length;
@@ -484,7 +492,7 @@ async function LibrarySurface({ mediaType, filter, storageId }: { mediaType: str
       <div className="section-heading library-heading">
         <div>
           <h1>
-            <Link href="/?tab=library" style={{ marginRight: 12, opacity: 0.6 }}>
+            <Link href={`${libBasePath}?tab=library`} style={{ marginRight: 12, opacity: 0.6 }}>
               ‹
             </Link>
             {typeLabel}
@@ -496,25 +504,25 @@ async function LibrarySurface({ mediaType, filter, storageId }: { mediaType: str
       <div style={{ marginBottom: 16, display: "flex", gap: 8 }}>
         <Link
           className={`filter-pill ${filter === "all" ? "is-active" : ""}`}
-          href={`/?tab=library&type=${mediaType}&filter=all`}
+          href={`${libBasePath}?tab=library&type=${mediaType}&filter=all`}
         >
           全部
         </Link>
         <Link
           className={`filter-pill ${filter === "complete" ? "is-active" : ""}`}
-          href={`/?tab=library&type=${mediaType}&filter=complete`}
+          href={`${libBasePath}?tab=library&type=${mediaType}&filter=complete`}
         >
           已完结
         </Link>
         <Link
           className={`filter-pill ${filter === "tracking" ? "is-active" : ""}`}
-          href={`/?tab=library&type=${mediaType}&filter=tracking`}
+          href={`${libBasePath}?tab=library&type=${mediaType}&filter=tracking`}
         >
           追更中
         </Link>
         <Link
           className={`filter-pill ${filter === "partial" ? "is-active" : ""}`}
-          href={`/?tab=library&type=${mediaType}&filter=partial`}
+          href={`${libBasePath}?tab=library&type=${mediaType}&filter=partial`}
         >
           有缺集
         </Link>
@@ -551,7 +559,7 @@ function CategoryRow({
   }
   return (
     <div className="category-section">
-      <Link className="category-header" href={`/?tab=library&type=${type}&filter=all`}>
+      <Link className="category-header" href={`${workspaceBasePath(storageId)}?tab=library&type=${type}&filter=all`}>
         <h2>
           {label} {count}
         </h2>
