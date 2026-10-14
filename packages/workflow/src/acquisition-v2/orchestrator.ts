@@ -213,6 +213,27 @@ function rejectionRowItems<T extends { episode: string; isVideo: boolean }>(item
   return rows;
 }
 
+const TRANSFER_ATTEMPTED_ON_THROW = Symbol.for("media-track.transferAttemptedOnThrow");
+
+export function attachTransferAttemptedOnThrow<E>(error: E, attempted: boolean): E {
+  if (attempted && typeof error === "object" && error !== null) {
+    Object.defineProperty(error, TRANSFER_ATTEMPTED_ON_THROW, {
+      value: true,
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return error;
+}
+
+export function hasTransferAttemptedOnThrow(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) {
+    return false;
+  }
+  return (error as Record<symbol, unknown>)[TRANSFER_ATTEMPTED_ON_THROW] === true;
+}
+
 export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promise<RunAcquisitionV2Result> {
   // Before the provider exists, so the pre-warmed snapshot is annotated too.
   const linkNotes = await loadLinkHistory(request);
@@ -596,10 +617,16 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     ...(request.stagingRecovery ? { stagingRecovery: true as const } : {}),
   };
 
-  const result =
-    request.target.kind === "tv"
-      ? await runTvAnimeTaskAgent({ ...common, target: stripKind(request.target) })
-      : await runMovieTaskAgent({ ...common, target: stripKind(request.target) });
+  let result: AcquisitionAgentResult;
+  try {
+    result =
+      request.target.kind === "tv"
+        ? await runTvAnimeTaskAgent({ ...common, target: stripKind(request.target) })
+        : await runMovieTaskAgent({ ...common, target: stripKind(request.target) });
+  } catch (error) {
+    const attempted = storage.attempts().length > 0 || (await sandbox.hasTransferEvidence());
+    throw attachTransferAttemptedOnThrow(error, attempted);
+  }
   // Every requested/rejected episode the agent did not report becomes not_found
   // (stays 待换). After the loop — the content-filter recovery turn included.
   if (userRequest) await sandbox.finalizeReplacement();

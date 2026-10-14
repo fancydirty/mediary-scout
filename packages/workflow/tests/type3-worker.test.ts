@@ -1468,6 +1468,51 @@ describe("runScheduledType3Monitoring — transient retry & failure logging", ()
       logSpy.mockRestore();
     }
   });
+
+  it("does NOT replay a patrol run when the first attempt preserved unmoved staging files or already attempted a transfer", async () => {
+    const { FREE_LLM_PRESET } = await import("../src/agent-model.js");
+    const { attachStagingKeptUnmoved } = await import("../src/acquisition-v2/directory-lifecycle.js");
+    const repository = new InMemoryWorkflowRepository();
+    const { title, season } = trackedFixture("no_replay_kept");
+    await seedTrackedSeason({ repository, title, season, obtainedCodes: ["S01E01"] });
+    const storage = new FakeStorageExecutor();
+    await seedV2Season(storage, title, season, ["S01E01"]);
+
+    let attempts = 0;
+    const model = new MockLanguageModelV3({
+      doGenerate: async () => {
+        attempts += 1;
+        const err = Object.assign(new Error("Upstream error from Nvidia: Service temporarily overloaded"), {
+          statusCode: 503,
+        });
+        throw attachStagingKeptUnmoved(err, [
+          { stagingDirectoryId: "stg-1", showDirectoryId: "show-1", fileCount: 2 },
+        ]);
+      },
+    });
+
+    const outcomes = await runScheduledType3Monitoring({
+      repository,
+      resourceProvider: emptyProvider(),
+      storage,
+      model,
+      llmConfig: FREE_LLM_PRESET,
+      storageParentDirectoryId: "library_root",
+      now: fixedNow,
+      createWorkflowRunId: () => "run_no_replay_kept",
+    });
+
+    expect(attempts).toBe(1);
+    expect(outcomes).toEqual([
+      expect.objectContaining({
+        trackedSeasonId: season.id,
+        status: "failed",
+        workflowRunId: "run_no_replay_kept",
+      }),
+    ]);
+    const saved = await repository.getWorkflowRunSnapshot("run_no_replay_kept");
+    expect(saved?.workflowRun.auditEvents.some((e) => e.type === "staging_kept_unmoved_files")).toBe(true);
+  });
 });
 
 

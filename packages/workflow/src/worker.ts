@@ -22,6 +22,7 @@ import {
 import { isTransientAcquisitionError } from "./acquisition-v2/transient-error.js";
 import type { JevJudge } from "./jev-judge.js";
 import { stagingFailureAuditEvents } from "./acquisition-v2/directory-lifecycle.js";
+import { hasTransferAttemptedOnThrow } from "./acquisition-v2/orchestrator.js";
 import {
   describeAgentRunError,
   isLlmAuthError,
@@ -863,7 +864,11 @@ async function patrolTrackedState(args: {
       try {
         result = await runOnce();
       } catch (firstError) {
-        if (!isTransientForRun(firstError, deps.llmConfig)) {
+        if (
+          !isTransientForRun(firstError, deps.llmConfig) ||
+          stagingFailureAuditEvents(firstError).length > 0 ||
+          hasTransferAttemptedOnThrow(firstError)
+        ) {
           throw firstError;
         }
         result = await runOnce();
@@ -1063,7 +1068,11 @@ async function patrolMovie(args: {
     try {
       result = await runOnce();
     } catch (firstError) {
-      if (!isTransientForRun(firstError, deps.llmConfig)) {
+      if (
+        !isTransientForRun(firstError, deps.llmConfig) ||
+        stagingFailureAuditEvents(firstError).length > 0 ||
+        hasTransferAttemptedOnThrow(firstError)
+      ) {
         throw firstError;
       }
       result = await runOnce();
