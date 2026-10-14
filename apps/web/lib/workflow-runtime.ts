@@ -1141,15 +1141,15 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
     await pushNotificationsSince(repository, startedAt, { workflowRunId: replace.workflowRunId });
     return replace;
   }
-  // Leftover staging heals itself. No notification and no push — which also means
-  // no llmConfig here: staging recovery's failure path never reaches the
-  // free-preset copy (handleWorkflowRunFailure goes silent for staging_recovery),
-  // so the param would be dead weight.
+  // Leftover staging heals itself. No notification and no push — llmConfig is
+  // still passed so a free-preset 429/5xx transient error triggers auto-requeue
+  // instead of terminally failing the recovery run.
   return runQueuedStagingRecovery({
     repository,
     resourceProvider: await getWorkerResourceProvider(),
     storage,
     model,
+    llmConfig,
     ...language,
     ...quality,
     resolveAccountContext,
@@ -1974,13 +1974,14 @@ async function runScheduledType3Now(options?: { force?: boolean }): Promise<Sche
     await hydratePan115CookieFromDb();
     const sync = tmdbSeasonMetadataSync();
     const accountId = await getCurrentAccountId();
-    const { model, preferredLanguage, qualityPreference } = await getAgentModel(getAccountScopedSettings(accountId));
+    const { model, llmConfig, preferredLanguage, qualityPreference } = await getAgentModel(getAccountScopedSettings(accountId));
     const parents = await getWorkerStorageParents(accountId);
     result = await runScheduledType3Monitoring({
       repository,
       resourceProvider: await getWorkerResourceProvider(),
       storage: await getWorkerStorageExecutor(accountId),
       model,
+      llmConfig,
       ...(preferredLanguage === undefined ? {} : { preferredLanguage }),
       ...(qualityPreference === undefined ? {} : { qualityPreference }),
       storageParentDirectoryId: parents.tv,

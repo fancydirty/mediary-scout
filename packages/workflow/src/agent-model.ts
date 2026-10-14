@@ -45,6 +45,92 @@ export interface AgentModelOptions {
   baseURL?: string;
   modelId?: string;
   providerName?: string;
+  fetch?: typeof fetch;
+}
+
+/**
+ * 部分 OpenAI 兼容网关（如 Kilo Code 代理背后的 OpenRouter/NVIDIA 免费池）在
+ * 上游临时过载或故障时，会返回外层 `HTTP 200 OK`，但 JSON 响应体不是
+ * `{ choices: [...] }` 而是 `{ error: { message, code: 503, ... } }`。
+ *
+ * 这会让 `@ai-sdk/provider-utils` 的 `postToApi` 因为 `response.ok === true`
+ * 走入 `successfulResponseHandler`，对 `choices` 的 Zod 校验失败后抛出
+ * `APICallError({ message: "Invalid JSON response", statusCode: 200, isRetryable: false })`：
+ *  1. `isRetryable: false` 让 AI SDK 内置的单步指数退避重试（`maxRetries: 2`）
+ *     完全失效，Agent 跑在半途遇到一次 1 秒的 503 抖动就整轮崩掉；
+ *  2. 真实的 `error.message` 被藏进 `responseBody`，外层只剩不知所云的
+ *     `"Invalid JSON response"`。
+ *
+ * 这里在 fetch 层把这种「HTTP 2xx 假成功、实为顶层 `{ error }` 信封且无
+ * `choices`」的 JSON 响应还原成真实的非 2xx HTTP 状态码（优先取信封里的
+ * 400..599 数值 code，否则映射为 502 Bad Gateway），交回 AI SDK 原生的
+ * `failedResponseHandler` 解析出可读 message 并按 `statusCode` 自动单步重试。
+ */
+function extractEmbeddedErrorStatus(parsed: unknown): number | null {
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return null;
+  }
+  const record = parsed as Record<string, unknown>;
+  if ("choices" in record && Array.isArray(record["choices"])) {
+    return null;
+  }
+  const err = record["error"];
+  if (err === null || typeof err !== "object" || Array.isArray(err)) {
+    return null;
+  }
+  const errRecord = err as Record<string, unknown>;
+  if (typeof errRecord["message"] !== "string" || errRecord["message"].trim() === "") {
+    return null;
+  }
+  const rawCode = errRecord["code"] ?? errRecord["status"];
+  const numericCode =
+    typeof rawCode === "number"
+      ? rawCode
+      : typeof rawCode === "string" && /^\d{3}$/.test(rawCode.trim())
+        ? Number(rawCode.trim())
+        : NaN;
+  if (Number.isInteger(numericCode) && numericCode >= 400 && numericCode <= 599) {
+    return numericCode;
+  }
+  return 502;
+}
+
+function createErrorEnvelopeNormalizingFetch(baseFetch: typeof fetch = globalThis.fetch): typeof fetch {
+  return async (input, init) => {
+    const response = await baseFetch(input, init);
+    if (!response.ok) {
+      return response;
+    }
+    const contentType = response.headers.get("content-type") ?? "";
+    if (contentType.toLowerCase().includes("text/event-stream")) {
+      return response;
+    }
+    let text: string;
+    try {
+      text = await response.clone().text();
+    } catch {
+      return response;
+    }
+    const trimmed = text.trim();
+    if (!trimmed.startsWith("{")) {
+      return response;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      return response;
+    }
+    const status = extractEmbeddedErrorStatus(parsed);
+    if (status === null) {
+      return response;
+    }
+    return new Response(text, {
+      status,
+      statusText: response.statusText || "Upstream Error",
+      headers: response.headers,
+    });
+  };
 }
 
 /**
@@ -95,6 +181,7 @@ export function createAgentProviderConfig(options: AgentModelOptions = {}): {
   const providerSettings: OpenAICompatibleProviderSettings = {
     name: options.providerName ?? DEFAULT_PROVIDER_NAME,
     baseURL: options.baseURL!.trim(),
+    fetch: createErrorEnvelopeNormalizingFetch(options.fetch),
     ...(key ? { apiKey: key, headers: { "api-key": key } } : {}),
   };
   return { providerSettings, modelId: options.modelId!.trim() };

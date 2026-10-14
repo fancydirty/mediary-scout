@@ -83,10 +83,12 @@ export async function runQueuedStagingRecovery(
   if (input.mayStartRun && !input.mayStartRun()) return { status: "idle" };
   const claimed = await claimNextQueuedRun(input.repository, "staging_recovery", now(), input.claim);
   if (!claimed) return { status: "idle" };
+  let resolvedLlmConfig: { baseURL?: string; modelId?: string } | undefined = input.llmConfig;
   try {
     // Claim already flipped the run to running. A throw here must take the
     // same silent failure path, or the run stays running and blocks the dir.
     const deps = await resolveWorkerDeps(input.resolveAccountContext, claimed.accountId, claimed.connectedStorageId, input);
+    resolvedLlmConfig = deps.llmConfig;
     const target = stagingRecoveryTarget(claimed.workflowRun);
     if (!target) {
       throw new Error("STAGING_RECOVERY_PAYLOAD: queued run is missing its staging dir");
@@ -141,6 +143,7 @@ export async function runQueuedStagingRecovery(
       error,
       repository: input.repository,
       now,
+      ...(resolvedLlmConfig === undefined ? {} : { llmConfig: resolvedLlmConfig }),
       ...(input.onAuthErrorFreeze === undefined ? {} : { onAuthErrorFreeze: input.onAuthErrorFreeze }),
     });
     return handled.status === "auto_requeued"

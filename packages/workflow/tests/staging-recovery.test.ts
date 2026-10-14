@@ -1206,4 +1206,118 @@ describe("staging_recovery", () => {
     expect(staging).toBeDefined();
     expect(removed).toContain(staging!.id);
   });
+
+  it("auto-requeues a staging_recovery run when the free-preset LLM fails with an HTTP 503 status error", async () => {
+    const { FREE_LLM_PRESET } = await import("../src/agent-model.js");
+    const repo = new InMemoryWorkflowRepository();
+    const scope = { accountId: "acct", connectedStorageId: "drive" };
+    const title = {
+      id: "title_503",
+      tmdbId: 503,
+      type: "tv" as const,
+      title: "Show 503",
+      originalTitle: "Show 503",
+      year: 2024,
+      aliases: [] as string[],
+    };
+    const season = {
+      id: "title_503_s1",
+      mediaTitleId: title.id,
+      seasonNumber: 1,
+      status: "active" as const,
+      qualityPreference: "1080p" as const,
+      storageDirectoryId: "season-dir",
+      totalEpisodes: 1,
+      latestAiredEpisode: 1,
+      latestAiredSource: "metadata" as const,
+    };
+    const episodes = createEpisodeStates({
+      trackedSeasonId: season.id,
+      seasonNumber: 1,
+      totalEpisodes: 1,
+      latestAiredEpisode: 1,
+    });
+    const sim = new Storage115Simulator({});
+    const showId = await sim.createDirectory({ name: "Show 503 (2024)", parentId: "root" });
+    await sim.createDirectory({ name: "Season 01", parentId: showId });
+    const stagingId = await sim.createDirectory({ name: "staging-old", parentId: showId });
+    const { executor: storage } = asExecutor(sim, false);
+
+    await repo.saveWorkflowRunSnapshot({
+      ...scope,
+      title,
+      season,
+      workflowRun: {
+        id: "done-503",
+        kind: "type3_monitor",
+        status: "succeeded",
+        trackedSeasonId: season.id,
+        startedAt: "2026-10-13T00:00:00.000Z",
+        finishedAt: "2026-10-13T01:00:00.000Z",
+        auditEvents: [],
+      },
+      episodes,
+      resourceSnapshots: [],
+      decisions: [],
+      transferAttempts: [],
+      notifications: [],
+    });
+    await repo.reserveWorkflowRun({
+      ...scope,
+      title,
+      season,
+      episodes,
+      workflowRun: {
+        id: "recovery-503",
+        kind: "staging_recovery",
+        status: "queued",
+        trackedSeasonId: season.id,
+        startedAt: "2026-10-13T22:00:45.000Z",
+        finishedAt: null,
+        auditEvents: [
+          {
+            type: "staging_recovery_queued",
+            message: "queued",
+            data: { stagingDirectoryId: stagingId, showDirectoryId: showId, seasonNumbers: [1] },
+          },
+        ],
+      },
+      resourceSnapshots: [],
+      decisions: [],
+      transferAttempts: [],
+      notifications: [],
+      keepCurrentEpisodes: true,
+      requireTrackedSeason: true,
+    });
+
+    const http503Error = Object.assign(new Error("Upstream error from Nvidia: Service temporarily overloaded"), {
+      statusCode: 503,
+    });
+    const result = await runQueuedStagingRecovery({
+      repository: repo,
+      resourceProvider: {
+        async search(): Promise<ResourceSnapshot> {
+          return { id: "snap", provider: "pansou", keyword: "Show", candidates: [], createdAt: "2026-10-13T22:00:45.000Z" };
+        },
+      },
+      storage,
+      model: new MockLanguageModelV3({
+        doGenerate: async () => {
+          throw http503Error;
+        },
+      }),
+      llmConfig: FREE_LLM_PRESET,
+      now: () => "2026-10-13T22:12:37.000Z",
+    });
+
+    expect(result).toEqual({
+      status: "ran",
+      workflowRunId: "recovery-503",
+      workflowStatus: "queued",
+    });
+    const saved = await repo.getWorkflowRunSnapshot("recovery-503", scope);
+    expect(saved?.workflowRun.status).toBe("queued");
+    expect(saved?.workflowRun.autoRequeueCount).toBe(1);
+  });
 });
+

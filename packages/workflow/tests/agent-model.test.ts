@@ -366,3 +366,123 @@ describe("sanitizeLlmApiKey — strips paste contamination (keys are whitespace-
     expect(sanitizeLlmApiKey(contaminated)).toBe("tp-abc");
   });
 });
+
+describe("agent-model — HTTP 200 error-envelope normalization (Kilo/OpenRouter gateway quirk)", () => {
+  it("retries in-step via AI SDK and succeeds when a gateway returns HTTP 200 with { error: { code: 503, message } } on attempt 1", async () => {
+    const { generateText } = await import("ai");
+    let calls = 0;
+    const fakeFetch: typeof fetch = async () => {
+      calls += 1;
+      if (calls === 1) {
+        return new Response(
+          JSON.stringify({
+            id: "gen-1791987472-YiskVKGPZU7YDtr5pzVZ",
+            error: {
+              message: "Upstream error from Nvidia: Service temporarily overloaded",
+              code: 503,
+              metadata: { error_type: "provider_overloaded" },
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          id: "chatcmpl-ok",
+          model: FREE_LLM_PRESET.modelId,
+          choices: [
+            {
+              index: 0,
+              finish_reason: "stop",
+              message: { role: "assistant", content: "recovered" },
+            },
+          ],
+          usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    };
+
+    const model = createAgentModel({ ...FREE_LLM_PRESET, fetch: fakeFetch });
+    const result = await generateText({
+      model,
+      maxRetries: 1,
+      prompt: "ping",
+    });
+
+    expect(calls).toBe(2);
+    expect(result.text).toBe("recovered");
+  });
+
+  it("surfaces the real error message and statusCode (not 'Invalid JSON response' / 200) when HTTP 200 error envelope persists", async () => {
+    const { generateText } = await import("ai");
+    const fakeFetch: typeof fetch = async () =>
+      new Response(
+        JSON.stringify({
+          id: "gen-err",
+          error: {
+            message: "Upstream error from Nvidia: Service temporarily overloaded",
+            code: 503,
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+
+    const model = createAgentModel({ ...FREE_LLM_PRESET, fetch: fakeFetch });
+    let caught: unknown;
+    try {
+      await generateText({ model, maxRetries: 0, prompt: "ping" });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    const err = caught as { message: string; statusCode?: number; isRetryable?: boolean };
+    expect(err.message).toContain("Upstream error from Nvidia: Service temporarily overloaded");
+    expect(err.message).not.toContain("Invalid JSON response");
+    expect(err.statusCode).toBe(503);
+    expect(err.isRetryable).toBe(true);
+  });
+
+  it("maps an HTTP 200 error envelope without a valid numeric HTTP code (e.g. string code) to 502 Bad Gateway", async () => {
+    const { generateText } = await import("ai");
+    const fakeFetch: typeof fetch = async () =>
+      new Response(
+        JSON.stringify({
+          error: {
+            message: "Provider returned an internal error",
+            code: "provider_error",
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+
+    const model = createAgentModel({ ...FREE_LLM_PRESET, fetch: fakeFetch });
+    let caught: unknown;
+    try {
+      await generateText({ model, maxRetries: 0, prompt: "ping" });
+    } catch (error) {
+      caught = error;
+    }
+
+    const err = caught as { message: string; statusCode?: number; isRetryable?: boolean };
+    expect(err.message).toContain("Provider returned an internal error");
+    expect(err.statusCode).toBe(502);
+    expect(err.isRetryable).toBe(true);
+  });
+
+  it("leaves SSE (text/event-stream) and non-2xx responses untouched without reading their body", async () => {
+    const { providerSettings } = createAgentProviderConfig({
+      ...FREE_LLM_PRESET,
+      fetch: async () =>
+        new Response("data: {\"choices\":[]}\n\n", {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        }),
+    });
+    const res = await providerSettings.fetch!("https://api.kilo.ai/api/gateway/chat/completions");
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("data: {\"choices\":[]}\n\n");
+  });
+});
+

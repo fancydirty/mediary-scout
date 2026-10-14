@@ -272,6 +272,24 @@ function failureHeadline(input: {
   return null;
 }
 
+function isTransientForRun(
+  error: unknown,
+  llmConfig: { baseURL?: string; modelId?: string } | undefined,
+): boolean {
+  const httpStatusClassified =
+    isFreeLlmPreset(llmConfig ?? {}) &&
+    (isLlmModelGoneError(error) ||
+      isLlmRateLimitError(error) ||
+      isLlmAuthError(error) ||
+      isLlmServerError(error) ||
+      isLlmHttpStatusError(error));
+  return isTransientAcquisitionError(
+    error,
+    0,
+    httpStatusClassified ? { httpStatusClassified: true } : undefined,
+  );
+}
+
 /**
  * Single failure path for every interactive queued acquisition (type2/series/
  * movie). A TRANSIENT error (network/TLS/socket — see isTransientAcquisitionError)
@@ -317,18 +335,7 @@ export async function handleWorkflowRunFailure(input: {
   // r6 M）。非 LLM 排除保留：网盘/PanSou/Prowlarr 的 429/5xx 不因此进门，
   // BYO 维持既有保守连接类分类 —— Kilo 免费池的恢复策略不扩大到别人的
   // 失败上（Copilot r5 M）。
-  const httpStatusClassified =
-    isFreeLlmPreset(input.llmConfig ?? {}) &&
-    (isLlmModelGoneError(error) ||
-      isLlmRateLimitError(error) ||
-      isLlmAuthError(error) ||
-      isLlmServerError(error) ||
-      isLlmHttpStatusError(error));
-  const transient = isTransientAcquisitionError(
-    error,
-    0,
-    httpStatusClassified ? { httpStatusClassified: true } : undefined,
-  );
+  const transient = isTransientForRun(error, input.llmConfig);
   const willRetry = transient && priorCount < AUTO_REQUEUE_MAX;
 
   // A staging dir that survived the harness cleanup on this failed body rides on
@@ -568,6 +575,8 @@ export async function runScheduledType3Monitoring(input: {
   resourceProvider: ResourceProvider;
   storage: StorageExecutor;
   model: LanguageModel;
+  /** Config that built `model` (used for free-preset HTTP-status transient classification). */
+  llmConfig?: { baseURL?: string; modelId?: string };
   preferredLanguage?: string;
   qualityPreference?: "high" | "medium";
   storageParentDirectoryId: string;
@@ -809,8 +818,8 @@ async function patrolTrackedState(args: {
       return { trackedSeasonId: season.id, status: "skipped_active" };
     }
 
-    try {
-      const result = await runType3MonitoringV2AndPersist({
+    const runOnce = () =>
+      runType3MonitoringV2AndPersist({
         title: state.title,
         season,
         episodes,
@@ -848,6 +857,17 @@ async function patrolTrackedState(args: {
         workflowRun: { id: workflowRunId, startedAt, finishedAt: null },
         now,
       });
+
+    try {
+      let result;
+      try {
+        result = await runOnce();
+      } catch (firstError) {
+        if (!isTransientForRun(firstError, deps.llmConfig)) {
+          throw firstError;
+        }
+        result = await runOnce();
+      }
       return {
         trackedSeasonId: state.season.id,
         status: "ran",
@@ -857,6 +877,10 @@ async function patrolTrackedState(args: {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Workflow failed";
+      console.log(
+        `[workflow] run ${workflowRunId} type3_monitor failed` +
+          ` (storage ${state.connectedStorageId ?? "-"}): ${summarizeErrorForNotification(errorMessage)}`,
+      );
       await input.repository.saveWorkflowRunSnapshot({
         accountId: state.accountId,
         connectedStorageId: state.connectedStorageId,
@@ -918,6 +942,7 @@ async function patrolMovie(args: {
     resourceProvider: ResourceProvider;
     storage: StorageExecutor;
     model: LanguageModel;
+    llmConfig: { baseURL?: string; modelId?: string } | undefined;
     preferredLanguage: string | undefined;
     qualityPreference: "high" | "medium" | undefined;
     storageProvider: string | undefined;
@@ -999,8 +1024,8 @@ async function patrolMovie(args: {
     return { trackedSeasonId: state.season.id, status: "skipped_active" };
   }
 
-  try {
-    const result = await runMovieAcquisitionV2AndPersist({
+  const runOnce = () =>
+    runMovieAcquisitionV2AndPersist({
       title: state.title,
       categoryParentId: moviesParent,
       resourceProvider: deps.resourceProvider,
@@ -1032,6 +1057,17 @@ async function patrolMovie(args: {
       workflowRun: { id: workflowRunId, startedAt, finishedAt: null },
       now,
     });
+
+  try {
+    let result;
+    try {
+      result = await runOnce();
+    } catch (firstError) {
+      if (!isTransientForRun(firstError, deps.llmConfig)) {
+        throw firstError;
+      }
+      result = await runOnce();
+    }
     return {
       trackedSeasonId: state.season.id,
       status: "ran",
@@ -1041,6 +1077,10 @@ async function patrolMovie(args: {
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : "Workflow failed";
+    console.log(
+      `[workflow] run ${workflowRunId} movie_init failed` +
+        ` (storage ${state.connectedStorageId ?? "-"}): ${summarizeErrorForNotification(errorMessage)}`,
+    );
     await input.repository.saveWorkflowRunSnapshot({
       accountId: state.accountId,
       connectedStorageId: state.connectedStorageId,

@@ -1353,6 +1353,124 @@ describe("runScheduledType3Monitoring — user requests", () => {
   });
 });
 
+describe("runScheduledType3Monitoring — transient retry & failure logging", () => {
+  it("retries once in-patrol when a season patrol hits a transient free-preset LLM 503 error and succeeds on attempt 2", async () => {
+    const { FREE_LLM_PRESET } = await import("../src/agent-model.js");
+    const repository = new InMemoryWorkflowRepository();
+    const { title, season } = trackedFixture("retry_tv");
+    // E02 is missing so the agent actually runs.
+    await seedTrackedSeason({ repository, title, season, obtainedCodes: ["S01E01"] });
+    const storage = new FakeStorageExecutor();
+    await seedV2Season(storage, title, season, ["S01E01"]);
+
+    let attempts = 0;
+    const flakyModel = new MockLanguageModelV3({
+      doGenerate: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw Object.assign(new Error("Upstream error from Nvidia: Service temporarily overloaded"), {
+            statusCode: 503,
+          });
+        }
+        if (attempts === 2) {
+          return {
+            content: [
+              {
+                type: "tool-call" as const,
+                toolCallId: "c1",
+                toolName: "searchResources",
+                input: JSON.stringify({ keyword: "Show retry_tv" }),
+              },
+            ],
+            finishReason: { unified: "tool-calls" as const, raw: "tool-calls" as const },
+            usage: USAGE,
+            warnings: [],
+          };
+        }
+        if (attempts === 3) {
+          return {
+            content: [
+              {
+                type: "tool-call" as const,
+                toolCallId: "c2",
+                toolName: "reportNoCoverage",
+                input: JSON.stringify({ reason: "still missing" }),
+              },
+            ],
+            finishReason: { unified: "tool-calls" as const, raw: "tool-calls" as const },
+            usage: USAGE,
+            warnings: [],
+          };
+        }
+        return {
+          content: [{ type: "text" as const, text: "done" }],
+          finishReason: { unified: "stop" as const, raw: "stop" as const },
+          usage: USAGE,
+          warnings: [],
+        };
+      },
+    });
+
+    const outcomes = await runScheduledType3Monitoring({
+      repository,
+      resourceProvider: emptyProvider(),
+      storage,
+      model: flakyModel,
+      llmConfig: FREE_LLM_PRESET,
+      storageParentDirectoryId: "library_root",
+      now: fixedNow,
+      createWorkflowRunId: () => "run_patrol_retry_ok",
+    });
+
+    expect(attempts).toBeGreaterThanOrEqual(3);
+    expect(outcomes).toEqual([
+      expect.objectContaining({
+        trackedSeasonId: season.id,
+        status: "ran",
+        workflowRunId: "run_patrol_retry_ok",
+      }),
+    ]);
+    const saved = await repository.getWorkflowRunSnapshot("run_patrol_retry_ok");
+    expect(saved?.workflowRun.status).not.toBe("failed");
+  });
+
+  it("logs [workflow] run <id> type3_monitor failed when a patrol run terminally fails", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const { title, season } = trackedFixture("log_fail");
+    await seedTrackedSeason({ repository, title, season, obtainedCodes: ["S01E01"] });
+    const storage = new FakeStorageExecutor();
+    await seedV2Season(storage, title, season, ["S01E01"]);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      const outcomes = await runScheduledType3Monitoring({
+        repository,
+        resourceProvider: emptyProvider(),
+        storage,
+        model: throwingModel(),
+        storageParentDirectoryId: "library_root",
+        now: fixedNow,
+        createWorkflowRunId: () => "run_patrol_log_fail",
+      });
+
+      expect(outcomes).toEqual([
+        {
+          trackedSeasonId: season.id,
+          status: "failed",
+          workflowRunId: "run_patrol_log_fail",
+          errorMessage: "agent model unavailable",
+        },
+      ]);
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining("[workflow] run run_patrol_log_fail type3_monitor failed"),
+      );
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+});
+
+
 describe("runScheduledType3Monitoring — the user's rejected list applies to ordinary runs", () => {
   const ACCOUNT = "acct_default";
   const OLD_TITLE = "Show show S01E02 [OldGroup] [1.3G]";
