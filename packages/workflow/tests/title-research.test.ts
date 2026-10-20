@@ -202,7 +202,7 @@ describe("optional title research through the maintained dispatcher", () => {
     expect(result).not.toHaveProperty("referenceOnly");
   });
 
-  it.each(["file:///tmp/private", "https://user:password@example.org/", "ftp://example.org/"])("rejects nonpublic reference URL %s through the AI SDK caller", async (url) => {
+  it.each(["not-a-url", "file:///tmp/private", "https://user:password@example.org/", "ftp://example.org/"])("rejects invalid reference URL %s through the AI SDK caller", async (url) => {
     const network = vi.fn(); vi.stubGlobal("fetch", network);
     const { sandbox } = await setup(); let step = 0;
     const model = new MockLanguageModelV3({ doGenerate: async () => {
