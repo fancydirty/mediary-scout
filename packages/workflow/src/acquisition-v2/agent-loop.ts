@@ -14,6 +14,7 @@ import {
 } from "./agent-loop-guards.js";
 import { interpretTool, type AgentToolEvent } from "./activity.js";
 import { LINK_HISTORY_PROMPT } from "./link-history.js";
+import { createTitleResearchTools, resolveTitleResearch, type TitleResearchChoice } from "./title-research.js";
 
 /**
  * Phase 3 — the agent loop harness. The strong agent drives its own
@@ -127,10 +128,13 @@ export function buildSandboxToolSet(
     /** Leftover staging: no search, no transfer, no subtitle landing.
      *  renameSubtitle stays: a leftover .ass/.srt may not match its video. */
     stagingRecovery?: boolean;
+    /** Optional alternate-title research. false overrides deployment opt-in. */
+    titleResearch?: TitleResearchChoice;
   } = {},
 ): ToolSet {
   const recover = options.stagingRecovery === true;
   const tools: Record<string, unknown> = {
+    ...(!recover && resolveTitleResearch(options.titleResearch) ? createTitleResearchTools() : {}),
     readSkill: {
       description:
         // Section list derived from SKILL_SECTION_NAMES — the single source of
@@ -346,6 +350,8 @@ export interface AcquisitionAgentRequest {
   storageProvider?: string;
   /** Leftover staging: the tool set has no search or transfer tools. */
   stagingRecovery?: boolean;
+  /** Optional alternate-title research; absent uses MEDIA_TRACK_TITLE_RESEARCH. */
+  titleResearch?: TitleResearchChoice;
   /** Per-tool-call live progress for the activity page (cleaned activity + phase
    *  + raw name/args). Best-effort; absent in tests/headless. */
   onProgress?: (event: AgentToolEvent) => void;
@@ -374,6 +380,7 @@ export async function runAcquisitionAgent(
   const onProgress = request.onProgress;
   const tools = buildSandboxToolSet(request.sandbox, {
     movie: request.movie ?? false,
+    ...(request.titleResearch === undefined ? {} : { titleResearch: request.titleResearch }),
     ...(request.subtitle ? { subtitle: true } : {}),
     ...(request.stagingRecovery ? { stagingRecovery: true } : {}),
     ...(request.storageProvider === undefined ? {} : { storageProvider: request.storageProvider }),

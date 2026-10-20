@@ -44,6 +44,9 @@ export function interpretTool(toolName: string, args: Record<string, unknown> = 
       const keyword = String(args.keyword ?? "").trim();
       return { activity: keyword ? `正在搜索资源:${keyword}` : "正在搜索资源…", phase: "search" };
     }
+    case "researchTitle":
+    case "readTitleReference":
+      return { activity: "正在核对作品的其他译名…", phase: "search" };
     case "transferCandidate":
     case "transferUntilLanded":
       return { activity: "正在转存到网盘…", phase: "transfer" };

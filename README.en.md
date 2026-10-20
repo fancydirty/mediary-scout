@@ -73,6 +73,7 @@ Per-drive resource counts, and why only these five: [drive evaluations](docs/dri
 - [Deploy guide](docs/deploy.md)
 - [Agent API](docs/agent-api.md): let coding agents such as Claude Code or Codex drive Mediary Scout
 - [Architecture overview](docs/architecture.md)
+- [Optional title research](docs/title-research.md): find alternate titles before retrying resource search
 
 ## Disclaimer
 
