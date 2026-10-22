@@ -69,6 +69,8 @@ export interface RunMovieAcquisitionV2Request {
   rejectedLookup?: RunAcquisitionV2Request["rejectedLookup"];
   /** See orchestrator.linkHistory. */
   linkHistory?: RunAcquisitionV2Request["linkHistory"];
+  /** Web-reference tools (alternate titles for a film). */
+  titleResearch?: RunAcquisitionV2Request["titleResearch"];
   onProgress?: (event: AgentToolEvent) => void;
   now?: () => string;
 }
@@ -128,6 +130,7 @@ export async function runMovieAcquisitionV2(
     ...(request.protectExisting ? { protectExisting: request.protectExisting } : {}),
     ...(request.rejectedLookup ? { rejectedLookup: request.rejectedLookup } : {}),
     ...(request.linkHistory ? { linkHistory: request.linkHistory } : {}),
+    ...(request.titleResearch === undefined ? {} : { titleResearch: request.titleResearch }),
     ...(request.onProgress ? { onProgress: request.onProgress } : {}),
   });
 

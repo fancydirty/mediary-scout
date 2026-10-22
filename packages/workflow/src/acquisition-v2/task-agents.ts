@@ -54,6 +54,12 @@ Hard-won rules:
 - A foreign / different work bundled into a pack (e.g. El Camino inside a Breaking Bad pack) is NEVER moved into a season and NEVER mapped to an episode — leave it in staging and discardStaging wipes it with the rest. Do NOT isolate it for separate review or hand-classify it.
 - Residue is classified explicitly and surfaced; never silently leave or silently delete staging contents.`;
 
+/** Movies only need the alternate-title half of web research. */
+function movieWebBlock(options: TaskAgentPromptOptions): string {
+  if (!options.titleResearch) return "";
+  return `\n🌐 ALTERNATE TITLES: when the resource search for this film is thin, call researchTitle once with the film's known Chinese title, original title and year to check for other established names (mainland/HK/Taiwan releases of the same film often differ), then search again with one of those names. Reference only: web evidence never becomes a candidate and never proves the film was obtained. Do not use it to change which year or which film this task is about.`;
+}
+
 /** The TV loop. A user request run gets one more line up front: its first step (the one
  *  USER REQUESTS names) comes before the loop's search, and its report comes after the
  *  mark. Outside a replace run the loop is unchanged. */
@@ -134,6 +140,10 @@ export interface TaskAgentPromptOptions {
   protectExisting?: { episodes: string[] | "unknown" };
   /** Leftover staging. Search and transfer are not this run's job. */
   stagingRecovery?: boolean;
+  /** Web-reference tools: alternate titles + fan-season ↔ TMDB episode mapping.
+   *  Carries the user's LLM endpoint so web search routes through DeepSeek's own
+   *  engine when they configured it. Absent = no web access. */
+  titleResearch?: { web: { llmBaseURL?: string; llmApiKey?: string; timeoutMs?: number; limit?: number } };
 }
 
 /** Shown to the agent for a leftover staging dir. Search and transfer tools are not registered. */
@@ -223,6 +233,25 @@ function qualityGuidanceBlock(options: TaskAgentPromptOptions): string {
   return options.qualityGuidance === undefined || options.qualityGuidance === ""
     ? ""
     : `\nQUALITY PREFERENCE (召回后选片优先级,不影响搜索词):\n${options.qualityGuidance}\n`;
+}
+
+/**
+ * Fan-split seasons on officially-unsegmented shows (animate). The rights holder
+ * never numbered seasons; TMDB therefore stores one absolute run, while every
+ * release group, subtitle team and viewer counts "第二季" / "死灭回游" as its own
+ * block. A patroller that expects a `Season 2` directory never finds one and
+ * either reports no-coverage or files episodes under the wrong season.
+ *
+ * Only injected when web research is available — the mapping has to be looked
+ * up, not guessed (the model must not invent episode ranges).
+ */
+function fanSeasonBlock(options: TaskAgentPromptOptions): string {
+  if (!options.titleResearch) return "";
+  return `\n📺 OFFICIALLY-UNSEGMENTED SHOWS — FAN SPLITS (动漫画常见): some shows were never formally split into seasons by their rights holder, so TMDB stores ONE absolute episode run, while release groups / subtitle teams / viewers number them as seasons or story arcs. 咒术回战 is the worked example: the fan "第二季" (怀玉·玉折／涩谷事变) ships as TMDB S01E25-E47, and "死灭回游" ships as S01E48-E59. 药屋少女的呢喃 likewise: fan 第二季 = S01E25-E48, 第三季 = S01E49-E60.
+- Do NOT conclude a resource "does not match / is the wrong season" just because its title says 第二季 / 第三季 / 死灭回游 / 怀玉·玉折 and the DB calls everything Season 1. That is the SAME show, shifted numbering.
+- When numbering is ambiguous, call researchTitle once with a concrete question ("<title> 第二季 对应 集数" / "<title> 死灭回游 是第几集到第几集") and use the answer to map those episodes onto the absolute numbers this task tracks. Web evidence is reference only: it never becomes a candidate and never changes what TMDB says the show is.
+- Then select the resource that covers the absolute range, extract by your own reading of the real files, and file them under the SEASON THIS TASK TRACKS. The library key stays TMDB's — the fan season name is only a search/matching hint.
+- Never refuse to acquire a resource because of a season-name mismatch you have not checked: that silently leaves a real gap (the reported 药屋少女/咒术回战 bug).`;
 }
 
 /** Past-run experience for this work (in full) and the account's shared lessons (index
@@ -321,6 +350,7 @@ ${languageLine(options)}
 ${transferModelLine(options)}
 ${searchHintsBlock(options)}
 ${qualityGuidanceBlock(options)}
+${fanSeasonBlock(options)}
 ${tvLoopGuidance(options)}`;
 }
 
@@ -342,6 +372,7 @@ ${languageLine({ ...options, subtitleFallback: true })}
 ${transferModelLine(options)}
 ${searchHintsBlock(options)}
 ${qualityGuidanceBlock(options)}
+${movieWebBlock(options)}
 Your loop (you drive it; the system only orchestrates the tool calls). A MOVIE is simple — there is NO season distribution and NO separate staging to discard (the film lands in the movie directory and flattenMovie cleans the wrapper in place). At EVERY decision point lay out Evidence → Facts → Decision (read your skill's "protocol" section); once a transfer has LANDED, do NOT keep searching/transferring — verify and finish.
 ${loopEnds.first}1. searchResources — bare title first; re-keyword (add the original/English name or "全集") only if weak. Stop the moment you can identify the one correct film.
 2. Decide the ONE correct film (right title AND year, not a remake / same-IP other film / a same-keyword different work) and RANK its candidate links best-first.
@@ -436,6 +467,7 @@ If one pack covers multiple seasons, distribute its files in ONE plan with a mov
     prompt,
     ...(promptOptions.stagingRecovery ? { stagingRecovery: true } : {}),
     ...(promptOptions.storageProvider === undefined ? {} : { storageProvider: promptOptions.storageProvider }),
+    ...(promptOptions.titleResearch === undefined ? {} : { titleResearch: promptOptions.titleResearch }),
     ...(promptOptions.subtitle ? { subtitle: true } : {}),
     ...(maxSteps === undefined ? {} : { maxSteps }),
     ...(onProgress ? { onProgress } : {}),
@@ -464,6 +496,7 @@ Find the one correct film, transfer it, keep the directory clean, mark it presen
     prompt,
     movie: true,
     ...(promptOptions.storageProvider === undefined ? {} : { storageProvider: promptOptions.storageProvider }),
+    ...(promptOptions.titleResearch === undefined ? {} : { titleResearch: promptOptions.titleResearch }),
     ...(promptOptions.subtitle ? { subtitle: true } : {}),
     ...(maxSteps === undefined ? {} : { maxSteps }),
     ...(onProgress ? { onProgress } : {}),

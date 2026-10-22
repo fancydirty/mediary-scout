@@ -73,6 +73,9 @@ export interface SearchPageView {
   state: SearchPageState;
   cacheStatus: SearchCacheStatus;
   candidates: SearchCandidateCard[];
+  /** Set when the typed query was a description (or carried an unofficial
+   *  season/arc name) and a real title was found instead — the UI says which. */
+  interpretedQuery?: string;
   /** Only when state === "provider_error": the underlying provider failure, for
    *  a diagnostic line in the UI and the reporter's issue. */
   providerError?: string;
@@ -102,6 +105,10 @@ export async function getSearchPageView(input: {
    *  state is per-drive — obtained on drive A must still be 获取-able on drive B.
    *  Undefined = account-wide (legacy / single-drive). */
   scope?: ScopeArg;
+  /** "I don't remember the name" fallback: when the keyword search finds nothing,
+   *  turn the description into real titles and search again. Best-effort — an
+   *  absent resolver or a failure simply leaves the empty result. */
+  resolveTitles?: (query: string) => Promise<string[]>;
 }): Promise<SearchPageView> {
   const now = input.now ?? (() => new Date().toISOString());
   const query = normalizeSearchQuery(input.query);
@@ -116,6 +123,7 @@ export async function getSearchPageView(input: {
 
   const cached = await input.cache.get(query);
   let candidates = cached;
+  let interpretedQuery: string | undefined;
   if (!candidates) {
     // A deployment that cannot reach ANY TMDB access (GFW-blocked network: direct
     // API and the workers.dev proxy both dead — issue #134) makes the provider
@@ -135,10 +143,58 @@ export async function getSearchPageView(input: {
     await input.cache.set(query, candidates);
   }
 
+  // Nothing found for what the user typed. Two common causes are NOT "the work
+  // does not exist": (a) they appended an unofficial season/arc name
+  // ("咒术回战 第三季" / "死灭回游"), or (b) they described the plot instead of
+  // the title. The suffix strip is free and deterministic; the description
+  // resolution costs one web search plus one model call, so it runs only after.
+  if (candidates.length === 0) {
+    const stripped = stripSeasonMarkers(query);
+    if (stripped) {
+      const normalized = normalizeSearchQuery(stripped);
+      try {
+        let found = await input.cache.get(normalized);
+        if (!found) {
+          found = await input.provider.searchMedia({ query: normalized });
+          await input.cache.set(normalized, found);
+        }
+        if (found.length > 0) {
+          candidates = found;
+          interpretedQuery = stripped;
+        }
+      } catch {
+        // Fall through to the description resolver.
+      }
+    }
+  }
+  if (candidates.length === 0 && input.resolveTitles) {
+    const titles = await input.resolveTitles(query).catch(() => []);
+    for (const title of titles) {
+      const normalized = normalizeSearchQuery(title);
+      if (!normalized || normalized === query) continue;
+      try {
+        let found = await input.cache.get(normalized);
+        if (!found) {
+          found = await input.provider.searchMedia({ query: normalized });
+          await input.cache.set(normalized, found);
+        }
+        if (found.length > 0) {
+          candidates = found;
+          interpretedQuery = title;
+          break;
+        }
+      } catch {
+        // Keep trying the remaining titles; a provider failure will surface on
+        // the next search as the normal provider_error state.
+      }
+    }
+  }
+
   return {
     query,
     state: "ready",
     cacheStatus: cached ? "hit" : "miss",
+    ...(interpretedQuery === undefined ? {} : { interpretedQuery }),
     candidates: await Promise.all(
       candidates.map((candidate) => toCandidateCard(candidate, input.repository, now(), input.scope)),
     ),
@@ -147,6 +203,21 @@ export async function getSearchPageView(input: {
 
 function normalizeSearchQuery(query: string): string {
   return query.trim().replace(/\s+/g, " ");
+}
+
+/**
+ * Drop a trailing season / part marker so "咒术回战 第三季" and "庆余年 第二季"
+ * still reach their series. Deterministic and free — it runs before any model
+ * call, because these suffixes are the single most common way a title search
+ * returns nothing. Returns null when there is nothing to strip.
+ */
+export function stripSeasonMarkers(query: string): string | null {
+  const stripped = query
+    .replace(/\s*(?:第\s*[0-9一二三四五六七八九十百]+\s*[季部篇]|season\s*\d+|s\d{1,2})\s*$/iu, "")
+    .replace(/\s*(?:上|下|中)\s*篇\s*$/u, "")
+    .replace(/\s*(?:final\s*season|完结篇|剧场版)\s*$/iu, "")
+    .trim();
+  return stripped.length > 0 && stripped !== query.trim() ? stripped : null;
 }
 
 /** The diagnostic line must stay readable for ANY throw shape: bare String()

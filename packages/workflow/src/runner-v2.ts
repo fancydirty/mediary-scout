@@ -14,6 +14,7 @@ import type {
   WorkflowStatus,
 } from "./domain.js";
 import { runTvAcquisitionV2, type RunTvAcquisitionV2Request } from "./acquisition-v2/run-tv-v2.js";
+import type { TitleResearchOptions } from "./acquisition-v2/title-research.js";
 import type { BridgedV2Result } from "./acquisition-v2/workflow-v2-bridge.js";
 import { makeProgressSink } from "./acquisition-v2/progress-sink.js";
 import { makeAgentTraceSink, combineToolEventSinks } from "./acquisition-v2/agent-trace-sink.js";
@@ -61,6 +62,8 @@ interface TvV2Common {
   /** Agent memory on/off (Settings → AI 模型, default on). When on, the repository
    *  itself is the memory store, scoped to `accountId`. */
   agentMemory?: boolean;
+  /** Web-reference tools (alternate titles, fan-season ↔ TMDB episode mapping). */
+  titleResearch?: TitleResearchOptions;
   /**
    * Wall clock for the run. Drives the engine's timestamps (including the
    * terminal notification's `createdAt`) AND the persisted `finishedAt`, which
@@ -86,6 +89,7 @@ function passthrough(input: TvV2Common): {
   assrtToken?: string;
   jevJudge?: JevJudge;
   memory?: { store: AgentMemoryStore; accountId: string; drive?: string };
+  titleResearch?: TitleResearchOptions;
 } {
   return {
     ...memoryOption(input),
@@ -96,6 +100,7 @@ function passthrough(input: TvV2Common): {
     ...(input.storageProvider === undefined ? {} : { storageProvider: input.storageProvider }),
     ...(input.assrtToken === undefined ? {} : { assrtToken: input.assrtToken }),
     ...(input.jevJudge === undefined ? {} : { jevJudge: input.jevJudge }),
+    ...(input.titleResearch === undefined ? {} : { titleResearch: input.titleResearch }),
   };
 }
 
@@ -761,6 +766,8 @@ export async function runMovieAcquisitionV2AndPersist(input: {
   jevJudge?: JevJudge;
   /** See TvV2Common.agentMemory. */
   agentMemory?: boolean;
+  /** Web-reference tools (alternate titles). */
+  titleResearch?: TitleResearchOptions;
   /** A replace_request run (user message): persisted under kind replace_request. */
   userRequest?: RunMovieAcquisitionV2Request["userRequest"];
   /** Replace runs: whether the film was obtained before (see RunMovieAcquisitionV2Request). */
@@ -802,6 +809,7 @@ export async function runMovieAcquisitionV2AndPersist(input: {
     ...rejectedLookupOption(input),
     ...linkHistoryOption({ ...input, workflowRunId: input.workflowRun.id, now }),
     ...memoryOption(input),
+    ...(input.titleResearch === undefined ? {} : { titleResearch: input.titleResearch }),
   });
 
   const held = await saveRunRecord({ ...input, now }, result.status, stampNotifications(result.notifications, input.notice), (run, notifications) => ({

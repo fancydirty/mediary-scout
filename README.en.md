@@ -72,6 +72,7 @@ Per-drive resource counts, and why only these five: [drive evaluations](docs/dri
 
 - [Deploy guide](docs/deploy.md)
 - [Agent API](docs/agent-api.md): let coding agents such as Claude Code or Codex drive Mediary Scout
+- [Search and web research](docs/web-research.md) (Chinese): describe a plot, or how shows without official seasons map to episode numbers
 - [Architecture overview](docs/architecture.md)
 
 ## Disclaimer

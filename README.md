@@ -73,6 +73,7 @@ docker compose up -d
 
 - [部署指南](docs/deploy.md)
 - [Agent API](docs/agent-api.md)：让 Claude Code、Codex 等编程 agent 直接操作巡影
+- [搜索与网页查证](docs/web-research.md)：描述也能找片；官方不分季的作品怎么对集号
 - [架构速览](docs/architecture.md)
 
 ## 免责声明

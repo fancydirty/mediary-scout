@@ -231,6 +231,16 @@ describe("Movie system prompt carries movie-specific invariants", () => {
     expect(prompt).not.toMatch(/discardStaging/);
     expect(prompt).not.toMatch(/moveToSeason/);
   });
+
+  it("offers alternate-title research only when web access is configured", () => {
+    expect(prompt).not.toMatch(/ALTERNATE TITLES/);
+    const withResearch = buildMovieSystemPrompt({ titleResearch: { web: {} } });
+    expect(withResearch).toMatch(/ALTERNATE TITLES/);
+    expect(withResearch).toMatch(/researchTitle/);
+    expect(withResearch).toMatch(/reference only/i);
+    // A film has no seasons, so the fan-season block must not leak into it.
+    expect(withResearch).not.toMatch(/OFFICIALLY-UNSEGMENTED/);
+  });
 });
 
 describe("中文字幕 floor: HARD for TV/anime, SOFT last-resort fallback for movie", () => {

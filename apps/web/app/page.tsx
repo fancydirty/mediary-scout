@@ -223,6 +223,11 @@ async function SearchResults({
                 {searchView.candidates.length} 个候选
                 {searchView.cacheStatus === "hit" ? "，来自缓存" : ""}
               </p>
+              {searchView.interpretedQuery ? (
+                <p className="panel-note">
+                  「{searchView.query}」像是描述而不是片名 —— 已按「{searchView.interpretedQuery}」搜索。
+                </p>
+              ) : null}
             </div>
           </div>
           {searchView.candidates.length > 0 ? (
@@ -255,6 +260,9 @@ async function SearchResults({
               <TriangleAlert size={22} aria-hidden />
               <strong>没有匹配结果</strong>
               <span>{searchView.query}</span>
+              <span className="panel-note">
+                可以试试剧情描述（如「男主带着小绿瓶修仙的国漫」），或去掉「第几季／篇章名」只搜作品名。
+              </span>
             </div>
           )}
         </section>

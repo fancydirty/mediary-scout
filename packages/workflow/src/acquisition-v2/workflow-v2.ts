@@ -83,6 +83,8 @@ export interface RunAcquisitionV2WorkflowRequest {
   /** Leftover staging. The orphan dir is the staging handle; season dirs are resolved
    *  under `showDirectoryId`. The agent runs even when the DB already says complete. */
   stagingRecovery?: StagingRecoveryDirectories;
+  /** Web-reference tools (alternate titles, fan-season ↔ TMDB episode mapping). */
+  titleResearch?: { web: { llmBaseURL?: string; llmApiKey?: string; timeoutMs?: number; limit?: number } };
   onProgress?: (event: AgentToolEvent) => void;
 }
 
@@ -226,6 +228,7 @@ export async function runAcquisitionV2Workflow(
         : {}),
     ...(request.rejectedLookup ? { rejectedLookup: request.rejectedLookup } : {}),
     ...(request.linkHistory ? { linkHistory: request.linkHistory } : {}),
+    ...(request.titleResearch === undefined ? {} : { titleResearch: request.titleResearch }),
     ...(request.onProgress ? { onProgress: request.onProgress } : {}),
     unmovedStaging,
     ...(request.stagingRecovery ? { terminalCleanup } : {}),

@@ -33,6 +33,7 @@ import {
   summarizeErrorForNotification,
 } from "./agent-error.js";
 import { isFreeLlmPreset } from "./agent-model.js";
+import type { TitleResearchOptions } from "./acquisition-v2/title-research.js";
 import { formatReportPushText } from "./notification-report.js";
 import { isMovieUnreleased } from "./domain.js";
 import {
@@ -108,6 +109,7 @@ export async function resolveWorkerDeps(
   assrtToken: string | undefined;
   jevJudge: JevJudge | undefined;
   agentMemory: boolean | undefined;
+  titleResearch: TitleResearchOptions | undefined;
   storageParentDirectoryId: string | undefined;
   animeStorageParentDirectoryId: string | undefined;
   moviesParentDirectoryId: string | undefined;
@@ -131,6 +133,10 @@ export async function resolveWorkerDeps(
     // prefilter must not inherit a judge that happens to ride in the base deps.
     jevJudge: resolve ? ctx.jevJudge : base.jevJudge,
     agentMemory: ctx.agentMemory ?? base.agentMemory,
+    // Web search follows the account's LLM endpoint (DeepSeek's own engine when
+    // that is what they configured). With a resolver its answer is authoritative
+    // — an account without one must not inherit another account's config.
+    titleResearch: resolve ? ctx.titleResearch : base.titleResearch,
     storageParentDirectoryId:
       ctx.storageParentDirectoryId ?? base.storageParentDirectoryId,
     animeStorageParentDirectoryId:
@@ -183,6 +189,8 @@ export interface AccountWorkerContext {
   jevJudge?: JevJudge;
   /** Agent memory on/off, resolved per account from Settings (absent = on). */
   agentMemory?: boolean;
+  /** Web-reference tools, resolved from the account's LLM endpoint. */
+  titleResearch?: TitleResearchOptions;
   storageParentDirectoryId?: string;
   animeStorageParentDirectoryId?: string;
   moviesParentDirectoryId?: string;
@@ -444,6 +452,8 @@ export async function runQueuedType2Workflow(input: {
   llmConfig?: { baseURL?: string; modelId?: string };
   preferredLanguage?: string;
   qualityPreference?: "high" | "medium";
+  /** Web-reference tools for the agent (see TitleResearchOptions). */
+  titleResearch?: TitleResearchOptions;
   now?: () => string;
   storageParentDirectoryId?: string;
   /** Separate landing parent for anime (see runQueuedSeriesInitialization). */
@@ -510,6 +520,10 @@ export async function runQueuedType2Workflow(input: {
       ...(deps.agentMemory === undefined
         ? {}
         : { agentMemory: deps.agentMemory }),
+        // Web-reference tools, same per-account resolution as memory.
+        ...(deps.titleResearch === undefined
+          ? {}
+          : { titleResearch: deps.titleResearch }),
       // finishedAt is stamped post-run inside the persist step (see runner-v2),
       // so it reflects actual completion, not the claim time.
       workflowRun: {
@@ -580,6 +594,8 @@ export async function runScheduledType3Monitoring(input: {
   llmConfig?: { baseURL?: string; modelId?: string };
   preferredLanguage?: string;
   qualityPreference?: "high" | "medium";
+  /** Web-reference tools for the agent (see TitleResearchOptions). */
+  titleResearch?: TitleResearchOptions;
   storageParentDirectoryId: string;
   /** Separate landing parent for anime, so anime patrol verify-or-creates under
    *  its own tree (see runQueuedSeriesInitialization). */
@@ -855,6 +871,10 @@ async function patrolTrackedState(args: {
         ...(deps.agentMemory === undefined
           ? {}
           : { agentMemory: deps.agentMemory }),
+          // Web-reference tools, same per-account resolution as memory.
+          ...(deps.titleResearch === undefined
+            ? {}
+            : { titleResearch: deps.titleResearch }),
         workflowRun: { id: workflowRunId, startedAt, finishedAt: null },
         now,
       });
@@ -954,6 +974,7 @@ async function patrolMovie(args: {
     assrtToken: string | undefined;
     jevJudge: JevJudge | undefined;
     agentMemory: boolean | undefined;
+    titleResearch: TitleResearchOptions | undefined;
     moviesParentDirectoryId: string | undefined;
   };
   state: {
@@ -1057,6 +1078,10 @@ async function patrolMovie(args: {
       ...(deps.agentMemory === undefined
         ? {}
         : { agentMemory: deps.agentMemory }),
+        // Web-reference tools, same per-account resolution as memory.
+        ...(deps.titleResearch === undefined
+          ? {}
+          : { titleResearch: deps.titleResearch }),
       // Reported in the sweep's daily digest, like the shows, not pushed on its own.
       notice: { trigger: "scheduled", routineIfNothingReplaced: false },
       workflowRun: { id: workflowRunId, startedAt, finishedAt: null },
@@ -1173,6 +1198,8 @@ export async function runQueuedMovieAcquisition(input: {
   llmConfig?: { baseURL?: string; modelId?: string };
   preferredLanguage?: string;
   qualityPreference?: "high" | "medium";
+  /** Web-reference tools for the agent (see TitleResearchOptions). */
+  titleResearch?: TitleResearchOptions;
   moviesParentDirectoryId: string;
   now?: () => string;
   /** §7: resolve the claimed run's per-account 115 creds + landing CIDs. */
@@ -1230,6 +1257,10 @@ export async function runQueuedMovieAcquisition(input: {
       ...(deps.agentMemory === undefined
         ? {}
         : { agentMemory: deps.agentMemory }),
+        // Web-reference tools, same per-account resolution as memory.
+        ...(deps.titleResearch === undefined
+          ? {}
+          : { titleResearch: deps.titleResearch }),
       workflowRun: {
         id: claimed.workflowRun.id,
         startedAt: claimed.workflowRun.startedAt,
@@ -1268,6 +1299,8 @@ export async function runQueuedSeriesInitialization(input: {
   llmConfig?: { baseURL?: string; modelId?: string };
   preferredLanguage?: string;
   qualityPreference?: "high" | "medium";
+  /** Web-reference tools for the agent (see TitleResearchOptions). */
+  titleResearch?: TitleResearchOptions;
   storageParentDirectoryId: string;
   /** Separate landing parent for anime, so the 动漫 shelf is physically its own
    *  tree on 115 and never mixed into the TV shows directory. */
@@ -1345,6 +1378,10 @@ export async function runQueuedSeriesInitialization(input: {
       ...(deps.agentMemory === undefined
         ? {}
         : { agentMemory: deps.agentMemory }),
+        // Web-reference tools, same per-account resolution as memory.
+        ...(deps.titleResearch === undefined
+          ? {}
+          : { titleResearch: deps.titleResearch }),
       workflowRun: {
         id: claimed.workflowRun.id,
         startedAt: claimed.workflowRun.startedAt,

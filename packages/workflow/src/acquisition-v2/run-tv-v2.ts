@@ -62,6 +62,8 @@ export interface RunTvAcquisitionV2Request {
   linkHistory?: RunAcquisitionV2WorkflowRequest["linkHistory"];
   /** Leftover staging dir adopted as this run's staging. See workflow-v2. */
   stagingRecovery?: RunAcquisitionV2WorkflowRequest["stagingRecovery"];
+  /** Web-reference tools (alternate titles, fan-season ↔ TMDB episode mapping). */
+  titleResearch?: RunAcquisitionV2WorkflowRequest["titleResearch"];
   onProgress?: (event: AgentToolEvent) => void;
   now?: () => string;
 }
@@ -112,6 +114,7 @@ export async function runTvAcquisitionV2(request: RunTvAcquisitionV2Request): Pr
     ...(request.rejectedLookup ? { rejectedLookup: request.rejectedLookup } : {}),
     ...(request.linkHistory ? { linkHistory: request.linkHistory } : {}),
     ...(request.stagingRecovery ? { stagingRecovery: request.stagingRecovery } : {}),
+    ...(request.titleResearch === undefined ? {} : { titleResearch: request.titleResearch }),
     ...(request.onProgress ? { onProgress: request.onProgress } : {}),
   });
 

@@ -120,6 +120,12 @@ export interface RunAcquisitionV2Request {
   linkHistory?: { list: () => Promise<LinkHistoryRow[]> };
   /** Leftover staging: no search, no transfer, no memory reflection. Season files stay protected. */
   stagingRecovery?: boolean;
+  /** Web-reference tools for the agent: alternate titles, and mapping a fan
+   *  season/story-arc name onto this task's absolute episode numbers on shows
+   *  their rights holder never split. Carries the user's LLM endpoint so the
+   *  search routes through DeepSeek's own engine when that is what they use.
+   *  Absent = no web access (and no fan-season block in the prompt). */
+  titleResearch?: { web: { llmBaseURL?: string; llmApiKey?: string; timeoutMs?: number; limit?: number } };
   /** A replace_request run (user message). See docs/superpowers/specs/2026-09-26-user-message-replace-design.md. */
   userRequest?: {
     /** Episodes the user named or that are still pending (movie: ["MOVIE"]). Added to the need. */
@@ -615,6 +621,7 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     ...(userRequest ? { userRequests: userRequest.prompt } : {}),
     ...(protectExisting ? { protectExisting } : {}),
     ...(request.stagingRecovery ? { stagingRecovery: true as const } : {}),
+    ...(request.titleResearch === undefined ? {} : { titleResearch: request.titleResearch }),
   };
 
   let result: AcquisitionAgentResult;

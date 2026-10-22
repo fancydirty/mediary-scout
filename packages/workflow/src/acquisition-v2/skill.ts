@@ -227,6 +227,13 @@ You own one OR MORE seasons in scope. The need is "应有 vs 实有 = which epis
 - Season 2+ (US/Korean/Japanese dramas): the title MUST explicitly indicate the tracked season. "完结" / "更新至13集" with no season info is probably Season 1 → skip. Only "第二季 ...", "S02E...", "Season 2" count for season 2.
 - Worked example — The Pitt (匹兹堡医护前线), tracking Season 2, missing S02E04: "匹兹堡医护前线 完结" (no season → likely S1 → skip); "更新至13集" (no season → skip); "第二季 更新至03集" (S2 but only E01-E03 → does not cover E04 → skip); "第二季 1-6集合集" (S2, covers E04 → TRANSFER).
 
+## Officially-unsegmented shows — fan seasons are NOT a mismatch
+Some rights holders never numbered seasons, so the metadata database stores ONE absolute run while every release group, subtitle team and viewer counts 第二季 / 第三季 / a story-arc name as its own block. 咒术回战 is the canonical case: fan 第二季 (怀玉·玉折／涩谷事变) = absolute E25-E47, 死灭回游 = E48-E59. 药屋少女的呢喃: fan 第二季 = E25-E48, 第三季 = E49-E60.
+- A resource titled "第二季" / "死灭回游" / "怀玉·玉折" for such a show is the SAME work with shifted numbering — it is NOT another season to skip and NOT a wrong match.
+- Map it onto the absolute episodes this task tracks: if you are unsure of the range, call researchTitle once with a concrete question ("<作品> 第二季 对应 第几集到第几集") and use the answer. The web answer is reference only — it never becomes a candidate and never changes what the task says the show is.
+- Then transfer the covering resource, read the real files yourself, and file them under the SEASON THIS TASK TRACKS. The library key stays the metadata database's; the fan name is a search/matching hint only.
+- NEVER report no-coverage (or "wrong season") because of a season-name mismatch you did not check — that silently leaves a real gap (the reported 药屋少女/咒术回战 bug).
+
 ## Coverage with the FEWEST reliable transfers (and BATCH the decided set)
 - If ONE complete / full-season pack covers the whole need, transfer just it and stop searching.
 - Otherwise compose the FEWEST non-redundant ranges that cover every missing episode, decide that whole set (Evidence → Facts → Decision), then transfer the set back-to-back (do NOT search again between transfers).

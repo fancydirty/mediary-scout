@@ -14,6 +14,7 @@ import {
 } from "./agent-loop-guards.js";
 import { interpretTool, type AgentToolEvent } from "./activity.js";
 import { LINK_HISTORY_PROMPT } from "./link-history.js";
+import { createTitleResearchTools, type TitleResearchConfig } from "./title-research.js";
 
 /**
  * Phase 3 — the agent loop harness. The strong agent drives its own
@@ -127,10 +128,16 @@ export function buildSandboxToolSet(
     /** Leftover staging: no search, no transfer, no subtitle landing.
      *  renameSubtitle stays: a leftover .ass/.srt may not match its video. */
     stagingRecovery?: boolean;
+    /** Web-reference tools (alternate titles + fan-season ↔ TMDB episode mapping).
+     *  Absent = no web access. Never registered on a recovery run. */
+    titleResearch?: TitleResearchConfig;
   } = {},
 ): ToolSet {
   const recover = options.stagingRecovery === true;
   const tools: Record<string, unknown> = {
+    // Web reference only: both tools return untrusted evidence, never a
+    // transferable candidate, and never touch storage.
+    ...(!recover && options.titleResearch ? createTitleResearchTools(options.titleResearch) : {}),
     readSkill: {
       description:
         // Section list derived from SKILL_SECTION_NAMES — the single source of
@@ -346,6 +353,10 @@ export interface AcquisitionAgentRequest {
   storageProvider?: string;
   /** Leftover staging: the tool set has no search or transfer tools. */
   stagingRecovery?: boolean;
+  /** Web-reference tools (alternate titles, fan-season ↔ TMDB episode mapping).
+   *  Requires the user's LLM endpoint so web search can route (DeepSeek's own
+   *  engine when configured, anonymous otherwise). Absent = no web access. */
+  titleResearch?: TitleResearchConfig;
   /** Per-tool-call live progress for the activity page (cleaned activity + phase
    *  + raw name/args). Best-effort; absent in tests/headless. */
   onProgress?: (event: AgentToolEvent) => void;
@@ -376,6 +387,7 @@ export async function runAcquisitionAgent(
     movie: request.movie ?? false,
     ...(request.subtitle ? { subtitle: true } : {}),
     ...(request.stagingRecovery ? { stagingRecovery: true } : {}),
+    ...(request.titleResearch === undefined ? {} : { titleResearch: request.titleResearch }),
     ...(request.storageProvider === undefined ? {} : { storageProvider: request.storageProvider }),
     ...(onProgress
       ? {

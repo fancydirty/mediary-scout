@@ -2,6 +2,7 @@ import {
   createTmdbSearchProvider,
   getSearchPageView,
   InMemoryMediaSearchCache,
+  resolveTitles,
   type MediaSearchProvider,
   type SearchPageView,
 } from "@media-track/workflow";
@@ -11,10 +12,12 @@ import {
   ensureDemoSeeded,
   getAccountScopedSettings,
   getActiveWorkspaceScope,
+  getAgentModelForSearch,
   getCurrentAccountId,
   getTmdbAccesses,
   getWorkflowRepository,
   postgresConnectionString,
+  resolveTitleResearchOptions,
 } from "./workflow-runtime";
 
 let demoSearchCache: InMemoryMediaSearchCache | null = null;
@@ -35,7 +38,28 @@ export async function getSearchView(query: string, storageId?: string): Promise<
     cache: getSearchCache(),
     repository,
     scope,
+    // Only the live deployment can describe-search: the demo provider serves a
+    // fixed seed list, and a demo deployment has no user LLM to call.
+    ...(process.env.MEDIA_TRACK_SEARCH_PROVIDER === "tmdb"
+      ? { resolveTitles: (descriptive: string) => resolveSearchTitles(descriptive) }
+      : {}),
   });
+}
+
+/**
+ * Turn "男主带小绿瓶修仙的国漫" / "咒术回战 死灭回游" into real titles with the
+ * ACCOUNT'S OWN model (Settings → AI 模型), plus web search that routes to
+ * DeepSeek's own engine when that is their endpoint. Best-effort: a missing
+ * model, a timeout or a bad answer just means "no extra titles".
+ */
+async function resolveSearchTitles(query: string): Promise<string[]> {
+  const settings = getAccountScopedSettings(await getCurrentAccountId());
+  const model = await getAgentModelForSearch(settings);
+  if (!model) return [];
+  const web = await resolveTitleResearchOptions(settings);
+  // 15s covers one web search (12s) plus the model call. The page is already
+  // inside Suspense, and only a zero-result search pays this at all.
+  return resolveTitles({ query, model, web: web.web, timeoutMs: 15_000 });
 }
 
 function getSearchCache() {

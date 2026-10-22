@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import type { LanguageModel } from "ai";
 import { isAgentMemoryEnabled } from "./agent-memory-server";
 import { cache } from "react";
 import {
@@ -946,6 +947,9 @@ export function buildAccountContextResolver(): ResolveAccountWorkerContext {
     const driveProvider =
       (await getAccountStorageCredentials(accountId, connectedStorageId))?.provider ?? "pan115";
     const assrtToken = await getAssrtToken(scoped);
+    // Web reference (alternate titles, fan-season ↔ episode mapping) follows THIS
+    // account's LLM endpoint — DeepSeek's search when that is what they configured.
+    const titleResearch = await resolveTitleResearchOptions(scoped);
     // Per-account: undefined unless THIS account set a key, enabled the prefilter
     // and the save-time probe passed. Undefined → the orchestrator keeps the bare
     // provider, so an unconfigured account costs exactly zero Jev calls.
@@ -967,6 +971,7 @@ export function buildAccountContextResolver(): ResolveAccountWorkerContext {
       // their own Kilo/BYO verdict.
       llmConfig,
       ...(assrtToken === undefined ? {} : { assrtToken }),
+      titleResearch,
       ...(jevJudge === undefined ? {} : { jevJudge }),
       agentMemory,
       ...(preferredLanguage === undefined ? {} : { preferredLanguage }),
@@ -1208,6 +1213,49 @@ export async function getLlmConfig(repository: {
     baseURL: await read(LLM_BASE_URL_SETTING_KEY),
     apiKey: await read(LLM_API_KEY_SETTING_KEY),
     modelId: await read(LLM_MODEL_ID_SETTING_KEY),
+  };
+}
+
+/**
+ * The model the SEARCH BOX uses to interpret a description. It is the account's
+ * own configured model (Settings → AI 模型), and consciously NOT the shipped
+ * free preset: the free pool is a shared, rate-limited courtesy meant for
+ * acquisitions, so a typed description must not burn it. Returns null when the
+ * account configured nothing of its own — the search then stays keyword-only.
+ */
+export async function getAgentModelForSearch(
+  repository: { getSetting(key: string): Promise<string | null> },
+): Promise<LanguageModel | null> {
+  const resolved = await resolveAgentModelConfig(repository);
+  // "free-preset" = the account configured nothing of its own. The shipped free
+  // pool is a shared, rate-limited courtesy for acquisitions; a typed
+  // description must not spend it (and after the「换回免费模型」button the
+  // effective values ARE the preset even though the source reads "db").
+  if (resolved.source === "free-preset" || isFreeLlmPreset(resolved)) return null;
+  if (llmConfigError(resolved)) return null;
+  try {
+    return createAgentModel(resolved);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Web search for the acquisition agent, always available. When the account's
+ * configured LLM endpoint is DeepSeek's own API we search with THEIR engine and
+ * THEIR key (they already pay for it); otherwise the keyless anonymous provider
+ * is used. Never carries a key toward a third party: `resolveAgentModelConfig`
+ * drops the key whenever the effective config is the free preset.
+ */
+export async function resolveTitleResearchOptions(
+  repository: { getSetting(key: string): Promise<string | null> },
+): Promise<{ web: { llmBaseURL?: string; llmApiKey?: string } }> {
+  const resolved = await resolveAgentModelConfig(repository);
+  return {
+    web: {
+      ...(resolved.baseURL === undefined ? {} : { llmBaseURL: resolved.baseURL }),
+      ...(resolved.apiKey === undefined ? {} : { llmApiKey: resolved.apiKey }),
+    },
   };
 }
 

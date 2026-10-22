@@ -41,7 +41,7 @@ export function SearchForm({
           key={defaultQuery}
           name="q"
           aria-label="搜索媒体"
-          placeholder="片名 / 剧名"
+          placeholder="片名 / 剧名，也可以描述剧情"
           defaultValue={defaultQuery}
         />
       </label>
