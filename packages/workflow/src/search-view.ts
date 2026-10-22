@@ -136,20 +136,29 @@ const inflightInterpretations = new Map<string, Promise<SearchQueryInterpretatio
 
 async function resolveOnce(
   query: string,
-  cache: SearchInterpretationCache | undefined,
-  resolve: (query: string) => Promise<string[]>,
+  input: Parameters<typeof getSearchPageView>[0],
 ): Promise<SearchQueryInterpretation> {
   const key = normalizeSearchQuery(query);
   const pending = inflightInterpretations.get(key);
   if (pending) return pending;
 
   const run = (async (): Promise<SearchQueryInterpretation> => {
-    const cached = await cache?.get(key).catch(() => null);
+    const cached = await input.interpretations?.get(key).catch(() => null);
     if (cached) return cached;
-    const titles = await resolve(key).catch(() => []);
-    const value: SearchQueryInterpretation = { title: titles[0] ?? null };
-    await cache?.set(key, value).catch(() => {});
-    return value;
+    const titles = await input.resolveTitles!(key).catch(() => []);
+    for (const candidateTitle of titles) {
+      const normalized = normalizeSearchQuery(candidateTitle);
+      if (!normalized || normalized === key) continue;
+      const found = await safeSearch(input, normalized);
+      if (found && found.length > 0) {
+        const hit: SearchQueryInterpretation = { title: candidateTitle };
+        await input.interpretations?.set(key, hit).catch(() => {});
+        return hit;
+      }
+    }
+    const miss: SearchQueryInterpretation = { title: null };
+    await input.interpretations?.set(key, miss).catch(() => {});
+    return miss;
   })();
 
   inflightInterpretations.set(key, run);
@@ -279,17 +288,14 @@ async function interpretUnfoundQuery(
   }
 
   if (!input.resolveTitles) {
-    // Nothing else to try: remember the miss so the strip is not re-run forever.
-    await input.interpretations?.set(query, { title: null }).catch(() => {});
+    // Do not write { title: null } when no model was configured: if the user
+    // later configures a BYO model in Settings, the query must be allowed to
+    // resolve instead of being stuck on a cached false negative.
     return null;
   }
 
-  const interpretation = await resolveOnce(query, input.interpretations, input.resolveTitles);
-  if (!interpretation.title) return null;
-  const normalized = normalizeSearchQuery(interpretation.title);
-  if (!normalized || normalized === query) return null;
-  const found = await safeSearch(input, normalized);
-  return found && found.length > 0 ? interpretation.title : null;
+  const interpretation = await resolveOnce(query, input);
+  return interpretation.title;
 }
 
 function normalizeSearchQuery(query: string): string {

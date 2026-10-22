@@ -173,6 +173,73 @@ describe("search fallback for a season-suffixed query", () => {
     expect(resolveTitles).toHaveBeenCalledTimes(1);
   });
 
+  it("tries alternate titles in order when the first candidate misses in TMDB, and never caches an unverified title", async () => {
+    const provider = providerOf({ "Jujutsu Kaisen": [TV] });
+    const interpretations = new InMemorySearchInterpretationCache();
+    const resolveTitles = vi.fn(async () => ["不存在的译名", "Jujutsu Kaisen"]);
+
+    const first = await getSearchPageView({
+      query: "宿傩手指动漫",
+      provider,
+      cache: new InMemoryMediaSearchCache(),
+      repository: repositoryStub(),
+      resolveTitles,
+      interpretations,
+    });
+    expect(first.interpretedQuery).toBe("Jujutsu Kaisen");
+    expect(first.candidates).toHaveLength(1);
+
+    // When all candidate titles miss TMDB, interpretedQuery stays undefined on
+    // both the first and second render.
+    const missInterpretations = new InMemorySearchInterpretationCache();
+    const missProvider = providerOf({});
+    const missFirst = await getSearchPageView({
+      query: "未知描述",
+      provider: missProvider,
+      cache: new InMemoryMediaSearchCache(),
+      repository: repositoryStub(),
+      resolveTitles: async () => ["仍然查不到的片名"],
+      interpretations: missInterpretations,
+    });
+    const missSecond = await getSearchPageView({
+      query: "未知描述",
+      provider: missProvider,
+      cache: new InMemoryMediaSearchCache(),
+      repository: repositoryStub(),
+      resolveTitles: async () => ["仍然查不到的片名"],
+      interpretations: missInterpretations,
+    });
+    expect(missFirst.interpretedQuery).toBeUndefined();
+    expect(missSecond.interpretedQuery).toBeUndefined();
+  });
+
+  it("does not poison the interpretation cache when no resolveTitles callback is supplied", async () => {
+    const provider = providerOf({ 咒术回战: [TV] });
+    const interpretations = new InMemorySearchInterpretationCache();
+
+    // First search runs without a configured model (no resolveTitles).
+    const unconfigured = await getSearchPageView({
+      query: "宿傩手指动漫",
+      provider,
+      cache: new InMemoryMediaSearchCache(),
+      repository: repositoryStub(),
+      interpretations,
+    });
+    expect(unconfigured.candidates).toHaveLength(0);
+
+    // Once the user configures a model, the same query resolves normally.
+    const configured = await getSearchPageView({
+      query: "宿傩手指动漫",
+      provider,
+      cache: new InMemoryMediaSearchCache(),
+      repository: repositoryStub(),
+      resolveTitles: async () => ["咒术回战"],
+      interpretations,
+    });
+    expect(configured.interpretedQuery).toBe("咒术回战");
+    expect(configured.candidates).toHaveLength(1);
+  });
+
   it("survives a throwing resolver", async () => {
     const provider = providerOf({});
     const view = await getSearchPageView({

@@ -268,51 +268,53 @@ async function parallelFetchPages(
   urls: string[],
   options: Required<Pick<WebSearchOptions, "fetch" | "timeoutMs">> & WebSearchOptions,
 ): Promise<WebPage[]> {
-  const pages: WebPage[] = [];
-  // Parallel's MCP web_fetch takes one page per call, so serialise (the caller's
-  // budget is 4 calls total anyway, and 3 URLs is the schema's max).
-  for (const url of urls) {
-    try {
-      const response = await options.fetch(PARALLEL_MCP_ENDPOINT, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json, text/event-stream",
-          "User-Agent": USER_AGENT,
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "tools/call",
-          params: {
-            name: "web_fetch",
-            arguments: {
-              objective:
-                "Extract the text that establishes the work's title (including localized/alternate names), its year, and which episode numbers a named season or story arc covers. Return the page text.",
-              urls: [url],
-            },
+  // Fetch the requested URLs concurrently (bounded to at most 3 by webFetchPages)
+  // so multiple slow pages do not multiply the timeout.
+  const settled = await Promise.all(
+    urls.map(async (url): Promise<WebPage | null> => {
+      try {
+        const response = await options.fetch(PARALLEL_MCP_ENDPOINT, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json, text/event-stream",
+            "User-Agent": USER_AGENT,
           },
-        }),
-        signal: AbortSignal.timeout(options.timeoutMs),
-      });
-      if (!response.ok) continue;
-      const payload = (await response.json()) as { result?: unknown };
-      const result = payload.result as { content?: unknown; isError?: unknown } | undefined;
-      if (result?.isError === true) continue;
-      const text = (Array.isArray(result?.content) ? result!.content : [])
-        .flatMap((part) =>
-          part && typeof part === "object" && typeof (part as { text?: unknown }).text === "string"
-            ? [(part as { text: string }).text]
-            : [],
-        )
-        .join("\n")
-        .trim();
-      if (text) pages.push({ url, title: url, content: text });
-    } catch {
-      // Per-URL failure: keep the pages that did load.
-    }
-  }
-  return pages;
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/call",
+            params: {
+              name: "web_fetch",
+              arguments: {
+                objective:
+                  "Extract the text that establishes the work's title (including localized/alternate names), its year, and which episode numbers a named season or story arc covers. Return the page text.",
+                urls: [url],
+              },
+            },
+          }),
+          signal: AbortSignal.timeout(options.timeoutMs),
+        });
+        if (!response.ok) return null;
+        const payload = (await response.json()) as { result?: unknown };
+        const result = payload.result as { content?: unknown; isError?: unknown } | undefined;
+        if (result?.isError === true) return null;
+        const text = (Array.isArray(result?.content) ? result!.content : [])
+          .flatMap((part) =>
+            part && typeof part === "object" && typeof (part as { text?: unknown }).text === "string"
+              ? [(part as { text: string }).text]
+              : [],
+          )
+          .join("\n")
+          .trim();
+        return text ? { url, title: url, content: text } : null;
+      } catch {
+        // Per-URL failure: keep the pages that did load.
+        return null;
+      }
+    }),
+  );
+  return settled.filter((page): page is WebPage => page !== null);
 }
 
 async function deepSeekFetchPages(
@@ -322,31 +324,33 @@ async function deepSeekFetchPages(
   const baseURL = (options.llmBaseURL ?? "").trim().replace(/\/+$/, "").replace(/\/v1$/i, "");
   const apiKey = (options.llmApiKey ?? "").trim();
   if (!baseURL || !apiKey) throw new Error("DeepSeek fetch needs a base URL and API key");
-  const pages: WebPage[] = [];
-  for (const url of urls) {
-    try {
-      const response = await options.fetch(`${baseURL}/v1/tools/fetch`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-          "User-Agent": USER_AGENT,
-        },
-        body: JSON.stringify({ url }),
-        signal: AbortSignal.timeout(options.timeoutMs),
-      });
-      if (!response.ok) continue;
-      const payload = (await response.json()) as { title?: unknown; content?: unknown };
-      const content = typeof payload.content === "string" ? payload.content.trim() : "";
-      if (!content) continue;
-      pages.push({
-        url,
-        title: typeof payload.title === "string" && payload.title.trim() ? payload.title.trim() : url,
-        content,
-      });
-    } catch {
-      // Per-URL failure.
-    }
-  }
-  return pages;
+  const settled = await Promise.all(
+    urls.map(async (url): Promise<WebPage | null> => {
+      try {
+        const response = await options.fetch(`${baseURL}/v1/tools/fetch`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+            "User-Agent": USER_AGENT,
+          },
+          body: JSON.stringify({ url }),
+          signal: AbortSignal.timeout(options.timeoutMs),
+        });
+        if (!response.ok) return null;
+        const payload = (await response.json()) as { title?: unknown; content?: unknown };
+        const content = typeof payload.content === "string" ? payload.content.trim() : "";
+        if (!content) return null;
+        return {
+          url,
+          title: typeof payload.title === "string" && payload.title.trim() ? payload.title.trim() : url,
+          content,
+        };
+      } catch {
+        // Per-URL failure.
+        return null;
+      }
+    }),
+  );
+  return settled.filter((page): page is WebPage => page !== null);
 }

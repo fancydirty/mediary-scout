@@ -36,18 +36,24 @@ export async function getSearchView(query: string, storageId?: string): Promise<
   // Tree model: scope a movie's 已获取/获取 state to the active drive — obtained on
   // one drive must stay acquirable on another's workspace.
   const scope = await getActiveWorkspaceScope(storageId);
+  const liveTmdb = process.env.MEDIA_TRACK_SEARCH_PROVIDER === "tmdb";
+  const settings = liveTmdb ? getAccountScopedSettings(await getCurrentAccountId()) : null;
+  const searchModel = settings ? await getAgentModelForSearch(settings) : null;
   return getSearchPageView({
     query,
     provider: await getMediaSearchProvider(),
     cache: getSearchCache(),
     repository,
     scope,
-    // Only the live deployment can describe-search: the demo provider serves a
-    // fixed seed list, and a demo deployment has no user LLM to call.
-    ...(process.env.MEDIA_TRACK_SEARCH_PROVIDER === "tmdb"
+    // Only pass resolveTitles when the account actually has a BYO model
+    // configured — otherwise an unconfigured search would cache `{ title: null }`
+    // and block resolution even after the user configures a model.
+    ...(liveTmdb
       ? {
-          resolveTitles: (descriptive: string) => resolveSearchTitles(descriptive),
           interpretations: getInterpretationCache(),
+          ...(searchModel && settings
+            ? { resolveTitles: (descriptive: string) => resolveSearchTitlesWithModel(descriptive, searchModel, settings) }
+            : {}),
         }
       : {}),
   });
@@ -70,10 +76,11 @@ function getInterpretationCache(): SearchInterpretationCache {
  * DeepSeek's own engine when that is their endpoint. Best-effort: a missing
  * model, a timeout or a bad answer just means "no extra titles".
  */
-async function resolveSearchTitles(query: string): Promise<string[]> {
-  const settings = getAccountScopedSettings(await getCurrentAccountId());
-  const model = await getAgentModelForSearch(settings);
-  if (!model) return [];
+async function resolveSearchTitlesWithModel(
+  query: string,
+  model: NonNullable<Awaited<ReturnType<typeof getAgentModelForSearch>>>,
+  settings: ReturnType<typeof getAccountScopedSettings>,
+): Promise<string[]> {
   const web = await resolveTitleResearchOptions(settings);
   // 15s covers one web search (12s) plus the model call. The page is already
   // inside Suspense, and only a zero-result search pays this at all.
