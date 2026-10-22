@@ -145,19 +145,30 @@ async function resolveOnce(
   const run = (async (): Promise<SearchQueryInterpretation> => {
     const cached = await input.interpretations?.get(key).catch(() => null);
     if (cached) return cached;
-    const titles = await input.resolveTitles!(key).catch(() => []);
+    let resolverFailed = false;
+    const titles = await input.resolveTitles!(key).catch(() => {
+      resolverFailed = true;
+      return [];
+    });
+    let hadLookupError = false;
     for (const candidateTitle of titles) {
       const normalized = normalizeSearchQuery(candidateTitle);
       if (!normalized || normalized === key) continue;
       const found = await safeSearch(input, normalized);
-      if (found && found.length > 0) {
+      if (found === null) {
+        hadLookupError = true;
+        continue;
+      }
+      if (found.length > 0) {
         const hit: SearchQueryInterpretation = { title: candidateTitle };
         await input.interpretations?.set(key, hit).catch(() => {});
         return hit;
       }
     }
     const miss: SearchQueryInterpretation = { title: null };
-    await input.interpretations?.set(key, miss).catch(() => {});
+    if (!resolverFailed && !hadLookupError) {
+      await input.interpretations?.set(key, miss).catch(() => {});
+    }
     return miss;
   })();
 

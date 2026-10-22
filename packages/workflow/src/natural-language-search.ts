@@ -92,7 +92,7 @@ export async function resolveTitles(input: ResolveTitlesInput): Promise<string[]
   let evidence = "";
   if (input.web) {
     try {
-      const webTimeoutMs = Math.min(12_000, Math.max(1_000, Math.floor(totalBudgetMs * 0.6)));
+      const webTimeoutMs = Math.min(totalBudgetMs, 12_000, Math.max(1_000, Math.floor(totalBudgetMs * 0.6)));
       const hits = await webSearch(query, { ...input.web, timeoutMs: webTimeoutMs, limit: 5 });
       evidence = hits.length > 0 ? renderWebHits(hits, 3_500) : "";
     } catch {
