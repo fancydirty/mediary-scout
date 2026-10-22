@@ -391,6 +391,56 @@ describe("queueReplaceRequest", () => {
   });
 });
 
+describe("runQueuedReplaceRequest — web tools survive the replace path", () => {
+  // A replacement run searches and transfers exactly like a normal run, so the
+  // configured web tools (and the fan-season mapping prompt) must reach the
+  // agent. optionalDeps used to drop them silently — TS does not excess-property
+  // check a spread, so nothing failed to compile.
+  it.each([
+    ["tv", "run_rr_tv"],
+    ["movie", "run_rr_movie"],
+  ])("forwards titleResearch to a %s replacement run", async (kind, runId) => {
+    const repository = new InMemoryWorkflowRepository();
+    const storage = new FakeStorageExecutor();
+    let system = "";
+    const model = new MockLanguageModelV3({
+      doGenerate: async (options) => {
+        system = JSON.stringify(options.prompt.find((m) => m.role === "system") ?? "");
+        return text("done");
+      },
+    });
+
+    // Seed whichever shape this case needs, then queue a replacement for it.
+    const { title, season } = trackedFixture();
+    await seedTrackedSeason({ repository, title, season, obtainedCodes: ["S01E01", "S01E02"] });
+    await seedV2Season(storage, title, season, ["S01E01", "S01E02"]);
+    const work = { ...WORK, titleKey: title.id };
+    await repository.createUserMessage({ ...work, body: "换源", episodeTags: ["S01E01"], now: NOW });
+    const queued = await queueReplaceRequest({ repository, work, now: fixedNow, createWorkflowRunId: () => runId });
+    expect(queued).toMatchObject({ status: "queued" });
+
+    const deps = kind === "movie"
+      ? { ...baseRun(repository, storage, model), moviesParentDirectoryId: "movies_root" }
+      : baseRun(repository, storage, model);
+
+    await runQueuedReplaceRequest({
+      ...deps,
+      resolveAccountContext: async () => ({
+        resourceProvider: provider(),
+        storage,
+        model,
+        agentMemory: false,
+        // The account configured its own LLM → its web tools must ride along.
+        titleResearch: { web: { llmBaseURL: "https://api.deepseek.com", llmApiKey: "sk-test" } },
+      }),
+    });
+
+    // The prompt only renders the season/alternate-title block when the config
+    // actually arrived at the agent.
+    expect(system).toMatch(/OFFICIALLY-UNSEGMENTED|ALTERNATE TITLES/);
+  });
+});
+
 describe("runQueuedReplaceRequest", () => {
   it("idle when nothing is queued", async () => {
     const repository = new InMemoryWorkflowRepository();

@@ -168,6 +168,14 @@ async function parallelSearch(
 
 // ── DeepSeek (user's own key) ──────────────────────────────────────────────
 
+/** DeepSeek rejects queries over 128 Unicode code points. Truncate by CODE POINT
+ *  (not UTF-16 units) so an emoji/CJK string is never cut mid-surrogate, and
+ *  keep the head — the meaningful part of a search phrase is at the front. */
+export function clampQueryForProvider(query: string, max = 128): string {
+  const points = [...query];
+  return points.length <= max ? query : points.slice(0, max).join("");
+}
+
 async function deepSeekSearch(
   query: string,
   options: Required<Pick<WebSearchOptions, "fetch" | "timeoutMs" | "limit">> & WebSearchOptions,
@@ -187,7 +195,9 @@ async function deepSeekSearch(
       "Content-Type": "application/json",
       "User-Agent": USER_AGENT,
     },
-    body: JSON.stringify({ query, count: options.limit }),
+    // DeepSeek's own limit is 128 code points; a longer local description would
+    // be rejected outright instead of returning evidence.
+    body: JSON.stringify({ query: clampQueryForProvider(query), count: options.limit }),
     signal,
   });
   if (!response.ok) {
@@ -220,4 +230,123 @@ export function renderWebHits(hits: WebSearchHit[], maxChars = 6_000): string {
     })
     .join("\n\n");
   return text.length > maxChars ? `${text.slice(0, maxChars)}…` : text;
+}
+
+// ── Page reading ───────────────────────────────────────────────────────────
+
+export interface WebPage {
+  url: string;
+  title: string;
+  /** Page body as markdown/plain text. */
+  content: string;
+}
+
+/**
+ * Read public pages. `researchTitle`'s excerpts are often too thin to settle a
+ * title or an episode mapping, and the agent then needs the source page itself.
+ *
+ * Both vendors have a dedicated fetch route (Parallel MCP `web_fetch`, DeepSeek
+ * `/v1/tools/fetch`); neither is a search — asking a search engine to "read
+ * these URLs" silently returns unrelated snippets. Failures are per-URL: one
+ * dead page must not discard the others.
+ */
+export async function webFetchPages(
+  urls: string[],
+  options: WebSearchOptions = {},
+): Promise<WebPage[]> {
+  const clean = urls.map((url) => url.trim()).filter(Boolean).slice(0, 3);
+  if (clean.length === 0) return [];
+  const vendor = resolveWebSearchVendor(options);
+  const fetchImpl = options.fetch ?? globalThis.fetch;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  return vendor === "deepseek"
+    ? deepSeekFetchPages(clean, { ...options, fetch: fetchImpl, timeoutMs })
+    : parallelFetchPages(clean, { ...options, fetch: fetchImpl, timeoutMs });
+}
+
+async function parallelFetchPages(
+  urls: string[],
+  options: Required<Pick<WebSearchOptions, "fetch" | "timeoutMs">> & WebSearchOptions,
+): Promise<WebPage[]> {
+  const pages: WebPage[] = [];
+  // Parallel's MCP web_fetch takes one page per call, so serialise (the caller's
+  // budget is 4 calls total anyway, and 3 URLs is the schema's max).
+  for (const url of urls) {
+    try {
+      const response = await options.fetch(PARALLEL_MCP_ENDPOINT, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
+          "User-Agent": USER_AGENT,
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: {
+            name: "web_fetch",
+            arguments: {
+              objective:
+                "Extract the text that establishes the work's title (including localized/alternate names), its year, and which episode numbers a named season or story arc covers. Return the page text.",
+              urls: [url],
+            },
+          },
+        }),
+        signal: AbortSignal.timeout(options.timeoutMs),
+      });
+      if (!response.ok) continue;
+      const payload = (await response.json()) as { result?: unknown };
+      const result = payload.result as { content?: unknown; isError?: unknown } | undefined;
+      if (result?.isError === true) continue;
+      const text = (Array.isArray(result?.content) ? result!.content : [])
+        .flatMap((part) =>
+          part && typeof part === "object" && typeof (part as { text?: unknown }).text === "string"
+            ? [(part as { text: string }).text]
+            : [],
+        )
+        .join("\n")
+        .trim();
+      if (text) pages.push({ url, title: url, content: text });
+    } catch {
+      // Per-URL failure: keep the pages that did load.
+    }
+  }
+  return pages;
+}
+
+async function deepSeekFetchPages(
+  urls: string[],
+  options: Required<Pick<WebSearchOptions, "fetch" | "timeoutMs">> & WebSearchOptions,
+): Promise<WebPage[]> {
+  const baseURL = (options.llmBaseURL ?? "").trim().replace(/\/+$/, "").replace(/\/v1$/i, "");
+  const apiKey = (options.llmApiKey ?? "").trim();
+  if (!baseURL || !apiKey) throw new Error("DeepSeek fetch needs a base URL and API key");
+  const pages: WebPage[] = [];
+  for (const url of urls) {
+    try {
+      const response = await options.fetch(`${baseURL}/v1/tools/fetch`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+          "User-Agent": USER_AGENT,
+        },
+        body: JSON.stringify({ url }),
+        signal: AbortSignal.timeout(options.timeoutMs),
+      });
+      if (!response.ok) continue;
+      const payload = (await response.json()) as { title?: unknown; content?: unknown };
+      const content = typeof payload.content === "string" ? payload.content.trim() : "";
+      if (!content) continue;
+      pages.push({
+        url,
+        title: typeof payload.title === "string" && payload.title.trim() ? payload.title.trim() : url,
+        content,
+      });
+    } catch {
+      // Per-URL failure.
+    }
+  }
+  return pages;
 }

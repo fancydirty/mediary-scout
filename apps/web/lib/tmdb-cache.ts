@@ -5,6 +5,8 @@ import {
   WORKFLOW_SCHEMA_ADVISORY_LOCK_KEY,
   type MediaSearchCache,
   type MediaSearchCandidate,
+  type SearchInterpretationCache,
+  type SearchQueryInterpretation,
 } from "@media-track/workflow";
 
 const DEFAULT_TTL_MS = 6 * 60 * 60 * 1000; // 6h: TMDB search results barely change
@@ -208,5 +210,32 @@ export class InMemoryJsonCache implements DurableJsonCache {
     // Snapshot on write too, so a caller mutating the object AFTER setJson doesn't
     // retroactively change what's cached.
     this.values.set(key, { value: structuredClone(value), expiresAt: Date.now() + (ttlMs ?? this.ttlMs) });
+  }
+}
+
+/**
+ * Description → title memory, over the same durable JSON store.
+ *
+ * This exists because the search page re-renders server-side every five seconds
+ * while an acquisition runs (AcquiringPoller). Without it, one typed description
+ * would buy a web search AND a model call on every poll for the whole run. A
+ * resolved-to-nothing answer is stored too, so a dead description is not retried
+ * either. TTL is short: a brand-new show must become findable within the hour.
+ */
+export class SearchInterpretationCacheAdapter implements SearchInterpretationCache {
+  private static readonly TTL_MS = 60 * 60 * 1000; // 1h
+
+  constructor(private readonly store: DurableJsonCache) {}
+
+  async get(query: string): Promise<SearchQueryInterpretation | null> {
+    return this.store.getJson<SearchQueryInterpretation>(this.key(query));
+  }
+
+  async set(query: string, value: SearchQueryInterpretation): Promise<void> {
+    await this.store.setJson(this.key(query), value, SearchInterpretationCacheAdapter.TTL_MS);
+  }
+
+  private key(query: string): string {
+    return `search-meaning:${query.trim().toLowerCase()}`;
   }
 }

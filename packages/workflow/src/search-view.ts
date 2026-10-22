@@ -43,6 +43,26 @@ export interface MediaSearchCache {
   set(query: string, candidates: MediaSearchCandidate[]): Promise<void>;
 }
 
+/**
+ * Remembers which real title a DESCRIBED query resolved to, so a re-render does
+ * not pay for the resolution again. This matters concretely: the search page
+ * mounts the acquisition poller, which re-renders the results server-side every
+ * five seconds — without this, one typed description would bill a web search and
+ * a model call every five seconds for the whole run.
+ *
+ * A cached EMPTY result is meaningful too ("this description resolves to
+ * nothing"), so it records a miss instead of re-asking.
+ */
+export interface SearchQueryInterpretation {
+  /** The title that was eventually searched, or null when nothing resolved. */
+  title: string | null;
+}
+
+export interface SearchInterpretationCache {
+  get(query: string): Promise<SearchQueryInterpretation | null>;
+  set(query: string, value: SearchQueryInterpretation): Promise<void>;
+}
+
 export interface SearchCandidateAction {
   state: SearchActionState;
   label: string;
@@ -94,6 +114,52 @@ export class InMemoryMediaSearchCache implements MediaSearchCache {
   }
 }
 
+/** In-memory twin of SearchInterpretationCache (demo / tests). */
+export class InMemorySearchInterpretationCache implements SearchInterpretationCache {
+  private readonly values = new Map<string, SearchQueryInterpretation>();
+
+  async get(query: string): Promise<SearchQueryInterpretation | null> {
+    return this.values.get(normalizeSearchQuery(query)) ?? null;
+  }
+
+  async set(query: string, value: SearchQueryInterpretation): Promise<void> {
+    this.values.set(normalizeSearchQuery(query), value);
+  }
+}
+
+/**
+ * Serialise resolution per query inside one process. Two renders racing on the
+ * same description must not each pay for a web search + model call; the second
+ * one waits for the first and reuses its answer.
+ */
+const inflightInterpretations = new Map<string, Promise<SearchQueryInterpretation>>();
+
+async function resolveOnce(
+  query: string,
+  cache: SearchInterpretationCache | undefined,
+  resolve: (query: string) => Promise<string[]>,
+): Promise<SearchQueryInterpretation> {
+  const key = normalizeSearchQuery(query);
+  const pending = inflightInterpretations.get(key);
+  if (pending) return pending;
+
+  const run = (async (): Promise<SearchQueryInterpretation> => {
+    const cached = await cache?.get(key).catch(() => null);
+    if (cached) return cached;
+    const titles = await resolve(key).catch(() => []);
+    const value: SearchQueryInterpretation = { title: titles[0] ?? null };
+    await cache?.set(key, value).catch(() => {});
+    return value;
+  })();
+
+  inflightInterpretations.set(key, run);
+  try {
+    return await run;
+  } finally {
+    inflightInterpretations.delete(key);
+  }
+}
+
 export async function getSearchPageView(input: {
   query: string;
   provider: MediaSearchProvider;
@@ -109,6 +175,9 @@ export async function getSearchPageView(input: {
    *  turn the description into real titles and search again. Best-effort — an
    *  absent resolver or a failure simply leaves the empty result. */
   resolveTitles?: (query: string) => Promise<string[]>;
+  /** Remembers description → title (including "resolved to nothing") so a
+   *  re-render does not pay for the resolution again. */
+  interpretations?: SearchInterpretationCache;
 }): Promise<SearchPageView> {
   const now = input.now ?? (() => new Date().toISOString());
   const query = normalizeSearchQuery(input.query);
@@ -147,46 +216,14 @@ export async function getSearchPageView(input: {
   // does not exist": (a) they appended an unofficial season/arc name
   // ("咒术回战 第三季" / "死灭回游"), or (b) they described the plot instead of
   // the title. The suffix strip is free and deterministic; the description
-  // resolution costs one web search plus one model call, so it runs only after.
+  // resolution costs one web search plus one model call, so it runs only after —
+  // and its ANSWER is cached, because this page re-renders every five seconds
+  // while an acquisition runs.
   if (candidates.length === 0) {
-    const stripped = stripSeasonMarkers(query);
-    if (stripped) {
-      const normalized = normalizeSearchQuery(stripped);
-      try {
-        let found = await input.cache.get(normalized);
-        if (!found) {
-          found = await input.provider.searchMedia({ query: normalized });
-          await input.cache.set(normalized, found);
-        }
-        if (found.length > 0) {
-          candidates = found;
-          interpretedQuery = stripped;
-        }
-      } catch {
-        // Fall through to the description resolver.
-      }
-    }
-  }
-  if (candidates.length === 0 && input.resolveTitles) {
-    const titles = await input.resolveTitles(query).catch(() => []);
-    for (const title of titles) {
-      const normalized = normalizeSearchQuery(title);
-      if (!normalized || normalized === query) continue;
-      try {
-        let found = await input.cache.get(normalized);
-        if (!found) {
-          found = await input.provider.searchMedia({ query: normalized });
-          await input.cache.set(normalized, found);
-        }
-        if (found.length > 0) {
-          candidates = found;
-          interpretedQuery = title;
-          break;
-        }
-      } catch {
-        // Keep trying the remaining titles; a provider failure will surface on
-        // the next search as the normal provider_error state.
-      }
+    const interpreted = await interpretUnfoundQuery(query, input);
+    if (interpreted) {
+      interpretedQuery = interpreted;
+      candidates = (await safeSearch(input, interpreted)) ?? [];
     }
   }
 
@@ -199,6 +236,60 @@ export async function getSearchPageView(input: {
       candidates.map((candidate) => toCandidateCard(candidate, input.repository, now(), input.scope)),
     ),
   };
+}
+
+/** Keyword search through the provider + cache; null when the provider throws. */
+async function safeSearch(
+  input: Parameters<typeof getSearchPageView>[0],
+  query: string,
+): Promise<MediaSearchCandidate[] | null> {
+  const normalized = normalizeSearchQuery(query);
+  try {
+    const cached = await input.cache.get(normalized);
+    if (cached) return cached;
+    const found = await input.provider.searchMedia({ query: normalized });
+    await input.cache.set(normalized, found);
+    return found;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Turn an unfound query into a real, searchable title — or null.
+ *
+ * Order: the free deterministic suffix strip first (covers most cases), then the
+ * paid description resolution. Either way the conclusion is remembered, so a
+ * repeated render re-uses it instead of paying again.
+ */
+async function interpretUnfoundQuery(
+  query: string,
+  input: Parameters<typeof getSearchPageView>[0],
+): Promise<string | null> {
+  const cached = await input.interpretations?.get(query).catch(() => null);
+  if (cached) return cached.title;
+
+  const stripped = stripSeasonMarkers(query);
+  if (stripped) {
+    const found = await safeSearch(input, stripped);
+    if (found && found.length > 0) {
+      await input.interpretations?.set(query, { title: stripped }).catch(() => {});
+      return stripped;
+    }
+  }
+
+  if (!input.resolveTitles) {
+    // Nothing else to try: remember the miss so the strip is not re-run forever.
+    await input.interpretations?.set(query, { title: null }).catch(() => {});
+    return null;
+  }
+
+  const interpretation = await resolveOnce(query, input.interpretations, input.resolveTitles);
+  if (!interpretation.title) return null;
+  const normalized = normalizeSearchQuery(interpretation.title);
+  if (!normalized || normalized === query) return null;
+  const found = await safeSearch(input, normalized);
+  return found && found.length > 0 ? interpretation.title : null;
 }
 
 function normalizeSearchQuery(query: string): string {

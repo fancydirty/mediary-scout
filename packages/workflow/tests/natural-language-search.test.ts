@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { MockLanguageModelV3 } from "ai/test";
 import { parseResolvedTitles, resolveTitles } from "../src/natural-language-search.js";
 import { getSearchPageView, InMemoryMediaSearchCache, stripSeasonMarkers } from "../src/search-view.js";
+import { InMemorySearchInterpretationCache } from "../src/search-view.js";
 import type { MediaSearchCandidate, MediaSearchProvider } from "../src/search-view.js";
 import type { WorkflowRepository } from "../src/repository.js";
 
@@ -115,6 +116,61 @@ describe("search fallback for a season-suffixed query", () => {
     expect(view.state).toBe("ready");
     expect(view.candidates).toEqual([]);
     expect(view.interpretedQuery).toBeUndefined();
+  });
+
+  it("pays the resolver ONCE: a re-render reuses the stored interpretation", async () => {
+    // The search page re-renders every 5s while an acquisition runs, so an
+    // uncached interpretation would buy a web search + model call on every poll.
+    const provider = providerOf({ 咒术回战: [TV] });
+    const cache = new InMemoryMediaSearchCache();
+    const interpretations = new InMemorySearchInterpretationCache();
+    let resolverCalls = 0;
+    const resolveTitles = async () => {
+      resolverCalls += 1;
+      return ["咒术回战"];
+    };
+
+    const first = await getSearchPageView({
+      query: "男主带着宿傩手指打咒灵的动漫",
+      provider,
+      cache,
+      repository: repositoryStub(),
+      resolveTitles,
+      interpretations,
+    });
+    expect(first.interpretedQuery).toBe("咒术回战");
+    expect(resolverCalls).toBe(1);
+
+    // A fresh cache instance would still hit the provider, but must NOT resolve
+    // the description again.
+    const second = await getSearchPageView({
+      query: "男主带着宿傩手指打咒灵的动漫",
+      provider,
+      cache,
+      repository: repositoryStub(),
+      resolveTitles,
+      interpretations,
+    });
+    expect(second.interpretedQuery).toBe("咒术回战");
+    expect(second.candidates).toHaveLength(1);
+    expect(resolverCalls).toBe(1);
+  });
+
+  it("remembers a description that resolved to nothing, so it is not re-asked", async () => {
+    const provider = providerOf({});
+    const interpretations = new InMemorySearchInterpretationCache();
+    const resolveTitles = vi.fn(async () => []);
+    const opts = {
+      query: "完全无法解析的描述",
+      provider,
+      cache: new InMemoryMediaSearchCache(),
+      repository: repositoryStub(),
+      resolveTitles,
+      interpretations,
+    };
+    await getSearchPageView(opts);
+    await getSearchPageView(opts);
+    expect(resolveTitles).toHaveBeenCalledTimes(1);
   });
 
   it("survives a throwing resolver", async () => {

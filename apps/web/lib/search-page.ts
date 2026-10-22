@@ -4,10 +4,11 @@ import {
   InMemoryMediaSearchCache,
   resolveTitles,
   type MediaSearchProvider,
+  type SearchInterpretationCache,
   type SearchPageView,
 } from "@media-track/workflow";
 import { demoMediaSearchProvider } from "./demo-candidates";
-import { PostgresMediaSearchCache } from "./tmdb-cache";
+import { InMemoryJsonCache, PostgresMediaSearchCache, SearchInterpretationCacheAdapter } from "./tmdb-cache";
 import {
   ensureDemoSeeded,
   getAccountScopedSettings,
@@ -25,6 +26,9 @@ let durableSearchCache: PostgresMediaSearchCache | null = null;
 // Desktop (SQLite) build: no Postgres, so the durable cache degrades to in-memory
 // (a lost cache on restart is fine — a 2nd SQLite schema isn't worth it).
 let sqliteSearchCache: InMemoryMediaSearchCache | null = null;
+// Description → title memory (see SearchInterpretationCache): the search page
+// re-renders every 5s while an acquisition runs, so this must outlive one render.
+let interpretationCache: SearchInterpretationCache | null = null;
 
 export async function getSearchView(query: string, storageId?: string): Promise<SearchPageView> {
   const repository = getWorkflowRepository();
@@ -41,9 +45,23 @@ export async function getSearchView(query: string, storageId?: string): Promise<
     // Only the live deployment can describe-search: the demo provider serves a
     // fixed seed list, and a demo deployment has no user LLM to call.
     ...(process.env.MEDIA_TRACK_SEARCH_PROVIDER === "tmdb"
-      ? { resolveTitles: (descriptive: string) => resolveSearchTitles(descriptive) }
+      ? {
+          resolveTitles: (descriptive: string) => resolveSearchTitles(descriptive),
+          interpretations: getInterpretationCache(),
+        }
       : {}),
   });
+}
+
+/** Postgres-backed in production, in-memory on the desktop (SQLite) build/demo. */
+function getInterpretationCache(): SearchInterpretationCache {
+  if (interpretationCache) return interpretationCache;
+  const store =
+    process.env.MEDIA_TRACK_SQLITE_PATH?.trim() || process.env.MEDIA_TRACK_SEARCH_PROVIDER !== "tmdb"
+      ? new InMemoryJsonCache()
+      : (durableSearchCache ??= new PostgresMediaSearchCache({ connectionString: postgresConnectionString() }));
+  interpretationCache = new SearchInterpretationCacheAdapter(store);
+  return interpretationCache;
 }
 
 /**

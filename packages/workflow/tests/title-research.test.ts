@@ -84,6 +84,23 @@ describe("acquisition agent web-reference tools", () => {
     expect(result).not.toHaveProperty("referenceOnly");
   });
 
+  it("readTitleReference READS the pages instead of running another search", async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      // A read must call web_fetch with the URLs; a search would call web_search
+      // and return whatever the engine matched instead of these pages.
+      expect(body.params.name).toBe("web_fetch");
+      expect(body.params.arguments.urls).toEqual(["https://src.example/page"]);
+      return okPayload("第二季：第25集至第47集");
+    });
+    const tools = createTitleResearchTools({ web: { fetch: fetchMock as unknown as typeof fetch } });
+    const result = await call(tools, "readTitleReference", { urls: ["https://src.example/page"] });
+    expect(result.referenceOnly).toBe(true);
+    expect(String(result.untrustedWebEvidence)).toContain("第25集至第47集");
+    expect(String(result.untrustedWebEvidence)).toContain("https://src.example/page");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects non-public and credential-bearing URLs", () => {
     const tools = createTitleResearchTools({ web: {} });
     const schema = (tools.readTitleReference as unknown as { inputSchema: { safeParse: (v: unknown) => { success: boolean } } })

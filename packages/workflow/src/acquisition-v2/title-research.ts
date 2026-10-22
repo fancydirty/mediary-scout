@@ -12,7 +12,7 @@
  */
 import { z } from "zod";
 import type { ToolSet } from "ai";
-import { renderWebHits, webSearch, type WebSearchOptions } from "../web-search.js";
+import { renderWebHits, webFetchPages, webSearch, type WebSearchOptions } from "../web-search.js";
 
 /** Combined search/fetch budget for ONE acquisition run. */
 export const TITLE_RESEARCH_MAX_CALLS = 4;
@@ -39,6 +39,28 @@ export function createTitleResearchTools(config: TitleResearchConfig): ToolSet {
       // Web text is untrusted data: fence it so the model cannot mistake page
       // content for system instructions.
       return { referenceOnly: true, untrustedWebEvidence: renderWebHits(hits) };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  /** Read the pages themselves. A search query containing URLs is NOT a read —
+   *  it returns whatever the engine happens to match. */
+  async function readPages(urls: string[]): Promise<unknown> {
+    if (calls >= TITLE_RESEARCH_MAX_CALLS) {
+      return { error: "Title research budget exhausted; continue with the resource evidence you already have" };
+    }
+    calls += 1;
+    try {
+      const pages = await webFetchPages(urls, config.web);
+      if (pages.length === 0) return { error: "Could not read any of those pages" };
+      const body = pages
+        .map((page) => `# ${page.title}\n${page.url}\n\n${page.content}`)
+        .join("\n\n---\n\n");
+      return {
+        referenceOnly: true,
+        untrustedWebEvidence: body.length > 12_000 ? `${body.slice(0, 12_000)}…` : body,
+      };
     } catch (error) {
       return { error: error instanceof Error ? error.message : String(error) };
     }
@@ -75,7 +97,7 @@ export function createTitleResearchTools(config: TitleResearchConfig): ToolSet {
           .min(1)
           .max(3),
       }),
-      execute: (args: { urls: string[] }) => research(`Read and summarise these pages for the title evidence: ${args.urls.join(" ")}`),
+      execute: (args: { urls: string[] }) => readPages(args.urls),
     },
   };
 }
