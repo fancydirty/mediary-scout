@@ -14,6 +14,10 @@
  * fallback everywhere this is used.
  */
 
+// One-way import: quark-cookie-client imports only fetch-with-timeout, so this
+// does not create a cycle.
+import { parseCloudDriveUid } from "./quark-cookie-client.js";
+
 export type QuarkQrFetchJson = (
   url: string,
   init: { method: string; headers?: Record<string, string> },
@@ -102,9 +106,6 @@ export interface QuarkQrSession {
   token: string;
   /** String content to render as a QR; the user scans it in the brand's app. */
   qrcodeContent: string;
-  /** Cookies the CAS token call already set. Some brands need them replayed on
-   *  the redemption hop (UC does per community clients); harmless otherwise. */
-  setCookies?: string[];
 }
 export type QuarkQrStatus = "waiting" | "scanned" | "confirmed" | "expired";
 export interface QuarkQrPollResult {
@@ -175,13 +176,10 @@ export class QuarkQrLoginClient {
     return { status: "waiting" };
   }
 
-  async exchangeCookie(serviceTicket: string, initialCookies: string[] = []): Promise<QuarkQrCookie> {
+  async exchangeCookie(serviceTicket: string): Promise<QuarkQrCookie> {
     // The CAS service_ticket is redeemed at the brand's drive host; the drive
     // cookies are Set-Cookie'd across the redirect chain. Follow manually.
     const jar = new Map<string, string>();
-    for (const raw of initialCookies) {
-      absorbCookie(jar, raw);
-    }
     let url: string | null = this.profile.accountInfoUrl(serviceTicket);
     for (let hop = 0; hop < 6 && url; hop++) {
       const res: QuarkQrRawResponse = await this.rawFetch(url, {
@@ -199,7 +197,7 @@ export class QuarkQrLoginClient {
       .filter((k) => jar.has(k) && jar.get(k))
       .map((k) => `${k}=${jar.get(k)}`)
       .join("; ");
-    const providerUid = parseFamilyUid(cookie);
+    const providerUid = parseCloudDriveUid(cookie);
     if (!jar.get("__pus") || !providerUid) {
       throw new Error(
         `${this.errCode("EXCHANGE_FAILED")}: no drive cookie (missing __pus/__uid) — the service_ticket may be stale or the exchange endpoint changed`,
@@ -272,17 +270,6 @@ async function defaultRawFetch(
     status: res.status,
     headers: { getSetCookie: () => res.headers.getSetCookie(), get: (n) => res.headers.get(n) },
   };
-}
-
-// Imported through a local re-export to avoid a circular import: quark-cookie-client
-// does not import this module, but keeping the dependency one-way is still cleaner.
-function parseFamilyUid(cookie: string): string | null {
-  const uid = /(?:^|;|\s)__uid=([^;]+)/.exec(cookie);
-  if (uid?.[1]) {
-    return uid[1].trim();
-  }
-  const kps = /(?:^|;|\s)__kps=([^;]+)/.exec(cookie);
-  return kps?.[1] ? kps[1].trim() : null;
 }
 
 function asRecord(v: unknown): Record<string, unknown> {
