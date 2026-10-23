@@ -21,6 +21,15 @@ describe("createExecutorForBrand", () => {
     expect(exec).toBeInstanceOf(QuarkStorageExecutor);
   });
 
+  it("uc → QuarkStorageExecutor bound to the UC profile (not the 夸克 one)", () => {
+    const exec = createExecutorForBrand({ provider: "uc", cookie: "__uid=uc1", scopeCids: ["ROOT"] });
+    expect(exec).toBeInstanceOf(QuarkStorageExecutor);
+    // Same class, different family member: the profile decides host/query/UA and
+    // the fail-loud error codes. Losing it would silently talk to drive-pc.quark.cn
+    // with a UC cookie.
+    expect((exec as unknown as { profile: { key: string } }).profile.key).toBe("uc");
+  });
+
   it("guangya → GuangYaStorageExecutor (from a token credential blob, no cookie)", () => {
     const exec = createExecutorForBrand({
       provider: "guangya",

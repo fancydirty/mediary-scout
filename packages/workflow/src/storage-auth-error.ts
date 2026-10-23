@@ -11,6 +11,7 @@ import { isTianyiAuthError } from "./tianyi-client.js";
 export function isBrandStorageAuthError(error: unknown): boolean {
   return (
     isPan115AuthError(error) ||
+    // 夸克 + UC share ONE error class (same family protocol, same 31001 code).
     isQuarkAuthError(error) ||
     isGuangYaAuthError(error) ||
     isTianyiAuthError(error) ||

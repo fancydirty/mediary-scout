@@ -1,23 +1,39 @@
 /**
- * Quark StorageExecutor — the brand-2 analogue of Storage115Executor, over
- * QuarkCookieClient. Implements the 12 StorageExecutor port methods.
+ * 阿里云盘族 (Alibaba cloud-drive family) StorageExecutor — serves 夸克 AND UC over
+ * the one shared QuarkCookieClient. UC joined 2026-10-23; the two differ only in
+ * the client's CloudDriveProfile, so this class takes the profile instead of
+ * being copied per brand.
  *
  * Differences from 115:
- *  - 转存 is a share-link chain (token→detail→save→poll). There is NO magnet/
- *    offline web API on quark, so a magnet candidate fails LOUD (QUARK_NO_MAGNET)
- *    instead of being attempted.
- *  - Quark has no one-shot breadcrumb, so the write-scope guard walks pdir_fid up
+ *  - 转存 is a share-link chain (token→detail→save→poll). There is NO usable
+ *    magnet/offline web API on either family member (UC's is gated behind a
+ *    runtime-injected `window.encryption`), so a magnet candidate fails LOUD
+ *    (QUARK_NO_MAGNET / UC_NO_MAGNET) instead of being attempted.
+ *  - No one-shot breadcrumb, so the write-scope guard walks pdir_fid up
  *    (getFileInfo per hop, ≤ maxWriteScopeDepth) until it reaches a scope root.
- *  - A quark item is a directory when `dir === true`; files and dirs both key on `fid`.
+ *  - An item is a directory when `dir === true`; files and dirs both key on `fid`.
  */
 import type { PackageTreeFile, ResourceCandidate, TransferAttempt, TransferStatus, VerifiedFile } from "./domain.js";
 import { episodeCodeFromFileName } from "./episode-code.js";
 import type { StorageExecutor, UnparsedVideoFile } from "./ports.js";
-import { isQuarkAuthError, type QuarkCookieClient, type QuarkItem } from "./quark-cookie-client.js";
+import {
+  isQuarkAuthError,
+  QUARK_PROFILE,
+  UC_PROFILE,
+  type CloudDriveProfile,
+  type QuarkCookieClient,
+  type QuarkItem,
+} from "./quark-cookie-client.js";
 
 const MAX_RECURSIVE_COLLECT_DEPTH = 6;
 const DEFAULT_MAX_WRITE_SCOPE_DEPTH = 8;
 const DEFAULT_MIN_VIDEO_SIZE_BYTES = 10 * 1024 * 1024;
+/** UC's folder listing lags ~900ms behind a create (measured 2026-10-23); a
+ *  duplicate-name rejection is therefore expected on a re-provision and must be
+ *  resolved by re-reading, not by failing. 6 × 400ms ≈ 2.4s, comfortably past
+ *  the observed lag without stalling a run on a genuinely broken drive. */
+const NAME_CONFLICT_RETRIES = 6;
+const NAME_CONFLICT_RETRY_DELAY_MS = 400;
 
 const DEFAULT_VIDEO_EXTENSIONS = [
   ".mp4",
@@ -36,6 +52,9 @@ const DEFAULT_VIDEO_EXTENSIONS = [
 
 export interface QuarkStorageExecutorOptions {
   client: QuarkCookieClient;
+  /** Which family member this drive is. Defaults to 夸克. Drives the fail-loud
+   *  error codes and the share-URL parser — never a brand `if` in the body. */
+  profile?: CloudDriveProfile;
   /** Directory fids inside which writes/deletes are allowed (the drive's scope
    *  roots: rootCid + Movies/TV/Anime). Empty = allow all (dev only). */
   writeScopeDirectoryIds?: string[];
@@ -54,6 +73,7 @@ interface VideoFact {
 
 export class QuarkStorageExecutor implements StorageExecutor {
   private readonly client: QuarkCookieClient;
+  private readonly profile: CloudDriveProfile;
   private readonly writeScopeDirectoryIds: Set<string>;
   private readonly protectedDirectoryIds: Set<string>;
   private readonly minVideoSizeBytes: number;
@@ -63,6 +83,7 @@ export class QuarkStorageExecutor implements StorageExecutor {
 
   constructor(options: QuarkStorageExecutorOptions) {
     this.client = options.client;
+    this.profile = options.profile ?? QUARK_PROFILE;
     this.writeScopeDirectoryIds = new Set(options.writeScopeDirectoryIds ?? []);
     this.protectedDirectoryIds = new Set([
       "0",
@@ -79,7 +100,7 @@ export class QuarkStorageExecutor implements StorageExecutor {
   async createDirectory(input: { name: string; parentId: string }): Promise<string> {
     const safeParentId = await this.assertWithinWriteScope(input.parentId, "create directory");
     // Find-or-create: seasons of one title initialize at different times and must
-    // land under the SAME show directory (quark happily makes duplicate folders).
+    // land under the SAME show directory (the family happily makes duplicate folders).
     const items = await this.client.listItems({ directoryId: safeParentId });
     for (const item of items) {
       if (isDirectory(item) && nameOf(item) === input.name) {
@@ -89,7 +110,32 @@ export class QuarkStorageExecutor implements StorageExecutor {
         }
       }
     }
-    return this.client.createFolder({ name: input.name, parentId: safeParentId });
+    try {
+      return await this.client.createFolder({ name: input.name, parentId: safeParentId });
+    } catch (error) {
+      // ⚠️ UC-only (VERIFIED LIVE 2026-10-23): the folder listing is eventually
+      // consistent — a dir created moments ago may not appear in the very next
+      // listItems, so the pre-list above misses it and the create is rejected as
+      // "code=23008 file is doloading[同名冲突]". 夸克 never does this. Re-list
+      // (after the server has settled) and adopt the existing dir; rethrow
+      // anything that is NOT a name conflict, so real failures stay loud.
+      if (!isNameConflict(error)) {
+        throw error;
+      }
+      // Measured live 2026-10-23: UC takes ~900ms to expose a new dir in
+      // listItems (polled at 300ms, first hit at the 3rd read) — so ONE re-list
+      // is too early. Short bounded poll, then give up loudly.
+      for (let attempt = 0; attempt < NAME_CONFLICT_RETRIES; attempt++) {
+        await new Promise<void>((resolve) => setTimeout(resolve, NAME_CONFLICT_RETRY_DELAY_MS));
+        const after = await this.client.listItems({ directoryId: safeParentId });
+        const adopted = after.find((item) => isDirectory(item) && nameOf(item) === input.name);
+        const adoptedId = adopted ? idOf(adopted) : "";
+        if (adoptedId) {
+          return adoptedId;
+        }
+      }
+      throw error;
+    }
   }
 
   async listVideoFiles(directoryId: string): Promise<VerifiedFile[]> {
@@ -117,7 +163,9 @@ export class QuarkStorageExecutor implements StorageExecutor {
     // Magnet has no web API on quark — fail LOUD so the caller never thinks a
     // magnet "could have" worked; it must pick a quark share-link candidate.
     if (input.candidate.type === "magnet" || url.startsWith("magnet:")) {
-      throw new Error("QUARK_NO_MAGNET: 夸克网盘不支持磁力链接转存(无 web 离线 API);请改用夸克分享链候选");
+      throw new Error(
+        `${this.profile.errorPrefix}_NO_MAGNET: ${this.profile.label}不支持磁力链接转存(无可用 web 离线 API);请改用${this.profile.label}分享链候选`,
+      );
     }
 
     const safeDirectoryId = await this.assertWithinWriteScope(input.directoryId, "transfer");
@@ -125,9 +173,11 @@ export class QuarkStorageExecutor implements StorageExecutor {
 
     let providerMessage = "";
     try {
-      const parsed = parseQuarkShareUrl(url);
+      const parsed = parseCloudFamilyShareUrl(url, this.profile);
       if (!parsed) {
-        throw new Error(`QUARK_TRANSFER_FAILED: unparseable quark share url: ${url.slice(0, 60)}`);
+        throw new Error(
+          `${this.profile.errorPrefix}_TRANSFER_FAILED: unparseable ${this.profile.label} share url: ${url.slice(0, 60)}`,
+        );
       }
       const passcode = stringValue(input.candidate.providerPayload["password"]) || parsed.passcode;
       const stoken = await this.client.getShareToken({ pwd_id: parsed.pwdId, passcode });
@@ -135,7 +185,7 @@ export class QuarkStorageExecutor implements StorageExecutor {
       const fidList = shareItems.map((i) => stringValue(i.fid)).filter(Boolean);
       const fidTokenList = shareItems.map((i) => stringValue(i.share_fid_token)).filter(Boolean);
       if (fidList.length === 0) {
-        throw new Error("QUARK_TRANSFER_FAILED: share has no transferable files");
+        throw new Error(`${this.profile.errorPrefix}_TRANSFER_FAILED: share has no transferable files`);
       }
       const taskId = await this.client.saveShare({
         fid_list: fidList,
@@ -436,14 +486,26 @@ interface ParsedQuarkShare {
   passcode: string;
 }
 
-/** `https://pan.quark.cn/s/<pwd_id>[?passcode=xxx]` → its pwd_id + passcode. */
-export function parseQuarkShareUrl(url: string): ParsedQuarkShare | null {
-  const match = /pan\.quark\.cn\/s\/([0-9a-zA-Z]+)(?:[?#]([^#]*))?/.exec(url);
+/** Generic share-URL parser for a family profile:
+ *  `https://<host>/s/<pwd_id>[?passcode=xxx]` → its pwd_id + passcode. The host
+ *  regex lives in the profile so a lookalike domain can never be mis-parsed. */
+export function parseCloudFamilyShareUrl(url: string, profile: CloudDriveProfile): ParsedQuarkShare | null {
+  const match = profile.shareHostPattern.exec(url);
   if (!match?.[1]) {
     return null;
   }
   const params = new URLSearchParams(match[2] ?? "");
   return { pwdId: match[1], passcode: params.get("passcode") ?? params.get("pwd") ?? "" };
+}
+
+/** `https://pan.quark.cn/s/<pwd_id>[?passcode=xxx]` → its pwd_id + passcode. */
+export function parseQuarkShareUrl(url: string): ParsedQuarkShare | null {
+  return parseCloudFamilyShareUrl(url, QUARK_PROFILE);
+}
+
+/** `https://drive.uc.cn/s/<pwd_id>[?pwd=xxx]` → its pwd_id + passcode. */
+export function parseUcShareUrl(url: string): ParsedQuarkShare | null {
+  return parseCloudFamilyShareUrl(url, UC_PROFILE);
 }
 
 function verifiedFileFromItem(
@@ -467,6 +529,26 @@ function verifiedFileFromItem(
     episodeCode: episodeCodeFromFileName(name),
     providerFileId,
   };
+}
+
+/**
+ * The family's duplicate-name rejection. Both members report it as a THROWN
+ * Error carrying the server code/message from `unwrap` (never a structured
+ * field), so this declares the predicate EXPLICITLY rather than only by
+ * message text. UC's live wording is:
+ *   `UC_CREATE_FOLDER_FAILED: code=23008 file is doloading[同名冲突]`
+ * The Chinese marker is what survives a wording change; `23008` is UC's own
+ * conflict code (夸克 uses a different one, hence both arms).
+ */
+function isNameConflict(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const message = error.message;
+  if (/同名冲突|已存在|already exists/i.test(message)) {
+    return true;
+  }
+  return /\bcode=23008\b/.test(message);
 }
 
 function isDirectory(item: QuarkItem): boolean {

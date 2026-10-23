@@ -4,6 +4,7 @@ import {
   parseQuarkUid,
   QuarkAuthError,
   QuarkCookieClient,
+  UC_PROFILE,
 } from "../src/index.js";
 
 interface RecordedRequest {
@@ -253,5 +254,88 @@ describe("QuarkCookieClient", () => {
 
   it("requires a cookie", () => {
     expect(() => new QuarkCookieClient({ cookie: "" })).toThrow("QUARK_COOKIE is required");
+  });
+});
+
+describe("UC (阿里云盘族 second member) over the same client", () => {
+  it("talks to pc-api.uc.cn with UC's own query/UA/referer — never quark's", async () => {
+    const requests: RecordedRequest[] = [];
+    const client = new QuarkCookieClient({
+      cookie: "__uid=ucuser; __kps=kps",
+      profile: UC_PROFILE,
+      fetchJson: record(requests, async () => ({ code: 0, data: { list: [] } })),
+    });
+
+    await client.listItems({ directoryId: "0" });
+
+    const url = requests[0]!.url;
+    expect(url.startsWith("https://pc-api.uc.cn/1/clouddrive/file/sort")).toBe(true);
+    // The two brands' fixed queries are NOT interchangeable — routing quark's
+    // query to UC returns 403 code=41027 分享不存在 (verified live 2026-10-23).
+    expect(url).toContain("pr=UCBrowser&fr=pc&sys=darwin&ve=1.8.6");
+    expect(url).not.toContain("ucpro");
+    expect(requests[0]?.headers["Referer"]).toBe("https://drive.uc.cn");
+    expect(requests[0]?.headers["Origin"]).toBe("https://drive.uc.cn");
+    expect(requests[0]?.headers["User-Agent"]).toContain("uc-cloud-drive");
+    expect(requests[0]?.headers["Cookie"]).toBe("__uid=ucuser; __kps=kps");
+  });
+
+  it("uses the family error codes with a UC_ prefix (fail-loud, brand-readable)", async () => {
+    const client = new QuarkCookieClient({
+      cookie: "__uid=u",
+      profile: UC_PROFILE,
+      fetchJson: async () => ({ code: 41011, message: "分享地址已失效" }),
+    });
+
+    await expect(client.getShareToken({ pwd_id: "p", passcode: "" })).rejects.toThrow(
+      /UC_SHARE_TOKEN_FAILED: code=41011 分享地址已失效/,
+    );
+  });
+
+  it("treats code 31001 as a dead cookie on UC too (same code as 夸克)", async () => {
+    const client = new QuarkCookieClient({
+      cookie: "__uid=u",
+      profile: UC_PROFILE,
+      fetchJson: async () => ({ code: 31001, message: "require login [guest]" }),
+    });
+
+    const error = await client.listItems({ directoryId: "0" }).catch((e: unknown) => e);
+    expect(isQuarkAuthError(error)).toBe(true);
+    expect((error as Error).message).toContain("UC_AUTH_FAILED");
+  });
+
+  it("defaults to the 夸克 profile so every pre-UC caller is unchanged", async () => {
+    const requests: RecordedRequest[] = [];
+    const client = new QuarkCookieClient({
+      cookie: "__uid=u",
+      fetchJson: record(requests, async () => ({ code: 0, data: { list: [] } })),
+    });
+
+    await client.listItems({ directoryId: "0" });
+    expect(requests[0]!.url.startsWith("https://drive-pc.quark.cn")).toBe(true);
+  });
+
+  it("parses UC share URLs but refuses a quark URL (and vice versa)", async () => {
+    const { parseQuarkShareUrl, parseUcShareUrl } = await import("../src/index.js");
+
+    expect(parseUcShareUrl("https://drive.uc.cn/s/ad26437c945f4")).toEqual({
+      pwdId: "ad26437c945f4",
+      passcode: "",
+    });
+    expect(parseUcShareUrl("https://drive.uc.cn/s/abc123?pwd=xy99")).toEqual({
+      pwdId: "abc123",
+      passcode: "xy99",
+    });
+    expect(parseUcShareUrl("https://pan.quark.cn/s/abcdef")).toBeNull();
+    expect(parseQuarkShareUrl("https://drive.uc.cn/s/abcdef")).toBeNull();
+    // A lookalike host must never parse (it would become an untransferable candidate).
+    expect(parseUcShareUrl("https://evil-drive.uc.cn.attacker.com/s/abcdef")).toBeNull();
+  });
+
+  it("parses UC cookies with the same key names the family uses", async () => {
+    const { parseCloudDriveUid, parseQuarkUid } = await import("../src/index.js");
+    const cookie = "_UP_F7E_8D_=x; __pus=p; __kps=k; __uid=uc-uid-123";
+    expect(parseCloudDriveUid(cookie)).toBe("uc-uid-123");
+    expect(parseQuarkUid(cookie)).toBe("uc-uid-123"); // back-compat alias, one parser
   });
 });

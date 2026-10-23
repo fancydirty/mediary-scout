@@ -20,7 +20,7 @@
   <a href="README.en.md">English</a>
 </p>
 
-你说要哪部电影、剧或番，agent 自己去搜资源，挑最合适的转存进你自己的网盘（夸克 / 115 / 光鸭 / 123 / 天翼），转完读回来确认真的到了，之后缺哪集还会接着补。
+你说要哪部电影、剧或番，agent 自己去搜资源，挑最合适的转存进你自己的网盘（夸克 / UC / 115 / 光鸭 / 123 / 天翼），转完读回来确认真的到了，之后缺哪集还会接着补。
 
 点击前往下载：[GitHub Releases](https://github.com/fancydirty/mediary-scout/releases/latest)（macOS / Windows 桌面版）
 
@@ -78,7 +78,7 @@ docker compose up -d
 
 ## 免责声明
 
-巡影是开源、自部署的软件，不提供、也永远不会提供托管服务：你自己跑实例，自带网盘和 AI 模型的凭证。它做的就是你本可以在自己网盘里手动完成的那些文件操作。详见[项目定位](docs/distribution-and-legal-positioning.md)。与 115、夸克、光鸭、123、天翼、TMDB 及任何索引器均无隶属关系。
+巡影是开源、自部署的软件，不提供、也永远不会提供托管服务：你自己跑实例，自带网盘和 AI 模型的凭证。它做的就是你本可以在自己网盘里手动完成的那些文件操作。详见[项目定位](docs/distribution-and-legal-positioning.md)。与 115、夸克、UC、光鸭、123、天翼、TMDB 及任何索引器均无隶属关系。
 
 ## 致谢
 

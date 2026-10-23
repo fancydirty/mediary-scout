@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  allowedResourceTypesForKinds,
   getStorageBrand,
   parseQuarkUid,
   parsePan115Uid,
   STORAGE_BRANDS,
   isPan115AuthError,
+  isBrandStorageAuthError,
   isQuarkAuthError,
   Pan115AuthError,
   QuarkAuthError,
@@ -17,14 +19,49 @@ function makeGuangYaJwt(payload: Record<string, unknown>): string {
 }
 
 describe("storage brand registry", () => {
-  it("registers exactly pan115 + quark + guangya + tianyi + pan123", () => {
+  it("registers exactly pan115 + quark + uc + guangya + tianyi + pan123", () => {
     expect(STORAGE_BRANDS.map((b) => b.provider).sort()).toEqual([
       "guangya",
       "pan115",
       "pan123",
       "quark",
       "tianyi",
+      "uc",
     ]);
+  });
+
+  it("getStorageBrand resolves uc as a 夸克-family cookie brand (share-only, no prowlarr)", () => {
+    const u = getStorageBrand("uc");
+    expect(u.provider).toBe("uc");
+    expect(u.label).toBe("UC网盘");
+    expect(u.resourceProviderKinds).toEqual(["pansou-uc"]);
+    // No usable magnet/offline API on UC → magnet sources stay hidden, exactly
+    // like 夸克. This is what keeps the agent from ever seeing a magnet candidate.
+    expect(u.resourceProviderKinds).not.toContain("prowlarr");
+    expect(u.resourceProviderKinds).not.toContain("pansou-magnet");
+    // Same family cookie key names as 夸克 — one parser serves both.
+    expect(u.parseUid("__pus=p; __uid=uc-42")).toBe("uc-42");
+    expect(u.parseUid("__pus=p; __kps=only-kps")).toBe("only-kps");
+    expect(u.parseUid("no keys here")).toBeNull();
+    // Same error class as 夸克: one family, one freeze signal.
+    expect(u.isAuthError(new QuarkAuthError("x"))).toBe(true);
+    expect(u.isAuthError(new Pan115AuthError("y"))).toBe(false);
+    expect(u.authKind).toBe("cookie");
+    expect(u.provisionRootId).toBe("0");
+    // pdir_fid walk (getFileInfo) — the family protocol has a real breadcrumb.
+    expect(u.writeScope).toBe("parents");
+  });
+
+  it("maps the uc resource kind to the uc link type only", () => {
+    expect(allowedResourceTypesForKinds(["pansou-uc"])).toEqual(["uc"]);
+  });
+
+  it("a UC auth failure is classified as a netdisk auth error, but 'no such model' is NOT", () => {
+    // Regression guard: adding bare "uc" to the brand-marker list made every LLM
+    // 404 ("no such model" → "no s-uc-h") look like a dead drive credential.
+    expect(isBrandStorageAuthError(new QuarkAuthError("UC_AUTH_FAILED: require login"))).toBe(true);
+    expect(isBrandStorageAuthError(new Error("no such model on gateway"))).toBe(false);
+    expect(isBrandStorageAuthError(new Error("The model does not exist"))).toBe(false);
   });
 
   it("getStorageBrand resolves guangya with its label, magnet/prowlarr kinds + uid parsing", () => {

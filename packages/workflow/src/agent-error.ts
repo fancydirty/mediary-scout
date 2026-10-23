@@ -116,11 +116,17 @@ const BRAND_RATE_LIMIT_MARKERS = [
 const BRAND_AUTH_MARKERS = [
   "guangya",
   "quark",
+  // NOT a bare "uc": that is a substring of "no such model" ("no s-uc-h"), which
+  // would misclassify an LLM 404 as a netdisk auth failure — caught by the full
+  // suite 2026-10-23. UC reuses the family error class, so its thrown messages
+  // are UC_AUTH_FAILED / UCAuthError; match those instead.
+  "uc_auth_failed",
   "pan115",
   "tianyi",
   "pan123",
   "pan115autherror",
   "quarkautherror",
+  "clouddriveautherror",
   "guangyaautherror",
   "tianyiautherror",
   "pan123autherror",

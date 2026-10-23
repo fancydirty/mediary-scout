@@ -4,19 +4,21 @@ import { useState } from "react";
 import { Pan115QrConnect } from "./pan115-qr-connect";
 import { QuarkQrConnect } from "./quark-qr-connect";
 import { QuarkCookieConnect } from "./quark-cookie-connect";
+import { UcCookieConnect } from "./uc-cookie-connect";
 import { GuangYaTokenConnect } from "./guangya-token-connect";
 import { TianyiQrConnect } from "./tianyi-qr-connect";
 import { TianyiSsonConnect } from "./tianyi-sson-connect";
 import { Pan123QrConnect } from "./pan123-qr-connect";
 import { Pan123TokenConnect } from "./pan123-token-connect";
 
-type Brand = "pan115" | "quark" | "guangya" | "tianyi" | "pan123";
+type Brand = "pan115" | "quark" | "uc" | "guangya" | "tianyi" | "pan123";
 
 /** 品牌图库瓦片的静态元数据:图标走 /brands/<key>.svg(workspace-switcher 同款资产),
  *  authNote 把认证方式前置到选择时刻(选之前就知道要扫码还是粘贴)。加新品牌:此表加一行 + Brand 联合 + 下方连接区分支 + /brands svg(完整触点见加品牌清单)。 */
 const BRAND_TILES: Array<{ key: Brand; label: string; authNote: string }> = [
   { key: "pan115", label: "115网盘", authNote: "扫码登录" },
   { key: "quark", label: "夸克网盘", authNote: "扫码 / 粘 cookie" },
+  { key: "uc", label: "UC网盘", authNote: "粘 cookie" },
   { key: "guangya", label: "光鸭云盘", authNote: "粘贴 token" },
   { key: "tianyi", label: "天翼云盘", authNote: "扫码 / SSON" },
   { key: "pan123", label: "123网盘", authNote: "扫码 / 粘 token" },
@@ -54,6 +56,12 @@ export function AddDriveBrandTabs({ defaultBrand = "pan115" }: { defaultBrand?: 
       {brand === "pan115" ? (
         <div className="brand-connect-area">
           <Pan115QrConnect />
+        </div>
+      ) : brand === "uc" ? (
+        <div className="brand-connect-area">
+          {/* UC 与夸克同一套账号体系的两块云盘；UC 的扫码链路尚未摸清(夸克那条 CAS
+              兑换在 UC 上未验证)，先把已验证可用的 cookie 粘贴放正位，不做折叠。 */}
+          <UcCookieConnect />
         </div>
       ) : brand === "guangya" ? (
         <div className="brand-connect-area">

@@ -1,4 +1,5 @@
 import { parseGuangYaShareUrl } from "./guangya-client.js";
+import { parseUcShareUrl } from "./quark-storage-executor.js";
 import { createHash } from "node:crypto";
 import type {
   ResourceCandidate,
@@ -313,6 +314,14 @@ function normalizeResourceType(rawType: string, url: string): ResourceType | nul
   }
   if (rawType === "quark" || url.includes("pan.quark.cn/s/")) {
     return "quark";
+  }
+  // UC shares live on drive.uc.cn/s/<id>. Classified through the executor's OWN
+  // parser (not a substring test), so a lookalike host can never become a
+  // candidate that then fails as unparseable at transfer time. rawType "uc" only
+  // nominates a link; the shape still has to hold. Deliberately NOT bare "uc.cn"
+  // (that covers the browser, news, …).
+  if (rawType === "uc" || url.includes("drive.uc.cn/")) {
+    return parseUcShareUrl(url) !== null ? "uc" : null;
   }
   // 123 share shapes mirror parsePan123ShareUrl (pan123-storage-executor):
   // multi-mirror domains 123pan/123684/123865/123912 · com/cn, path /s/<key>.

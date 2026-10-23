@@ -168,6 +168,75 @@ describe("PanSouResourceProvider", () => {
     ]);
   });
 
+  it("recognizes UC share links as type 'uc' and keeps them out of a 夸克 drive", async () => {
+    // PanSou's real shape: data.results[] = {title, channel, links[{type,url,...}]}.
+    const payload = {
+      code: 0,
+      data: {
+        total: 3,
+        results: [
+          {
+            title: "UC 资源",
+            channel: "tg",
+            links: [
+              { type: "uc", url: "https://drive.uc.cn/s/ad26437c945f4", password: "" },
+              // rawType "uc" only NOMINATES; a lookalike host still fails the
+              // parser and is dropped rather than becoming an untransferable
+              // candidate the agent would burn a turn on.
+              { type: "uc", url: "https://evil-uc.cn.attacker.com/s/x", password: "" },
+            ],
+          },
+          { title: "夸克 资源", channel: "tg", links: [{ type: "quark", url: "https://pan.quark.cn/s/abc", password: "p" }] },
+        ],
+      },
+    };
+
+    const all = await new PanSouResourceProvider({
+      baseURL: "http://pansou.test",
+      maxSearchAttempts: 1,
+      fetchJson: async () => payload,
+    }).search({
+      keyword: "k",
+    });
+    // The real UC link + the quark link survive; the lookalike does not.
+    expect(all.candidates.map((c) => c.type).sort()).toEqual(["quark", "uc"]);
+
+    const ucOnly = await new PanSouResourceProvider({
+      baseURL: "http://pansou.test",
+      maxSearchAttempts: 1,
+      fetchJson: async () => payload,
+      allowedTypes: ["uc"],
+    }).search({ keyword: "k" });
+    expect(ucOnly.candidates).toHaveLength(1);
+    expect(ucOnly.candidates[0]?.type).toBe("uc");
+    expect(ucOnly.candidates[0]?.providerPayload.url).toBe("https://drive.uc.cn/s/ad26437c945f4");
+  });
+
+  it("classifies a UC URL by SHAPE even when PanSou mislabels rawType", async () => {
+    const provider = new PanSouResourceProvider({
+      baseURL: "http://pansou.test",
+      maxSearchAttempts: 1,
+      fetchJson: async () => ({
+        code: 0,
+        data: {
+          total: 2,
+          results: [
+            {
+              title: "mislabelled",
+              channel: "tg",
+              links: [
+                { type: "other", url: "https://drive.uc.cn/s/shapeonly123", password: "" },
+                { type: "other", url: "https://evil-uc.cn.attacker.com/s/x", password: "" },
+              ],
+            },
+          ],
+        },
+      }),
+    });
+    const result = await provider.search({ keyword: "k" });
+    expect(result.candidates.map((c) => c.type)).toEqual(["uc"]); // lookalike dropped
+  });
+
   it("recognizes quark links and filters candidates by allowedTypes (per-brand)", async () => {
     const fetchJson = async () => ({
       code: 0,

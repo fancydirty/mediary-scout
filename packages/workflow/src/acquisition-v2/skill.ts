@@ -84,6 +84,34 @@ When a 夸克转存 fails with a SYSTEMIC message — "配额不足" / "额度�
   - Verified to cover → process it (move / dedup / mark) and finish. Do NOT keep searching for a "better" one.
   - Does not cover → treat it as a dead candidate, clean its staging residue with deleteFiles, try the next.`;
 
+const DEAD_LINKS_BLACK_BOX_UC = `# Dead links, 转存, and black-box resources (UC网盘)
+
+> 提醒:raw 候选已预搜好,先 viewResourceSnapshot() 通读活期文档再动手;searchResources 只用于繁体/英文升级,别拿画质/字幕词搜。
+
+## How transfer works on THIS drive (UC)
+The drive is UC网盘 (drive.uc.cn). Every candidate is a UC分享链 (drive.uc.cn/s/<id>) — a 转存分享 (the 115-秒传 equivalent): the system exchanges the share token, lists the share, and saves its files into staging. This is the SAME protocol as 夸克. transferCandidate returns the TRUE materialized files (the system rereads for you). Trust THAT, not your prediction.
+
+## 无磁力 (this is the key difference from 115)
+UC has NO usable magnet / offline-download web API (its offline endpoint is gated behind a runtime-encrypted client payload). So there are NO magnet candidates here (the resource provider only surfaces UC分享链), and a magnet would fail LOUD ("UC_NO_MAGNET") if ever forced. There is therefore NO "magnet silently fails / wait for download" nuance at all — every candidate is an instant 转存分享 that either lands or fails loud.
+
+## 死链很多,这是常态 (important)
+UC shares on aggregators expire FAST — roughly HALF are already dead by the time you see them. Do NOT read a run of dead links as "this work has no resources". Every dead share is cheap to reject; keep walking the ranked list. A short bench of UC分享 for a popular title is NORMAL.
+
+## Fail-loud (a dead / expired / wrong share)
+A UC分享 fails LOUD with a clear reason — switch to another covering candidate:
+- "分享地址已失效" (code 41011), "好友已取消了分享" (code 41012), "分享不存在" (code 41027), "提取码错误 / 需要提取码". All = dead.
+A dead link is the NORM, never a reason to give up — try the next UC分享 that covers the need. For a movie, transferUntilLanded over your ranked UC分享 burns through the dead ones automatically (it relies on this loud failure, exactly like the 115 path).
+
+## SYSTEMIC BLOCK (别甩锅)
+When a UC转存 fails with a SYSTEMIC message — "配额不足" / "额度已用完" / "VIP会员" / "登录" / "鉴权" / "涉嫌违规" — the resource EXISTS but the ACCOUNT is blocked (quota / auth / VIP / risk-control). The tool result carries \`systemicBlock: { reason: "..." }\`. **立即停 — DO NOT keep transferring.** Every candidate will fail the same way. Report honestly: the resource was found, the account cannot transfer it (not "no resource"). This is actionable (top up / re-login / appeal), never blame the resource.
+
+## Black-box gate (same discipline as 115)
+"Transparent" = the title states size / resolution / episodes / release group. "Black-box / opaque" = a bare name or a vague bundle.
+- If a TRANSPARENT UC分享 clearly covers the need, select ONLY it and STOP. Do NOT also transfer opaque ones "just in case".
+- ONLY when ZERO transparent candidate covers may you fall back to a black-box one. When you do, your VERY NEXT step after it lands MUST be inspectStaging to VERIFY it actually holds the target — black-box coverage is UNPROVEN until you read the real files.
+  - Verified to cover → process it (move / dedup / mark) and finish. Do NOT keep searching for a "better" one.
+  - Does not cover → treat it as a dead candidate, clean its staging residue with deleteFiles, try the next.`;
+
 const DEAD_LINKS_BLACK_BOX_TIANYI = `# Dead links, 转存, and black-box resources (天翼云盘)
 
 > 提醒:raw 候选已预搜好,先 viewResourceSnapshot() 通读活期文档再动手;searchResources 只用于繁体/英文升级,别拿画质/字幕词搜。
@@ -360,6 +388,9 @@ export const SKILL_SECTION_NAMES = Object.keys(SECTIONS) as SkillSectionName[];
 export function getStorageSkill(provider: string): string {
   if (provider === "quark") {
     return DEAD_LINKS_BLACK_BOX_QUARK;
+  }
+  if (provider === "uc") {
+    return DEAD_LINKS_BLACK_BOX_UC;
   }
   if (provider === "guangya") {
     return DEAD_LINKS_BLACK_BOX_GUANGYA;

@@ -99,6 +99,20 @@ export async function connectQuarkAction(cookie: string): Promise<ConnectQuarkAc
   }
 }
 
+/** Settings "添加网盘 → UC网盘": bind a pasted UC cookie as a new drive. Same
+ *  family protocol as 夸克, so it reuses the whole connect/probe/provision path. */
+export async function connectUcAction(cookie: string): Promise<ConnectQuarkActionResult> {
+  assertNotDemo();
+  try {
+    const { connectUcCookie } = await import("../lib/workflow-runtime");
+    const { providerUid } = await connectUcCookie(cookie);
+    revalidatePath("/settings");
+    return { ok: true, message: `UC网盘已连接（账号 ${providerUid.slice(0, 10)}…）。` };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 /** Settings "添加网盘 → 光鸭": bind a pasted access_token + refresh_token as a new
  *  drive. Mirrors connectQuarkAction; the token blob is validated + provisioned in
  *  connectGuangYa (workflow-runtime). */

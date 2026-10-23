@@ -64,7 +64,9 @@ import {
   isRegisteredStorageProvider,
   allowedResourceTypesForKinds,
   parseQuarkUid,
+  parseCloudDriveUid,
   parseTianyiUid,
+  UC_PROFILE,
   parsePan123Uid,
   generateGuangYaDeviceId,
   GuangYaClient,
@@ -2405,13 +2407,17 @@ async function provisionDriveCategoryDirs(
   const brand = getStorageBrand(provider);
   const baseParentId = brand.provisionRootId;
   // Dispatch on authKind (registry) so ANY token brand takes the credential path —
-  // a future token brand won't silently fall through to the 115/夸克 cookie path.
+  // a future token brand won't silently fall through to the cookie path. Cookie
+  // brands then split on the family: 115 has its own executor; 阿里云盘族 (夸克/UC)
+  // shares one, so `provider` is passed straight through. Hardcoding "quark" here
+  // (the pre-UC form) dropped a UC drive into the 115 bootstrap — wrong protocol,
+  // and the provision silently failed, leaving the drive with no CIDs.
   const executor =
     brand.authKind === "token"
       ? createExecutorForBrand({ provider, credential: credential ?? {}, scopeCids: [] })
-      : provider === "quark"
-        ? createExecutorForBrand({ provider: "quark", cookie, scopeCids: [] })
-        : createBootstrapPan115CookieStorageExecutor({ cookie });
+      : provider === "pan115"
+        ? createBootstrapPan115CookieStorageExecutor({ cookie })
+        : createExecutorForBrand({ provider, cookie, scopeCids: [] });
   return provisionCategoryDirs({
     baseParentId,
     ...customDirNamesFromEnv(process.env),
@@ -2664,7 +2670,9 @@ async function probeStorageConnection(
   // testConnection (an existing drive). Omitted at first-connect (no row yet).
   onCredentialRefresh?: ((creds: unknown) => Promise<void>) | undefined,
 ): Promise<void> {
-  const { Pan115CookieClient, Pan123Client, QuarkCookieClient, TianyiClient } = await import("@media-track/workflow");
+  const { Pan115CookieClient, Pan123Client, QuarkCookieClient, TianyiClient, UC_PROFILE } = await import(
+    "@media-track/workflow"
+  );
   if (provider === "guangya") {
     const blob = (credential ?? {}) as { accessToken?: string; refreshToken?: string; deviceId?: string };
     // Token-auth: validateToken() does account/v1/user/me + refresh-retry on 401;
@@ -2715,6 +2723,12 @@ async function probeStorageConnection(
   }
   if (provider === "quark") {
     await new QuarkCookieClient({ cookie }).listItems({ directoryId: rootCid ?? "0" });
+    return;
+  }
+  if (provider === "uc") {
+    // Same family client, UC profile. A dead cookie throws the family auth error
+    // (code 31001) → registry isAuthError freezes the drive.
+    await new QuarkCookieClient({ cookie, profile: UC_PROFILE }).listItems({ directoryId: rootCid ?? "0" });
     return;
   }
   if (provider === "pan115") {
@@ -3468,20 +3482,39 @@ export async function completePan115QrLogin(input: {
  * media-track/{Movies,TV,Anime} tree on a genuinely new connection (best-effort).
  */
 export async function connectQuarkCookie(rawCookie: string): Promise<{ providerUid: string }> {
+  return connectCloudFamilyCookie(rawCookie, "quark");
+}
+
+/** Settings "添加网盘 → UC网盘". Same family protocol as 夸克 — one implementation,
+ *  driven by the brand registry (label + provisioning root), so a future family
+ *  member needs no new connect path. */
+export async function connectUcCookie(rawCookie: string): Promise<{ providerUid: string }> {
+  return connectCloudFamilyCookie(rawCookie, "uc");
+}
+
+/** Bind a pasted cookie for a 阿里云盘族 brand (夸克 / UC). Enforces instance-wide
+ *  ownership, live-probes BEFORE binding, and provisions the media tree on a
+ *  genuinely new connection. */
+async function connectCloudFamilyCookie(
+  rawCookie: string,
+  provider: "quark" | "uc",
+): Promise<{ providerUid: string }> {
+  const label = getStorageBrand(provider).label;
   const cookie = rawCookie.trim();
   if (!cookie) {
-    throw new Error("请粘贴夸克 cookie。");
+    throw new Error(`请粘贴${label} cookie。`);
   }
-  const providerUid = parseQuarkUid(cookie);
+  // Identical cookie key names across the family (verified live on UC).
+  const providerUid = parseCloudDriveUid(cookie);
   if (!providerUid) {
     throw new Error(
-      "无法从该 cookie 解析夸克账号（需包含 __uid 或 __kps）；请从浏览器 Network 请求头复制完整 Cookie（Copy as cURL 最省事）。",
+      `无法从该 cookie 解析${label}账号（需包含 __uid 或 __kps）；请从浏览器 Network 请求头复制完整 Cookie（Copy as cURL 最省事）。`,
     );
   }
   const accountId = await requireAuthenticatedAccountId();
   const repository = getWorkflowRepository();
-  const existing = await repository.findConnectedStorageByUid("quark", providerUid);
-  const decision = resolveStorageBinding({ provider: "quark", providerUid, accountId, existing });
+  const existing = await repository.findConnectedStorageByUid(provider, providerUid);
+  const decision = resolveStorageBinding({ provider, providerUid, accountId, existing });
   if (decision.action === "reject") {
     throw new StorageOwnedByOtherAccountError();
   }
@@ -3490,10 +3523,10 @@ export async function connectQuarkCookie(rawCookie: string): Promise<{ providerU
   // existing.rootCid (that is the mediary category tree — user may have deleted
   // it; a missing layout dir must not block cookie refresh).
   try {
-    await probeStorageConnection("quark", cookie, "0", null);
+    await probeStorageConnection(provider, cookie, "0", null);
   } catch (error) {
     throw new Error(
-      `无法用该 cookie 连接夸克：${error instanceof Error ? error.message : String(error)}`,
+      `无法用该 cookie 连接${label}：${error instanceof Error ? error.message : String(error)}`,
       { cause: error },
     );
   }
@@ -3503,7 +3536,7 @@ export async function connectQuarkCookie(rawCookie: string): Promise<{ providerU
     await refreshConnectedStorage(repository, existing, {
       id: existing.id,
       accountId,
-      provider: "quark",
+      provider,
       providerUid,
       label: existing.label,
       payload,
@@ -3525,9 +3558,9 @@ export async function connectQuarkCookie(rawCookie: string): Promise<{ providerU
     animeCid: null,
   };
   try {
-    const executor = createExecutorForBrand({ provider: "quark", cookie, scopeCids: [] });
+    const executor = createExecutorForBrand({ provider, cookie, scopeCids: [] });
     cids = await provisionCategoryDirs({
-      baseParentId: getStorageBrand("quark").provisionRootId, // 夸克 account root ("0")
+      baseParentId: getStorageBrand(provider).provisionRootId, // family account root ("0")
       ...customDirNamesFromEnv(process.env),
       storage: {
         listChildDirs: (parentId: string) => executor.listChildDirectories(parentId),
@@ -3535,13 +3568,13 @@ export async function connectQuarkCookie(rawCookie: string): Promise<{ providerU
       },
     });
   } catch (error) {
-    console.error(`[media-track] 夸克 directory provision failed (will store without CIDs): ${String(error)}`);
+    console.error(`[media-track] ${label} directory provision failed (will store without CIDs): ${String(error)}`);
   }
   const idSuffix = providerUid.replace(/[^A-Za-z0-9]/g, "").slice(0, 48);
   await repository.upsertConnectedStorage({
-    id: `cs_quark_${idSuffix}`,
+    id: `cs_${provider}_${idSuffix}`,
     accountId,
-    provider: "quark",
+    provider,
     providerUid,
     label: null,
     payload,

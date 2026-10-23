@@ -1,5 +1,5 @@
 import { parsePan123ShareUrl } from "../pan123-storage-executor.js";
-import { parseQuarkShareUrl } from "../quark-storage-executor.js";
+import { parseQuarkShareUrl, parseUcShareUrl } from "../quark-storage-executor.js";
 import { parseTianyiShareUrl } from "../tianyi-storage-executor.js";
 import { deadLinkKey } from "./dead-links.js";
 
@@ -16,6 +16,8 @@ export function resourceLinkKey(url: string): string | null {
   if (known) return known.key;
   const quark = parseQuarkShareUrl(url);
   if (quark) return `quark:${quark.pwdId}`;
+  const uc = parseUcShareUrl(url);
+  if (uc) return `uc:${uc.pwdId}`;
   const pan123 = parsePan123ShareUrl(url);
   if (pan123) return `pan123:${pan123.shareKey}`;
   const tianyi = parseTianyiShareUrl(url);

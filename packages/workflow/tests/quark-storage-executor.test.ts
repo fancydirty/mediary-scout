@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { QuarkStorageExecutor } from "../src/index.js";
+import { QuarkStorageExecutor, UC_PROFILE } from "../src/index.js";
 import type { ResourceCandidate } from "../src/index.js";
 
 /**
@@ -229,5 +229,118 @@ describe("QuarkStorageExecutor", () => {
       /SAFETY_VIOLATION/,
     );
     expect(calls.filter((c) => c.startsWith("deleteFiles:"))).toEqual([]);
+  });
+});
+
+describe("UC over the same executor (family profile)", () => {
+  it("transfers a UC share URL and reports the materialized file", async () => {
+    const { client, files, calls } = makeFakeClient({
+      share: { items: [{ fid: "s1", share_fid_token: "t1", file_name: "Movie.2026.2160p.mkv", dir: false, size: 4e9 }] },
+    });
+    const exec = new QuarkStorageExecutor({
+      client: client as never,
+      profile: UC_PROFILE,
+      writeScopeDirectoryIds: ["ROOT"],
+    });
+    const attempt = await exec.transfer({
+      workflowRunId: "run_uc",
+      directoryId: "STAGE",
+      // The UC parser, not 夸克's — a quark-only regex would reject this outright.
+      candidate: shareCandidate("https://drive.uc.cn/s/ad26437c945f4", ""),
+    });
+
+    expect(calls).toEqual(
+      expect.arrayContaining(["getShareToken", "listShareDetail", "saveShare:STAGE", "pollTask"]),
+    );
+    expect(attempt.status).toBe("succeeded");
+    expect(attempt.materializedFileIds).toHaveLength(1);
+    expect(files.get(attempt.materializedFileIds[0]!)?.file_name).toBe("Movie.2026.2160p.mkv");
+  });
+
+  it("refuses a 夸克 share URL on a UC drive (wrong brand, not a silent partial)", async () => {
+    const { client } = makeFakeClient();
+    const exec = new QuarkStorageExecutor({
+      client: client as never,
+      profile: UC_PROFILE,
+      writeScopeDirectoryIds: ["ROOT"],
+    });
+
+    const attempt = await exec.transfer({
+      workflowRunId: "run_uc",
+      directoryId: "STAGE",
+      candidate: shareCandidate("https://pan.quark.cn/s/abc123", ""),
+    });
+    expect(attempt.status).toBe("failed");
+    expect(attempt.providerMessage).toContain("UC_TRANSFER_FAILED");
+  });
+
+  it("throws UC_NO_MAGNET (not QUARK_NO_MAGNET) so the agent gets the right brand's reason", async () => {
+    const { client } = makeFakeClient();
+    const exec = new QuarkStorageExecutor({
+      client: client as never,
+      profile: UC_PROFILE,
+      writeScopeDirectoryIds: ["ROOT"],
+    });
+    const magnet = {
+      id: "m1",
+      title: "Movie magnet",
+      type: "magnet",
+      providerPayload: { url: "magnet:?xt=urn:btih:abc" },
+    } as unknown as ResourceCandidate;
+
+    await expect(
+      exec.transfer({ workflowRunId: "run_uc", directoryId: "STAGE", candidate: magnet }),
+    ).rejects.toThrow("UC_NO_MAGNET");
+  });
+});
+
+describe("createDirectory tolerates UC's eventually-consistent listing", () => {
+  it("adopts the existing dir when createFolder rejects with 23008 同名冲突", async () => {
+    // VERIFIED LIVE 2026-10-23: on UC a dir created moments ago may not appear in
+    // the very next listItems, so the pre-list misses it and the create is
+    // rejected. Without this, every fresh connect's category provisioning could
+    // fail and leave the drive with no CIDs.
+    const { client } = makeFakeClient();
+    let listCalls = 0;
+    const flaky = {
+      ...client,
+      async listItems(args: { directoryId: string }) {
+        listCalls += 1;
+        // First list: the dir is not there yet (stale read).
+        if (listCalls === 1) return [];
+        // Any later list: the server has settled and it IS there.
+        return [{ fid: "SETTLED", file_name: "Season 1", dir: true, size: 0 }];
+      },
+      async createFolder() {
+        throw new Error("UC_CREATE_FOLDER_FAILED: code=23008 file is doloading[同名冲突]");
+      },
+    };
+    const exec = new QuarkStorageExecutor({
+      client: flaky as never,
+      profile: UC_PROFILE,
+      writeScopeDirectoryIds: ["ROOT"],
+    });
+
+    await expect(exec.createDirectory({ name: "Season 1", parentId: "ROOT" })).resolves.toBe("SETTLED");
+  });
+
+  it("still fails loud on a NON-conflict create error (never swallows a real failure)", async () => {
+    const { client } = makeFakeClient();
+    const failing = {
+      ...client,
+      async listItems() {
+        return [];
+      },
+      async createFolder() {
+        throw new Error("UC_CREATE_FOLDER_FAILED: code=50000 internal error");
+      },
+    };
+    const exec = new QuarkStorageExecutor({
+      client: failing as never,
+      profile: UC_PROFILE,
+      writeScopeDirectoryIds: ["ROOT"],
+    });
+
+    await expect(exec.createDirectory({ name: "Season 1", parentId: "ROOT" })).rejects.toThrow(/50000/);
   });
 });

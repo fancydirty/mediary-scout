@@ -10,6 +10,24 @@ describe("brand-aware storage skill", () => {
     expect(quark).toContain("夸克");
   });
 
+  it("getStorageSkill('uc') does NOT throw and teaches UC's own fail-loud codes + dead-link norm", () => {
+    // A missing arm here THROWS at runtime: the agent prompt tells it to
+    // readSkill("dead-links-black-box") on its first transfer failure, so a UC
+    // drive would crash mid-run instead of degrading.
+    const uc = getStorageSkill("uc");
+    expect(uc).toContain("UC网盘");
+    expect(uc).toContain("转存分享");
+    expect(uc).toMatch(/无磁力|NO magnet/i);
+    // UC's OWN live-verified codes, not 夸克's 41006.
+    expect(uc).toContain("41011"); // 分享地址已失效
+    expect(uc).toContain("41012"); // 好友已取消了分享
+    expect(uc).toContain("41027"); // 分享不存在
+    expect(uc).toContain("UC_NO_MAGNET");
+    // The 54%-dead reality must be stated, or the agent reads it as "no resources".
+    expect(uc).toMatch(/死链|dead/i);
+    expect(uc).not.toContain("QUARK_NO_MAGNET");
+  });
+
   it("getStorageSkill('pan115') keeps the 115 transfer model (秒传/magnet)", () => {
     const pan115 = getStorageSkill("pan115");
     expect(pan115).toContain("115");

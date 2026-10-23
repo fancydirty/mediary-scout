@@ -15,13 +15,14 @@ import type { ResourceType } from "./domain.js";
 import { isGuangYaAuthError, parseGuangYaUid } from "./guangya-client.js";
 import { isPan115AuthError } from "./pan115-cookie-client.js";
 import { isPan123AuthError, parsePan123Uid } from "./pan123-client.js";
-import { isQuarkAuthError, parseQuarkUid } from "./quark-cookie-client.js";
+import { isQuarkAuthError, parseCloudDriveUid, parseQuarkUid } from "./quark-cookie-client.js";
 import { isTianyiAuthError, parseTianyiUid } from "./tianyi-client.js";
 
-export type StorageProvider = "pan115" | "quark" | "guangya" | "tianyi" | "pan123";
+export type StorageProvider = "pan115" | "quark" | "uc" | "guangya" | "tianyi" | "pan123";
 export type ResourceProviderKind =
   | "pansou-115"
   | "pansou-quark"
+  | "pansou-uc"
   | "pansou-magnet"
   | "pansou-tianyi"
   | "pansou-123"
@@ -99,6 +100,22 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     writeScope: "parents",
   },
   {
+    // UC joined 2026-10-23: the SAME Alibaba family protocol as 夸克 (share
+    // token → detail → save → poll, identical envelope, identical 31001 auth
+    // code, identical cookie key names) — verified live end-to-end. Share links
+    // only, like 夸克: UC's magnet/offline API is gated behind a runtime-injected
+    // window.encryption, so magnets fail loud rather than being attempted.
+    provider: "uc",
+    label: "UC网盘",
+    parseUid: parseCloudDriveUid,
+    isAuthError: isQuarkAuthError, // same error class — one family, one signal
+    resourceProviderKinds: ["pansou-uc"],
+    assumeChineseSubsFromChineseTitle: true,
+    authKind: "cookie",
+    provisionRootId: "0", // UC account root
+    writeScope: "parents", // family protocol: getFileInfo walks pdir_fid up
+  },
+  {
     provider: "guangya",
     label: "光鸭云盘",
     parseUid: parseGuangYaUid,
@@ -147,6 +164,9 @@ export const STORAGE_BRANDS: StorageBrand[] = [
 export function allowedResourceTypesForKinds(kinds: readonly string[]): ResourceType[] {
   if (kinds.includes("pansou-quark")) {
     return ["quark"];
+  }
+  if (kinds.includes("pansou-uc")) {
+    return ["uc"];
   }
   if (kinds.includes("pansou-tianyi")) {
     return ["tianyi"];

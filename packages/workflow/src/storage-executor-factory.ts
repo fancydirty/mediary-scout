@@ -15,7 +15,7 @@ import { Pan123Client } from "./pan123-client.js";
 import type { Pan123Credential } from "./pan123-client.js";
 import { Pan123StorageExecutor } from "./pan123-storage-executor.js";
 import type { StorageExecutor } from "./ports.js";
-import { QuarkCookieClient } from "./quark-cookie-client.js";
+import { QuarkCookieClient, UC_PROFILE } from "./quark-cookie-client.js";
 import { QuarkStorageExecutor } from "./quark-storage-executor.js";
 import { TianyiClient } from "./tianyi-client.js";
 import type { TianyiClientOptions, TianyiCredential } from "./tianyi-client.js";
@@ -49,6 +49,15 @@ export function createExecutorForBrand(input: {
   if (input.provider === "quark") {
     return new QuarkStorageExecutor({
       client: new QuarkCookieClient({ cookie: input.cookie ?? "" }),
+      writeScopeDirectoryIds: input.scopeCids,
+    });
+  }
+  if (input.provider === "uc") {
+    // Same executor, same client — only the CloudDriveProfile differs. This is
+    // why UC cost ~a tenth of the historical per-brand integration.
+    return new QuarkStorageExecutor({
+      client: new QuarkCookieClient({ cookie: input.cookie ?? "", profile: UC_PROFILE }),
+      profile: UC_PROFILE,
       writeScopeDirectoryIds: input.scopeCids,
     });
   }
