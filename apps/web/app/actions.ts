@@ -88,26 +88,28 @@ export interface ConnectQuarkActionResult {
 
 /** Settings "添加网盘 → 夸克": bind a pasted 夸克 cookie as a new drive. */
 export async function connectQuarkAction(cookie: string): Promise<ConnectQuarkActionResult> {
-  assertNotDemo();
-  try {
-    const { connectQuarkCookie } = await import("../lib/workflow-runtime");
-    const { providerUid } = await connectQuarkCookie(cookie);
-    revalidatePath("/settings");
-    return { ok: true, message: `夸克网盘已连接（账号 ${providerUid.slice(0, 10)}…）。` };
-  } catch (error) {
-    return { ok: false, message: error instanceof Error ? error.message : String(error) };
-  }
+  return connectCloudFamilyCookieAction(cookie, "quark");
 }
 
 /** Settings "添加网盘 → UC网盘": bind a pasted UC cookie as a new drive. Same
  *  family protocol as 夸克, so it reuses the whole connect/probe/provision path. */
 export async function connectUcAction(cookie: string): Promise<ConnectQuarkActionResult> {
+  return connectCloudFamilyCookieAction(cookie, "uc");
+}
+
+/** Shared body for the 阿里云盘族 (夸克 / UC) cookie actions — the two differ only
+ *  in which runtime function runs and the label in the success message. */
+async function connectCloudFamilyCookieAction(
+  cookie: string,
+  provider: "quark" | "uc",
+): Promise<ConnectQuarkActionResult> {
   assertNotDemo();
+  const label = provider === "uc" ? "UC网盘" : "夸克网盘";
   try {
-    const { connectUcCookie } = await import("../lib/workflow-runtime");
-    const { providerUid } = await connectUcCookie(cookie);
+    const { connectQuarkCookie, connectUcCookie } = await import("../lib/workflow-runtime");
+    const { providerUid } = await (provider === "uc" ? connectUcCookie(cookie) : connectQuarkCookie(cookie));
     revalidatePath("/settings");
-    return { ok: true, message: `UC网盘已连接（账号 ${providerUid.slice(0, 10)}…）。` };
+    return { ok: true, message: `${label}已连接（账号 ${providerUid.slice(0, 10)}…）。` };
   } catch (error) {
     return { ok: false, message: error instanceof Error ? error.message : String(error) };
   }

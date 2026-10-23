@@ -63,7 +63,6 @@ import {
   getStorageBrand,
   isRegisteredStorageProvider,
   allowedResourceTypesForKinds,
-  parseQuarkUid,
   parseCloudDriveUid,
   parseTianyiUid,
   UC_PROFILE,
@@ -2412,12 +2411,14 @@ async function provisionDriveCategoryDirs(
   // shares one, so `provider` is passed straight through. Hardcoding "quark" here
   // (the pre-UC form) dropped a UC drive into the 115 bootstrap — wrong protocol,
   // and the provision silently failed, leaving the drive with no CIDs.
-  const executor =
-    brand.authKind === "token"
-      ? createExecutorForBrand({ provider, credential: credential ?? {}, scopeCids: [] })
-      : provider === "pan115"
-        ? createBootstrapPan115CookieStorageExecutor({ cookie })
-        : createExecutorForBrand({ provider, cookie, scopeCids: [] });
+  let executor: StorageExecutor;
+  if (brand.authKind === "token") {
+    executor = createExecutorForBrand({ provider, credential: credential ?? {}, scopeCids: [] });
+  } else if (provider === "pan115") {
+    executor = createBootstrapPan115CookieStorageExecutor({ cookie });
+  } else {
+    executor = createExecutorForBrand({ provider, cookie, scopeCids: [] });
+  }
   return provisionCategoryDirs({
     baseParentId,
     ...customDirNamesFromEnv(process.env),
@@ -2670,7 +2671,7 @@ async function probeStorageConnection(
   // testConnection (an existing drive). Omitted at first-connect (no row yet).
   onCredentialRefresh?: ((creds: unknown) => Promise<void>) | undefined,
 ): Promise<void> {
-  const { Pan115CookieClient, Pan123Client, QuarkCookieClient, TianyiClient, UC_PROFILE } = await import(
+  const { Pan115CookieClient, Pan123Client, QuarkCookieClient, TianyiClient } = await import(
     "@media-track/workflow"
   );
   if (provider === "guangya") {

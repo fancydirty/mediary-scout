@@ -63,6 +63,10 @@ export interface QuarkStorageExecutorOptions {
   minVideoSizeBytes?: number;
   videoExtensions?: string[];
   maxWriteScopeDepth?: number;
+  /** Injectable delay between name-conflict re-reads (tests pass a no-op so the
+   *  UC settlement wait costs no wall clock — same convention as
+   *  QuarkCookieClientOptions.sleep). */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 interface VideoFact {
@@ -79,6 +83,7 @@ export class QuarkStorageExecutor implements StorageExecutor {
   private readonly minVideoSizeBytes: number;
   private readonly videoExtensions: Set<string>;
   private readonly maxWriteScopeDepth: number;
+  private readonly sleepFn: (ms: number) => Promise<void>;
   private nextTransferNumber = 1;
 
   constructor(options: QuarkStorageExecutorOptions) {
@@ -95,6 +100,8 @@ export class QuarkStorageExecutor implements StorageExecutor {
       (options.videoExtensions ?? DEFAULT_VIDEO_EXTENSIONS).map((ext) => ext.toLowerCase()),
     );
     this.maxWriteScopeDepth = options.maxWriteScopeDepth ?? DEFAULT_MAX_WRITE_SCOPE_DEPTH;
+    this.sleepFn =
+      options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   }
 
   async createDirectory(input: { name: string; parentId: string }): Promise<string> {
@@ -126,7 +133,7 @@ export class QuarkStorageExecutor implements StorageExecutor {
       // listItems (polled at 300ms, first hit at the 3rd read) — so ONE re-list
       // is too early. Short bounded poll, then give up loudly.
       for (let attempt = 0; attempt < NAME_CONFLICT_RETRIES; attempt++) {
-        await new Promise<void>((resolve) => setTimeout(resolve, NAME_CONFLICT_RETRY_DELAY_MS));
+        await this.sleepFn(NAME_CONFLICT_RETRY_DELAY_MS);
         const after = await this.client.listItems({ directoryId: safeParentId });
         const adopted = after.find((item) => isDirectory(item) && nameOf(item) === input.name);
         const adoptedId = adopted ? idOf(adopted) : "";

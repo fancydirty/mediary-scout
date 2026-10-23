@@ -319,6 +319,7 @@ describe("createDirectory tolerates UC's eventually-consistent listing", () => {
       client: flaky as never,
       profile: UC_PROFILE,
       writeScopeDirectoryIds: ["ROOT"],
+      sleep: async () => {}, // no wall-clock wait for the settlement poll
     });
 
     await expect(exec.createDirectory({ name: "Season 1", parentId: "ROOT" })).resolves.toBe("SETTLED");
@@ -339,6 +340,7 @@ describe("createDirectory tolerates UC's eventually-consistent listing", () => {
       client: failing as never,
       profile: UC_PROFILE,
       writeScopeDirectoryIds: ["ROOT"],
+      sleep: async () => {},
     });
 
     await expect(exec.createDirectory({ name: "Season 1", parentId: "ROOT" })).rejects.toThrow(/50000/);

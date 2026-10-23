@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Pan115QrConnect } from "./pan115-qr-connect";
 import { QuarkQrConnect } from "./quark-qr-connect";
 import { QuarkCookieConnect } from "./quark-cookie-connect";
-import { UcCookieConnect } from "./uc-cookie-connect";
+import { CloudFamilyCookieConnect } from "./cloud-family-cookie-connect";
 import { GuangYaTokenConnect } from "./guangya-token-connect";
 import { TianyiQrConnect } from "./tianyi-qr-connect";
 import { TianyiSsonConnect } from "./tianyi-sson-connect";
@@ -61,7 +61,7 @@ export function AddDriveBrandTabs({ defaultBrand = "pan115" }: { defaultBrand?: 
         <div className="brand-connect-area">
           {/* UC 与夸克同一套账号体系的两块云盘；UC 的扫码链路尚未摸清(夸克那条 CAS
               兑换在 UC 上未验证)，先把已验证可用的 cookie 粘贴放正位，不做折叠。 */}
-          <UcCookieConnect />
+          <CloudFamilyCookieConnect brand="uc" />
         </div>
       ) : brand === "guangya" ? (
         <div className="brand-connect-area">
