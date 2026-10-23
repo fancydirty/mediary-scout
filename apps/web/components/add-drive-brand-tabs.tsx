@@ -5,6 +5,7 @@ import { Pan115QrConnect } from "./pan115-qr-connect";
 import { QuarkQrConnect } from "./quark-qr-connect";
 import { QuarkCookieConnect } from "./quark-cookie-connect";
 import { CloudFamilyCookieConnect } from "./cloud-family-cookie-connect";
+import { CloudFamilyQrConnect } from "./cloud-family-qr-connect";
 import { GuangYaTokenConnect } from "./guangya-token-connect";
 import { TianyiQrConnect } from "./tianyi-qr-connect";
 import { TianyiSsonConnect } from "./tianyi-sson-connect";
@@ -18,7 +19,7 @@ type Brand = "pan115" | "quark" | "uc" | "guangya" | "tianyi" | "pan123";
 const BRAND_TILES: Array<{ key: Brand; label: string; authNote: string }> = [
   { key: "pan115", label: "115网盘", authNote: "扫码登录" },
   { key: "quark", label: "夸克网盘", authNote: "扫码 / 粘 cookie" },
-  { key: "uc", label: "UC网盘", authNote: "粘 cookie" },
+  { key: "uc", label: "UC网盘", authNote: "扫码 / 粘 cookie" },
   { key: "guangya", label: "光鸭云盘", authNote: "粘贴 token" },
   { key: "tianyi", label: "天翼云盘", authNote: "扫码 / SSON" },
   { key: "pan123", label: "123网盘", authNote: "扫码 / 粘 token" },
@@ -59,9 +60,15 @@ export function AddDriveBrandTabs({ defaultBrand = "pan115" }: { defaultBrand?: 
         </div>
       ) : brand === "uc" ? (
         <div className="brand-connect-area">
-          {/* UC 与夸克同一套账号体系的两块云盘；UC 的扫码链路尚未摸清(夸克那条 CAS
-              兑换在 UC 上未验证)，先把已验证可用的 cookie 粘贴放正位，不做折叠。 */}
-          <CloudFamilyCookieConnect brand="uc" />
+          <CloudFamilyQrConnect brand="uc" />
+          <details style={{ marginTop: 12 }}>
+            <summary className="panel-note" style={{ cursor: "pointer" }}>
+              扫码不行？手动粘 cookie
+            </summary>
+            <div style={{ marginTop: 10 }}>
+              <CloudFamilyCookieConnect brand="uc" />
+            </div>
+          </details>
         </div>
       ) : brand === "guangya" ? (
         <div className="brand-connect-area">

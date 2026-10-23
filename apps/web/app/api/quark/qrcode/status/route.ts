@@ -7,7 +7,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ ok: false, error: "missing token" }, { status: 400 });
   }
   try {
-    const result = await new QuarkQrLoginClient().pollStatus({ token, qrcodeContent: "" });
+    const result = await new QuarkQrLoginClient().pollStatus({ token });
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {
     return NextResponse.json({ ok: false, error: String(error) }, { status: 502 });
