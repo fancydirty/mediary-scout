@@ -122,6 +122,38 @@ function adapter(executor: StorageExecutor, registry = new CandidateRegistry(), 
   };
 }
 
+describe("RealStorageV2.candidateLinkKind — every fail-loud share brand", () => {
+  // This gate decides whether transferUntilLanded will accept a candidate at all
+  // (SANDBOX_TRANSFER_UNTIL_LANDED_REQUIRES_SHARE_LINK). Forgetting a brand here
+  // silently kills the movie path for it even though the executor can transfer
+  // it — exactly the UC gap caught by review on 2026-10-23.
+  const cases: Array<[string, string]> = [
+    ["115", "https://115.com/s/abc"],
+    ["quark", "https://pan.quark.cn/s/abc123"],
+    ["uc", "https://drive.uc.cn/s/ad26437c945f4"],
+    ["tianyi", "https://cloud.189.cn/t/abc"],
+    ["123", "https://www.123pan.com/s/abc-def"],
+    ["guangya", "https://guangyapan.com/s/abc"],
+  ];
+  for (const [label, url] of cases) {
+    it(`classifies a ${label} share link as "share"`, () => {
+      const registry = new CandidateRegistry();
+      const { storage } = adapter(new RecordingExecutor(), registry);
+      registry.record({ ...candidate("c"), type: label as ResourceCandidate["type"], providerPayload: { url } });
+      expect(storage.candidateLinkKind("c")).toBe("share");
+    });
+  }
+
+  it("still answers magnet / unknown for non-share links", () => {
+    const registry = new CandidateRegistry();
+    const { storage } = adapter(new RecordingExecutor(), registry);
+    registry.record({ ...candidate("m"), type: "magnet", providerPayload: { url: "magnet:?xt=urn:btih:abc" } });
+    registry.record({ ...candidate("u"), type: "quark", providerPayload: { url: "https://example.com/nope" } });
+    expect(storage.candidateLinkKind("m")).toBe("magnet");
+    expect(storage.candidateLinkKind("u")).toBe("unknown");
+  });
+});
+
 describe("RealStorageV2 — StorageExecutor → StorageV2 adapter", () => {
   it("transfers a registry candidate via the executor with the run id and maps success", async () => {
     const executor = new RecordingExecutor();

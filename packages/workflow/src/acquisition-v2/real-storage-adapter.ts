@@ -2,7 +2,7 @@ import type { TransferAttempt } from "../domain.js";
 import { parseGuangYaShareUrl } from "../guangya-client.js";
 import { parsePan123ShareUrl } from "../pan123-storage-executor.js";
 import type { StorageExecutor } from "../ports.js";
-import { parseQuarkShareUrl } from "../quark-storage-executor.js";
+import { parseQuarkShareUrl, parseUcShareUrl } from "../quark-storage-executor.js";
 import { isBrandStorageAuthError } from "../storage-auth-error.js";
 import { parseTianyiShareUrl } from "../tianyi-storage-executor.js";
 import type { CandidateRegistry } from "./candidate-registry.js";
@@ -73,6 +73,7 @@ export class RealStorageV2 implements StorageV2 {
     if (
       PAN115_SHARE_URL.test(url) ||
       parseQuarkShareUrl(url) !== null ||
+      parseUcShareUrl(url) !== null ||
       parseTianyiShareUrl(url) !== null ||
       parsePan123ShareUrl(url) !== null ||
       parseGuangYaShareUrl(url) !== null

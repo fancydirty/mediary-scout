@@ -328,8 +328,19 @@ describe("UC (阿里云盘族 second member) over the same client", () => {
     });
     expect(parseUcShareUrl("https://pan.quark.cn/s/abcdef")).toBeNull();
     expect(parseQuarkShareUrl("https://drive.uc.cn/s/abcdef")).toBeNull();
-    // A lookalike host must never parse (it would become an untransferable candidate).
+    // Real-world shapes must keep working: a pasted link may carry leading spaces,
+    // a passcode query, or a client-side fragment.
+    expect(parseUcShareUrl("  https://drive.uc.cn/s/abc?public=1  ")).toEqual({ pwdId: "abc", passcode: "" });
+    expect(parseQuarkShareUrl("https://pan.quark.cn/s/abc123#/list/share")).toEqual({
+      pwdId: "abc123",
+      passcode: "",
+    });
+    // Lookalikes must NEVER parse — each would become a candidate that can never
+    // land. Three shapes: a subdomain-ish prefix, a path substring under a foreign
+    // host, and a suffix domain.
     expect(parseUcShareUrl("https://evil-drive.uc.cn.attacker.com/s/abcdef")).toBeNull();
+    expect(parseUcShareUrl("https://attacker.com/drive.uc.cn/s/abcdef")).toBeNull();
+    expect(parseQuarkShareUrl("https://evilpan.quark.cn/s/abcdef")).toBeNull();
   });
 
   it("parses UC cookies with the same key names the family uses", async () => {

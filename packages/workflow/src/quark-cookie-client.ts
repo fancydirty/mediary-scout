@@ -38,6 +38,18 @@ export interface CloudDriveProfile {
   shareHostPattern: RegExp;
 }
 
+/**
+ * Anchor a share-host pattern so it can only match at a real host boundary.
+ * Without this, an unanchored `pan\.quark\.cn\/s\/…` accepts BOTH
+ * `https://evilpan.quark.cn/s/x` (a lookalike registrable domain) and
+ * `https://attacker.com/drive.uc.cn/s/x` (a path substring) — either would become
+ * a "transferable" candidate that can never land. Leading whitespace is tolerated
+ * (pasted links often carry it); anything else must be the URL's very start.
+ */
+function SHARE_HOST(body: RegExp): RegExp {
+  return new RegExp(`^\\s*(?:https?:\\/\\/)?${body.source}`, body.flags);
+}
+
 export const QUARK_PROFILE: CloudDriveProfile = {
   key: "quark",
   label: "夸克网盘",
@@ -50,7 +62,7 @@ export const QUARK_PROFILE: CloudDriveProfile = {
   referer: "https://pan.quark.cn/",
   origin: "https://pan.quark.cn",
   errorPrefix: "QUARK",
-  shareHostPattern: /pan\.quark\.cn\/s\/([0-9a-zA-Z]+)(?:[?#]([^#]*))?/,
+  shareHostPattern: SHARE_HOST(/pan\.quark\.cn\/s\/([0-9a-zA-Z]+)(?:[?#]([^#]*))?/),
 };
 
 /** UC profile — captured live 2026-10-23 (drive.uc.cn web client 2.5.20). */
@@ -66,7 +78,7 @@ export const UC_PROFILE: CloudDriveProfile = {
   referer: "https://drive.uc.cn",
   origin: "https://drive.uc.cn",
   errorPrefix: "UC",
-  shareHostPattern: /drive\.uc\.cn\/s\/([0-9a-zA-Z]+)(?:[?#]([^#]*))?/,
+  shareHostPattern: SHARE_HOST(/drive\.uc\.cn\/s\/([0-9a-zA-Z]+)(?:[?#]([^#]*))?/),
 };
 
 const DEFAULT_LIST_PAGE_SIZE = 50;
