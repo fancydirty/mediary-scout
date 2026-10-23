@@ -164,3 +164,76 @@ describe("UC QR login over the same family client", () => {
     expect(s.qrcodeContent).toContain("su.quark.cn");
   });
 });
+
+// Cookies are bearer credentials. The redemption chain is followed manually, so
+// these two behaviours are ours to guarantee — both were flagged by review.
+describe("exchangeCookie — redirect confinement and cookie deletion", () => {
+  function hop(status: number, setCookie: string[], location: string | null) {
+    return {
+      status,
+      headers: {
+        getSetCookie: () => setCookie,
+        get: (n: string) => (n.toLowerCase() === "location" ? location : null),
+      },
+    };
+  }
+
+  it("refuses to send the jar off the brand's hosts", async () => {
+    const seen: Array<string | undefined> = [];
+    const client = new QuarkQrLoginClient({
+      rawFetch: async (_url, init) => {
+        seen.push(init.headers?.["Cookie"]);
+        // First hop sets a good cookie, then redirects to an attacker host.
+        return hop(302, ["__pus=PUS1; Path=/", "__uid=AARtUID; Path=/"], "https://evil.example.com/steal");
+      },
+    });
+    await expect(client.exchangeCookie("ST")).rejects.toThrow(/left 夸克 hosts .*evil\.example\.com/);
+    // The jar never reached the foreign host: only the FIRST hop was fetched.
+    expect(seen).toHaveLength(1);
+  });
+
+  it("allows a subdomain of an allowed host but not lookalikes", async () => {
+    const ok = new QuarkQrLoginClient({
+      rawFetch: async (url) => {
+        if (url.includes("passport.quark.cn")) {
+          return hop(200, ["__pus=PUS1; Path=/", "__uid=AARtUID; Path=/"], null);
+        }
+        return hop(302, [], "https://passport.quark.cn/x");
+      },
+    });
+    await expect(ok.exchangeCookie("ST")).resolves.toMatchObject({ providerUid: "AARtUID" });
+
+    const bad = new QuarkQrLoginClient({
+      rawFetch: async () => hop(302, [], "https://evilquark.cn/x"),
+    });
+    await expect(bad.exchangeCookie("ST")).rejects.toThrow(/left/);
+  });
+
+  it("treats an epoch-expiry empty cookie as a delete (what UC really sends for a spent ticket)", async () => {
+    const client = new QuarkQrLoginClient({
+      rawFetch: async () =>
+        hop(
+          200,
+          [
+            // Good value first, then the deletion signal UC returns for a used ticket.
+            "__uid=AARtUID; Path=/",
+            "__pus=; Path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; domain=.uc.cn",
+          ],
+          null,
+        ),
+    });
+    await expect(client.exchangeCookie("ST")).rejects.toThrow(/QUARK_QR_EXCHANGE_FAILED/);
+  });
+
+  it("does not let a bare empty value clobber a good cookie from an earlier hop", async () => {
+    const hops = [
+      hop(302, ["__pus=PUS1; Path=/", "__uid=AARtUID; Path=/"], "https://pan.quark.cn/next"),
+      // No expiry marker: an ordinary empty attr, NOT a deletion. Must not wipe.
+      hop(200, ["__pus=; Path=/"], null),
+    ];
+    let i = 0;
+    const client = new QuarkQrLoginClient({ rawFetch: async () => hops[i++]! });
+    const out = await client.exchangeCookie("ST");
+    expect(out.cookie).toContain("__pus=PUS1");
+  });
+});

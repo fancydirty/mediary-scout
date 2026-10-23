@@ -48,6 +48,10 @@ export interface CloudDriveQrProfile {
   userAgent: string;
   /** Cookie keys the session rides on (assembled from Set-Cookie). */
   driveCookieKeys: string[];
+  /** Hosts the redemption chain may touch. Cookies are bearer credentials, so a
+   *  redirect off these hosts must NOT receive the jar (and must not be followed
+   *  with it). Exact host or a dot-suffix match. */
+  redirectHosts: string[];
 }
 
 const DEFAULT_UA =
@@ -65,6 +69,7 @@ export const QUARK_QR_PROFILE: CloudDriveQrProfile = {
   referer: "https://pan.quark.cn/",
   userAgent: DEFAULT_UA,
   driveCookieKeys: ["__pus", "__uid", "__kps", "__ktd", "__puus", "_UP_A4A_11_", "_UP_D_"],
+  redirectHosts: ["pan.quark.cn", "quark.cn", "uop.quark.cn"],
 };
 
 /**
@@ -86,6 +91,7 @@ export const UC_QR_PROFILE: CloudDriveQrProfile = {
     `https://drive.uc.cn/account/info?st=${encodeURIComponent(ticket)}&fr=pc&platform=pc`,
   referer: "https://drive.uc.cn",
   userAgent: DEFAULT_UA,
+  redirectHosts: ["drive.uc.cn", "uc.cn", "api.open.uc.cn"],
   driveCookieKeys: [
     "__pus",
     "__uid",
@@ -179,9 +185,18 @@ export class QuarkQrLoginClient {
   async exchangeCookie(serviceTicket: string): Promise<QuarkQrCookie> {
     // The CAS service_ticket is redeemed at the brand's drive host; the drive
     // cookies are Set-Cookie'd across the redirect chain. Follow manually.
+    //
+    // Cookies are bearer credentials, so the chain is confined to the brand's
+    // own hosts. A hop anywhere else means the endpoint changed — fail loud
+    // instead of following it (and instead of following it without the jar).
     const jar = new Map<string, string>();
     let url: string | null = this.profile.accountInfoUrl(serviceTicket);
     for (let hop = 0; hop < 6 && url; hop++) {
+      if (!isAllowedRedirectHost(url, this.profile.redirectHosts)) {
+        throw new Error(
+          `${this.errCode("EXCHANGE_FAILED")}: redemption left ${this.profile.label} hosts (${hostOf(url)})`,
+        );
+      }
       const res: QuarkQrRawResponse = await this.rawFetch(url, {
         method: "GET",
         headers: this.headers(jar),
@@ -224,12 +239,57 @@ export class QuarkQrLoginClient {
 }
 
 /** Absorb one Set-Cookie line into the jar (first `k=v` pair only). */
+/** Set-Cookie with an empty value is normally a DELETION (browsers see
+ *  `expires=Thu, 01 Jan 1970`, which is exactly what UC returns for a spent
+ *  ticket — verified live). Treating every empty value as a plain overwrite
+ *  would let a later hop wipe a good cookie from an earlier one, so:
+ *    - explicit epoch/past expiry → delete from the jar
+ *    - empty value without a deletion marker → ignore (never clobber a good one)
+ *  Non-empty values always win, in arrival order.
+ */
 function absorbCookie(jar: Map<string, string>, raw: string): void {
-  const pair = raw.split(";")[0] ?? "";
+  const parts = raw.split(";");
+  const pair = parts[0] ?? "";
   const eq = pair.indexOf("=");
-  if (eq > 0) {
-    jar.set(pair.slice(0, eq).trim(), pair.slice(eq + 1).trim());
+  if (eq <= 0) return;
+  const key = pair.slice(0, eq).trim();
+  const value = pair.slice(eq + 1).trim();
+  if (value) {
+    jar.set(key, value);
+    return;
   }
+  if (isDeletion(parts.slice(1))) jar.delete(key);
+}
+
+/** A cookie is being deleted when it carries an expiry at/before the epoch, or
+ *  `max-age=0`. */
+function isDeletion(attributes: string[]): boolean {
+  for (const attr of attributes) {
+    const [rawName, rawValue = ""] = attr.split("=");
+    const name = rawName?.trim().toLowerCase();
+    const value = rawValue.trim();
+    if (name === "max-age" && Number(value) <= 0) return true;
+    if (name === "expires") {
+      const at = Date.parse(value);
+      if (Number.isFinite(at) && at <= 0) return true;
+    }
+  }
+  return false;
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
+/** Exact host, or a dot-suffix of one of `allowed` (so `pan.quark.cn` allows
+ *  `passport.quark.cn`'s parent but never `evilquark.cn`). */
+function isAllowedRedirectHost(url: string, allowed: string[]): boolean {
+  const host = hostOf(url).toLowerCase();
+  return allowed.some((a) => host === a || host.endsWith(`.${a}`));
 }
 
 function absolutize(loc: string, base: string): string {
