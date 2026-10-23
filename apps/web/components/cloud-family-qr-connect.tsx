@@ -15,12 +15,37 @@ const BRANDS = {
   uc: { label: "UC网盘", app: "UC 浏览器", api: "/api/uc/qrcode" },
 } as const;
 
+/** 二维码框下方的状态文案。只有到达这里的三个相位(waiting/scanned/confirming)
+ *  会渲染二维码,其余相位走 message 分支。 */
+function statusLabel(phase: Phase, app: string): string {
+  if (phase === "waiting") return `用${app}扫码`;
+  if (phase === "scanned") return "已扫码，请在手机上确认";
+  return "正在完成登录…";
+}
+
+/** 按钮图标随之切换:生成中显示 spinner(可重入态显示刷新),其余显示二维码。 */
+function buttonIcon(phase: Phase) {
+  if (phase === "loading") return <LoaderCircle size={14} className="spin" aria-hidden />;
+  if (phase === "waiting" || phase === "scanned" || phase === "expired") {
+    return <RefreshCw size={14} aria-hidden />;
+  }
+  return <QrCode size={14} aria-hidden />;
+}
+
 /**
  * 扫码登录(阿里云盘族):生成二维码 → 用户用对应 App 扫 → 每 2s 轮询(非长轮询)
  * → confirmed 拿 service_ticket → /confirm 兑换+绑定。扫码兑换失败时,外层折叠的
  * cookie 粘贴是回退 —— 兑换这一步只有真机扫码才能确认。
+ *
+ * 外层固定 key={brand}:session/phase/pollLoop 都绑定在某个品牌上,换品牌却沿用
+ * 旧状态会让旧二维码继续被轮询、旧 ticket 被拿去兑换别的品牌。当前调用方各品牌用
+ * 不同的组件元素因而恰好会重挂,但那是调用方的巧合;key 让这个不变量由组件自己保证。
  */
 export function CloudFamilyQrConnect({ brand }: { brand: keyof typeof BRANDS }) {
+  return <FamilyQrConnectBody key={brand} brand={brand} />;
+}
+
+function FamilyQrConnectBody({ brand }: { brand: keyof typeof BRANDS }) {
   const config = BRANDS[brand];
   const router = useRouter();
   const [phase, setPhase] = useState<Phase>("idle");
@@ -120,13 +145,7 @@ export function CloudFamilyQrConnect({ brand }: { brand: keyof typeof BRANDS }) 
           onClick={start}
           disabled={phase === "loading" || phase === "confirming"}
         >
-          {phase === "loading" ? (
-            <LoaderCircle size={14} className="spin" aria-hidden />
-          ) : phase === "waiting" || phase === "scanned" || phase === "expired" ? (
-            <RefreshCw size={14} aria-hidden />
-          ) : (
-            <QrCode size={14} aria-hidden />
-          )}
+          {buttonIcon(phase)}
           {phase === "idle" || phase === "done" ? "生成二维码" : "重新生成"}
         </button>
       </div>
@@ -138,13 +157,7 @@ export function CloudFamilyQrConnect({ brand }: { brand: keyof typeof BRANDS }) 
             src={`${config.api}/image?content=${encodeURIComponent(session.qrcodeContent)}`}
             alt={`${config.label}登录二维码`}
           />
-          <span className={`qr-status ${phase}`}>
-            {phase === "waiting"
-              ? `用${config.app}扫码`
-              : phase === "scanned"
-                ? "已扫码，请在手机上确认"
-                : "正在完成登录…"}
-          </span>
+          <span className={`qr-status ${phase}`}>{statusLabel(phase, config.app)}</span>
         </div>
       ) : null}
       {message ? (
