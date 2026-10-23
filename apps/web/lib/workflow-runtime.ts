@@ -3594,9 +3594,26 @@ async function connectCloudFamilyCookie(
  * 有效性由用户真机扫码确认;兑换失败时设置页折叠的 cookie 粘贴是回退。
  */
 export async function completeQuarkQrLogin(serviceTicket: string): Promise<{ providerUid: string }> {
-  const { QuarkQrLoginClient } = await import("@media-track/workflow");
-  const { cookie } = await new QuarkQrLoginClient().exchangeCookie(serviceTicket);
-  return connectQuarkCookie(cookie);
+  return completeCloudFamilyQrLogin(serviceTicket, "quark");
+}
+
+/** Settings "添加网盘 → UC网盘": finish a UC QR scan. Same family CAS flow as 夸克 —
+ *  only the QR profile differs, so the whole exchange+bind path is shared. */
+export async function completeUcQrLogin(serviceTicket: string): Promise<{ providerUid: string }> {
+  return completeCloudFamilyQrLogin(serviceTicket, "uc");
+}
+
+/** Redeem a CAS service_ticket into a drive cookie and bind it, for a 阿里云盘族
+ *  brand. ⚠️ The ticket→cookie hop is the fragile one on both brands; a failure
+ *  here surfaces to the UI, which offers cookie paste as the fallback. */
+async function completeCloudFamilyQrLogin(
+  serviceTicket: string,
+  provider: "quark" | "uc",
+): Promise<{ providerUid: string }> {
+  const { QuarkQrLoginClient, QUARK_QR_PROFILE, UC_QR_PROFILE } = await import("@media-track/workflow");
+  const profile = provider === "uc" ? UC_QR_PROFILE : QUARK_QR_PROFILE;
+  const { cookie } = await new QuarkQrLoginClient({ profile }).exchangeCookie(serviceTicket);
+  return provider === "uc" ? connectUcCookie(cookie) : connectQuarkCookie(cookie);
 }
 
 /**
