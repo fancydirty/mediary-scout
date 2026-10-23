@@ -8,6 +8,8 @@ import {
   isPan115AuthError,
   isBrandStorageAuthError,
   isQuarkAuthError,
+  isLlmRateLimitError,
+  isLlmServerError,
   Pan115AuthError,
   QuarkAuthError,
 } from "../src/index.js";
@@ -62,6 +64,13 @@ describe("storage brand registry", () => {
     expect(isBrandStorageAuthError(new QuarkAuthError("UC_AUTH_FAILED: require login"))).toBe(true);
     expect(isBrandStorageAuthError(new Error("no such model on gateway"))).toBe(false);
     expect(isBrandStorageAuthError(new Error("The model does not exist"))).toBe(false);
+    // Every UC_* code must short-circuit the LLM classifiers (so a UC 429/5xx is
+    // never reported as an AI-模型 problem) — not just the auth one. Asserted on
+    // the PUBLIC LLM predicates, which is the path isBrandError actually guards.
+    for (const code of ["UC_LIST_ITEMS_FAILED", "UC_CREATE_FOLDER_FAILED", "UC_SHARE_TOKEN_FAILED", "UC_MOVE_FAILED"]) {
+      expect(isLlmRateLimitError(new Error(`${code}: code=429 too many requests`)), code).toBe(false);
+      expect(isLlmServerError(new Error(`${code}: code=503 upstream`)), code).toBe(false);
+    }
   });
 
   it("getStorageBrand resolves guangya with its label, magnet/prowlarr kinds + uid parsing", () => {

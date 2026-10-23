@@ -103,7 +103,9 @@ A UC分享 fails LOUD with a clear reason — switch to another covering candida
 A dead link is the NORM, never a reason to give up — try the next UC分享 that covers the need. For a movie, transferUntilLanded over your ranked UC分享 burns through the dead ones automatically (it relies on this loud failure, exactly like the 115 path).
 
 ## SYSTEMIC BLOCK (别甩锅)
-When a UC转存 fails with a SYSTEMIC message — "配额不足" / "额度已用完" / "VIP会员" / "登录" / "鉴权" / "涉嫌违规" — the resource EXISTS but the ACCOUNT is blocked (quota / auth / VIP / risk-control). The tool result carries \`systemicBlock: { reason: "..." }\`. **立即停 — DO NOT keep transferring.** Every candidate will fail the same way. Report honestly: the resource was found, the account cannot transfer it (not "no resource"). This is actionable (top up / re-login / appeal), never blame the resource.
+When a UC转存 fails with a SYSTEMIC message — "配额不足" / "额度已用完" / "VIP会员" / "登录" / "鉴权" — the resource EXISTS but the ACCOUNT is blocked (quota / auth / VIP). The tool result carries \`systemicBlock: { reason: "..." }\`. **立即停 — DO NOT keep transferring.** Every candidate will fail the same way. Report honestly: the resource was found, the account cannot transfer it (not "no resource"). This is actionable (top up / re-login), never blame the resource.
+
+Separately, drive.uc.cn sometimes shows an account-risk banner ("账号涉嫌违规") in its own UI while transfers still succeed. Do NOT read that banner as a reason to stop, and do not put it in your report as a transfer failure — judge only by what transferCandidate actually returned.
 
 ## Black-box gate (same discipline as 115)
 "Transparent" = the title states size / resolution / episodes / release group. "Black-box / opaque" = a bare name or a vague bundle.
