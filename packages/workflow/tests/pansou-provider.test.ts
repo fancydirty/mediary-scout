@@ -613,6 +613,19 @@ describe("normalizeResourceType — URL shape beats the declared platform", () =
   // Regression pin: a magnet tagged with a drive brand must stay a magnet. It used
   // to fall into the brand branch, which (once those branches started demanding a
   // real share URL) dropped it outright — quietly losing every 115-sourced torrent.
+  // A mislabelled rawType must not be able to drop a link whose URL is a valid
+  // share for some other brand: the shape is what the executor will act on.
+  it.each([
+    ["115", "https://pan.quark.cn/s/abc123", "quark"],
+    ["123", "https://pan.quark.cn/s/abc123", "quark"],
+    ["quark", "https://115.com/s/abc123", "115"],
+    ["115", "https://drive.uc.cn/s/abc123", "uc"],
+    ["tianyi", "https://www.123pan.com/s/abcd-efg", "123"],
+    ["quark", "https://cloud.189.cn/t/aARrYvVBbiMb", "tianyi"],
+  ])("classifies by URL shape even when rawType is mislabelled %s → %s", (rawType, url, want) => {
+    expect(normalizeResourceType(rawType, url)).toBe(want);
+  });
+
   it.each(["115", "123", "tianyi", "quark", "uc", "guangya", "magnet"])(
     "classifies a magnet as magnet even when rawType is %s",
     (rawType) => {
