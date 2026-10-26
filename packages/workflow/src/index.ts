@@ -20,6 +20,7 @@ export { SqliteWorkflowRepository, createSqliteWorkflowRepository } from "./sqli
 export * from "./worker.js";
 export * from "./commands.js";
 export * from "./pansou-provider.js";
+export * from "./haisou-provider.js";
 export * from "./prowlarr-provider.js";
 export * from "./composite-provider.js";
 export * from "./fallback-provider.js";

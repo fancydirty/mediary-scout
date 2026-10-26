@@ -14,6 +14,7 @@ import {
   createBootstrapPan115CookieStorageExecutor,
   CompositeResourceProvider,
   ProwlarrResourceProvider,
+  HaisouResourceProvider,
   createJevJudge,
   DEFAULT_JEV_BASE_URL,
   type JevJudge,
@@ -1363,6 +1364,24 @@ export async function getProwlarrConfig(
   };
 }
 
+export const HAISOU_API_KEY_SETTING_KEY = "haisou_api_key";
+
+/** 海搜 (haisou) 的官方 API key —— idatariver 项目 b9d1，站方页脚「开放接口」
+ *  指向的就是它。每日前 100 次免费，之后阶梯计费，所以它只做补充源。
+ *
+ *  为什么不走 haisou.cc 自己的 /api/v2：那条路要用户的登录 cookie
+ *  (`hs_web_session`)，匿名配额耗尽后连续 429，而且站方页面明写不要用脚本
+ *  调用。官方 API 只要一个 apikey，是站方给出的程序化入口。 */
+export async function getHaisouApiKey(
+  repository: { getSetting(key: string): Promise<string | null> },
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string | undefined> {
+  const dbValue = (await repository.getSetting(HAISOU_API_KEY_SETTING_KEY))?.trim();
+  if (dbValue) return dbValue;
+  const envValue = env["HAISOU_API_KEY"]?.trim();
+  return envValue ? envValue : undefined;
+}
+
 export const JEV_API_KEY_SETTING_KEY = "jev_api_key";
 export const JEV_BASE_URL_SETTING_KEY = "jev_base_url";
 export const JEV_PREFILTER_ENABLED_SETTING_KEY = "jev_prefilter_enabled";
@@ -2307,6 +2326,16 @@ async function getWorkerResourceProvider(
           provider: new ProwlarrResourceProvider({ baseURL: prowlarr.baseURL, apiKey: prowlarr.apiKey }),
         });
       }
+    }
+    // 海搜：站方官方 API（idatariver b9d1），配了 key 才启用。它排在 PanSou 之后
+    // 只是数组顺序，没有优先级含义 —— Composite 是并集去重。每日前 100 次免费
+    // 意味着它是补充源：够补光鸭/115 的量，撑不起每小时巡检 223 个作品。
+    const haisouApiKey = await getHaisouApiKey(settings);
+    if (haisouApiKey) {
+      providers.push({
+        name: "haisou",
+        provider: new HaisouResourceProvider({ apiKey: haisouApiKey, allowedTypes }),
+      });
     }
     return providers.length > 1
       ? new CompositeResourceProvider({ providers })

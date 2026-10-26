@@ -817,6 +817,47 @@ export async function clearProwlarrConfigAction(): Promise<PushSettingsActionRes
   }
 }
 
+/** 海搜官方 API（idatariver 项目 b9d1）。保存前先真打一次搜索，把
+ *  「key 无效 / 没余额」在保存这一刻就告诉用户 —— 否则它会一路静默成
+ *  「这个源没结果」，用户永远查不到原因。 */
+export async function saveHaisouConfigAction(input: {
+  apiKey: string;
+}): Promise<PushSettingsActionResult> {
+  assertNotDemo();
+  const apiKey = input.apiKey.trim();
+  if (!apiKey) {
+    return { success: false, message: "请填入 API Key" };
+  }
+  try {
+    const { HaisouResourceProvider } = await import("@media-track/workflow");
+    const probe = new HaisouResourceProvider({ apiKey });
+    const snapshot = await probe.search({ keyword: "沙丘" });
+    if (snapshot.sourceHealth && snapshot.sourceHealth.status !== "healthy") {
+      return { success: false, message: "API Key 无效或额度不足（上游返回失败码）" };
+    }
+    const { getWorkflowRepository, getCurrentAccountId, HAISOU_API_KEY_SETTING_KEY } = await import(
+      "../lib/workflow-runtime"
+    );
+    await getWorkflowRepository().setAccountSetting(await getCurrentAccountId(), HAISOU_API_KEY_SETTING_KEY, apiKey);
+    return { success: true };
+  } catch (error) {
+    return { success: false, message: `保存失败：${String(error)}` };
+  }
+}
+
+export async function clearHaisouConfigAction(): Promise<PushSettingsActionResult> {
+  assertNotDemo();
+  try {
+    const { getWorkflowRepository, getCurrentAccountId, HAISOU_API_KEY_SETTING_KEY } = await import(
+      "../lib/workflow-runtime"
+    );
+    await getWorkflowRepository().setAccountSetting(await getCurrentAccountId(), HAISOU_API_KEY_SETTING_KEY, "");
+    return { success: true };
+  } catch (error) {
+    return { success: false, message: `清除失败：${String(error)}` };
+  }
+}
+
 export async function saveJevConfigAction(input: {
   apiKey: string;
   baseUrl: string;

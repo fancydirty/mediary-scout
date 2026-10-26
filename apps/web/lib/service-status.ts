@@ -134,6 +134,17 @@ export function prowlarrPills(input: { baseURL: string; apiKeySet: boolean; from
   return [first, ...source, { label: "仅磁力盘", tone: "neutral" }];
 }
 
+/** 海搜：apikeySet 是 getHaisouApiKey 的生效值（DB → env HAISOU_API_KEY），
+ *  fromEnv = 空的那项由 env 补上。「每天 100 次免费」写进胶囊，因为它是这个源
+ *  最重要的使用约束 —— 额度用完会静默变成「没结果」。 */
+export function haisouPills(input: { apiKeySet: boolean; fromEnv: boolean }): ServicePill[] {
+  const first: ServicePill = input.apiKeySet
+    ? { label: "已接入", tone: "on" }
+    : { label: "未配置", tone: "off" };
+  const source = input.fromEnv && input.apiKeySet ? [ENV_SOURCE_PILL] : [];
+  return [first, ...source, { label: "每日 100 次免费", tone: "neutral" }];
+}
+
 /** assrt：只有 DB 一层（getAssrtToken 不读 env），DB 里有没有 token 就是生效值。 */
 export function assrtPills(input: { tokenSet: boolean }): ServicePill[] {
   return input.tokenSet ? [{ label: "已配置", tone: "on" }] : [{ label: "未配置", tone: "off" }];

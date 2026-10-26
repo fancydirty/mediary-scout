@@ -15,6 +15,7 @@ import { RestoreFreeLlmButton } from "../../components/restore-free-llm-button";
 import { TmdbApiKeyForm } from "../../components/tmdb-api-key-form";
 import { AssrtTokenForm } from "../../components/assrt-token-form";
 import { ProwlarrConfigForm } from "../../components/prowlarr-config-form";
+import { HaisouConfigForm } from "../../components/haisou-config-form";
 import { JevPrefilterForm } from "../../components/jev-prefilter-form";
 import { ServiceBlock } from "../../components/service-block";
 import { AgentMemoryNotes, AgentMemoryStats } from "../../components/agent-memory-panel";
@@ -25,7 +26,7 @@ import {
   memoryStatsForUi,
   toMemoryItem,
 } from "../../lib/agent-memory-server";
-import { assrtPills, isEnvBackedValue, jevPills, llmPills, pansouPills, prowlarrPills, tmdbPills } from "../../lib/service-status";
+import { assrtPills, haisouPills, isEnvBackedValue, jevPills, llmPills, pansouPills, prowlarrPills, tmdbPills } from "../../lib/service-status";
 import { PanSouConfigForm } from "../../components/pansou-config-form";
 import { DailySweepForm } from "../../components/daily-sweep-form";
 import { PatrolConcurrencyForm } from "../../components/patrol-concurrency-form";
@@ -63,6 +64,8 @@ import {
   PROWLARR_BASE_URL_SETTING_KEY,
   PROWLARR_API_KEY_SETTING_KEY,
   getProwlarrConfig,
+  HAISOU_API_KEY_SETTING_KEY,
+  getHaisouApiKey,
   resolveAgentModelConfig,
   getJevConfig,
   getJevBaseUrlOverride,
@@ -520,6 +523,9 @@ async function ResourceProviderSection() {
   const pansouHealth = (await repository.getSetting(PANSOU_HEALTH_SETTING_KEY)) ?? "";
   const prowlarrBaseURL = (await repository.getSetting(PROWLARR_BASE_URL_SETTING_KEY)) ?? "";
   const prowlarrApiKeySet = Boolean((await repository.getSetting(PROWLARR_API_KEY_SETTING_KEY))?.trim());
+  const haisouApiKeySet = Boolean((await repository.getSetting(HAISOU_API_KEY_SETTING_KEY))?.trim());
+  // The form shows DB state; the pill follows what the worker mounts (DB → env).
+  const haisouFromEnv = !haisouApiKeySet && Boolean((await getHaisouApiKey(repository))?.trim());
   // The form shows the DB values; the pill follows what the worker mounts
   // (getProwlarrConfig: DB → env PROWLARR_BASE_URL / PROWLARR_API_KEY).
   const prowlarr = await getProwlarrConfig(repository);
@@ -586,6 +592,30 @@ async function ResourceProviderSection() {
         }
       >
         <PanSouConfigForm baseURL={pansouBaseURL} />
+      </ServiceBlock>
+      <ServiceBlock
+        name="海搜 (haisou)"
+        pills={haisouPills({ apiKeySet: haisouApiKeySet || haisouFromEnv, fromEnv: haisouFromEnv })}
+        summary="补充源：自有索引（夸克 2.48 亿文件，光鸭/天翼也有量）。走站方官方 API，每天前 100 次免费。"
+        details={
+          <>
+            <p>
+              海搜是独立索引的网盘搜索库，和 PanSou 的数据源不重合。这个接入走它挂在 idatariver 上的<b>官方 API</b>（海搜页面底部的「开放接口」就指向那里），不是去爬它的网站——所以只需要一个 API Key，不需要登录账号或粘贴 cookie。
+            </p>
+            <p>
+              <b>每天前 100 次免费</b>，之后阶梯计费（约 $0.0001/次）。100 次够补一补缺口，但撑不起对全部作品的每小时巡检——额度用完后这个源会返回「没结果」而不是报错，所以别把它当成 PanSou 的替代品。
+            </p>
+            <p>
+              取 Key：{" "}
+              <a href="https://www.idatariver.com/zh-cn/console/apikeys" target="_blank" rel="noopener noreferrer">
+                idatariver 控制台 → API Keys <ExternalLink size={12} style={{ verticalAlign: "-1px" }} />
+              </a>
+              {" "}（注册免费，选中 haisou API 项目即可）
+            </p>
+          </>
+        }
+      >
+        <HaisouConfigForm apiKeySet={haisouApiKeySet} />
       </ServiceBlock>
       {showProwlarr ? (
         <ServiceBlock

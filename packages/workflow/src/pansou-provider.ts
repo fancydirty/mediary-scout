@@ -1,5 +1,5 @@
 import { parseGuangYaShareUrl } from "./guangya-client.js";
-import { parseUcShareUrl } from "./quark-storage-executor.js";
+import { parseQuarkShareUrl, parseUcShareUrl } from "./quark-storage-executor.js";
 import { createHash } from "node:crypto";
 import type {
   ResourceCandidate,
@@ -308,12 +308,15 @@ function collectLinkFacts(results: unknown[]): PanSouLinkFact[] {
   return facts;
 }
 
-function normalizeResourceType(rawType: string, url: string): ResourceType | null {
+export function normalizeResourceType(rawType: string, url: string): ResourceType | null {
   if (rawType === "115") {
     return "115";
   }
-  if (rawType === "quark" || url.includes("pan.quark.cn/s/")) {
-    return "quark";
+  // Classified through the executor's OWN parser for the same reason as UC below:
+  // a bare substring test accepts `https://evil.example.com/pan.quark.cn/s/x`,
+  // which then fails as unparseable at transfer time (or worse, gets trusted).
+  if (rawType === "quark" || url.includes("pan.quark.cn/")) {
+    return parseQuarkShareUrl(url) !== null ? "quark" : null;
   }
   // UC shares live on drive.uc.cn/s/<id>. Classified through the executor's OWN
   // parser (not a substring test), so a lookalike host can never become a
