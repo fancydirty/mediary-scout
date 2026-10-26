@@ -269,3 +269,26 @@ describe("isDeletion edge cases (malformed attributes must not delete)", () => {
     await expect(client.exchangeCookie("ST")).rejects.toThrow(/QUARK_QR_EXCHANGE_FAILED/);
   });
 });
+
+describe("redirect allowlist — protocol and host confusion", () => {
+  function hop(location: string) {
+    return {
+      status: 302,
+      headers: {
+        getSetCookie: () => [] as string[],
+        get: (n: string) => (n.toLowerCase() === "location" ? location : null),
+      },
+    };
+  }
+
+  it.each([
+    ["http://pan.quark.cn/x", "plain-HTTP downgrade would leak the cookie in clear"],
+    ["javascript://pan.quark.cn/%0a", "non-HTTP scheme"],
+    ["//evil.com/x", "protocol-relative resolves off-host"],
+    ["https://quark.cn.evil.com/x", "suffix confusion"],
+    ["https://evilquark.cn/x", "prefix confusion"],
+  ])("refuses %s (%s)", async (location) => {
+    const client = new QuarkQrLoginClient({ rawFetch: async () => hop(location) });
+    await expect(client.exchangeCookie("ST")).rejects.toThrow(/left 夸克 hosts/);
+  });
+});

@@ -288,9 +288,17 @@ function hostOf(url: string): string {
 }
 
 /** Exact host, or a dot-suffix of one of `allowed` (so `pan.quark.cn` allows
- *  `passport.quark.cn`'s parent but never `evilquark.cn`). */
+ *  `passport.quark.cn`'s parent but never `evilquark.cn`). HTTPS only: cookies
+ *  are bearer credentials and a downgrade to `http:` would leak them in clear. */
 function isAllowedRedirectHost(url: string, allowed: string[]): boolean {
-  const host = hostOf(url).toLowerCase();
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "https:") return false;
+  const host = parsed.hostname.toLowerCase();
   return allowed.some((a) => host === a || host.endsWith(`.${a}`));
 }
 
