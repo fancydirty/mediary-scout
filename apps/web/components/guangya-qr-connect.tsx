@@ -3,18 +3,12 @@
 import { LoaderCircle, QrCode, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "../lib/use-router";
+import { buildGuangYaQrContent } from "../lib/guangya-qr-content";
 
 type Session = { deviceCode: string; userCode: string; verificationUrl: string; expiresIn: number; interval: number };
 
-/** The QR must encode the verification_url WITH `&user_code=…` appended.
- *  Scan the bare URL from /v1/auth/device/code and the 光鸭 app resolves it to a
- *  404 — `user_code` is what identifies WHICH pending authorization is being
- *  approved. Confirmed against the real site on 2026-10-26 by reading the value
- *  the page hands to its QR canvas. */
 function qrContent(session: Session): string {
-  if (!session.userCode) return session.verificationUrl;
-  const joiner = session.verificationUrl.includes("?") ? "&" : "?";
-  return `${session.verificationUrl}${joiner}user_code=${encodeURIComponent(session.userCode)}`;
+  return buildGuangYaQrContent({ verificationUrl: session.verificationUrl, userCode: session.userCode });
 }
 type Phase = "idle" | "loading" | "waiting" | "confirming" | "done" | "expired" | "error";
 
