@@ -97,10 +97,11 @@ export function GuangYaQrConnect() {
         const data = (await res.json()) as { ok: boolean; status?: string; error?: string };
         if (data.ok && data.status) {
           status = data.status;
-        } else if (data.error) {
-          // A real error (not a transient network blip): the code may already be
-          // spent, so surface it instead of looping forever.
-          error = data.error;
+        } else if (!data.ok) {
+          // ANY non-ok response is terminal: the device code may already be spent
+          // (this call consumes it), so looping would spin until the deadline
+          // showing nothing. `data.error` can be absent, hence the fallback.
+          error = data.error || "登录失败，请重新生成二维码";
         }
       } catch {
         // network blip — keep polling

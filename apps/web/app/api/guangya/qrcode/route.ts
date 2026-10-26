@@ -13,7 +13,7 @@ import { isDemoMode } from "../../../../lib/demo-mode";
  * stored server-side, so a multi-instance deployment behaves the same as one.
  */
 export async function POST(): Promise<NextResponse> {
-  if (isDemoMode()) return NextResponse.json({ error: "演示站只读" }, { status: 403 });
+  if (isDemoMode()) return NextResponse.json({ ok: false, error: "演示站只读" }, { status: 403 });
   try {
     const code = await new GuangYaDeviceLogin().start();
     return NextResponse.json({ ok: true, ...code });
