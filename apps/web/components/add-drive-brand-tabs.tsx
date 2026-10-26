@@ -7,6 +7,7 @@ import { QuarkCookieConnect } from "./quark-cookie-connect";
 import { CloudFamilyCookieConnect } from "./cloud-family-cookie-connect";
 import { CloudFamilyQrConnect } from "./cloud-family-qr-connect";
 import { GuangYaTokenConnect } from "./guangya-token-connect";
+import { GuangYaQrConnect } from "./guangya-qr-connect";
 import { TianyiQrConnect } from "./tianyi-qr-connect";
 import { TianyiSsonConnect } from "./tianyi-sson-connect";
 import { Pan123QrConnect } from "./pan123-qr-connect";
@@ -20,7 +21,7 @@ const BRAND_TILES: Array<{ key: Brand; label: string; authNote: string }> = [
   { key: "pan115", label: "115网盘", authNote: "扫码登录" },
   { key: "quark", label: "夸克网盘", authNote: "扫码 / 粘 cookie" },
   { key: "uc", label: "UC网盘", authNote: "扫码 / 粘 cookie" },
-  { key: "guangya", label: "光鸭云盘", authNote: "粘贴 token" },
+  { key: "guangya", label: "光鸭云盘", authNote: "扫码 / 粘 token" },
   { key: "tianyi", label: "天翼云盘", authNote: "扫码 / SSON" },
   { key: "pan123", label: "123网盘", authNote: "扫码 / 粘 token" },
 ];
@@ -72,7 +73,15 @@ export function AddDriveBrandTabs({ defaultBrand = "pan115" }: { defaultBrand?: 
         </div>
       ) : brand === "guangya" ? (
         <div className="brand-connect-area">
-          <GuangYaTokenConnect />
+          <GuangYaQrConnect />
+          <details style={{ marginTop: 12 }}>
+            <summary className="panel-note" style={{ cursor: "pointer" }}>
+              扫码不行？手动粘 token
+            </summary>
+            <div style={{ marginTop: 10 }}>
+              <GuangYaTokenConnect />
+            </div>
+          </details>
         </div>
       ) : brand === "tianyi" ? (
         <div className="brand-connect-area">

@@ -38,6 +38,7 @@ export * from "./quark-cookie-client.js";
 export * from "./quark-qrcode-login.js";
 export * from "./quark-storage-executor.js";
 export * from "./guangya-client.js";
+export * from "./guangya-device-login.js";
 export * from "./guangya-storage-executor.js";
 export * from "./tianyi-client.js";
 export * from "./tianyi-qrcode-login.js";
