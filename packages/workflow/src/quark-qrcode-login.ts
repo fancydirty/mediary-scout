@@ -261,9 +261,11 @@ function absorbCookie(jar: Map<string, string>, raw: string): void {
   if (isDeletion(parts.slice(1))) jar.delete(key);
 }
 
-/** A cookie is being deleted when it carries an expiry at/before the epoch, or
- *  `max-age=0`. A malformed attr (`Max-Age` with no value, `Max-Age=`) must NOT
- *  count: `Number("")` is 0, which would read as "delete" and wipe a live cookie. */
+/** A cookie is being deleted when its expiry is already in the past, or
+ *  `max-age=0`. Browsers drop any already-expired cookie, not just the epoch
+ *  ones — a server may clear with e.g. `expires=Wed, 01 Jan 2025 …`.
+ *  A malformed attr (`Max-Age` with no value, `Max-Age=`) must NOT count:
+ *  `Number("")` is 0, which would read as "delete" and wipe a live cookie. */
 function isDeletion(attributes: string[]): boolean {
   for (const attr of attributes) {
     const [rawName, rawValue = ""] = attr.split("=");
@@ -273,7 +275,7 @@ function isDeletion(attributes: string[]): boolean {
     if (name === "max-age" && Number(value) <= 0) return true;
     if (name === "expires") {
       const at = Date.parse(value);
-      if (Number.isFinite(at) && at <= 0) return true;
+      if (Number.isFinite(at) && at <= Date.now()) return true;
     }
   }
   return false;

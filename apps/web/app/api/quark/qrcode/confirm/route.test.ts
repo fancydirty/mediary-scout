@@ -54,6 +54,20 @@ describe("POST /api/quark/qrcode/confirm — error mapping", () => {
     expect(res.status).toBe(400);
   });
 
+  // `request.json()` is `any`, so a truthiness test alone lets non-strings
+  // through to blow up inside string handling as a 502.
+  it.each<[unknown, string]>([
+    [{ serviceTicket: 123 }, "number"],
+    [{ serviceTicket: {} }, "object"],
+    [{ serviceTicket: [] }, "array"],
+    [{ serviceTicket: true }, "boolean"],
+    [{ serviceTicket: "   " }, "blank string"],
+  ])("returns 400 for a non-string serviceTicket (%#: %s)", async (body) => {
+    const res = await POST(req(body));
+    expect(res.status).toBe(400);
+    expect((completeQuarkQrLogin as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+  });
+
   it("returns 400 (not 502) when the request body is invalid JSON", async () => {
     const r = new NextRequest("http://localhost/api/quark/qrcode/confirm", {
       method: "POST",

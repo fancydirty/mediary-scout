@@ -82,11 +82,15 @@ export function createFamilyQrRoutes(config: FamilyQrRoutesConfig) {
     async confirm(request: NextRequest): Promise<NextResponse> {
       if (isDemoMode()) return NextResponse.json({ error: "演示站只读" }, { status: 403 });
       // Parse the body OUTSIDE the business try/catch: invalid/missing JSON is a
-      // client error (400), not an infra failure (502).
-      const body = (await request.json().catch(() => null)) as { serviceTicket?: string } | null;
-      if (!body?.serviceTicket) {
+      // client error (400), not an infra failure (502). The runtime type check
+      // matters: `request.json()` is `any`, so a body of `{serviceTicket:{}}` or
+      // `{serviceTicket:123}` would sail past a truthiness test and blow up
+      // inside string handling as a 502 instead of a 400.
+      const body = (await request.json().catch(() => null)) as { serviceTicket?: unknown } | null;
+      if (typeof body?.serviceTicket !== "string" || !body.serviceTicket.trim()) {
         return NextResponse.json({ ok: false, error: "missing serviceTicket" }, { status: 400 });
       }
+      const serviceTicket = body.serviceTicket;
 
       // Loaded here, not at module scope: workflow-runtime pulls in the DB
       // layer, and token/status/image have no business loading it.
@@ -100,7 +104,7 @@ export function createFamilyQrRoutes(config: FamilyQrRoutesConfig) {
       // Binding UC with 夸克's helper would store a UC cookie under the 夸克 row.
       const complete = config.brand === "uc" ? runtime.completeUcQrLogin : runtime.completeQuarkQrLogin;
       try {
-        const result = await complete(body.serviceTicket);
+        const result = await complete(serviceTicket);
         return NextResponse.json({ ok: true, ...result });
       } catch (error) {
         if (error instanceof runtime.StorageOwnedByOtherAccountError) {

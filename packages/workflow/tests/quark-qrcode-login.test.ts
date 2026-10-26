@@ -292,3 +292,28 @@ describe("redirect allowlist — protocol and host confusion", () => {
     await expect(client.exchangeCookie("ST")).rejects.toThrow(/left 夸克 hosts/);
   });
 });
+
+describe("isDeletion — a past (non-epoch) expiry also clears", () => {
+  function hop(setCookie: string[]) {
+    return { status: 200, headers: { getSetCookie: () => setCookie, get: () => null } };
+  }
+
+  it("deletes on an already-past expiry that is not the epoch", async () => {
+    // Servers clear with any past date, not only 1970. Only watching for the
+    // epoch would leave the stale cookie in the jar.
+    const client = new QuarkQrLoginClient({
+      rawFetch: async () =>
+        hop(["__pus=PUS1; Path=/", "__uid=AARtUID; Path=/", "__pus=; Expires=Wed, 01 Jan 2025 00:00:00 GMT"]),
+    });
+    await expect(client.exchangeCookie("ST")).rejects.toThrow(/QUARK_QR_EXCHANGE_FAILED/);
+  });
+
+  it("does NOT delete on a future expiry with an empty value", async () => {
+    const future = new Date(Date.now() + 86_400_000).toUTCString();
+    const client = new QuarkQrLoginClient({
+      rawFetch: async () => hop(["__pus=PUS1; Path=/", "__uid=AARtUID; Path=/", `__pus=; Expires=${future}`]),
+    });
+    const out = await client.exchangeCookie("ST");
+    expect(out.cookie).toContain("__pus=PUS1");
+  });
+});
