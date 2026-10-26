@@ -119,6 +119,28 @@ describe("HaisouResourceProvider", () => {
     expect(snap.sourceHealth?.unhealthySources).toContain("haisou");
   });
 
+  // A body with no numeric `code` must NOT read as success: the save-time probe
+  // in saveHaisouConfigAction accepts healthy snapshots, so a malformed response
+  // slipping through would persist an invalid API key.
+  it.each([
+    ["no code field", { result: { items: [] } }],
+    ["string code", { code: "0", result: { items: [] } }],
+    ["null body", null],
+    ["unexpected shape", { data: [] }],
+  ])("treats a malformed upstream body as unreachable (%s)", async (_label, body) => {
+    const p = provider(async () => body);
+    const snap = await p.search({ keyword: "沙丘" });
+    expect(snap.sourceHealth?.status).toBe("unreachable");
+  });
+
+  it("still treats a genuine code:0 with zero items as healthy", async () => {
+    const p = provider(async () => okResponse([]));
+    const snap = await p.search({ keyword: "沙丘" });
+    expect(snap.candidates).toHaveLength(0);
+    // No health field = healthy by the port's backwards-compatible reading.
+    expect(snap.sourceHealth).toBeUndefined();
+  });
+
   it("reports sourceHealth=unreachable when the upstream throws", async () => {
     const p = provider(async () => { throw new Error("ECONNREFUSED"); });
     const snap = await p.search({ keyword: "沙丘" });

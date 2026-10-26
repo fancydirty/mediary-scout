@@ -1,5 +1,7 @@
 import { parseGuangYaShareUrl } from "./guangya-client.js";
 import { parseQuarkShareUrl, parseUcShareUrl } from "./quark-storage-executor.js";
+import { parsePan123ShareUrl } from "./pan123-storage-executor.js";
+import { parseTianyiShareUrl } from "./tianyi-storage-executor.js";
 import { createHash } from "node:crypto";
 import type {
   ResourceCandidate,
@@ -309,8 +311,11 @@ function collectLinkFacts(results: unknown[]): PanSouLinkFact[] {
 }
 
 export function normalizeResourceType(rawType: string, url: string): ResourceType | null {
-  if (rawType === "115") {
-    return "115";
+  // 115 shares live on 115.com/s/<code> or 115cdn.com/s/<code> — the exact
+  // prefixes storage-115-executor will transfer. A bare rawType="115" used to be
+  // enough, which let an arbitrary URL through as a 115 candidate.
+  if (rawType === "115" || url.includes("115.com/") || url.includes("115cdn.com/")) {
+    return /^https?:\/\/(?:www\.)?115(?:cdn)?\.com\/s\/[A-Za-z0-9]+/.test(url) ? "115" : null;
   }
   // Classified through the executor's OWN parser for the same reason as UC below:
   // a bare substring test accepts `https://evil.example.com/pan.quark.cn/s/x`,
@@ -329,7 +334,7 @@ export function normalizeResourceType(rawType: string, url: string): ResourceTyp
   // 123 share shapes mirror parsePan123ShareUrl (pan123-storage-executor):
   // multi-mirror domains 123pan/123684/123865/123912 · com/cn, path /s/<key>.
   if (rawType === "123" || /123(?:684|865|912|pan)\.(?:com|cn)\/s\//.test(url)) {
-    return "123";
+    return parsePan123ShareUrl(url) !== null ? "123" : null;
   }
   // 天翼 share shapes mirror parseTianyiShareUrl (tianyi-storage-executor):
   // cloud.189.cn/t/<code> (the probe-confirmed PanSou link shape) and
@@ -341,7 +346,7 @@ export function normalizeResourceType(rawType: string, url: string): ResourceTyp
     url.includes("cloud.189.cn/t/") ||
     /cloud\.189\.cn\/web\/share\?[^#]*\bcode=/.test(url)
   ) {
-    return "tianyi";
+    return parseTianyiShareUrl(url) !== null ? "tianyi" : null;
   }
   // 光鸭 share: the SAME parser the executor transfers with, so a lookalike host
   // (evilguangyapan.com) can never become a candidate that then fails as unsupported.

@@ -109,8 +109,12 @@ export class HaisouResourceProvider implements ResourceProvider {
     }
 
     const envelope = asRecord(raw);
-    const code = numberValue(envelope["code"]);
-    if (code !== 0) {
+    // Check `code === 0` directly, NOT through numberValue: that helper defaults a
+    // missing/non-numeric code to 0, which would make a malformed upstream body
+    // look like a healthy empty result. That matters more than usual here — the
+    // save-time probe in saveHaisouConfigAction accepts a snapshot whose health is
+    // healthy, so a silently-passing malformed response would persist a bad key.
+    if (envelope["code"] !== 0) {
       // idatariver 用 code 表达失败（1001 key 缺失 / 1005 余额不足 …）。
       // 这些不是「今天没有这个资源」，必须如实上报成源不可用。
       return emptySnapshot(snapshotId, keyword, this.now(), {

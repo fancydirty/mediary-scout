@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
-import { PanSouResourceProvider } from "../src/index.js";
+import { PanSouResourceProvider, normalizeResourceType } from "../src/index.js";
 
 describe("PanSouResourceProvider", () => {
   it("never has more than two searches in flight against one server, even across providers", async () => {
@@ -579,4 +579,38 @@ describe("PanSouResourceProvider request timeout", () => {
     // error path; well under a second proves the wait is bounded.
     expect(elapsedMs).toBeLessThan(2000);
   }, 10_000);
+});
+
+// The candidate classifier is shared with the haisou provider, so a gap here is a
+// gap on both paths. Each brand must be validated by its OWN executor parser:
+// trusting the declared platform alone lets an arbitrary URL become a candidate
+// that then fails (or worse, gets trusted) at transfer time.
+describe("normalizeResourceType — URL shape beats the declared platform", () => {
+  it.each([
+    ["115", "https://115.com/s/abc123"],
+    ["115", "https://115cdn.com/s/abc123"],
+    ["quark", "https://pan.quark.cn/s/abc123"],
+    ["uc", "https://drive.uc.cn/s/abc123"],
+    ["123", "https://www.123pan.cn/s/abcd"],
+    ["tianyi", "https://cloud.189.cn/t/aARrYvVBbiMb"],
+    ["guangya", "https://www.guangyapan.com/s/1961038051308896266_al17ELaa58LSIYXK"],
+  ])("accepts a real %s share URL", (rawType, url) => {
+    expect(normalizeResourceType(rawType, url)).toBe(rawType);
+  });
+
+  it.each([
+    ["115", "https://evil.example.com/whatever"],
+    ["quark", "https://evil.example.com/pan.quark.cn/s/abc"],
+    ["quark", "https://evilpan.quark.cn/s/abc"],
+    ["uc", "https://attacker.com/drive.uc.cn/s/x"],
+    ["123", "https://evil.example.com/x"],
+    ["tianyi", "https://evil.example.com/x"],
+    ["guangya", "https://evil.example.com/s/x"],
+  ])("rejects a %s candidate whose URL is not a real share link (%s)", (rawType, url) => {
+    expect(normalizeResourceType(rawType, url)).toBeNull();
+  });
+
+  it("still classifies a magnet link", () => {
+    expect(normalizeResourceType("magnet", "magnet:?xt=urn:btih:abc")).toBe("magnet");
+  });
 });
