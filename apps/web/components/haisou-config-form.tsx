@@ -55,6 +55,7 @@ export function HaisouConfigForm({ apiKeySet }: { apiKeySet: boolean }) {
       );
       if (!r.ok) return;
       const res = r.value;
+      setResult(res.success ? "✅ 已清除，海搜搜索源关闭" : `❌ ${res.message ?? "清除失败"}`);
       if (res.success) {
         setHasKey(false);
         router.refresh();
@@ -72,13 +73,18 @@ export function HaisouConfigForm({ apiKeySet }: { apiKeySet: boolean }) {
           className="setting-control"
           value={apiKey}
           onChange={(event) => setApiKey(event.target.value)}
-          placeholder={hasKey ? "已设置（留空不改）" : "粘贴 idr_ 开头的 Key"}
+          placeholder={hasKey ? "已设置（填入新 Key 可替换）" : "粘贴 idr_ 开头的 Key"}
           aria-label="海搜 API Key"
           autoComplete="off"
         />
       </div>
       <div className="service-actions">
-        <button type="button" className="primary-button" onClick={handleSave} disabled={isPending}>
+        <button
+          type="button"
+          className="primary-button"
+          onClick={handleSave}
+          disabled={isPending || !apiKey.trim()}
+        >
           {isPending ? <LoaderCircle size={14} className="spin" aria-hidden /> : <Check size={14} aria-hidden />}
           保存
         </button>

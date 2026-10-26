@@ -610,7 +610,13 @@ describe("normalizeResourceType — URL shape beats the declared platform", () =
     expect(normalizeResourceType(rawType, url)).toBeNull();
   });
 
-  it("still classifies a magnet link", () => {
-    expect(normalizeResourceType("magnet", "magnet:?xt=urn:btih:abc")).toBe("magnet");
-  });
+  // Regression pin: a magnet tagged with a drive brand must stay a magnet. It used
+  // to fall into the brand branch, which (once those branches started demanding a
+  // real share URL) dropped it outright — quietly losing every 115-sourced torrent.
+  it.each(["115", "123", "tianyi", "quark", "uc", "guangya", "magnet"])(
+    "classifies a magnet as magnet even when rawType is %s",
+    (rawType) => {
+      expect(normalizeResourceType(rawType, "magnet:?xt=urn:btih:abc")).toBe("magnet");
+    },
+  );
 });

@@ -311,6 +311,14 @@ function collectLinkFacts(results: unknown[]): PanSouLinkFact[] {
 }
 
 export function normalizeResourceType(rawType: string, url: string): ResourceType | null {
+  // Magnets first, regardless of the declared rawType: a magnet is transferable by
+  // whichever drive has 秒传, and every executor routes on candidate.type ===
+  // "magnet". Putting this after the brand branches meant a link PanSou tagged
+  // "115" but whose url is a magnet got labelled 115 — and, once the brand
+  // branches started requiring a real share URL shape, silently DROPPED.
+  if (url.startsWith("magnet:")) {
+    return "magnet";
+  }
   // 115 shares live on 115.com/s/<code> or 115cdn.com/s/<code> — the exact
   // prefixes storage-115-executor will transfer. A bare rawType="115" used to be
   // enough, which let an arbitrary URL through as a 115 candidate.
@@ -352,9 +360,6 @@ export function normalizeResourceType(rawType: string, url: string): ResourceTyp
   // (evilguangyapan.com) can never become a candidate that then fails as unsupported.
   if (parseGuangYaShareUrl(url) !== null) {
     return "guangya";
-  }
-  if (url.startsWith("magnet:")) {
-    return "magnet";
   }
   return null;
 }
