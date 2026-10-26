@@ -262,12 +262,14 @@ function absorbCookie(jar: Map<string, string>, raw: string): void {
 }
 
 /** A cookie is being deleted when it carries an expiry at/before the epoch, or
- *  `max-age=0`. */
+ *  `max-age=0`. A malformed attr (`Max-Age` with no value, `Max-Age=`) must NOT
+ *  count: `Number("")` is 0, which would read as "delete" and wipe a live cookie. */
 function isDeletion(attributes: string[]): boolean {
   for (const attr of attributes) {
     const [rawName, rawValue = ""] = attr.split("=");
     const name = rawName?.trim().toLowerCase();
     const value = rawValue.trim();
+    if (value === "") continue;
     if (name === "max-age" && Number(value) <= 0) return true;
     if (name === "expires") {
       const at = Date.parse(value);

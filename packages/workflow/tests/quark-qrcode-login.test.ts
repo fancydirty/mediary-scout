@@ -237,3 +237,35 @@ describe("exchangeCookie — redirect confinement and cookie deletion", () => {
     expect(out.cookie).toContain("__pus=PUS1");
   });
 });
+
+describe("isDeletion edge cases (malformed attributes must not delete)", () => {
+  function hop(setCookie: string[]) {
+    return {
+      status: 200,
+      headers: {
+        getSetCookie: () => setCookie,
+        get: () => null,
+      },
+    };
+  }
+
+  it.each(["Max-Age", "Max-Age=", "max-age=  "])(
+    "an empty %s attribute does not delete a live cookie",
+    async (attr) => {
+      const client = new QuarkQrLoginClient({
+        rawFetch: async () => hop(["__pus=PUS1; Path=/", "__uid=AARtUID; Path=/", `__pus=; ${attr}`]),
+      });
+      // `Number("")` is 0 — without the guard this reads as "delete" and the
+      // jar loses __pus, turning a valid scan into EXCHANGE_FAILED.
+      const out = await client.exchangeCookie("ST");
+      expect(out.cookie).toContain("__pus=PUS1");
+    },
+  );
+
+  it("still honours a real max-age=0 deletion", async () => {
+    const client = new QuarkQrLoginClient({
+      rawFetch: async () => hop(["__pus=PUS1; Path=/", "__uid=AARtUID; Path=/", "__pus=; Max-Age=0"]),
+    });
+    await expect(client.exchangeCookie("ST")).rejects.toThrow(/QUARK_QR_EXCHANGE_FAILED/);
+  });
+});

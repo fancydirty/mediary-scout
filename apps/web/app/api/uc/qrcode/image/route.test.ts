@@ -43,4 +43,14 @@ describe("GET /api/uc/qrcode/image — content validation", () => {
     const res = await GET(req(`https://su.uc.cn/1_n0ZCv?token=${"a".repeat(4000)}`));
     expect(res.status).toBe(400);
   });
+
+  // The cap is measured in BYTES because QR payload limits are byte-based.
+  // This size is chosen to actually distinguish the two: it ENCODES fine, so a
+  // char-count cap would return 200 here — only a byte cap rejects it.
+  it("caps by bytes, not characters", async () => {
+    const cjk = `https://su.uc.cn/1_n0ZCv?token=${"啊".repeat(700)}`;
+    expect(cjk.length).toBeLessThan(2048); // passes a char-count check
+    expect(Buffer.byteLength(cjk, "utf8")).toBeGreaterThan(2048);
+    expect((await GET(req(cjk))).status).toBe(400);
+  });
 });
