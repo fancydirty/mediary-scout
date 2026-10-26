@@ -77,7 +77,9 @@ function FamilyQrConnectBody({ brand }: { brand: keyof typeof BRANDS }) {
     } catch (error) {
       if (generation.current !== myGen) return;
       setPhase("error");
-      setMessage(String(error));
+      // `String(Error)` yields "Error: <msg>"; strip the prefix — this text is
+      // shown verbatim in the panel.
+      setMessage(error instanceof Error ? error.message : String(error));
     }
   }
 
