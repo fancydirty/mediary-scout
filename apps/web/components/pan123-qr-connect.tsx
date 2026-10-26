@@ -47,7 +47,8 @@ export function Pan123QrConnect() {
     } catch (error) {
       if (generation.current !== myGen) return;
       setPhase("error");
-      setMessage(String(error));
+      // `String(Error)` yields "Error: <msg>"; strip it — shown verbatim.
+      setMessage(error instanceof Error ? error.message : String(error));
     }
   }
 

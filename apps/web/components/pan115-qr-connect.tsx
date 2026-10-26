@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, LoaderCircle, QrCode, RefreshCw } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "../lib/use-router";
 
 type Session = { uid: string; time: number; sign: string; qrcodeContent: string };
@@ -24,6 +24,14 @@ export function Pan115QrConnect() {
   const [message, setMessage] = useState<string>("");
   const generation = useRef(0);
 
+  // Unmount: bump the generation so any in-flight poll loop stops instead of
+  // hammering the QR status endpoint until the 5-minute deadline.
+  useEffect(() => {
+    return () => {
+      generation.current += 1;
+    };
+  }, []);
+
   async function start() {
     const myGeneration = ++generation.current;
     setPhase("loading");
@@ -41,7 +49,8 @@ export function Pan115QrConnect() {
     } catch (error) {
       if (generation.current !== myGeneration) return;
       setPhase("error");
-      setMessage(String(error));
+      // `String(Error)` yields "Error: <msg>"; strip it — shown verbatim.
+      setMessage(error instanceof Error ? error.message : String(error));
     }
   }
 

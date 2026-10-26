@@ -1,7 +1,7 @@
 "use client";
 
 import { LoaderCircle, QrCode, RefreshCw } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "../lib/use-router";
 
 /** The FULL TianyiQrSession round-trips through the browser (the 天翼 poll needs
@@ -39,6 +39,14 @@ export function TianyiQrConnect() {
   const [message, setMessage] = useState<string>("");
   const generation = useRef(0);
 
+  // Unmount: bump the generation so any in-flight poll loop stops instead of
+  // hammering the QR status endpoint until the 5-minute deadline.
+  useEffect(() => {
+    return () => {
+      generation.current += 1;
+    };
+  }, []);
+
   async function start() {
     const myGen = ++generation.current;
     setPhase("loading");
@@ -54,7 +62,8 @@ export function TianyiQrConnect() {
     } catch (error) {
       if (generation.current !== myGen) return;
       setPhase("error");
-      setMessage(String(error));
+      // `String(Error)` yields "Error: <msg>"; strip it — shown verbatim.
+      setMessage(error instanceof Error ? error.message : String(error));
     }
   }
 
