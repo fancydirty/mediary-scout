@@ -2328,8 +2328,8 @@ export async function getWorkerResourceProvider(
       }
     }
     // 海搜：站方官方 API（idatariver b9d1），配了 key 才启用。它排在 PanSou 之后
-    // 只是数组顺序，没有优先级含义 —— Composite 是并集去重。每日前 100 次免费
-    // 意味着它是补充源：够补光鸭/115 的量，撑不起每小时巡检 223 个作品。
+    // 只是数组顺序，没有优先级含义 —— Composite 是并集去重。每日前 100 次免费，
+    // 按实际巡检量（一天一个时间点、活跃季个位数）绰绰有余。
     const haisouApiKey = await getHaisouApiKey(settings);
     if (haisouApiKey) {
       providers.push({
