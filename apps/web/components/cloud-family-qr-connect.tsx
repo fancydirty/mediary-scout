@@ -1,7 +1,7 @@
 "use client";
 
 import { LoaderCircle, QrCode, RefreshCw } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "../lib/use-router";
 
 type Session = { token: string; qrcodeContent: string };
@@ -52,6 +52,15 @@ function FamilyQrConnectBody({ brand }: { brand: keyof typeof BRANDS }) {
   const [session, setSession] = useState<Session | null>(null);
   const [message, setMessage] = useState<string>("");
   const generation = useRef(0);
+
+  // Stop the 2s poll when the panel is unmounted (user switched brand / left the
+  // page): without this the loop keeps hitting the CAS endpoint for up to the
+  // 5-minute deadline after the user is gone. Same guard as Pan123QrConnect.
+  useEffect(() => {
+    return () => {
+      generation.current += 1;
+    };
+  }, []);
 
   async function start() {
     const myGen = ++generation.current;
