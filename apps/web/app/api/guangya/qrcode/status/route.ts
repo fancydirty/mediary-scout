@@ -22,6 +22,12 @@ import { isDemoMode } from "../../../../../lib/demo-mode";
  *    the code is already spent, so waiting would hang forever.
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  // Gate BEFORE polling: this call consumes the single-use device_code upstream,
+  // so a demo-mode visitor could otherwise burn a real visitor's code (and make
+  // us send outbound token requests on their behalf).
+  if (isDemoMode()) {
+    return NextResponse.json({ ok: false, error: "演示站只读" }, { status: 403 });
+  }
   const deviceCode = request.nextUrl.searchParams.get("deviceCode") ?? "";
   if (!deviceCode.trim()) {
     return NextResponse.json({ ok: false, error: "missing deviceCode" }, { status: 400 });
@@ -38,12 +44,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }
 
   // Approved. The code is now spent — binding must happen on THIS request.
-  if (isDemoMode()) {
-    // Still return confirmed so the demo UI doesn't hang on a dead code, but
-    // don't persist anything.
-    return NextResponse.json({ ok: true, status: "confirmed", demo: true });
-  }
-
   let runtime: typeof import("../../../../../lib/workflow-runtime");
   try {
     runtime = await import("../../../../../lib/workflow-runtime");

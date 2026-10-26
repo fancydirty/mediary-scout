@@ -151,7 +151,9 @@ function readString(value: unknown, key: string): string {
   return typeof raw === "string" ? raw.trim() : "";
 }
 
+/** Positive only: a 0 or negative `expires_in`/`interval` must fall back to the
+ *  defaults rather than time the session out instantly or spin the poll loop. */
 function readNumber(value: unknown, key: string): number | null {
   const raw = asRecord(value)?.[key];
-  return typeof raw === "number" && Number.isFinite(raw) ? raw : null;
+  return typeof raw === "number" && Number.isFinite(raw) && raw > 0 ? raw : null;
 }

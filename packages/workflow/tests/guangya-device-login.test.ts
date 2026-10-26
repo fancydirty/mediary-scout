@@ -70,6 +70,18 @@ describe("GuangYaDeviceLogin.start", () => {
     await expect(login.start()).rejects.toThrow(/permission_denied/);
   });
 
+  // A non-positive expires_in/interval must fall back to the defaults: 0 would
+  // time the session out instantly, and a 0 interval would spin the poll loop.
+  it.each([
+    [{ ...STARTED, expires_in: 0, interval: 0 }],
+    [{ ...STARTED, expires_in: -5, interval: -1 }],
+  ])("falls back to sane defaults for non-positive timing (%#)", async (body) => {
+    const { login } = client(() => jsonResponse(body));
+    const code = await login.start();
+    expect(code.expiresIn).toBe(120);
+    expect(code.interval).toBe(2);
+  });
+
   it("throws when the response is 200 but missing fields", async () => {
     const { login } = client(() => jsonResponse({ device_code: "x" }));
     await expect(login.start()).rejects.toThrow(/GUANGYA_DEVICE_CODE_FAILED/);

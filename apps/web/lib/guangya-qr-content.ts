@@ -19,6 +19,14 @@ export function buildGuangYaQrContent(input: {
 }): string {
   const { verificationUrl, userCode } = input;
   if (!userCode) return verificationUrl;
-  const joiner = verificationUrl.includes("?") ? "&" : "?";
-  return `${verificationUrl}${joiner}user_code=${encodeURIComponent(userCode)}`;
+  // Prefer URL/searchParams: string concatenation neither dedupes an existing
+  // user_code nor copes with a #fragment if the upstream format ever changes.
+  try {
+    const url = new URL(verificationUrl);
+    url.searchParams.set("user_code", userCode);
+    return url.toString();
+  } catch {
+    const joiner = verificationUrl.includes("?") ? "&" : "?";
+    return `${verificationUrl}${joiner}user_code=${encodeURIComponent(userCode)}`;
+  }
 }

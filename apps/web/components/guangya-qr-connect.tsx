@@ -10,19 +10,13 @@ type Session = { deviceCode: string; userCode: string; verificationUrl: string; 
 function qrContent(session: Session): string {
   return buildGuangYaQrContent({ verificationUrl: session.verificationUrl, userCode: session.userCode });
 }
-type Phase = "idle" | "loading" | "waiting" | "confirming" | "done" | "expired" | "error";
+type Phase = "idle" | "loading" | "waiting" | "done" | "expired" | "error";
 
 const API = "/api/guangya/qrcode";
 
-/** 二维码框下方的状态文案。 */
-function statusLabel(phase: Phase): string {
-  if (phase === "waiting") return "用光鸭 App 扫码";
-  return "正在完成登录…";
-}
-
 function buttonIcon(phase: Phase) {
   if (phase === "loading") return <LoaderCircle size={14} className="spin" aria-hidden />;
-  if (phase === "expired") return <RefreshCw size={14} aria-hidden />;
+  if (phase === "waiting" || phase === "expired") return <RefreshCw size={14} aria-hidden />;
   return <QrCode size={14} aria-hidden />;
 }
 
@@ -143,7 +137,7 @@ export function GuangYaQrConnect() {
           className="primary-button"
           type="button"
           onClick={start}
-          disabled={phase === "loading" || phase === "confirming"}
+          disabled={phase === "loading"}
         >
           {buttonIcon(phase)}
           {phase === "idle" || phase === "done" ? "生成二维码" : "重新生成"}
@@ -152,14 +146,14 @@ export function GuangYaQrConnect() {
       <p className="qr-hint">
         用光鸭 App 扫码登录；token 持久化到数据库，过期时自动续期（续期后自动保存）。
       </p>
-      {session && (phase === "waiting" || phase === "confirming") ? (
+      {session && phase === "waiting" ? (
         <div className="qr-frame">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={`${API}/image?content=${encodeURIComponent(qrContent(session))}`}
             alt="光鸭云盘登录二维码"
           />
-          <span className={`qr-status ${phase === "confirming" ? "scanned" : phase}`}>{statusLabel(phase)}</span>
+          <span className={`qr-status ${phase}`}>用光鸭 App 扫码</span>
         </div>
       ) : null}
       {message ? (
