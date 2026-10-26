@@ -54,9 +54,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (error instanceof runtime.StorageOwnedByOtherAccountError) {
       return NextResponse.json({ ok: false, error: error.message }, { status: 409 });
     }
-    return NextResponse.json(
-      { ok: false, error: error instanceof Error ? error.message : "登录失败" },
-      { status: 502 },
-    );
+    // An Error with an EMPTY message yields "" and the UI renders a blank
+    // "❌ " with no explanation. Fall back through message → name → generic.
+    const message =
+      (error instanceof Error ? error.message.trim() || error.name : String(error).trim()) || "登录失败";
+    return NextResponse.json({ ok: false, error: message }, { status: 502 });
   }
 }

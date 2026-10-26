@@ -5,6 +5,17 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "../lib/use-router";
 
 type Session = { deviceCode: string; userCode: string; verificationUrl: string; expiresIn: number; interval: number };
+
+/** The QR must encode the verification_url WITH `&user_code=…` appended.
+ *  Scan the bare URL from /v1/auth/device/code and the 光鸭 app resolves it to a
+ *  404 — `user_code` is what identifies WHICH pending authorization is being
+ *  approved. Confirmed against the real site on 2026-10-26 by reading the value
+ *  the page hands to its QR canvas. */
+function qrContent(session: Session): string {
+  if (!session.userCode) return session.verificationUrl;
+  const joiner = session.verificationUrl.includes("?") ? "&" : "?";
+  return `${session.verificationUrl}${joiner}user_code=${encodeURIComponent(session.userCode)}`;
+}
 type Phase = "idle" | "loading" | "waiting" | "confirming" | "done" | "expired" | "error";
 
 const API = "/api/guangya/qrcode";
@@ -162,7 +173,7 @@ export function GuangYaQrConnect() {
         <div className="qr-frame">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={`${API}/image?content=${encodeURIComponent(session.verificationUrl)}`}
+            src={`${API}/image?content=${encodeURIComponent(qrContent(session))}`}
             alt="光鸭云盘登录二维码"
           />
           <span className={`qr-status ${phase === "confirming" ? "scanned" : phase}`}>{statusLabel(phase)}</span>
