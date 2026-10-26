@@ -61,13 +61,16 @@ export function GuangYaQrConnect() {
     try {
       const res = await fetch(API, { method: "POST" });
       const data = (await res.json()) as { ok: boolean; error?: string } & Partial<Session>;
-      if (!data.ok || !data.deviceCode || !data.verificationUrl) {
+      // userCode is required too: without it the QR resolves to a 404 in the
+      // 光鸭 app (see buildGuangYaQrContent). Fail fast rather than render a
+      // code nobody can use.
+      if (!data.ok || !data.deviceCode || !data.userCode || !data.verificationUrl) {
         throw new Error(data.error ?? "无法获取二维码");
       }
       if (generation.current !== myGen) return;
       const next: Session = {
         deviceCode: data.deviceCode,
-        userCode: data.userCode ?? "",
+        userCode: data.userCode,
         verificationUrl: data.verificationUrl,
         expiresIn: data.expiresIn ?? 120,
         interval: data.interval ?? 2,
@@ -90,60 +93,46 @@ export function GuangYaQrConnect() {
     while (Date.now() < deadline && generation.current === myGen) {
       await new Promise((r) => setTimeout(r, waitMs));
       if (generation.current !== myGen) return;
+
       let status = "pending";
+      let error: string | undefined;
       try {
+        // This call also BINDS on approval — the device code is single-use, so
+        // the exchange has to happen in the same request that observes it.
         const res = await fetch(`${API}/status?deviceCode=${encodeURIComponent(s.deviceCode)}`);
         const data = (await res.json()) as { ok: boolean; status?: string; error?: string };
-        // A failed poll is transient; only an explicit terminal status ends it.
-        if (data.ok && data.status) status = data.status;
+        if (data.ok && data.status) {
+          status = data.status;
+        } else if (data.error) {
+          // A real error (not a transient network blip): the code may already be
+          // spent, so surface it instead of looping forever.
+          error = data.error;
+        }
       } catch {
-        // transient — keep polling
+        // network blip — keep polling
       }
       if (generation.current !== myGen) return;
+
+      if (error) {
+        setPhase("error");
+        setMessage(error);
+        return;
+      }
       if (status === "expired") {
         setPhase("expired");
         setMessage("二维码已过期，请重新生成。");
         return;
       }
       if (status === "confirmed") {
-        setPhase("confirming");
-        await confirm(s.deviceCode, myGen);
+        setPhase("done");
+        setMessage("光鸭云盘已连接。");
+        router.refresh();
         return;
       }
     }
     if (generation.current === myGen) {
       setPhase("expired");
       setMessage("等待超时，请重新生成二维码。");
-    }
-  }
-
-  async function confirm(deviceCode: string, myGen: number) {
-    try {
-      const res = await fetch(`${API}/confirm`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deviceCode }),
-      });
-      const data = (await res.json()) as { ok: boolean; providerUid?: string; error?: string };
-      if (generation.current !== myGen) return;
-      if (!data.ok) {
-        // 409 = not approved yet (a race with the poll tick); treat it as more
-        // waiting rather than a hard failure.
-        if (res.status === 409) {
-          setPhase("waiting");
-          return;
-        }
-        setPhase("error");
-        setMessage(data.error ?? "登录失败");
-        return;
-      }
-      setPhase("done");
-      setMessage("光鸭云盘已连接。");
-      router.refresh();
-    } catch {
-      if (generation.current !== myGen) return;
-      setPhase("error");
-      setMessage("网络异常，请重试。");
     }
   }
 

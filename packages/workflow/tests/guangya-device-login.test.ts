@@ -62,6 +62,14 @@ describe("GuangYaDeviceLogin.start", () => {
     await expect(login.start()).rejects.toThrow(/permission_denied|scope openid/);
   });
 
+  // OAuth errors often carry only `error`, no `error_description`. Without this
+  // fallback the message degrades to a bare "HTTP 403" and the real reason is lost
+  // — which is exactly how the scope misconfiguration looked when I hit it.
+  it("keeps the OAuth error code when error_description is absent", async () => {
+    const { login } = client(() => jsonResponse({ error: "permission_denied" }, 403));
+    await expect(login.start()).rejects.toThrow(/permission_denied/);
+  });
+
   it("throws when the response is 200 but missing fields", async () => {
     const { login } = client(() => jsonResponse({ device_code: "x" }));
     await expect(login.start()).rejects.toThrow(/GUANGYA_DEVICE_CODE_FAILED/);

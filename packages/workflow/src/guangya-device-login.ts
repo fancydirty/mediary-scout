@@ -82,8 +82,12 @@ export class GuangYaDeviceLogin {
     const userCode = readString(body, "user_code");
     const verificationUrl = readString(body, "verification_url");
     if (!response.ok || !deviceCode || !userCode || !verificationUrl) {
+      // OAuth errors often omit error_description and carry only `error`
+      // (permission_denied / not_found) — keep that code in the message.
       throw new Error(
-        `GUANGYA_DEVICE_CODE_FAILED: ${readString(body, "error_description") || `HTTP ${response.status}`}`,
+        `GUANGYA_DEVICE_CODE_FAILED: ${
+          readString(body, "error_description") || readString(body, "error") || `HTTP ${response.status}`
+        }`,
       );
     }
     return {
