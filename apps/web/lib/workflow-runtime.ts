@@ -2280,7 +2280,7 @@ function parseTvCandidateId(candidateId: string): { tmdbId: number; seasonNumber
   };
 }
 
-async function getWorkerResourceProvider(
+export async function getWorkerResourceProvider(
   settings: { getSetting(key: string): Promise<string | null> } = getWorkflowRepository(),
   provider: string = "pan115",
   accountId?: string,
