@@ -1,7 +1,7 @@
 import type { AgentMemoryStore } from "../agent-memory.js";
 import type { LanguageModel } from "ai";
 import type { MediaTitle } from "../domain.js";
-import type { ResourceProvider, StorageExecutor } from "../ports.js";
+import type { AcquisitionDriveContext, ResourceProvider, StorageExecutor } from "../ports.js";
 import {
   bridgeV2WorkflowToResult,
   type BridgedV2Result,
@@ -64,6 +64,8 @@ export interface RunTvAcquisitionV2Request {
   stagingRecovery?: RunAcquisitionV2WorkflowRequest["stagingRecovery"];
   /** Web-reference tools (alternate titles, fan-season ↔ TMDB episode mapping). */
   titleResearch?: RunAcquisitionV2WorkflowRequest["titleResearch"];
+  /** Ordered active drives for this account in unified multi-drive mode. */
+  drives?: AcquisitionDriveContext[];
   onProgress?: (event: AgentToolEvent) => void;
   now?: () => string;
 }
@@ -115,6 +117,7 @@ export async function runTvAcquisitionV2(request: RunTvAcquisitionV2Request): Pr
     ...(request.linkHistory ? { linkHistory: request.linkHistory } : {}),
     ...(request.stagingRecovery ? { stagingRecovery: request.stagingRecovery } : {}),
     ...(request.titleResearch === undefined ? {} : { titleResearch: request.titleResearch }),
+    ...(request.drives === undefined ? {} : { drives: request.drives }),
     ...(request.onProgress ? { onProgress: request.onProgress } : {}),
   });
 

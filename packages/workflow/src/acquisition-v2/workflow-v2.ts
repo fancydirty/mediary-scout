@@ -1,6 +1,6 @@
 import type { AgentMemoryStore } from "../agent-memory.js";
 import type { LanguageModel } from "ai";
-import type { ResourceProvider, StorageExecutor } from "../ports.js";
+import type { AcquisitionDriveContext, ResourceProvider, StorageExecutor } from "../ports.js";
 import type { AuditEvent } from "../domain.js";
 import {
   bindRecoveryDirectories,
@@ -85,6 +85,8 @@ export interface RunAcquisitionV2WorkflowRequest {
   stagingRecovery?: StagingRecoveryDirectories;
   /** Web-reference tools (alternate titles, fan-season ↔ TMDB episode mapping). */
   titleResearch?: { web: { llmBaseURL?: string; llmApiKey?: string; timeoutMs?: number; limit?: number } };
+  /** Ordered active drives for this account in unified multi-drive mode. */
+  drives?: AcquisitionDriveContext[];
   onProgress?: (event: AgentToolEvent) => void;
 }
 
@@ -229,6 +231,7 @@ export async function runAcquisitionV2Workflow(
     ...(request.rejectedLookup ? { rejectedLookup: request.rejectedLookup } : {}),
     ...(request.linkHistory ? { linkHistory: request.linkHistory } : {}),
     ...(request.titleResearch === undefined ? {} : { titleResearch: request.titleResearch }),
+    ...(request.drives === undefined ? {} : { drives: request.drives }),
     ...(request.onProgress ? { onProgress: request.onProgress } : {}),
     unmovedStaging,
     ...(request.stagingRecovery ? { terminalCleanup } : {}),

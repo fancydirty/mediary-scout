@@ -2,7 +2,7 @@ import { memoryTitleKey, type AgentMemory, type AgentMemoryStore } from "../agen
 import { buildReflectionDigest, runMemoryReflection } from "./agent-loop.js";
 import type { LanguageModel } from "ai";
 import type { AgentDecision, AuditEvent, ResourceSnapshot, TransferAttempt } from "../domain.js";
-import type { ResourceProvider, StorageExecutor } from "../ports.js";
+import type { AcquisitionDriveContext, ResourceProvider, StorageExecutor } from "../ports.js";
 import type { AcquisitionAgentResult } from "./agent-loop.js";
 import type { AgentToolEvent } from "./activity.js";
 import { CandidateRegistry } from "./candidate-registry.js";
@@ -126,6 +126,8 @@ export interface RunAcquisitionV2Request {
    *  search routes through DeepSeek's own engine when that is what they use.
    *  Absent = no web access (and no fan-season block in the prompt). */
   titleResearch?: { web: { llmBaseURL?: string; llmApiKey?: string; timeoutMs?: number; limit?: number } };
+  /** Ordered active drives for this account in unified multi-drive mode. */
+  drives?: AcquisitionDriveContext[];
   /** A replace_request run (user message). See docs/superpowers/specs/2026-09-26-user-message-replace-design.md. */
   userRequest?: {
     /** Episodes the user named or that are still pending (movie: ["MOVIE"]). Added to the need. */

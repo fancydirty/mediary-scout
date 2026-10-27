@@ -10,7 +10,7 @@ import type {
   TrackedSeason,
   WorkflowStatus,
 } from "./domain.js";
-import type { ResourceProvider, StorageExecutor } from "./ports.js";
+import type { AcquisitionDriveContext, ResourceProvider, StorageExecutor } from "./ports.js";
 import type { PersistedWorkflowRunSnapshot, QueueClaimOptions, WorkflowRepository } from "./repository.js";
 import {
   AUTO_REQUEUE_BACKOFF_MS,
@@ -113,6 +113,7 @@ export async function resolveWorkerDeps(
   storageParentDirectoryId: string | undefined;
   animeStorageParentDirectoryId: string | undefined;
   moviesParentDirectoryId: string | undefined;
+  drives: AcquisitionDriveContext[] | undefined;
 }> {
   const ctx = resolve ? await resolve(accountId, connectedStorageId) : {};
   return {
@@ -143,6 +144,7 @@ export async function resolveWorkerDeps(
       ctx.animeStorageParentDirectoryId ?? base.animeStorageParentDirectoryId,
     moviesParentDirectoryId:
       ctx.moviesParentDirectoryId ?? base.moviesParentDirectoryId,
+    drives: ctx.drives ?? base.drives,
   };
 }
 
@@ -194,6 +196,8 @@ export interface AccountWorkerContext {
   storageParentDirectoryId?: string;
   animeStorageParentDirectoryId?: string;
   moviesParentDirectoryId?: string;
+  /** Ordered active drives for this account in unified multi-drive mode. */
+  drives?: AcquisitionDriveContext[];
 }
 
 export type ResolveAccountWorkerContext = (
@@ -524,6 +528,7 @@ export async function runQueuedType2Workflow(input: {
         ...(deps.titleResearch === undefined
           ? {}
           : { titleResearch: deps.titleResearch }),
+      ...(deps.drives === undefined ? {} : { drives: deps.drives }),
       // finishedAt is stamped post-run inside the persist step (see runner-v2),
       // so it reflects actual completion, not the claim time.
       workflowRun: {
@@ -875,6 +880,7 @@ async function patrolTrackedState(args: {
           ...(deps.titleResearch === undefined
             ? {}
             : { titleResearch: deps.titleResearch }),
+        ...(deps.drives === undefined ? {} : { drives: deps.drives }),
         workflowRun: { id: workflowRunId, startedAt, finishedAt: null },
         now,
       });
@@ -976,6 +982,7 @@ async function patrolMovie(args: {
     agentMemory: boolean | undefined;
     titleResearch: TitleResearchOptions | undefined;
     moviesParentDirectoryId: string | undefined;
+    drives: AcquisitionDriveContext[] | undefined;
   };
   state: {
     accountId: string;
@@ -1082,6 +1089,7 @@ async function patrolMovie(args: {
         ...(deps.titleResearch === undefined
           ? {}
           : { titleResearch: deps.titleResearch }),
+      ...(deps.drives === undefined ? {} : { drives: deps.drives }),
       // Reported in the sweep's daily digest, like the shows, not pushed on its own.
       notice: { trigger: "scheduled", routineIfNothingReplaced: false },
       workflowRun: { id: workflowRunId, startedAt, finishedAt: null },
@@ -1261,6 +1269,7 @@ export async function runQueuedMovieAcquisition(input: {
         ...(deps.titleResearch === undefined
           ? {}
           : { titleResearch: deps.titleResearch }),
+      ...(deps.drives === undefined ? {} : { drives: deps.drives }),
       workflowRun: {
         id: claimed.workflowRun.id,
         startedAt: claimed.workflowRun.startedAt,
@@ -1382,6 +1391,7 @@ export async function runQueuedSeriesInitialization(input: {
         ...(deps.titleResearch === undefined
           ? {}
           : { titleResearch: deps.titleResearch }),
+      ...(deps.drives === undefined ? {} : { drives: deps.drives }),
       workflowRun: {
         id: claimed.workflowRun.id,
         startedAt: claimed.workflowRun.startedAt,

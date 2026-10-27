@@ -20,7 +20,7 @@ import { makeProgressSink } from "./acquisition-v2/progress-sink.js";
 import { makeAgentTraceSink, combineToolEventSinks } from "./acquisition-v2/agent-trace-sink.js";
 import { runMovieAcquisitionV2, type MovieAcquisitionV2Result, type RunMovieAcquisitionV2Request } from "./movie-workflow-v2.js";
 import type { JevJudge } from "./jev-judge.js";
-import type { ResourceProvider, StorageExecutor } from "./ports.js";
+import type { AcquisitionDriveContext, ResourceProvider, StorageExecutor } from "./ports.js";
 import type { PersistWorkflowRunSnapshotInput, WorkflowRepository } from "./repository.js";
 import { userMessageDrive } from "./user-requests.js";
 import { stampReplaceNotification } from "./notification-report.js";
@@ -64,6 +64,8 @@ interface TvV2Common {
   agentMemory?: boolean;
   /** Web-reference tools (alternate titles, fan-season ↔ TMDB episode mapping). */
   titleResearch?: TitleResearchOptions;
+  /** Ordered active drives for this account in unified multi-drive mode. */
+  drives?: AcquisitionDriveContext[];
   /**
    * Wall clock for the run. Drives the engine's timestamps (including the
    * terminal notification's `createdAt`) AND the persisted `finishedAt`, which
@@ -90,6 +92,7 @@ function passthrough(input: TvV2Common): {
   jevJudge?: JevJudge;
   memory?: { store: AgentMemoryStore; accountId: string; drive?: string };
   titleResearch?: TitleResearchOptions;
+  drives?: AcquisitionDriveContext[];
 } {
   return {
     ...memoryOption(input),
@@ -101,6 +104,7 @@ function passthrough(input: TvV2Common): {
     ...(input.assrtToken === undefined ? {} : { assrtToken: input.assrtToken }),
     ...(input.jevJudge === undefined ? {} : { jevJudge: input.jevJudge }),
     ...(input.titleResearch === undefined ? {} : { titleResearch: input.titleResearch }),
+    ...(input.drives === undefined ? {} : { drives: input.drives }),
   };
 }
 
@@ -768,6 +772,8 @@ export async function runMovieAcquisitionV2AndPersist(input: {
   agentMemory?: boolean;
   /** Web-reference tools (alternate titles). */
   titleResearch?: TitleResearchOptions;
+  /** Ordered active drives for this account in unified multi-drive mode. */
+  drives?: AcquisitionDriveContext[];
   /** A replace_request run (user message): persisted under kind replace_request. */
   userRequest?: RunMovieAcquisitionV2Request["userRequest"];
   /** Replace runs: whether the film was obtained before (see RunMovieAcquisitionV2Request). */
@@ -810,6 +816,7 @@ export async function runMovieAcquisitionV2AndPersist(input: {
     ...linkHistoryOption({ ...input, workflowRunId: input.workflowRun.id, now }),
     ...memoryOption(input),
     ...(input.titleResearch === undefined ? {} : { titleResearch: input.titleResearch }),
+    ...(input.drives === undefined ? {} : { drives: input.drives }),
   });
 
   const held = await saveRunRecord({ ...input, now }, result.status, stampNotifications(result.notifications, input.notice), (run, notifications) => ({

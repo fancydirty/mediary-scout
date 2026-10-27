@@ -539,6 +539,35 @@ export interface DriveSpaceCacheEntry {
 /** 30-minute TTL for cached drive space numbers (`drive_space_cache`). */
 export const DRIVE_SPACE_CACHE_TTL_MS = 30 * 60 * 1000;
 
+/** Account-setting key storing the user's preferred drive order (JSON `string[]` of storageIds). */
+export const DRIVE_ORDER_SETTING_KEY = "drive_order";
+
+/** Order a list of drives by a user-configured `drive_order` array. Any drive not
+ *  named in `order` keeps its relative `createdAt` (connection-order) position after
+ *  the ordered ones. Pure & deterministic. */
+export function sortDrivesByOrder<T extends { id: string; createdAt?: string }>(
+  drives: readonly T[],
+  order: readonly string[] | null | undefined,
+): T[] {
+  const rank = new Map<string, number>();
+  order?.forEach((id, idx) => {
+    if (typeof id === "string" && id && !rank.has(id)) {
+      rank.set(id, idx);
+    }
+  });
+  return [...drives].sort((a, b) => {
+    const rA = rank.get(a.id);
+    const rB = rank.get(b.id);
+    if (rA !== undefined && rB !== undefined) return rA - rB;
+    if (rA !== undefined) return -1;
+    if (rB !== undefined) return 1;
+    if (a.createdAt && b.createdAt && a.createdAt !== b.createdAt) {
+      return a.createdAt.localeCompare(b.createdAt);
+    }
+    return 0;
+  });
+}
+
 /** Format drive space into a concise human-readable Chinese string for settings cards
  *  and agent context. Negative remaining bytes (over-quota) are preserved explicitly,
  *  never clamped to zero. */

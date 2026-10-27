@@ -84,7 +84,10 @@ import {
   pickWorkspaceStorageId,
   resolveQueueStorageChoice,
   resolveWorkspaceFromParam,
+  DRIVE_ORDER_SETTING_KEY,
   DRIVE_SPACE_CACHE_TTL_MS,
+  sortDrivesByOrder,
+  type AcquisitionDriveContext,
   type DriveSpaceCacheEntry,
   type DriveSpaceInfo,
   type Account,
@@ -966,6 +969,7 @@ export function buildAccountContextResolver(): ResolveAccountWorkerContext {
       console.log(`[memory] agent_memory_enabled read failed (defaulting on): ${error instanceof Error ? error.message : String(error)}`);
       return true;
     });
+    const drives = await resolveAccountActiveDrives(accountId);
     return {
       storage: await getWorkerStorageExecutor(accountId, connectedStorageId),
       resourceProvider: await getWorkerResourceProvider(scoped, driveProvider, accountId),
@@ -984,8 +988,102 @@ export function buildAccountContextResolver(): ResolveAccountWorkerContext {
       storageParentDirectoryId: parents.tv,
       animeStorageParentDirectoryId: parents.anime,
       moviesParentDirectoryId: parents.movies,
+      ...(drives.length > 0 ? { drives } : {}),
     };
   };
+}
+
+/** Read the account's user-configured drive priority order (`drive_order` setting). */
+export async function getAccountDriveOrder(
+  accountId: string,
+  repository: Pick<WorkflowRepository, "getAccountSetting"> = getWorkflowRepository(),
+): Promise<string[]> {
+  try {
+    const raw = await repository.getAccountSetting(accountId, DRIVE_ORDER_SETTING_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((id): id is string => typeof id === "string" && id.trim() !== "");
+  } catch {
+    return [];
+  }
+}
+
+/** Persist the account's user-configured drive priority order (`drive_order` setting). */
+export async function setAccountDriveOrder(
+  accountId: string,
+  driveIds: readonly string[],
+  repository: Pick<WorkflowRepository, "setAccountSetting"> = getWorkflowRepository(),
+): Promise<void> {
+  const unique = [...new Set(driveIds.map((id) => id.trim()).filter(Boolean))];
+  await repository.setAccountSetting(accountId, DRIVE_ORDER_SETTING_KEY, JSON.stringify(unique));
+}
+
+/**
+ * Resolve all active, registered drives for `accountId` in the user's configured
+ * priority order (`drive_order`, falling back to `created_at`). Each entry carries
+ * its own StorageExecutor, its own provisioned category parents (`tv`, `anime`,
+ * `movies`), and its cached space info.
+ *
+ * ⚠️ Unlike `getWorkerStorageParents`, non-115 drives NEVER fall back to the
+ * global 115 env CIDs (`TV_SHOWS_CID`, etc.); a drive whose category CIDs are
+ * missing and cannot be self-healed is skipped rather than given another drive's CIDs.
+ */
+export async function resolveAccountActiveDrives(
+  accountId: string = DEFAULT_ACCOUNT_ID,
+): Promise<AcquisitionDriveContext[]> {
+  const adapter = process.env.MEDIA_TRACK_STORAGE_ADAPTER ?? "fake";
+  if (adapter !== "115") {
+    return [];
+  }
+  try {
+    const repo = getWorkflowRepository();
+    const rows = (await repo.listConnectedStorages(accountId)).filter(
+      (row) => row.status === "active" && isRegisteredStorageProvider(row.provider),
+    );
+    if (rows.length === 0) {
+      return [];
+    }
+    const order = await getAccountDriveOrder(accountId, repo);
+    const sorted = sortDrivesByOrder(rows, order);
+    const resolved = await Promise.all(
+      sorted.map(async (row): Promise<AcquisitionDriveContext | null> => {
+        try {
+          const creds = await getAccountStorageCredentials(accountId, row.id);
+          if (!creds || creds.status !== "active") {
+            return null;
+          }
+          const is115 = creds.provider === "pan115";
+          const tv = creds.tvCid || (is115 ? storageParentDirectoryId() : "");
+          const anime = creds.animeCid || creds.tvCid || (is115 ? animeParentDirectoryId() : "");
+          const movies = creds.moviesCid || (is115 ? moviesParentDirectoryId() : "");
+          if (!tv || !anime || !movies) {
+            return null;
+          }
+          const [storage, space] = await Promise.all([
+            getWorkerStorageExecutor(accountId, row.id),
+            resolveCachedDriveSpace(accountId, row.id, "active"),
+          ]);
+          const brandLabel = getStorageBrand(creds.provider).label;
+          return {
+            storageId: row.id,
+            provider: creds.provider,
+            label: row.label?.trim() ? `${brandLabel}（${row.label.trim()}）` : brandLabel,
+            storage,
+            parents: { tv, anime, movies },
+            space,
+          };
+        } catch (error) {
+          console.warn(`[multi-drive] skipping drive ${row.id} for ${accountId}: ${String(error)}`);
+          return null;
+        }
+      }),
+    );
+    return resolved.filter((ctx): ctx is AcquisitionDriveContext => ctx !== null);
+  } catch (error) {
+    console.warn(`[multi-drive] failed to resolve active drives for ${accountId}: ${String(error)}`);
+    return [];
+  }
 }
 
 /** 记录自建搜索源的最新健康结论,供设置页徽章读取(它每 8s 轮询,不能自己打网络)。
@@ -3247,7 +3345,9 @@ export async function getAccountConnectedStorages(options?: {
 }): Promise<ConnectedStorageView[]> {
   const accountId = await getCurrentAccountId();
   const repository = getWorkflowRepository();
-  const rows = await repository.listConnectedStorages(accountId);
+  const rawRows = await repository.listConnectedStorages(accountId);
+  const order = await getAccountDriveOrder(accountId, repository);
+  const rows = sortDrivesByOrder(rawRows, order);
   const includeSpace = options?.includeSpace === true;
   return Promise.all(
     rows.map(async (row) => {

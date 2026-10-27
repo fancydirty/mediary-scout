@@ -29,6 +29,22 @@ export interface DriveSpaceInfo {
   usedBytes: number;
 }
 
+/** One active drive available to a unified multi-drive acquisition run, ordered by
+ *  the user's preference (`drive_order` setting, falling back to `created_at`). */
+export interface AcquisitionDriveContext {
+  storageId: string;
+  provider: string;
+  label: string;
+  storage: StorageExecutor;
+  parents: {
+    tv: string;
+    anime: string;
+    movies: string;
+  };
+  /** Cached or freshly-probed drive capacity at run start. Null when unknown. */
+  space: DriveSpaceInfo | null;
+}
+
 export interface StorageExecutor {
   /** Query the drive's total and used space in bytes. `totalBytes - usedBytes` may
    *  be negative when a drive is over-quota (e.g. expired SVIP). Returns null on a

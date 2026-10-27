@@ -3,7 +3,7 @@ import type { QueueClaimOptions, TrackedSeasonState, WorkflowRepository } from "
 import { claimNextQueuedRun } from "./repository.js";
 import type { AuditEvent, EpisodeState, TrackedSeason } from "./domain.js";
 import { syncSeasonAgainstMetadata } from "./season-sync.js";
-import type { ResourceProvider, StorageExecutor } from "./ports.js";
+import type { AcquisitionDriveContext, ResourceProvider, StorageExecutor } from "./ports.js";
 import type { JevJudge } from "./jev-judge.js";
 import type { RunAcquisitionV2Request, RunAcquisitionV2Result } from "./acquisition-v2/orchestrator.js";
 import type { TitleResearchOptions } from "./acquisition-v2/title-research.js";
@@ -622,6 +622,7 @@ function optionalDeps(deps: Awaited<ReturnType<typeof resolveWorkerDeps>>): {
   jevJudge?: JevJudge;
   agentMemory?: boolean;
   titleResearch?: TitleResearchOptions;
+  drives?: AcquisitionDriveContext[];
 } {
   return {
     ...(deps.preferredLanguage === undefined ? {} : { preferredLanguage: deps.preferredLanguage }),
@@ -633,5 +634,6 @@ function optionalDeps(deps: Awaited<ReturnType<typeof resolveWorkerDeps>>): {
     // A replacement run searches and transfers like any other — without this the
     // configured web tools (and the fan-season mapping prompt) silently vanish.
     ...(deps.titleResearch === undefined ? {} : { titleResearch: deps.titleResearch }),
+    ...(deps.drives === undefined ? {} : { drives: deps.drives }),
   };
 }

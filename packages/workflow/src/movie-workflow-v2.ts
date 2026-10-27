@@ -17,7 +17,7 @@ import {
 import { buildMovieReport, buildReplacementReport, emptyRunOutcome, formatReportPushText } from "./notification-report.js";
 import { classifyTransferBlock } from "./acquisition-v2/transfer-block.js";
 import { classifySearchSourceFault } from "./acquisition-v2/search-source-fault.js";
-import type { ResourceProvider, StorageExecutor } from "./ports.js";
+import type { AcquisitionDriveContext, ResourceProvider, StorageExecutor } from "./ports.js";
 import type { DeadLinkStore } from "./acquisition-v2/dead-links.js";
 import { readLandedSize, type LandedSize } from "./acquisition-v2/landed-size.js";
 import type { AgentToolEvent } from "./acquisition-v2/activity.js";
@@ -71,6 +71,8 @@ export interface RunMovieAcquisitionV2Request {
   linkHistory?: RunAcquisitionV2Request["linkHistory"];
   /** Web-reference tools (alternate titles for a film). */
   titleResearch?: RunAcquisitionV2Request["titleResearch"];
+  /** Ordered active drives for this account in unified multi-drive mode. */
+  drives?: AcquisitionDriveContext[];
   onProgress?: (event: AgentToolEvent) => void;
   now?: () => string;
 }
@@ -131,6 +133,7 @@ export async function runMovieAcquisitionV2(
     ...(request.rejectedLookup ? { rejectedLookup: request.rejectedLookup } : {}),
     ...(request.linkHistory ? { linkHistory: request.linkHistory } : {}),
     ...(request.titleResearch === undefined ? {} : { titleResearch: request.titleResearch }),
+    ...(request.drives === undefined ? {} : { drives: request.drives }),
     ...(request.onProgress ? { onProgress: request.onProgress } : {}),
   });
 

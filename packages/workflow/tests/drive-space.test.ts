@@ -1,13 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
+  FakeResourceProvider,
+  FakeStorageExecutor,
   formatDriveSpaceSummary,
   GuangYaClient,
   InMemoryWorkflowRepository,
   Pan115CookieClient,
   Pan123Client,
   QuarkCookieClient,
+  resolveWorkerDeps,
+  sortDrivesByOrder,
   TianyiClient,
   UC_PROFILE,
+  type AcquisitionDriveContext,
 } from "../src/index.js";
 
 describe("drive space querying across all six brands + cache + summary formatting", () => {
@@ -234,5 +239,60 @@ describe("drive space querying across all six brands + cache + summary formattin
       }),
     });
     expect(await quark.getSpace()).toBeNull();
+  });
+
+  it("sortDrivesByOrder orders drives by user preference and falls back to createdAt for unlisted drives", () => {
+    const drives = [
+      { id: "cs_115", createdAt: "2026-06-01T00:00:00.000Z" },
+      { id: "cs_quark", createdAt: "2026-06-02T00:00:00.000Z" },
+      { id: "cs_123", createdAt: "2026-06-03T00:00:00.000Z" },
+      { id: "cs_uc", createdAt: "2026-06-04T00:00:00.000Z" },
+    ];
+    expect(sortDrivesByOrder(drives, ["cs_123", "cs_115"]).map((d) => d.id)).toEqual([
+      "cs_123",
+      "cs_115",
+      "cs_quark",
+      "cs_uc",
+    ]);
+    expect(sortDrivesByOrder(drives, []).map((d) => d.id)).toEqual([
+      "cs_115",
+      "cs_quark",
+      "cs_123",
+      "cs_uc",
+    ]);
+  });
+
+  it("resolveWorkerDeps threads the resolved multi-drive contexts through to callers", async () => {
+    const fakeExec = new FakeStorageExecutor({ transferOutcomes: {} });
+    const fakeProvider = new FakeResourceProvider({ keywordResults: {} });
+    const mockDrives: AcquisitionDriveContext[] = [
+      {
+        storageId: "cs_115",
+        provider: "pan115",
+        label: "115 网盘",
+        storage: fakeExec,
+        parents: { tv: "tv_115", anime: "anime_115", movies: "mov_115" },
+        space: { totalBytes: 40 * 1024 ** 4, usedBytes: 19 * 1024 ** 4 },
+      },
+      {
+        storageId: "cs_123",
+        provider: "pan123",
+        label: "123网盘",
+        storage: fakeExec,
+        parents: { tv: "tv_123", anime: "anime_123", movies: "mov_123" },
+        space: { totalBytes: 20 * 1024 ** 4, usedBytes: 2 * 1024 ** 4 },
+      },
+    ];
+    const resolved = await resolveWorkerDeps(
+      async () => ({ drives: mockDrives }),
+      "acct_default",
+      "cs_115",
+      {
+        storage: fakeExec,
+        resourceProvider: fakeProvider,
+        model: {} as never,
+      },
+    );
+    expect(resolved.drives).toEqual(mockDrives);
   });
 });
