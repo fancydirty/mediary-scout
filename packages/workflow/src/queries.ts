@@ -1,7 +1,9 @@
-import type { WorkflowScope } from "./workflow-scope.js";
+import { normalizeScope, type WorkflowScope } from "./workflow-scope.js";
 import {
+  DEFAULT_ACCOUNT_ID,
   episodeNumberFromCode,
   type AirStatus,
+  type CrossDriveEpisodeOwnership,
   type EpisodeState,
   type MetadataStatus,
 } from "./domain.js";
@@ -16,6 +18,8 @@ export interface EpisodeStatusCell {
   metadataStatus: MetadataStatus;
   verifiedFileCount: number;
   displayState: EpisodeDisplayState;
+  /** Connected drives holding a copy of this episode (populated when reading cross-drive union). */
+  drives?: CrossDriveEpisodeOwnership["drives"];
 }
 
 export interface TrackedSeasonStatusView {
@@ -55,10 +59,76 @@ export async function getTrackedSeasonStatusView(input: {
     return null;
   }
 
-  const episodes = [...state.episodes].sort(
-    (a, b) => episodeNumberFromCode(a.episodeCode) - episodeNumberFromCode(b.episodeCode),
-  );
-  const cells = episodes.map(toEpisodeStatusCell);
+  const normalized = normalizeScope(input.scope ?? input.accountId);
+  let episodes = [...state.episodes];
+  const driveMap = new Map<string, CrossDriveEpisodeOwnership["drives"]>();
+
+  // When no specific drive is pinned (`connectedStorageId === null`), compute the
+  // cross-drive union across all drives of the account so an episode obtained on
+  // any connected drive counts as obtained and carries its drive ownership list.
+  if (normalized.connectedStorageId === null && input.repository.obtainedEpisodesForSeason) {
+    const union = await input.repository.obtainedEpisodesForSeason(
+      input.trackedSeasonId,
+      normalized.accountId ?? DEFAULT_ACCOUNT_ID,
+    );
+    const byCode = new Map(episodes.map((e) => [e.episodeCode, { ...e }]));
+    for (const row of union) {
+      driveMap.set(row.episodeCode, row.drives);
+      const existing = byCode.get(row.episodeCode);
+      if (existing) {
+        if (row.obtained) {
+          existing.obtained = true;
+          if (existing.verifiedFileIds.length === 0) {
+            existing.verifiedFileIds = row.drives.flatMap((d) => d.fileIds);
+          }
+          if (row.metadataStatus === "provider_ahead") {
+            existing.metadataStatus = "provider_ahead";
+          }
+        }
+      } else if (row.obtained) {
+        byCode.set(row.episodeCode, {
+          trackedSeasonId: input.trackedSeasonId,
+          episodeCode: row.episodeCode,
+          airDate: null,
+          title: row.episodeCode,
+          airStatus: row.metadataStatus === "provider_ahead" ? "unknown" : "aired",
+          obtained: true,
+          metadataStatus: row.metadataStatus,
+          verifiedFileIds: row.drives.flatMap((d) => d.fileIds),
+        });
+      }
+    }
+    episodes = [...byCode.values()];
+  } else if (normalized.connectedStorageId !== null) {
+    const copies = input.repository.listEpisodeCopies
+      ? await input.repository.listEpisodeCopies(input.trackedSeasonId)
+      : [];
+    const copyByCode = new Map(
+      copies
+        .filter((c) => c.storageId === normalized.connectedStorageId)
+        .map((c) => [c.episodeCode, c]),
+    );
+    for (const ep of episodes) {
+      if (ep.obtained) {
+        const copy = copyByCode.get(ep.episodeCode);
+        driveMap.set(ep.episodeCode, [
+          {
+            storageId: normalized.connectedStorageId,
+            fileIds: copy && copy.fileIds.length > 0 ? [...copy.fileIds] : [...ep.verifiedFileIds],
+            sizeBytes: copy?.sizeBytes ?? null,
+            quality: copy?.quality ?? null,
+          },
+        ]);
+      }
+    }
+  }
+
+  episodes.sort((a, b) => episodeNumberFromCode(a.episodeCode) - episodeNumberFromCode(b.episodeCode));
+  const cells = episodes.map((ep) => {
+    const cell = toEpisodeStatusCell(ep);
+    const drives = driveMap.get(ep.episodeCode);
+    return drives && drives.length > 0 ? { ...cell, drives } : cell;
+  });
   const obtainedEpisodes = cells
     .filter((episode) => episode.obtained)
     .map((episode) => episode.episodeCode);

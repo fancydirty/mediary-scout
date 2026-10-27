@@ -71,6 +71,8 @@ export interface BridgedV2Result {
   notification: NotificationEvent;
   notifications: NotificationEvent[];
   auditEvents: AuditEvent[];
+  /** Drives on which season target directories were materialized during this run. */
+  touchedTargetDrives?: RunAcquisitionV2WorkflowResult["touchedTargetDrives"];
   /** Present only on a replace_request run (attached by runTvAcquisitionV2). */
   replacement?: RunAcquisitionV2WorkflowResult["replacement"];
 }
@@ -138,6 +140,7 @@ export function bridgeV2WorkflowToResult(input: {
     // A leftover recovery is invisible: the run still reconciles, it does not tell anyone.
     notifications: input.mode === "staging_recovery" ? [] : [notification],
     auditEvents: v2.auditEvents,
+    ...(v2.touchedTargetDrives ? { touchedTargetDrives: v2.touchedTargetDrives } : {}),
   };
 }
 

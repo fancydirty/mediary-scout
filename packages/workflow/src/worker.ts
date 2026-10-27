@@ -694,13 +694,17 @@ export async function runScheduledType3Monitoring(input: {
       busyKeys.add(workKey({ accountId, drive: userMessageDrive(run.connectedStorageId), titleKey: run.title.id }));
     }
   }
-  const patrolStates: typeof trackedStates = [];
+  const patrolStatesBySeasonKey = new Map<string, (typeof trackedStates)[number]>();
   for (const s of trackedStates) {
     const key = workKey({ accountId: s.accountId, drive: userMessageDrive(s.connectedStorageId), titleKey: s.title.id });
     if (requestKeys.has(key) || busyKeys.has(key)) continue;
     if (await onFrozenDrive(s.accountId, s.connectedStorageId)) continue;
-    patrolStates.push(s);
+    const seasonKey = `${s.accountId}::${s.season.id}`;
+    if (!patrolStatesBySeasonKey.has(seasonKey)) {
+      patrolStatesBySeasonKey.set(seasonKey, s);
+    }
   }
+  const patrolStates = [...patrolStatesBySeasonKey.values()];
   for (const [drive, count] of skippedOnFrozen) {
     console.log(`[patrol] drive ${drive} is frozen (login expired): skipped ${count} item(s) until it is re-bound`);
   }
@@ -787,6 +791,23 @@ async function patrolTrackedState(args: {
       }
     }
 
+    let patrolEpisodes = episodes;
+    if (input.repository.obtainedEpisodesForSeason) {
+      const crossDrive = await input.repository.obtainedEpisodesForSeason(
+        season.id,
+        state.accountId,
+      );
+      if (crossDrive.length > 0) {
+        const obtainedCodes = new Set(
+          crossDrive.filter((c) => c.obtained).map((c) => c.episodeCode),
+        );
+        patrolEpisodes = episodes.map((ep) => ({
+          ...ep,
+          obtained: ep.obtained || obtainedCodes.has(ep.episodeCode),
+        }));
+      }
+    }
+
     const workflowRunId = input.createWorkflowRunId?.() ?? crypto.randomUUID();
     const startedAt = now();
     const staleActiveRunStartedBefore = staleStartedBefore(
@@ -844,7 +865,7 @@ async function patrolTrackedState(args: {
       runType3MonitoringV2AndPersist({
         title: state.title,
         season,
-        episodes,
+        episodes: patrolEpisodes,
         categoryParentId: requireCategoryParent(
           storageParentForTitle(
             state.title,
@@ -998,7 +1019,14 @@ async function patrolMovie(args: {
   if (moviesParent === undefined) {
     return null;
   }
-  const obtained = state.episodes.some((episode) => episode.obtained);
+  let obtained = state.episodes.some((episode) => episode.obtained);
+  if (!obtained && input.repository.obtainedEpisodesForSeason) {
+    const crossDrive = await input.repository.obtainedEpisodesForSeason(
+      state.season.id,
+      state.accountId,
+    );
+    obtained = crossDrive.some((c) => c.obtained);
+  }
   if (obtained) {
     return null;
   }

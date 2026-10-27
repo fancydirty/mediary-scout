@@ -2,6 +2,7 @@ import { createRequire } from "node:module";
 import type Database from "better-sqlite3";
 import {
   DEFAULT_ACCOUNT_ID,
+  buildCrossDriveEpisodeOwnership,
   episodeNumberFromCode,
   HIDDEN_NOTIFICATION_KINDS,
   isStagingJanitorId,
@@ -11,7 +12,9 @@ import {
 import type {
   AgentDecision,
   AgentStep,
+  CrossDriveEpisodeOwnership,
   DriveSpaceCacheEntry,
+  EpisodeCopy,
   EpisodeState,
   MediaTitle,
   NotificationEvent,
@@ -288,6 +291,17 @@ export const SQLITE_SCHEMA = `
     total_bytes integer NOT NULL,
     used_bytes integer NOT NULL,
     probed_at text NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS episode_copies (
+    tracked_season_id text NOT NULL,
+    episode_code text NOT NULL,
+    storage_id text NOT NULL,
+    file_ids text NOT NULL,
+    size_bytes integer,
+    quality text,
+    run_id text NOT NULL,
+    recorded_at text NOT NULL,
+    PRIMARY KEY (tracked_season_id, episode_code, storage_id)
   );
   INSERT INTO accounts (id, username, password_hash, is_owner, created_at)
     VALUES ('acct_default', 'default', '', 1, '1970-01-01T00:00:00.000Z')
@@ -1729,6 +1743,109 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
       usedBytes: Number(row.used_bytes),
       probedAt: String(row.probed_at),
     };
+  }
+
+  async upsertEpisodeCopies(copies: readonly EpisodeCopy[]): Promise<void> {
+    if (copies.length === 0) return;
+    const stmt = this.db.prepare(
+      "INSERT INTO episode_copies (tracked_season_id, episode_code, storage_id, file_ids, size_bytes, quality, run_id, recorded_at) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?) " +
+        "ON CONFLICT (tracked_season_id, episode_code, storage_id) DO UPDATE SET " +
+        "file_ids = excluded.file_ids, size_bytes = excluded.size_bytes, quality = excluded.quality, run_id = excluded.run_id, recorded_at = excluded.recorded_at",
+    );
+    const tx = this.db.transaction(() => {
+      for (const copy of copies) {
+        stmt.run(
+          copy.trackedSeasonId,
+          copy.episodeCode,
+          copy.storageId,
+          JSON.stringify(copy.fileIds),
+          copy.sizeBytes !== null && Number.isFinite(copy.sizeBytes) ? Math.trunc(copy.sizeBytes) : null,
+          copy.quality,
+          copy.runId,
+          copy.recordedAt,
+        );
+      }
+    });
+    tx();
+  }
+
+  async listEpisodeCopies(trackedSeasonId: string): Promise<EpisodeCopy[]> {
+    const rows = this.db
+      .prepare(
+        "SELECT tracked_season_id, episode_code, storage_id, file_ids, size_bytes, quality, run_id, recorded_at " +
+          "FROM episode_copies WHERE tracked_season_id = ? ORDER BY episode_code, storage_id",
+      )
+      .all(trackedSeasonId) as Array<{
+      tracked_season_id: string;
+      episode_code: string;
+      storage_id: string;
+      file_ids: string;
+      size_bytes: number | null;
+      quality: string | null;
+      run_id: string;
+      recorded_at: string;
+    }>;
+    return rows.map((row) => {
+      let fileIds: string[] = [];
+      try {
+        const parsed: unknown = JSON.parse(row.file_ids);
+        if (Array.isArray(parsed)) fileIds = parsed.map(String);
+      } catch {
+        fileIds = [];
+      }
+      return {
+        trackedSeasonId: String(row.tracked_season_id),
+        episodeCode: String(row.episode_code),
+        storageId: String(row.storage_id),
+        fileIds,
+        sizeBytes: row.size_bytes === null || row.size_bytes === undefined ? null : Number(row.size_bytes),
+        quality: row.quality ?? null,
+        runId: String(row.run_id),
+        recordedAt: String(row.recorded_at),
+      };
+    });
+  }
+
+  async obtainedEpisodesForSeason(
+    trackedSeasonId: string,
+    accountId: string = DEFAULT_ACCOUNT_ID,
+  ): Promise<CrossDriveEpisodeOwnership[]> {
+    const copies = await this.listEpisodeCopies(trackedSeasonId);
+    const rows = this.db
+      .prepare(
+        "SELECT e.connected_storage_id AS connected_storage_id, e.payload AS payload " +
+          "FROM episode_states e " +
+          "JOIN tracked_seasons ts ON e.tracked_season_id = ts.id AND e.connected_storage_id = ts.connected_storage_id " +
+          "WHERE e.tracked_season_id = ? AND ts.account_id = ?",
+      )
+      .all(trackedSeasonId, accountId) as Array<{
+      connected_storage_id: string;
+      payload: string;
+    }>;
+
+    const byDrive = new Map<string, EpisodeState[]>();
+    for (const row of rows) {
+      const ep = JSON.parse(row.payload) as EpisodeState;
+      const list = byDrive.get(row.connected_storage_id) ?? [];
+      list.push(ep);
+      byDrive.set(row.connected_storage_id, list);
+    }
+    const ownedStorages = new Set(
+      (await this.listConnectedStorages(accountId)).map((s) => s.id),
+    );
+    for (const sid of byDrive.keys()) {
+      if (sid !== UNSCOPED_STORAGE) ownedStorages.add(sid);
+    }
+    return buildCrossDriveEpisodeOwnership({
+      driveEpisodeBuckets: [...byDrive.entries()].map(([storageId, episodes]) => ({
+        storageId,
+        episodes,
+      })),
+      copies,
+      ownedStorageIds: ownedStorages,
+      unscopedStorageSentinel: UNSCOPED_STORAGE,
+    });
   }
 
   async recordDeadLink(input: {
