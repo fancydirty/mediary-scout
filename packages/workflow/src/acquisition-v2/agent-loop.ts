@@ -181,9 +181,13 @@ export function buildSandboxToolSet(
       : {
     transferCandidate: {
       description:
-        "Transfer ONE snapshot-bound candidate into staging, then read back the TRUE materialized files. The candidate must come from a snapshot you searched this task. Refused once coverage is already met.",
-      inputSchema: z.object({ snapshotId: z.string(), candidateId: z.string() }),
-      execute: (args: { snapshotId: string; candidateId: string }) =>
+        "Transfer ONE snapshot-bound candidate into staging, then read back the TRUE materialized files. The candidate must come from a snapshot you searched this task. Optional `storageId` selects a specific connected drive when you have multiple drives of the same brand or want a specific magnet-capable drive; omitted = auto-route to the highest-priority compatible drive with enough free space. Refused once coverage is already met.",
+      inputSchema: z.object({
+        snapshotId: z.string(),
+        candidateId: z.string(),
+        storageId: z.string().optional(),
+      }),
+      execute: (args: { snapshotId: string; candidateId: string; storageId?: string }) =>
         asEvidence(() => sandbox.transferCandidate(args)),
     },
       }),

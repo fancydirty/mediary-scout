@@ -12,7 +12,25 @@ import { resourceLinkKey } from "./resource-link.js";
 import { resourceFingerprintMatches, type LinkHistoryRow } from "../user-requests.js";
 import type { UserRequestPromptInput } from "./user-request-block.js";
 import { RealResourceProviderV2 } from "./real-provider-adapter.js";
+import type { StorageV2 } from "./storage-115-simulator.js";
 import { RealStorageV2 } from "./real-storage-adapter.js";
+import {
+  attachStagingCleanupUnverified,
+  attachStagingKeptUnmoved,
+  attachStagingLeaks,
+  stagingCleanupUnverifiedAuditEvent,
+  stagingKeptAuditEvent,
+  stagingLeakAuditEvent,
+  type StagingCleanupUnverified,
+  type StagingKeptUnmoved,
+  type StagingLeak,
+} from "./directory-lifecycle.js";
+import {
+  MultiDriveStorageV2,
+  MULTI_DRIVE_MOVIE_HANDLE,
+  MULTI_DRIVE_STAGING_HANDLE,
+  multiDriveSeasonHandle,
+} from "./multi-drive-storage.js";
 import { budgetSoftThreshold } from "./agent-loop-guards.js";
 import { TaskSandbox } from "./sandbox.js";
 import { JANITOR_LIST_DEPTH } from "../staging-depth.js";
@@ -150,6 +168,10 @@ export interface RunAcquisitionV2Request {
       add: (rows: Array<{ episode: string; linkKey: string | null; label: string; sizeBytes: number | null; reason: string }>) => Promise<void>;
     };
   };
+  /** Optional multi-drive coordinator when running in unified multi-drive mode.
+   *  When present, `MultiDriveStorageV2` owns the per-drive lazy directory lifecycle
+   *  and routes transfers by candidate brand / explicit `storageId`. */
+  multiDriveCoordinator?: MultiDriveStorageV2;
   /** Filled with the sandbox reader as soon as the sandbox exists, including when
    *  the agent loop later throws. The harness cleanup reads it from `finally`. */
   unmovedStaging?: { read: (() => string[]) | null };
@@ -168,6 +190,8 @@ export interface AcquisitionV2Outcome {
 export interface RunAcquisitionV2Result extends AcquisitionAgentResult {
   outcome: AcquisitionV2Outcome;
   auditEvents: AuditEvent[];
+  /** Drives on which season/movie target directories were materialized during this run. */
+  touchedTargetDrives?: ReturnType<MultiDriveStorageV2["touchedTargetDrives"]>;
   /** Present only on a replace_request run. */
   replacement?: {
     /** One entry per episode (the last report wins). candidateId here is the
@@ -267,12 +291,22 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     ...(rejectedSource ? { rejectedResources: { list: () => listRejected(), ...(strictRejected ? { strict: true } : {}) } } : {}),
     ...(linkNotes.size > 0 ? { linkHistory: linkNotes } : {}),
   });
-  const storage = new RealStorageV2({
-    executor: request.executor,
-    registry,
-    workflowRunId: request.workflowRunId,
-    ...(request.deadLinkStore ? { deadLinkStore: request.deadLinkStore } : {}),
-  });
+  const storage = createStorageAdapter(request, registry);
+  const usingMultiDrive = storage instanceof MultiDriveStorageV2;
+  let effectiveStagingId = request.stagingDirectoryId;
+  let effectiveSeasonDirs = request.targetSeasonDirectoryIds;
+  let effectiveMovieDir = request.targetMovieDirectoryId;
+  if (usingMultiDrive) {
+    if (request.target.kind === "movie") {
+      effectiveStagingId = MULTI_DRIVE_MOVIE_HANDLE;
+      effectiveMovieDir = MULTI_DRIVE_MOVIE_HANDLE;
+    } else {
+      effectiveStagingId = MULTI_DRIVE_STAGING_HANDLE;
+      effectiveSeasonDirs = Object.fromEntries(
+        request.target.seasons.map((s) => [s, multiDriveSeasonHandle(s)]),
+      );
+    }
+  }
   const need = request.target.kind === "tv" ? needForTvTarget(request.target) : needForMovie();
   const userRequest = request.userRequest;
   const protectExisting =
@@ -348,13 +382,13 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     // Movie-only 中文字幕软兜底: 8+2 budget + last-resort raw landing (the prompt's
     // soft floor authorizes it). TV/anime omit it → hard floor + hard 8-budget.
     ...(request.target.kind === "movie" ? { subtitleFallback: true } : {}),
-    stagingDirectoryId: request.stagingDirectoryId,
-    ...(request.targetSeasonDirectoryIds === undefined
+    stagingDirectoryId: effectiveStagingId,
+    ...(effectiveSeasonDirs === undefined
       ? {}
-      : { targetSeasonDirectoryIds: request.targetSeasonDirectoryIds }),
-    ...(request.targetMovieDirectoryId === undefined
+      : { targetSeasonDirectoryIds: effectiveSeasonDirs }),
+    ...(effectiveMovieDir === undefined
       ? {}
-      : { targetMovieDirectoryId: request.targetMovieDirectoryId }),
+      : { targetMovieDirectoryId: effectiveMovieDir }),
     need,
     // The agent's search keywords must reference the title — reject genre/year-only
     // fallbacks ("2026 电影") at the tool boundary so they never burn a search.
@@ -627,14 +661,44 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
   };
 
   let result: AcquisitionAgentResult;
+  let caughtError: unknown;
+  let didThrow = false;
   try {
     result =
       request.target.kind === "tv"
         ? await runTvAnimeTaskAgent({ ...common, target: stripKind(request.target) })
         : await runMovieTaskAgent({ ...common, target: stripKind(request.target) });
   } catch (error) {
+    didThrow = true;
+    caughtError = error;
     const attempted = storage.attempts().length > 0 || (await sandbox.hasTransferEvidence());
     throw attachTransferAttemptedOnThrow(error, attempted);
+  } finally {
+    if (storage instanceof MultiDriveStorageV2) {
+      const leaks: StagingLeak[] = [];
+      const unverified: StagingCleanupUnverified[] = [];
+      const kept: StagingKeptUnmoved[] = [];
+      await storage.cleanupMaterializedStagings({
+        unmovedFileIds: new Set(sandbox.unmovedStagingFileIds()),
+        onLeak: (leak) => {
+          leaks.push(leak);
+          sandbox.recordExternalAuditEvent(stagingLeakAuditEvent(leak));
+        },
+        onCleanupUnverified: (event) => {
+          unverified.push(event);
+          sandbox.recordExternalAuditEvent(stagingCleanupUnverifiedAuditEvent(event));
+        },
+        onKept: (event) => {
+          kept.push(event);
+          sandbox.recordExternalAuditEvent(stagingKeptAuditEvent(event));
+        },
+      });
+      if (didThrow) {
+        attachStagingLeaks(caughtError, leaks);
+        attachStagingCleanupUnverified(caughtError, unverified);
+        attachStagingKeptUnmoved(caughtError, kept);
+      }
+    }
   }
   // Every requested/rejected episode the agent did not report becomes not_found
   // (stays 待换). After the loop — the content-filter recovery turn included.
@@ -711,6 +775,9 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     ...result,
     outcome: { resourceSnapshots, decisions, transferAttempts },
     auditEvents: sandbox.auditTrail(),
+    ...(storage instanceof MultiDriveStorageV2
+      ? { touchedTargetDrives: storage.touchedTargetDrives() }
+      : {}),
     ...(userRequest
       ? {
           replacement: {
@@ -723,6 +790,58 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
         }
       : {}),
   };
+}
+
+function createStorageAdapter(
+  request: RunAcquisitionV2Request,
+  registry: CandidateRegistry,
+): StorageV2 & { attempts(): TransferAttempt[] } {
+  if (request.multiDriveCoordinator) {
+    return request.multiDriveCoordinator;
+  }
+  if (request.drives && request.drives.length > 0 && !request.stagingRecovery) {
+    let categoryKey: "tv" | "anime" | "movies" = "tv";
+    if (request.target.kind === "movie") {
+      categoryKey = "movies";
+    } else if (request.searchProfile === "cn-anime" || request.searchProfile === "jp-anime") {
+      categoryKey = "anime";
+    }
+    return new MultiDriveStorageV2({
+      drives: request.drives,
+      ...(request.memory?.drive ? { primaryStorageId: request.memory.drive } : {}),
+      target: {
+        kind: request.target.kind,
+        categoryKey,
+        title: request.target.title,
+        year: request.target.year ?? "—",
+        tmdbId: request.target.tmdbId ?? 0,
+        seasons: request.target.kind === "tv" ? request.target.seasons : [1],
+        workflowRunId: request.workflowRunId,
+      },
+      buildDriveAdapter: (drive) =>
+        new RealStorageV2({
+          executor: drive.storage,
+          registry,
+          workflowRunId: request.workflowRunId,
+          ...(request.deadLinkStore ? { deadLinkStore: request.deadLinkStore } : {}),
+        }),
+      resolveCandidate: (candidateId) => {
+        const c = registry.get(candidateId);
+        if (!c) return undefined;
+        const url = String(c.providerPayload?.["url"] ?? "");
+        const rawSize = c.providerPayload?.["sizeBytes"];
+        const sizeBytes =
+          typeof rawSize === "number" && Number.isFinite(rawSize) && rawSize > 0 ? rawSize : undefined;
+        return { url, ...(sizeBytes === undefined ? {} : { sizeBytes }) };
+      },
+    });
+  }
+  return new RealStorageV2({
+    executor: request.executor,
+    registry,
+    workflowRunId: request.workflowRunId,
+    ...(request.deadLinkStore ? { deadLinkStore: request.deadLinkStore } : {}),
+  });
 }
 
 /** A log-sized error message (outside errors can carry whole response bodies). */

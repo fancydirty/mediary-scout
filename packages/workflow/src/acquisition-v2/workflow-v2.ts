@@ -105,32 +105,48 @@ export interface RunAcquisitionV2WorkflowResult {
   landedFileCount?: number;
   landedBytes?: number;
   auditEvents: AuditEvent[];
+  /** Drives on which season target directories were materialized during this run. */
+  touchedTargetDrives?: RunAcquisitionV2Result["touchedTargetDrives"];
   /** Present only on a replace_request run (see orchestrator). */
   replacement?: RunAcquisitionV2Result["replacement"];
 }
 
 const EMPTY_OUTCOME: AcquisitionV2Outcome = { resourceSnapshots: [], decisions: [], transferAttempts: [] };
 
+async function resolveAcquisitionDirectories(
+  request: RunAcquisitionV2WorkflowRequest,
+  multiDrive: boolean,
+): Promise<AcquisitionDirectories> {
+  if (request.stagingRecovery) {
+    return bindRecoveryDirectories({
+      ...request.stagingRecovery,
+      executor: request.executor,
+      seasons: request.seasons.map((season) => season.seasonNumber),
+    });
+  }
+  if (multiDrive) {
+    return {
+      showDirectoryId: "",
+      seasonDirectoryIds: Object.fromEntries(request.seasons.map((s) => [s.seasonNumber, ""])),
+      stagingDirectoryId: "",
+    };
+  }
+  return ensureSeasonAcquisitionDirectories({
+    executor: request.executor,
+    categoryParentId: request.categoryParentId,
+    showName: request.title.name,
+    year: request.title.year,
+    tmdbId: request.title.tmdbId,
+    seasons: request.seasons.map((season) => season.seasonNumber),
+    workflowRunId: request.workflowRunId,
+  });
+}
+
 export async function runAcquisitionV2Workflow(
   request: RunAcquisitionV2WorkflowRequest,
 ): Promise<RunAcquisitionV2WorkflowResult> {
-  // 7a — verify-or-create the directory tree, get scoped handles.
-  // A recovery adopts the leftover dir and does not create a new staging dir.
-  const directories = request.stagingRecovery
-    ? await bindRecoveryDirectories({
-        ...request.stagingRecovery,
-        executor: request.executor,
-        seasons: request.seasons.map((season) => season.seasonNumber),
-      })
-    : await ensureSeasonAcquisitionDirectories({
-        executor: request.executor,
-        categoryParentId: request.categoryParentId,
-        showName: request.title.name,
-        year: request.title.year,
-        tmdbId: request.title.tmdbId,
-        seasons: request.seasons.map((season) => season.seasonNumber),
-        workflowRunId: request.workflowRunId,
-      });
+  const multiDrive = Boolean(!request.stagingRecovery && request.drives && request.drives.length > 0);
+  const directories = await resolveAcquisitionDirectories(request, multiDrive);
 
   // Harness-level leak guard: whatever the agent does (covers, fails, or
   // reportNoCoverage), the run's staging dir is discarded when this returns or
@@ -146,25 +162,7 @@ export async function runAcquisitionV2Workflow(
   // from the agent loop still lets this finally see files whose move failed.
   const unmovedStaging: { read: (() => string[]) | null } = { read: null };
   const terminalCleanup: { read: (() => boolean) | null } = { read: null };
-  const result = await withStagingCleanup(
-    {
-      executor: request.executor,
-      stagingDirectoryId: directories.stagingDirectoryId,
-      parentDirectoryId: directories.showDirectoryId,
-      onLeak: (leak) => leaks.push(leak),
-      onCleanupUnverified: (event) => unverified.push(event),
-      keep: () => {
-        const fileCount = unmovedStaging.read?.().length ?? 0;
-        return fileCount > 0 ? { fileCount } : null;
-      },
-      // The adopted leftover can be the only copy. A throw must not delete it,
-      // and a normal exit deletes it only after discardStaging. finish does not.
-      ...(request.stagingRecovery
-        ? { preserveOnThrow: true, discardOnNormalReturn: () => terminalCleanup.read?.() ?? false }
-        : {}),
-      onKept: (event) => kept.push(event),
-    },
-    async () => {
+  const runBody = async (): Promise<RunAcquisitionV2WorkflowResult> => {
   const seasonsForSync = request.seasons.map((season) => ({
     seasonNumber: season.seasonNumber,
     latestAiredEpisode: season.latestAiredEpisode,
@@ -254,9 +252,42 @@ export async function runAcquisitionV2Workflow(
   // throwing, so the size is simply omitted — never failing a good run.
   // A replace run skips it (like the movie path): its season dirs hold the old
   // AND the new copies, and the replace notification drops the size anyway.
-  const landed = request.userRequest
-    ? undefined
-    : await readLandedSize(request.executor, Object.values(directories.seasonDirectoryIds));
+  if (multiDrive && v2.touchedTargetDrives && v2.touchedTargetDrives.length > 0) {
+    const firstTouched = v2.touchedTargetDrives[0]!;
+    if (firstTouched.showDirectoryId) {
+      directories.showDirectoryId = firstTouched.showDirectoryId;
+    }
+    for (const touched of v2.touchedTargetDrives) {
+      for (const [seasonNum, dirId] of Object.entries(touched.seasonDirectoryIds)) {
+        const sn = Number(seasonNum);
+        if (!directories.seasonDirectoryIds[sn] && dirId) {
+          directories.seasonDirectoryIds[sn] = dirId;
+        }
+      }
+    }
+  }
+
+  let landed: { fileCount: number; totalBytes: number } | undefined;
+  if (!request.userRequest) {
+    if (!multiDrive) {
+      landed = await readLandedSize(request.executor, Object.values(directories.seasonDirectoryIds));
+    } else if (v2.touchedTargetDrives && v2.touchedTargetDrives.length > 0) {
+      const parts = await Promise.all(
+        v2.touchedTargetDrives.map((touched) => readLandedSize(touched.executor, touched.directoryIds)),
+      );
+      let totalFiles = 0;
+      let totalBytes = 0;
+      for (const part of parts) {
+        if (part) {
+          totalFiles += part.fileCount;
+          totalBytes += part.totalBytes;
+        }
+      }
+      if (totalFiles > 0) {
+        landed = { fileCount: totalFiles, totalBytes };
+      }
+    }
+  }
 
   return {
     directories,
@@ -267,11 +298,36 @@ export async function runAcquisitionV2Workflow(
     obtained: after.obtained,
     providerAhead: after.providerAhead,
     auditEvents: v2.auditEvents,
+    ...(v2.touchedTargetDrives ? { touchedTargetDrives: v2.touchedTargetDrives } : {}),
     ...(landed ? { landedFileCount: landed.fileCount, landedBytes: landed.totalBytes } : {}),
     ...(v2.replacement ? { replacement: v2.replacement } : {}),
   };
-    },
-  );
+  };
+
+  // In multi-drive mode, MultiDriveStorageV2 runs its own per-drive staging cleanup
+  // inside runAcquisitionV2's finally block.
+  const result = multiDrive
+    ? await runBody()
+    : await withStagingCleanup(
+        {
+          executor: request.executor,
+          stagingDirectoryId: directories.stagingDirectoryId,
+          parentDirectoryId: directories.showDirectoryId,
+          onLeak: (leak) => leaks.push(leak),
+          onCleanupUnverified: (event) => unverified.push(event),
+          keep: () => {
+            const fileCount = unmovedStaging.read?.().length ?? 0;
+            return fileCount > 0 ? { fileCount } : null;
+          },
+          // The adopted leftover can be the only copy. A throw must not delete it,
+          // and a normal exit deletes it only after discardStaging. finish does not.
+          ...(request.stagingRecovery
+            ? { preserveOnThrow: true, discardOnNormalReturn: () => terminalCleanup.read?.() ?? false }
+            : {}),
+          onKept: (event) => kept.push(event),
+        },
+        runBody,
+      );
   const stagingEvents = [
     ...leaks.map((leak) => stagingLeakAuditEvent(leak)),
     ...unverified.map((event) => stagingCleanupUnverifiedAuditEvent(event)),

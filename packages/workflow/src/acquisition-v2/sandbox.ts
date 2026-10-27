@@ -612,11 +612,25 @@ export class TaskSandbox {
 
   /** Same counts for an explicit file-id list (a persisted attempt's ids, which
    *  are keyed by the provider's real candidate id, not the agent's alias).
-   *  Undefined when this run did not materialize any of them. */
+   *  Supports both raw provider file ids and MultiDriveStorageV2 scoped `<storageId>::<id>`
+   *  ids. Undefined when this run did not materialize any of them. */
   materializedFateOf(fileIds: readonly string[]): { kept: number; thrownAway: number } | undefined {
-    const known = fileIds.filter((id) => this.materializedBy.has(id));
-    if (known.length === 0) return undefined;
-    return this.fateOf(known);
+    const resolved: string[] = [];
+    for (const rawId of fileIds) {
+      if (this.materializedBy.has(rawId)) {
+        resolved.push(rawId);
+        continue;
+      }
+      const suffix = `::${rawId}`;
+      for (const knownId of this.materializedBy.keys()) {
+        if (knownId.endsWith(suffix)) {
+          resolved.push(knownId);
+          break;
+        }
+      }
+    }
+    if (resolved.length === 0) return undefined;
+    return this.fateOf(resolved);
   }
 
   /** Whether every needed token has been confirmed obtained — the gate that
@@ -932,7 +946,11 @@ export class TaskSandbox {
    *  staging and return the TRUE contents. The candidate must come from a
    *  snapshot observed in THIS task (no stale/raw ids) — the agent can never
    *  transfer-and-run; the real landing is handed back for it to judge. */
-  async transferCandidate(input: { snapshotId: string; candidateId: string }): Promise<TransferToolResult> {
+  async transferCandidate(input: {
+    snapshotId: string;
+    candidateId: string;
+    storageId?: string;
+  }): Promise<TransferToolResult> {
     if (!this.storage || !this.stagingDirectoryId) {
       throw new Error("SANDBOX: no storage/staging handle configured for transfers");
     }
@@ -976,6 +994,7 @@ export class TaskSandbox {
       attempt = await this.storage.transferCandidate({
         candidateId: input.candidateId,
         intoDirectoryId: this.stagingDirectoryId,
+        ...(input.storageId === undefined ? {} : { storageId: input.storageId }),
       });
     } catch (error) {
       this.releaseLink(input.candidateId);
@@ -2118,6 +2137,11 @@ export class TaskSandbox {
 
   auditTrail(): AuditEvent[] {
     return [...this.auditEvents];
+  }
+
+  /** Append an external harness audit event (e.g. multi-drive staging cleanup). */
+  recordExternalAuditEvent(event: AuditEvent): void {
+    this.auditEvents.push(event);
   }
 
   /** Pre-warm a raw search (system-initiated, does NOT consume agent's distinct

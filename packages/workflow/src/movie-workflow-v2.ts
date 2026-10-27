@@ -78,25 +78,33 @@ export interface RunMovieAcquisitionV2Request {
 }
 
 /** The movie result plus the replace outcome of a replace_request run. */
-export type MovieAcquisitionV2Result = MovieWorkflowResult & { replacement?: RunAcquisitionV2Result["replacement"] };
+export type MovieAcquisitionV2Result = MovieWorkflowResult & {
+  replacement?: RunAcquisitionV2Result["replacement"];
+  touchedTargetDrives?: RunAcquisitionV2Result["touchedTargetDrives"];
+};
 
 export async function runMovieAcquisitionV2(
   request: RunMovieAcquisitionV2Request,
 ): Promise<MovieAcquisitionV2Result> {
   const now = request.now ?? defaultNowIso;
+  const multiDrive = Boolean(request.drives && request.drives.length > 0);
 
   // verify-or-create Movies/Title (Year) {tmdb-N} (legacy Title (Year) reused).
   // For a movie this dir IS the staging, the flatten target, and the final
   // location — there is NO separate staging (§5): transfer lands here, the
   // wrapper is flattened in place, mark. So stagingDirectoryId ===
   // targetMovieDirectoryId === the movie dir.
-  const movieDirectoryId = await ensureMediaLibraryDirectory({
-    executor: request.storage,
-    parentId: request.moviesParentDirectoryId,
-    title: request.title.title,
-    year: request.title.year ?? "—",
-    tmdbId: request.title.tmdbId,
-  });
+  // In multi-drive mode, MultiDriveStorageV2 creates the movie directory lazily
+  // on whichever drive actually receives the transfer.
+  const movieDirectoryId = multiDrive
+    ? ""
+    : await ensureMediaLibraryDirectory({
+        executor: request.storage,
+        parentId: request.moviesParentDirectoryId,
+        title: request.title.title,
+        year: request.title.year ?? "—",
+        tmdbId: request.title.tmdbId,
+      });
 
   const v2 = await runAcquisitionV2({
     provider: request.resourceProvider,
@@ -148,12 +156,21 @@ export async function runMovieAcquisitionV2(
   // Real landed volume for the push (best-effort; never fails the run). The
   // movie dir IS the staging+final location, so its video file(s) are the film.
   // Not on a replace run: the dir holds the old AND the new film (double count).
-  const landed =
-    obtained && !request.userRequest ? await readLandedSize(request.storage, [movieDirectoryId]) : undefined;
+  const firstTouchedMovieDrive = v2.touchedTargetDrives?.[0];
+  const resolvedMovieDirectoryId =
+    firstTouchedMovieDrive?.directoryIds[0] ?? movieDirectoryId;
+  let landed: { fileCount: number; totalBytes: number } | undefined;
+  if (obtained && !request.userRequest) {
+    if (firstTouchedMovieDrive) {
+      landed = await readLandedSize(firstTouchedMovieDrive.executor, firstTouchedMovieDrive.directoryIds);
+    } else if (!multiDrive) {
+      landed = await readLandedSize(request.storage, [movieDirectoryId]);
+    }
+  }
 
   const result = buildResult({
     request,
-    movieDirectoryId,
+    movieDirectoryId: resolvedMovieDirectoryId,
     obtained,
     status: obtained ? "succeeded" : "no_coverage",
     kind: obtained ? "movie_init" : "no_coverage",
@@ -167,7 +184,11 @@ export async function runMovieAcquisitionV2(
     ...(v2.replacement ? { replacementResults: v2.replacement.results } : {}),
     now,
   });
-  return v2.replacement ? { ...result, replacement: v2.replacement } : result;
+  return {
+    ...result,
+    ...(v2.replacement ? { replacement: v2.replacement } : {}),
+    ...(v2.touchedTargetDrives ? { touchedTargetDrives: v2.touchedTargetDrives } : {}),
+  };
 }
 
 function buildResult(input: {
