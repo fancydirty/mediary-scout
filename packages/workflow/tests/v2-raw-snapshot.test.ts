@@ -840,4 +840,36 @@ describe("multi-brand snapshot rendering in viewResourceSnapshot", () => {
     expect(multiDoc).toContain("[c2] 琅琊榜 全54集 · 夸克\n");
     expect(multiDoc).toContain("[c3] Nirvana.in.Fire.S01 · 磁力\n");
   });
+
+  it("samples round-robin per brand (up to 60 per brand, 180 total) so 600 Quark rows never starve 200 115 rows (C7)", async () => {
+    const quarkRows = Array.from({ length: 600 }, (_, i) => ({
+      id: `q${i + 1}`,
+      title: `夸克候选 #${i + 1}`,
+      drive: "quark",
+      driveLabel: "夸克",
+    }));
+    const pan115Rows = Array.from({ length: 200 }, (_, i) => ({
+      id: `p${i + 1}`,
+      title: `115候选 #${i + 1}`,
+      drive: "115",
+      driveLabel: "115",
+    }));
+    const provider = new FakeResourceProviderV2({
+      results: {
+        三体: [...quarkRows, ...pan115Rows],
+      },
+    });
+    const sandbox = new TaskSandbox({ provider, need: ["S01E01"] });
+    await sandbox.primeRawSnapshot("三体");
+    const { document, candidateCount } = sandbox.viewResourceSnapshot();
+
+    expect(candidateCount).toBe(800);
+    // Both brands get 60 rows represented in the document (120 rows total for 2 brands).
+    expect(document).toContain("[q1] 夸克候选 #1 · 夸克\n");
+    expect(document).toContain("[q60] 夸克候选 #60 · 夸克\n");
+    expect(document).not.toContain("[q61]");
+    expect(document).toContain("[p1] 115候选 #1 · 115\n");
+    expect(document).toContain("[p60] 115候选 #60 · 115\n");
+    expect(document).not.toContain("[p61]");
+  });
 });

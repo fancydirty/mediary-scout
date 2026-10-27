@@ -118,9 +118,58 @@ function sourceHealthWarning(health: MergedSourceHealth | undefined): string | u
   }
 }
 
-/** Rows viewResourceSnapshot renders before it truncates. Shared with the presenter
- *  so the legend is gated on exactly the rows that make it into the document. */
+/** Rows viewResourceSnapshot renders before it truncates on a single-brand snapshot. */
 const RAW_SNAPSHOT_ROW_LIMIT = 120;
+/** Multi-brand viewResourceSnapshot caps: round-robin up to 60 rows per brand, 180 total. */
+const MULTI_BRAND_PER_DRIVE_LIMIT = 60;
+const MULTI_BRAND_TOTAL_ROW_LIMIT = 180;
+
+function candidateBrandKey(c: ResourceSnapshotV2["candidates"][number]): string {
+  if (c.drive) return c.drive;
+  if (c.driveLabel) return c.driveLabel;
+  return "";
+}
+
+/** Select the candidate indices that `viewResourceSnapshot` will display.
+ *  - Single-brand (or untagged) snapshots keep the exact top-120 slice (`0..119`).
+ *  - Multi-brand snapshots sample round-robin across distinct brands (up to 60 per
+ *    brand, 180 total), then sort the chosen indices in original order so one
+ *    dominant brand (e.g. 600 Quark links) cannot starve other connected drives. */
+export function selectRawSnapshotVisibleIndices(
+  candidates: readonly ResourceSnapshotV2["candidates"][number][],
+): number[] {
+  const buckets = new Map<string, number[]>();
+  for (let i = 0; i < candidates.length; i += 1) {
+    const key = candidateBrandKey(candidates[i]!);
+    const list = buckets.get(key);
+    if (list) list.push(i);
+    else buckets.set(key, [i]);
+  }
+  const nonEmptyBrands = [...buckets.keys()].filter((k) => k !== "");
+  if (nonEmptyBrands.length <= 1) {
+    const count = Math.min(candidates.length, RAW_SNAPSHOT_ROW_LIMIT);
+    return Array.from({ length: count }, (_, i) => i);
+  }
+
+  const bucketLists = [...buckets.values()].map((indices) =>
+    indices.slice(0, MULTI_BRAND_PER_DRIVE_LIMIT),
+  );
+  const picked: number[] = [];
+  let depth = 0;
+  while (picked.length < MULTI_BRAND_TOTAL_ROW_LIMIT) {
+    let addedInRound = false;
+    for (const list of bucketLists) {
+      if (depth < list.length) {
+        picked.push(list[depth]!);
+        addedInRound = true;
+        if (picked.length >= MULTI_BRAND_TOTAL_ROW_LIMIT) break;
+      }
+    }
+    if (!addedInRound) break;
+    depth += 1;
+  }
+  return picked.sort((a, b) => a - b);
+}
 
 /** Below this many rows a majority of ⚠ can still point at something (2 of 3 is a
  *  real signal); from here on a majority means the judge could not tell. */
@@ -134,7 +183,10 @@ const JEV_FLAGS_SUPPRESSED_NOTE =
  *  the 活期文档), the raw score map stripped (the agent judges titles, not numbers).
  *  Both read paths (searchResources and viewResourceSnapshot) go through here so the
  *  agent can never see two different stories about the same candidates. */
-function presentSnapshotForAgent(snapshot: ResourceSnapshotV2, limit?: number): {
+function presentSnapshotForAgent(
+  snapshot: ResourceSnapshotV2,
+  visibleIndices?: ReadonlySet<number>,
+): {
   snapshot: ResourceSnapshotV2;
   legend: string | undefined;
   allDroppedWarning: string | undefined;
@@ -143,15 +195,18 @@ function presentSnapshotForAgent(snapshot: ResourceSnapshotV2, limit?: number): 
   if (!scores) return { snapshot, legend: undefined, allDroppedWarning: undefined };
   // The legend explains a ⚠ the agent can SEE. viewResourceSnapshot truncates its
   // rows, so a flag past the cut must not pull in a legend for a document that has
-  // no flag in it. `limit` undefined = every row is shown (searchResources).
+  // no flag in it. `visibleIndices` undefined = every row is shown (searchResources).
   // A flag only helps while it singles out a few rows. On a long-running anime the
   // fansub numbering (第四季 / 总第78话) disagrees with TMDB's one-season listing, and
   // the judge doubts nearly every row (Re:从零 patrol: 150 of 155) — a ⚠ on every
   // line tells the agent nothing and costs tokens on every read. Past that point the
   // flags are dropped and one line says why.
   const flags = snapshot.candidates.map((c) => jevUncertaintyFlag(scores[c.id]));
-  // Judged on the rows the agent will actually see (viewResourceSnapshot cuts at `limit`).
-  const shown = limit === undefined ? flags : flags.slice(0, limit);
+  // Judged on the rows the agent will actually see.
+  const shown =
+    visibleIndices === undefined
+      ? flags
+      : flags.filter((_, idx) => visibleIndices.has(idx));
   const shownFlagged = shown.filter((flag) => flag !== "").length;
   if (shown.length >= JEV_FLAG_NOISE_MIN_ROWS && shownFlagged > shown.length / 2) {
     const { prefilterScores: _scores, prefilterDropped: _dropped, ...rest } = snapshot;
@@ -160,7 +215,7 @@ function presentSnapshotForAgent(snapshot: ResourceSnapshotV2, limit?: number): 
   let flagged = 0;
   const candidates = snapshot.candidates.map((c, index) => {
     const flag = flags[index]!;
-    if (flag && (limit === undefined || index < limit)) flagged += 1;
+    if (flag && (visibleIndices === undefined || visibleIndices.has(index))) flagged += 1;
     return flag ? { ...c, title: `${c.title}${flag}` } : c;
   });
   // Both prefilter fields are stripped: the agent judges titles, not numbers, and the
@@ -2219,11 +2274,13 @@ export class TaskSandbox {
     // or a drop-band row the containment floor kept because its title contains the
     // target's name. Kept and flagged so the agent looks twice.
     // Same presenter as searchResources: one story, two read paths.
-    const view = presentSnapshotForAgent(this.rawSnapshot, RAW_SNAPSHOT_ROW_LIMIT);
+    const visibleIndicesList = selectRawSnapshotVisibleIndices(this.rawSnapshot.candidates);
+    const visibleIndicesSet = new Set(visibleIndicesList);
+    const view = presentSnapshotForAgent(this.rawSnapshot, visibleIndicesSet);
     const snapshotId = view.snapshot.id;
     const candidates = view.snapshot.candidates;
     const total = candidates.length;
-    const truncated = candidates.slice(0, RAW_SNAPSHOT_ROW_LIMIT);
+    const truncated = visibleIndicesList.map((idx) => candidates[idx]!);
     const remaining = total - truncated.length;
 
     let document = `📋 Raw snapshot (snapshotId: ${snapshotId}, ${total} candidates):\n\n`;
