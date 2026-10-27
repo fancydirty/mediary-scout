@@ -20,6 +20,35 @@ describe("HaisouResourceProvider", () => {
   // reads the key from the query string. Omitting it returns `code: 1001`, which
   // the provider correctly reports as unreachable — i.e. it looked like "source
   // down" for a client-side mistake.
+  // Live finding (2026-10-27): without an explicit `platforms`, the upstream
+  // ranks by popularity and the result set collapses to ~95% 夸克 — measured
+  // across 24 keywords, 115 was 1.4%. Asking per-platform on the same keywords
+  // returned 101 115 links, 474 UC, 201 光鸭. So the filter is not an
+  // optimisation, it is what makes the smaller brands reachable at all.
+  it("asks for exactly the platforms this drive can transfer", async () => {
+    let body: Record<string, unknown> = {};
+    const p = provider(
+      async (_u, init) => {
+        body = JSON.parse(init.body);
+        return okResponse([]);
+      },
+      { allowedTypes: ["115", "magnet"] },
+    );
+    await p.search({ keyword: "琅琊榜" });
+    // magnet is a link kind, not a platform — it must not be sent.
+    expect(body["platforms"]).toEqual(["115"]);
+  });
+
+  it("omits platforms when the drive is unrestricted", async () => {
+    let body: Record<string, unknown> = {};
+    const p = provider(async (_u, init) => {
+      body = JSON.parse(init.body);
+      return okResponse([]);
+    });
+    await p.search({ keyword: "琅琊榜" });
+    expect(body).not.toHaveProperty("platforms");
+  });
+
   it("puts the apikey in the query string, not the body or a header", async () => {
     let seenUrl = "";
     let seenBody = "";
@@ -145,6 +174,67 @@ describe("HaisouResourceProvider", () => {
     const p = provider(async () => { throw new Error("ECONNREFUSED"); });
     const snap = await p.search({ keyword: "沙丘" });
     expect(snap.sourceHealth?.status).toBe("unreachable");
+  });
+
+  // Live finding (2026-10-27): spending the free 100 calls makes every subsequent
+  // request answer code 1005 for the rest of the UTC day. Without a breaker each
+  // keyword on each drive costs a doomed round-trip.
+  describe("credits-exhausted circuit breaker", () => {
+    it("stops calling upstream after the first 1005, same day", async () => {
+      let calls = 0;
+      const p = provider(async () => {
+        calls++;
+        return { code: 1005, msg: "Credits not enough." };
+      });
+      const first = await p.search({ keyword: "甲" });
+      expect(first.sourceHealth?.status).toBe("unreachable");
+      expect(calls).toBe(1);
+
+      const second = await p.search({ keyword: "乙" });
+      expect(second.sourceHealth?.status).toBe("unreachable");
+      expect(second.candidates).toHaveLength(0);
+      // Still 1: the second search never reached the network.
+      expect(calls).toBe(1);
+    });
+
+    it("tries again on the next UTC day", async () => {
+      let calls = 0;
+      let clock = "2026-10-27T01:00:00.000Z";
+      const p = new HaisouResourceProvider({
+        apiKey: "idr_test",
+        now: () => clock,
+        fetchJson: async () => {
+          calls++;
+          return calls === 1
+            ? { code: 1005, msg: "Credits not enough." }
+            : okResponse([{ platform: "115", title: "x", shareUrl: "https://115.com/s/abc" }]);
+        },
+      });
+      await p.search({ keyword: "甲" });
+      expect(calls).toBe(1);
+
+      // Same day, later hour: still short-circuited.
+      clock = "2026-10-27T23:00:00.000Z";
+      await p.search({ keyword: "乙" });
+      expect(calls).toBe(1);
+
+      // Next UTC day: the window reset, so we may ask again.
+      clock = "2026-10-28T00:30:00.000Z";
+      const snap = await p.search({ keyword: "丙" });
+      expect(calls).toBe(2);
+      expect(snap.candidates).toHaveLength(1);
+    });
+
+    it("a non-1005 failure does not trip the breaker", async () => {
+      let calls = 0;
+      const p = provider(async () => {
+        calls++;
+        return calls === 1 ? { code: 1003, msg: "内部处理较忙" } : okResponse([]);
+      });
+      await p.search({ keyword: "甲" });
+      await p.search({ keyword: "乙" });
+      expect(calls).toBe(2);
+    });
   });
 
   it("does not call the network at all when no apikey is configured", async () => {

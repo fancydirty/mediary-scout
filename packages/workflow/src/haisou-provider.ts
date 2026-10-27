@@ -49,12 +49,20 @@ const ALL_PLATFORMS = ["quark", "uc", "115", "tianyi", "123", "guangya"] as cons
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 
+/** idatariver 的「余额/额度不足」。一旦见到它，当天再问也没用 —— 每个关键词都
+ *  白打一次只会浪费时间并把日志刷满。命中后熔断到 UTC 日切（上游的 rpd 按日
+ *  重置），期间直接返回 unreachable 而不发请求。 */
+const CREDITS_EXHAUSTED_CODE = 1005;
+
 export class HaisouResourceProvider implements ResourceProvider {
   private readonly apiKey: string;
   private readonly allowedTypes: readonly ResourceType[] | undefined;
   private readonly fetchJson: HaisouFetchJson;
   private readonly endpoint: string;
   private readonly now: () => string;
+  /** UTC date (YYYY-MM-DD) on which we saw CREDITS_EXHAUSTED_CODE. Same-day
+   *  searches short-circuit instead of hammering a source we know will refuse. */
+  private exhaustedOn: string | null = null;
 
   constructor(options: HaisouResourceProviderOptions) {
     this.apiKey = options.apiKey;
@@ -86,6 +94,25 @@ export class HaisouResourceProvider implements ResourceProvider {
     if (!keyword) {
       return emptySnapshot(snapshotId, keyword, this.now());
     }
+    // Circuit breaker: the upstream answers code 1005 for the rest of the UTC day
+    // once the free 100 requests are spent (or credits run out). Asking again costs
+    // a round-trip and returns nothing, so stop after the first refusal.
+    if (this.exhaustedOn === utcDay(this.now())) {
+      return emptySnapshot(snapshotId, keyword, this.now(), {
+        status: "unreachable",
+        source: "haisou",
+      });
+    }
+
+    // Map what this drive can actually transfer onto haisou's platform ids.
+    // `magnet` is a link kind, not a 光鸭 platform, so it contributes nothing here.
+    const platformFilter = (() => {
+      if (!this.allowedTypes) return {};
+      const wanted = this.allowedTypes.filter((t) =>
+        (ALL_PLATFORMS as readonly string[]).includes(t),
+      );
+      return wanted.length > 0 ? { platforms: wanted } : {};
+    })();
 
     let raw: unknown;
     try {
@@ -94,8 +121,14 @@ export class HaisouResourceProvider implements ResourceProvider {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           query: keyword,
-          // 不传 platforms 表示全部；本地按 ALL_PLATFORMS + URL 形状过滤，
-          // 不把平台枚举写死在请求里。
+          // 必须显式传 `platforms`，否则上游按热度把结果挤成几乎全是夸克：
+          // 实测 24 个关键词不传时 quark 95.0% / tianyi 1.5% / **115 1.4%**，
+          // 而同一批关键词按平台分别查，115 有 101 条、UC 474 条、光鸭 201 条。
+          // 也就是说「海搜没有 115」是假象，是默认排序饿死了小平台。
+          //
+          // 成本不变：每块盘的 allowedTypes 本来就只有 1–2 个平台，所以还是
+          // 一次请求。只有在没有 allowedTypes（不限品牌）时才退化成不传。
+          ...platformFilter,
           page: 1,
           pageSize: 100,
         }),
@@ -117,6 +150,9 @@ export class HaisouResourceProvider implements ResourceProvider {
     if (envelope["code"] !== 0) {
       // idatariver 用 code 表达失败（1001 key 缺失 / 1005 余额不足 …）。
       // 这些不是「今天没有这个资源」，必须如实上报成源不可用。
+      if (envelope["code"] === CREDITS_EXHAUSTED_CODE) {
+        this.exhaustedOn = utcDay(this.now());
+      }
       return emptySnapshot(snapshotId, keyword, this.now(), {
         status: "unreachable",
         source: "haisou",
@@ -165,6 +201,12 @@ export class HaisouResourceProvider implements ResourceProvider {
       createdAt: this.now(),
     };
   }
+}
+
+/** The upstream's rpd window resets on a UTC day boundary. */
+function utcDay(iso: string): string {
+  const at = Date.parse(iso);
+  return new Date(Number.isFinite(at) ? at : Date.now()).toISOString().slice(0, 10);
 }
 
 /** 标题里带 `<span class="highlight">` 高亮，去掉标签但保留文字。 */
