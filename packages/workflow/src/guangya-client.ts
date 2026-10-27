@@ -1,3 +1,4 @@
+import { parseFiniteMetric } from "./domain.js";
 import { fetchWithTimeout } from "./fetch-with-timeout.js";
 
 /**
@@ -337,6 +338,17 @@ export class GuangYaClient {
   async listTask(taskIds: string[]): Promise<GuangYaTaskStatus[]> {
     const data = await this.postAPI("/cloudcollection/v1/list_task", { taskIds });
     return arrayValue(recordValue(data, "list")).filter(isRecord).map(toTaskStatus);
+  }
+
+  /** Query total and used storage capacity (`POST /assets/v1/get_assets`). */
+  async getSpace(): Promise<{ totalBytes: number; usedBytes: number } | null> {
+    const data = await this.postAPI("/assets/v1/get_assets", {});
+    const totalBytes = parseFiniteMetric(recordValue(data, "totalSpaceSize"));
+    const usedBytes = parseFiniteMetric(recordValue(data, "usedSpaceSize"));
+    if (!Number.isFinite(totalBytes) || !Number.isFinite(usedBytes) || totalBytes <= 0) {
+      return null;
+    }
+    return { totalBytes, usedBytes };
   }
 
   /**

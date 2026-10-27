@@ -11,6 +11,7 @@ import {
 import type {
   AgentDecision,
   AgentStep,
+  DriveSpaceCacheEntry,
   EpisodeState,
   MediaTitle,
   NotificationEvent,
@@ -281,6 +282,12 @@ export const SQLITE_SCHEMA = `
     frozen_at text,
     created_at text NOT NULL,
     UNIQUE (provider, provider_uid)
+  );
+  CREATE TABLE IF NOT EXISTS drive_space_cache (
+    storage_id text PRIMARY KEY,
+    total_bytes integer NOT NULL,
+    used_bytes integer NOT NULL,
+    probed_at text NOT NULL
   );
   INSERT INTO accounts (id, username, password_hash, is_owner, created_at)
     VALUES ('acct_default', 'default', '', 1, '1970-01-01T00:00:00.000Z')
@@ -1697,6 +1704,31 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
         .prepare("DELETE FROM sessions WHERE account_id = ? AND id != ?")
         .run(accountId, exceptSessionId);
     }
+  }
+
+  async upsertDriveSpaceCache(entry: DriveSpaceCacheEntry): Promise<void> {
+    if (!Number.isFinite(entry.totalBytes) || !Number.isFinite(entry.usedBytes)) return;
+    this.db
+      .prepare(
+        "INSERT INTO drive_space_cache (storage_id, total_bytes, used_bytes, probed_at) VALUES (?, ?, ?, ?) " +
+          "ON CONFLICT (storage_id) DO UPDATE SET total_bytes = excluded.total_bytes, used_bytes = excluded.used_bytes, probed_at = excluded.probed_at",
+      )
+      .run(entry.storageId, Math.trunc(entry.totalBytes), Math.trunc(entry.usedBytes), entry.probedAt);
+  }
+
+  async getDriveSpaceCache(storageId: string): Promise<DriveSpaceCacheEntry | null> {
+    const row = this.db
+      .prepare("SELECT storage_id, total_bytes, used_bytes, probed_at FROM drive_space_cache WHERE storage_id = ?")
+      .get(storageId) as
+      | { storage_id: string; total_bytes: number; used_bytes: number; probed_at: string }
+      | undefined;
+    if (!row) return null;
+    return {
+      storageId: String(row.storage_id),
+      totalBytes: Number(row.total_bytes),
+      usedBytes: Number(row.used_bytes),
+      probedAt: String(row.probed_at),
+    };
   }
 
   async recordDeadLink(input: {

@@ -5,6 +5,7 @@ import {
   isUserVisibleWorkflowKind,
   type AgentDecision,
   type AgentStep,
+  type DriveSpaceCacheEntry,
   type EpisodeState,
   type MediaTitle,
   type NotificationEvent,
@@ -449,6 +450,10 @@ export interface WorkflowRepository extends DeadLinkStore, AgentMemoryStore, Use
   setAccountPassword(accountId: string, passwordHash: string): Promise<void>;
   /** Revoke an account's sessions (after reset/change); optionally keep one. */
   deleteSessionsForAccount(accountId: string, exceptSessionId?: string): Promise<void>;
+  /** Cache a drive's probed space numbers (`drive_space_cache`). */
+  upsertDriveSpaceCache?(entry: DriveSpaceCacheEntry): Promise<void>;
+  /** Read cached space for one drive, or null if never probed. */
+  getDriveSpaceCache?(storageId: string): Promise<DriveSpaceCacheEntry | null>;
   // recordDeadLink + listDeadLinkKeys come from DeadLinkStore.
 }
 
@@ -475,6 +480,7 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
   private readonly pendingReplacements = new Map<string, PendingReplacement>();
   private readonly rejectedResources: RejectedResource[] = [];
   private readonly episodeSources = new Map<string, EpisodeSource>();
+  private readonly driveSpaceCache = new Map<string, DriveSpaceCacheEntry>();
 
   async getSetting(key: string): Promise<string | null> {
     return this.settings.get(key) ?? null;
@@ -712,6 +718,16 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
         this.sessions.delete(id);
       }
     }
+  }
+
+  async upsertDriveSpaceCache(entry: DriveSpaceCacheEntry): Promise<void> {
+    if (!Number.isFinite(entry.totalBytes) || !Number.isFinite(entry.usedBytes)) return;
+    this.driveSpaceCache.set(entry.storageId, { ...entry });
+  }
+
+  async getDriveSpaceCache(storageId: string): Promise<DriveSpaceCacheEntry | null> {
+    const entry = this.driveSpaceCache.get(storageId);
+    return entry ? { ...entry } : null;
   }
 
   async recordDeadLink(input: {

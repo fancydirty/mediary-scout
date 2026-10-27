@@ -20,6 +20,8 @@
  * is the SINGLE json-parse entry point — no response is ever handed to raw JSON.parse.
  */
 
+import { parseFiniteMetric } from "./domain.js";
+
 const API_BASE = "https://yun.123pan.com/b/api";
 const DEFAULT_TIMEOUT_MS = 20_000;
 const OFFLINE_RESOLVE_TIMEOUT_MS = 60_000;
@@ -642,6 +644,19 @@ export class Pan123Client {
       method: "POST",
       body: { task_ids: ids },
     });
+  }
+
+  /** Query total and used storage capacity (`GET /b/api/user/info`). */
+  async getSpace(): Promise<{ totalBytes: number; usedBytes: number } | null> {
+    const resp = await this.signed("/user/info", { method: "GET" });
+    const rawData = resp["data"];
+    const data = typeof rawData === "object" && rawData !== null ? (rawData as Record<string, unknown>) : {};
+    const totalBytes = parseFiniteMetric(data["SpacePermanent"]);
+    const usedBytes = parseFiniteMetric(data["SpaceUsed"]);
+    if (!Number.isFinite(totalBytes) || !Number.isFinite(usedBytes) || totalBytes <= 0) {
+      return null;
+    }
+    return { totalBytes, usedBytes };
   }
 }
 

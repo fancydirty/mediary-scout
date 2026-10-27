@@ -16,6 +16,7 @@
  * evaluation ledger), so it lives in the executor's fail-loud path, not here.
  */
 
+import { parseFiniteMetric } from "./domain.js";
 import { fetchWithTimeout } from "./fetch-with-timeout.js";
 
 /** The per-brand half of the family protocol: everything that actually differs. */
@@ -338,6 +339,20 @@ export class QuarkCookieClient {
       file_name: input.name,
     });
     unwrap(response, this.errCode("RENAME_FAILED"));
+  }
+
+  /** Query total and used storage capacity (`GET /1/clouddrive/member`).
+   *  Note: `totalBytes - usedBytes` can be negative when SVIP expires and total
+   *  capacity drops back to 10 GB while existing files still occupy > 1 TB. */
+  async getSpace(): Promise<{ totalBytes: number; usedBytes: number } | null> {
+    const response = await this.getJson("/1/clouddrive/member", []);
+    const data = unwrap(response, this.errCode("SPACE_FAILED"));
+    const totalBytes = parseFiniteMetric(recordValue(data, "total_capacity"));
+    const usedBytes = parseFiniteMetric(recordValue(data, "use_capacity"));
+    if (!Number.isFinite(totalBytes) || !Number.isFinite(usedBytes) || totalBytes <= 0) {
+      return null;
+    }
+    return { totalBytes, usedBytes };
   }
 
   private async getJson(path: string, params: Array<[string, string]>): Promise<unknown> {

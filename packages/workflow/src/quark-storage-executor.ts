@@ -104,6 +104,13 @@ export class QuarkStorageExecutor implements StorageExecutor {
       options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   }
 
+  async getSpace(): Promise<{ totalBytes: number; usedBytes: number } | null> {
+    if (typeof (this.client as { getSpace?: () => Promise<{ totalBytes: number; usedBytes: number } | null> }).getSpace !== "function") {
+      return null;
+    }
+    return this.client.getSpace();
+  }
+
   async createDirectory(input: { name: string; parentId: string }): Promise<string> {
     const safeParentId = await this.assertWithinWriteScope(input.parentId, "create directory");
     // Find-or-create: seasons of one title initialize at different times and must

@@ -8,6 +8,7 @@ import {
   isUserVisibleWorkflowKind,
   type AgentDecision,
   type AgentStep,
+  type DriveSpaceCacheEntry,
   type EpisodeState,
   type MediaTitle,
   type NotificationEvent,
@@ -260,6 +261,12 @@ const SCHEMA = `
     key text NOT NULL,
     value text NOT NULL,
     PRIMARY KEY (account_id, key)
+  );
+  CREATE TABLE IF NOT EXISTS drive_space_cache (
+    storage_id text PRIMARY KEY,
+    total_bytes bigint NOT NULL,
+    used_bytes bigint NOT NULL,
+    probed_at text NOT NULL
   );
   ALTER TABLE tracked_seasons ADD COLUMN IF NOT EXISTS account_id text NOT NULL DEFAULT 'acct_default';
   ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS account_id text NOT NULL DEFAULT 'acct_default';
@@ -1512,6 +1519,36 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
       accountId,
       exceptSessionId ?? null,
     ]);
+  }
+
+  async upsertDriveSpaceCache(entry: DriveSpaceCacheEntry): Promise<void> {
+    if (!Number.isFinite(entry.totalBytes) || !Number.isFinite(entry.usedBytes)) return;
+    await this.ensureSchema();
+    await this.pool.query(
+      "INSERT INTO drive_space_cache (storage_id, total_bytes, used_bytes, probed_at) VALUES ($1, $2, $3, $4) " +
+        "ON CONFLICT (storage_id) DO UPDATE SET total_bytes = EXCLUDED.total_bytes, used_bytes = EXCLUDED.used_bytes, probed_at = EXCLUDED.probed_at",
+      [entry.storageId, Math.trunc(entry.totalBytes), Math.trunc(entry.usedBytes), entry.probedAt],
+    );
+  }
+
+  async getDriveSpaceCache(storageId: string): Promise<DriveSpaceCacheEntry | null> {
+    await this.ensureSchema();
+    const result = await this.pool.query<{
+      storage_id: string;
+      total_bytes: string | number;
+      used_bytes: string | number;
+      probed_at: string;
+    }>("SELECT storage_id, total_bytes, used_bytes, probed_at FROM drive_space_cache WHERE storage_id = $1", [
+      storageId,
+    ]);
+    const row = result.rows[0];
+    if (!row) return null;
+    return {
+      storageId: String(row.storage_id),
+      totalBytes: Number(row.total_bytes),
+      usedBytes: Number(row.used_bytes),
+      probedAt: String(row.probed_at),
+    };
   }
 
   async recordDeadLink(input: {

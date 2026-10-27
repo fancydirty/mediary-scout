@@ -222,6 +222,13 @@ export class Pan123StorageExecutor implements StorageExecutor {
     this.now = options.now ?? (() => performance.now());
   }
 
+  async getSpace(): Promise<{ totalBytes: number; usedBytes: number } | null> {
+    if (typeof (this.client as { getSpace?: () => Promise<{ totalBytes: number; usedBytes: number } | null> }).getSpace !== "function") {
+      return null;
+    }
+    return this.client.getSpace();
+  }
+
   async createDirectory(input: { name: string; parentId: string }): Promise<string> {
     const safeParentId = this.assertWithinWriteScope(input.parentId, "create directory");
     // Find-or-create: seasons of one title initialize at different times and must

@@ -79,7 +79,15 @@ import {
   resolveGlobalWorkspace,
   resolveIsDesktop,
 } from "../../lib/workflow-runtime";
-import { brandSupportsProwlarr, brandsSupportingProwlarr, FREE_LLM_PRESET, getStorageBrand, isFreeLlmPreset, isRegisteredStorageProvider } from "@media-track/workflow";
+import {
+  brandSupportsProwlarr,
+  brandsSupportingProwlarr,
+  formatDriveSpaceSummary,
+  FREE_LLM_PRESET,
+  getStorageBrand,
+  isFreeLlmPreset,
+  isRegisteredStorageProvider,
+} from "@media-track/workflow";
 import { isDemoMode } from "../../lib/demo-mode";
 
 export default function SettingsPage({
@@ -700,7 +708,7 @@ function providerLabel(provider: string): string {
 async function Pan115Section() {
   await connection();
   const status = await getPan115ConnectionStatus();
-  const drives = await getAccountConnectedStorages();
+  const drives = await getAccountConnectedStorages({ includeSpace: true });
 
   return (
     <section className="panel" style={{ maxWidth: 720 }}>
@@ -738,6 +746,7 @@ async function Pan115Section() {
           {drives.map((drive) => {
             const frozen = drive.status === "frozen";
             const ready = !frozen && drive.provisioned;
+            const spaceSummary = formatDriveSpaceSummary(drive.space);
             return (
               <div key={drive.id} className={`drive-card${frozen ? " is-frozen" : ""}`}>
                 <div className="drive-card-head">
@@ -770,6 +779,10 @@ async function Pan115Section() {
                   ) : (
                     <span>就绪</span>
                   )}
+                  <span> · </span>
+                  <span className={spaceSummary.overQuota ? "tone-amber-text" : undefined}>
+                    {spaceSummary.badgeText}
+                  </span>
                 </div>
                 <div className="drive-card-actions">
                   <TestConnectionButton storageId={drive.id} />

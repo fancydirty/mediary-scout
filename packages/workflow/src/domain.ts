@@ -528,3 +528,86 @@ export interface MovieWorkflowResult {
   notifications: NotificationEvent[];
   auditEvents: AuditEvent[];
 }
+
+export interface DriveSpaceCacheEntry {
+  storageId: string;
+  totalBytes: number;
+  usedBytes: number;
+  probedAt: string;
+}
+
+/** 30-minute TTL for cached drive space numbers (`drive_space_cache`). */
+export const DRIVE_SPACE_CACHE_TTL_MS = 30 * 60 * 1000;
+
+/** Format drive space into a concise human-readable Chinese string for settings cards
+ *  and agent context. Negative remaining bytes (over-quota) are preserved explicitly,
+ *  never clamped to zero. */
+export function formatDriveSpaceSummary(
+  space: { totalBytes: number; usedBytes: number } | null | undefined,
+): {
+  remainingBytes: number | null;
+  overQuota: boolean;
+  badgeText: string;
+  agentText: string;
+} {
+  if (!space || !Number.isFinite(space.totalBytes) || !Number.isFinite(space.usedBytes) || space.totalBytes <= 0) {
+    return {
+      remainingBytes: null,
+      overQuota: false,
+      badgeText: "容量未知",
+      agentText: "容量未知",
+    };
+  }
+  const remainingBytes = space.totalBytes - space.usedBytes;
+  const overQuota = remainingBytes <= 0;
+  if (overQuota) {
+    const exceededLabel = formatByteSize(Math.abs(remainingBytes));
+    return {
+      remainingBytes,
+      overQuota: true,
+      badgeText: remainingBytes < 0
+        ? `已超额 ${exceededLabel}（共 ${formatByteSize(space.totalBytes)}）`
+        : `空间已满（共 ${formatByteSize(space.totalBytes)}）`,
+      agentText: remainingBytes < 0
+        ? `已超配额 ${exceededLabel}（总额 ${formatByteSize(space.totalBytes)}，已用 ${formatByteSize(space.usedBytes)}）— 禁止写入`
+        : `剩余 0 B（已满）— 禁止写入`,
+    };
+  }
+  return {
+    remainingBytes,
+    overQuota: false,
+    badgeText: `剩余 ${formatByteSize(remainingBytes)} / ${formatByteSize(space.totalBytes)}`,
+    agentText: `剩余 ${formatByteSize(remainingBytes)}（总额 ${formatByteSize(space.totalBytes)}）`,
+  };
+}
+
+/** Strict finite number coercion for JSON API responses: accepts only finite
+ *  numbers or non-empty numeric strings (rejects null, booleans, "", whitespace). */
+export function parseFiniteMetric(value: unknown): number {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : Number.NaN;
+  }
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : Number.NaN;
+  }
+  return Number.NaN;
+}
+
+export function formatByteSize(bytes: number): string {
+  const abs = Math.abs(bytes);
+  const sign = bytes < 0 ? "-" : "";
+  const TB = 1024 ** 4;
+  const GB = 1024 ** 3;
+  const MB = 1024 ** 2;
+  if (abs >= TB) {
+    return `${sign}${(abs / TB).toFixed(2)} TB`;
+  }
+  if (abs >= GB) {
+    return `${sign}${(abs / GB).toFixed(1)} GB`;
+  }
+  if (abs >= MB) {
+    return `${sign}${(abs / MB).toFixed(1)} MB`;
+  }
+  return `${sign}${Math.round(abs)} B`;
+}

@@ -1,3 +1,4 @@
+import { parseFiniteMetric } from "./domain.js";
 import { lixianRsaEncrypt } from "./pan115-lixian-cipher.js";
 import { fetchWithTimeout } from "./fetch-with-timeout.js";
 import type {
@@ -289,6 +290,27 @@ export class Pan115CookieClient implements Pan115StorageApi {
       [`files_new_name[${input.fileId}]`, input.newName],
     ]);
     return actionResultFromResponse(response);
+  }
+
+  /** Query total and used storage capacity (`GET /user/space`). */
+  async getSpace(): Promise<{ totalBytes: number; usedBytes: number } | null> {
+    const response = await this.fetchJson(`${PAN115_WEBAPI_BASE_URL}/user/space`, {
+      method: "GET",
+      headers: {
+        ...this.headers(),
+        Referer: "https://115.com/",
+      },
+    });
+    if (!responseState(response)) {
+      throwResponseFailure(response, `PAN115_SPACE_FAILED: ${responseMessage(response)}`);
+    }
+    const data = recordValue(response, "data");
+    const totalBytes = parseFiniteMetric(recordValue(recordValue(data, "all_total"), "size"));
+    const usedBytes = parseFiniteMetric(recordValue(recordValue(data, "all_use"), "size"));
+    if (!Number.isFinite(totalBytes) || !Number.isFinite(usedBytes) || totalBytes <= 0) {
+      return null;
+    }
+    return { totalBytes, usedBytes };
   }
 
   private async getJson(url: string, params: Array<[string, string]>): Promise<unknown> {

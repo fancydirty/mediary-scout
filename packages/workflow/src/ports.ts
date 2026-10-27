@@ -24,7 +24,16 @@ export interface UnparsedVideoFile {
   sizeBytes: number;
 }
 
+export interface DriveSpaceInfo {
+  totalBytes: number;
+  usedBytes: number;
+}
+
 export interface StorageExecutor {
+  /** Query the drive's total and used space in bytes. `totalBytes - usedBytes` may
+   *  be negative when a drive is over-quota (e.g. expired SVIP). Returns null on a
+   *  non-auth failure or when the fake/simulator does not implement it. */
+  getSpace?(): Promise<DriveSpaceInfo | null>;
   createDirectory(input: { name: string; parentId: string }): Promise<string>;
   listVideoFiles(directoryId: string): Promise<VerifiedFile[]>;
   /** Video files in the directory whose names expose no parseable episode code. */

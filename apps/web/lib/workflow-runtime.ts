@@ -84,6 +84,9 @@ import {
   pickWorkspaceStorageId,
   resolveQueueStorageChoice,
   resolveWorkspaceFromParam,
+  DRIVE_SPACE_CACHE_TTL_MS,
+  type DriveSpaceCacheEntry,
+  type DriveSpaceInfo,
   type Account,
   type WorkflowScope,
   type MediaSearchCandidate,
@@ -2677,6 +2680,7 @@ export async function testConnection(
       makeTokenPersister(accountId, creds.id, creds.provider),
     );
     await getWorkflowRepository().setConnectedStorageStatus(creds.id, "active", null, null);
+    await resolveCachedDriveSpace(accountId, creds.id, "active", { forceRefresh: true });
     return { ok: true, status: "active", message: "连接正常。" };
   } catch (error) {
     // The brand's own dead-cookie signal → freeze; anything else (network/
@@ -3230,28 +3234,138 @@ export interface ConnectedStorageView {
   status: "active" | "frozen";
   /** True once category directories are provisioned (CIDs stored). */
   provisioned: boolean;
+  /** Cached or freshly probed drive space (totalBytes / usedBytes). Null when never probed. */
+  space?: DriveSpaceInfo | null;
 }
 
 /**
  * §7 P2: the CURRENT account's connected network drives, sanitized for the
  * settings UI — the cookie/payload is NEVER exposed, only display metadata.
  */
-export async function getAccountConnectedStorages(): Promise<ConnectedStorageView[]> {
+export async function getAccountConnectedStorages(options?: {
+  includeSpace?: boolean;
+}): Promise<ConnectedStorageView[]> {
   const accountId = await getCurrentAccountId();
-  const rows = await getWorkflowRepository().listConnectedStorages(accountId);
-  return rows.map((row) => {
-    const meta = (row.payload as { meta?: { connectedAt?: string } } | null)?.meta;
-    return {
-      id: row.id,
-      provider: row.provider,
-      providerUid: row.providerUid,
-      label: row.label,
-      connectedAt: meta?.connectedAt ?? null,
-      createdAt: row.createdAt,
-      status: row.status,
-      provisioned: Boolean(row.tvCid && row.moviesCid && row.animeCid),
-    };
+  const repository = getWorkflowRepository();
+  const rows = await repository.listConnectedStorages(accountId);
+  const includeSpace = options?.includeSpace === true;
+  return Promise.all(
+    rows.map(async (row) => {
+      const meta = (row.payload as { meta?: { connectedAt?: string } } | null)?.meta;
+      const space = includeSpace ? await resolveCachedDriveSpace(accountId, row.id, row.status) : undefined;
+      return {
+        id: row.id,
+        provider: row.provider,
+        providerUid: row.providerUid,
+        label: row.label,
+        connectedAt: meta?.connectedAt ?? null,
+        createdAt: row.createdAt,
+        status: row.status,
+        provisioned: Boolean(row.tvCid && row.moviesCid && row.animeCid),
+        ...(space === undefined ? {} : { space }),
+      };
+    }),
+  );
+}
+
+const inFlightSpaceProbes = new Map<string, Promise<DriveSpaceInfo | null>>();
+
+/**
+ * Resolve a drive's space with a 30-minute DB cache (`drive_space_cache`).
+ * When the cache is fresh, returns it without network I/O; when expired or
+ * missing on an active drive, probes via a lightweight read-only executor and
+ * updates the cache; on probe failure, falls back to the stale cached entry.
+ */
+export async function resolveCachedDriveSpace(
+  accountId: string,
+  storageId: string,
+  status: "active" | "frozen" = "active",
+  options?: { forceRefresh?: boolean },
+): Promise<DriveSpaceInfo | null> {
+  const inflightKey = `${accountId}:${storageId}:${options?.forceRefresh ? "force" : "normal"}`;
+  const existing = inFlightSpaceProbes.get(inflightKey);
+  if (existing) {
+    return existing;
+  }
+  const run = (async (): Promise<DriveSpaceInfo | null> => {
+    const repository = getWorkflowRepository();
+    let cached: DriveSpaceCacheEntry | null = null;
+    try {
+      cached = (await repository.getDriveSpaceCache?.(storageId)) ?? null;
+    } catch (error) {
+      console.warn(`[drive-space] cache read failed for ${storageId}: ${String(error)}`);
+    }
+
+    const nowMs = Date.now();
+    const probedMs = cached ? Date.parse(cached.probedAt) : Number.NaN;
+    const isFresh =
+      !options?.forceRefresh &&
+      cached !== null &&
+      Number.isFinite(probedMs) &&
+      nowMs - probedMs < DRIVE_SPACE_CACHE_TTL_MS;
+
+    if (isFresh && cached) {
+      return { totalBytes: cached.totalBytes, usedBytes: cached.usedBytes };
+    }
+
+    if (status === "frozen" || process.env.MEDIA_TRACK_STORAGE_ADAPTER !== "115") {
+      return cached ? { totalBytes: cached.totalBytes, usedBytes: cached.usedBytes } : null;
+    }
+
+    try {
+      const storages = await repository.listConnectedStorages(accountId);
+      const drive = storages.find(
+        (s) => s.id === storageId && isRegisteredStorageProvider(s.provider),
+      );
+      if (!drive) {
+        return cached ? { totalBytes: cached.totalBytes, usedBytes: cached.usedBytes } : null;
+      }
+      const { cookie, credential } = extractStorageCredential(drive.provider, drive.payload);
+      if (!cookie && !credential) {
+        return cached ? { totalBytes: cached.totalBytes, usedBytes: cached.usedBytes } : null;
+      }
+      const scopeCids = [drive.rootCid, drive.moviesCid, drive.tvCid, drive.animeCid].filter(
+        (cid): cid is string => Boolean(cid),
+      );
+      const executor =
+        getStorageBrand(drive.provider).authKind === "token"
+          ? createExecutorForBrand({
+              provider: drive.provider,
+              credential: credential ?? {},
+              scopeCids,
+              env: process.env,
+              onCredentialRefresh: makeTokenPersister(accountId, drive.id, drive.provider),
+            })
+          : createExecutorForBrand({
+              provider: drive.provider,
+              cookie,
+              scopeCids,
+              env: process.env,
+            });
+      if (!executor.getSpace) {
+        return cached ? { totalBytes: cached.totalBytes, usedBytes: cached.usedBytes } : null;
+      }
+      const fresh = await executor.getSpace();
+      if (fresh && Number.isFinite(fresh.totalBytes) && Number.isFinite(fresh.usedBytes) && fresh.totalBytes > 0) {
+        await repository.upsertDriveSpaceCache?.({
+          storageId,
+          totalBytes: fresh.totalBytes,
+          usedBytes: fresh.usedBytes,
+          probedAt: new Date(nowMs).toISOString(),
+        });
+        return fresh;
+      }
+    } catch (error) {
+      console.warn(`[drive-space] probe failed for ${storageId}, falling back to cached value: ${String(error)}`);
+    }
+
+    return cached ? { totalBytes: cached.totalBytes, usedBytes: cached.usedBytes } : null;
+  })().finally(() => {
+    inFlightSpaceProbes.delete(inflightKey);
   });
+
+  inFlightSpaceProbes.set(inflightKey, run);
+  return run;
 }
 
 /** Thrown when a QR connect targets a 115 already bound to a DIFFERENT account

@@ -18,6 +18,8 @@
  * response is ever handed to raw JSON.parse.
  */
 
+import { parseFiniteMetric } from "./domain.js";
+
 const WEB_BASE = "https://cloud.189.cn";
 const API_BASE = "https://api.cloud.189.cn"; // OPEN face — getSessionForPC (token exchange)
 const AUTH_BASE = "https://open.e.189.cn"; // OPEN face — refreshToken.do
@@ -385,6 +387,22 @@ export class TianyiClient {
       ["iconOption", "0"],
     ]);
     return mergeTianyiListing(data["fileListAO"]);
+  }
+
+  /** Query total and used storage capacity (`GET /api/open/user/getUserInfo.action`).
+   *  Note: `available` may be negative when a drive is over-quota (e.g. 30 GB quota
+   *  with 71 GB used returns `available = -44152877229`), so `usedBytes = capacity - available`. */
+  async getSpace(): Promise<{ totalBytes: number; usedBytes: number } | null> {
+    const data = await this.webGet("/api/open/user/getUserInfo.action", []);
+    const totalBytes = parseFiniteMetric(data["capacity"]);
+    const availableBytes = parseFiniteMetric(data["available"]);
+    if (!Number.isFinite(totalBytes) || !Number.isFinite(availableBytes) || totalBytes <= 0) {
+      return null;
+    }
+    return {
+      totalBytes,
+      usedBytes: totalBytes - availableBytes,
+    };
   }
 
   // ── 转存链(SHARE_SAVE) ───────────────────────────────────────────────────

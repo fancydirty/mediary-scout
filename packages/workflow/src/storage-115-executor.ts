@@ -144,6 +144,7 @@ export interface Pan115StorageApi {
   moveItems(input: { fileIds: string[]; targetDirectoryId: string }): Promise<Pan115ActionResult>;
   deleteItems(input: { fileIds: string[] }): Promise<Pan115ActionResult>;
   renameFile(input: { fileId: string; newName: string }): Promise<Pan115ActionResult>;
+  getSpace?(): Promise<{ totalBytes: number; usedBytes: number } | null>;
 }
 
 export interface Storage115ExecutorOptions {
@@ -531,6 +532,14 @@ export class Storage115Executor implements StorageExecutor {
    *  stop line for subtitle landing polls — polling must never eat the reserve. */
   apiTransferCallBudget(): number {
     return this.apiGuard.transferCallBudget();
+  }
+
+  async getSpace(): Promise<{ totalBytes: number; usedBytes: number } | null> {
+    const getSpace = this.api.getSpace;
+    if (!getSpace) {
+      return null;
+    }
+    return this.callApi("getSpace", () => getSpace.call(this.api));
   }
 
   async createDirectory(input: { name: string; parentId: string }): Promise<string> {
