@@ -601,13 +601,16 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
   // to its batch), so a brand adding only the batch must add the delegate
   // too — see the 加品牌 touch-point list.
   const origins = request.originCountries ?? [];
+  const anySubtitleExecutor =
+    typeof request.executor.transferSubtitleUrl === "function" ||
+    Boolean(request.drives?.some((d) => typeof d.storage.transferSubtitleUrl === "function"));
   const subtitleActive =
     !request.stagingRecovery &&
     request.assrtToken !== undefined &&
     request.assrtToken.trim() !== "" &&
     origins.length > 0 &&
     origins.every((c) => c !== "CN") &&
-    typeof request.executor.transferSubtitleUrl === "function";
+    anySubtitleExecutor;
   let subtitleCandidateCount: number | undefined;
   if (subtitleActive) {
     const subtitleProvider: AssrtProviderPort =
@@ -631,6 +634,8 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     ...(request.searchHints === undefined ? {} : { searchHints: request.searchHints }),
     ...(request.qualityGuidance === undefined ? {} : { qualityGuidance: request.qualityGuidance }),
     ...(request.storageProvider === undefined ? {} : { storageProvider: request.storageProvider }),
+    ...(request.drives && request.drives.length > 0 ? { drives: request.drives } : {}),
+    ...(request.memory?.drive ? { primaryStorageId: request.memory.drive } : {}),
     ...(subtitleActive ? { subtitle: true } : {}),
     ...(subtitleCandidateCount ? { subtitleCandidateCount } : {}),
     ...(request.onProgress ? { onProgress: request.onProgress } : {}),

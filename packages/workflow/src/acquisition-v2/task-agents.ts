@@ -2,7 +2,7 @@ import type { LanguageModel } from "ai";
 import { runAcquisitionAgent, type AcquisitionAgentResult } from "./agent-loop.js";
 import type { AgentToolEvent } from "./activity.js";
 import type { TaskSandbox } from "./sandbox.js";
-import { skillIndexForAgent } from "./skill.js";
+import { buildMultiDriveAllocationBlock, skillIndexForAgent, type PromptDriveSummary } from "./skill.js";
 import { getStorageBrand } from "../storage-brands.js";
 import { stripMemoryFence, type AgentMemory } from "../agent-memory.js";
 import { LINK_HISTORY_PROMPT } from "./link-history.js";
@@ -144,6 +144,10 @@ export interface TaskAgentPromptOptions {
    *  Carries the user's LLM endpoint so web search routes through DeepSeek's own
    *  engine when they configured it. Absent = no web access. */
   titleResearch?: { web: { llmBaseURL?: string; llmApiKey?: string; timeoutMs?: number; limit?: number } };
+  /** Ordered active drives when running in unified multi-drive mode. */
+  drives?: readonly PromptDriveSummary[];
+  /** Primary storageId (e.g. an ongoing show's home drive). */
+  primaryStorageId?: string | null;
 }
 
 /** Shown to the agent for a leftover staging dir. Search and transfer tools are not registered. */
@@ -164,6 +168,9 @@ function protectExistingLine(options: Pick<TaskAgentPromptOptions, "protectExist
  *  123 = dual (own 分享链 + 离线磁力, like 115); 115 keeps the
  *  existing in-prompt guidance (no extra line). Exported for unit coverage. */
 export function transferModelLine(options: TaskAgentPromptOptions): string {
+  if (options.drives && options.drives.length > 1) {
+    return `\n${buildMultiDriveAllocationBlock(options.drives, options.primaryStorageId)}\n`;
+  }
   if (options.storageProvider === "quark") {
     return `\nTRANSFER MODEL — 夸克网盘 (this drive): every candidate is a 夸克分享链 (转存分享链, the 秒传 equivalent). 夸克 has NO magnet / offline-download API, so there are NO magnet candidates and a magnet would fail loud (QUARK_NO_MAGNET); ignore any 115/magnet wording — it does not apply here. A dead/expired share fails LOUD (分享不存在 / 已取消 / 已过期 / 提取码错误) — switch to the next covering 夸克分享. Read the "dead-links-black-box" skill section: on this drive it is the 夸克 version.`;
   }
@@ -470,6 +477,8 @@ If one pack covers multiple seasons, distribute its files in ONE plan with a mov
     prompt,
     ...(promptOptions.stagingRecovery ? { stagingRecovery: true } : {}),
     ...(promptOptions.storageProvider === undefined ? {} : { storageProvider: promptOptions.storageProvider }),
+    ...(promptOptions.drives === undefined ? {} : { drives: promptOptions.drives }),
+    ...(promptOptions.primaryStorageId === undefined ? {} : { primaryStorageId: promptOptions.primaryStorageId }),
     ...(promptOptions.titleResearch === undefined ? {} : { titleResearch: promptOptions.titleResearch }),
     ...(promptOptions.subtitle ? { subtitle: true } : {}),
     ...(maxSteps === undefined ? {} : { maxSteps }),
@@ -499,6 +508,8 @@ Find the one correct film, transfer it, keep the directory clean, mark it presen
     prompt,
     movie: true,
     ...(promptOptions.storageProvider === undefined ? {} : { storageProvider: promptOptions.storageProvider }),
+    ...(promptOptions.drives === undefined ? {} : { drives: promptOptions.drives }),
+    ...(promptOptions.primaryStorageId === undefined ? {} : { primaryStorageId: promptOptions.primaryStorageId }),
     ...(promptOptions.titleResearch === undefined ? {} : { titleResearch: promptOptions.titleResearch }),
     ...(promptOptions.subtitle ? { subtitle: true } : {}),
     ...(maxSteps === undefined ? {} : { maxSteps }),

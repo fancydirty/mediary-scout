@@ -3,7 +3,7 @@ import { AgentContentFilterError } from "../agent-error.js";
 import { generateText, stepCountIs, type LanguageModel, type ToolSet } from "ai";
 import { z } from "zod";
 import type { SearchHistoryEntry, TaskSandbox } from "./sandbox.js";
-import { readSkillSection, SKILL_SECTION_NAMES } from "./skill.js";
+import { readSkillSection, SKILL_SECTION_NAMES, type PromptDriveSummary } from "./skill.js";
 import {
   DEFAULT_MAX_STEPS,
   buildRepetitionStop,
@@ -125,6 +125,10 @@ export function buildSandboxToolSet(
     onToolCall?: (toolName: string, args: Record<string, unknown>) => void;
     /** The run's drive brand — selects the brand-specific dead-links section. */
     storageProvider?: string;
+    /** Ordered active drives when running in unified multi-drive mode. */
+    drives?: readonly PromptDriveSummary[];
+    /** Primary storageId (e.g. an ongoing show's home drive). */
+    primaryStorageId?: string | null;
     /** Leftover staging: no search, no transfer, no subtitle landing.
      *  renameSubtitle stays: a leftover .ass/.srt may not match its video. */
     stagingRecovery?: boolean;
@@ -145,7 +149,15 @@ export function buildSandboxToolSet(
         `Read a section of your domain skill manual ON DEMAND — the hard-won playbook for HOW to act. Sections: ${SKILL_SECTION_NAMES.join(", ")}. Read your sections before you act, and re-read the relevant one the moment its situation arises. Acting from memory instead of the skill is how the old agent hammered the drive and corrupted libraries.`,
       inputSchema: z.object({ section: z.string() }),
       execute: (args: { section: string }) =>
-        Promise.resolve({ section: args.section, body: readSkillSection(args.section, options.storageProvider) }),
+        Promise.resolve({
+          section: args.section,
+          body: readSkillSection(
+            args.section,
+            options.storageProvider,
+            options.drives,
+            options.primaryStorageId,
+          ),
+        }),
     },
     ...(recover
       ? {}
@@ -355,6 +367,10 @@ export interface AcquisitionAgentRequest {
   subtitle?: boolean;
   /** The run's drive brand — selects the brand-specific dead-links skill section. */
   storageProvider?: string;
+  /** Ordered active drives when running in unified multi-drive mode. */
+  drives?: readonly PromptDriveSummary[];
+  /** Primary storageId (e.g. an ongoing show's home drive). */
+  primaryStorageId?: string | null;
   /** Leftover staging: the tool set has no search or transfer tools. */
   stagingRecovery?: boolean;
   /** Web-reference tools (alternate titles, fan-season ↔ TMDB episode mapping).
@@ -393,6 +409,8 @@ export async function runAcquisitionAgent(
     ...(request.stagingRecovery ? { stagingRecovery: true } : {}),
     ...(request.titleResearch === undefined ? {} : { titleResearch: request.titleResearch }),
     ...(request.storageProvider === undefined ? {} : { storageProvider: request.storageProvider }),
+    ...(request.drives === undefined ? {} : { drives: request.drives }),
+    ...(request.primaryStorageId === undefined ? {} : { primaryStorageId: request.primaryStorageId }),
     ...(onProgress
       ? {
           onToolCall: (toolName: string, args: Record<string, unknown>) =>

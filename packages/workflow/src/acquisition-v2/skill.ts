@@ -16,6 +16,12 @@
  * so it ships reliably in the compiled package.
  */
 
+import { formatDriveSpaceSummary } from "../domain.js";
+import type { AcquisitionDriveContext } from "../ports.js";
+import { isRegisteredStorageProvider } from "../storage-brands.js";
+
+export type PromptDriveSummary = Pick<AcquisitionDriveContext, "storageId" | "provider" | "label" | "space">;
+
 const PROTOCOL = `# Method protocol (read this before you act)
 
 You drive your own observe → act → verify loop through the sandbox tools. "Intelligence" means: read the evidence the tools actually returned and decide in plain words — NOT acting on a hunch, and NOT firing many side effects before you have looked at what landed.
@@ -409,16 +415,79 @@ export function getStorageSkill(provider: string): string {
   throw new Error(`unknown storage brand: ${provider}`);
 }
 
+/**
+ * Build the multi-drive allocation section (`## 你手上有这几块盘`) when >1 active
+ * drive is available. Enforces the 7 hard rules:
+ *  1. Over-quota / full drives (`remainingBytes <= 0`) are strictly forbidden.
+ *  2. Single-drive completion is the default — never split if one drive can cover all missing episodes.
+ *  3. Split across drives ONLY when splitting increases total obtained episode count.
+ *  4. Share links are brand-locked (Quark share -> Quark drive, 115 share -> 115 drive).
+ *  5. Never split just to balance free space.
+ *  6. Never store duplicate copies of the same episode across multiple drives.
+ *  7. When an episode's only candidate is on an over-quota drive, report honestly that the drive is out of space rather than "no resource".
+ */
+export function buildMultiDriveAllocationBlock(
+  drives: readonly PromptDriveSummary[],
+  primaryStorageId?: string | null,
+): string {
+  if (drives.length <= 1) {
+    return "";
+  }
+  const lines = drives.map((d, idx) => {
+    const summary = formatDriveSpaceSummary(d.space);
+    const homeTag = primaryStorageId && d.storageId === primaryStorageId ? " · 【本剧历史在追主盘】" : "";
+    return `${idx + 1}. ${d.label} [storageId=${d.storageId}, provider=${d.provider}] — ${summary.agentText}${homeTag}`;
+  });
+  return `## 你手上有这几块盘（多盘统一获取规则 — 必读）
+
+当前已连接的可用网盘（按优先级顺序排列）：
+${lines.join("\n")}
+
+候选列表里每条资源都带有品牌/通道标签（如 \`· 115\`、\`· 夸克\`、\`· 123\`、\`· 磁力\`）。你必须严格遵守以下 7 条铁律：
+
+1. **剩余空间 <= 0（已超配额/已满）的网盘严禁落盘**：余量数据的唯一作用就是排除装不下的盘。上面标注「禁止写入」的超额网盘（以及剩余空间小于候选已知体积的网盘），不论候选画质多好、不论是不是唯一有源的盘，**一律不得转存**（沙箱在入口也会直接硬拦截 \`SANDBOX_DRIVE_OUT_OF_SPACE\`）。
+2. **默认一块盘收齐（单盘优先，绝不无故拆盘）**：先看有没有**任何单块可用盘**能覆盖全部缺集。如果有，就只用那一块盘收齐，其余网盘一律不碰！选哪块盘：先排除剩余空间 <= 0 的盘，在能收齐的单盘里按「画质更好 → 上方列表顺位更靠前」挑选。
+3. **拆盘的唯一标准：拆完能拿到的总集数 > 单盘能拿到的集数**：只有当没有任何单块可用盘能覆盖全部缺集时（例如 E01–E13 只有 115 有源、E14–E24 只有 123 有源，单盘只能拿 13 集、两盘合起来能拿 24 集），才允许把缺集拆分到多块盘；而且能用两块盘搞定就绝不摊到三块。
+4. **分享链品牌锁定，不能跨品牌转存**：夸克分享链只能转进夸克盘，115 分享链只能转进 115 盘，123/天翼/UC/光鸭同理；磁力链可转进支持磁力的可用盘（115 / 光鸭 / 123）。同品牌如果绑了多块盘，系统会自动选顺位第一且空间足够的盘（你也可在 \`transferCandidate\` 传 \`storageId\` 指定）。
+5. **严禁为了「均衡剩余空间」而拆盘**：余量只用来排除装不下的盘，绝不用来分摊集数。只要一块盘还装得下，就不要因为别的盘更空而把剧集拆散。
+6. **同一集绝不在两块盘各存一份**：那是重复浪费，不是分配。每一集只落一块盘。
+7. **在更剧与超额盘诚实上报**：
+   - 在更剧如果标注了【本剧历史在追主盘】且该盘空间足够、有源，优先继续落在该主盘，不要另开新盘；只有主盘确实没有某集或已满、而其他可用盘有源时，才用其他盘补齐缺集。
+   - 如果某集的候选**只存在于已超配额/空间不足的网盘**上，结果是拿不到该集——此时必须留缺或 \`reportNoCoverage\`，并在原因里**如实写明是「对应网盘空间已满/超额（如夸克已超配额）」**，绝不能谎报成「暂未找到可用资源」！`;
+}
+
 /** Read one section of the skill manual on demand, for the run's drive brand
- *  (defaults to 115). The "dead-links-black-box" section is brand-specific; the
- *  rest are shared. Unknown name → a clear error string the agent can recover from. */
-export function readSkillSection(section: string, provider: string = "pan115"): string {
+ *  (defaults to 115). The "dead-links-black-box" section is brand-specific; when
+ *  `drives` has >1 active drive, `dead-links-black-box` and `protocol` include the
+ *  multi-drive allocation rules and the combined brand manuals. */
+export function readSkillSection(
+  section: string,
+  provider: string = "pan115",
+  drives?: readonly PromptDriveSummary[],
+  primaryStorageId?: string | null,
+): string {
+  const multiBlock = drives && drives.length > 1 ? buildMultiDriveAllocationBlock(drives, primaryStorageId) : "";
   if (section === "dead-links-black-box") {
+    if (drives && drives.length > 1) {
+      const seenProviders = new Set<string>();
+      const brandManuals: string[] = [];
+      for (const d of drives) {
+        if (seenProviders.has(d.provider) || !isRegisteredStorageProvider(d.provider)) continue;
+        seenProviders.add(d.provider);
+        brandManuals.push(getStorageSkill(d.provider));
+      }
+      if (brandManuals.length > 0) {
+        return `${multiBlock}\n\n${brandManuals.join("\n\n---\n\n")}`;
+      }
+    }
     return getStorageSkill(provider);
   }
   const body = (SECTIONS as Record<string, string>)[section];
   if (body === undefined) {
     return `Unknown skill section "${section}". Available sections: ${SKILL_SECTION_NAMES.join(", ")}.`;
+  }
+  if (section === "protocol" && multiBlock) {
+    return `${multiBlock}\n\n${body}`;
   }
   return body;
 }
