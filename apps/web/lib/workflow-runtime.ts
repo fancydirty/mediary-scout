@@ -617,17 +617,18 @@ export function getAccountScopedSettings(
  */
 export async function getActiveWorkspaceScope(storageId?: string): Promise<WorkflowScope> {
   const accountId = await getCurrentAccountId();
+  if (storageId === undefined) {
+    return { accountId, connectedStorageId: null };
+  }
   const storages = await getWorkflowRepository().listConnectedStorages(accountId);
   const connectedStorageId = pickWorkspaceStorageId(
-    // Tree model: a workspace is any registered brand's drive (115 or quark), not
-    // just 115 — so a quark drive shows up as its own switchable workspace.
     storages.filter((storage) => isRegisteredStorageProvider(storage.provider)),
     storageId,
   );
   return { accountId, connectedStorageId };
 }
 
-/** 通知页/角标只展示最近 N 天 —— 旧通知不再无限堆积。 */
+/** 通知页/角标只展示最近 N 天 —— 旧通知不再堆积。 */
 export const NOTIFICATION_WINDOW_DAYS = 7;
 
 /** ISO cutoff for the notification window (now − NOTIFICATION_WINDOW_DAYS). */
@@ -644,14 +645,53 @@ export async function untrackTrackedTitle(
   seasonNumber?: number,
 ): Promise<{ status: "untracked" | "not_found" | "in_flight"; removedSeasons: number }> {
   const scope = await getActiveWorkspaceScope(storageId);
-  return getWorkflowRepository().untrackTitle(tmdbId, scope, mediaKind, seasonNumber);
+  const repo = getWorkflowRepository();
+  if (scope.connectedStorageId !== null) {
+    return repo.untrackTitle(tmdbId, scope, mediaKind, seasonNumber);
+  }
+  const states = (await repo.listTrackedSeasonStates(scope)).filter(
+    (state) =>
+      state.title.tmdbId === tmdbId &&
+      (state.title.type === "movie") === (mediaKind === "movie") &&
+      (seasonNumber === undefined || state.season.seasonNumber === seasonNumber),
+  );
+  if (states.length === 0) {
+    return { status: "not_found", removedSeasons: 0 };
+  }
+  const targetSeasonIds = new Set(states.map((s) => s.season.id));
+  const activeRuns = await repo.listActiveWorkflowRuns(scope);
+  const hasActiveRun = activeRuns.some(
+    (snap) =>
+      snap.title.tmdbId === tmdbId &&
+      (snap.title.type === "movie") === (mediaKind === "movie") &&
+      ((snap.workflowRun.status === "running" && snap.workflowRun.kind !== "staging_recovery" && targetSeasonIds.has(snap.season.id)) ||
+        snap.workflowRun.kind === "replace_request"),
+  );
+  if (hasActiveRun) {
+    return { status: "in_flight", removedSeasons: 0 };
+  }
+  const storageIds = [...new Set(states.map((s) => s.connectedStorageId))];
+  let removedSeasons = 0;
+  for (const sid of storageIds) {
+    const res = await repo.untrackTitle(
+      tmdbId,
+      { accountId: scope.accountId, connectedStorageId: sid },
+      mediaKind,
+      seasonNumber,
+    );
+    if (res.status === "in_flight") {
+      return res;
+    }
+    if (res.status === "untracked") {
+      removedSeasons += res.removedSeasons;
+    }
+  }
+  return { status: removedSeasons > 0 ? "untracked" : "not_found", removedSeasons };
 }
 
 /** Resolve a global page's (通知/活动/设置) active workspace from its `?w` param.
- *  Returns the scope to filter content by, the basePath for the sidebar's
- *  library/search links, and the activeStorageId for the sidebar's global links
- *  (undefined = primary → those links stay `?w`-free). A stale `w` falls back to
- *  primary (never 404). */
+ *  When `w` is omitted, returns the unified cross-drive scope (`connectedStorageId: null`)
+ *  so notifications and activity show all drives of the account. */
 export async function resolveGlobalWorkspace(w: string | undefined): Promise<{
   accountId: string;
   connectedStorageId: string | null;
@@ -659,6 +699,9 @@ export async function resolveGlobalWorkspace(w: string | undefined): Promise<{
   activeStorageId: string | undefined;
 }> {
   const accountId = await getCurrentAccountId();
+  if (!w) {
+    return { accountId, connectedStorageId: null, basePath: "/", activeStorageId: undefined };
+  }
   const storages = (await getWorkflowRepository().listConnectedStorages(accountId)).filter((storage) =>
     isRegisteredStorageProvider(storage.provider),
   );
@@ -2716,7 +2759,7 @@ async function getAccountStorageCredentials(
  * queue entrypoints can refuse — a frozen drive (cookie died) must not accept
  * acquisition until re-bound. id is null when the account has no 115 drive yet.
  */
-async function resolveQueueStorage(
+export async function resolveQueueStorage(
   accountId: string,
   explicitConnectedStorageId?: string | null,
 ): Promise<{ id: string | null; frozen: boolean; unknown: boolean; provider: string | null }> {
@@ -2724,8 +2767,20 @@ async function resolveQueueStorage(
     const storages = (await getWorkflowRepository().listConnectedStorages(accountId)).filter(
       (storage) => isRegisteredStorageProvider(storage.provider),
     );
-    const choice = resolveQueueStorageChoice(storages, explicitConnectedStorageId);
-    return { ...choice, provider: storages.find((storage) => storage.id === choice.id)?.provider ?? null };
+    const order = await getAccountDriveOrder(accountId);
+    const ordered = sortDrivesByOrder(storages, order);
+    if (!explicitConnectedStorageId) {
+      const firstActive = ordered.find((s) => s.status !== "frozen");
+      if (firstActive) {
+        return { id: firstActive.id, frozen: false, unknown: false, provider: firstActive.provider };
+      }
+      const firstFrozen = ordered[0];
+      if (firstFrozen) {
+        return { id: firstFrozen.id, frozen: true, unknown: false, provider: firstFrozen.provider };
+      }
+    }
+    const choice = resolveQueueStorageChoice(ordered, explicitConnectedStorageId);
+    return { ...choice, provider: ordered.find((storage) => storage.id === choice.id)?.provider ?? null };
   } catch {
     // Fail closed: transient DB errors must not queue unscoped or drop an
     // explicit workspace pin (would land on the wrong drive).
@@ -2734,7 +2789,7 @@ async function resolveQueueStorage(
 }
 
 /** Refusal for a queue/reserve action on a drive whose login died: re-scan THAT brand. */
-function frozenDriveMessage(provider: string | null, action: "获取" | "预定"): string {
+export function frozenDriveMessage(provider: string | null, action: "获取" | "预定"): string {
   const label = provider ? getStorageBrand(provider).label : "网盘";
   return `该网盘已掉线，请重新扫码绑定同一个${label}后再${action}。`;
 }

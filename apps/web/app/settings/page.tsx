@@ -5,8 +5,7 @@ import { Suspense } from "react";
 import { Bell, Bot, Cable, CalendarClock, Clapperboard, ExternalLink, Gauge, KeyRound, Languages, Radio, ShieldCheck, Subtitles, TriangleAlert, Users } from "lucide-react";
 import { AppSidebar } from "../../components/app-sidebar";
 import { AddDriveBrandTabs } from "../../components/add-drive-brand-tabs";
-import { TestConnectionButton } from "../../components/test-connection-button";
-import { UnbindStorageButton } from "../../components/unbind-storage-button";
+import { DriveOrderGrid } from "../../components/drive-order-grid";
 import { PushNotificationForm } from "../../components/push-notification-form";
 import { PreferredLanguageForm } from "../../components/preferred-language-form";
 import { QualityPreferenceForm } from "../../components/quality-preference-form";
@@ -718,7 +717,7 @@ async function Pan115Section() {
             <Cable size={16} aria-hidden style={{ verticalAlign: "-2px", marginRight: 8 }} />
             网盘连接
           </h2>
-          <p className="panel-note">每块盘是独立工作区，左上角可切换；凭证入库后自动用于转存</p>
+          <p className="panel-note">多块网盘统一协作：单盘能收齐绝不拆盘，可拖拽卡片调整优先顺序</p>
         </div>
         {(() => {
           // #93: derive the header badge from ALL drives — 115-only status made
@@ -742,62 +741,30 @@ async function Pan115Section() {
       ) : null}
 
       {drives.length > 0 ? (
-        <div className="drive-grid">
-          {drives.map((drive) => {
-            const frozen = drive.status === "frozen";
-            const ready = !frozen && drive.provisioned;
+        <DriveOrderGrid
+          initialDrives={drives.map((drive) => {
             const spaceSummary = formatDriveSpaceSummary(drive.space);
-            return (
-              <div key={drive.id} className={`drive-card${frozen ? " is-frozen" : ""}`}>
-                <div className="drive-card-head">
-                  {isRegisteredStorageProvider(drive.provider) ? (
-                    // 已注册品牌必有 svg(workspace-switcher 同款资产)
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img className="drive-card-icon" src={`/brands/${drive.provider}.svg`} alt="" width={26} height={26} />
-                  ) : (
-                    // 未注册品牌:中性方形占位(与右侧状态圆点区分形状,避免双点误读)
-                    <span className="drive-card-icon-fallback" aria-hidden />
-                  )}
-                  <span className="drive-card-name">{providerLabel(drive.provider)}</span>
-                  <span
-                    className={`drive-dot ${ready ? "green" : "amber"}`}
-                    role="img"
-                    title={frozen ? "凭证已失效，重新绑定同一账号即可恢复" : ready ? "目录已就绪" : "目录待建"}
-                    aria-label={frozen ? "掉线" : ready ? "就绪" : "目录待建"}
-                  />
-                </div>
-                <div className="drive-card-uid" title={drive.providerUid}>
-                  {maskProviderUid(drive.providerUid)}
-                </div>
-                <div className="drive-card-meta">
-                  {frozen ? (
-                    <span className="tone-amber-text">掉线 · 重新绑定即恢复</span>
-                  ) : !drive.provisioned ? (
-                    <span className="tone-amber-text">目录待建</span>
-                  ) : drive.connectedAt ? (
-                    <span>{drive.connectedAt.slice(0, 10)} 连接</span>
-                  ) : (
-                    <span>就绪</span>
-                  )}
-                  <span> · </span>
-                  <span className={spaceSummary.overQuota ? "tone-amber-text" : undefined}>
-                    {spaceSummary.badgeText}
-                  </span>
-                </div>
-                <div className="drive-card-actions">
-                  <TestConnectionButton storageId={drive.id} />
-                  <UnbindStorageButton storageId={drive.id} label={providerLabel(drive.provider)} />
-                </div>
-              </div>
-            );
+            return {
+              id: drive.id,
+              provider: drive.provider,
+              providerLabel: providerLabel(drive.provider),
+              hasBrandSvg: isRegisteredStorageProvider(drive.provider),
+              providerUid: drive.providerUid,
+              maskedUid: maskProviderUid(drive.providerUid),
+              frozen: drive.status === "frozen",
+              provisioned: drive.provisioned,
+              connectedAt: drive.connectedAt,
+              spaceBadgeText: spaceSummary.badgeText,
+              spaceOverQuota: spaceSummary.overQuota,
+            };
           })}
-        </div>
+        />
       ) : null}
 
       <p className="panel-note drive-add-heading">
         {drives.length > 0 ? "添加网盘 · 选择品牌开始连接" : "添加你的第一块网盘"}
         {drives.length > 0 ? (
-          <span className="drive-add-hint">不同账号即新增一块独立工作区；绑已连的同一账号会自动刷新登录</span>
+          <span className="drive-add-hint">不同账号即新增一块可用网盘；绑已连的同一账号会自动刷新登录</span>
         ) : null}
       </p>
       <AddDriveBrandTabs defaultBrand={drives.length > 0 ? null : "pan115"} />

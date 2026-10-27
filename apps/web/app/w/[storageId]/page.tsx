@@ -1,20 +1,11 @@
 import { Suspense } from "react";
-import { notFound } from "next/navigation";
-import { WorkspaceNotFoundError } from "@media-track/workflow";
-import { HomeView } from "../../page";
-import { getActiveWorkspaceScope } from "../../../lib/workflow-runtime";
+import { redirect } from "next/navigation";
 
 /**
- * Tree model: a specific drive's workspace. Same home surface as the root route,
- * scoped to this connected storage. Root ("/") is the account's PRIMARY drive;
- * additional drives live here. A storageId the account does not own → 404.
- *
- * All dynamic reads (params + the ownership-validating DB call) live INSIDE a
- * Suspense boundary so the static shell still prerenders — cacheComponents
- * forbids uncached data access outside <Suspense> (the "blocking-route" error).
+ * Legacy `/w/<storageId>` workspace URLs now redirect to the unified library (`/`),
+ * preserving any query parameters (`?tab=library`, `?q=...`).
  */
 export default function WorkspaceHomePage({
-  params,
   searchParams,
 }: {
   params: Promise<{ storageId: string }>;
@@ -22,27 +13,25 @@ export default function WorkspaceHomePage({
 }) {
   return (
     <Suspense fallback={<div className="app-shell" />}>
-      <ValidatedWorkspaceHome params={params} searchParams={searchParams} />
+      <RedirectToUnifiedHome searchParams={searchParams} />
     </Suspense>
   );
 }
 
-async function ValidatedWorkspaceHome({
-  params,
+async function RedirectToUnifiedHome({
   searchParams,
 }: {
-  params: Promise<{ storageId: string }>;
   searchParams: Promise<Record<string, string | string[] | undefined>> | undefined;
-}) {
-  const { storageId } = await params;
-  try {
-    // Up-front ownership validation; the data readers re-resolve the same scope.
-    await getActiveWorkspaceScope(storageId);
-  } catch (error) {
-    if (error instanceof WorkspaceNotFoundError) {
-      notFound();
+}): Promise<never> {
+  const sp = (await searchParams) ?? {};
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(sp)) {
+    if (typeof v === "string") {
+      qs.set(k, v);
+    } else if (Array.isArray(v)) {
+      for (const item of v) qs.append(k, item);
     }
-    throw error;
   }
-  return <HomeView searchParams={searchParams} storageId={storageId} />;
+  const suffix = qs.toString();
+  redirect(suffix ? `/?${suffix}` : "/");
 }

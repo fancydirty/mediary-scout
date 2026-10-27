@@ -7,7 +7,6 @@ import { SearchNavLink } from "./search-memory";
 import { ActivityNavBadge } from "./activity-nav-badge";
 import { NotificationsNavBadge } from "./notifications-nav-badge";
 import { SettingsAttentionBadge } from "./settings-attention-badge";
-import { WorkspaceSwitcherLoader } from "./workspace-switcher-loader";
 import { AccountIdentityLoader } from "./account-identity-loader";
 
 export function AppSidebar({
@@ -36,12 +35,6 @@ export function AppSidebar({
           <span>多网盘媒体 agent</span>
         </span>
       </div>
-
-      {/* Drive switcher (≥2 drives). In Suspense so its DB read never blocks the
-          static shell, and so the client switcher's useSearchParams() is allowed. */}
-      <Suspense fallback={null}>
-        <WorkspaceSwitcherLoader />
-      </Suspense>
 
       {/* Account identity — mobile top-bar copy (desktop keeps the footer one).
           Single-user/demo → AccountIdentityLoader returns null → empty. */}

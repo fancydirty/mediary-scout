@@ -24,7 +24,7 @@ import type { JevJudge } from "./jev-judge.js";
 import type { AcquisitionDriveContext, ResourceProvider, StorageExecutor } from "./ports.js";
 import type { PersistWorkflowRunSnapshotInput, WorkflowRepository } from "./repository.js";
 import { userMessageDrive } from "./user-requests.js";
-import { stampReplaceNotification } from "./notification-report.js";
+import { formatReportPushText, stampReplaceNotification } from "./notification-report.js";
 
 /**
  * Phase 7d — production persist wrappers on the V2 engine. These mirror the old
@@ -295,20 +295,20 @@ async function recordTouchedSeasonCopies(input: {
   touchedTargetDrives: BridgedV2Result["touchedTargetDrives"];
   runId: string;
   recordedAt: string;
-}): Promise<void> {
+}): Promise<EpisodeCopy[]> {
   if (!input.repository.upsertEpisodeCopies) {
-    return;
+    return [];
   }
   const touched = input.touchedTargetDrives ?? [];
   const obtainedEpisodes = input.seasonResult.episodes.filter((ep) => ep.obtained);
   if (obtainedEpisodes.length === 0) {
-    return;
+    return [];
   }
 
   // If no multi-drive coordinator ran (or only the primary drive was touched),
   // record episode_copies against the primary drive when known.
   if (touched.length === 0) {
-    if (!input.primaryStorageId) return;
+    if (!input.primaryStorageId) return [];
     const copies: EpisodeCopy[] = obtainedEpisodes.map((ep) => ({
       trackedSeasonId: input.seasonResult.season.id,
       episodeCode: ep.episodeCode,
@@ -320,7 +320,7 @@ async function recordTouchedSeasonCopies(input: {
       recordedAt: input.recordedAt,
     }));
     await input.repository.upsertEpisodeCopies(copies);
-    return;
+    return copies;
   }
 
   // Inspect each touched drive's season directory to attribute episodes and file sizes
@@ -421,6 +421,51 @@ async function recordTouchedSeasonCopies(input: {
   if (copies.length > 0) {
     await input.repository.upsertEpisodeCopies(copies);
   }
+  return copies;
+}
+
+function appendMultiDriveBreakdownToNotifications(
+  notifications: readonly NotificationEvent[],
+  touchedTargetDrives: BridgedV2Result["touchedTargetDrives"],
+  copies: readonly EpisodeCopy[],
+): NotificationEvent[] {
+  const touched = touchedTargetDrives ?? [];
+  if (touched.length <= 1 || copies.length === 0) {
+    return [...notifications];
+  }
+  const countByStorage = new Map<string, Set<string>>();
+  for (const c of copies) {
+    let set = countByStorage.get(c.storageId);
+    if (!set) {
+      set = new Set();
+      countByStorage.set(c.storageId, set);
+    }
+    set.add(`${c.trackedSeasonId}:${c.episodeCode}`);
+  }
+  if (countByStorage.size <= 1) {
+    return [...notifications];
+  }
+  const labelById = new Map(
+    touched.map((d) => [d.storageId, d.label.replace(/\s*网盘$/, "")]),
+  );
+  const parts: string[] = [];
+  for (const [storageId, codes] of countByStorage) {
+    const label = labelById.get(storageId) ?? storageId;
+    parts.push(`${label} ${codes.size} 集`);
+  }
+  const breakdownLine = `跨盘分布：${parts.join(" · ")}`;
+  return notifications.map((n) => {
+    if (!n.report) return n;
+    const nextReport = {
+      ...n.report,
+      lines: [...n.report.lines, breakdownLine],
+    };
+    return {
+      ...n,
+      report: nextReport,
+      body: formatReportPushText(nextReport),
+    };
+  });
 }
 
 async function persistSingleSeason(input: {
@@ -443,6 +488,21 @@ async function persistSingleSeason(input: {
     seasonResult,
     touchedTargetDrives: input.bridged.touchedTargetDrives,
   });
+  const copies = await recordTouchedSeasonCopies({
+    repository: input.repository,
+    accountId,
+    primaryStorageId,
+    title: input.title,
+    seasonResult,
+    touchedTargetDrives: input.bridged.touchedTargetDrives,
+    runId: input.workflowRun.id,
+    recordedAt: input.workflowRun.finishedAt ?? input.workflowRun.startedAt,
+  });
+  const notifications = appendMultiDriveBreakdownToNotifications(
+    input.bridged.notifications,
+    input.bridged.touchedTargetDrives,
+    copies,
+  );
   await input.repository.saveWorkflowRunSnapshot({
     ...(input.accountId ? { accountId: input.accountId } : {}),
     ...(input.connectedStorageId !== undefined ? { connectedStorageId: input.connectedStorageId } : {}),
@@ -461,17 +521,7 @@ async function persistSingleSeason(input: {
     resourceSnapshots: input.bridged.resourceSnapshots,
     decisions: input.bridged.decisions,
     transferAttempts: input.bridged.transferAttempts,
-    notifications: input.bridged.notifications,
-  });
-  await recordTouchedSeasonCopies({
-    repository: input.repository,
-    accountId,
-    primaryStorageId,
-    title: input.title,
-    seasonResult,
-    touchedTargetDrives: input.bridged.touchedTargetDrives,
-    runId: input.workflowRun.id,
-    recordedAt: input.workflowRun.finishedAt ?? input.workflowRun.startedAt,
+    notifications,
   });
 }
 
@@ -622,7 +672,13 @@ export async function runSeriesInitializationV2AndPersist(
   // One record per season under `${runId}_s${n}`, mirroring the old series
   // persistence: resource evidence + notifications ride on the first season
   // only (title-level), not duplicated across N season records.
-  for (const [index, seasonResult] of bridged.seasons.entries()) {
+  const allCopies: EpisodeCopy[] = [];
+  const preparedSeasons: Array<{
+    seasonResult: BridgedV2Result["seasons"][number];
+    seasonRunId: string;
+    primaryEpisodes: EpisodeState[];
+  }> = [];
+  for (const seasonResult of bridged.seasons) {
     const seasonRunId = `${input.workflowRun.id}_s${seasonResult.season.seasonNumber}`;
     const primaryEpisodes = await resolvePrimaryDriveSeasonEpisodes({
       repository: input.repository,
@@ -631,6 +687,25 @@ export async function runSeriesInitializationV2AndPersist(
       seasonResult,
       touchedTargetDrives: bridged.touchedTargetDrives,
     });
+    const copies = await recordTouchedSeasonCopies({
+      repository: input.repository,
+      accountId,
+      primaryStorageId,
+      title: input.title,
+      seasonResult,
+      touchedTargetDrives: bridged.touchedTargetDrives,
+      runId: seasonRunId,
+      recordedAt: finishedAt,
+    });
+    allCopies.push(...copies);
+    preparedSeasons.push({ seasonResult, seasonRunId, primaryEpisodes });
+  }
+  const enrichedNotifications = appendMultiDriveBreakdownToNotifications(
+    bridged.notifications,
+    bridged.touchedTargetDrives,
+    allCopies,
+  );
+  for (const [index, { seasonResult, seasonRunId, primaryEpisodes }] of preparedSeasons.entries()) {
     await input.repository.saveWorkflowRunSnapshot({
       ...(input.accountId ? { accountId: input.accountId } : {}),
       ...(input.connectedStorageId !== undefined ? { connectedStorageId: input.connectedStorageId } : {}),
@@ -654,22 +729,12 @@ export async function runSeriesInitializationV2AndPersist(
           : [],
       notifications:
         index === 0
-          ? bridged.notifications.map((notification) => ({
+          ? enrichedNotifications.map((notification) => ({
               ...notification,
               id: notification.id.replace(input.workflowRun.id, seasonRunId),
               workflowRunId: seasonRunId,
             }))
           : [],
-    });
-    await recordTouchedSeasonCopies({
-      repository: input.repository,
-      accountId,
-      primaryStorageId,
-      title: input.title,
-      seasonResult,
-      touchedTargetDrives: bridged.touchedTargetDrives,
-      runId: seasonRunId,
-      recordedAt: finishedAt,
     });
   }
   return bridged;
@@ -753,6 +818,7 @@ export async function runReplaceRequestV2AndPersist(
     ...(input.connectedStorageId !== undefined ? { connectedStorageId: input.connectedStorageId } : {}),
   };
   const finishedAt = now();
+  const allReplaceCopies: EpisodeCopy[] = [];
   for (const seasonResult of bridged.seasons) {
     if (seasonResult === lock) continue;
     const runId = `${input.workflowRun.id}_s${seasonResult.season.seasonNumber}`;
@@ -782,7 +848,7 @@ export async function runReplaceRequestV2AndPersist(
       transferAttempts: [],
       notifications: [],
     });
-    await recordTouchedSeasonCopies({
+    const copies = await recordTouchedSeasonCopies({
       repository: input.repository,
       accountId,
       primaryStorageId,
@@ -792,6 +858,7 @@ export async function runReplaceRequestV2AndPersist(
       runId,
       recordedAt: finishedAt,
     });
+    allReplaceCopies.push(...copies);
   }
   const lockPrimaryEpisodes = await resolvePrimaryDriveSeasonEpisodes({
     repository: input.repository,
@@ -800,10 +867,26 @@ export async function runReplaceRequestV2AndPersist(
     seasonResult: lock,
     touchedTargetDrives: bridged.touchedTargetDrives,
   });
+  const lockCopies = await recordTouchedSeasonCopies({
+    repository: input.repository,
+    accountId,
+    primaryStorageId,
+    title: input.title,
+    seasonResult: lock,
+    touchedTargetDrives: bridged.touchedTargetDrives,
+    runId: input.workflowRun.id,
+    recordedAt: finishedAt,
+  });
+  allReplaceCopies.push(...lockCopies);
+  const enrichedReplaceNotifications = appendMultiDriveBreakdownToNotifications(
+    stampNotifications(bridged.notifications, input.notice),
+    bridged.touchedTargetDrives,
+    allReplaceCopies,
+  );
   const held = await saveRunRecord(
     { ...input, now },
     bridged.status,
-    stampNotifications(bridged.notifications, input.notice),
+    enrichedReplaceNotifications,
     (run, notifications) => ({
       ...owner,
       title: input.title,
@@ -823,16 +906,6 @@ export async function runReplaceRequestV2AndPersist(
       notifications,
     }),
   );
-  await recordTouchedSeasonCopies({
-    repository: input.repository,
-    accountId,
-    primaryStorageId,
-    title: input.title,
-    seasonResult: lock,
-    touchedTargetDrives: bridged.touchedTargetDrives,
-    runId: input.workflowRun.id,
-    recordedAt: finishedAt,
-  });
   return { ...bridged, ...held };
 }
 
