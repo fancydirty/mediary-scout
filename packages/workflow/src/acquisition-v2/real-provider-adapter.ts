@@ -3,7 +3,7 @@ import type { ResourceProvider } from "../ports.js";
 import { resourceFingerprintMatches } from "../user-requests.js";
 import type { CandidateRegistry } from "./candidate-registry.js";
 import { deadLinkKey, type DeadLinkStore } from "./dead-links.js";
-import { resourceLinkKey } from "./resource-link.js";
+import { brandOfUrl, candidateDriveLabel, resourceLinkKey } from "./resource-link.js";
 import type { ResourceProviderV2, ResourceSnapshotV2 } from "./fake-provider.js";
 
 /**
@@ -126,17 +126,36 @@ export class RealResourceProviderV2 implements ResourceProviderV2 {
     for (const candidate of kept) {
       this.registry.record(candidate, aliasOf.get(candidate.id));
     }
+    // Only tag candidates with their drive/channel when the snapshot mixes multiple
+    // distinct channels (unified multi-drive mode). Single-brand snapshots stay
+    // byte-identical to the legacy representation.
+    const resolvedBrands = kept.map((candidate) => {
+      const rawUrl = candidate.providerPayload?.["url"];
+      return (typeof rawUrl === "string" ? brandOfUrl(rawUrl) : null) ?? (candidate.type !== "manual" ? candidate.type : null);
+    });
+    const distinctBrandCount = new Set(resolvedBrands.filter((b): b is NonNullable<typeof b> => b !== null)).size;
+    const includeDriveTags = distinctBrandCount > 1;
+
     return {
       id: snapshotAlias,
       keyword: snapshot.keyword,
-      candidates: kept.map((candidate) => {
+      candidates: kept.map((candidate, idx) => {
         const postedAt = postedAtFromDatetime(candidate.providerPayload?.["datetime"]);
         const rawUrl = candidate.providerPayload?.["url"];
         const linkKey = typeof rawUrl === "string" ? resourceLinkKey(rawUrl) : null;
         const linkHistory = linkKey ? this.linkHistory?.get(linkKey) : undefined;
+        const drive = includeDriveTags ? (resolvedBrands[idx] ?? undefined) : undefined;
+        const driveLabel = drive ? candidateDriveLabel(drive) : undefined;
+        const rawSize = candidate.providerPayload?.["sizeBytes"];
+        const sizeBytes = includeDriveTags && typeof rawSize === "number" && Number.isFinite(rawSize) && rawSize > 0
+          ? rawSize
+          : undefined;
         return {
           id: aliasOf.get(candidate.id)!,
           title: candidate.title,
+          ...(drive ? { drive } : {}),
+          ...(driveLabel ? { driveLabel } : {}),
+          ...(sizeBytes !== undefined ? { sizeBytes } : {}),
           ...(postedAt ? { postedAt } : {}),
           ...(linkHistory ? { linkHistory } : {}),
         };

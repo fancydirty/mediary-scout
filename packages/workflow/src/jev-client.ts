@@ -8,8 +8,11 @@ export const DEFAULT_JEV_BASE_URL = "https://openrouter.ai/api/alpha/decisions";
 /** Re-exported from jev-judge.ts (its single definition) so existing importers of
  *  this module are unaffected by the move. */
 export { JEV_MODEL };
-/** Evals: 322 candidates in one call (~37k tokens) succeeded but sits above the
- *  documented ~32k budget; 150 (~17k) leaves headroom. Chunks run in parallel. */
+/** 150 comes from the accuracy eval, not from a context ceiling. The 32k figure
+ *  this comment used to cite was the old documented budget — Jev's context is
+ *  256k now, so a bigger chunk is possible; nobody has re-run the eval at a
+ *  larger size, and context rot grows with the state, so leave 150 until someone
+ *  does. Chunks run in parallel. */
 export const JEV_CHUNK_SIZE = 150;
 /** p90 was 0.9s over OpenRouter, 1.1s for a 322-candidate batch. 8s is a wide ceiling. */
 export const JEV_TIMEOUT_MS = 8_000;

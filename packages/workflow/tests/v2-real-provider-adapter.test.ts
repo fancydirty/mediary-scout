@@ -371,4 +371,28 @@ describe("RealResourceProviderV2 — pansou → ResourceProviderV2 adapter", () 
       { id: "s1-4", postedAt: undefined },
     ]);
   });
+
+  it("annotates drive and driveLabel only when the snapshot contains multiple distinct brands/channels", async () => {
+    const base = realSnapshot().candidates[0]!;
+    const multiSnapshot: ResourceSnapshot = {
+      ...realSnapshot(),
+      candidates: [
+        { ...base, id: "c115", type: "115", providerPayload: { url: "https://115.com/s/sw3abcd1234" } },
+        { ...base, id: "cQuark", index: 1, type: "quark", providerPayload: { url: "https://pan.quark.cn/s/1a2B3c4D", sizeBytes: 4_200_000_000 } },
+        { ...base, id: "cMag", index: 2, type: "magnet", providerPayload: { url: "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567" } },
+      ],
+    };
+    const adapter = new RealResourceProviderV2({
+      provider: { search: async () => multiSnapshot },
+      registry: new CandidateRegistry(),
+      workflowRunId: "run-1",
+    });
+
+    const view = await adapter.search("莉可丽丝 全集");
+    expect(view.candidates).toEqual([
+      { id: "s1-1", title: "莉可丽丝 全集 1080p", drive: "115", driveLabel: "115" },
+      { id: "s1-2", title: "莉可丽丝 全集 1080p", drive: "quark", driveLabel: "夸克", sizeBytes: 4_200_000_000 },
+      { id: "s1-3", title: "莉可丽丝 全集 1080p", drive: "magnet", driveLabel: "磁力" },
+    ]);
+  });
 });

@@ -24,6 +24,7 @@ import {
   type AgentMemoryWrite,
 } from "../agent-memory.js";
 import { indexSubtitleFiles, selectSubtitleChunk } from "./subtitle-renewal.js";
+import { candidateDriveLabel } from "./resource-link.js";
 
 /** Quality / subtitle / source tokens that PanSou share titles almost never carry,
  *  so appending them collapses recall (实测归零). Case-insensitive; word-ish so
@@ -2203,10 +2204,24 @@ export class TaskSandbox {
 
     let document = `📋 Raw snapshot (snapshotId: ${snapshotId}, ${total} candidates):\n\n`;
 
+    // Only append `· <品牌>` when the snapshot mixes multiple distinct channels/brands.
+    // Single-brand snapshots stay byte-identical to the legacy representation.
+    const resolveDriveLabel = (c: (typeof candidates)[number]): string | undefined => {
+      if (c.driveLabel) return c.driveLabel;
+      if (c.drive) return candidateDriveLabel(c.drive) ?? c.drive;
+      return undefined;
+    };
+    const distinctDrives = new Set(
+      candidates.map(resolveDriveLabel).filter((d): d is string => Boolean(d)),
+    );
+    const showDriveLabel = distinctDrives.size > 1;
+
     for (const candidate of truncated) {
+      const labelText = showDriveLabel ? resolveDriveLabel(candidate) : undefined;
+      const driveSuffix = labelText ? ` · ${labelText}` : "";
       const posted = candidate.postedAt ? ` · 发布 ${candidate.postedAt}` : "";
       const history = candidate.linkHistory ? ` · ${candidate.linkHistory}` : "";
-      document += `[${candidate.id}] ${candidate.title}${posted}${history}\n`;
+      document += `[${candidate.id}] ${candidate.title}${driveSuffix}${posted}${history}\n`;
     }
 
     if (remaining > 0) {

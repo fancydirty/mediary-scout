@@ -1,10 +1,6 @@
 import type { TransferAttempt } from "../domain.js";
-import { parseGuangYaShareUrl } from "../guangya-client.js";
-import { parsePan123ShareUrl } from "../pan123-storage-executor.js";
 import type { StorageExecutor } from "../ports.js";
-import { parseQuarkShareUrl, parseUcShareUrl } from "../quark-storage-executor.js";
 import { isBrandStorageAuthError } from "../storage-auth-error.js";
-import { parseTianyiShareUrl } from "../tianyi-storage-executor.js";
 import type { CandidateRegistry } from "./candidate-registry.js";
 import {
   deadLinkKey,
@@ -13,6 +9,7 @@ import {
   UNRESOLVED_MAGNET_DEAD_LINK_TTL_MS,
   type DeadLinkStore,
 } from "./dead-links.js";
+import { brandOfUrl } from "./resource-link.js";
 import type { SimTreeFile, StorageV2, SubtitleLandingResult, TransferAttemptResult } from "./storage-115-simulator.js";
 
 /**
@@ -23,7 +20,6 @@ import type { SimTreeFile, StorageV2, SubtitleLandingResult, TransferAttemptResu
  */
 const VIDEO_EXTENSIONS = /\.(mkv|mp4|avi|ts|m2ts|mov|flv|wmv)$/i;
 const SUBTITLE_EXTENSIONS = /\.(srt|ass|ssa|sub|idx|vtt|sup|smi)$/i;
-const PAN115_SHARE_URL = /^https?:\/\/(115\.com|115cdn\.com|anxia\.com)\/s\//i;
 
 /** Consecutive per-file landing failures after which the rest of a package is
  *  skipped on the per-file fallback path. Each failed landing costs real drive
@@ -70,17 +66,9 @@ export class RealStorageV2 implements StorageV2 {
    *  never drift from what actually transfers (no second domain list). */
   candidateLinkKind(candidateId: string): "share" | "magnet" | "unknown" {
     const url = String(this.registry.get(candidateId)?.providerPayload?.["url"] ?? "");
-    if (
-      PAN115_SHARE_URL.test(url) ||
-      parseQuarkShareUrl(url) !== null ||
-      parseUcShareUrl(url) !== null ||
-      parseTianyiShareUrl(url) !== null ||
-      parsePan123ShareUrl(url) !== null ||
-      parseGuangYaShareUrl(url) !== null
-    ) {
-      return "share";
-    }
-    if (/^magnet:/i.test(url)) return "magnet";
+    const brand = brandOfUrl(url);
+    if (brand === "magnet") return "magnet";
+    if (brand !== null) return "share";
     return "unknown";
   }
 

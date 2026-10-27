@@ -807,3 +807,37 @@ describe("预搜退避重试（源头自愈：双源全挂先等 5 秒重试一�
     }
   });
 });
+
+describe("multi-brand snapshot rendering in viewResourceSnapshot", () => {
+  it("renders · <品牌> only when multiple distinct brands are present in the snapshot", async () => {
+    const singleBrandProvider = new FakeResourceProviderV2({
+      results: {
+        单盘: [
+          { id: "c1", title: "琅琊榜 S01 4K", drive: "115", driveLabel: "115" },
+          { id: "c2", title: "琅琊榜 S01 1080p", drive: "115", driveLabel: "115" },
+        ],
+      },
+    });
+    const singleSandbox = new TaskSandbox({ provider: singleBrandProvider, need: ["S01E01"] });
+    await singleSandbox.primeRawSnapshot("单盘");
+    const singleDoc = singleSandbox.viewResourceSnapshot().document;
+    expect(singleDoc).toContain("[c1] 琅琊榜 S01 4K\n");
+    expect(singleDoc).not.toContain("· 115");
+
+    const multiBrandProvider = new FakeResourceProviderV2({
+      results: {
+        多盘: [
+          { id: "c1", title: "琅琊榜 S01 4K", drive: "115", driveLabel: "115", postedAt: "2026-10-01" },
+          { id: "c2", title: "琅琊榜 全54集", drive: "quark", driveLabel: "夸克" },
+          { id: "c3", title: "Nirvana.in.Fire.S01", drive: "magnet", driveLabel: "磁力" },
+        ],
+      },
+    });
+    const multiSandbox = new TaskSandbox({ provider: multiBrandProvider, need: ["S01E01"] });
+    await multiSandbox.primeRawSnapshot("多盘");
+    const multiDoc = multiSandbox.viewResourceSnapshot().document;
+    expect(multiDoc).toContain("[c1] 琅琊榜 S01 4K · 115 · 发布 2026-10-01\n");
+    expect(multiDoc).toContain("[c2] 琅琊榜 全54集 · 夸克\n");
+    expect(multiDoc).toContain("[c3] Nirvana.in.Fire.S01 · 磁力\n");
+  });
+});

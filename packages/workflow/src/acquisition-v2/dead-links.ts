@@ -7,6 +7,7 @@
  */
 
 import { parseGuangYaShareUrl } from "../guangya-client.js";
+import { parsePan115ShareUrl } from "../storage-115-executor.js";
 
 export type DeadLinkKind = "pan115" | "magnet" | "guangya";
 
@@ -57,8 +58,6 @@ export interface DeadLinkStore {
   listDeadLinkKeys(options?: { now?: string }): Promise<string[]>;
 }
 
-const PAN115_SHARE = /(?:115\.com|115cdn\.com|anxia\.com)\/s\/([0-9a-z]+)/i;
-
 /** 光鸭 share death, from the EXECUTOR's loud messages (guangya-storage-executor):
  *  dead/cancelled/malformed link, or the share opens but lists nothing. Deliberately
  *  NOT matched: GUANGYA_RESTORE_TIMEOUT (still running), GUANGYA_RESTORE_FAILED (a
@@ -79,9 +78,9 @@ const MAGNET_BTIH = /btih:([0-9a-fA-F]{40})/;
  * the unknown.
  */
 export function deadLinkKey(url: string): { key: string; kind: DeadLinkKind } | null {
-  const share = url.match(PAN115_SHARE);
+  const share = parsePan115ShareUrl(url);
   if (share) {
-    return { key: `115:${share[1]!.toLowerCase()}`, kind: "pan115" };
+    return { key: `115:${share.shareCode.toLowerCase()}`, kind: "pan115" };
   }
   const magnet = url.match(MAGNET_BTIH);
   if (magnet) {
