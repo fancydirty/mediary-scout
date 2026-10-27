@@ -156,37 +156,69 @@ export const STORAGE_BRANDS: StorageBrand[] = [
 ];
 
 /**
- * Map a brand's resource-provider kinds to the PanSou link types its acquisitions
- * may transfer. A 夸克 drive can only save 夸克 share links; 光鸭 / 123 / 115 take
- * their OWN share links plus magnets (光鸭: restore_share + offline download).
- * Pure + brand-table-driven so the resource assembly stays testable.
+ * Map a brand's (or multiple brands') resource-provider kinds to the PanSou /
+ * Haisou link types its acquisitions may transfer. A 夸克 drive can only save
+ * 夸克 share links; 光鸭 / 123 / 115 take their OWN share links plus magnets.
+ *
+ * In unified multi-drive mode, callers pass the UNION of `resourceProviderKinds`
+ * across all active connected drives (or call `allowedResourceTypesForProviders`),
+ * and this function returns the union of allowed `ResourceType`s without order bias.
  */
 export function allowedResourceTypesForKinds(kinds: readonly string[]): ResourceType[] {
+  if (kinds.length === 0) {
+    return ["115", "magnet"];
+  }
+  const out = new Set<ResourceType>();
+  if (kinds.includes("pansou-115")) {
+    out.add("115");
+    out.add("magnet");
+  }
   if (kinds.includes("pansou-quark")) {
-    return ["quark"];
+    out.add("quark");
   }
   if (kinds.includes("pansou-uc")) {
-    return ["uc"];
+    out.add("uc");
   }
   if (kinds.includes("pansou-tianyi")) {
-    return ["tianyi"];
+    out.add("tianyi");
   }
-  // 123 share + magnet when prowlarr/pansou-magnet is also listed (dual-path brand).
   if (kinds.includes("pansou-123")) {
-    return kinds.includes("prowlarr") || kinds.includes("pansou-magnet")
-      ? ["123", "magnet"]
-      : ["123"];
+    out.add("123");
   }
-  // 光鸭 share + magnet when a magnet source is also listed (dual-path brand).
   if (kinds.includes("pansou-guangya")) {
-    return kinds.includes("prowlarr") || kinds.includes("pansou-magnet")
-      ? ["guangya", "magnet"]
-      : ["guangya"];
+    out.add("guangya");
   }
-  if (kinds.includes("pansou-magnet")) {
-    return ["magnet"];
+  if (kinds.includes("pansou-magnet") || kinds.includes("prowlarr")) {
+    out.add("magnet");
   }
-  return ["115", "magnet"];
+  if (out.size === 0) {
+    return ["115", "magnet"];
+  }
+  return [...out];
+}
+
+/**
+ * Union of `ResourceProviderKind`s and `ResourceType`s across a list of connected
+ * storage providers (e.g. `["pan115", "quark", "pan123"]`). Falls back to `pan115`
+ * when no registered provider is given.
+ */
+export function allowedResourceTypesForProviders(providers: readonly string[]): {
+  kinds: ResourceProviderKind[];
+  allowedTypes: ResourceType[];
+} {
+  const registered = providers.filter(isRegisteredStorageProvider);
+  const effectiveProviders = registered.length > 0 ? registered : (["pan115"] as const);
+  const kindSet = new Set<ResourceProviderKind>();
+  for (const p of effectiveProviders) {
+    for (const k of getStorageBrand(p).resourceProviderKinds) {
+      kindSet.add(k);
+    }
+  }
+  const kinds = [...kindSet];
+  return {
+    kinds,
+    allowedTypes: allowedResourceTypesForKinds(kinds),
+  };
 }
 
 export function getStorageBrand(provider: string): StorageBrand {

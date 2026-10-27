@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   allowedResourceTypesForKinds,
+  allowedResourceTypesForProviders,
   getStorageBrand,
   parseQuarkUid,
   parsePan115Uid,
@@ -141,5 +142,32 @@ describe("storage brand registry", () => {
     expect(getStorageBrand("quark").assumeChineseSubsFromChineseTitle).toBe(true);
     // guangya stays conservative (its magnets are often scene releases, not 中文圈 packs)
     expect(getStorageBrand("guangya").assumeChineseSubsFromChineseTitle).toBe(false);
+  });
+
+  it("allowedResourceTypesForKinds and allowedResourceTypesForProviders compute the full union across connected drives (C5)", () => {
+    // Previously allowedResourceTypesForKinds short-circuited on the first `if`, so
+    // passing ["pansou-quark", "pansou-115"] returned only ["quark"]. Now it returns the union.
+    expect(allowedResourceTypesForKinds(["pansou-quark", "pansou-115"]).sort()).toEqual([
+      "115",
+      "magnet",
+      "quark",
+    ]);
+
+    const multi = allowedResourceTypesForProviders(["pan115", "quark", "uc", "pan123", "tianyi", "guangya"]);
+    expect(multi.allowedTypes.sort()).toEqual([
+      "115",
+      "123",
+      "guangya",
+      "magnet",
+      "quark",
+      "tianyi",
+      "uc",
+    ]);
+    expect(multi.kinds).toContain("prowlarr");
+
+    // Share-only drives (quark + uc + tianyi) omit magnet & prowlarr.
+    const shareOnly = allowedResourceTypesForProviders(["quark", "uc", "tianyi"]);
+    expect(shareOnly.allowedTypes.sort()).toEqual(["quark", "tianyi", "uc"]);
+    expect(shareOnly.kinds).not.toContain("prowlarr");
   });
 });

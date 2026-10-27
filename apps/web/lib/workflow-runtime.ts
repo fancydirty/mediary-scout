@@ -63,7 +63,7 @@ import {
   createExecutorForBrand,
   getStorageBrand,
   isRegisteredStorageProvider,
-  allowedResourceTypesForKinds,
+  allowedResourceTypesForProviders,
   parseCloudDriveUid,
   parseTianyiUid,
   UC_PROFILE,
@@ -970,9 +970,11 @@ export function buildAccountContextResolver(): ResolveAccountWorkerContext {
       return true;
     });
     const drives = await resolveAccountActiveDrives(accountId);
+    const activeProviders =
+      drives.length > 0 ? drives.map((d) => d.provider) : [driveProvider];
     return {
       storage: await getWorkerStorageExecutor(accountId, connectedStorageId),
-      resourceProvider: await getWorkerResourceProvider(scoped, driveProvider, accountId),
+      resourceProvider: await getWorkerResourceProvider(scoped, activeProviders, accountId),
       storageProvider: driveProvider,
       model,
       // The worker uses this ONLY to pick the free-preset failure copy for THIS
@@ -2383,7 +2385,7 @@ function parseTvCandidateId(candidateId: string): { tmdbId: number; seasonNumber
 
 export async function getWorkerResourceProvider(
   settings: { getSetting(key: string): Promise<string | null> } = getWorkflowRepository(),
-  provider: string = "pan115",
+  provider: string | readonly string[] = "pan115",
   accountId?: string,
 ): Promise<ResourceProvider> {
   // accountId 仅用于健康结论回写(recordPanSouHealth)。多账户场景下,worker 在
@@ -2392,13 +2394,12 @@ export async function getWorkerResourceProvider(
   // base provider 只在无 resolver(单用户/兜底)时被实际使用,此时 getCurrentAccountId()
   // 正确地返回 default 账号,所以两处都不丢账号作用域。
   if (process.env.MEDIA_TRACK_WORKFLOW_ADAPTER === "pansou") {
-    // Per-brand assembly: a quark drive gets PanSou restricted to quark links and
-    // NO Prowlarr (磁力 115-only); a 115 drive gets PanSou(115/magnet) + Prowlarr.
-    const kinds: readonly string[] = isRegisteredStorageProvider(provider)
-      ? getStorageBrand(provider).resourceProviderKinds
-      : ["pansou-115", "prowlarr"];
-    // 夸克 → quark-only links; 光鸭 → guangya + magnet; 115 → 115 + magnet.
-    const allowedTypes: ResourceType[] = allowedResourceTypesForKinds(kinds);
+    // Unified multi-drive assembly: take the UNION of resourceProviderKinds across
+    // all active connected drives so the agent sees candidates from every connected
+    // drive at once (and Prowlarr is included whenever at least one active drive
+    // supports magnets).
+    const providerList: readonly string[] = typeof provider === "string" ? [provider] : provider;
+    const { kinds, allowedTypes } = allowedResourceTypesForProviders(providerList);
     const providers: Array<{ name: string; provider: ResourceProvider }> = [
       {
         name: "pansou",
