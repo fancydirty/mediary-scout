@@ -248,10 +248,13 @@ async function resolvePrimaryDriveSeasonEpisodes(input: {
   touchedTargetDrives: BridgedV2Result["touchedTargetDrives"];
 }): Promise<EpisodeState[]> {
   const touched = input.touchedTargetDrives ?? [];
-  if (touched.length <= 1 || !input.primaryStorageId) {
+  if (touched.length === 0 || !input.primaryStorageId) {
     return input.seasonResult.episodes;
   }
   const primaryDrive = touched.find((d) => d.storageId === input.primaryStorageId);
+  if (touched.length === 1 && primaryDrive) {
+    return input.seasonResult.episodes;
+  }
   const seasonDirId = primaryDrive?.seasonDirectoryIds[input.seasonResult.season.seasonNumber];
   const byEp = new Map<string, string[]>();
   if (primaryDrive && seasonDirId) {
@@ -1182,8 +1185,33 @@ export async function runMovieAcquisitionV2AndPersist(input: {
     ...(input.drives === undefined ? {} : { drives: input.drives }),
   });
 
+  const accountId = input.accountId ?? DEFAULT_ACCOUNT_ID;
   const effectiveStorageId =
     input.connectedStorageId ?? result.touchedTargetDrives?.[0]?.storageId ?? null;
+  const movieDrive = result.touchedTargetDrives?.[0];
+  let primaryMovieEpisodes = result.episodes;
+  if (
+    movieDrive &&
+    input.connectedStorageId &&
+    movieDrive.storageId !== input.connectedStorageId
+  ) {
+    const existingPrimary = await input.repository.getTrackedSeasonState(result.season.id, {
+      accountId,
+      connectedStorageId: input.connectedStorageId,
+    });
+    const priorByCode = new Map(
+      (existingPrimary?.episodes ?? []).filter((e) => e.obtained).map((e) => [e.episodeCode, e.verifiedFileIds]),
+    );
+    primaryMovieEpisodes = result.episodes.map((ep) => {
+      const priorFiles = priorByCode.get(ep.episodeCode);
+      const hadPriorOnPrimary = priorFiles !== undefined;
+      return {
+        ...ep,
+        obtained: hadPriorOnPrimary,
+        verifiedFileIds: priorFiles ?? [],
+      };
+    });
+  }
   const movieDriveLabels = (result.touchedTargetDrives ?? []).map((d) => shortDriveLabel(d.label));
   const movieNotifications = stampNotifications(result.notifications, input.notice).map((n) => {
     if (!n.report || movieDriveLabels.length === 0) return n;
@@ -1208,7 +1236,7 @@ export async function runMovieAcquisitionV2AndPersist(input: {
       startedAt: input.workflowRun.startedAt,
       auditEvents: result.auditEvents,
     },
-    episodes: result.episodes,
+    episodes: primaryMovieEpisodes,
     resourceSnapshots: result.resourceSnapshots,
     decisions: result.decisions,
     transferAttempts: result.transferAttempts,
@@ -1218,7 +1246,6 @@ export async function runMovieAcquisitionV2AndPersist(input: {
     const obtainedMovie = result.episodes.filter((ep) => ep.obtained);
     if (obtainedMovie.length > 0) {
       const finishedAt = now();
-      const movieDrive = result.touchedTargetDrives?.[0];
       const movieDirId = movieDrive?.directoryIds[0];
       let fileIds: string[] = [];
       let sizeBytes: number | null = null;
@@ -1230,6 +1257,36 @@ export async function runMovieAcquisitionV2AndPersist(input: {
         } catch {
           fileIds = [];
         }
+      }
+      if (
+        movieDrive &&
+        input.connectedStorageId &&
+        movieDrive.storageId !== input.connectedStorageId
+      ) {
+        const sideRunId = `${input.workflowRun.id}_drv_${movieDrive.storageId.slice(-8)}`;
+        await input.repository.saveWorkflowRunSnapshot({
+          accountId,
+          connectedStorageId: movieDrive.storageId,
+          title: input.title,
+          season: {
+            ...result.season,
+            ...(movieDirId ? { storageDirectoryId: movieDirId } : {}),
+          },
+          workflowRun: {
+            id: sideRunId,
+            kind: input.userRequest ? "replace_request" : "movie_init",
+            status: "succeeded",
+            trackedSeasonId: result.season.id,
+            startedAt: finishedAt,
+            finishedAt,
+            auditEvents: [],
+          },
+          episodes: result.episodes,
+          resourceSnapshots: [],
+          decisions: [],
+          transferAttempts: [],
+          notifications: [],
+        });
       }
       await input.repository.upsertEpisodeCopies(
         obtainedMovie.map((ep) => ({
