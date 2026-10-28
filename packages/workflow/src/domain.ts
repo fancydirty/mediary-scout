@@ -341,6 +341,8 @@ export interface NotificationReport {
   fileCount?: number;
   totalBytes?: number;
   landingDir?: string;
+  /** Short drive labels where files landed during this run (e.g. ["115"] or ["115", "123"]). */
+  driveLabels?: string[];
 }
 
 export interface NotificationEvent {
@@ -353,6 +355,8 @@ export interface NotificationEvent {
   /** Absent on legacy/foreign-work events; generators set it going forward. */
   trigger?: NotificationTrigger;
   report?: NotificationReport;
+  /** Connected storage ID of the workflow run that generated this notification (populated on read). */
+  connectedStorageId?: string | null;
 }
 
 export function episodeCode(seasonNumber: number, episodeNumber: number): string {

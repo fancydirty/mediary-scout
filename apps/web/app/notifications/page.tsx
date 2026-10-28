@@ -18,7 +18,7 @@ import {
   XCircle,
 } from "lucide-react";
 import type { NotificationEvent, NotificationReportStatus } from "@media-track/workflow";
-import { landedSize } from "@media-track/workflow";
+import { getStorageBrand, isRegisteredStorageProvider, landedSize } from "@media-track/workflow";
 import { NotificationsSeenMarker } from "../../components/notifications-seen-marker";
 import { DemoSessionNotifications } from "../../components/demo-session-notifications";
 import { AppSidebar } from "../../components/app-sidebar";
@@ -129,6 +129,15 @@ async function NotificationFeed({ connectedStorageId }: { connectedStorageId: st
   // poster from the still-tracked title (by tmdbId, then name) so cards show a
   // real poster instead of nothing.
   const trackedStates = await repository.listTrackedSeasonStates({ accountId, connectedStorageId });
+  const storages = await repository.listConnectedStorages(accountId);
+  const driveLabelById = new Map<string, string>();
+  for (const s of storages) {
+    const nickname = s.label?.trim();
+    const brandName = isRegisteredStorageProvider(s.provider)
+      ? getStorageBrand(s.provider).label.replace(/\s*(?:网盘|云盘)$/, "")
+      : s.provider;
+    driveLabelById.set(s.id, nickname || brandName);
+  }
   const posterByTmdb = new Map<number, string>();
   const posterByName = new Map<string, string>();
   for (const state of trackedStates) {
@@ -173,6 +182,11 @@ async function NotificationFeed({ connectedStorageId }: { connectedStorageId: st
                   fallbackPoster={
                     block.notification.report ? fallbackPoster(block.notification.report) : null
                   }
+                  fallbackDriveLabel={
+                    block.notification.connectedStorageId
+                      ? driveLabelById.get(block.notification.connectedStorageId) ?? null
+                      : null
+                  }
                 />
               ),
             )}
@@ -187,9 +201,11 @@ async function NotificationFeed({ connectedStorageId }: { connectedStorageId: st
 function NotificationCard({
   notification,
   fallbackPoster = null,
+  fallbackDriveLabel = null,
 }: {
   notification: NotificationEvent;
   fallbackPoster?: string | null;
+  fallbackDriveLabel?: string | null;
 }) {
   const icon = kindIcon[notification.kind] ?? { tone: "muted", icon: Bell };
   const KindIcon = icon.icon;
@@ -233,7 +249,24 @@ function NotificationCard({
   // informative progress line(s).
   const lines = report.status === "acquired" ? [] : report.lines;
   const size = landedSize(report);
-  const hasChips = report.newlyObtained.length > 0 || report.realMissing.length > 0 || Boolean(size);
+  let driveLabels: string[] = [];
+  if (report.driveLabels && report.driveLabels.length > 0) {
+    driveLabels = report.driveLabels;
+  } else if (
+    fallbackDriveLabel &&
+    (report.status === "acquired" ||
+      report.status === "complete" ||
+      report.status === "airing" ||
+      report.status === "partial" ||
+      report.status === "replaced")
+  ) {
+    driveLabels = [fallbackDriveLabel];
+  }
+  const hasChips =
+    report.newlyObtained.length > 0 ||
+    report.realMissing.length > 0 ||
+    Boolean(size) ||
+    driveLabels.length > 0;
   // The same TMDB poster the push uses — a small thumbnail turns the row into a
   // proper media card (parity with the WeChat/Bark notification).
   const posterPath = report.posterPath ?? fallbackPoster;
@@ -274,6 +307,18 @@ function NotificationCard({
         <div className="feed-card-chips">
           <ChipGroup label="本次新增" codes={report.newlyObtained} variant="is-new" />
           <ChipGroup label="缺集" codes={report.realMissing} variant="is-missing" />
+          {driveLabels.length > 0 ? (
+            <span className="feed-chip-group">
+              <span className="feed-chip-label">网盘</span>
+              <span className="feed-chips">
+                {driveLabels.map((dl) => (
+                  <span className="feed-chip" key={dl}>
+                    {dl}
+                  </span>
+                ))}
+              </span>
+            </span>
+          ) : null}
           {size ? (
             <span className="feed-chip-group">
               <span className="feed-chip-label">{size.label}</span>

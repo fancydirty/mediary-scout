@@ -1330,16 +1330,24 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     const since = input?.since ?? null;
     const rows = this.db
       .prepare(
-        "SELECT n.payload AS payload FROM notifications n " +
+        "SELECT n.payload AS payload, wr.connected_storage_id AS connected_storage_id FROM notifications n " +
           "JOIN workflow_runs wr ON n.workflow_run_id = wr.id " +
           "WHERE wr.account_id = ? AND (? IS NULL OR wr.connected_storage_id = ?) " +
           "AND (? IS NULL OR json_extract(n.payload, '$.createdAt') >= ?)",
       )
       .all(scope.accountId, scope.connectedStorageId, scope.connectedStorageId, since, since) as Array<{
       payload: string;
+      connected_storage_id: string | null;
     }>;
     const all = rows
-      .map((row) => JSON.parse(row.payload) as NotificationEvent)
+      .map((row) => {
+        const parsed = JSON.parse(row.payload) as NotificationEvent;
+        const sid = row.connected_storage_id && row.connected_storage_id !== UNSCOPED_STORAGE ? row.connected_storage_id : null;
+        return {
+          ...parsed,
+          ...(parsed.connectedStorageId === undefined && sid ? { connectedStorageId: sid } : {}),
+        };
+      })
       .filter((notification) => isUserVisibleNotificationKind(notification.kind));
     all.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
     return all.slice(0, input?.limit ?? 100);

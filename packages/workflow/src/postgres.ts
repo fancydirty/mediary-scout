@@ -1203,15 +1203,22 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     );
     // ISO-8601 UTC timestamps sort lexicographically = chronologically, so a string
     // `>=` on payload->>'createdAt' is a correct (and indexable) recency cutoff.
-    const all = await this.selectMany<NotificationEvent>(
-      this.pool,
-      "SELECT n.payload AS payload FROM notifications n " +
+    await this.ensureSchema();
+    const res = await this.pool.query<{ payload: NotificationEvent; connected_storage_id: string | null }>(
+      "SELECT n.payload AS payload, wr.connected_storage_id AS connected_storage_id FROM notifications n " +
         "JOIN workflow_runs wr ON n.workflow_run_id = wr.id " +
         "WHERE wr.account_id = $1 AND ($2::text IS NULL OR wr.connected_storage_id = $2) " +
         "AND ($3::text IS NULL OR (n.payload->>'createdAt') >= $3) " +
         "AND COALESCE(n.payload->>'kind', '') <> ALL($4::text[])",
       [scope.accountId, scope.connectedStorageId, input?.since ?? null, HIDDEN_NOTIFICATION_KINDS],
     );
+    const all = res.rows.map((row) => {
+      const sid = row.connected_storage_id && row.connected_storage_id !== UNSCOPED_STORAGE ? row.connected_storage_id : null;
+      return {
+        ...row.payload,
+        ...(row.payload.connectedStorageId === undefined && sid ? { connectedStorageId: sid } : {}),
+      };
+    });
     all.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
     return all.slice(0, input?.limit ?? 100);
   }

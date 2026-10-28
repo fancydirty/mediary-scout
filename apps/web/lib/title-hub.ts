@@ -97,6 +97,8 @@ export interface MovieHubView {
    *  of the film is queued or running (a user's replace request keeps the old file)
    *  the state reads 获取中. */
   obtained: boolean;
+  /** Connected drives holding a copy of this movie (populated when obtained). */
+  driveBadges?: EpisodeDriveBadge[];
 }
 
 export type DetailView = TitleHubView | MovieHubView;
@@ -369,13 +371,34 @@ export async function getDetailView(
       (snapshot) => snapshot.title.tmdbId === tmdbId && isUserVisibleWorkflowKind(snapshot.workflowRun.kind),
     );
     let obtained = movieStates.some((s) => s.episodes.some((episode) => episode.obtained));
-    if (!obtained && repository.obtainedEpisodesForSeason) {
+    const driveBadges: EpisodeDriveBadge[] = [];
+    if (repository.obtainedEpisodesForSeason) {
+      const storages = await repository.listConnectedStorages(scope.accountId);
+      const storageMetaById = new Map(
+        storages.map((s) => [s.id, { provider: s.provider, label: s.label }]),
+      );
       const union = await repository.obtainedEpisodesForSeason(movieState.season.id, scope.accountId);
-      obtained = union.some((c) => c.obtained);
+      if (scope.connectedStorageId === null && union.some((c) => c.obtained)) {
+        obtained = true;
+      }
+      for (const row of union) {
+        if (!row.obtained) continue;
+        for (const d of row.drives) {
+          if (scope.connectedStorageId !== null && d.storageId !== scope.connectedStorageId) continue;
+          if (driveBadges.some((b) => b.storageId === d.storageId)) continue;
+          const metaInfo = storageMetaById.get(d.storageId);
+          driveBadges.push({
+            storageId: d.storageId,
+            label: driveBadgeLabel(metaInfo?.provider, metaInfo?.label),
+            sizeBytes: d.sizeBytes,
+            quality: d.quality,
+          });
+        }
+      }
     }
     const reserved = isMovieUnreleased(movieState.title.releaseDate, now);
     const state = acquiring ? "acquiring" : reserved ? "reserved" : obtained ? "acquired" : "missing";
-    return movieHubViewFromTitle(movieState.title, state, acquiring, obtained);
+    return movieHubViewFromTitle(movieState.title, state, acquiring, obtained, driveBadges);
   }
 
   // Untracked title: TMDB's movie/tv id namespaces collide (movie 278 ≠ tv 278).
@@ -413,6 +436,7 @@ function movieHubViewFromTitle(
   state: MovieHubView["state"],
   acquiring: boolean,
   obtained: boolean,
+  driveBadges?: EpisodeDriveBadge[],
 ): MovieHubView {
   return {
     kind: "movie",
@@ -427,6 +451,7 @@ function movieHubViewFromTitle(
     state,
     acquiring,
     obtained,
+    ...(driveBadges && driveBadges.length > 0 ? { driveBadges } : {}),
   };
 }
 

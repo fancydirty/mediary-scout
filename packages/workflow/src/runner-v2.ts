@@ -424,15 +424,23 @@ async function recordTouchedSeasonCopies(input: {
   return copies;
 }
 
+function shortDriveLabel(label: string): string {
+  return label.replace(/\s*(?:网盘|云盘)$/, "");
+}
+
 function appendMultiDriveBreakdownToNotifications(
   notifications: readonly NotificationEvent[],
   touchedTargetDrives: BridgedV2Result["touchedTargetDrives"],
   copies: readonly EpisodeCopy[],
 ): NotificationEvent[] {
   const touched = touchedTargetDrives ?? [];
-  if (touched.length <= 1 || copies.length === 0) {
+  if (touched.length === 0) {
     return [...notifications];
   }
+  const labelById = new Map(
+    touched.map((d) => [d.storageId, shortDriveLabel(d.label)]),
+  );
+  const driveLabels = [...new Set(touched.map((d) => shortDriveLabel(d.label)))];
   const countByStorage = new Map<string, Set<string>>();
   for (const c of copies) {
     let set = countByStorage.get(c.storageId);
@@ -442,28 +450,26 @@ function appendMultiDriveBreakdownToNotifications(
     }
     set.add(`${c.trackedSeasonId}:${c.episodeCode}`);
   }
-  if (countByStorage.size <= 1) {
-    return [...notifications];
+  let breakdownLine: string | null = null;
+  if (touched.length > 1 && countByStorage.size > 1) {
+    const parts: string[] = [];
+    for (const [storageId, codes] of countByStorage) {
+      const label = labelById.get(storageId) ?? storageId;
+      parts.push(`${label} ${codes.size} 集`);
+    }
+    breakdownLine = `跨盘分布：${parts.join(" · ")}`;
   }
-  const labelById = new Map(
-    touched.map((d) => [d.storageId, d.label.replace(/\s*网盘$/, "")]),
-  );
-  const parts: string[] = [];
-  for (const [storageId, codes] of countByStorage) {
-    const label = labelById.get(storageId) ?? storageId;
-    parts.push(`${label} ${codes.size} 集`);
-  }
-  const breakdownLine = `跨盘分布：${parts.join(" · ")}`;
   return notifications.map((n) => {
     if (!n.report) return n;
     const nextReport = {
       ...n.report,
-      lines: [...n.report.lines, breakdownLine],
+      ...(driveLabels.length > 0 ? { driveLabels } : {}),
+      ...(breakdownLine ? { lines: [...n.report.lines, breakdownLine] } : {}),
     };
     return {
       ...n,
       report: nextReport,
-      body: formatReportPushText(nextReport),
+      body: breakdownLine ? formatReportPushText(nextReport) : n.body,
     };
   });
 }
@@ -1178,7 +1184,18 @@ export async function runMovieAcquisitionV2AndPersist(input: {
 
   const effectiveStorageId =
     input.connectedStorageId ?? result.touchedTargetDrives?.[0]?.storageId ?? null;
-  const held = await saveRunRecord({ ...input, now }, result.status, stampNotifications(result.notifications, input.notice), (run, notifications) => ({
+  const movieDriveLabels = (result.touchedTargetDrives ?? []).map((d) => shortDriveLabel(d.label));
+  const movieNotifications = stampNotifications(result.notifications, input.notice).map((n) => {
+    if (!n.report || movieDriveLabels.length === 0) return n;
+    return {
+      ...n,
+      report: {
+        ...n.report,
+        driveLabels: [...new Set(movieDriveLabels)],
+      },
+    };
+  });
+  const held = await saveRunRecord({ ...input, now }, result.status, movieNotifications, (run, notifications) => ({
     ...(input.accountId ? { accountId: input.accountId } : {}),
     ...(input.connectedStorageId !== undefined ? { connectedStorageId: input.connectedStorageId } : {}),
     title: input.title,

@@ -1751,7 +1751,16 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     const since = input?.since;
     const all = [...this.workflowRuns.values()]
       .filter((snapshot) => scopeMatches(scope, snapshot.accountId, snapshot.connectedStorageId))
-      .flatMap((snapshot) => snapshot.notifications.map((notification) => ({ ...notification })))
+      .flatMap((snapshot) =>
+        snapshot.notifications.map((notification) => ({
+          ...notification,
+          ...(notification.connectedStorageId === undefined &&
+          snapshot.connectedStorageId !== null &&
+          snapshot.connectedStorageId !== undefined
+            ? { connectedStorageId: snapshot.connectedStorageId }
+            : {}),
+        })),
+      )
       .filter((notification) => isUserVisibleNotificationKind(notification.kind))
       .filter((notification) => since === undefined || notification.createdAt >= since);
     all.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
