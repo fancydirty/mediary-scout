@@ -289,4 +289,81 @@ describe("MultiDriveStorageV2 — lazy per-drive staging, brand/storageId routin
     expect(keptEvents[0]!.fileCount).toBe(1);
     expect(t2.materializedFileIds.length).toBe(1);
   });
+
+  it("deduplicates concurrent directory creation on the same drive and disambiguates transferAttempt IDs across drives", async () => {
+    const sim115 = new Storage115Simulator({
+      packs: {
+        c115_a: { files: [{ path: "Show.S01E01.mkv", sizeBytes: 1000 }] },
+        c115_b: { files: [{ path: "Show.S01E02.mkv", sizeBytes: 1000 }] },
+      },
+    });
+    const sim123 = new Storage115Simulator({
+      packs: {
+        c123_a: { files: [{ path: "Show.S01E03.mkv", sizeBytes: 1000 }] },
+        c123_b: { files: [{ path: "Show.S01E04.mkv", sizeBytes: 1000 }] },
+      },
+    });
+    const created123: string[] = [];
+    const drive115 = makeDrive({ storageId: "cs_115", provider: "pan115", label: "115", sim: sim115 });
+    const drive123 = makeDrive({ storageId: "cs_123", provider: "pan123", label: "123", sim: sim123, createdDirs: created123 });
+
+    const attempts115 = [
+      { id: "run_dup_transfer_1", workflowRunId: "run_dup", candidateId: "c115_a", status: "succeeded" as const, providerMessage: "", materializedFileIds: ["f1"] },
+    ];
+    const attempts123 = [
+      { id: "run_dup_transfer_1", workflowRunId: "run_dup", candidateId: "c123_a", status: "succeeded" as const, providerMessage: "", materializedFileIds: ["f3"] },
+    ];
+
+    const coordinator = new MultiDriveStorageV2({
+      drives: [drive115, drive123],
+      target: {
+        kind: "tv",
+        categoryKey: "tv",
+        title: "幻视任务",
+        year: 2026,
+        tmdbId: 213375,
+        seasons: [1],
+        workflowRunId: "run_dup",
+      },
+      buildDriveAdapter: (d) => {
+        const base = d.storageId === "cs_115" ? sim115 : sim123;
+        return {
+          createDirectory: (i) => base.createDirectory(i),
+          transferCandidate: (i) => base.transferCandidate(i),
+          transferSubtitleUrls: (i) => base.transferSubtitleUrls(i),
+          listTree: (i) => base.listTree(i),
+          listSubdirectories: (i) => base.listSubdirectories(i),
+          moveFiles: (i) => base.moveFiles(i),
+          renameFile: (i) => base.renameFile(i),
+          deleteFiles: (i) => base.deleteFiles(i),
+          removeDirectory: (i) => base.removeDirectory(i),
+          candidateLinkKind: (c) => base.candidateLinkKind(c),
+          attempts: () => (d.storageId === "cs_115" ? attempts115 : attempts123),
+        };
+      },
+      resolveCandidate: (id) =>
+        id.startsWith("c115")
+          ? { url: `https://115.com/s/sw3abcd${id}` }
+          : { url: `https://www.123pan.com/s/Ab-cD_${id}` },
+    });
+
+    // Fire two concurrent transfers onto drive 123 (simulating parallel tool calls in one LLM turn)
+    await Promise.all([
+      coordinator.transferCandidate({ candidateId: "c123_a", intoDirectoryId: MULTI_DRIVE_STAGING_HANDLE, storageId: "cs_123" }),
+      coordinator.transferCandidate({ candidateId: "c123_b", intoDirectoryId: MULTI_DRIVE_STAGING_HANDLE, storageId: "cs_123" }),
+    ]);
+
+    // Show directory and staging directory on 123 must each be created ONLY ONCE (no 5060 duplicate folder race)
+    expect(created123).toEqual([
+      "cs_123:幻视任务 (2026) {tmdb-213375}",
+      "cs_123:staging-run_dup",
+    ]);
+
+    // TransferAttempt IDs from both drives must be globally unique (no transfer_attempts_pkey collision)
+    const allAttempts = coordinator.attempts();
+    expect(allAttempts.map((a) => a.id)).toEqual([
+      "run_dup_transfer_cs_115_1",
+      "run_dup_transfer_cs_123_1",
+    ]);
+  });
 });

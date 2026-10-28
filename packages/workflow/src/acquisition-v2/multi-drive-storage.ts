@@ -61,9 +61,13 @@ interface DriveRuntimeState {
   drive: AcquisitionDriveContext;
   adapter: StorageV2 & { attempts?: () => TransferAttempt[] };
   showDirectoryId?: string;
+  showDirectoryPromise?: Promise<string>;
   stagingDirectoryId?: string;
+  stagingDirectoryPromise?: Promise<string>;
   movieDirectoryId?: string;
+  movieDirectoryPromise?: Promise<string>;
   seasonDirectoryIds: Map<number, string>;
+  seasonDirectoryPromises: Map<number, Promise<string>>;
 }
 
 /**
@@ -105,6 +109,7 @@ export class MultiDriveStorageV2 implements StorageV2 {
         drive,
         adapter: options.buildDriveAdapter(drive),
         seasonDirectoryIds: new Map(),
+        seasonDirectoryPromises: new Map(),
       });
     }
   }
@@ -142,13 +147,21 @@ export class MultiDriveStorageV2 implements StorageV2 {
    *  `materializedFileIds` scoped so they match `TaskSandbox.materializedBy` keys. */
   attempts(): TransferAttempt[] {
     const all: TransferAttempt[] = [];
+    const seenIds = new Set<string>();
+    const multiDrive = this.orderedDrives.length > 1;
     for (const state of this.states.values()) {
       if (state.adapter.attempts) {
-        for (const attempt of state.adapter.attempts()) {
+        for (const [idx, attempt] of state.adapter.attempts().entries()) {
+          let id = attempt.id;
+          if (multiDrive || seenIds.has(id)) {
+            id = `${attempt.workflowRunId}_transfer_${state.drive.storageId}_${idx + 1}`;
+          }
+          seenIds.add(id);
           all.push({
             ...attempt,
-            materializedFileIds: attempt.materializedFileIds.map((id) =>
-              this.scopedId(state.drive.storageId, id),
+            id,
+            materializedFileIds: attempt.materializedFileIds.map((fid) =>
+              this.scopedId(state.drive.storageId, fid),
             ),
           });
         }
@@ -296,35 +309,51 @@ export class MultiDriveStorageV2 implements StorageV2 {
     if (state.stagingDirectoryId) {
       return state.stagingDirectoryId;
     }
-    const showDirId = await this.ensureDriveShowDir(state);
-    const stagingDirId = await state.drive.storage.createDirectory({
-      name: `staging-${this.target.workflowRunId}`,
-      parentId: showDirId,
-    });
-    state.stagingDirectoryId = stagingDirId;
-    const scoped = this.scopedId(state.drive.storageId, stagingDirId);
-    this.dirToDrive.set(scoped, { storageId: state.drive.storageId, realDirId: stagingDirId });
-    this.dirToDrive.set(stagingDirId, { storageId: state.drive.storageId, realDirId: stagingDirId });
-    return stagingDirId;
+    if (!state.stagingDirectoryPromise) {
+      state.stagingDirectoryPromise = (async () => {
+        const showDirId = await this.ensureDriveShowDir(state);
+        const stagingDirId = await state.drive.storage.createDirectory({
+          name: `staging-${this.target.workflowRunId}`,
+          parentId: showDirId,
+        });
+        state.stagingDirectoryId = stagingDirId;
+        const scoped = this.scopedId(state.drive.storageId, stagingDirId);
+        this.dirToDrive.set(scoped, { storageId: state.drive.storageId, realDirId: stagingDirId });
+        this.dirToDrive.set(stagingDirId, { storageId: state.drive.storageId, realDirId: stagingDirId });
+        return stagingDirId;
+      })().catch((err) => {
+        delete state.stagingDirectoryPromise;
+        throw err;
+      });
+    }
+    return state.stagingDirectoryPromise;
   }
 
   private async ensureDriveShowDir(state: DriveRuntimeState): Promise<string> {
     if (state.showDirectoryId) {
       return state.showDirectoryId;
     }
-    const parentId = state.drive.parents[this.target.categoryKey];
-    const showDirId = await ensureMediaLibraryDirectory({
-      executor: state.drive.storage,
-      parentId,
-      title: this.target.title,
-      year: this.target.year,
-      tmdbId: this.target.tmdbId,
-    });
-    state.showDirectoryId = showDirId;
-    const scoped = this.scopedId(state.drive.storageId, showDirId);
-    this.dirToDrive.set(scoped, { storageId: state.drive.storageId, realDirId: showDirId });
-    this.dirToDrive.set(showDirId, { storageId: state.drive.storageId, realDirId: showDirId });
-    return showDirId;
+    if (!state.showDirectoryPromise) {
+      state.showDirectoryPromise = (async () => {
+        const parentId = state.drive.parents[this.target.categoryKey];
+        const showDirId = await ensureMediaLibraryDirectory({
+          executor: state.drive.storage,
+          parentId,
+          title: this.target.title,
+          year: this.target.year,
+          tmdbId: this.target.tmdbId,
+        });
+        state.showDirectoryId = showDirId;
+        const scoped = this.scopedId(state.drive.storageId, showDirId);
+        this.dirToDrive.set(scoped, { storageId: state.drive.storageId, realDirId: showDirId });
+        this.dirToDrive.set(showDirId, { storageId: state.drive.storageId, realDirId: showDirId });
+        return showDirId;
+      })().catch((err) => {
+        delete state.showDirectoryPromise;
+        throw err;
+      });
+    }
+    return state.showDirectoryPromise;
   }
 
   private async ensureDriveSeasonDir(state: DriveRuntimeState, season: number): Promise<string> {
@@ -332,26 +361,36 @@ export class MultiDriveStorageV2 implements StorageV2 {
     if (existing) {
       return existing;
     }
-    const showDirId = await this.ensureDriveShowDir(state);
-    const seasonName = `Season ${String(season).padStart(2, "0")}`;
-    let foundId: string | undefined;
-    try {
-      const children = await state.drive.storage.listChildDirectories(showDirId);
-      foundId = children.find((c) => c.name === seasonName)?.id;
-    } catch {
-      foundId = undefined;
+    let pending = state.seasonDirectoryPromises.get(season);
+    if (!pending) {
+      pending = (async () => {
+        const showDirId = await this.ensureDriveShowDir(state);
+        const seasonName = `Season ${String(season).padStart(2, "0")}`;
+        let foundId: string | undefined;
+        try {
+          const children = await state.drive.storage.listChildDirectories(showDirId);
+          foundId = children.find((c) => c.name === seasonName)?.id;
+        } catch {
+          foundId = undefined;
+        }
+        const seasonDirId =
+          foundId ??
+          (await state.drive.storage.createDirectory({
+            name: seasonName,
+            parentId: showDirId,
+          }));
+        state.seasonDirectoryIds.set(season, seasonDirId);
+        const scoped = this.scopedId(state.drive.storageId, seasonDirId);
+        this.dirToDrive.set(scoped, { storageId: state.drive.storageId, realDirId: seasonDirId });
+        this.dirToDrive.set(seasonDirId, { storageId: state.drive.storageId, realDirId: seasonDirId });
+        return seasonDirId;
+      })().catch((err) => {
+        state.seasonDirectoryPromises.delete(season);
+        throw err;
+      });
+      state.seasonDirectoryPromises.set(season, pending);
     }
-    const seasonDirId =
-      foundId ??
-      (await state.drive.storage.createDirectory({
-        name: seasonName,
-        parentId: showDirId,
-      }));
-    state.seasonDirectoryIds.set(season, seasonDirId);
-    const scoped = this.scopedId(state.drive.storageId, seasonDirId);
-    this.dirToDrive.set(scoped, { storageId: state.drive.storageId, realDirId: seasonDirId });
-    this.dirToDrive.set(seasonDirId, { storageId: state.drive.storageId, realDirId: seasonDirId });
-    return seasonDirId;
+    return pending;
   }
 
   private async findExistingSeasonDirReadOnly(state: DriveRuntimeState, season: number): Promise<string | null> {
@@ -406,19 +445,27 @@ export class MultiDriveStorageV2 implements StorageV2 {
     if (state.movieDirectoryId) {
       return state.movieDirectoryId;
     }
-    const movieDirId = await ensureMediaLibraryDirectory({
-      executor: state.drive.storage,
-      parentId: state.drive.parents.movies,
-      title: this.target.title,
-      year: this.target.year,
-      tmdbId: this.target.tmdbId,
-    });
-    state.movieDirectoryId = movieDirId;
-    state.stagingDirectoryId = movieDirId;
-    const scoped = this.scopedId(state.drive.storageId, movieDirId);
-    this.dirToDrive.set(scoped, { storageId: state.drive.storageId, realDirId: movieDirId });
-    this.dirToDrive.set(movieDirId, { storageId: state.drive.storageId, realDirId: movieDirId });
-    return movieDirId;
+    if (!state.movieDirectoryPromise) {
+      state.movieDirectoryPromise = (async () => {
+        const movieDirId = await ensureMediaLibraryDirectory({
+          executor: state.drive.storage,
+          parentId: state.drive.parents.movies,
+          title: this.target.title,
+          year: this.target.year,
+          tmdbId: this.target.tmdbId,
+        });
+        state.movieDirectoryId = movieDirId;
+        state.stagingDirectoryId = movieDirId;
+        const scoped = this.scopedId(state.drive.storageId, movieDirId);
+        this.dirToDrive.set(scoped, { storageId: state.drive.storageId, realDirId: movieDirId });
+        this.dirToDrive.set(movieDirId, { storageId: state.drive.storageId, realDirId: movieDirId });
+        return movieDirId;
+      })().catch((err) => {
+        delete state.movieDirectoryPromise;
+        throw err;
+      });
+    }
+    return state.movieDirectoryPromise;
   }
 
   private defaultState(): DriveRuntimeState {
