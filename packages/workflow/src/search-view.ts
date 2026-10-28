@@ -428,13 +428,30 @@ async function actionForTrackedSeason(
   // isFullyAcquired, which a finished-season/unaired-anchor reserve trips falsely.
   // Otherwise, situation-aware wording: a one-off film / finished season fully in
   // hand is DONE → "已获取"; a still-airing season or real gaps is "已追踪".
-  const obtained = state.episodes.some((episode) => episode.obtained);
+  let effectiveEpisodes = state.episodes;
+  if (
+    (scoped === undefined || scoped.connectedStorageId === null) &&
+    repository.obtainedEpisodesForSeason
+  ) {
+    const union = await repository.obtainedEpisodesForSeason(
+      trackedSeasonIdValue,
+      scoped?.accountId ?? state.accountId,
+    );
+    if (union.length > 0) {
+      const obtainedCodes = new Set(union.filter((c) => c.obtained).map((c) => c.episodeCode));
+      effectiveEpisodes = state.episodes.map((ep) => ({
+        ...ep,
+        obtained: ep.obtained || obtainedCodes.has(ep.episodeCode),
+      }));
+    }
+  }
+  const obtained = effectiveEpisodes.some((episode) => episode.obtained);
   if (unreleased && !obtained) {
     return reservedAction();
   }
   return {
     state: "already_tracked",
-    label: isFullyAcquired(state) ? "已获取" : "已追踪",
+    label: isFullyAcquired({ season: state.season, episodes: effectiveEpisodes }) ? "已获取" : "已追踪",
     disabled: true,
     workflowRunId: null,
   };

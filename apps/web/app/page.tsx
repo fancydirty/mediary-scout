@@ -247,9 +247,13 @@ async function SearchResults({
                         )
                       : null
                   }
-                  trackedSeasonNumbers={(trackedByTmdbId.get(candidate.tmdbId) ?? []).map(
-                    (state) => state.season.seasonNumber,
-                  )}
+                  trackedSeasonNumbers={[
+                    ...new Set(
+                      (trackedByTmdbId.get(candidate.tmdbId) ?? []).map(
+                        (state) => state.season.seasonNumber,
+                      ),
+                    ),
+                  ]}
                   storageId={storageId}
                   key={`${candidate.mediaType}_${candidate.tmdbId}`}
                 />
@@ -274,25 +278,47 @@ async function SearchResults({
 /**
  * Concrete library awareness for a result card: not just "tracked", but
  * WHICH seasons are obtained / airing / missing.
+ * When a season is tracked across multiple drives, its states are merged by
+ * `seasonNumber` so the obtained episode set is unioned and each season number
+ * appears at most once in the summary label.
  */
 function trackedSummaryLabel(states: TrackedSeasonState[], totalSeasonCount: number): string | null {
   if (states.length === 0) {
     return null;
   }
-  const seasonNumber = (state: TrackedSeasonState) => state.season.seasonNumber;
-  const obtainedCount = (state: TrackedSeasonState) =>
-    state.episodes.filter((episode) => episode.obtained).length;
-  const complete = states
-    .filter(
-      (state) =>
-        state.season.status === "completed" && obtainedCount(state) >= state.season.totalEpisodes,
-    )
-    .map(seasonNumber)
-    .sort((a, b) => a - b);
-  const active = states
-    .filter((state) => state.season.status === "active")
-    .map(seasonNumber)
-    .sort((a, b) => a - b);
+  const bySeason = new Map<number, TrackedSeasonState[]>();
+  for (const state of states) {
+    const list = bySeason.get(state.season.seasonNumber) ?? [];
+    list.push(state);
+    bySeason.set(state.season.seasonNumber, list);
+  }
+  const complete: number[] = [];
+  const active: number[] = [];
+  let missingCount = 0;
+  for (const [seasonNumber, group] of [...bySeason.entries()].sort((a, b) => a[0] - b[0])) {
+    const primary = group.reduce((best, cur) =>
+      cur.season.latestAiredEpisode > best.season.latestAiredEpisode ? cur : best,
+    );
+    const obtainedCodes = new Set<string>();
+    for (const s of group) {
+      for (const ep of s.episodes) {
+        if (ep.obtained) obtainedCodes.add(ep.episodeCode);
+      }
+    }
+    const totalEpisodes = primary.season.totalEpisodes;
+    const latestAired = primary.season.latestAiredEpisode;
+    const airedCount = Math.min(latestAired, totalEpisodes);
+    const allCompleted =
+      group.every((s) => s.season.status === "completed") ||
+      (totalEpisodes > 0 && latestAired >= totalEpisodes && obtainedCodes.size >= airedCount);
+    if (allCompleted && obtainedCodes.size >= totalEpisodes) {
+      complete.push(seasonNumber);
+    } else if (!allCompleted && group.some((s) => s.season.status === "active")) {
+      active.push(seasonNumber);
+    } else {
+      missingCount += 1;
+    }
+  }
   if (totalSeasonCount > 0 && complete.length === totalSeasonCount) {
     return `全 ${totalSeasonCount} 季已获取`;
   }
@@ -303,9 +329,8 @@ function trackedSummaryLabel(states: TrackedSeasonState[], totalSeasonCount: num
   if (active.length > 0) {
     parts.push(`第 ${active.join("、")} 季追更中`);
   }
-  const rest = states.length - complete.length - active.length;
-  if (rest > 0) {
-    parts.push(`${rest} 季有缺集`);
+  if (missingCount > 0) {
+    parts.push(`${missingCount} 季有缺集`);
   }
   return parts.join(" · ") || "已追踪";
 }
