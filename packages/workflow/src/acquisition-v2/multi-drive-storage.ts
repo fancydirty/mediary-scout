@@ -1,5 +1,5 @@
 import type { TransferAttempt } from "../domain.js";
-import { ensureMediaLibraryDirectory } from "../media-library-folder.js";
+import { ensureMediaLibraryDirectory, findExistingMediaLibraryDirectory } from "../media-library-folder.js";
 import { formatByteSize, formatDriveSpaceSummary } from "../domain.js";
 import type { AcquisitionDriveContext, StorageExecutor } from "../ports.js";
 import { brandOfUrl, candidateDriveLabel, storageProviderForResourceType } from "./resource-link.js";
@@ -333,15 +333,73 @@ export class MultiDriveStorageV2 implements StorageV2 {
       return existing;
     }
     const showDirId = await this.ensureDriveShowDir(state);
-    const seasonDirId = await state.drive.storage.createDirectory({
-      name: `Season ${String(season).padStart(2, "0")}`,
-      parentId: showDirId,
-    });
+    const seasonName = `Season ${String(season).padStart(2, "0")}`;
+    let foundId: string | undefined;
+    try {
+      const children = await state.drive.storage.listChildDirectories(showDirId);
+      foundId = children.find((c) => c.name === seasonName)?.id;
+    } catch {
+      foundId = undefined;
+    }
+    const seasonDirId =
+      foundId ??
+      (await state.drive.storage.createDirectory({
+        name: seasonName,
+        parentId: showDirId,
+      }));
     state.seasonDirectoryIds.set(season, seasonDirId);
     const scoped = this.scopedId(state.drive.storageId, seasonDirId);
     this.dirToDrive.set(scoped, { storageId: state.drive.storageId, realDirId: seasonDirId });
     this.dirToDrive.set(seasonDirId, { storageId: state.drive.storageId, realDirId: seasonDirId });
     return seasonDirId;
+  }
+
+  private async findExistingSeasonDirReadOnly(state: DriveRuntimeState, season: number): Promise<string | null> {
+    const cached = state.seasonDirectoryIds.get(season);
+    if (cached) return cached;
+    let showDirId = state.showDirectoryId;
+    if (!showDirId) {
+      const parentId = state.drive.parents[this.target.categoryKey];
+      const existingShow = await findExistingMediaLibraryDirectory({
+        executor: state.drive.storage,
+        parentId,
+        title: this.target.title,
+        year: this.target.year,
+        tmdbId: this.target.tmdbId,
+      });
+      if (!existingShow) return null;
+      showDirId = existingShow;
+      state.showDirectoryId = showDirId;
+      const scopedShow = this.scopedId(state.drive.storageId, showDirId);
+      this.dirToDrive.set(scopedShow, { storageId: state.drive.storageId, realDirId: showDirId });
+      this.dirToDrive.set(showDirId, { storageId: state.drive.storageId, realDirId: showDirId });
+    }
+    const seasonName = `Season ${String(season).padStart(2, "0")}`;
+    const children = await state.drive.storage.listChildDirectories(showDirId);
+    const hit = children.find((c) => c.name === seasonName);
+    if (!hit) return null;
+    state.seasonDirectoryIds.set(season, hit.id);
+    const scoped = this.scopedId(state.drive.storageId, hit.id);
+    this.dirToDrive.set(scoped, { storageId: state.drive.storageId, realDirId: hit.id });
+    this.dirToDrive.set(hit.id, { storageId: state.drive.storageId, realDirId: hit.id });
+    return hit.id;
+  }
+
+  private async findExistingMovieDirReadOnly(state: DriveRuntimeState): Promise<string | null> {
+    if (state.movieDirectoryId) return state.movieDirectoryId;
+    const existing = await findExistingMediaLibraryDirectory({
+      executor: state.drive.storage,
+      parentId: state.drive.parents.movies,
+      title: this.target.title,
+      year: this.target.year,
+      tmdbId: this.target.tmdbId,
+    });
+    if (!existing) return null;
+    state.movieDirectoryId = existing;
+    const scoped = this.scopedId(state.drive.storageId, existing);
+    this.dirToDrive.set(scoped, { storageId: state.drive.storageId, realDirId: existing });
+    this.dirToDrive.set(existing, { storageId: state.drive.storageId, realDirId: existing });
+    return existing;
   }
 
   private async ensureDriveMovieDir(state: DriveRuntimeState): Promise<string> {
@@ -458,7 +516,40 @@ export class MultiDriveStorageV2 implements StorageV2 {
   }
 
   async listTree(input: { directoryId: string; maxDepth?: number }): Promise<SimTreeFile[]> {
-    if (input.directoryId === MULTI_DRIVE_STAGING_HANDLE || input.directoryId === MULTI_DRIVE_MOVIE_HANDLE) {
+    if (input.directoryId === MULTI_DRIVE_MOVIE_HANDLE) {
+      let activeStates = [...this.states.values()].filter((s) => s.movieDirectoryId !== undefined);
+      if (activeStates.length === 0) {
+        const primary = this.states.get(this.primaryStorageId ?? "") ?? this.defaultState();
+        try {
+          const found = await this.findExistingMovieDirReadOnly(primary);
+          if (found) activeStates = [primary];
+        } catch {
+          activeStates = [];
+        }
+      }
+      if (activeStates.length === 0) {
+        return [];
+      }
+      const trees = await Promise.all(
+        activeStates.map(async (state) => {
+          const files = await state.adapter.listTree({
+            directoryId: state.movieDirectoryId!,
+            ...(input.maxDepth === undefined ? {} : { maxDepth: input.maxDepth }),
+          });
+          return files.map((f) => {
+            const scoped = this.scopedId(state.drive.storageId, f.id);
+            this.fileToDrive.set(scoped, state.drive.storageId);
+            return {
+              ...f,
+              id: scoped,
+            };
+          });
+        }),
+      );
+      return trees.flat();
+    }
+
+    if (input.directoryId === MULTI_DRIVE_STAGING_HANDLE) {
       const activeStates = [...this.states.values()].filter((s) => s.stagingDirectoryId !== undefined);
       if (activeStates.length === 0) {
         return [];
@@ -484,7 +575,16 @@ export class MultiDriveStorageV2 implements StorageV2 {
 
     const seasonNum = parseMultiDriveSeasonHandle(input.directoryId);
     if (seasonNum !== null) {
-      const statesWithSeason = [...this.states.values()].filter((s) => s.seasonDirectoryIds.has(seasonNum));
+      let statesWithSeason = [...this.states.values()].filter((s) => s.seasonDirectoryIds.has(seasonNum));
+      if (statesWithSeason.length === 0) {
+        const primary = this.states.get(this.primaryStorageId ?? "") ?? this.defaultState();
+        try {
+          const found = await this.findExistingSeasonDirReadOnly(primary, seasonNum);
+          if (found) statesWithSeason = [primary];
+        } catch {
+          statesWithSeason = [];
+        }
+      }
       if (statesWithSeason.length === 0) {
         return [];
       }

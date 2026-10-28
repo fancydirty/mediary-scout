@@ -297,12 +297,33 @@ export async function runQueuedReplaceRequest(
       // A file's own link, from the transfer that landed it: the only link a file an
       // ordinary run landed has (no episode source is recorded for it).
       landingLinkKeys: async (fileIds) => {
+        const rawIds: string[] = [];
+        const rawToScoped = new Map<string, string[]>();
+        for (const fid of fileIds) {
+          const sep = fid.indexOf("::");
+          const storageId = sep > 0 ? fid.slice(0, sep) : null;
+          const raw = sep > 0 ? fid.slice(sep + 2) : fid;
+          if (storageId === null || storageId === work.drive) {
+            rawIds.push(raw);
+            const list = rawToScoped.get(raw) ?? [];
+            list.push(fid);
+            rawToScoped.set(raw, list);
+          }
+        }
         const keys = new Map<string, string | null>();
-        for (const s of await repository.listLandingSources({ accountId: work.accountId, drive: work.drive, fileIds })) {
+        for (const s of await repository.listLandingSources({
+          accountId: work.accountId,
+          drive: work.drive,
+          fileIds: [...new Set([...fileIds, ...rawIds])],
+        })) {
           // The oldest transfer decides — a later one can only have claimed the file through
           // a lagging listing — even when its link is unusable or has no key (null, not left
           // out: the file has a source of its own, so the episode's recorded one is not lent).
-          if (!keys.has(s.fileId)) keys.set(s.fileId, s.url === null ? null : resourceLinkKey(s.url));
+          const linkVal = s.url === null ? null : resourceLinkKey(s.url);
+          if (!keys.has(s.fileId)) keys.set(s.fileId, linkVal);
+          for (const scoped of rawToScoped.get(s.fileId) ?? []) {
+            if (!keys.has(scoped)) keys.set(scoped, linkVal);
+          }
         }
         return Object.fromEntries(keys);
       },

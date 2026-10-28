@@ -1342,26 +1342,3 @@ export async function restoreEpisodesToPendingAction(
   }
 }
 
-export async function saveDriveOrderAction(orderedIds: string[]): Promise<PushSettingsActionResult> {
-  assertNotDemo();
-  try {
-    if (!Array.isArray(orderedIds) || orderedIds.some((id) => typeof id !== "string" || !id.trim())) {
-      return { success: false, message: "网盘顺序参数无效" };
-    }
-    const {
-      getWorkflowRepository,
-      requireAuthenticatedAccountId,
-      setAccountDriveOrder,
-    } = await import("../lib/workflow-runtime");
-    const accountId = await requireAuthenticatedAccountId();
-    const repo = getWorkflowRepository();
-    const owned = new Set((await repo.listConnectedStorages(accountId)).map((s) => s.id));
-    const filtered = orderedIds.filter((id) => owned.has(id));
-    await setAccountDriveOrder(accountId, filtered, repo);
-    revalidatePath("/settings");
-    return { success: true };
-  } catch (error) {
-    return { success: false, message: `保存顺序失败：${String(error)}` };
-  }
-}
-

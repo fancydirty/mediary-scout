@@ -5,7 +5,8 @@ import { Suspense } from "react";
 import { Bell, Bot, Cable, CalendarClock, Clapperboard, ExternalLink, Gauge, KeyRound, Languages, Radio, ShieldCheck, Subtitles, TriangleAlert, Users } from "lucide-react";
 import { AppSidebar } from "../../components/app-sidebar";
 import { AddDriveBrandTabs } from "../../components/add-drive-brand-tabs";
-import { DriveOrderGrid } from "../../components/drive-order-grid";
+import { TestConnectionButton } from "../../components/test-connection-button";
+import { UnbindStorageButton } from "../../components/unbind-storage-button";
 import { PushNotificationForm } from "../../components/push-notification-form";
 import { PreferredLanguageForm } from "../../components/preferred-language-form";
 import { QualityPreferenceForm } from "../../components/quality-preference-form";
@@ -717,7 +718,7 @@ async function Pan115Section() {
             <Cable size={16} aria-hidden style={{ verticalAlign: "-2px", marginRight: 8 }} />
             网盘连接
           </h2>
-          <p className="panel-note">多块网盘统一协作：单盘能收齐绝不拆盘，可拖拽卡片调整优先顺序</p>
+          <p className="panel-note">多块网盘统一协作：根据资源画质与剩余空间自动入库，单盘能收齐绝不拆盘</p>
         </div>
         {(() => {
           // #93: derive the header badge from ALL drives — 115-only status made
@@ -741,24 +742,65 @@ async function Pan115Section() {
       ) : null}
 
       {drives.length > 0 ? (
-        <DriveOrderGrid
-          initialDrives={drives.map((drive) => {
+        <div className="drive-grid">
+          {drives.map((drive) => {
+            const frozen = drive.status === "frozen";
+            const ready = !frozen && drive.provisioned;
             const spaceSummary = formatDriveSpaceSummary(drive.space);
-            return {
-              id: drive.id,
-              provider: drive.provider,
-              providerLabel: providerLabel(drive.provider),
-              hasBrandSvg: isRegisteredStorageProvider(drive.provider),
-              providerUid: drive.providerUid,
-              maskedUid: maskProviderUid(drive.providerUid),
-              frozen: drive.status === "frozen",
-              provisioned: drive.provisioned,
-              connectedAt: drive.connectedAt,
-              spaceBadgeText: spaceSummary.badgeText,
-              spaceOverQuota: spaceSummary.overQuota,
-            };
+            let dotTitle = "目录待建";
+            let dotAriaLabel = "目录待建";
+            if (frozen) {
+              dotTitle = "凭证已失效，重新绑定同一账号即可恢复";
+              dotAriaLabel = "掉线";
+            } else if (ready) {
+              dotTitle = "目录已就绪";
+              dotAriaLabel = "就绪";
+            }
+            let statusMetaNode = <span>就绪</span>;
+            if (frozen) {
+              statusMetaNode = <span className="tone-amber-text">掉线 · 重新绑定即恢复</span>;
+            } else if (!drive.provisioned) {
+              statusMetaNode = <span className="tone-amber-text">目录待建</span>;
+            } else if (drive.connectedAt) {
+              statusMetaNode = <span>{drive.connectedAt.slice(0, 10)} 连接</span>;
+            }
+            return (
+              <div key={drive.id} className={`drive-card${frozen ? " is-frozen" : ""}`}>
+                <div className="drive-card-head">
+                  {isRegisteredStorageProvider(drive.provider) ? (
+                    // 已注册品牌必有 svg(workspace-switcher 同款资产)
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img className="drive-card-icon" src={`/brands/${drive.provider}.svg`} alt="" width={26} height={26} />
+                  ) : (
+                    // 未注册品牌:中性方形占位(与右侧状态圆点区分形状,避免双点误读)
+                    <span className="drive-card-icon-fallback" aria-hidden />
+                  )}
+                  <span className="drive-card-name">{providerLabel(drive.provider)}</span>
+                  <span
+                    className={`drive-dot ${ready ? "green" : "amber"}`}
+                    role="img"
+                    title={dotTitle}
+                    aria-label={dotAriaLabel}
+                  />
+                </div>
+                <div className="drive-card-uid" title={drive.providerUid}>
+                  {maskProviderUid(drive.providerUid)}
+                </div>
+                <div className="drive-card-meta">
+                  {statusMetaNode}
+                  <span> · </span>
+                  <span className={spaceSummary.overQuota ? "tone-amber-text" : undefined}>
+                    {spaceSummary.badgeText}
+                  </span>
+                </div>
+                <div className="drive-card-actions">
+                  <TestConnectionButton storageId={drive.id} />
+                  <UnbindStorageButton storageId={drive.id} label={providerLabel(drive.provider)} />
+                </div>
+              </div>
+            );
           })}
-        />
+        </div>
       ) : null}
 
       <p className="panel-note drive-add-heading">

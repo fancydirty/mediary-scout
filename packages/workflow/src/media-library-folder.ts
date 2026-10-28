@@ -37,13 +37,13 @@ export function legacyMediaLibraryFolderName(input: {
  * Prefer the new `{tmdb-N}` name; if only the legacy `Title (Year)` exists, reuse it
  * (do not auto-rename this round).
  */
-export async function ensureMediaLibraryDirectory(input: {
-  executor: Pick<StorageExecutor, "createDirectory" | "listChildDirectories">;
+export async function findExistingMediaLibraryDirectory(input: {
+  executor: Pick<StorageExecutor, "listChildDirectories">;
   parentId: string;
   title: string;
   year: number | string | null | undefined;
   tmdbId: number;
-}): Promise<string> {
+}): Promise<string | null> {
   const preferred = mediaLibraryFolderName({
     title: input.title,
     year: input.year,
@@ -56,6 +56,22 @@ export async function ensureMediaLibraryDirectory(input: {
   if (hitPreferred) return hitPreferred.id;
   const hitLegacy = children.find((child) => child.name === legacy);
   if (hitLegacy) return hitLegacy.id;
+  return null;
+}
 
+export async function ensureMediaLibraryDirectory(input: {
+  executor: Pick<StorageExecutor, "createDirectory" | "listChildDirectories">;
+  parentId: string;
+  title: string;
+  year: number | string | null | undefined;
+  tmdbId: number;
+}): Promise<string> {
+  const existing = await findExistingMediaLibraryDirectory(input);
+  if (existing) return existing;
+  const preferred = mediaLibraryFolderName({
+    title: input.title,
+    year: input.year,
+    tmdbId: input.tmdbId,
+  });
   return input.executor.createDirectory({ name: preferred, parentId: input.parentId });
 }
