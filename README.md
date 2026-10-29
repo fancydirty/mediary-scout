@@ -61,19 +61,23 @@ docker compose up -d
 
 ## 支持的网盘
 
-- **夸克**：分享链转存，PanSou 上资源最多。
-- **115**：分享链 + 磁力。
+连接多个网盘时，agent 会自动联合各盘资源池并按实时剩余容量与画质分配落盘，也可以跨盘凑齐同一季（[多网盘联合获取详解](https://mediaryscout.app/features/multi-drive-agent/)）：
+
+- **夸克**：分享链转存，扫码登录，PanSou 上资源最多。
+- **UC网盘**：分享链转存，扫码登录，免费容量大。
+- **115**：分享链 + 磁力，扫码登录。
 - **123网盘**：分享链 + 磁力，免费账号也能转存，扫码登录。[连接教程](docs/deploy.md#123网盘连接)
 - **光鸭云盘**：分享链 + 磁力，粘 token 登录。[连接教程](docs/deploy.md#光鸭云盘guangyapan连接)
 - **天翼云盘**：分享链转存，扫码登录，电影资源偏少。[连接教程](docs/deploy.md#天翼云盘连接)
 
-各盘资源量对比、为什么只支持这五家：[网盘评估](docs/drive-brand-evaluations.md)。
+各盘资源量对比、为什么只支持这六家：[追剧用哪个网盘好](https://mediaryscout.app/guides/which-cloud-drive/) · [网盘评估](docs/drive-brand-evaluations.md)。
 
 ## 更多文档
 
+- [官网指南中心](https://mediaryscout.app/guides/)：[NAS / Docker 部署教程](https://mediaryscout.app/guides/docker-nas-deploy/) · [网盘与搜索源配置](https://mediaryscout.app/guides/cloud-drive-setup/) · [与 MoviePilot / Sonarr 对比](https://mediaryscout.app/compare/mediary-scout-vs-moviepilot-sonarr/)
 - [部署指南](docs/deploy.md)
-- [Agent API](docs/agent-api.md)：让 Claude Code、Codex 等编程 agent 直接操作巡影
-- [搜索与网页查证](docs/web-research.md)：描述也能找片；官方不分季的作品怎么对集号
+- [Agent API](https://mediaryscout.app/features/agent-api/)（[仓库文档](docs/agent-api.md)）：让 Claude Code、Codex、OpenClaw 等 agent 直接操作巡影
+- [AI 选源与外挂字幕](https://mediaryscout.app/features/smart-search-and-subtitles/) · [搜索与网页查证](docs/web-research.md)：描述也能找片；官方不分季的作品怎么对集号
 - [架构速览](docs/architecture.md)
 
 ## 免责声明

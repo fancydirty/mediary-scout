@@ -14,12 +14,12 @@
 
 <p align="center">
   <a href="https://github.com/fancydirty/mediary-scout/releases/latest">📥 Download</a> ·
-  <a href="https://mediaryscout.app">🌐 Website</a> ·
+  <a href="https://mediaryscout.app/en/">🌐 Website</a> ·
   <a href="https://demo.mediaryscout.app">🔭 Live demo</a> ·
   <a href="README.md">中文</a>
 </p>
 
-Ask for a movie, show or anime; an agent searches for it, transfers the best match into your own drive (Quark / 115 / GuangYaPan / 123 / Tianyi), reads the drive back to confirm it landed, and keeps filling in episodes that are still missing.
+Ask for a movie, show or anime; an agent searches for it, transfers the best match into your own drive (Quark / UC / 115 / GuangYaPan / 123 / Tianyi), reads the drive back to confirm it landed, and keeps filling in episodes that are still missing.
 
 Download: [GitHub Releases](https://github.com/fancydirty/mediary-scout/releases/latest) (macOS / Windows desktop app)
 
@@ -60,24 +60,28 @@ Either way, bringing your own OpenAI-compatible AI model endpoint is an optional
 
 ## Supported drives
 
-- **Quark**: share-link transfer; the largest pool on PanSou.
-- **115**: share links + magnets.
+When multiple drives are connected, the agent unifies all drive pools, checks live free space before every transfer, and can even complete a single season across multiple drives ([Multi-Drive Agent overview](https://mediaryscout.app/features/multi-drive-agent/)):
+
+- **Quark**: share-link transfer; QR login; the largest pool on PanSou.
+- **UC Drive**: share-link transfer; QR login; generous free storage.
+- **115**: share links + magnets; QR login.
 - **123**: share links + magnets; free accounts can transfer; QR login. [Setup](docs/deploy.md#123网盘连接)
 - **GuangYaPan (光鸭)**: share links + magnets; paste a token to log in. [Setup](docs/deploy.md#光鸭云盘guangyapan连接)
 - **Tianyi (天翼)**: share-link transfer; QR login; few movies. [Setup](docs/deploy.md#天翼云盘连接)
 
-Per-drive resource counts, and why only these five: [drive evaluations](docs/drive-brand-evaluations.md) (Chinese).
+Per-drive resource counts, and why only these six: [Cloud drive comparison](https://mediaryscout.app/guides/which-cloud-drive/) · [drive evaluations](docs/drive-brand-evaluations.md) (Chinese).
 
 ## More docs
 
-- [Deploy guide](docs/deploy.md)
-- [Agent API](docs/agent-api.md): let coding agents such as Claude Code or Codex drive Mediary Scout
-- [Search and web research](docs/web-research.md) (Chinese): describe a plot, or how shows without official seasons map to episode numbers
+- [Official Website (English)](https://mediaryscout.app/en/) · [Guides & Tutorials Hub](https://mediaryscout.app/guides/) · [Mediary Scout vs. MoviePilot / Sonarr](https://mediaryscout.app/compare/mediary-scout-vs-moviepilot-sonarr/)
+- [Deploy guide](https://mediaryscout.app/guides/docker-nas-deploy/) ([repo docs](docs/deploy.md))
+- [Agent API](https://mediaryscout.app/features/agent-api/) ([repo docs](docs/agent-api.md)): let coding agents such as Claude Code, Codex, or OpenClaw drive Mediary Scout
+- [Smart Search & Subtitles](https://mediaryscout.app/features/smart-search-and-subtitles/) · [Search and web research](docs/web-research.md) (Chinese): describe a plot, or how shows without official seasons map to episode numbers
 - [Architecture overview](docs/architecture.md)
 
 ## Disclaimer
 
-Mediary Scout is open-source, self-hosted software. It is not offered, and never will be offered, as a hosted service: you run your own instance and bring your own drive and AI model credentials. It performs the same file operations you could do by hand in your own cloud drive. See [project positioning](docs/distribution-and-legal-positioning.md). Not affiliated with 115, Quark, GuangYaPan, 123, Tianyi, TMDB, or any indexer.
+Mediary Scout is open-source, self-hosted software. It is not offered, and never will be offered, as a hosted service: you run your own instance and bring your own drive and AI model credentials. It performs the same file operations you could do by hand in your own cloud drive. See [project positioning](docs/distribution-and-legal-positioning.md). Not affiliated with 115, Quark, UC, GuangYaPan, 123, Tianyi, TMDB, or any indexer.
 
 ## Credits
 
