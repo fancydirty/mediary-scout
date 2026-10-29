@@ -1109,3 +1109,187 @@ section {
   margin: 0;
   max-width: 320px;
 }
+
+/* ---------- Article & Guide Pages + Topic Hub Cards ---------- */
+.article {
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 0 24px 96px;
+}
+.article h1 {
+  font-size: 2.1rem;
+  line-height: 1.28;
+  margin: 36px 0 12px;
+  letter-spacing: -0.4px;
+}
+.article .meta {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  margin-bottom: 32px;
+}
+.article h2 {
+  font-size: 1.4rem;
+  margin: 44px 0 12px;
+  padding-top: 8px;
+}
+.article h3 {
+  font-size: 1.08rem;
+  margin: 28px 0 8px;
+}
+.article p,
+.article li {
+  line-height: 1.85;
+  color: #e2e2e2;
+}
+.article li {
+  margin: 6px 0;
+}
+.article strong {
+  color: var(--text);
+}
+.article a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.article a:hover {
+  color: var(--accent-press);
+}
+.article code {
+  background: var(--bg-raised);
+  color: var(--accent);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.88em;
+}
+.article pre {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 14px 18px;
+  overflow-x: auto;
+  margin: 18px 0;
+}
+.article pre code {
+  background: transparent;
+  padding: 0;
+  color: #e5e5e5;
+  font-size: 0.86rem;
+  line-height: 1.65;
+}
+.article table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 20px 0;
+  font-size: 0.92rem;
+}
+.article th,
+.article td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  text-align: left;
+  vertical-align: top;
+}
+.article th {
+  color: var(--text);
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.02);
+}
+.article td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.article .win {
+  color: var(--accent);
+  font-weight: 600;
+}
+.callout {
+  background: var(--bg-card);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  padding: 16px 18px;
+  margin: 24px 0;
+}
+.callout.warn {
+  border-left-color: var(--dot-orange);
+}
+.callout p {
+  margin: 0;
+}
+.callout p + p {
+  margin-top: 10px;
+}
+.crumb {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  padding-top: 28px;
+}
+.crumb a {
+  color: var(--text-muted);
+  text-decoration: none;
+}
+.crumb a:hover {
+  color: var(--text);
+}
+.next {
+  margin-top: 56px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* Hub Grid Cards (used on homepage & /guides/ to distribute internal link equity) */
+.hub-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+  margin-top: 32px;
+}
+.hub-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 22px 24px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  text-decoration: none !important;
+  transition: border-color 0.18s ease, transform 0.18s ease, background 0.18s ease;
+}
+.hub-card:hover {
+  border-color: var(--accent);
+  background: var(--bg-raised);
+  transform: translateY(-2px);
+}
+.hub-card-tag {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  color: var(--accent);
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+.hub-card h3 {
+  font-size: 16.5px;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0 0 8px 0;
+  line-height: 1.4;
+}
+.hub-card p {
+  font-size: 13.5px;
+  color: var(--text-muted);
+  line-height: 1.65;
+  margin: 0 0 16px 0;
+}
+.hub-card-more {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+}
+@media (max-width: 860px) {
+  .hub-grid {
+    grid-template-columns: 1fr;
+  }
+}
+

@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>巡影 Mediary Scout vs MoviePilot / Sonarr / CloudDrive2：自动追剧工具怎么选？</title>
+  <meta name="description" content="客观对比巡影 Mediary Scout 与 MoviePilot、Sonarr/Radarr、CloudDrive2/AList 的定位差异：云网盘原生分享转存与磁力秒传流 vs 私有 PT 站本地 NAS 硬盘硬链接流，帮你根据网盘会员与硬件条件选对自动追剧方案。">
+
+  <link rel="canonical" href="https://mediaryscout.app/compare/mediary-scout-vs-moviepilot-sonarr/">
+
+  <meta property="og:title" content="巡影 Mediary Scout vs MoviePilot / Sonarr / CloudDrive2 深度对比">
+  <meta property="og:description" content="云网盘 AI Agent 零本地占用流 vs PT 种子本地 NAS 硬链接流：适用人群、硬件成本、维护难度与协同用法全解析。">
+  <meta property="og:url" content="https://mediaryscout.app/compare/mediary-scout-vs-moviepilot-sonarr/">
+  <meta property="og:type" content="article">
+  <meta property="og:image" content="https://mediaryscout.app/assets/og.png">
+  <meta name="twitter:card" content="summary_large_image">
+
+  <link rel="icon" href="/favicon.ico">
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/main.js"></script>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Article",
+        "headline": "巡影 Mediary Scout vs MoviePilot / Sonarr / CloudDrive2：自动追剧工具怎么选？",
+        "description": "客观对比巡影 Mediary Scout 与 MoviePilot、Sonarr/Radarr、CloudDrive2/AList 的架构差异、优缺点与适用场景。",
+        "datePublished": "2026-10-29",
+        "dateModified": "2026-10-29",
+        "author": {"@type": "Organization", "name": "Mediary Scout"},
+        "publisher": {"@type": "Organization", "name": "Mediary Scout", "url": "https://mediaryscout.app/"},
+        "mainEntityOfPage": {"@type": "WebPage", "@id": "https://mediaryscout.app/compare/mediary-scout-vs-moviepilot-sonarr/"}
+      },
+      {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          { "@type": "ListItem", "position": 1, "name": "巡影 Mediary Scout", "item": "https://mediaryscout.app/" },
+          { "@type": "ListItem", "position": 2, "name": "方案对比", "item": "https://mediaryscout.app/compare/mediary-scout-vs-moviepilot-sonarr/" }
+        ]
+      }
+    ]
+  }
+  </script>
+</head>
+<body>
+  <a href="#main" class="skip-link">跳转到主内容</a>
+  <nav>
+    <div class="container">
+      <div class="nav-left">
+        <a href="/" style="display:flex;align-items:center;gap:12px;text-decoration:none;color:inherit">
+          <svg class="logo-mark" viewBox="0 0 32 32" width="24" height="24" aria-hidden="true" focusable="false">
+            <circle cx="16" cy="16" r="16" fill="#1ED760"/>
+            <g transform="translate(4,4)" fill="none" stroke="#0B3B1E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <path d="m14.31 8 5.74 9.94"/>
+              <path d="M9.69 8h11.48"/>
+              <path d="m7.38 12 5.74-9.94"/>
+              <path d="M9.69 16 3.95 6.06"/>
+              <path d="M14.31 16H2.83"/>
+              <path d="m16.62 12-5.74 9.94"/>
+            </g>
+          </svg>
+          <span class="wordmark">巡影 · Mediary Scout</span>
+        </a>
+      </div>
+      <div class="nav-right">
+        <div class="nav-links">
+          <a href="/features/multi-drive-agent/">多盘协作</a>
+          <span aria-hidden="true">·</span>
+          <a href="/guides/which-cloud-drive/">六盘实测对比</a>
+          <span aria-hidden="true">·</span>
+          <a href="/guides/docker-nas-deploy/">NAS 部署</a>
+          <span aria-hidden="true">·</span>
+          <a href="/compare/mediary-scout-vs-moviepilot-sonarr/">对比 MoviePilot</a>
+          <span aria-hidden="true">·</span>
+          <a href="/guides/">教程中心</a>
+          <span aria-hidden="true">·</span>
+          <a href="/en/" lang="en">English</a>
+        </div>
+        <a href="https://github.com/fancydirty/mediary-scout" class="github-link" aria-label="GitHub">
+          <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+        </a>
+        <span class="pill" data-stars>★ …</span>
+      </div>
+    </div>
+  </nav>
+
+  <main id="main" class="article">
+    <p class="crumb"><a href="/">巡影 Mediary Scout 首页</a> › 方案对比 › 对比 MoviePilot / Sonarr / CloudDrive2</p>
+
+    <h1>巡影 Mediary Scout vs MoviePilot / Sonarr / CloudDrive2：自动追剧工具怎么选？</h1>
+    <p class="meta">2026-10-29 核实更新 · 客观对比云网盘 Agent 流与传统 PT 本地硬盘流的优缺点</p>
+
+    <p>很多想搭建家庭自动化影视库的朋友都会纠结：到底是上 <strong>MoviePilot / Sonarr + qBittorrent</strong> 这一套经典 PT/BT 自动化栈，还是用 <strong><a href="/">巡影 Mediary Scout</a></strong> 走云网盘自动转存与离线秒传？</p>
+
+    <p>这两套方案并不是谁单纯替代谁，而是<strong>针对完全不同的存储介质与资源生态设计的</strong>。下面用一张完整对比表和具体场景帮你做决定。</p>
+
+    <h2>一、核心架构与能力横向对比表</h2>
+
+    <table>
+      <thead>
+        <tr>
+          <th>对比维度</th>
+          <th>巡影 Mediary Scout</th>
+          <th>MoviePilot (NAStool 演进)</th>
+          <th>Sonarr + Radarr + Bazarr</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>核心存储介质</strong></td>
+          <td><strong>个人云网盘</strong>（夸克 / UC / 115 / 123 / 光鸭 / 天翼）</td>
+          <td><strong>本地 NAS 机械硬盘</strong>（辅以部分 115/CD2 插件）</td>
+          <td><strong>本地磁盘阵列</strong></td>
+        </tr>
+        <tr>
+          <td><strong>主要资源来源</strong></td>
+          <td>公开网盘分享链（PanSou / 海搜）+ 公共磁力秒传（Prowlarr）</td>
+          <td>私有 PT 站点（需邀请码与考核保种）+ 公开 BT</td>
+          <td>Usenet + 英文 PT/BT 索引器（Prowlarr / Jackett）</td>
+        </tr>
+        <tr>
+          <td><strong>本地硬盘与带宽消耗</strong></td>
+          <td><strong>0 本地视频占用</strong>（云端直接转存 / 离线秒传）</td>
+          <td>高（需数十 TB 本地硬盘 + 24 小时上传保种带宽）</td>
+          <td>高（全程本地下载存储）</td>
+        </tr>
+        <tr>
+          <td><strong>选片与防假片方式</strong></td>
+          <td><strong>AI Agent 语义判断 + Jev 预筛 + 转存后回读真实目录验证</strong></td>
+          <td>自定义正则表达式、优先级规则词、文件大小过滤</td>
+          <td>Release Profile 正则评分与固定命名解析器</td>
+        </tr>
+        <tr>
+          <td><strong>多网盘统筹能力</strong></td>
+          <td><strong>原生支持 6 盘统一协作</strong>（实时查余量、超额禁写、单盘优先、跨盘互补）</td>
+          <td>通常绑定单一主存储路径</td>
+          <td>仅限本地挂载目录</td>
+        </tr>
+        <tr>
+          <td><strong>坏源替换体验</strong></td>
+          <td>详情页<strong>打字留言一句话</strong>，Agent 自动拉黑坏链并换新源</td>
+          <td>手动删文件、加屏蔽词、去搜索列表手动重下</td>
+          <td>手动标记 Release Blacklist 重搜</td>
+        </tr>
+        <tr>
+          <td><strong>安装与上手门槛</strong></td>
+          <td><strong>极低</strong>：macOS / Windows 双击安装包即用，或单条 <code>docker compose up -d</code>（内置免费 AI 模型）</td>
+          <td>较高：需配置 qBittorrent、PT 站点 Cookie、硬链接路径映射、TMDB Key、媒体服联动</td>
+          <td>高：需分别部署并串联 Sonarr + Radarr + Prowlarr + Bazarr + 下载器</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>二、诚实优缺点对比：什么时候选谁？</h2>
+
+    <h3>什么时候应该选 MoviePilot / Sonarr？</h3>
+    <ul>
+      <li><strong>你已经是重度私有 PT 玩家</strong>：手里有多个大站 PT 账号、家里有大容量 4 盘位/8 盘位 NAS 机械阵列和公网上传带宽，享受本地 LAN 蓝光原盘零缓冲直通播放。</li>
+      <li><strong>你不想依赖任何云网盘厂商或 LLM 接口</strong>：Sonarr / MoviePilot 用纯确定性的正则规则运行，不调用 AI 模型，只要规则写好就能零 Token 跑下去。</li>
+    </ul>
+
+    <h3>什么时候应该选巡影 Mediary Scout？</h3>
+    <ul>
+      <li><strong>你的主力存储是云网盘（夸克 / UC / 115 / 123 / 光鸭 / 天翼）</strong>：不想买几千块钱的大容量 NAS 机械硬盘，也不想应付 PT 站严苛的分享率考核和每月的保种电费。</li>
+      <li><strong>你厌倦了维护正则表达式和被黑盒分享包坑</strong>：网盘分享链的标题千奇百怪（比如把广告视频混在剧集里、或者文件夹名叫「新建文件夹」）。巡影的 Agent 会先转进临时 <code>staging</code> 目录，<strong>回读真实文件大小和集数</strong>，删掉广告和低码率重复集后再放进正式库。</li>
+      <li><strong>你手里有多块网盘，希望它们合体成一个库</strong>：比如夸克会员过期超额了，还有 UC 6TB、123 20TB、115 40TB 和光鸭 500TB。巡影会自动避开超额的夸克，优先在单块盘收齐，单盘不全时跨盘互补（参见 <a href="/features/multi-drive-agent/">多网盘统一协作机制</a>）。</li>
+      <li><strong>你想要开箱即用的桌面软件或极简软路由容器</strong>：巡影提供带 Apple 签名公证的 macOS 桌面版、Windows 桌面版，以及能在 2GB 内存软路由（如 iStoreOS）上流畅运行的 Docker 栈。</li>
+    </ul>
+
+    <h2>三、巡影 Mediary Scout 与 CloudDrive2 / AList / Infuse 是什么关系？</h2>
+    <div class="callout">
+      <p><strong>黄金互补搭档，而非竞争对手！</strong></p>
+      <p><strong>巡影 Mediary Scout 负责「找片、选片、转存、整理、追更入盘」</strong>；而 <strong>Infuse / VidHub / CloudDrive2 / AList / Emby</strong> 负责「把你网盘里整理干净的规范目录挂载出来播放」。</p>
+    </div>
+    <p>巡影在你的网盘里生成的目录结构天然符合媒体中心规范：</p>
+    <pre><code>Mediary Scout/
+├── Movies/
+│   └── 坠落 (2022) {tmdb-985939}/
+│       └── 坠落.Fall.2022.2160p.UHD.BluRay.HDR.mkv
+├── TV/
+│   └── 幻视任务 (2026) {tmdb-213375}/
+│       └── Season 01/
+│           ├── 幻视任务.S01E01.2160p.DV.mkv
+│           └── ...
+└── Anime/
+    └── 学园默示录 (2010) {tmdb-56998}/
+        └── Season 01/
+            ├── [Snow-Raws] 学園黙示録 第01話.mkv
+            └── [Snow-Raws] 学園黙示録 第01話.sc.ass</code></pre>
+    <p>而且因为巡影所有的转存、改名和去重都走网盘官方 Web API 直接在云端完成（而不是通过 FUSE 本地挂载盘去全盘高频扫盘），<strong>不会触发网盘针对挂载扫盘的 403 风控冻结</strong>。等巡影把文件干干净净放进 <code>Season 01</code> 后，你打开 Apple TV / Mac / iPad 上的 Infuse 或 VidHub 直接点播即可！</p>
+
+    <div class="next">
+      <p>下一步：<a href="/guides/which-cloud-drive/">查看六大网盘实测资源量对比</a> · <a href="/guides/docker-nas-deploy/">阅读 NAS / Docker 一键部署指南</a> · <a href="/">返回首页下载桌面版</a></p>
+    </div>
+  </main>
+
+  <footer>
+    <div class="container">
+      <div>
+        <h3>产品与核心功能</h3>
+        <ul>
+          <li><a href="/">巡影 Mediary Scout 首页</a></li>
+          <li><a href="https://github.com/fancydirty/mediary-scout/releases/latest">桌面版下载（macOS / Windows）</a></li>
+          <li><a href="/features/multi-drive-agent/">多网盘统一协作与容量保护</a></li>
+          <li><a href="/features/smart-search-and-subtitles/">留言换源与自动补配中文字幕</a></li>
+          <li><a href="/features/agent-api/">Agent HTTP API</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3>指南、教程与对比</h3>
+        <ul>
+          <li><a href="/guides/">教程与指南中心</a></li>
+          <li><a href="/guides/which-cloud-drive/">六大网盘实测资源量对比</a></li>
+          <li><a href="/guides/docker-nas-deploy/">NAS / 软路由 Docker 部署教程</a></li>
+          <li><a href="/guides/cloud-drive-setup/">六大网盘扫码连接与搜索源配置</a></li>
+          <li><a href="/compare/mediary-scout-vs-moviepilot-sonarr/">对比 MoviePilot / Sonarr / CloudDrive2</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3>社区与语言</h3>
+        <ul>
+          <li><a href="/en/" lang="en">English Official Site (/en/)</a></li>
+          <li><a href="https://github.com/fancydirty/mediary-scout">GitHub 开源仓库</a></li>
+          <li><a href="https://demo.mediaryscout.app">在线只读 Demo</a></li>
+        </ul>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>

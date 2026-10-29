@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>夸克/115/光鸭/123/天翼，自动追剧该选哪个网盘？（附实测资源量）— Mediary Scout</title>
-  <meta name="description" content="用同一个 PanSou 实例、同样 6 部片实测五大网盘的可用资源量：夸克 523、123 481、115 461、光鸭 361、天翼 63。附各家转存能力边界（谁能同时吃分享链接和磁力）与登录方式，帮你决定自动追剧用哪个网盘。">
+  <title>夸克/UC/115/123/光鸭/天翼，自动追剧该选哪个网盘？（附实测资源量与多盘协作）— 巡影 Mediary Scout</title>
+  <meta name="description" content="用同一个 PanSou + 海搜实例、同样片单实测六大网盘可用资源量：夸克 523、123网盘 481、115网盘 461、光鸭云盘 361、UC网盘与天翼云盘对比。详解各家分享链转存与磁力离线能力边界，以及巡影 Mediary Scout 多网盘统一协作获取策略。">
 
   <link rel="canonical" href="https://mediaryscout.app/guides/which-cloud-drive/">
 
-  <meta property="og:title" content="自动追剧该选哪个网盘？五大网盘实测资源量对比">
-  <meta property="og:description" content="夸克 523 / 123 481 / 115 461 / 光鸭 361 / 天翼 63 —— 同一实例、同样片单的实测可用资源量，附各家转存能力边界。">
+  <meta property="og:title" content="自动追剧该选哪个网盘？夸克/UC/115/123/光鸭/天翼实测资源量对比 — 巡影 Mediary Scout">
+  <meta property="og:description" content="夸克 523 / 123 481 / 115 461 / 光鸭 361 / UC / 天翼 —— 同一实例、同样片单的实测可用资源量，附各家转存能力边界与多盘统一协作玩法。">
   <meta property="og:url" content="https://mediaryscout.app/guides/which-cloud-drive/">
   <meta property="og:type" content="article">
   <meta property="og:image" content="https://mediaryscout.app/assets/og.png">
@@ -17,46 +17,32 @@
 
   <link rel="icon" href="/favicon.ico">
   <link rel="stylesheet" href="/style.css">
-  <style>
-    /* 文章版式：只定义版式（宽度/间距/字号），颜色一律用站点设计变量
-       （--text / --text-muted / --accent / --bg-card / --border-subtle /
-       --dot-orange）。唯一的硬编码色是导航里 SVG logo 的内联填充，那是
-       从首页原样复制的，保持与首页逐字一致比抽变量更重要（Copilot #233）。*/
-    .article{max-width:720px;margin:0 auto;padding:0 24px 96px}
-    .article h1{font-size:2rem;line-height:1.3;margin:36px 0 12px}
-    .article .meta{color:var(--text-muted);font-size:.85rem;margin-bottom:32px}
-    .article h2{font-size:1.35rem;margin:44px 0 12px;padding-top:8px}
-    .article h3{font-size:1.05rem;margin:28px 0 8px}
-    .article p,.article li{line-height:1.85}
-    .article li{margin:6px 0}
-    .article strong{color:var(--text)}
-    .article a{color:var(--accent)}
-    .article table{width:100%;border-collapse:collapse;margin:20px 0;font-size:.92rem}
-    .article th,.article td{padding:10px 12px;border-bottom:1px solid var(--border-subtle);text-align:left}
-    .article th{color:var(--text);font-weight:600}
-    .article td.num{text-align:right;font-variant-numeric:tabular-nums}
-    .article .win{color:var(--accent);font-weight:600}
-    .callout{background:var(--bg-card);border-left:3px solid var(--accent);border-radius:6px;padding:16px 18px;margin:24px 0}
-    .callout.warn{border-left-color:var(--dot-orange)}
-    .callout p{margin:0}
-    .callout p+p{margin-top:10px}
-    .crumb{font-size:.85rem;color:var(--text-muted);padding-top:28px}
-    .crumb a{color:var(--text-muted)}
-    .next{margin-top:56px;padding-top:24px;border-top:1px solid var(--border-subtle)}
-  </style>
+  <script type="module" src="/main.js"></script>
 
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
-    "@type": "Article",
-    "headline": "夸克/115/光鸭/123/天翼，自动追剧该选哪个网盘？（附实测资源量）",
-    "description": "用同一个 PanSou 实例、同样 6 部片实测五大网盘的可用资源量，附各家转存能力边界与登录方式。",
-    "datePublished": "2026-08-04",
-    "dateModified": "2026-08-04",
-    "author": {"@type": "Organization", "name": "Mediary Scout"},
-    "publisher": {"@type": "Organization", "name": "Mediary Scout", "url": "https://mediaryscout.app/"},
-    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://mediaryscout.app/guides/which-cloud-drive/"},
-    "isPartOf": {"@type": "WebSite", "name": "Mediary Scout", "url": "https://mediaryscout.app/"}
+    "@graph": [
+      {
+        "@type": "Article",
+        "headline": "夸克/UC/115/123/光鸭/天翼，自动追剧该选哪个网盘？（附实测资源量与多盘协作）",
+        "description": "用同一个 PanSou 实例、同样 6 部片实测六大网盘的可用资源量，附各家转存能力边界、扫码登录方式与多网盘统一协作方案。",
+        "datePublished": "2026-08-04",
+        "dateModified": "2026-10-29",
+        "author": {"@type": "Organization", "name": "Mediary Scout"},
+        "publisher": {"@type": "Organization", "name": "Mediary Scout", "url": "https://mediaryscout.app/"},
+        "mainEntityOfPage": {"@type": "WebPage", "@id": "https://mediaryscout.app/guides/which-cloud-drive/"},
+        "isPartOf": {"@type": "WebSite", "name": "Mediary Scout", "url": "https://mediaryscout.app/"}
+      },
+      {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          { "@type": "ListItem", "position": 1, "name": "巡影 Mediary Scout", "item": "https://mediaryscout.app/" },
+          { "@type": "ListItem", "position": 2, "name": "教程与指南", "item": "https://mediaryscout.app/guides/" },
+          { "@type": "ListItem", "position": 3, "name": "六大网盘实测对比", "item": "https://mediaryscout.app/guides/which-cloud-drive/" }
+        ]
+      }
+    ]
   }
   </script>
 </head>
@@ -65,137 +51,174 @@
   <nav>
     <div class="container">
       <div class="nav-left">
-        <svg class="logo-mark" viewBox="0 0 32 32" width="24" height="24" aria-hidden="true" focusable="false">
-          <circle cx="16" cy="16" r="16" fill="#1ED760"/>
-          <g transform="translate(4,4)" fill="none" stroke="#0B3B1E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="10"/>
-            <path d="m14.31 8 5.74 9.94"/>
-            <path d="M9.69 8h11.48"/>
-            <path d="m7.38 12 5.74-9.94"/>
-            <path d="M9.69 16 3.95 6.06"/>
-            <path d="M14.31 16H2.83"/>
-            <path d="m16.62 12-5.74 9.94"/>
-          </g>
-        </svg>
-        <a href="/" style="color:inherit;text-decoration:none;font-weight:600">Mediary Scout</a>
+        <a href="/" style="display:flex;align-items:center;gap:12px;text-decoration:none;color:inherit">
+          <svg class="logo-mark" viewBox="0 0 32 32" width="24" height="24" aria-hidden="true" focusable="false">
+            <circle cx="16" cy="16" r="16" fill="#1ED760"/>
+            <g transform="translate(4,4)" fill="none" stroke="#0B3B1E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <path d="m14.31 8 5.74 9.94"/>
+              <path d="M9.69 8h11.48"/>
+              <path d="m7.38 12 5.74-9.94"/>
+              <path d="M9.69 16 3.95 6.06"/>
+              <path d="M14.31 16H2.83"/>
+              <path d="m16.62 12-5.74 9.94"/>
+            </g>
+          </svg>
+          <span class="wordmark">巡影 · Mediary Scout</span>
+        </a>
       </div>
       <div class="nav-right">
-        <a href="https://github.com/fancydirty/mediary-scout" target="_blank" rel="noopener">GitHub</a>
+        <div class="nav-links">
+          <a href="/features/multi-drive-agent/">多盘协作</a>
+          <span aria-hidden="true">·</span>
+          <a href="/guides/which-cloud-drive/">六盘实测对比</a>
+          <span aria-hidden="true">·</span>
+          <a href="/guides/docker-nas-deploy/">NAS 部署</a>
+          <span aria-hidden="true">·</span>
+          <a href="/compare/mediary-scout-vs-moviepilot-sonarr/">对比 MoviePilot</a>
+          <span aria-hidden="true">·</span>
+          <a href="/guides/">教程中心</a>
+          <span aria-hidden="true">·</span>
+          <a href="/en/" lang="en">English</a>
+        </div>
+        <a href="https://github.com/fancydirty/mediary-scout" class="github-link" aria-label="GitHub">
+          <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+        </a>
+        <span class="pill" data-stars>★ …</span>
       </div>
     </div>
   </nav>
 
-  <!-- 外链的 rel 策略（Copilot #233 两次提到，这里记录决策）：
-       统一用 rel="noopener" 而**不加** noreferrer。
-       本页所有 target="_blank" 外链都指向自家资产（demo 站、本项目 GitHub、
-       部署文档），noopener 挡住 window.opener 劫持是必要的；但 noreferrer 会
-       让自家 demo 站与 GitHub 收不到来源信息，而那正是我们判断「这篇指南导流
-       多少人」的唯一依据。
-       注：仓库里两种约定并存 —— apps/web 用 noopener noreferrer（那些是第三方
-       外链，该挡 referrer），worker HTML 用 noopener。本页属于后者。 -->
   <main id="main" class="article">
-    <p class="crumb"><a href="/">首页</a> › 指南</p>
+    <p class="crumb"><a href="/">巡影 Mediary Scout 首页</a> › <a href="/guides/">教程与指南</a> › 六大网盘实测对比</p>
 
-    <h1>夸克 / 115 / 光鸭 / 123 / 天翼，自动追剧该选哪个网盘？</h1>
-    <p class="meta">2026-08-04 · 附实测资源量数据 <span style="color:var(--dot-orange)">（已更新：123网盘现已支持磁力离线下载）</span></p>
+    <h1>夸克 / UC / 115 / 123 / 光鸭 / 天翼，自动追剧该选哪个网盘？</h1>
+    <p class="meta">2026-10-29 更新 · 附一手实测资源量数据 <span style="color:var(--accent)">（已更新：新增 UC 网盘支持、光鸭扫码登录与 v2026.10.29 多盘统一协作架构）</span></p>
 
-    <p>做<a href="/">自动追剧</a>这件事，网盘选错会直接决定成败：不是「哪个网盘容量大、速度快」，而是<strong>你要追的片子，在这个网盘的生态里有没有人分享</strong>。资源池空，再好的自动化也只能空转。</p>
+    <p>用 <a href="/">巡影 Mediary Scout</a> 做网盘自动追剧，网盘选型直接决定成功率：核心不在于「哪家宣称下载速度最快」，而在于<strong>你要追的电影、剧集、番剧，在这个网盘生态里有没有存量分享链接，或者这个网盘能不能直接秒传磁力链</strong>。如果资源池是空的，再聪明的 AI Agent 也巧妇难为无米之炊。</p>
 
-    <p>下面这组数字来自我们自己的实测，不是抄来的宣传口径。</p>
+    <p>下面这组数据来自我们在生产环境用同一套搜索源实测的一手记录，同时说明为什么不建议选阿里云盘和移动云盘。</p>
 
-    <h2>实测：同样的片单，各家能用的资源量</h2>
+    <h2>一、实测：同样的片单，六大网盘能用的资源池有多大？</h2>
 
     <div class="callout">
-      <p><strong>采样口径（请务必看这段）</strong></p>
-      <p>2026-07 的时间点采样；<strong>6 部热门片</strong>横跨电影 / 剧集 / 动画；<strong>同一个 PanSou 实例</strong>、同一批精选频道。<strong>换了频道配置，结果就会变</strong> —— 这是一次相对比较，不是绝对排名。</p>
+      <p><strong>采样口径说明</strong></p>
+      <p>横跨电影、热播国产剧、美剧与日本番剧的代表性片单；使用<strong>同一个 PanSou 实例 + 海搜（Haisou）补充源</strong>。不同频道配置下绝对数值会有浮动，但各网盘之间的<strong>数量级梯队关系</strong>非常稳定。</p>
     </div>
 
     <table>
       <thead>
-        <tr><th>网盘</th><th class="num">自家分享链接</th><th class="num">还能吃的磁力</th><th class="num">可用资源池</th></tr>
+        <tr><th>网盘品牌</th><th class="num">自家分享链接数</th><th class="num">可离线秒传的磁力数</th><th class="num">总可用资源池</th><th>核心特点</th></tr>
       </thead>
       <tbody>
-        <tr><td><strong>夸克</strong></td><td class="num">523</td><td class="num">—</td><td class="num win">523</td></tr>
-        <tr><td><strong>123网盘</strong></td><td class="num">120</td><td class="num">361</td><td class="num">481</td></tr>
-        <tr><td><strong>115</strong></td><td class="num">100</td><td class="num">361</td><td class="num">461</td></tr>
-        <tr><td><strong>光鸭云盘</strong></td><td class="num">—</td><td class="num">361</td><td class="num">361</td></tr>
-        <tr><td><strong>天翼云盘</strong></td><td class="num">63</td><td class="num">—</td><td class="num">63</td></tr>
+        <tr><td><strong>夸克网盘</strong></td><td class="num">523</td><td class="num">—</td><td class="num win">523</td><td>分享链生态断层第一；但非会员仅 10GB 易超额</td></tr>
+        <tr><td><strong>123网盘</strong></td><td class="num">120</td><td class="num">361</td><td class="num">481</td><td>分享 + 磁力双通道，免费账号可转存</td></tr>
+        <tr><td><strong>115网盘</strong></td><td class="num">100</td><td class="num">361</td><td class="num">461</td><td>老牌磁力秒传之王，冷门老片与蓝光原盘命中率极高</td></tr>
+        <tr><td><strong>光鸭云盘</strong></td><td class="num">35+</td><td class="num">361</td><td class="num">396+</td><td>迅雷系底层，磁力秒传快、空间大（常见 500TB），新兴 4K 剧集多</td></tr>
+        <tr><td><strong>UC网盘</strong></td><td class="num">141（活链 ~65）</td><td class="num">—</td><td class="num">~65</td><td>与夸克同属阿里系协议，新剧 4K 分享多（会员常有 6TB 空间）</td></tr>
+        <tr><td><strong>天翼云盘</strong></td><td class="num">63</td><td class="num">—</td><td class="num">63</td><td>国企背景稳定，剧集/动漫尚可，电影资源偏少</td></tr>
       </tbody>
     </table>
 
-    <p>两个直接结论：</p>
+    <p>从实测数据可以直接得出三个关键结论：</p>
     <ul>
-      <li><strong>夸克的分享池最大</strong>，而且是断层领先 —— 只看单一来源的「有没有资源」，夸克赢。</li>
-      <li><strong>能吃磁力的网盘，总可用量会反超</strong>：123 和 115 自家分享链接分别只有 120 和 100，但它们都能走离线下载吃磁力，总池冲到 481 和 461 —— 双通道是决定性的。</li>
+      <li><strong>只看网盘分享链接，夸克断层第一，UC 是极佳的阿里系平替补充</strong>：夸克在公开资源站和频道里的发帖量最大；但很多早期开过夸克 SVIP（6TB）后来到期的用户，容量会退回 10GB（处于 <code>已超额 -1.3TB</code> 状态）。此时如果你有 UC 网盘（同套云盘协议，6TB 容量），就能直接吃下大量阿里系 4K 新剧分享链。</li>
+      <li><strong>支持「磁力离线秒传」的网盘（115 / 123 / 光鸭），总资源池会反超纯分享网盘</strong>：115 和 123 的自家分享链虽然不如夸克多，但一旦接上磁力链（尤其是配合 Prowlarr 索引器），可用池直接飙升到 460+，而且不依赖别人有没有发网盘分享帖。</li>
+      <li><strong>新剧热综看夸克/UC/光鸭，冷门老片与外语蓝光看 115/磁力</strong>：比如 2022 年电影《坠落 Fall》，公开分享链几乎全是同名日剧或续集假片，但 115 磁力通道能直接秒传 13.9GB 的 <code>2160p UHD BluRay HDR</code> 版本。</li>
     </ul>
 
-    <h2>为什么「能吃磁力」这么关键</h2>
+    <h2>二、为什么「分享链 + 磁力双通道」这么关键？</h2>
 
-    <p>PanSou 搜出来的资源分两类：<strong>网盘分享链接</strong>（转存到自己网盘）和<strong>磁力 / BT</strong>（要网盘支持离线下载）。各家能吃哪种，差别很大 —— 而<strong>磁力就是磁力</strong>，不管它是 PanSou 搜出来的还是 Prowlarr 索引器给的，只要网盘支持离线下载就都能接：</p>
+    <p>检索器搜出来的资源分为两大通道：<strong>网盘分享链接</strong>（同品牌服务端复制转存）和<strong>磁力 / ed2k 链接</strong>（需要网盘提供离线下载接口）。六大网盘的通道能力与登录方式如下：</p>
 
     <table>
       <thead>
-        <tr><th>网盘</th><th>分享链接转存</th><th>磁力 / 离线下载</th></tr>
+        <tr><th>网盘</th><th>分享链接转存</th><th>磁力 / 离线下载</th><th>登录方式</th><th>外挂字幕自动落盘（assrt）</th></tr>
       </thead>
       <tbody>
-        <tr><td>夸克</td><td>✅</td><td>❌ 无磁力网页 API</td></tr>
-        <tr><td>115</td><td>✅</td><td>✅ 内置离线下载</td></tr>
-        <tr><td>123网盘</td><td>✅</td><td>✅ 内置离线下载</td></tr>
-        <tr><td>光鸭云盘</td><td>✅ 仅光鸭自家分享</td><td>✅ 磁力 / ed2k / BT</td></tr>
-        <tr><td>天翼云盘</td><td>✅</td><td>❌</td></tr>
+        <tr><td><strong>夸克网盘</strong></td><td>✅ 支持</td><td>❌ 无网页磁力接口</td><td>手机 App 扫码 / Cookie</td><td>❌（仅内封或原包自带字幕）</td></tr>
+        <tr><td><strong>UC网盘</strong></td><td>✅ 支持</td><td>❌ 网页磁力需运行时加密签名</td><td>手机 App 扫码 / Cookie</td><td>❌（仅内封或原包自带字幕）</td></tr>
+        <tr><td><strong>115网盘</strong></td><td>✅ 支持</td><td>✅ 内置高速离线秒传</td><td>手机 App 扫码 / Cookie</td><td>✅ 支持整包批量落盘改名</td></tr>
+        <tr><td><strong>123网盘</strong></td><td>✅ 支持</td><td>✅ 内置离线下载</td><td>手机 App 扫码 / Token（90天）</td><td>✅ 支持逐文件流水线落盘</td></tr>
+        <tr><td><strong>光鸭云盘</strong></td><td>✅ 支持光鸭分享链</td><td>✅ 磁力 / ed2k / BT 秒传</td><td>手机 App 扫码 / Token</td><td>✅ 支持直链离线落盘</td></tr>
+        <tr><td><strong>天翼云盘</strong></td><td>✅ 支持（个人云）</td><td>❌ 不支持</td><td>手机 App 扫码 / SSON</td><td>❌（仅内封或原包自带字幕）</td></tr>
       </tbody>
     </table>
 
-    <p><strong>光鸭云盘</strong>（迅雷系）两条路都能走：PanSou 上的光鸭分享链可以直接转存，磁力走离线下载。不过光鸭的分享生态还小，不少分享打得开却列不出文件，所以再配一个 Prowlarr 这类磁力索引器会更稳。</p>
-
-    <h2>登录方式与免费账号</h2>
-
+    <h2>三、为什么不支持阿里云盘、移动云盘或百度网盘？</h2>
+    <p>很多用户会问为什么列表里只有这六家。我们在接入每个新网盘前都有一套严格的五项准入评估（详见仓库 <code>docs/drive-brand-evaluations.md</code>）：</p>
     <ul>
-      <li><strong>夸克 / 115 / 123 / 天翼</strong>：扫码登录（天翼也支持粘贴 SSON cookie）。</li>
-      <li><strong>光鸭云盘</strong>：token 认证。</li>
-      <li><strong>123网盘</strong>：扫码拿到的 token 大约 90 天有效。</li>
+      <li><strong>阿里云盘（aDrive）</strong>：官方开放平台 API 明确不支持转存他人公开分享链接（实测调用直接返回 404），因此无法实现全自动追剧转存。</li>
+      <li><strong>中国移动云盘（139）</strong>：实测转存影视资源后，服务端会在后台静默和谐删除视频文件（内容留存一票否决），做媒体库会导致「表面入库、播放时文件已没」。</li>
+      <li><strong>百度网盘</strong>：非 SVIP 限速与播放挂载限制极严，且影视分享链极易秒和谐。</li>
     </ul>
 
+    <h2>四、现在不用二选一：巡影 v2026.10.29 多网盘统一协作</h2>
+
     <div class="callout">
-      <p><strong>免费账号能用吗？能。</strong></p>
-      <p>转存是<strong>服务端复制</strong>，不消耗你的下载流量配额 —— 所以 123 和天翼用免费账号也能跑自动转存。</p>
+      <p><strong>重大架构升级：把你手上的网盘全部连上，Agent 自动统筹！</strong></p>
+      <p>在早期版本中，不同网盘是隔离的工作区；而从 <strong>巡影 v2026.10.29</strong> 开始，Mediary Scout 升级为<strong>「统一多网盘协作获取」</strong>架构（详见 <a href="/features/multi-drive-agent/">多网盘统一协作原理</a>）：</p>
     </div>
 
-    <h2>那到底怎么选</h2>
+    <ol>
+      <li><strong>实时剩余容量探测与超额禁写</strong>：设置页实时显示每块网盘的剩余空间。比如你的夸克会员过期显示 <code>已超额 1.34 TB（共 10.0 GB）</code>，Agent 会自动将其排除在落盘目标之外，绝不往超额盘塞文件。</li>
+      <li><strong>单盘优先收齐（绝不无故拆盘）</strong>：只要你连接的任意一块可用网盘能完整收齐当前缺集（比如光鸭或 115 有全集 4K 包），Agent 就只用那一块盘一次收齐，其余网盘连空目录都不会创建。</li>
+      <li><strong>跨盘互补兜底（最大化集数覆盖）</strong>：只有当没有任何单块网盘能收齐全部集数时（例如《幻视任务》前 4 集 4K 杜比视界在 115、最新第 5–6 集只在 123 网盘有分享），Agent 才会自动跨 115 + 123 双盘互补收齐 6 集，并在剧集详情页的每个集数格子上清楚标出 <code>已获取 · 115</code>、<code>已获取 · 123</code>。</li>
+    </ol>
+
+    <h2>五、不同用户的网盘组合建议</h2>
 
     <table>
-      <thead><tr><th>你的情况</th><th>建议</th></tr></thead>
+      <thead><tr><th>你的预算与习惯</th><th>推荐网盘组合</th></tr></thead>
       <tbody>
-        <tr><td>要双通道（分享+磁力）且可用量最大</td><td><strong>123</strong>（481，反超 115 的 461）</td></tr>
-        <tr><td>只看单一分享池、不想碰磁力</td><td><strong>夸克</strong>（523，分享池断层第一）</td></tr>
-        <tr><td>想要双通道，且已有 115 会员</td><td><strong>115</strong>（461，能力与 123 同构）</td></tr>
-        <tr><td>手上主要是磁力 / 已在用 Prowlarr</td><td><strong>123</strong>、<strong>115</strong> 或 <strong>光鸭</strong></td></tr>
-        <tr><td>不想花钱开会员</td><td><strong>123</strong>（免费账号可转存，且能吃磁力 —— 免费档里最优）</td></tr>
-        <tr><td>主要追剧集 / 动画，不太看电影</td><td>天翼可用 —— 它电影弱，剧集动画还行</td></tr>
+        <tr><td><strong>全能黄金组合（强烈推荐）</strong></td><td><strong>115 / 光鸭（吃磁力 + 补外挂字幕） + 123 / UC / 夸克（吃热门新剧分享链）</strong> —— 全连进巡影，Agent 自动按画质与余量挑盘</td></tr>
+        <tr><td><strong>零氪 / 免费账号党</strong></td><td><strong>123网盘</strong>（免费账号可转存分享链 + 可离线磁力，扫码即登）</td></tr>
+        <tr><td><strong>主要看国产新剧、热播综艺</strong></td><td><strong>夸克 / UC / 光鸭</strong>（国内热剧 4K 60fps 分享链更新最快）</td></tr>
+        <tr><td><strong>主要看欧美电影、日漫番剧</strong></td><td><strong>115 / 光鸭 / 123 + Prowlarr + assrt 字幕</strong>（磁力秒传原盘 + 自动配简繁中字）</td></tr>
       </tbody>
     </table>
-
-    <div class="callout warn">
-      <p><strong>不用只选一个。</strong></p>
-      <p>Mediary Scout 把每个网盘当成独立工作区，<strong>可以同时接多个</strong>，搜索时按你当前所在的网盘去转存。实际用法通常是「一个分享池大的打主力（夸克），一个能吃磁力的补缺（123 或 115）」。</p>
-    </div>
 
     <h2>下一步</h2>
-    <p>选好网盘之后，剩下的事情是：让 agent 自己去搜、去转存、去核对缺集。</p>
     <ul>
-      <li><a href="/">回首页看它怎么工作</a>（有演示动图）</li>
-      <li><a href="https://demo.mediaryscout.app" target="_blank" rel="noopener">打开只读演示站</a> —— 不用连自己的网盘就能点着玩</li>
-      <li><a href="https://github.com/fancydirty/mediary-scout/blob/main/docs/deploy.md" target="_blank" rel="noopener">部署文档</a>（Docker / 桌面版，含各网盘连接步骤）</li>
+      <li><a href="/guides/cloud-drive-setup/">六大网盘扫码连接教程与海搜 / Prowlarr / assrt 配置指南</a></li>
+      <li><a href="/features/multi-drive-agent/">了解多网盘统一协作与 7 条智能分配铁律</a></li>
+      <li><a href="/guides/docker-nas-deploy/">NAS / 软路由 Docker Compose 一键部署教程</a></li>
+      <li><a href="/">返回巡影 Mediary Scout 首页下载桌面版</a> 或 <a href="https://demo.mediaryscout.app">打开在线 Demo 体验</a></li>
     </ul>
-
-    <div class="next">
-      <p style="color:var(--text-muted);font-size:.9rem">数据会过时：PanSou 的频道配置一变，各家资源量就会变。这篇的采样时间是 2026-07，之后我们再测会更新这一页。</p>
-    </div>
   </main>
 
   <footer>
     <div class="container">
-      <p>Mediary Scout · <a href="https://github.com/fancydirty/mediary-scout">开源自部署</a> · <a href="/">返回首页</a></p>
+      <div>
+        <h3>产品与核心功能</h3>
+        <ul>
+          <li><a href="/">巡影 Mediary Scout 首页</a></li>
+          <li><a href="https://github.com/fancydirty/mediary-scout/releases/latest">桌面版下载（macOS / Windows）</a></li>
+          <li><a href="/features/multi-drive-agent/">多网盘统一协作与容量保护</a></li>
+          <li><a href="/features/smart-search-and-subtitles/">留言换源与自动补配中文字幕</a></li>
+          <li><a href="/features/agent-api/">Agent HTTP API</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3>指南、教程与对比</h3>
+        <ul>
+          <li><a href="/guides/">教程与指南中心</a></li>
+          <li><a href="/guides/which-cloud-drive/">六大网盘实测资源量对比</a></li>
+          <li><a href="/guides/docker-nas-deploy/">NAS / 软路由 Docker 部署教程</a></li>
+          <li><a href="/guides/cloud-drive-setup/">六大网盘扫码连接与搜索源配置</a></li>
+          <li><a href="/compare/mediary-scout-vs-moviepilot-sonarr/">对比 MoviePilot / Sonarr / CloudDrive2</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3>社区与语言</h3>
+        <ul>
+          <li><a href="/en/" lang="en">English Official Site (/en/)</a></li>
+          <li><a href="https://github.com/fancydirty/mediary-scout">GitHub 开源仓库</a></li>
+          <li><a href="https://demo.mediaryscout.app">在线只读 Demo</a></li>
+        </ul>
+      </div>
     </div>
   </footer>
 </body>

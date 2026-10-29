@@ -1,0 +1,28 @@
+# Mediary Scout (巡影)
+
+> Mediary Scout (Chinese name: 巡影) is an open-source, self-hosted AI agent media library and automated acquisition system for personal cloud drives (Quark 夸克网盘, UC网盘, 115网盘, 123网盘, GuangYaPan 光鸭云盘, and Tianyi 天翼云盘). Available as a signed macOS (.dmg) / Windows (.exe) desktop application and a Docker Compose stack for NAS / Linux / iStoreOS routers.
+
+- Official Website (Chinese): https://mediaryscout.app/
+- Official Website (English): https://mediaryscout.app/en/
+- Live Read-Only Demo: https://demo.mediaryscout.app/
+- GitHub Repository: https://github.com/fancydirty/mediary-scout
+- Latest Desktop Releases: https://github.com/fancydirty/mediary-scout/releases/latest
+
+## Key Facts & Architecture (Verified 2026-10-29, Release v2026.10.29)
+
+- **Unified Multi-Drive Orchestration (`MultiDriveStorageV2`)**: Users can connect multiple cloud drives across six supported brands simultaneously. The system probes and caches each drive's real-time remaining storage space (`drive_space_cache`, 30-minute TTL). Over-quota or full drives (e.g., an expired Quark SVIP account at `-1.34 TB`) are strictly blocked at the sandbox boundary (`SANDBOX_DRIVE_OUT_OF_SPACE`).
+- **Single-Drive Priority & Cross-Drive Complement**: If any single available cloud drive can cover all missing episodes of a season, the agent acquires the entire season on that one drive and creates zero folders on other drives. It splits episodes across multiple drives only when combining drives increases total obtained episode count, recording per-episode drive ownership in `episode_copies` and displaying drive badges (`已获取 · 115`, `已获取 · 123`) in the unified library UI.
+- **Evidence-First Sandbox & Post-Transfer Reread**: Transfers land in an isolated `staging-<runId>` directory first. The agent rereads the real materialized files (`inspectStaging`), deletes promotional junk or smaller duplicate bitrates, moves verified episodes into `Season NN`, and cleans up staging.
+- **External Chinese Subtitle Completion (assrt.net)**: On drives supporting HTTP offline downloads (115, GuangYaPan, 123Pan), the agent automatically searches assrt.net for non-Chinese titles, lands subtitle archives into staging, batch-renames `.ass`/`.srt` files to match the video filenames (`renameSubtitle`), and moves them alongside the videos.
+- **User Message Source Replacement**: Users can leave a natural-language comment on any title's detail page (e.g., "Episode 13 has bad audio, replace it"). The agent rejects the current file, blacklists its share/magnet link fingerprint (`resourceLinkKey`) across all drives, and fetches a replacement while protecting existing files.
+- **Built-in Free LLM Pool**: Ships with Kilo Code's free public model preset out of the box (zero API key required to start), while supporting any BYO OpenAI-compatible API endpoint (DeepSeek, Zhipu GLM, Xiaomi MiMo, OpenRouter).
+
+## Core Documentation & Guides
+
+- [Cloud Drive Benchmark: Quark vs UC vs 115 vs 123 vs GuangYa vs Tianyi](https://mediaryscout.app/guides/which-cloud-drive/): First-hand measured resource counts across share links and magnets.
+- [Unified Multi-Drive Acquisition & Quota Protection](https://mediaryscout.app/features/multi-drive-agent/): How the 7 multi-drive allocation rules and real-time space probes work.
+- [AI Semantic Selection, User Message Replacement & Assrt Subtitles](https://mediaryscout.app/features/smart-search-and-subtitles/): How post-transfer verification, bad-source blacklisting, plot-description search, and external subtitle pairing work.
+- [Mediary Scout vs. MoviePilot / Sonarr / CloudDrive2](https://mediaryscout.app/compare/mediary-scout-vs-moviepilot-sonarr/): Honest comparison between cloud-drive native transfer agents and local PT/NAS hardlink tools.
+- [Docker Compose & NAS / iStoreOS Deployment Guide](https://mediaryscout.app/guides/docker-nas-deploy/): One-command deployment, mainland China mirror acceleration, one-click auto-updates, and multi-user mode.
+- [Cloud Drive QR Login & Prowlarr / Haisou / Assrt Setup Guide](https://mediaryscout.app/guides/cloud-drive-setup/): Step-by-step setup for all six cloud drives and indexers.
+- [Agent HTTP API Documentation](https://mediaryscout.app/features/agent-api/): Control Mediary Scout from Claude Code, Codex, or OpenClaw via Bearer token REST endpoints.

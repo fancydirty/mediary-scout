@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>巡影 Mediary Scout 教程与指南中心：网盘实测对比、NAS部署与多盘协作文档</title>
+  <meta name="description" content="巡影 Mediary Scout 官方教程与深度指南中心：涵盖夸克/UC/115/123/光鸭/天翼六大网盘资源量实测对比、NAS 与软路由 Docker Compose 部署教程、网盘扫码连接与 Prowlarr/海搜/assrt 配置、多网盘统一协作原理，以及与 MoviePilot/Sonarr 的选型对比。">
+
+  <link rel="canonical" href="https://mediaryscout.app/guides/">
+
+  <meta property="og:title" content="巡影 Mediary Scout 教程与指南中心">
+  <meta property="og:description" content="六大网盘实测对比、NAS Docker 部署、扫码连接配置、多盘协作原理与自动追剧方案选型指南。">
+  <meta property="og:url" content="https://mediaryscout.app/guides/">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="https://mediaryscout.app/assets/og.png">
+  <meta name="twitter:card" content="summary_large_image">
+
+  <link rel="icon" href="/favicon.ico">
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/main.js"></script>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "CollectionPage",
+        "name": "巡影 Mediary Scout 教程与指南中心",
+        "description": "巡影 Mediary Scout 官方教程、网盘实测对比、NAS 部署指南与架构解析。",
+        "url": "https://mediaryscout.app/guides/"
+      },
+      {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          { "@type": "ListItem", "position": 1, "name": "巡影 Mediary Scout", "item": "https://mediaryscout.app/" },
+          { "@type": "ListItem", "position": 2, "name": "教程与指南中心", "item": "https://mediaryscout.app/guides/" }
+        ]
+      }
+    ]
+  }
+  </script>
+</head>
+<body>
+  <a href="#main" class="skip-link">跳转到主内容</a>
+  <nav>
+    <div class="container">
+      <div class="nav-left">
+        <a href="/" style="display:flex;align-items:center;gap:12px;text-decoration:none;color:inherit">
+          <svg class="logo-mark" viewBox="0 0 32 32" width="24" height="24" aria-hidden="true" focusable="false">
+            <circle cx="16" cy="16" r="16" fill="#1ED760"/>
+            <g transform="translate(4,4)" fill="none" stroke="#0B3B1E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <path d="m14.31 8 5.74 9.94"/>
+              <path d="M9.69 8h11.48"/>
+              <path d="m7.38 12 5.74-9.94"/>
+              <path d="M9.69 16 3.95 6.06"/>
+              <path d="M14.31 16H2.83"/>
+              <path d="m16.62 12-5.74 9.94"/>
+            </g>
+          </svg>
+          <span class="wordmark">巡影 · Mediary Scout</span>
+        </a>
+      </div>
+      <div class="nav-right">
+        <div class="nav-links">
+          <a href="/features/multi-drive-agent/">多盘协作</a>
+          <span aria-hidden="true">·</span>
+          <a href="/guides/which-cloud-drive/">六盘实测对比</a>
+          <span aria-hidden="true">·</span>
+          <a href="/guides/docker-nas-deploy/">NAS 部署</a>
+          <span aria-hidden="true">·</span>
+          <a href="/compare/mediary-scout-vs-moviepilot-sonarr/">对比 MoviePilot</a>
+          <span aria-hidden="true">·</span>
+          <a href="/guides/">教程中心</a>
+          <span aria-hidden="true">·</span>
+          <a href="/en/" lang="en">English</a>
+        </div>
+        <a href="https://github.com/fancydirty/mediary-scout" class="github-link" aria-label="GitHub">
+          <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+        </a>
+        <span class="pill" data-stars>★ …</span>
+      </div>
+    </div>
+  </nav>
+
+  <main id="main" class="container" style="padding-bottom:96px">
+    <p class="crumb"><a href="/">巡影 Mediary Scout 首页</a> › 教程与指南中心</p>
+    <h1 style="font-size:2.2rem;margin:28px 0 12px">巡影 Mediary Scout 教程与指南中心</h1>
+    <p style="color:var(--text-muted);max-width:720px;margin:0 0 36px">汇集网盘自动追剧选型实测、多网盘统一协作原理、NAS / 软路由 Docker 部署教程与 AI Agent 进阶玩法。</p>
+
+    <div class="hub-grid">
+      <a class="hub-card" href="/guides/which-cloud-drive/">
+        <div>
+          <div class="hub-card-tag">BENCHMARK · 网盘选型</div>
+          <h3>夸克 / UC / 115 / 123 / 光鸭 / 天翼：自动追剧该选哪个网盘？</h3>
+          <p>同一套 PanSou + 海搜实例下的真实可用资源量采样对比，详解分享链转存与磁力离线双通道差距。</p>
+        </div>
+        <span class="hub-card-more">阅读实测对比 →</span>
+      </a>
+
+      <a class="hub-card" href="/guides/docker-nas-deploy/">
+        <div>
+          <div class="hub-card-tag">DOCKER &amp; NAS · 部署指南</div>
+          <h3>NAS / 软路由 iStoreOS / Linux Docker Compose 部署教程</h3>
+          <p>一行命令启动完整容器栈，含国内镜像加速、网页端一键更新与每日自动更新、多账号隔离及远程访问配置。</p>
+        </div>
+        <span class="hub-card-more">阅读部署指南 →</span>
+      </a>
+
+      <a class="hub-card" href="/guides/cloud-drive-setup/">
+        <div>
+          <div class="hub-card-tag">SETUP · 连接配置</div>
+          <h3>六大网盘扫码连接与海搜 / Prowlarr / assrt 字幕源配置</h3>
+          <p>夸克、UC、115、123、光鸭、天翼手机 App 扫码绑定步骤，以及补充搜索源与外挂字幕自动补全配置。</p>
+        </div>
+        <span class="hub-card-more">阅读配置教程 →</span>
+      </a>
+
+      <a class="hub-card" href="/features/multi-drive-agent/">
+        <div>
+          <div class="hub-card-tag">MULTI-DRIVE · 核心架构</div>
+          <h3>多网盘统一协作获取与六盘实时余量保护机制</h3>
+          <p>详解 7 条多盘分配铁律：实时容量缓存、超额网盘硬拦截、单盘优先收齐、跨盘互补兜底与在更剧主盘粘性。</p>
+        </div>
+        <span class="hub-card-more">阅读架构详解 →</span>
+      </a>
+
+      <a class="hub-card" href="/features/smart-search-and-subtitles/">
+        <div>
+          <div class="hub-card-tag">AI AGENT · 智能获取</div>
+          <h3>留言换源、assrt 自动补中文字幕与剧情描述搜片</h3>
+          <p>一句话留言拉黑坏链并换新源、生肉自动拉取简繁双语字幕并改名对位、按剧情找片与动漫分季集号对齐。</p>
+        </div>
+        <span class="hub-card-more">阅读功能详解 →</span>
+      </a>
+
+      <a class="hub-card" href="/compare/mediary-scout-vs-moviepilot-sonarr/">
+        <div>
+          <div class="hub-card-tag">COMPARISON · 方案对比</div>
+          <h3>巡影 Mediary Scout vs MoviePilot / Sonarr / CloudDrive2</h3>
+          <p>云网盘原生转存流 vs PT 种子本地 NAS 硬链接流：客观对比适用人群、硬件成本与协同挂载播放方案。</p>
+        </div>
+        <span class="hub-card-more">阅读深度对比 →</span>
+      </a>
+
+      <a class="hub-card" href="/features/agent-api/">
+        <div>
+          <div class="hub-card-tag">DEVELOPER · 外部集成</div>
+          <h3>Agent HTTP API：让 Claude Code / Codex / OpenClaw 操控媒体库</h3>
+          <p>通过 5 个 Bearer Token REST 接口，让你的外部 AI 助手直接查库、点片入队、触发巡检与管理配置。</p>
+        </div>
+        <span class="hub-card-more">阅读 API 文档 →</span>
+      </a>
+
+      <a class="hub-card" href="/en/">
+        <div>
+          <div class="hub-card-tag">ENGLISH · GLOBAL</div>
+          <h3>Mediary Scout Official Documentation (English)</h3>
+          <p>Complete English overview of Mediary Scout's AI agent architecture, supported cloud drives, and installation.</p>
+        </div>
+        <span class="hub-card-more">Read in English →</span>
+      </a>
+    </div>
+  </main>
+
+  <footer>
+    <div class="container">
+      <div>
+        <h3>产品与核心功能</h3>
+        <ul>
+          <li><a href="/">巡影 Mediary Scout 首页</a></li>
+          <li><a href="https://github.com/fancydirty/mediary-scout/releases/latest">桌面版下载（macOS / Windows）</a></li>
+          <li><a href="/features/multi-drive-agent/">多网盘统一协作与容量保护</a></li>
+          <li><a href="/features/smart-search-and-subtitles/">留言换源与自动补配中文字幕</a></li>
+          <li><a href="/features/agent-api/">Agent HTTP API</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3>指南、教程与对比</h3>
+        <ul>
+          <li><a href="/guides/">教程与指南中心</a></li>
+          <li><a href="/guides/which-cloud-drive/">六大网盘实测资源量对比</a></li>
+          <li><a href="/guides/docker-nas-deploy/">NAS / 软路由 Docker 部署教程</a></li>
+          <li><a href="/guides/cloud-drive-setup/">六大网盘扫码连接与搜索源配置</a></li>
+          <li><a href="/compare/mediary-scout-vs-moviepilot-sonarr/">对比 MoviePilot / Sonarr / CloudDrive2</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3>社区与语言</h3>
+        <ul>
+          <li><a href="/en/" lang="en">English Official Site (/en/)</a></li>
+          <li><a href="https://github.com/fancydirty/mediary-scout">GitHub 开源仓库</a></li>
+          <li><a href="https://demo.mediaryscout.app">在线只读 Demo</a></li>
+        </ul>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>

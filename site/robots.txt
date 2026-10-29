@@ -2,3 +2,4 @@ User-agent: *
 Allow: /
 
 Sitemap: https://mediaryscout.app/sitemap.xml
+# LLM / AI Engine Index: https://mediaryscout.app/llms.txt

@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>多网盘统一协作获取与实时余量保护（夸克/UC/115/123/光鸭/天翼）— 巡影 Mediary Scout</title>
+  <meta name="description" content="详解巡影 Mediary Scout 的多网盘统一协作架构：实时查询夸克、UC、115、123、光鸭、天翼六大网盘剩余空间，会员到期超额自动硬拦截，单盘能收齐绝不拆盘，单盘都不全时自动跨盘互补收齐，并展示每集所在网盘。">
+
+  <link rel="canonical" href="https://mediaryscout.app/features/multi-drive-agent/">
+
+  <meta property="og:title" content="多网盘统一协作获取与实时余量保护 — 巡影 Mediary Scout">
+  <meta property="og:description" content="六盘实时容量感知、超额盘硬拦截、单盘收齐优先、跨盘互补兜底与每集网盘归属追踪。">
+  <meta property="og:url" content="https://mediaryscout.app/features/multi-drive-agent/">
+  <meta property="og:type" content="article">
+  <meta property="og:image" content="https://mediaryscout.app/assets/og.png">
+  <meta name="twitter:card" content="summary_large_image">
+
+  <link rel="icon" href="/favicon.ico">
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/main.js"></script>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Article",
+        "headline": "多网盘统一协作获取与六盘实时余量保护机制",
+        "description": "详解巡影 Mediary Scout 如何同时统筹夸克、UC、115、123、光鸭、天翼多块网盘：实时余量查询、超额硬拦截、单盘优先收齐与跨盘互补兜底。",
+        "datePublished": "2026-10-29",
+        "dateModified": "2026-10-29",
+        "author": {"@type": "Organization", "name": "Mediary Scout"},
+        "publisher": {"@type": "Organization", "name": "Mediary Scout", "url": "https://mediaryscout.app/"},
+        "mainEntityOfPage": {"@type": "WebPage", "@id": "https://mediaryscout.app/features/multi-drive-agent/"}
+      },
+      {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          { "@type": "ListItem", "position": 1, "name": "巡影 Mediary Scout", "item": "https://mediaryscout.app/" },
+          { "@type": "ListItem", "position": 2, "name": "核心功能", "item": "https://mediaryscout.app/#features" },
+          { "@type": "ListItem", "position": 3, "name": "多网盘统一协作", "item": "https://mediaryscout.app/features/multi-drive-agent/" }
+        ]
+      }
+    ]
+  }
+  </script>
+</head>
+<body>
+  <a href="#main" class="skip-link">跳转到主内容</a>
+  <nav>
+    <div class="container">
+      <div class="nav-left">
+        <a href="/" style="display:flex;align-items:center;gap:12px;text-decoration:none;color:inherit">
+          <svg class="logo-mark" viewBox="0 0 32 32" width="24" height="24" aria-hidden="true" focusable="false">
+            <circle cx="16" cy="16" r="16" fill="#1ED760"/>
+            <g transform="translate(4,4)" fill="none" stroke="#0B3B1E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <path d="m14.31 8 5.74 9.94"/>
+              <path d="M9.69 8h11.48"/>
+              <path d="m7.38 12 5.74-9.94"/>
+              <path d="M9.69 16 3.95 6.06"/>
+              <path d="M14.31 16H2.83"/>
+              <path d="m16.62 12-5.74 9.94"/>
+            </g>
+          </svg>
+          <span class="wordmark">巡影 · Mediary Scout</span>
+        </a>
+      </div>
+      <div class="nav-right">
+        <div class="nav-links">
+          <a href="/features/multi-drive-agent/">多盘协作</a>
+          <span aria-hidden="true">·</span>
+          <a href="/guides/which-cloud-drive/">六盘实测对比</a>
+          <span aria-hidden="true">·</span>
+          <a href="/guides/docker-nas-deploy/">NAS 部署</a>
+          <span aria-hidden="true">·</span>
+          <a href="/compare/mediary-scout-vs-moviepilot-sonarr/">对比 MoviePilot</a>
+          <span aria-hidden="true">·</span>
+          <a href="/guides/">教程中心</a>
+          <span aria-hidden="true">·</span>
+          <a href="/en/" lang="en">English</a>
+        </div>
+        <a href="https://github.com/fancydirty/mediary-scout" class="github-link" aria-label="GitHub">
+          <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+        </a>
+        <span class="pill" data-stars>★ …</span>
+      </div>
+    </div>
+  </nav>
+
+  <main id="main" class="article">
+    <p class="crumb"><a href="/">巡影 Mediary Scout 首页</a> › 核心功能 › 多网盘统一协作与实时余量保护</p>
+
+    <h1>多网盘统一协作获取与六盘实时余量保护机制</h1>
+    <p class="meta">2026-10-29 · 适用版本：巡影 v2026.10.29 及以上</p>
+
+    <p>玩网盘追剧的用户手里往往不止一块网盘：有人平时用 <strong>115 网盘</strong> 或 <strong>光鸭云盘</strong> 秒传磁力蓝光原盘，有人用 <strong>123网盘</strong> 或 <strong>UC网盘</strong> 转存国产新剧分享链，还有人的 <strong>夸克网盘</strong> 曾经开过 6TB 会员、存了 1.3TB 剧集后会员到期退回 10GB 总额度（处于 <code>-1.34 TB</code> 超额冻结状态）。</p>
+
+    <p>如果工具把每块网盘割裂成孤立的工作区，你点一部剧之前还得先猜「这部剧在哪个网盘有资源？那块盘还有没有空间？」。<strong>巡影（Mediary Scout）</strong>通过统一多网盘协调器（<code>MultiDriveStorageV2</code>），让一个 AI Agent 同时统筹你已连接的全部网盘。</p>
+
+    <h2>一、六大网盘实时容量探测与超额硬拦截</h2>
+    <p>每次运行获取任务（以及打开设置页网盘面板）时，巡影都会通过各品牌的原生容量接口探测真实总额度与已用空间，并缓存在本地 <code>drive_space_cache</code> 表中：</p>
+
+    <table>
+      <thead>
+        <tr><th>网盘品牌</th><th>容量探测机制</th><th>典型真实状态示例</th><th>Agent 准入决策</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>115 网盘</strong></td><td><code>user/space</code> 总额与已用字节</td><td><code>剩余 21.12 TB / 40.01 TB</code></td><td>✅ 正常可写（分享链 + 磁力 + 字幕）</td></tr>
+        <tr><td><strong>夸克网盘</strong></td><td><code>clouddrive/member</code> 容量字段</td><td><code>已超额 1.34 TB（共 10.0 GB）</code></td><td>⛔ <strong>禁止写入</strong>（提示词标红 + 沙盒入口硬拦截）</td></tr>
+        <tr><td><strong>UC 网盘</strong></td><td><code>clouddrive/member</code> 容量字段</td><td><code>剩余 5.40 TB / 6.00 TB</code></td><td>✅ 正常可写（UC 分享链）</td></tr>
+        <tr><td><strong>光鸭云盘</strong></td><td><code>assets/v1/get_assets</code></td><td><code>剩余 499.31 TB / 500.00 TB</code></td><td>✅ 正常可写（光鸭分享链 + 磁力 + 字幕）</td></tr>
+        <tr><td><strong>123网盘</strong></td><td><code>b/api/user/info</code> 永久空间</td><td><code>剩余 19.58 TB / 21.56 TB</code></td><td>✅ 正常可写（123 分享链 + 磁力 + 字幕）</td></tr>
+        <tr><td><strong>天翼云盘</strong></td><td><code>getUserInfo.action</code> 个人云容量</td><td><code>已超额 41.1 GB（共 30.0 GB）</code></td><td>⛔ <strong>禁止写入</strong>（超额硬拦截）</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout">
+      <p><strong>双重护栏：不靠大模型「自觉」，沙盒边界直接硬拦截</strong></p>
+      <p>对于剩余空间 <code>&lt;= 0</code>（已超配额或已满）或者剩余空间小于候选已知体积的网盘，不仅在系统提示词里明确标注 <code>— 禁止写入</code>，而且在沙盒 <code>transferCandidate</code> 工具入口设有机械门禁 <code>SANDBOX_DRIVE_OUT_OF_SPACE</code> —— 就算模型试图调用，也会在发起任何网盘网络请求前被当场拒绝，绝不往超额盘塞一字节数据。</p>
+    </div>
+
+    <h2>二、多盘智能分配的 7 条铁律</h2>
+    <p>当 PanSou、海搜和 Prowlarr 把所有已连接网盘的候选资源汇总成一份多品牌快照（每条候选标注 <code>· 115</code>、<code>· 夸克</code>、<code>· UC</code>、<code>· 123</code>、<code>· 光鸭</code>、<code>· 磁力</code>，并按每品牌轮转保底配额防止单一高产网盘挤掉其他网盘候选）交给 Agent 后，Agent 严格执行以下 7 条分配铁律：</p>
+
+    <ol>
+      <li><strong>剩余空间 &lt;= 0 的网盘严禁落盘</strong>：余量数据的唯一作用就是排除装不下的盘。已超额网盘上的候选哪怕画质再高，也一律跳过。</li>
+      <li><strong>默认单盘收齐（单盘优先，绝不无故拆盘）</strong>：先看有没有<strong>任何单块可用网盘</strong>能覆盖全部缺集。如果有，就只用那一块盘一次收齐，其余网盘一律不碰！在都能单盘收齐的候选里，按「资源画质与中字完整性更好 → 本剧历史在追主盘」挑选。</li>
+      <li><strong>拆盘的唯一标准：拆完能拿到的总集数 &gt; 单盘能拿到的集数</strong>：只有当没有任何单块可用网盘能收齐全部缺集时，才允许跨盘互补。例如美剧《幻视任务》已播 6 集，115 上只有 <code>S01E01–E04</code> 的 4K 杜比视界包，而 <code>S01E05–E06</code> 只有 123 网盘有分享链 —— 单盘最多只能拿 4 集，115 + 123 组合能拿齐 6 集，此时 Agent 自动将 E01–E04 落入 115、E05–E06 落入 123。</li>
+      <li><strong>懒创建目录（零空目录污染）</strong>：<code>MultiDriveStorageV2</code> 只在真正发生转存或文件移动的那块网盘上按需创建 <code>Title (Year) {tmdb-N}/staging</code> 与 <code>Season NN</code> 目录；未参与落盘的网盘不会留下任何空文件夹。</li>
+      <li><strong>严禁为了「均衡剩余空间」而拆盘</strong>：绝不会因为光鸭剩 499TB、115 剩 21TB 就把一部剧拆开平摊。</li>
+      <li><strong>同一集绝不在两块网盘重复存两份</strong>：每一集只落一块网盘，杜绝跨盘冗余浪费。</li>
+      <li><strong>在更剧主盘粘性与诚实上报</strong>：正在连载更新的剧集，日常巡检优先将新集继续落回该剧的<strong>历史在追主盘</strong>（保持整季目录集中）；只有原盘确实没有最新集或已满时，才用其他盘兜底补齐。如果某集的唯一候选位于已超配额的网盘上，系统会如实报告「对应网盘空间已满/超额」，绝不谎报成「暂未找到资源」。</li>
+    </ol>
+
+    <h2>三、跨盘副本表与统一媒体库视图</h2>
+    <p>落盘完成后，你不需要去不同网盘工作区翻找：</p>
+    <ul>
+      <li><strong>剧集详情页每集归属徽章</strong>：每个集数格子直接显示 <code>已获取 · 115</code>、<code>已获取 · 123</code> 或 <code>已获取 · 光鸭云盘</code>，鼠标悬停即可查看该集所在网盘与真实文件体积（如 <code>115 · 6.3 GB</code>）。</li>
+      <li><strong>电影详情页与通知卡片</strong>：电影详情页顶部徽章直接显示 <code>已入库 · 光鸭云盘</code> 及参数胶囊 <code>网盘 光鸭云盘</code> · <code>体积 67.6 GB</code>；跨盘互补入库的剧集在通知中心自动附带 <code>跨盘分布：115 4 集 · 123 2 集</code> 明细。</li>
+    </ul>
+
+    <div class="next">
+      <p>相关阅读：<a href="/guides/which-cloud-drive/">六大网盘实测资源量对比</a> · <a href="/features/smart-search-and-subtitles/">AI 语义选片、留言换源与外挂字幕补全</a> · <a href="/guides/cloud-drive-setup/">六大网盘扫码连接教程</a></p>
+    </div>
+  </main>
+
+  <footer>
+    <div class="container">
+      <div>
+        <h3>产品与核心功能</h3>
+        <ul>
+          <li><a href="/">巡影 Mediary Scout 首页</a></li>
+          <li><a href="https://github.com/fancydirty/mediary-scout/releases/latest">桌面版下载（macOS / Windows）</a></li>
+          <li><a href="/features/multi-drive-agent/">多网盘统一协作与容量保护</a></li>
+          <li><a href="/features/smart-search-and-subtitles/">留言换源与自动补配中文字幕</a></li>
+          <li><a href="/features/agent-api/">Agent HTTP API</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3>指南、教程与对比</h3>
+        <ul>
+          <li><a href="/guides/">教程与指南中心</a></li>
+          <li><a href="/guides/which-cloud-drive/">六大网盘实测资源量对比</a></li>
+          <li><a href="/guides/docker-nas-deploy/">NAS / 软路由 Docker 部署教程</a></li>
+          <li><a href="/guides/cloud-drive-setup/">六大网盘扫码连接与搜索源配置</a></li>
+          <li><a href="/compare/mediary-scout-vs-moviepilot-sonarr/">对比 MoviePilot / Sonarr / CloudDrive2</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3>社区与语言</h3>
+        <ul>
+          <li><a href="/en/" lang="en">English Official Site (/en/)</a></li>
+          <li><a href="https://github.com/fancydirty/mediary-scout">GitHub 开源仓库</a></li>
+          <li><a href="https://demo.mediaryscout.app">在线只读 Demo</a></li>
+        </ul>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>

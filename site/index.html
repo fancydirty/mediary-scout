@@ -3,12 +3,17 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>巡影 · Mediary Scout — 自建网盘的媒体获取 agent</title>
-  <meta name="description" content="指定一部影视，agent 跨源检索、择优转存进你自己的 夸克/115/光鸭/123/天翼 网盘、回读核对，并持续追踪缺集。macOS / Windows 桌面版，AGPL 开源、自部署。">
+  <title>巡影 Mediary Scout — 开源网盘自动追剧与影视资源转存 AI Agent（夸克/UC/115/123/光鸭/天翼）</title>
+  <meta name="description" content="巡影（Mediary Scout）是开源自部署的网盘自动追剧与影视资源获取 AI Agent。支持夸克、UC、115、123、光鸭、天翼六大网盘统一协作，实时感知网盘剩余空间、单盘优先收齐、跨盘互补补缺、自动回读验证与外挂中文字幕补全。提供 macOS / Windows 桌面版与 NAS Docker 部署。">
+
+  <link rel="canonical" href="https://mediaryscout.app/">
+  <link rel="alternate" hreflang="zh-CN" href="https://mediaryscout.app/">
+  <link rel="alternate" hreflang="en" href="https://mediaryscout.app/en/">
+  <link rel="alternate" hreflang="x-default" href="https://mediaryscout.app/">
 
   <!-- Open Graph -->
-  <meta property="og:title" content="巡影 · Mediary Scout — 自建网盘的媒体获取 agent">
-  <meta property="og:description" content="指定一部影视，agent 跨源检索、择优转存进你自己的 夸克/115/光鸭/123/天翼 网盘、回读核对，并持续追踪缺集。macOS / Windows 桌面版，AGPL 开源、自部署。">
+  <meta property="og:title" content="巡影 Mediary Scout — 开源网盘自动追剧与影视资源转存 AI Agent">
+  <meta property="og:description" content="指定一部电影、剧集或番剧，Mediary Scout 跨源检索、按画质与剩余空间择优转存进你的夸克/UC/115/123/光鸭/天翼网盘、回读核对并持续追踪缺集。">
   <meta property="og:image" content="https://mediaryscout.app/assets/og.png">
   <meta property="og:url" content="https://mediaryscout.app/">
   <meta property="og:type" content="website">
@@ -16,15 +21,12 @@
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
 
-  <link rel="icon" href="favicon.ico">
-  <link rel="icon" type="image/png" sizes="32x32" href="assets/icon-32.png">
-  <link rel="stylesheet" href="style.css">
-  <script type="module" src="main.js"></script>
+  <link rel="icon" href="/favicon.ico">
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/icon-32.png">
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/main.js"></script>
 
-  <!-- 规范 URL：参数/大小写/多入口不再被当重复内容 -->
-  <link rel="canonical" href="https://mediaryscout.app/">
-
-  <!-- 结构化数据：品牌实体（对抗同名抢注域）+ FAQ（内容与页面可见 FAQ 完全一致）-->
+  <!-- 结构化数据：品牌实体 + 软件应用 + FAQPage -->
   <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -33,12 +35,13 @@
       "@type": "SoftwareApplication",
       "@id": "https://mediaryscout.app/#software",
       "name": "Mediary Scout",
-      "alternateName": "巡影",
+      "alternateName": ["巡影", "巡影 Mediary Scout"],
       "url": "https://mediaryscout.app/",
-      "description": "指定一部影视，agent 跨源检索、择优转存进你自己的 夸克/115/光鸭/123/天翼 网盘、回读核对，并持续追踪缺集。自部署，AGPL 开源。",
+      "softwareVersion": "2026.1029.0",
+      "description": "开源自部署的网盘自动追剧与影视资源获取 AI Agent。支持夸克、UC、115、123、光鸭、天翼六大网盘多盘统一协作获取、实时剩余容量感知、回读核对、外挂中文字幕自动补全与定时追更补缺。",
       "applicationCategory": "MultimediaApplication",
-      "operatingSystem": "macOS, Windows, Docker (Linux)",
-      "license": "https://www.gnu.org/licenses/agpl-3.0.html",
+      "operatingSystem": "macOS, Windows, Docker (Linux / NAS / iStoreOS)",
+      "license": "https://github.com/fancydirty/mediary-scout/blob/main/LICENSE",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
@@ -46,7 +49,8 @@
         "priceCurrency": "CNY"
       },
       "codeRepository": "https://github.com/fancydirty/mediary-scout",
-      "inLanguage": "zh-CN"
+      "downloadUrl": "https://github.com/fancydirty/mediary-scout/releases/latest",
+      "inLanguage": ["zh-CN", "en"]
     },
     {
       "@type": "FAQPage",
@@ -54,42 +58,50 @@
       "mainEntity": [
         {
           "@type": "Question",
-          "name": "它会乱动我的网盘吗？",
+          "name": "巡影 Mediary Scout 会乱动我的网盘文件吗？",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "只做你手动也能做的转存和整理，全程每一步可见，凭证只在你自己的实例里。"
+            "text": "不会。Mediary Scout 具备严格的目录写作用域守卫（Write Scope Guard），只操作它自己创建的影视分类目录（Movies / TV / Anime），绝不触碰你网盘里的其他个人文件夹。每一步搜索、转存、去重和清理都有完整可回溯的审计轨迹。"
           }
         },
         {
           "@type": "Question",
-          "name": "账号密码存在哪？",
+          "name": "我的网盘 Cookie / Token 和 AI Key 存在哪里？",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "你自己电脑（桌面版）或你自己的服务器，作者碰不到。"
+            "text": "全部保存在你自己的电脑（macOS / Windows 桌面版 SQLite）或你自己的 NAS / 服务器（Docker Postgres）里，软件作者与任何第三方服务器都无法读取你的网盘凭证。"
           }
         },
         {
           "@type": "Question",
-          "name": "要花钱吗？",
+          "name": "使用巡影 Mediary Scout 要花钱吗？没有 AI Key 能用吗？",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "软件免费开源；你需要自己的网盘账号和一个 AI 服务的 key（任意 OpenAI 兼容接口）。"
+            "text": "软件完全免费开源。未配置自有 AI Key 时，出厂内置 Kilo 免费公共模型池，安装完成连上网盘即可直接获取影视资源；你也可以随时在设置里填入 DeepSeek、智谱 GLM、小米 MiMo 或 OpenRouter 等任意 OpenAI 兼容接口。"
           }
         },
         {
           "@type": "Question",
-          "name": "支持哪些网盘？",
+          "name": "支持哪些网盘？多块网盘怎么一起用？",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "夸克、115、光鸭、123、天翼；网盘层是插件化接口，欢迎 PR 加新品牌。不知道选哪个？看 五大网盘实测资源量对比。"
+            "text": "目前已原生支持夸克网盘、UC网盘、115网盘、123网盘、光鸭云盘、天翼云盘六大品牌。自 v2026.10.29 起采用统一多盘协作架构：无需手动切换网盘工作区，Agent 自动实时探测全部已连网盘的剩余容量（会员到期超额的网盘自动禁止写入），单块网盘能收齐时绝不拆盘，单盘都不全时自动跨盘互补收齐。"
           }
         },
         {
           "@type": "Question",
-          "name": "Windows 提示「已保护你的电脑」？",
+          "name": "巡影 Mediary Scout 和 MoviePilot / Sonarr 有什么区别？",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "未签名所致（个人开发者证书太贵），点「更多信息 → 仍要运行」即可；每个安装包发布前都经过 CI 真机安装验证。"
+            "text": "MoviePilot 与 Sonarr 主要面向私有 PT 站下载到本地 NAS 机械硬盘做硬链接；巡影 Mediary Scout 专为云网盘生态（夸克/UC/115/123/光鸭/天翼分享链转存 + 磁力秒传离线）打造，文件直接转存进云盘不占本地硬盘，且用 AI Agent 语义判断取代繁琐的正则表达式配置。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Windows 安装包提示「Windows 已保护你的电脑」怎么办？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "这是因为 Windows 个人代码签名证书价格高昂，安装包未购买商业签名（macOS 版已通过 Apple Developer ID 签名与公证）。点击弹窗上的「更多信息 → 仍要运行」即可正常安装；每个发版安装包均由 GitHub Actions 官方流水线构建并通过真机安装冒烟测试。"
           }
         }
       ]
@@ -103,27 +115,35 @@
   <nav>
     <div class="container">
       <div class="nav-left">
-        <svg class="logo-mark" viewBox="0 0 32 32" width="24" height="24" aria-hidden="true" focusable="false">
-          <circle cx="16" cy="16" r="16" fill="#1ED760"/>
-          <g transform="translate(4,4)" fill="none" stroke="#0B3B1E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="10"/>
-            <path d="m14.31 8 5.74 9.94"/>
-            <path d="M9.69 8h11.48"/>
-            <path d="m7.38 12 5.74-9.94"/>
-            <path d="M9.69 16 3.95 6.06"/>
-            <path d="M14.31 16H2.83"/>
-            <path d="m16.62 12-5.74 9.94"/>
-          </g>
-        </svg>
-        <span class="wordmark">巡影 · Mediary Scout</span>
+        <a href="/" style="display:flex;align-items:center;gap:12px;text-decoration:none;color:inherit">
+          <svg class="logo-mark" viewBox="0 0 32 32" width="24" height="24" aria-hidden="true" focusable="false">
+            <circle cx="16" cy="16" r="16" fill="#1ED760"/>
+            <g transform="translate(4,4)" fill="none" stroke="#0B3B1E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <path d="m14.31 8 5.74 9.94"/>
+              <path d="M9.69 8h11.48"/>
+              <path d="m7.38 12 5.74-9.94"/>
+              <path d="M9.69 16 3.95 6.06"/>
+              <path d="M14.31 16H2.83"/>
+              <path d="m16.62 12-5.74 9.94"/>
+            </g>
+          </svg>
+          <span class="wordmark">巡影 · Mediary Scout</span>
+        </a>
       </div>
       <div class="nav-right">
         <div class="nav-links">
-          <a href="#features">功能</a>
+          <a href="/features/multi-drive-agent/">多盘协作</a>
           <span aria-hidden="true">·</span>
-          <a href="#deploy">自部署</a>
+          <a href="/guides/which-cloud-drive/">六盘实测对比</a>
           <span aria-hidden="true">·</span>
-          <a href="#faq">FAQ</a>
+          <a href="/guides/docker-nas-deploy/">NAS 部署</a>
+          <span aria-hidden="true">·</span>
+          <a href="/compare/mediary-scout-vs-moviepilot-sonarr/">对比 MoviePilot</a>
+          <span aria-hidden="true">·</span>
+          <a href="/guides/">教程中心</a>
+          <span aria-hidden="true">·</span>
+          <a href="/en/" lang="en">English</a>
         </div>
         <a href="https://github.com/fancydirty/mediary-scout" class="github-link" aria-label="GitHub">
           <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
@@ -137,11 +157,11 @@
 
   <main id="main">
 
-  <!-- Hero section: title, CTAs, ticker window -->
+  <!-- Hero section: H1 carries both brand names + primary search keywords -->
   <section id="hero">
     <div class="container">
-      <h1>自建网盘的媒体获取 <em>agent</em></h1>
-      <p class="hero-sub">指定一部影视，agent 跨源检索、择优转存进你的网盘、回读核对，并持续追踪缺集。凭证据，不凭感觉。</p>
+      <h1>巡影 Mediary Scout<br>自建网盘的自动追剧 <em>agent</em></h1>
+      <p class="hero-sub">指定一部电影、剧集或番剧，AI agent 自动跨源检索、按画质与网盘剩余容量择优转存进你的 <strong>夸克 / UC / 115 / 123 / 光鸭 / 天翼</strong> 网盘、回读真实文件核对，并持续追踪缺集。凭证据，不凭感觉。</p>
 
       <div class="cta-row">
         <a class="pill cta-main" data-dl data-dl-platform="mac" href="https://github.com/fancydirty/mediary-scout/releases/latest">
@@ -156,10 +176,10 @@
           </svg>
           <span data-dl-label>Windows</span> <span data-dl-ver hidden></span>
         </a>
-        <a class="pill cta-outline" href="https://demo.mediaryscout.app">在线 Demo</a>
+        <a class="pill cta-outline" href="https://demo.mediaryscout.app">在线只读 Demo</a>
       </div>
 
-      <p class="hero-note">AGPL 开源 · 桌面版双击即用 · 也可 docker 自部署</p>
+      <p class="hero-note">开源免费 · 内置免费 AI 模型装完即用 · macOS 签名公证 / Windows 桌面版 · NAS Docker 一键自部署</p>
 
       <div class="ticker-window">
         <div class="ticker-dots">
@@ -168,27 +188,27 @@
           <div class="dot dot-green"></div>
         </div>
         <div class="ticker-content">
-          <div class="tk-line">▸ 跨源检索 · 命中 37 个候选</div>
-          <div class="tk-line">▸ 择优 · 2160p · 中文字幕 · 体积合理</div>
-          <div class="tk-line">▸ 转存至你的网盘 · 不经本地</div>
-          <div class="tk-line">▸ 回读核对 · 完整无损</div>
-          <div class="tk-line done">✓ 已入库</div>
+          <div class="tk-line">▸ 跨源检索（PanSou + 海搜 + Prowlarr）· 命中 6 盘 180 个候选</div>
+          <div class="tk-line">▸ 容量门控 · 排除已超额夸克盘 · 选 115 2160p 杜比视界中字版</div>
+          <div class="tk-line">▸ 云端秒传 / 分享转存进你的网盘 · 零本地磁盘占用</div>
+          <div class="tk-line">▸ 回读目录核对真实文件 + assrt 外挂简繁字幕自动对位改名</div>
+          <div class="tk-line done">✓ 已入库 · 详情页标注每集所在网盘与体积</div>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- Endorsement bar: 阮一峰 · HelloGitHub · GitHub stars -->
+  <!-- Endorsement bar -->
   <section id="endorse">
     <div class="container">
-      <p class="endorse-text">阮一峰《科技爱好者周刊》推荐 · HelloGitHub 收录 · <span class="pill" data-stars>★ …</span></p>
+      <p class="endorse-text">阮一峰《科技爱好者周刊》推荐 · HelloGitHub 收录 · LINUX DO 社区活跃交流 · <span class="pill" data-stars>★ …</span></p>
     </div>
   </section>
 
-  <!-- Scrollytelling "它正在工作": 4-act sticky window + intersection observer -->
+  <!-- Scrollytelling "它正在工作": 4-act sticky window -->
   <section id="how">
     <div class="container">
-      <h2>agent 如何完成一次获取</h2>
+      <h2>Mediary Scout 如何自动完成一次网盘获取</h2>
       <div class="how-wrap">
         <div class="how-marker" data-scene="0"></div>
         <div class="how-marker" data-scene="1"></div>
@@ -202,13 +222,13 @@
               <i class="dot dot-orange"></i>
               <i class="dot dot-green"></i>
             </div>
-            <div class="how-search"><svg width="13" height="13" viewBox="0 0 18 18" fill="none" aria-hidden="true" style="vertical-align: middle; display: inline-block;"><circle cx="9" cy="9" r="5.5" stroke="currentColor" stroke-width="1.8"/><line x1="13" y1="13" x2="16.5" y2="16.5" stroke="currentColor" stroke-width="1.8"/></svg> 闪灵<span class="how-cursor">▏</span></div>
+            <div class="how-search"><svg width="13" height="13" viewBox="0 0 18 18" fill="none" aria-hidden="true" style="vertical-align: middle; display: inline-block;"><circle cx="9" cy="9" r="5.5" stroke="currentColor" stroke-width="1.8"/><line x1="13" y1="13" x2="16.5" y2="16.5" stroke="currentColor" stroke-width="1.8"/></svg> 幻视任务<span class="how-cursor">▏</span></div>
             <div class="how-ticker">
-              <div class="how-line" data-need="1">▸ 跨源检索 · 命中 37 个候选</div>
-              <div class="how-line" data-need="1">▸ 择优 · 2160p · 中文字幕</div>
-              <div class="how-line" data-need="2">▸ 转存至你的网盘 · 不经本地</div>
-              <div class="how-line" data-need="2">▸ 回读核对 · 完整无损</div>
-              <div class="how-line" data-need="3">✓ 已入库</div>
+              <div class="how-line" data-need="1">▸ 全盘并集检索 · 识别候选所属品牌与通道</div>
+              <div class="how-line" data-need="1">▸ 核对六盘余量 · 优先单盘收齐，不全时跨盘互补</div>
+              <div class="how-line" data-need="2">▸ 秒传 / 分享转存至对应网盘 · 零本地流量消耗</div>
+              <div class="how-line" data-need="2">▸ 回读目录验明正身 · 剔除推广垃圾与低码率重复集</div>
+              <div class="how-line" data-need="3">✓ 已入库（E01–E04 115 · E05–E06 123）</div>
             </div>
             <div class="how-eps">
               <i class="got"></i><i class="got"></i><i class="got"></i><i class="got"></i>
@@ -219,20 +239,20 @@
           </div>
           <div class="how-captions">
             <div class="how-caption" data-cap="0">
-              <b>检索与指定</b>
-              <span>搜到目标，点获取。agent 接管，你无需值守。</span>
+              <b>检索与指定（支持片名或剧情描述）</b>
+              <span>搜片名，或直接输入「男主带着小绿瓶修仙的国漫」描述剧情，点获取后由 agent 全权接管。</span>
             </div>
             <div class="how-caption" data-cap="1">
-              <b>择优</b>
-              <span>按画质、中文字幕、去重与真伪逐一筛选；无合格资源则如实报告，不塞垃圾。</span>
+              <b>多盘容量感知与择优分配</b>
+              <span>实时读取各网盘剩余空间，自动跳过会员到期超额的网盘；单盘能收齐绝不拆盘，单盘都不全时自动跨盘互补。</span>
             </div>
             <div class="how-caption" data-cap="2">
-              <b>转存与核对</b>
-              <span>秒传 / 离线转存进你的网盘，不经本地磁盘；转存后回读真实文件，确认完整无损。</span>
+              <b>云端转存、回读核对与自动补字幕</b>
+              <span>分享链与磁力秒传直接落入你的网盘；转存后回读真实目录验明集数，外语生肉自动从 assrt 补配简繁双语字幕并改名对齐。</span>
             </div>
             <div class="how-caption" data-cap="3">
-              <b>持续追踪</b>
-              <span>季级状态机记录每部剧的缺集；定时巡检只在有新集时唤起 agent 补齐。</span>
+              <b>日常巡检追更与一句话留言换源</b>
+              <span>季级状态机记录每部在更剧的缺集与历史主盘；发现某集画质不对，在详情页留一句「第 3 集音轨不对换一个」，agent 自动拉黑坏源并重找。</span>
             </div>
           </div>
         </div>
@@ -240,79 +260,140 @@
     </div>
   </section>
 
-  <!-- Features v4: poster wall solo block + flat editorial column + label-voice trust line -->
+  <!-- Features v4: poster wall solo block + flat editorial column -->
   <section id="features">
     <div class="container">
-      <h2>不止获取，更是媒体库的状态管理</h2>
+      <h2>不止网盘自动转存，更是跨网盘统一媒体库</h2>
       <div class="feat-split">
         <div class="feat-glow" aria-hidden="true"></div>
 
-        <!-- The ONLY solid block: tilted TMDB poster wall -->
         <div class="feat-wall-col">
           <div class="feat-wall">
             <div class="poster-wall"></div>
             <div class="poster-overlay">
-              <div class="feat-eyebrow">LIBRARY</div>
-              <h3>你的网盘之上，一个结构化媒体库</h3>
-              <p>海报与元数据来自 TMDB</p>
+              <div class="feat-eyebrow">UNIFIED LIBRARY</div>
+              <h3>多块网盘合一，一个结构化海报墙</h3>
+              <p>每部电影、每一集直观标注所在网盘与文件体积</p>
             </div>
           </div>
         </div>
 
-        <!-- Flat editorial feature column: mono numerals, hairlines, no boxes -->
         <div class="feat-list">
           <div class="feat-item">
             <div class="feat-num">01</div>
-            <b>追更</b>
-            <span>季级状态机跟踪缺集；剧集更新后 agent 自动检索、转存，直至补齐。</span>
+            <b>多网盘统一协作与超额保护</b>
+            <span>同时连接夸克、UC、115、123、光鸭、天翼；实时探测剩余容量，超额网盘硬性拦截禁写，单盘收齐优先、跨盘互补兜底。</span>
             <div class="episode-grid">
               <i class="ep got"></i><i class="ep got"></i><i class="ep got"></i><i class="ep got"></i><i class="ep got"></i><i class="ep got"></i><i class="ep got"></i><i class="ep got"></i><i class="ep"></i><i class="ep"></i><i class="ep"></i><i class="ep"></i>
             </div>
-            <span>S01 · 8/12 已入库</span>
+            <span>S01 · 8/12 已入库（115 · 123 联合覆盖）</span>
           </div>
           <div class="feat-item">
             <div class="feat-num">02</div>
-            <b>择优检索</b>
-            <span>跨源检索，按画质、中文字幕、去重与真伪筛选；无合格资源如实报告。</span>
+            <b>AI 语义择优与黑盒验证</b>
+            <span>内置 Jev 语义预筛剔除同名假片与违规噪音；遇到黑盒资源包先转入临时 staging 目录回读核验，确认无误再移入正式季目录。</span>
           </div>
           <div class="feat-item">
             <div class="feat-num">03</div>
-            <b>转存进你的网盘</b>
-            <span>夸克 / 115 / 光鸭 / 123 / 天翼，秒传 / 离线转存，不占本地磁盘；缺字幕自动补配。</span>
+            <b>一句话留言换源与作品记忆</b>
+            <span>对已入库剧集留言即可触发换源，被拒坏链全盘永久拉黑；每次运行自动沉淀作品级搜索记忆，越用越准。</span>
           </div>
           <div class="feat-item">
             <div class="feat-num">04</div>
-            <b>多账户隔离</b>
-            <span>同一实例，各自注册、各绑网盘、各看各库。</span>
+            <b>自然语言找片与动漫分季对齐</b>
+            <span>记不清片名可直接搜剧情描述；面对《死神千年血战篇》等官方不分季而发布组按篇命名的番剧，自动联网查证对齐集号。</span>
           </div>
         </div>
       </div>
 
-      <!-- Trust line: flat label voice, no container -->
       <div class="feat-trust">
         <div class="feat-hairline" aria-hidden="true"></div>
         <div class="trust-row">
-          <span class="trust-green">AGPL 开源</span>
-          <span>凭证仅存于你的实例</span>
-          <span>转存不落本地</span>
-          <span>无合格资源即如实报告</span>
+          <span class="trust-green">开源自部署</span>
+          <span>凭证仅存于你的设备</span>
+          <span>云端转存不占本地磁盘</span>
+          <span>内置免费 AI 模型开箱即用</span>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- Demo section: GIF + CTA to demo.mediaryscout.app -->
+  <!-- Topic Hub Section: 六字真言「分门别类罗列」，把首页权重分发给核心功能页、网盘指南页与对比页 -->
+  <section id="explore">
+    <div class="container">
+      <h2 style="font-size:32px;font-weight:700;margin:0 0 12px 0;text-align:center">深入了解巡影 Mediary Scout</h2>
+      <p style="font-size:14px;color:var(--text-muted);text-align:center;margin:0 auto 32px;max-width:640px">从网盘横向实测对比、多盘智能分配机制，到 NAS Docker 自部署与同类工具选型指南</p>
+
+      <div class="hub-grid">
+        <a class="hub-card" href="/guides/which-cloud-drive/">
+          <div>
+            <div class="hub-card-tag">DRIVE BENCHMARK · 实测数据</div>
+            <h3>夸克 / UC / 115 / 123 / 光鸭 / 天翼：自动追剧该选哪个网盘？</h3>
+            <p>基于同一套 PanSou + 海搜 + Prowlarr 环境的真实资源量采样对比，详解分享链转存与磁力秒传双通道差异。</p>
+          </div>
+          <span class="hub-card-more">查看六大网盘实测对比 →</span>
+        </a>
+
+        <a class="hub-card" href="/features/multi-drive-agent/">
+          <div>
+            <div class="hub-card-tag">ARCHITECTURE · 多盘协作</div>
+            <h3>多网盘统一协作获取与六盘实时余量保护机制</h3>
+            <p>为什么夸克 SVIP 到期超额 -1.3TB 不会爆盘？详解 7 条多盘分配铁律：单盘优先、跨盘互补与在更剧主盘粘性。</p>
+          </div>
+          <span class="hub-card-more">了解多盘统一协作原理 →</span>
+        </a>
+
+        <a class="hub-card" href="/compare/mediary-scout-vs-moviepilot-sonarr/">
+          <div>
+            <div class="hub-card-tag">COMPARISON · 选型对比</div>
+            <h3>巡影 Mediary Scout vs MoviePilot / Sonarr / CloudDrive2</h3>
+            <p>云网盘原生转存流 vs PT 本地硬链接流：客观对比适用人群、硬件门槛、维护成本与防风控策略。</p>
+          </div>
+          <span class="hub-card-more">阅读完整工具对比 →</span>
+        </a>
+
+        <a class="hub-card" href="/features/smart-search-and-subtitles/">
+          <div>
+            <div class="hub-card-tag">CAPABILITIES · 智能获取</div>
+            <h3>留言换源、assrt 自动补中文字幕与剧情描述搜片</h3>
+            <p>生肉视频自动拉取简繁双语字幕并批量改名对齐；一句话留言换掉坏片源；官方不分季动漫自动联网对齐集号。</p>
+          </div>
+          <span class="hub-card-more">查看 AI 获取核心能力 →</span>
+        </a>
+
+        <a class="hub-card" href="/guides/docker-nas-deploy/">
+          <div>
+            <div class="hub-card-tag">DEPLOYMENT · 部署教程</div>
+            <h3>NAS / 软路由 iStoreOS / Linux Docker Compose 部署指南</h3>
+            <p>一行命令启动 Web + 内置 PanSou + Postgres + 自动更新器，支持国内镜像加速、多账号隔离与 AI 自动部署提示词。</p>
+          </div>
+          <span class="hub-card-more">查看 Docker 部署教程 →</span>
+        </a>
+
+        <a class="hub-card" href="/guides/cloud-drive-setup/">
+          <div>
+            <div class="hub-card-tag">SETUP GUIDE · 网盘与搜索源</div>
+            <h3>六大网盘扫码连接教程与海搜 / Prowlarr / 字幕源配置</h3>
+            <p>夸克、UC、115、123、光鸭、天翼手机扫码绑定全流程，以及海搜 API、Prowlarr 种子索引器与 assrt 字幕配置方法。</p>
+          </div>
+          <span class="hub-card-more">查看网盘连接指南 →</span>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Demo section -->
   <section id="demo">
     <div class="container">
-      <h2>只读演示，无需安装</h2>
-      <p class="demo-sub">脚本化回放：真实 TMDB 检索，mock 网盘，不写入任何数据。</p>
+      <h2>只读演示，无需安装即可在线体验</h2>
+      <p class="demo-sub">真实 TMDB 检索与多盘状态展示，内置脚本化获取回放，不写入任何个人数据。</p>
       <div class="demo-window">
         <div class="demo-dots">
           <div class="dot dot-red"></div>
           <div class="dot dot-orange"></div>
           <div class="dot dot-green"></div>
         </div>
-        <img loading="lazy" src="assets/demo.gif" alt="Mediary Scout 在线 demo 回放：搜索到入库全流程">
+        <img loading="lazy" src="/assets/demo.gif" width="900" height="560" alt="巡影 Mediary Scout 在线 demo 回放：搜索影视到多网盘自动转存入库全流程">
       </div>
       <div class="demo-cta">
         <a class="pill cta-outline" href="https://demo.mediaryscout.app">打开在线 Demo</a>
@@ -323,93 +404,101 @@
   <!-- Desktop vs Docker comparison cards -->
   <section id="deploy">
     <div class="container">
-      <h2>桌面，或服务器</h2>
+      <h2>macOS / Windows 桌面版，或 NAS 服务器常驻</h2>
       <div class="deploy-split">
         <div class="deploy-col">
-          <div class="deploy-eyebrow deploy-eyebrow-green">DESKTOP</div>
-          <b>桌面版（推荐）</b>
-          <p>macOS 签名公证 / Windows 安装向导 · 数据存于本机</p>
+          <div class="deploy-eyebrow deploy-eyebrow-green">DESKTOP APP</div>
+          <b>桌面版（个人电脑最省心）</b>
+          <p>macOS Apple 签名公证（.dmg） / Windows 安装向导（.exe） · 内置 SQLite 数据库与免费 AI 模型，双击即用，新版本自动提醒下载。</p>
+          <a class="deploy-link" href="/guides/cloud-drive-setup/">查看桌面版网盘扫码连接指南 →</a>
         </div>
         <div class="deploy-divider"></div>
         <div class="deploy-col">
-          <div class="deploy-eyebrow">DOCKER</div>
-          <b>NAS · 服务器 · 24 小时巡检</b>
-          <p>全家多账号合用</p>
+          <div class="deploy-eyebrow">DOCKER COMPOSE</div>
+          <b>NAS · 软路由 · 服务器 24 小时追更</b>
+          <p>自带 PanSou 搜索容器与每日自动更新助手，支持全家多账号独立媒体库与 <a href="/features/agent-api/" style="color:var(--accent)">Agent HTTP API</a>。</p>
           <code class="deploy-code">docker compose up -d</code>
-          <a class="deploy-link" href="https://github.com/fancydirty/mediary-scout/blob/main/docs/deploy.md#%E8%AE%A9-ai-agent-%E5%B8%AE%E4%BD%A0%E9%83%A8%E7%BD%B2">部署指南里有「让 AI 替你部署」的提示词 →</a>
+          <a class="deploy-link" href="/guides/docker-nas-deploy/">阅读 NAS / Docker 完整部署教程（含 AI 自动部署提示词） →</a>
         </div>
       </div>
       <div class="connect-banner">
         <div class="connect-text">
-          <b>Mediary Connect</b>
-          <p>部署在内网 / NAS？<a href="https://mediaryconnect.app">Mediary Connect 是 Scout 的可选付费附加服务</a>，一条加密隧道就能在任何设备的浏览器打开你家的面板 —— 无需公网 IP、无需端口转发，入口由应用自身的访问密码把守。它不托管你的实例，内容全程留在你自己的设备上。</p>
+          <b>Mediary Connect · 局域网实例一键加密远程访问</b>
+          <p>把巡影部署在家里 NAS 或软路由？<a href="https://mediaryconnect.app">Mediary Connect 是 Scout 的可选付费附加服务</a>，在设置页点一下即可开通固定二级域名与 Cloudflare 加密隧道 —— 无需公网 IP、无需端口转发，出门在外随时用手机浏览器查剧点片，数据全程留在你家里设备上。</p>
         </div>
         <a class="pill cta-outline" href="https://mediaryconnect.app">了解 Mediary Connect →</a>
-        <a class="pill cta-outline" href="https://beta.mediaryconnect.app" rel="nofollow">申请内测 →</a>
       </div>
     </div>
   </section>
 
-  <!-- FAQ accordion: native <details name="faq"> for exclusivity + a11y; smooth
-       open/close via CSS ::details-content + interpolate-size (instant fallback on
-       engines without them). initFAQ() adds only a toggle-listener exclusivity
-       fallback for engines without details[name] grouping — semantics stay native. -->
+  <!-- FAQ accordion -->
   <section id="faq">
     <div class="container">
-      <h2>你可能想问</h2>
+      <h2>常见问题（FAQ）</h2>
       <details name="faq" class="faq">
         <summary>
-          它会乱动我的网盘吗？
+          巡影 Mediary Scout 会乱动我的网盘文件吗？
           <svg class="chev" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M4 6L8 10L12 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         </summary>
         <div class="faq-body">
-          <p>只做你手动也能做的转存和整理，全程每一步可见，凭证只在你自己的实例里。</p>
+          <p>不会。系统内置严格的目录写作用域守卫（Write Scope Guard），只允许在专用媒体库目录（<code>Mediary Scout/{Movies,TV,Anime}</code>）内创建和移动文件，绝不触碰你网盘里的其他个人文件夹。全程每一步工具调用在「活动」页实时可见。</p>
         </div>
       </details>
       <details name="faq" class="faq">
         <summary>
-          账号密码存在哪？
+          我的网盘账号凭证和 AI Key 存在哪里？
           <svg class="chev" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M4 6L8 10L12 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         </summary>
         <div class="faq-body">
-          <p>你自己电脑（桌面版）或你自己的服务器，作者碰不到。</p>
+          <p>全部保存在你自己电脑（桌面版）或你自己的服务器（Docker 版）本地数据库里，作者与任何外部服务器都碰不到。</p>
         </div>
       </details>
       <details name="faq" class="faq">
         <summary>
-          要花钱吗？
+          使用要花钱吗？没有 AI 模型 API Key 能直接用吗？
           <svg class="chev" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M4 6L8 10L12 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         </summary>
         <div class="faq-body">
-          <p>软件免费开源；你需要自己的网盘账号和一个 AI 服务的 key（任意 OpenAI 兼容接口）。</p>
+          <p>软件免费开源；出厂已内置 Kilo 公共免费 AI 模型池，无需注册或填 Key 就能直接搜片获取。如果你追求更快的推理速度，也可以在「设置 → AI 模型」里填入 DeepSeek、智谱 GLM、小米 MiMo 等任意 OpenAI 兼容接口。</p>
         </div>
       </details>
       <details name="faq" class="faq">
         <summary>
-          支持哪些网盘？
+          支持哪些网盘？多块网盘同时连接是怎么分配的？
           <svg class="chev" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M4 6L8 10L12 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         </summary>
         <div class="faq-body">
-          <p>夸克、115、光鸭、123、天翼；网盘层是插件化接口，欢迎 PR 加新品牌。不知道选哪个？看 <a href="/guides/which-cloud-drive/">五大网盘实测资源量对比</a>。</p>
+          <p>支持 <strong>夸克、UC、115、123、光鸭、天翼</strong> 六大网盘（均支持手机扫码登录）。你可以同时绑定多块网盘，系统会自动查询每块盘的剩余容量（会员到期超额的盘自动禁止写入），遵循「单盘能收齐绝不拆盘、单盘都不全时跨盘互补收齐」的原则。不知道主力用哪个盘？看 <a href="/guides/which-cloud-drive/">六大网盘实测资源量对比</a> 与 <a href="/features/multi-drive-agent/">多网盘统一协作机制详解</a>。</p>
         </div>
       </details>
       <details name="faq" class="faq">
         <summary>
-          Windows 提示「已保护你的电脑」？
+          巡影 Mediary Scout 和 MoviePilot / Sonarr 有什么不同？
           <svg class="chev" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M4 6L8 10L12 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         </summary>
         <div class="faq-body">
-          <p>未签名所致（个人开发者证书太贵），点「更多信息 → 仍要运行」即可；每个安装包发布前都经过 CI 真机安装验证。</p>
+          <p>MoviePilot 和 Sonarr 的核心是「PT 种子下载到本地硬盘 + 正则表达式整理硬链接」；而巡影 Mediary Scout 专为「国内云网盘分享链转存 + 磁力秒传离线」设计，零本地硬盘占用、无需公网 IP 保种、无需手写正则规则。详见 <a href="/compare/mediary-scout-vs-moviepilot-sonarr/">Mediary Scout 与 MoviePilot / Sonarr 深度对比</a>。</p>
+        </div>
+      </details>
+      <details name="faq" class="faq">
+        <summary>
+          Windows 提示「Windows 已保护你的电脑」？
+          <svg class="chev" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M4 6L8 10L12 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </summary>
+        <div class="faq-body">
+          <p>Windows 商业代码签名证书价格高昂，个人开源项目未购买商业签名所致（macOS 版已签名公证）。点击「更多信息 → 仍要运行」即可；每个安装包发布前均经过 GitHub Actions 真机安装冒烟验证。</p>
         </div>
       </details>
     </div>
@@ -418,7 +507,7 @@
   <!-- Final CTA -->
   <section id="cta">
     <div class="container">
-      <h2>开始使用</h2>
+      <h2>立即开始构建你的网盘媒体库</h2>
       <div class="cta-final-row">
         <a class="pill cta-main cta-big" data-dl-cta data-dl-platform="mac" href="https://github.com/fancydirty/mediary-scout/releases/latest">
           <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" width="20" height="20">
@@ -436,7 +525,7 @@
           <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" width="20" height="20">
             <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
           </svg>
-          GitHub
+          GitHub 仓库
         </a>
       </div>
     </div>
@@ -447,24 +536,34 @@
   <footer>
     <div class="container">
       <div>
-        <h3>产品</h3>
+        <h3>产品与核心功能</h3>
         <ul>
-          <li><a href="https://github.com/fancydirty/mediary-scout/releases/latest">下载</a></li>
-          <li><a href="https://demo.mediaryscout.app">在线 Demo</a></li>
+          <li><a href="https://github.com/fancydirty/mediary-scout/releases/latest">桌面版下载（macOS / Windows）</a></li>
+          <li><a href="https://demo.mediaryscout.app">在线只读 Demo</a></li>
+          <li><a href="/features/multi-drive-agent/">多网盘统一协作与容量保护</a></li>
+          <li><a href="/features/smart-search-and-subtitles/">留言换源与自动补配中文字幕</a></li>
+          <li><a href="/features/agent-api/">Agent HTTP API（Claude Code / OpenClaw）</a></li>
         </ul>
       </div>
       <div>
-        <h3>社区</h3>
+        <h3>指南、教程与对比</h3>
         <ul>
-          <li><a href="https://github.com/fancydirty/mediary-scout">GitHub</a></li>
-          <li><a href="https://github.com/fancydirty/mediary-scout/issues">Issues</a></li>
+          <li><a href="/guides/">教程与指南中心</a></li>
+          <li><a href="/guides/which-cloud-drive/">六大网盘实测资源量对比</a></li>
+          <li><a href="/guides/docker-nas-deploy/">NAS / 软路由 Docker 部署教程</a></li>
+          <li><a href="/guides/cloud-drive-setup/">六大网盘扫码连接与搜索源配置</a></li>
+          <li><a href="/compare/mediary-scout-vs-moviepilot-sonarr/">对比 MoviePilot / Sonarr / CloudDrive2</a></li>
         </ul>
       </div>
       <div>
-        <p class="footer-small">
-          AGPL 开源<br>
-          工程细节与测试门禁见 GitHub
-        </p>
+        <h3>社区与语言</h3>
+        <ul>
+          <li><a href="/en/" lang="en">English Official Site (/en/)</a></li>
+          <li><a href="https://github.com/fancydirty/mediary-scout">GitHub 开源仓库</a></li>
+          <li><a href="https://github.com/fancydirty/mediary-scout/issues">问题反馈（Issues）</a></li>
+          <li><a href="https://mediaryconnect.app">Mediary Connect 远程访问</a></li>
+          <li><a href="/llms.txt">llms.txt（AI 引擎索引）</a></li>
+        </ul>
         <div class="tmdb-attr">
           <svg viewBox="0 0 273.4 35.5" aria-label="TMDB" class="tmdb-logo">
             <path fill="#01d277" d="M19.3 0H4.7C2.1 0 0 2.1 0 4.7v26.1c0 2.6 2.1 4.7 4.7 4.7h14.6c2.6 0 4.7-2.1 4.7-4.7V4.7C24 2.1 21.9 0 19.3 0zm0 31.2H4.7V4.3h14.6v26.9z"/>

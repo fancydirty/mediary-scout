@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI 语义选片、一句话留言换源、assrt 自动补中文字幕与剧情搜片 — 巡影 Mediary Scout</title>
+  <meta name="description" content="详解巡影 Mediary Scout 的四大 AI 核心能力：Jev 语义预筛与黑盒回读核验、对剧集留言一句话自动换掉坏片源、assrt 伪射手外挂中文字幕自动落盘与批量改名对齐、以及按剧情描述找片与动漫民间分季集号对齐。">
+
+  <link rel="canonical" href="https://mediaryscout.app/features/smart-search-and-subtitles/">
+
+  <meta property="og:title" content="AI 语义选片、一句话留言换源与外挂中文字幕自动补全 — 巡影 Mediary Scout">
+  <meta property="og:description" content="告别正则表达式维护：生肉自动配简繁双语字幕、坏源留言一键替换拉黑、记不清片名直接搜剧情描述。">
+  <meta property="og:url" content="https://mediaryscout.app/features/smart-search-and-subtitles/">
+  <meta property="og:type" content="article">
+  <meta property="og:image" content="https://mediaryscout.app/assets/og.png">
+  <meta name="twitter:card" content="summary_large_image">
+
+  <link rel="icon" href="/favicon.ico">
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/main.js"></script>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Article",
+        "headline": "AI 语义选片、一句话留言换源、assrt 自动补中文字幕与剧情搜片",
+        "description": "详解巡影 Mediary Scout 如何用 AI Agent 解决传统自动追剧工具的四大顽疾：同名假片、坏源替换、外语生肉无字幕与动漫分季错位。",
+        "datePublished": "2026-10-29",
+        "dateModified": "2026-10-29",
+        "author": {"@type": "Organization", "name": "Mediary Scout"},
+        "publisher": {"@type": "Organization", "name": "Mediary Scout", "url": "https://mediaryscout.app/"},
+        "mainEntityOfPage": {"@type": "WebPage", "@id": "https://mediaryscout.app/features/smart-search-and-subtitles/"}
+      },
+      {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          { "@type": "ListItem", "position": 1, "name": "巡影 Mediary Scout", "item": "https://mediaryscout.app/" },
+          { "@type": "ListItem", "position": 2, "name": "核心功能", "item": "https://mediaryscout.app/#features" },
+          { "@type": "ListItem", "position": 3, "name": "智能选片与字幕补全", "item": "https://mediaryscout.app/features/smart-search-and-subtitles/" }
+        ]
+      }
+    ]
+  }
+  </script>
+</head>
+<body>
+  <a href="#main" class="skip-link">跳转到主内容</a>
+  <nav>
+    <div class="container">
+      <div class="nav-left">
+        <a href="/" style="display:flex;align-items:center;gap:12px;text-decoration:none;color:inherit">
+          <svg class="logo-mark" viewBox="0 0 32 32" width="24" height="24" aria-hidden="true" focusable="false">
+            <circle cx="16" cy="16" r="16" fill="#1ED760"/>
+            <g transform="translate(4,4)" fill="none" stroke="#0B3B1E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <path d="m14.31 8 5.74 9.94"/>
+              <path d="M9.69 8h11.48"/>
+              <path d="m7.38 12 5.74-9.94"/>
+              <path d="M9.69 16 3.95 6.06"/>
+              <path d="M14.31 16H2.83"/>
+              <path d="m16.62 12-5.74 9.94"/>
+            </g>
+          </svg>
+          <span class="wordmark">巡影 · Mediary Scout</span>
+        </a>
+      </div>
+      <div class="nav-right">
+        <div class="nav-links">
+          <a href="/features/multi-drive-agent/">多盘协作</a>
+          <span aria-hidden="true">·</span>
+          <a href="/guides/which-cloud-drive/">六盘实测对比</a>
+          <span aria-hidden="true">·</span>
+          <a href="/guides/docker-nas-deploy/">NAS 部署</a>
+          <span aria-hidden="true">·</span>
+          <a href="/compare/mediary-scout-vs-moviepilot-sonarr/">对比 MoviePilot</a>
+          <span aria-hidden="true">·</span>
+          <a href="/guides/">教程中心</a>
+          <span aria-hidden="true">·</span>
+          <a href="/en/" lang="en">English</a>
+        </div>
+        <a href="https://github.com/fancydirty/mediary-scout" class="github-link" aria-label="GitHub">
+          <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+        </a>
+        <span class="pill" data-stars>★ …</span>
+      </div>
+    </div>
+  </nav>
+
+  <main id="main" class="article">
+    <p class="crumb"><a href="/">巡影 Mediary Scout 首页</a> › 核心功能 › 智能选片、留言换源与字幕补全</p>
+
+    <h1>AI 语义选片、一句话留言换源、assrt 自动补中文字幕与剧情搜片</h1>
+    <p class="meta">2026-10-29 · 告别正则表达式维护的四个核心体验</p>
+
+    <p>传统追剧工具最让人头疼的不是「找不到资源」，而是<strong>「找到了错的资源却不知道」</strong>：同名老片混进新片、转存下来发现是无字幕生肉、或者某两集画面发蓝/音轨不对却没法单独重下。<strong>巡影（Mediary Scout）</strong>把这四件事全部交给了带沙盒工具链的 AI Agent。</p>
+
+    <h2>一、一句话给 Agent 留言换源（全盘永久拉黑坏链）</h2>
+    <p>在日常观影中，如果你发现某部电影是枪版假片，或者某部剧的第 13、24 集画面发蓝、音轨错位，你不需要去网盘里手动翻删再重搜：</p>
+    <ol>
+      <li>直接在巡影的<strong>作品详情页留言板</strong>点选对应集数（或直接打字说「第 13 集画质发蓝，换一个版本」「这是无中字生肉，换带简中字幕的」），可选择「现在处理」或等下次日常巡检。</li>
+      <li>Agent 启动换源任务后，先读取目标目录里的现有文件，调用 <code>rejectCurrentSource</code> 将坏文件的<strong>名称、体积以及当初转存它的原始分享链/磁力指纹（<code>resourceLinkKey</code>）</strong>写入全账号拒绝表（<code>rejected_resources</code>）。</li>
+      <li>随后 Agent 在排除坏链的候选池里挑选新资源转存，并在找到新版本前<strong>保护旧文件不被误删</strong>（避免没找到新源却把旧文件删空）。</li>
+      <li>被拒绝的坏源在所有已连接网盘上<strong>永久拉黑</strong> —— 即便别的频道把同一条分享链换了个标题重发，未来任何巡检或换源也绝不会再次转存它。</li>
+    </ol>
+
+    <h2>二、外挂中文字幕自动补全与批量改名对位（assrt.net）</h2>
+    <p>欧美电影与日本番剧的高画质蓝光原盘（如 <code>[Snow-Raws] BD 1920x1080 HEVC FLAC</code> 或 <code>2160p UHD BluRay REMUX</code>）往往没有内封中文字幕。只要你在「设置 → 字幕来源」填入免费的 <a href="https://assrt.net" target="_blank" rel="noopener noreferrer">assrt.net（伪射手）</a> API Token：</p>
+    <ul>
+      <li><strong>自动触发</strong>：对于非国产影视，系统在开跑前自动用裸片名预搜 assrt 字幕包，生成包含社区评分（★）、字幕组名称与语言标签（<code>[简 繁 双语]</code>）的字幕快照文档。</li>
+      <li><strong>云端直链离线落盘</strong>：在支持外链离线的网盘（<strong>115 网盘、光鸭云盘、123网盘</strong>）上，Agent 调用 <code>transferSubtitle</code> 直接把字幕包拉进网盘 <code>staging</code> 目录，全程不经过本地硬盘。</li>
+      <li><strong>一键批量同名前缀对齐</strong>：Agent 调用一次 <code>renameSubtitle</code> 批量将全季 12 集或 24 集的 <code>.sc.ass</code> / <code>.tc.ass</code> / <code>.srt</code> 改名为与对应视频文件完全一致的前缀（例如 <code>[Snow-Raws] 学園黙示録 第01話 (...).sc.ass</code>），随后连同视频一起移入 <code>Season 01</code>，让 Infuse、VidHub、Kodi、IINA 或 Emby/Jellyfin 播放器打开即自动挂载中文字幕！</li>
+    </ul>
+
+    <h2>三、黑盒转存回读验证与高低码率智能去重</h2>
+    <p>网盘分享生态里大量存在两类坑：① 标题只写片名的「黑盒文件夹」；② 一个分享包里同时塞了 <code>4KHQHDR（6GB/集）</code> 和普通 <code>4KHDR（1.5GB/集）</code> 双份文件，外加「关注公众号.mp4」推广诱导小视频。</p>
+    <p>巡影的 Agent 严格遵守<strong>「证据先行，回读验证」</strong>：</p>
+    <ul>
+      <li>所有转存先进入临时的 <code>staging-&lt;runId&gt;</code> 沙盒目录；</li>
+      <li>Agent 调用 <code>inspectStaging</code> 读取真实落地的文件树与精确字节大小（<code>sizeBytes</code>）；</li>
+      <li>发现同一集有高低码率两份文件时，先调 <code>deleteFiles</code> 删掉低码率小文件与推广垃圾，只把真正的高码率正片 <code>moveToSeason</code> 移入季目录，最后 <code>discardStaging</code> 销毁临时目录。</li>
+    </ul>
+
+    <h2>四、剧情描述找片 &amp; 动漫民间分季集号自动对齐</h2>
+    <ul>
+      <li><strong>记不清片名？直接搜剧情描述</strong>：在搜索框输入「男主带着小绿瓶修仙的国漫」或「咒术回战 死灭回游」，系统会自动结合你的 AI 模型与联网搜索将其解析为准确的 TMDB 作品（如《凡人修仙传》《咒术回战》）。</li>
+      <li><strong>官方不分季 vs 字幕组分季自动映射</strong>：像《死神 千年血战篇》《海贼王》这类作品，TMDB 官方把几十集全部归在同 1 季，而网盘发布组按「诀别谭」「相剋谭」分季从 E01 重新编号。巡影 Agent 内置网页查证工具（<code>searchWeb</code>），在获取时自动查清篇章对应的绝对集号区间，精准落盘不漏集。</li>
+    </ul>
+
+    <div class="next">
+      <p>相关阅读：<a href="/features/multi-drive-agent/">多网盘统一协作与六盘实时余量保护</a> · <a href="/compare/mediary-scout-vs-moviepilot-sonarr/">巡影 Mediary Scout 对比 MoviePilot / Sonarr</a> · <a href="/guides/cloud-drive-setup/">网盘与 assrt 字幕源配置指南</a></p>
+    </div>
+  </main>
+
+  <footer>
+    <div class="container">
+      <div>
+        <h3>产品与核心功能</h3>
+        <ul>
+          <li><a href="/">巡影 Mediary Scout 首页</a></li>
+          <li><a href="https://github.com/fancydirty/mediary-scout/releases/latest">桌面版下载（macOS / Windows）</a></li>
+          <li><a href="/features/multi-drive-agent/">多网盘统一协作与容量保护</a></li>
+          <li><a href="/features/smart-search-and-subtitles/">留言换源与自动补配中文字幕</a></li>
+          <li><a href="/features/agent-api/">Agent HTTP API</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3>指南、教程与对比</h3>
+        <ul>
+          <li><a href="/guides/">教程与指南中心</a></li>
+          <li><a href="/guides/which-cloud-drive/">六大网盘实测资源量对比</a></li>
+          <li><a href="/guides/docker-nas-deploy/">NAS / 软路由 Docker 部署教程</a></li>
+          <li><a href="/guides/cloud-drive-setup/">六大网盘扫码连接与搜索源配置</a></li>
+          <li><a href="/compare/mediary-scout-vs-moviepilot-sonarr/">对比 MoviePilot / Sonarr / CloudDrive2</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3>社区与语言</h3>
+        <ul>
+          <li><a href="/en/" lang="en">English Official Site (/en/)</a></li>
+          <li><a href="https://github.com/fancydirty/mediary-scout">GitHub 开源仓库</a></li>
+          <li><a href="https://demo.mediaryscout.app">在线只读 Demo</a></li>
+        </ul>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>

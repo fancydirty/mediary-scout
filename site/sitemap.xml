@@ -1,18 +1,63 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-  首页 + 指南页。锚点（#features / #faq …）不是独立页面，刻意不列 ——
-  sitemap 只放希望被索引的规范页面。
-  付费服务站（mediaryconnect.app）有自己的 sitemap，两站互不混淆。
--->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://mediaryscout.app/</loc>
+    <lastmod>2026-10-29</lastmod>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
   </url>
   <url>
+    <loc>https://mediaryscout.app/en/</loc>
+    <lastmod>2026-10-29</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://mediaryscout.app/guides/</loc>
+    <lastmod>2026-10-29</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
     <loc>https://mediaryscout.app/guides/which-cloud-drive/</loc>
+    <lastmod>2026-10-29</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://mediaryscout.app/guides/docker-nas-deploy/</loc>
+    <lastmod>2026-10-29</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.85</priority>
+  </url>
+  <url>
+    <loc>https://mediaryscout.app/guides/cloud-drive-setup/</loc>
+    <lastmod>2026-10-29</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.85</priority>
+  </url>
+  <url>
+    <loc>https://mediaryscout.app/features/multi-drive-agent/</loc>
+    <lastmod>2026-10-29</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://mediaryscout.app/features/smart-search-and-subtitles/</loc>
+    <lastmod>2026-10-29</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.85</priority>
+  </url>
+  <url>
+    <loc>https://mediaryscout.app/features/agent-api/</loc>
+    <lastmod>2026-10-29</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://mediaryscout.app/compare/mediary-scout-vs-moviepilot-sonarr/</loc>
+    <lastmod>2026-10-29</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
   </url>
 </urlset>

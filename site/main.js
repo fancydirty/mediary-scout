@@ -65,7 +65,7 @@ async function wirePosters() {
     ]);
   } catch {
     try {
-      feeds = (await fetchJson("./data/posters-fallback.json")).feeds;
+      feeds = (await fetchJson("/data/posters-fallback.json")).feeds;
     } catch {
       console.warn("poster feeds unavailable; poster wall stays empty");
       return;

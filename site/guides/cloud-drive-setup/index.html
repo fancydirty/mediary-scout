@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>夸克/UC/115/123/光鸭/天翼六大网盘扫码连接教程与海搜/Prowlarr/字幕配置 — 巡影 Mediary Scout</title>
+  <meta name="description" content="巡影 Mediary Scout 六大网盘（夸克、UC、115、123网盘、光鸭云盘、天翼云盘）手机 App 扫码登录与连接配置全指南，以及海搜 Haisou API、Prowlarr 磁力索引器、assrt 伪射手外挂字幕与 Jev 语义预筛的配置方法。">
+
+  <link rel="canonical" href="https://mediaryscout.app/guides/cloud-drive-setup/">
+
+  <meta property="og:title" content="六大网盘扫码连接教程与海搜 / Prowlarr / 字幕配置 — 巡影 Mediary Scout">
+  <meta property="og:description" content="手把手教你扫码绑定夸克、UC、115、123、光鸭、天翼六大网盘，并配置海搜 API、Prowlarr 与 assrt 自动字幕。">
+  <meta property="og:url" content="https://mediaryscout.app/guides/cloud-drive-setup/">
+  <meta property="og:type" content="article">
+  <meta property="og:image" content="https://mediaryscout.app/assets/og.png">
+  <meta name="twitter:card" content="summary_large_image">
+
+  <link rel="icon" href="/favicon.ico">
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/main.js"></script>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Article",
+        "headline": "夸克/UC/115/123/光鸭/天翼六大网盘扫码连接教程与海搜/Prowlarr/字幕配置",
+        "description": "巡影 Mediary Scout 网盘绑定、搜索源扩展与外挂字幕配置完整教程。",
+        "datePublished": "2026-10-29",
+        "dateModified": "2026-10-29",
+        "author": {"@type": "Organization", "name": "Mediary Scout"},
+        "publisher": {"@type": "Organization", "name": "Mediary Scout", "url": "https://mediaryscout.app/"},
+        "mainEntityOfPage": {"@type": "WebPage", "@id": "https://mediaryscout.app/guides/cloud-drive-setup/"}
+      },
+      {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          { "@type": "ListItem", "position": 1, "name": "巡影 Mediary Scout", "item": "https://mediaryscout.app/" },
+          { "@type": "ListItem", "position": 2, "name": "教程与指南", "item": "https://mediaryscout.app/guides/" },
+          { "@type": "ListItem", "position": 3, "name": "网盘与搜索源配置", "item": "https://mediaryscout.app/guides/cloud-drive-setup/" }
+        ]
+      }
+    ]
+  }
+  </script>
+</head>
+<body>
+  <a href="#main" class="skip-link">跳转到主内容</a>
+  <nav>
+    <div class="container">
+      <div class="nav-left">
+        <a href="/" style="display:flex;align-items:center;gap:12px;text-decoration:none;color:inherit">
+          <svg class="logo-mark" viewBox="0 0 32 32" width="24" height="24" aria-hidden="true" focusable="false">
+            <circle cx="16" cy="16" r="16" fill="#1ED760"/>
+            <g transform="translate(4,4)" fill="none" stroke="#0B3B1E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <path d="m14.31 8 5.74 9.94"/>
+              <path d="M9.69 8h11.48"/>
+              <path d="m7.38 12 5.74-9.94"/>
+              <path d="M9.69 16 3.95 6.06"/>
+              <path d="M14.31 16H2.83"/>
+              <path d="m16.62 12-5.74 9.94"/>
+            </g>
+          </svg>
+          <span class="wordmark">巡影 · Mediary Scout</span>
+        </a>
+      </div>
+      <div class="nav-right">
+        <div class="nav-links">
+          <a href="/features/multi-drive-agent/">多盘协作</a>
+          <span aria-hidden="true">·</span>
+          <a href="/guides/which-cloud-drive/">六盘实测对比</a>
+          <span aria-hidden="true">·</span>
+          <a href="/guides/docker-nas-deploy/">NAS 部署</a>
+          <span aria-hidden="true">·</span>
+          <a href="/compare/mediary-scout-vs-moviepilot-sonarr/">对比 MoviePilot</a>
+          <span aria-hidden="true">·</span>
+          <a href="/guides/">教程中心</a>
+          <span aria-hidden="true">·</span>
+          <a href="/en/" lang="en">English</a>
+        </div>
+        <a href="https://github.com/fancydirty/mediary-scout" class="github-link" aria-label="GitHub">
+          <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+        </a>
+        <span class="pill" data-stars>★ …</span>
+      </div>
+    </div>
+  </nav>
+
+  <main id="main" class="article">
+    <p class="crumb"><a href="/">巡影 Mediary Scout 首页</a> › <a href="/guides/">教程与指南</a> › 六大网盘与搜索源配置</p>
+
+    <h1>夸克 / UC / 115 / 123 / 光鸭 / 天翼扫码连接与搜索源配置指南</h1>
+    <p class="meta">2026-10-29 更新 · 全部六大网盘均已支持手机 App 扫码一键绑定</p>
+
+    <p>打开 <a href="/">巡影 Mediary Scout</a> 的 <strong>设置 → 网盘连接</strong>，你可以同时添加一块或多块网盘。每次绑定成功后，系统会自动在你的网盘根目录下创建 <code>Mediary Scout/{Movies,TV,Anime}</code> 三个分类文件夹，并探测当前网盘的剩余容量。</p>
+
+    <h2>一、六大网盘连接方式一览</h2>
+
+    <h3>1. 夸克网盘 &amp; UC 网盘（扫码或粘贴 Cookie）</h3>
+    <ul>
+      <li><strong>扫码登录（推荐）</strong>：在「添加网盘」切到「夸克网盘」或「UC网盘」，点击「生成二维码」，打开手机上的<strong>夸克 App</strong> 或 <strong>UC 浏览器 App</strong> 扫码确认即可自动入库。</li>
+      <li><strong>Cookie 粘贴兜底</strong>：也可在电脑浏览器登录 <code>pan.quark.cn</code> 或 <code>drive.uc.cn</code>，从开发者工具 Network 面板复制包含 <code>__puus</code> 与 <code>__pus</code> 的 Cookie 字符串粘贴绑定。</li>
+    </ul>
+
+    <h3>2. 115 网盘（扫码或粘贴 Cookie）</h3>
+    <ul>
+      <li>在「添加网盘」切到「115 网盘」，点击生成二维码，用手机 <strong>115 生活 App</strong> 扫码并点击确认，系统会自动兑换网页会话并初始化分类目录。</li>
+      <li>如果后续手机端踢掉了登录设备导致卡片显示「掉线 · 重新绑定即恢复」，只需用同一个 115 账号重新扫一次码即可原地恢复，历史追剧记录与目录 ID 均完好保留。</li>
+    </ul>
+
+    <h3>3. 123网盘（扫码登录，约 90 天有效期）</h3>
+    <ul>
+      <li>切到「123网盘」点击扫码，用手机 <strong>123云盘 App</strong> 扫码确认即可拿到约 90 天有效期的访问凭证（同时支持分享链转存、磁力离线与外挂字幕落盘）。</li>
+    </ul>
+
+    <h3>4. 光鸭云盘（扫码登录或粘贴 Token）</h3>
+    <ul>
+      <li><strong>扫码登录（推荐）</strong>：自 2026-10 更新起，光鸭云盘已支持原生设备码二维码登录 —— 点击「生成二维码」，用手机 <strong>光鸭云盘 App</strong> 扫码即可自动获取 <code>accessToken</code> 与 <code>refreshToken</code>。</li>
+    </ul>
+
+    <h3>5. 天翼云盘（扫码登录或粘贴 SSON Cookie）</h3>
+    <ul>
+      <li>点击「天翼云盘 → 生成二维码」，用手机 <strong>天翼云盘 App</strong> 扫码确认即可绑定个人云空间。</li>
+    </ul>
+
+    <h2>二、搜索源与服务配置（设置 → 资源与服务）</h2>
+
+    <h3>1. PanSou 网盘聚合搜索</h3>
+    <ul>
+      <li><strong>Docker 部署版</strong>：已内置专属 <code>pansou</code> 容器，开箱即用，无需手动配置。</li>
+      <li><strong>桌面版</strong>：默认连接公共实例；如果你在 NAS 上自建了 PanSou，可在「设置 → 资源与服务 → PanSou」填入你的自建地址。</li>
+    </ul>
+
+    <h3>2. 海搜（Haisou）官方 API 补充源（可选）</h3>
+    <ul>
+      <li>海搜覆盖了大量夸克、UC、百度、阿里、115、天翼、123、迅雷/光鸭等多平台分享链。在 <a href="https://www.idatariver.com" target="_blank" rel="noopener noreferrer">iDataRiver</a> 获取海搜 API Key 后填入「设置 → 资源与服务 → 海搜」，巡影会在每次搜索时将 PanSou 与海搜结果自动去重合并。</li>
+    </ul>
+
+    <h3>3. Prowlarr 磁力 / PT 索引器聚合（推荐 115 / 光鸭 / 123 用户开启）</h3>
+    <ul>
+      <li>如果你连接了支持磁力离线的网盘（<strong>115、光鸭、123</strong>），强烈建议配置 Prowlarr 的 Base URL 与 API Key。Agent 搜索时会把 Prowlarr 的种子磁力与网盘分享链放在同一份快照里对比，遇到分享链死链或冷门老片时直接用磁力秒传落盘。</li>
+    </ul>
+
+    <h3>4. assrt.net（伪射手）外挂中文字幕（推荐开启）</h3>
+    <ul>
+      <li>在 <a href="https://secure.assrt.net/user/register.xml" target="_blank" rel="noopener noreferrer">assrt.net 注册页面</a> 免费注册并复制 32 位 Token 填入「设置 → 字幕来源」。当 Agent 获取欧美电影或日本生肉番剧时，会自动拉取简繁双语字幕包并改名对齐到视频文件旁。</li>
+    </ul>
+
+    <div class="next">
+      <p>相关阅读：<a href="/guides/which-cloud-drive/">六大网盘实测资源量对比</a> · <a href="/features/multi-drive-agent/">多网盘统一协作机制详解</a> · <a href="/guides/docker-nas-deploy/">NAS / Docker 部署指南</a></p>
+    </div>
+  </main>
+
+  <footer>
+    <div class="container">
+      <div>
+        <h3>产品与核心功能</h3>
+        <ul>
+          <li><a href="/">巡影 Mediary Scout 首页</a></li>
+          <li><a href="https://github.com/fancydirty/mediary-scout/releases/latest">桌面版下载（macOS / Windows）</a></li>
+          <li><a href="/features/multi-drive-agent/">多网盘统一协作与容量保护</a></li>
+          <li><a href="/features/smart-search-and-subtitles/">留言换源与自动补配中文字幕</a></li>
+          <li><a href="/features/agent-api/">Agent HTTP API</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3>指南、教程与对比</h3>
+        <ul>
+          <li><a href="/guides/">教程与指南中心</a></li>
+          <li><a href="/guides/which-cloud-drive/">六大网盘实测资源量对比</a></li>
+          <li><a href="/guides/docker-nas-deploy/">NAS / 软路由 Docker 部署教程</a></li>
+          <li><a href="/guides/cloud-drive-setup/">六大网盘扫码连接与搜索源配置</a></li>
+          <li><a href="/compare/mediary-scout-vs-moviepilot-sonarr/">对比 MoviePilot / Sonarr / CloudDrive2</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3>社区与语言</h3>
+        <ul>
+          <li><a href="/en/" lang="en">English Official Site (/en/)</a></li>
+          <li><a href="https://github.com/fancydirty/mediary-scout">GitHub 开源仓库</a></li>
+          <li><a href="https://demo.mediaryscout.app">在线只读 Demo</a></li>
+        </ul>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>

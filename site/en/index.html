@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mediary Scout (巡影) — Open-Source AI Agent Media Library for Cloud Drives</title>
+  <meta name="description" content="Mediary Scout (巡影) is an open-source, self-hosted AI agent media library that automatically searches, selects, transfers, and verifies movies, TV shows, and anime across Quark, UC, 115, 123Pan, GuangYaPan, and Tianyi cloud drives. Available as a macOS/Windows desktop app and Docker container.">
+
+  <link rel="canonical" href="https://mediaryscout.app/en/">
+  <link rel="alternate" hreflang="en" href="https://mediaryscout.app/en/">
+  <link rel="alternate" hreflang="zh-CN" href="https://mediaryscout.app/">
+  <link rel="alternate" hreflang="x-default" href="https://mediaryscout.app/">
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="Mediary Scout (巡影) — Open-Source AI Agent Media Library for Cloud Drives">
+  <meta property="og:description" content="Ask for a movie, TV series, or anime. Mediary Scout searches across indexers, transfers the best match into your own cloud drives (Quark, UC, 115, 123Pan, GuangYaPan, Tianyi), verifies landed files, and patrols for new episodes.">
+  <meta property="og:image" content="https://mediaryscout.app/assets/og.png">
+  <meta property="og:url" content="https://mediaryscout.app/en/">
+  <meta property="og:type" content="website">
+  <meta name="twitter:card" content="summary_large_image">
+
+  <link rel="icon" href="/favicon.ico">
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/icon-32.png">
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/main.js"></script>
+
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://mediaryscout.app/en/#software",
+      "name": "Mediary Scout",
+      "alternateName": ["巡影", "Mediary Scout AI Agent"],
+      "url": "https://mediaryscout.app/en/",
+      "softwareVersion": "2026.1029.0",
+      "description": "Open-source, self-hosted AI agent media library that automatically searches, transfers, and verifies movies, TV shows, and anime into personal cloud drives (Quark, UC, 115, 123Pan, GuangYaPan, Tianyi) with unified multi-drive orchestration and real-time storage quota protection.",
+      "applicationCategory": "MultimediaApplication",
+      "operatingSystem": "macOS, Windows, Docker (Linux)",
+      "license": "https://github.com/fancydirty/mediary-scout/blob/main/LICENSE",
+      "isAccessibleForFree": true,
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      },
+      "codeRepository": "https://github.com/fancydirty/mediary-scout",
+      "downloadUrl": "https://github.com/fancydirty/mediary-scout/releases/latest",
+      "inLanguage": "en"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "Mediary Scout", "item": "https://mediaryscout.app/" },
+        { "@type": "ListItem", "position": 2, "name": "English", "item": "https://mediaryscout.app/en/" }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://mediaryscout.app/en/#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "What is Mediary Scout (巡影)?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Mediary Scout (Chinese name: 巡影) is an open-source, self-hosted AI agent media acquisition and tracking system for personal cloud drives. Instead of downloading large torrents to local disks with complex regex rules, Mediary Scout uses an LLM agent to search share links and magnets, transfer the best match directly into your cloud drive (Quark, UC, 115, 123Pan, GuangYaPan, or Tianyi), reread the directory to verify the landed video files, pair external Chinese subtitles from assrt.net, and patrol daily for newly aired episodes."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How does Mediary Scout's unified multi-drive orchestration work?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "When you connect multiple cloud drives, Mediary Scout probes and caches each drive's real-time remaining storage space. Over-quota or full drives are strictly blocked at the sandbox boundary. The agent follows a single-drive-first rule: if any single available drive can cover all missing episodes, it completes the season on that one drive; it splits episodes across drives only when combining drives increases total episode coverage."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does Mediary Scout require a paid LLM API key?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. Mediary Scout ships with a built-in free LLM preset (via Kilo Code's public pool) so it works out of the box after installation. You can optionally configure your own OpenAI-compatible API key (DeepSeek, Zhipu GLM, OpenRouter, Xiaomi MiMo, or OpenAI) in Settings."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How does Mediary Scout compare to Sonarr, Radarr, or MoviePilot?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Sonarr, Radarr, and MoviePilot are designed around local NAS hard drives, BitTorrent/PT clients, and deterministic regex filters. Mediary Scout is purpose-built for cloud drive share-link transfers and instant magnet offline downloads—requiring zero local disk space for media storage and zero manual regex maintenance."
+          }
+        }
+      ]
+    }
+  ]
+}
+  </script>
+</head>
+<body>
+  <a href="#main" class="skip-link">Skip to main content</a>
+  <nav>
+    <div class="container">
+      <div class="nav-left">
+        <a href="/en/" style="display:flex;align-items:center;gap:12px;text-decoration:none;color:inherit">
+          <svg class="logo-mark" viewBox="0 0 32 32" width="24" height="24" aria-hidden="true" focusable="false">
+            <circle cx="16" cy="16" r="16" fill="#1ED760"/>
+            <g transform="translate(4,4)" fill="none" stroke="#0B3B1E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <path d="m14.31 8 5.74 9.94"/>
+              <path d="M9.69 8h11.48"/>
+              <path d="m7.38 12 5.74-9.94"/>
+              <path d="M9.69 16 3.95 6.06"/>
+              <path d="M14.31 16H2.83"/>
+              <path d="m16.62 12-5.74 9.94"/>
+            </g>
+          </svg>
+          <span class="wordmark">Mediary Scout · 巡影</span>
+        </a>
+      </div>
+      <div class="nav-right">
+        <div class="nav-links">
+          <a href="#how-it-works">How It Works</a>
+          <span aria-hidden="true">·</span>
+          <a href="#drives">Supported Drives</a>
+          <span aria-hidden="true">·</span>
+          <a href="#comparison">vs Sonarr / MoviePilot</a>
+          <span aria-hidden="true">·</span>
+          <a href="#install">Install</a>
+          <span aria-hidden="true">·</span>
+          <a href="/" lang="zh-CN">中文官网</a>
+        </div>
+        <a href="https://github.com/fancydirty/mediary-scout" class="github-link" aria-label="GitHub">
+          <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+        </a>
+        <span class="pill" data-stars>★ …</span>
+      </div>
+    </div>
+  </nav>
+
+  <main id="main">
+    <section id="hero">
+      <div class="container">
+        <h1>Mediary Scout <em>(巡影)</em><br>AI Agent Media Library for Cloud Drives</h1>
+        <p class="hero-sub">Ask for a movie, TV series, or anime. Mediary Scout's sandboxed AI agent searches across PanSou, Haisou, and Prowlarr, selects the best release based on quality and real-time drive space, transfers it directly into your <strong>Quark / UC / 115 / 123Pan / GuangYaPan / Tianyi</strong> cloud drive, rereads the folder to verify landed files, and patrols daily for new episodes.</p>
+
+        <div class="cta-row">
+          <a class="pill cta-main" data-dl data-dl-platform="mac" href="https://github.com/fancydirty/mediary-scout/releases/latest">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" width="18" height="18">
+              <path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09l.01-.01zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/>
+            </svg>
+            <span data-dl-label>macOS</span> <span data-dl-ver></span>
+          </a>
+          <a class="pill cta-dark" data-dl data-dl-platform="win" href="https://github.com/fancydirty/mediary-scout/releases/latest">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" width="18" height="18">
+              <path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/>
+            </svg>
+            <span data-dl-label>Windows</span> <span data-dl-ver hidden></span>
+          </a>
+          <a class="pill cta-outline" href="https://demo.mediaryscout.app">Live Read-Only Demo</a>
+          <a class="pill cta-outline" href="https://github.com/fancydirty/mediary-scout">GitHub Repo</a>
+        </div>
+
+        <p class="hero-note">Open-Source · Built-in Free LLM Pool · Signed macOS (.dmg) &amp; Windows (.exe) Desktop App · Docker Compose for NAS</p>
+      </div>
+    </section>
+
+    <div class="article">
+      <h2 id="how-it-works">Why Mediary Scout? Evidence-Driven Cloud Media Acquisition</h2>
+      <p>Traditional media automation tools (like Sonarr, Radarr, or MoviePilot) assume you maintain local multi-bay NAS hard drives, BitTorrent/PT clients, and brittle regular-expression rules. In practice, cloud drive share links and instant magnet offline transfers offer massive resource pools with zero local disk footprint—but share titles are noisy, dead links are common, and multi-season packs contain nested folders or promotional junk.</p>
+      <p><strong>Mediary Scout (巡影)</strong> replaces fragile regex pipelines with a tool-using AI agent running inside a strict write-scoped sandbox:</p>
+      <ul>
+        <li><strong>Unified Multi-Drive Orchestration &amp; Quota Protection</strong>: Connect Quark, UC, 115, 123Pan, GuangYaPan, and Tianyi simultaneously. Before every run, Mediary Scout probes each drive's remaining capacity. Drives that are full or over-quota (for example, an expired Quark SVIP account at <code>-1.34 TB</code>) are hard-blocked at the sandbox gate (<code>SANDBOX_DRIVE_OUT_OF_SPACE</code>).</li>
+        <li><strong>Single-Drive Priority, Cross-Drive Complement</strong>: If any single active drive can cover all missing episodes of a show, the agent uses only that drive and creates zero folders on other drives. When no single drive has the full season (e.g., Episodes 1–4 on 115 and Episodes 5–6 on 123Pan), the agent automatically combines both drives and records per-episode drive ownership in the unified library UI.</li>
+        <li><strong>Black-Box Verification &amp; Dedup</strong>: Transfers land in an isolated <code>staging</code> directory first. The agent inspects the real materialized video files and file sizes, deletes ad files or lower-bitrate duplicates, moves verified episodes into <code>Season NN</code>, and cleans up staging.</li>
+        <li><strong>External Subtitle Completion (assrt.net)</strong>: When a foreign movie or anime lands without Chinese subtitles, the agent automatically searches assrt.net, downloads matching subtitle packages into the drive, batch-renames <code>.ass</code> / <code>.srt</code> files to match the video filenames, and places them alongside the videos.</li>
+        <li><strong>User Message Source Replacement &amp; Agent Memory</strong>: Unhappy with an acquired file? Leave a natural-language note on the show's detail page (e.g., <em>"Episode 3 has out-of-sync audio, replace it"</em>). The agent rejects the old source, blacklists its share/magnet fingerprint across all drives, and fetches a clean replacement.</li>
+      </ul>
+
+      <h2 id="drives">Supported Cloud Drives &amp; Measured Resource Pool</h2>
+      <p>Mediary Scout evaluates cloud drive brands against five strict criteria: content retention, instant magnet offline download, share-link transfer API, ecosystem coverage on PanSou/Haisou, and free-tier usability. Six brands pass:</p>
+      <table>
+        <thead>
+          <tr>
+            <th>Cloud Drive</th>
+            <th>Share-Link Transfer</th>
+            <th>Magnet / Offline Download</th>
+            <th>Login Method</th>
+            <th>Real-Time Space Probe</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Quark (夸克网盘)</strong></td>
+            <td>✅ Largest share pool on PanSou</td>
+            <td>❌ No web magnet API</td>
+            <td>QR Code / Cookie</td>
+            <td>✅ Supported</td>
+          </tr>
+          <tr>
+            <td><strong>UC Drive (UC网盘)</strong></td>
+            <td>✅ Fast growing share pool</td>
+            <td>❌ Share-link only</td>
+            <td>QR Code / Cookie</td>
+            <td>✅ Supported</td>
+          </tr>
+          <tr>
+            <td><strong>115 Drive (115网盘)</strong></td>
+            <td>✅ Supported</td>
+            <td>✅ Instant magnet cache</td>
+            <td>QR Code / Cookie</td>
+            <td>✅ Supported</td>
+          </tr>
+          <tr>
+            <td><strong>123Pan (123网盘)</strong></td>
+            <td>✅ Free tier can transfer</td>
+            <td>✅ Built-in offline magnet</td>
+            <td>QR Code / Token (~90d)</td>
+            <td>✅ Supported</td>
+          </tr>
+          <tr>
+            <td><strong>GuangYaPan (光鸭云盘)</strong></td>
+            <td>✅ GuangYa share links</td>
+            <td>✅ Magnet / ed2k / BT</td>
+            <td>QR Code / Token</td>
+            <td>✅ Supported</td>
+          </tr>
+          <tr>
+            <td><strong>Tianyi (天翼云盘)</strong></td>
+            <td>✅ Personal cloud transfer</td>
+            <td>❌ Share-link only</td>
+            <td>QR Code / SSON Cookie</td>
+            <td>✅ Supported</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>For detailed benchmark numbers across drives, read our <a href="/guides/which-cloud-drive/">Cloud Drive Resource Pool Benchmark (Chinese)</a>.</p>
+
+      <h2 id="comparison">Mediary Scout vs. Sonarr / Radarr / MoviePilot</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Dimension</th>
+            <th>Mediary Scout (巡影)</th>
+            <th>MoviePilot / Sonarr / Radarr</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Primary Storage Target</strong></td>
+            <td>Personal Cloud Drives (Quark, UC, 115, 123, GuangYa, Tianyi)</td>
+            <td>Local NAS hard drives + PT/BT downloaders (qBittorrent / Transmission)</td>
+          </tr>
+          <tr>
+            <td><strong>Local Disk &amp; Bandwidth</strong></td>
+            <td><strong>Zero</strong> — server-side cloud transfers &amp; cloud offline magnets</td>
+            <td>High — requires local terabytes and upload seeding bandwidth</td>
+          </tr>
+          <tr>
+            <td><strong>Selection &amp; Parsing</strong></td>
+            <td><strong>AI Agent + Jev semantic prefilter</strong> + post-transfer file reread</td>
+            <td>Deterministic regex rules, custom format scores, filename parsers</td>
+          </tr>
+          <tr>
+            <td><strong>Multi-Drive Coordination</strong></td>
+            <td><strong>Unified library</strong> — single-drive priority, cross-drive gap complement, over-quota guard</td>
+            <td>Single local mount or manual path routing</td>
+          </tr>
+          <tr>
+            <td><strong>Setup Complexity</strong></td>
+            <td>Double-click Desktop App (.dmg / .exe) or 1-command <code>docker compose up -d</code></td>
+            <td>Multi-container stack (Downloader + Indexer + Media Server + Hardlink paths)</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2 id="install">Installation: Desktop App or Docker Compose</h2>
+      <h3>1. Desktop App (macOS Apple Silicon &amp; Windows x64)</h3>
+      <p>Download the latest installer from <a href="https://github.com/fancydirty/mediary-scout/releases/latest">GitHub Releases</a>. The macOS <code>.dmg</code> is signed and notarized by Apple. The app bundles its own SQLite database and defaults to Kilo Code's free LLM pool—just scan a QR code to connect your cloud drive in Settings and start acquiring titles.</p>
+
+      <h3>2. Docker Compose (NAS / Home Server / iStoreOS Router)</h3>
+      <pre><code>git clone https://github.com/fancydirty/mediary-scout &amp;&amp; cd mediary-scout
+docker compose up -d</code></pre>
+      <p>This starts the Next.js web UI + in-process background worker, PostgreSQL, a bundled PanSou search instance, and the one-click auto-updater on port <code>3000</code>.</p>
+
+      <h2>Documentation &amp; Deep-Dive Guides</h2>
+      <ul>
+        <li><a href="/">巡影 Mediary Scout 中文官网首页 (Chinese Home)</a></li>
+        <li><a href="/features/multi-drive-agent/">Unified Multi-Drive Orchestration &amp; Quota Protection</a></li>
+        <li><a href="/features/smart-search-and-subtitles/">AI Semantic Search, User Message Replacement &amp; Assrt Subtitles</a></li>
+        <li><a href="/features/agent-api/">Agent HTTP API for Claude Code / Codex / OpenClaw</a></li>
+        <li><a href="/guides/which-cloud-drive/">Six Cloud Drives Resource Benchmark</a></li>
+        <li><a href="/guides/docker-nas-deploy/">Docker &amp; NAS Deployment Guide</a></li>
+        <li><a href="/guides/cloud-drive-setup/">Cloud Drive QR Login &amp; Prowlarr / Haisou Setup</a></li>
+        <li><a href="/compare/mediary-scout-vs-moviepilot-sonarr/">Mediary Scout vs. MoviePilot / Sonarr Comparison</a></li>
+      </ul>
+    </div>
+  </main>
+
+  <footer>
+    <div class="container">
+      <div>
+        <h3>Product</h3>
+        <ul>
+          <li><a href="https://github.com/fancydirty/mediary-scout/releases/latest">Download Desktop App</a></li>
+          <li><a href="https://demo.mediaryscout.app">Live Read-Only Demo</a></li>
+          <li><a href="/features/multi-drive-agent/">Multi-Drive Agent</a></li>
+          <li><a href="/features/smart-search-and-subtitles/">Smart Search &amp; Subtitles</a></li>
+          <li><a href="/features/agent-api/">Agent HTTP API</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3>Guides &amp; Comparisons</h3>
+        <ul>
+          <li><a href="/guides/">All Guides</a></li>
+          <li><a href="/guides/which-cloud-drive/">Cloud Drive Benchmark</a></li>
+          <li><a href="/guides/docker-nas-deploy/">Docker &amp; NAS Deploy</a></li>
+          <li><a href="/guides/cloud-drive-setup/">Drive &amp; Indexer Setup</a></li>
+          <li><a href="/compare/mediary-scout-vs-moviepilot-sonarr/">vs MoviePilot &amp; Sonarr</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3>Community</h3>
+        <ul>
+          <li><a href="/">中文官网 (Chinese)</a></li>
+          <li><a href="https://github.com/fancydirty/mediary-scout">GitHub Repository</a></li>
+          <li><a href="https://github.com/fancydirty/mediary-scout/issues">GitHub Issues</a></li>
+          <li><a href="/llms.txt">llms.txt</a></li>
+        </ul>
+        <div class="tmdb-attr">
+          <p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
+        </div>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>
