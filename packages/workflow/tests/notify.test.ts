@@ -56,6 +56,25 @@ describe("resolveDriveSourceLabels (gate: account drive count ≥ 2)", () => {
     expect(m.has("legacy")).toBe(false);
     expect(m.has("unbound")).toBe(false);
   });
+
+  it("omits entries whose report status is no_coverage / failed / retrying so empty runs never blame a single drive (issue #359)", () => {
+    const m = resolveDriveSourceLabels(
+      [
+        { connectedStorageId: "cs_quark_x", notification: { id: "n_nocov", report: { status: "no_coverage" } } },
+        { connectedStorageId: "cs_quark_x", notification: { id: "n_fail", report: { status: "failed" } } },
+        { connectedStorageId: "cs_quark_x", notification: { id: "n_retry", report: { status: "retrying" } } },
+        {
+          connectedStorageId: "cs_a",
+          notification: { id: "n_ok", report: { status: "partial", driveLabels: ["夸克"] } },
+        },
+      ],
+      drivesTwo,
+    );
+    expect(m.has("n_nocov")).toBe(false);
+    expect(m.has("n_fail")).toBe(false);
+    expect(m.has("n_retry")).toBe(false);
+    expect(m.get("n_ok")).toBe("夸克");
+  });
 });
 
 describe("buildNotifyMessage sourceLabel", () => {

@@ -566,13 +566,18 @@ export class MultiDriveStorageV2 implements StorageV2 {
     if (input.directoryId === MULTI_DRIVE_MOVIE_HANDLE) {
       let activeStates = [...this.states.values()].filter((s) => s.movieDirectoryId !== undefined);
       if (activeStates.length === 0) {
-        const primary = this.states.get(this.primaryStorageId ?? "") ?? this.defaultState();
-        try {
-          const found = await this.findExistingMovieDirReadOnly(primary);
-          if (found) activeStates = [primary];
-        } catch {
-          activeStates = [];
-        }
+        const discovered = await Promise.all(
+          this.orderedDrives.map(async (drive) => {
+            const state = this.states.get(drive.storageId)!;
+            try {
+              const found = await this.findExistingMovieDirReadOnly(state);
+              return found ? state : null;
+            } catch {
+              return null;
+            }
+          }),
+        );
+        activeStates = discovered.filter((s): s is DriveRuntimeState => s !== null);
       }
       if (activeStates.length === 0) {
         return [];
@@ -624,13 +629,22 @@ export class MultiDriveStorageV2 implements StorageV2 {
     if (seasonNum !== null) {
       let statesWithSeason = [...this.states.values()].filter((s) => s.seasonDirectoryIds.has(seasonNum));
       if (statesWithSeason.length === 0) {
-        const primary = this.states.get(this.primaryStorageId ?? "") ?? this.defaultState();
-        try {
-          const found = await this.findExistingSeasonDirReadOnly(primary, seasonNum);
-          if (found) statesWithSeason = [primary];
-        } catch {
-          statesWithSeason = [];
-        }
+        // Check all connected drives in parallel so episodes already stored on a
+        // secondary drive (e.g. Quark when the run was queued on Tianyi, issue #359)
+        // are visible to `inspectTargetDir` and can be marked obtained without
+        // re-downloading.
+        const discovered = await Promise.all(
+          this.orderedDrives.map(async (drive) => {
+            const state = this.states.get(drive.storageId)!;
+            try {
+              const found = await this.findExistingSeasonDirReadOnly(state, seasonNum);
+              return found ? state : null;
+            } catch {
+              return null;
+            }
+          }),
+        );
+        statesWithSeason = discovered.filter((s): s is DriveRuntimeState => s !== null);
       }
       if (statesWithSeason.length === 0) {
         return [];

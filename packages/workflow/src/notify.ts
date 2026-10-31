@@ -12,13 +12,25 @@ export function driveDisplayName(drive: { provider: string; label: string | null
   return isRegisteredStorageProvider(drive.provider) ? getStorageBrand(drive.provider).label : drive.provider;
 }
 
+/** Statuses that represent real files in the library (mirrors `apps/web/app/notifications/page.tsx`).
+ *  A `no_coverage` / `failed` / `retrying` report landed nothing, so stamping a drive name on it
+ *  (e.g. "来源网盘：天翼云盘" when the agent searched both Tianyi and Quark and found nothing)
+ *  misleads the user into thinking only that one drive was searched (issue #359). */
+const LANDED_REPORT_STATUSES = new Set(["acquired", "complete", "airing", "partial", "replaced"]);
+
 /** Gate + resolution for the "which drive" push tag. Returns an EMPTY map when the
  *  account has < 2 drives (single-drive → no source tag anywhere). Otherwise maps
  *  each notification id to its source drive's display name. Entries whose drive is
  *  null/unknown (legacy run, drive unbound after the run, or the __unscoped__
- *  sentinel) are omitted, not errored. */
+ *  sentinel) or whose report status landed no files (`no_coverage` / `failed` /
+ *  `retrying`) are omitted, not errored. When a multi-drive run stamped explicit
+ *  `report.driveLabels`, those landed drive names take precedence over the queued
+ *  `connectedStorageId`. */
 export function resolveDriveSourceLabels(
-  entries: Array<{ connectedStorageId: string | null; notification: { id: string } }>,
+  entries: Array<{
+    connectedStorageId: string | null;
+    notification: { id: string; report?: { status?: string; driveLabels?: string[] } };
+  }>,
   drives: Array<{ id: string; provider: string; label: string | null }>,
 ): Map<string, string> {
   const labels = new Map<string, string>();
@@ -27,6 +39,15 @@ export function resolveDriveSourceLabels(
   }
   const byId = new Map(drives.map((drive) => [drive.id, driveDisplayName(drive)]));
   for (const entry of entries) {
+    const report = entry.notification.report;
+    if (report?.status && !LANDED_REPORT_STATUSES.has(report.status)) {
+      continue;
+    }
+    const reportDriveLabels = (report?.driveLabels ?? []).map((s) => s.trim()).filter(Boolean);
+    if (reportDriveLabels.length > 0) {
+      labels.set(entry.notification.id, reportDriveLabels.join("、"));
+      continue;
+    }
     const name = entry.connectedStorageId ? byId.get(entry.connectedStorageId) : undefined;
     if (name) {
       labels.set(entry.notification.id, name);
