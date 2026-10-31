@@ -434,6 +434,30 @@ describe("GuangYaClient offline ops", () => {
     });
   });
 
+  it("resolveRes does not truncate top-level directory subfiles at index >= 16", async () => {
+    const subfiles = Array.from({ length: 20 }, (_, i) => ({
+      fileName: `Folder_${i}`,
+      isDir: true,
+      subfiles: [{ fileName: `ep_${i}.mkv`, fileIndex: i, fileSize: 100 }],
+    }));
+    const fetchImpl = mockFetch(async () =>
+      jsonResponse(200, {
+        code: null,
+        msg: "success",
+        data: { resType: 1, btResInfo: { infoHash: "abc", fileName: "Pack", subfiles } },
+      }),
+    );
+    const client = new GuangYaClient({
+      accessToken: ACCESS,
+      refreshToken: REFRESH,
+      deviceId: "dev123",
+      fetchImpl,
+    });
+
+    const result = await client.resolveRes("magnet:?xt=urn:btih:abc");
+    expect(result.btResInfo?.subfiles[19]?.subfiles?.[0]?.fileName).toBe("ep_19.mkv");
+  });
+
   it("createTask posts {url,parentId,newName,fileIndexes?} and returns taskId", async () => {
     const fetchImpl = mockFetch(async () =>
       jsonResponse(200, { msg: "success", data: { taskId: "t1" } }),

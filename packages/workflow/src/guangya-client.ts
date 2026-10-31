@@ -373,13 +373,7 @@ export class GuangYaClient {
     });
     const json = (await response.json().catch(() => ({}))) as unknown;
     if (envelope) envelope.top = json;
-    const rawCode = recordValue(json, "code");
-    const numericCode =
-      typeof rawCode === "number"
-        ? rawCode
-        : typeof rawCode === "string" && /^\d+$/.test(rawCode)
-          ? Number(rawCode)
-          : null;
+    const numericCode = parseEnvelopeCode(recordValue(json, "code"));
     const authExpired =
       response.status === 401 ||
       (response.ok && numericCode !== null && GUANGYA_AUTH_EXPIRED_CODES.has(numericCode));
@@ -491,26 +485,43 @@ function toResolvedRes(data: unknown): GuangYaResolvedRes {
     resolved.btResInfo = {
       infoHash: stringValue(recordValue(btRaw, "infoHash")),
       fileName: stringValue(recordValue(btRaw, "fileName")),
-      subfiles: arrayValue(recordValue(btRaw, "subfiles")).filter(isRecord).map(toSubfile),
+      subfiles: arrayValue(recordValue(btRaw, "subfiles"))
+        .filter(isRecord)
+        .map((sub) => toSubfile(sub)),
       ...(rawExcluded.length > 0 ? { excludeIndices: [...new Set(rawExcluded)] } : {}),
     };
   }
   return resolved;
 }
 
-function toSubfile(raw: Record<string, unknown>, depth = 1): GuangYaSubfile {
-  const isDir = raw.isDir === true || raw.isDir === 1;
-  const idx = raw.fileIndex;
+function parseEnvelopeCode(rawCode: unknown): number | null {
+  if (typeof rawCode === "number" && Number.isFinite(rawCode)) {
+    return rawCode;
+  }
+  if (typeof rawCode === "string" && /^\d+$/.test(rawCode)) {
+    return Number(rawCode);
+  }
+  return null;
+}
+
+function parseLeafFileIndex(idx: unknown, isDir: boolean): number | null {
+  if (isDir) {
+    return null;
+  }
+  if (typeof idx === "number" && Number.isFinite(idx) && idx >= 0) {
+    return idx;
+  }
   // Per official guangyapan-drive skill (`src/cloud-collection.mjs:189`):
   // "protobuf JSON may omit uint32 zero values; the Web client also treats omission as index 0."
-  const parsedIdx =
-    isDir
-      ? null
-      : typeof idx === "number" && Number.isFinite(idx) && idx >= 0
-        ? idx
-        : idx === undefined || idx === null
-          ? 0
-          : null;
+  if (idx === undefined || idx === null) {
+    return 0;
+  }
+  return null;
+}
+
+function toSubfile(raw: Record<string, unknown>, depth = 1): GuangYaSubfile {
+  const isDir = raw.isDir === true || raw.isDir === 1;
+  const parsedIdx = parseLeafFileIndex(raw.fileIndex, isDir);
   const children =
     isDir && depth < 16
       ? arrayValue(raw.subfiles)
