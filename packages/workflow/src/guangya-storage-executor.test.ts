@@ -75,6 +75,61 @@ describe("GuangYaStorageExecutor.transfer", () => {
     expect(attempt.id).toBe("run-1_transfer_1");
   });
 
+  it("flattens nested BT directories, treats omitted fileIndex as 0, and drops server excludeIndices", async () => {
+    const listFiles = vi
+      .fn<GuangYaStorageClient["listFiles"]>()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        { fileId: "v1", parentId: SCOPE, fileName: "S01E01.mkv", fileSize: 50 * 1024 * 1024, resType: 1 },
+        { fileId: "v2", parentId: SCOPE, fileName: "S01E02.mkv", fileSize: 50 * 1024 * 1024, resType: 1 },
+      ]);
+    const resolveRes = vi.fn<GuangYaStorageClient["resolveRes"]>(async () => ({
+      resType: 1,
+      btResInfo: {
+        infoHash: "deadbeef",
+        fileName: "Show.S01",
+        excludeIndices: [1],
+        subfiles: [
+          {
+            fileName: "Disc1",
+            fileIndex: null,
+            fileSize: 0,
+            isDir: true,
+            subfiles: [
+              // Omitted protobuf uint32 zero comes through as null/0
+              { fileName: "S01E01.mkv", fileIndex: null, fileSize: 50 * 1024 * 1024 },
+              // Excluded ad video index 1
+              { fileName: "promo.mp4", fileIndex: 1, fileSize: 5 * 1024 * 1024 },
+            ],
+          },
+          {
+            fileName: "Disc2",
+            fileIndex: null,
+            fileSize: 0,
+            isDir: true,
+            subfiles: [{ fileName: "S01E02.mkv", fileIndex: 5, fileSize: 50 * 1024 * 1024 }],
+          },
+        ],
+      },
+    }));
+    const createTask = vi.fn<GuangYaStorageClient["createTask"]>(async () => "task-nested");
+    const client = fakeClient({ listFiles, resolveRes, createTask });
+    const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [SCOPE] });
+
+    const attempt = await executor.transfer({
+      workflowRunId: "run-1",
+      directoryId: SCOPE,
+      candidate: candidate(),
+    });
+
+    expect(createTask).toHaveBeenCalledTimes(1);
+    expect(createTask.mock.calls[0]![0]).toMatchObject({
+      parentId: SCOPE,
+      fileIndexes: [0, 5],
+    });
+    expect(attempt.status).toBe("succeeded");
+  });
+
   it("fails LOUD on a share link of ANOTHER brand (夸克/115 cannot land on 光鸭)", async () => {
     const client = fakeClient();
     const executor = new GuangYaStorageExecutor({ client, writeScopeDirectoryIds: [SCOPE] });

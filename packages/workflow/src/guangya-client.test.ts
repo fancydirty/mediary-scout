@@ -243,6 +243,48 @@ describe("GuangYaClient 401 -> refresh -> retry", () => {
 
     await expect(client.listFiles("p0")).rejects.toBeInstanceOf(GuangYaAuthError);
   });
+
+  it.each([110, 117, 118])(
+    "refreshes tokens on HTTP 200 with business auth-expired code=%i (official guangyapan-drive AUTH_CODES)",
+    async (authCode) => {
+      const newAccess = makeJwt({ sub: "aj6Qo5l86EF4O2AM" });
+      const newRefresh = "refresh-token-1";
+      let listCalls = 0;
+      const fetchImpl = mockFetch(async (url: string) => {
+        if (url === `${API_HOST}/userres/v1/file/get_file_list`) {
+          listCalls += 1;
+          if (listCalls === 1) {
+            return jsonResponse(200, { code: authCode, msg: "token expired" });
+          }
+          return jsonResponse(200, { code: null, msg: "success", data: { list: [] } });
+        }
+        if (url === `${AUTH_HOST}/v1/auth/token`) {
+          return jsonResponse(200, {
+            access_token: newAccess,
+            refresh_token: newRefresh,
+          });
+        }
+        throw new Error(`unexpected url ${url}`);
+      });
+      const onTokensRefreshed = vi.fn();
+      const client = new GuangYaClient({
+        accessToken: ACCESS,
+        refreshToken: REFRESH,
+        deviceId: "dev123",
+        onTokensRefreshed,
+        fetchImpl,
+      });
+
+      const items = await client.listFiles("p0");
+      expect(items).toEqual([]);
+      expect(listCalls).toBe(2);
+      expect(onTokensRefreshed).toHaveBeenCalledWith({
+        accessToken: newAccess,
+        refreshToken: newRefresh,
+        deviceId: "dev123",
+      });
+    },
+  );
 });
 
 describe("GuangYaClient file ops", () => {
@@ -351,6 +393,44 @@ describe("GuangYaClient offline ops", () => {
     expect(url).toBe(`${API_HOST}/cloudcollection/v1/resolve_res`);
     expect(JSON.parse((init as RequestInit).body as string)).toEqual({
       url: "magnet:?xt=urn:btih:abc",
+    });
+  });
+
+  it("resolveRes normalizes omitted protobuf fileIndex to 0, recurses nested subfiles, and preserves excludeIndices", async () => {
+    const rawData = {
+      resType: 1,
+      btResInfo: {
+        infoHash: "abc",
+        fileName: "SeasonPack",
+        excludeIndices: [1],
+        subfiles: [
+          // Protobuf uint32 zero omission: fileIndex is absent on the 0th leaf
+          { fileName: "S01E01.mkv", fileSize: 500 },
+          { fileName: "ad.mp4", fileIndex: 1, fileSize: 10 },
+          {
+            fileName: "Season 01",
+            isDir: true,
+            subfiles: [{ fileName: "S01E02.mkv", fileIndex: 2, fileSize: 600 }],
+          },
+        ],
+      },
+    };
+    const fetchImpl = mockFetch(async () => jsonResponse(200, { code: null, msg: "success", data: rawData }));
+    const client = new GuangYaClient({
+      accessToken: ACCESS,
+      refreshToken: REFRESH,
+      deviceId: "dev123",
+      fetchImpl,
+    });
+
+    const result = await client.resolveRes("magnet:?xt=urn:btih:abc");
+    expect(result.btResInfo?.excludeIndices).toEqual([1]);
+    expect(result.btResInfo?.subfiles[0]?.fileIndex).toBe(0);
+    expect(result.btResInfo?.subfiles[2]?.isDir).toBe(true);
+    expect(result.btResInfo?.subfiles[2]?.subfiles?.[0]).toEqual({
+      fileName: "S01E02.mkv",
+      fileIndex: 2,
+      fileSize: 600,
     });
   });
 
