@@ -2667,23 +2667,35 @@ function makeTokenPersister(
   };
 }
 
+function hasUsableStorageCredential(storage: { provider: string; payload: unknown }): boolean {
+  const { cookie, credential } = extractStorageCredential(storage.provider, storage.payload);
+  return Boolean(cookie || credential);
+}
+
+/** Pick the default drive for an account when no explicit `connectedStorageId` is
+ *  passed: first active registered drive with a valid credential, then any
+ *  registered drive with a valid credential. */
+function pickDefaultConnectedStorage<
+  T extends { id: string; provider: string; status: "active" | "frozen"; payload: unknown },
+>(storages: readonly T[]): T | undefined {
+  const registered = storages.filter((storage) => isRegisteredStorageProvider(storage.provider));
+  return (
+    registered.find((storage) => storage.status === "active" && hasUsableStorageCredential(storage)) ??
+    registered.find((storage) => hasUsableStorageCredential(storage))
+  );
+}
+
 /** The drive an unbound run of this account lands on — the same pick as
  *  getAccountStorageCredentials(accountId, null), without its credential checks
  *  or directory provisioning. Used only as the patrol's per-drive key. */
 async function defaultDriveIdOf(accountId: string): Promise<string | null> {
   const storages = await getWorkflowRepository().listConnectedStorages(accountId);
+  const picked = pickDefaultConnectedStorage(storages);
+  if (picked) {
+    return picked.id;
+  }
   const registered = storages.filter((storage) => isRegisteredStorageProvider(storage.provider));
-  const usable = registered.filter((storage) => {
-    const { cookie, credential } = extractStorageCredential(storage.provider, storage.payload);
-    return Boolean(cookie || credential);
-  });
-  return (
-    usable.find((storage) => storage.status === "active")?.id ??
-    usable[0]?.id ??
-    registered.find((storage) => storage.status === "active")?.id ??
-    registered[0]?.id ??
-    null
-  );
+  return registered.find((storage) => storage.status === "active")?.id ?? registered[0]?.id ?? null;
 }
 
 async function getAccountStorageCredentials(
@@ -2692,19 +2704,13 @@ async function getAccountStorageCredentials(
 ): Promise<AccountStorageCredentials | null> {
   try {
     const storages = await getWorkflowRepository().listConnectedStorages(accountId);
-    const registered = storages.filter((storage) => isRegisteredStorageProvider(storage.provider));
     // Tree model: when a specific drive is pinned (the run's connected_storage_id),
     // resolve THAT drive; otherwise pick the account's first active drive with a
     // valid credential (falling back to any drive with a valid credential). A stale
     // or incomplete first row must never hide a working second drive.
-    const hasCredential = (storage: (typeof registered)[number]) => {
-      const { cookie, credential } = extractStorageCredential(storage.provider, storage.payload);
-      return Boolean(cookie || credential);
-    };
     const drive = connectedStorageId
-      ? registered.find((storage) => storage.id === connectedStorageId)
-      : (registered.find((storage) => storage.status === "active" && hasCredential(storage)) ??
-        registered.find((storage) => hasCredential(storage)));
+      ? storages.find((storage) => storage.id === connectedStorageId && isRegisteredStorageProvider(storage.provider))
+      : pickDefaultConnectedStorage(storages);
     if (!drive) {
       return null;
     }
