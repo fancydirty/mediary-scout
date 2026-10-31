@@ -522,7 +522,10 @@ export async function savePatrolConcurrencyAction(value: number): Promise<PushSe
 export async function runPatrolNowAction(): Promise<PushSettingsActionResult & { checked?: number }> {
   assertNotDemo();
   try {
-    const { runScheduledType3 } = await import("../lib/workflow-runtime");
+    const { runScheduledType3, workerHasConfiguredDrive } = await import("../lib/workflow-runtime");
+    if (typeof workerHasConfiguredDrive === "function" && !(await workerHasConfiguredDrive())) {
+      return { success: false, message: "尚未连接任何网盘，请先在「网盘连接」中绑定网盘后再巡检。" };
+    }
     const result = await runScheduledType3({ force: true });
     if (result.skipped === "update_in_progress") {
       return { success: false, message: "正在更新，更新完成后再巡检。" };
