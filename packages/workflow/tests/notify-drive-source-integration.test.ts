@@ -72,7 +72,7 @@ describe("notification drive-source: end-to-end through a fake channel", () => {
     expect(sent[0]!.text).not.toContain("来源网盘");
   });
 
-  it("digest: each show line carries its source drive when ≥2 drives", async () => {
+  it("digest: each show line carries its source drive when ≥2 drives, and omits no_coverage shows", async () => {
     const sched = {
       ...notification("d1"),
       kind: "episodes_restored",
@@ -87,17 +87,38 @@ describe("notification drive-source: end-to-end through a fake channel", () => {
         realMissing: [],
       },
     };
-    const labels = resolveDriveSourceLabels([{ connectedStorageId: "cs_a", notification: sched }], drivesTwo);
+    const noCov = {
+      ...notification("d2"),
+      kind: "no_coverage",
+      trigger: "scheduled" as const,
+      report: {
+        ...report,
+        titleName: "731部队",
+        seasonLabel: "第 1 季",
+        status: "no_coverage" as const,
+        lines: ["暂未找到可用资源 · 将持续尝试"],
+        newlyObtained: [],
+        realMissing: ["E01", "E02"],
+      },
+    };
+    const labels = resolveDriveSourceLabels(
+      [
+        { connectedStorageId: "cs_a", notification: sched },
+        { connectedStorageId: "cs_quark_x", notification: noCov },
+      ],
+      drivesTwo,
+    );
     const digest = {
       id: "dg",
       workflowRunId: "run_dg",
       kind: "daily_digest",
       title: "每日巡检",
-      body: formatDailyDigestPushText([sched as never], { sourceLabelById: labels }),
+      body: formatDailyDigestPushText([sched as never, noCov as never], { sourceLabelById: labels }),
       createdAt: "2026-06-20T00:00:00Z",
     };
     const { channel, sent } = capturer();
     await dispatchNotifications({ channels: [channel], notifications: [digest as never] });
     expect(sent[0]!.text).toContain("来自115 网盘");
+    expect(sent[0]!.text).not.toContain("来自夸克网盘");
   });
 });

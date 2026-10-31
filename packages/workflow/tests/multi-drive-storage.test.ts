@@ -366,4 +366,65 @@ describe("MultiDriveStorageV2 — lazy per-drive staging, brand/storageId routin
       "run_dup_transfer_cs_123_1",
     ]);
   });
+
+  it("discovers pre-existing season files on a secondary drive when primaryStorageId has none (issue #359: Tianyi primary + Quark already holds S01E01-E04)", async () => {
+    const simTianyi = new Storage115Simulator({ packs: {} });
+    const simQuark = new Storage115Simulator({
+      packs: {
+        preseed: {
+          files: [
+            { path: "S01E01.mp4", sizeBytes: 1400 },
+            { path: "S01E02.mp4", sizeBytes: 1400 },
+            { path: "S01E03.mp4", sizeBytes: 1400 },
+            { path: "S01E04.mp4", sizeBytes: 1400 },
+          ],
+        },
+      },
+    });
+
+    // Pre-seed Quark with 731部队 (2026) {tmdb-999999}/Season 01 holding S01E01-S01E04
+    const quarkShowDir = await simQuark.createDirectory({
+      name: "731部队 (2026) {tmdb-999999}",
+      parentId: "root",
+    });
+    const quarkSeasonDir = await simQuark.createDirectory({
+      name: "Season 01",
+      parentId: quarkShowDir,
+    });
+    await simQuark.transferCandidate({ candidateId: "preseed", intoDirectoryId: quarkSeasonDir });
+
+    const driveTianyi = makeDrive({ storageId: "cs_tianyi", provider: "tianyi", label: "天翼云盘", sim: simTianyi });
+    const driveQuark = makeDrive({ storageId: "cs_quark", provider: "quark", label: "夸克网盘", sim: simQuark });
+    // Wire listChildDirectories on Quark so findExistingSeasonDirReadOnly can see the pre-existing folders
+    driveQuark.storage.listChildDirectories = async (parentId) => {
+      if (parentId === "root") return [{ id: quarkShowDir, name: "731部队 (2026) {tmdb-999999}" }];
+      if (parentId === quarkShowDir) return [{ id: quarkSeasonDir, name: "Season 01" }];
+      return [];
+    };
+
+    const coordinator = new MultiDriveStorageV2({
+      drives: [driveTianyi, driveQuark],
+      primaryStorageId: "cs_tianyi",
+      target: {
+        kind: "tv",
+        categoryKey: "tv",
+        title: "731部队",
+        year: 2026,
+        tmdbId: 999999,
+        seasons: [1],
+        workflowRunId: "run_731",
+      },
+      buildDriveAdapter: (d) => (d.storageId === "cs_tianyi" ? simTianyi : simQuark),
+      resolveCandidate: () => undefined,
+    });
+
+    const files = await coordinator.listTree({ directoryId: multiDriveSeasonHandle(1) });
+    expect(files.map((f) => f.path)).toEqual([
+      "S01E01.mp4",
+      "S01E02.mp4",
+      "S01E03.mp4",
+      "S01E04.mp4",
+    ]);
+    expect(files.every((f) => f.id.startsWith("cs_quark::"))).toBe(true);
+  });
 });

@@ -440,10 +440,15 @@ function appendMultiDriveBreakdownToNotifications(
   if (touched.length === 0) {
     return [...notifications];
   }
+  const storageIdsWithCopies = new Set(copies.map((c) => c.storageId));
+  const drivesWithFiles =
+    storageIdsWithCopies.size > 0
+      ? touched.filter((d) => storageIdsWithCopies.has(d.storageId))
+      : [];
   const labelById = new Map(
     touched.map((d) => [d.storageId, shortDriveLabel(d.label)]),
   );
-  const driveLabels = [...new Set(touched.map((d) => shortDriveLabel(d.label)))];
+  const driveLabels = [...new Set(drivesWithFiles.map((d) => shortDriveLabel(d.label)))];
   const countByStorage = new Map<string, Set<string>>();
   for (const c of copies) {
     let set = countByStorage.get(c.storageId);
@@ -1212,7 +1217,11 @@ export async function runMovieAcquisitionV2AndPersist(input: {
       };
     });
   }
-  const movieDriveLabels = (result.touchedTargetDrives ?? []).map((d) => shortDriveLabel(d.label));
+  const obtainedMovie = result.episodes.filter((ep) => ep.obtained);
+  const movieDriveLabels =
+    obtainedMovie.length > 0
+      ? (result.touchedTargetDrives ?? []).map((d) => shortDriveLabel(d.label))
+      : [];
   const movieNotifications = stampNotifications(result.notifications, input.notice).map((n) => {
     if (!n.report || movieDriveLabels.length === 0) return n;
     return {
