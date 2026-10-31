@@ -215,18 +215,26 @@ export class GuangYaStorageExecutor implements StorageExecutor {
     let providerMessage = "";
     try {
       const resolved = await this.client.resolveRes(url);
-      const subs = resolved.btResInfo?.subfiles ?? [];
+      const subs = flattenBtSubfiles(resolved.btResInfo?.subfiles ?? []);
+      const excluded = new Set(resolved.btResInfo?.excludeIndices ?? []);
       const videoIndexes = subs
-        .map((s, i) => ({ idx: s.fileIndex ?? i, name: s.fileName }))
-        .filter((s) => isVideoName(s.name, this.videoExtensions))
+        .map((s) => ({
+          // Protobuf JSON omits uint32 zero values (`fileIndex: 0`), so a missing/null
+          // leaf fileIndex is 0 per the official guangyapan-drive skill, never the
+          // array position `i` (which drifts when directories are flattened).
+          idx: s.fileIndex ?? 0,
+          name: s.fileName,
+        }))
+        .filter((s) => !excluded.has(s.idx) && isVideoName(s.name, this.videoExtensions))
         .map((s) => s.idx);
+      const uniqueVideoIndexes = [...new Set(videoIndexes)];
       const taskInput: Parameters<GuangYaStorageClient["createTask"]>[0] = {
         url: resolved.url || url,
         parentId: safe,
         newName: resolved.btResInfo?.fileName || "offline",
       };
-      if (videoIndexes.length) {
-        taskInput.fileIndexes = videoIndexes;
+      if (uniqueVideoIndexes.length) {
+        taskInput.fileIndexes = uniqueVideoIndexes;
       }
       const taskId = await this.client.createTask(taskInput);
       await this.pollTask(taskId);
@@ -294,7 +302,9 @@ export class GuangYaStorageExecutor implements StorageExecutor {
       const rootItems = await client.listShareFiles(accessToken, "");
       const fileIds = rootItems.map((item) => idOf(item)).filter((id): id is string => Boolean(id));
       if (fileIds.length === 0) {
-        throw new Error("GUANGYA_SHARE_EMPTY: 分享可打开但列不出任何文件(可能被分享者限制或内容审核中),无法转存,请换候选");
+        throw new Error(
+          "GUANGYA_SHARE_EMPTY: 分享当前没有可见文件(光鸭新创建的分享需后台完成分享审核后才可见,或已被限制),无法转存,请换候选",
+        );
       }
       // The submit itself can fail in TRANSIT (timeout / reset) after the server took it:
       // from that moment on the outcome is unknown, so it is treated like an accepted task.
@@ -860,6 +870,26 @@ function sizeOf(item: GuangYaStorageItem): number {
 function isVideoName(name: string, videoExtensions: Set<string>): boolean {
   const lower = name.toLowerCase();
   return [...videoExtensions].some((ext) => lower.endsWith(ext));
+}
+
+function flattenBtSubfiles(
+  subfiles: NonNullable<GuangYaResolvedRes["btResInfo"]>["subfiles"],
+  depth = 1,
+): NonNullable<GuangYaResolvedRes["btResInfo"]>["subfiles"] {
+  if (depth > MAX_RECURSIVE_COLLECT_DEPTH) {
+    return [];
+  }
+  const leaves: NonNullable<GuangYaResolvedRes["btResInfo"]>["subfiles"] = [];
+  for (const item of subfiles) {
+    if (item.isDir || (item.subfiles && item.subfiles.length > 0)) {
+      if (item.subfiles) {
+        leaves.push(...flattenBtSubfiles(item.subfiles, depth + 1));
+      }
+      continue;
+    }
+    leaves.push(item);
+  }
+  return leaves;
 }
 
 function normalizeId(directoryId: string): string {

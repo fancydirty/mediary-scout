@@ -26,6 +26,9 @@ const API_HOST = "https://api.guangyapan.com";
 
 const DEFAULT_LIST_PAGE_SIZE = 100;
 const DEFAULT_HTTP_TIMEOUT_MS = 20_000;
+/** HTTP 200 envelope codes that mean the access_token is expired (per official
+ *  guangyapan-drive v1.0.2 `src/api-client.mjs`: `const AUTH_CODES = new Set([110, 117, 118])`). */
+const GUANGYA_AUTH_EXPIRED_CODES = new Set([110, 117, 118]);
 
 /** A directory listing entry from get_file_list. */
 export interface GuangYaItem {
@@ -36,11 +39,14 @@ export interface GuangYaItem {
   resType: number;
 }
 
-/** One subfile inside a bt/磁力 resource (fileIndex is null when the API omits it). */
+/** One subfile inside a bt/磁力 resource (fileIndex is null when the API omits it;
+ *  nested directories carry `isDir: true` and `subfiles`). */
 export interface GuangYaSubfile {
   fileName: string;
   fileIndex: number | null;
   fileSize: number;
+  isDir?: boolean;
+  subfiles?: GuangYaSubfile[];
 }
 
 /** resolve_res result, parsed into the typed shape the executor relies on. */
@@ -51,6 +57,8 @@ export interface GuangYaResolvedRes {
     infoHash: string;
     fileName: string;
     subfiles: GuangYaSubfile[];
+    /** Server-recommended junk/ad file indexes to exclude (from official skill). */
+    excludeIndices?: number[];
   };
 }
 
@@ -352,9 +360,10 @@ export class GuangYaClient {
   }
 
   /**
-   * POST to the api host with Bearer + Did + Dt:4. On 401 (once) refresh and
-   * retry. Success = `msg===""||msg==="success"`; otherwise throw (GuangYaAuthError
-   * on 401, plain Error otherwise) carrying the server msg.
+   * POST to the api host with Bearer + Did + Dt:4. On 401 or HTTP 200 with
+   * business auth code 110/117/118 (once) refresh and retry. Success =
+   * `msg===""||msg==="success"`; otherwise throw (GuangYaAuthError on auth
+   * failure, plain Error otherwise) carrying the server msg.
    */
   private async postAPI(path: string, body: unknown, retried = false, envelope?: { top?: unknown }): Promise<unknown> {
     const response = await this.fetchImpl(`${API_HOST}${path}`, {
@@ -362,20 +371,27 @@ export class GuangYaClient {
       headers: this.apiHeaders(),
       body: JSON.stringify(body),
     });
-    if (response.status === 401) {
+    const json = (await response.json().catch(() => ({}))) as unknown;
+    if (envelope) envelope.top = json;
+    const numericCode = parseEnvelopeCode(recordValue(json, "code"));
+    const authExpired =
+      response.status === 401 ||
+      (response.ok && numericCode !== null && GUANGYA_AUTH_EXPIRED_CODES.has(numericCode));
+    if (authExpired) {
       if (retried) {
-        throw new GuangYaAuthError(`GUANGYA_AUTH_FAILED: 401 after refresh (${path})`);
+        throw new GuangYaAuthError(
+          `GUANGYA_AUTH_FAILED: ${response.status === 401 ? "401" : `code=${numericCode}`} after refresh (${path})`,
+        );
       }
       await this.refreshTokens();
       return this.postAPI(path, body, true, envelope);
     }
-    const json = (await response.json().catch(() => ({}))) as unknown;
-    if (envelope) envelope.top = json;
     const msg = stringValue(recordValue(json, "msg"));
-    if (response.ok && (msg === "" || msg.toLowerCase() === "success")) {
+    if (response.ok && (numericCode === null || numericCode === 0) && (msg === "" || msg.toLowerCase() === "success")) {
       return recordValue(json, "data");
     }
-    throw new Error(`GUANGYA_API_FAILED: ${path} status=${response.status} msg=${msg}`);
+    const codeSuffix = numericCode !== null && numericCode !== 0 ? ` code=${numericCode}` : "";
+    throw new Error(`GUANGYA_API_FAILED: ${path} status=${response.status}${codeSuffix} msg=${msg}`);
   }
 
   /**
@@ -463,21 +479,61 @@ function toResolvedRes(data: unknown): GuangYaResolvedRes {
   }
   const btRaw = recordValue(data, "btResInfo");
   if (isRecord(btRaw)) {
+    const rawExcluded = arrayValue(recordValue(btRaw, "excludeIndices"))
+      .map((v) => (typeof v === "number" ? v : typeof v === "string" && /^\d+$/.test(v) ? Number(v) : Number.NaN))
+      .filter((n) => Number.isSafeInteger(n) && n >= 0);
     resolved.btResInfo = {
       infoHash: stringValue(recordValue(btRaw, "infoHash")),
       fileName: stringValue(recordValue(btRaw, "fileName")),
-      subfiles: arrayValue(recordValue(btRaw, "subfiles")).filter(isRecord).map(toSubfile),
+      subfiles: arrayValue(recordValue(btRaw, "subfiles"))
+        .filter(isRecord)
+        .map((sub) => toSubfile(sub)),
+      ...(rawExcluded.length > 0 ? { excludeIndices: [...new Set(rawExcluded)] } : {}),
     };
   }
   return resolved;
 }
 
-function toSubfile(raw: Record<string, unknown>): GuangYaSubfile {
-  const idx = raw.fileIndex;
+function parseEnvelopeCode(rawCode: unknown): number | null {
+  if (typeof rawCode === "number" && Number.isFinite(rawCode)) {
+    return rawCode;
+  }
+  if (typeof rawCode === "string" && /^\d+$/.test(rawCode)) {
+    return Number(rawCode);
+  }
+  return null;
+}
+
+function parseLeafFileIndex(idx: unknown, isDir: boolean): number | null {
+  if (isDir) {
+    return null;
+  }
+  if (typeof idx === "number" && Number.isFinite(idx) && idx >= 0) {
+    return idx;
+  }
+  // Per official guangyapan-drive skill (`src/cloud-collection.mjs:189`):
+  // "protobuf JSON may omit uint32 zero values; the Web client also treats omission as index 0."
+  if (idx === undefined || idx === null) {
+    return 0;
+  }
+  return null;
+}
+
+function toSubfile(raw: Record<string, unknown>, depth = 1): GuangYaSubfile {
+  const isDir = raw.isDir === true || raw.isDir === 1;
+  const parsedIdx = parseLeafFileIndex(raw.fileIndex, isDir);
+  const children =
+    isDir && depth < 16
+      ? arrayValue(raw.subfiles)
+          .filter(isRecord)
+          .map((child) => toSubfile(child, depth + 1))
+      : undefined;
   return {
     fileName: stringValue(raw.fileName),
-    fileIndex: typeof idx === "number" && Number.isFinite(idx) ? idx : null,
+    fileIndex: parsedIdx,
     fileSize: numberValue(raw.fileSize),
+    ...(isDir ? { isDir: true } : {}),
+    ...(children && children.length > 0 ? { subfiles: children } : {}),
   };
 }
 
