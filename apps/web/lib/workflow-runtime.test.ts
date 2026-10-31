@@ -905,6 +905,34 @@ describe("workerHasConfiguredDrive (C1: any account's drive counts)", () => {
     vi.spyOn(repo, "hasAnyConnectedStorage").mockRejectedValueOnce(new Error("db down"));
     await expect(rt.workerHasConfiguredDrive()).resolves.toBe(false);
   });
+
+  it("runScheduledType3 & runNextQueuedWorkflow in adapter=115 without PAN115_COOKIE do not throw PAN115_COOKIE is required (issue #186)", async () => {
+    const prevAgent = process.env.MEDIA_TRACK_AGENT_ADAPTER;
+    process.env.MEDIA_TRACK_AGENT_ADAPTER = "vercel-ai";
+    try {
+      const rt = await boot();
+      const repo = rt.getWorkflowRepository();
+      // Multi-user or non-115 user where acct_default has no 115 cookie (or first row has empty payload)
+      await repo.upsertConnectedStorage({
+        id: "cs_broken_first",
+        accountId: "acct_default",
+        provider: "pan115",
+        providerUid: "broken",
+        label: "broken",
+        payload: {},
+        rootCid: null,
+        moviesCid: null,
+        tvCid: null,
+        animeCid: null,
+        createdAt: "2026-07-01T00:00:00.000Z",
+      });
+      await expect(rt.runScheduledType3({ force: true })).resolves.toMatchObject({ outcomes: [] });
+      await expect(rt.runNextQueuedWorkflow()).resolves.toEqual({ status: "idle" });
+    } finally {
+      if (prevAgent === undefined) delete process.env.MEDIA_TRACK_AGENT_ADAPTER;
+      else process.env.MEDIA_TRACK_AGENT_ADAPTER = prevAgent;
+    }
+  });
 });
 
 describe("requireAuthenticatedAccountId (C2: refuse acct_unauthenticated writes)", () => {

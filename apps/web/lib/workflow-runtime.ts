@@ -2667,12 +2667,35 @@ function makeTokenPersister(
   };
 }
 
+function hasUsableStorageCredential(storage: { provider: string; payload: unknown }): boolean {
+  const { cookie, credential } = extractStorageCredential(storage.provider, storage.payload);
+  return Boolean(cookie || credential);
+}
+
+/** Pick the default drive for an account when no explicit `connectedStorageId` is
+ *  passed: first active registered drive with a valid credential, then any
+ *  registered drive with a valid credential. */
+function pickDefaultConnectedStorage<
+  T extends { id: string; provider: string; status: "active" | "frozen"; payload: unknown },
+>(storages: readonly T[]): T | undefined {
+  const registered = storages.filter((storage) => isRegisteredStorageProvider(storage.provider));
+  return (
+    registered.find((storage) => storage.status === "active" && hasUsableStorageCredential(storage)) ??
+    registered.find((storage) => hasUsableStorageCredential(storage))
+  );
+}
+
 /** The drive an unbound run of this account lands on — the same pick as
  *  getAccountStorageCredentials(accountId, null), without its credential checks
  *  or directory provisioning. Used only as the patrol's per-drive key. */
 async function defaultDriveIdOf(accountId: string): Promise<string | null> {
   const storages = await getWorkflowRepository().listConnectedStorages(accountId);
-  return storages.find((storage) => isRegisteredStorageProvider(storage.provider))?.id ?? null;
+  const picked = pickDefaultConnectedStorage(storages);
+  if (picked) {
+    return picked.id;
+  }
+  const registered = storages.filter((storage) => isRegisteredStorageProvider(storage.provider));
+  return registered.find((storage) => storage.status === "active")?.id ?? registered[0]?.id ?? null;
 }
 
 async function getAccountStorageCredentials(
@@ -2682,14 +2705,12 @@ async function getAccountStorageCredentials(
   try {
     const storages = await getWorkflowRepository().listConnectedStorages(accountId);
     // Tree model: when a specific drive is pinned (the run's connected_storage_id),
-    // resolve THAT drive; otherwise the account's first registered-brand drive
-    // (single-drive / primary). Brand-agnostic — 115 or quark. Never silently fall
-    // through to another drive.
+    // resolve THAT drive; otherwise pick the account's first active drive with a
+    // valid credential (falling back to any drive with a valid credential). A stale
+    // or incomplete first row must never hide a working second drive.
     const drive = connectedStorageId
-      ? storages.find(
-          (storage) => storage.id === connectedStorageId && isRegisteredStorageProvider(storage.provider),
-        )
-      : storages.find((storage) => isRegisteredStorageProvider(storage.provider));
+      ? storages.find((storage) => storage.id === connectedStorageId && isRegisteredStorageProvider(storage.provider))
+      : pickDefaultConnectedStorage(storages);
     if (!drive) {
       return null;
     }
@@ -2952,6 +2973,30 @@ export async function workerHasConfiguredDrive(): Promise<boolean> {
   }
 }
 
+const NO_CONNECTED_DRIVE_MESSAGE =
+  "尚未连接可用网盘，请先在「设置 → 网盘连接」中绑定网盘后再试。";
+
+function createUnconfiguredStorageExecutor(): StorageExecutor {
+  const fail = async (): Promise<never> => {
+    throw new Error(NO_CONNECTED_DRIVE_MESSAGE);
+  };
+  return {
+    getSpace: async () => null,
+    createDirectory: fail,
+    listVideoFiles: fail,
+    listUnparsedVideoFiles: fail,
+    renameFile: fail,
+    transfer: fail,
+    flattenDirectory: fail,
+    deleteFiles: fail,
+    removeDirectory: fail,
+    listTree: fail,
+    listSubdirectories: fail,
+    listChildDirectories: fail,
+    moveFiles: fail,
+  };
+}
+
 async function getWorkerStorageExecutor(
   accountId: string = DEFAULT_ACCOUNT_ID,
   connectedStorageId?: string | null,
@@ -2988,8 +3033,14 @@ async function getWorkerStorageExecutor(
         env: process.env,
       });
     }
-    // No drive bound yet → legacy env-cookie 115 path (fresh deploy bootstrap).
-    return createProtectedPan115CookieStorageExecutorFromEnv({ env: process.env });
+    // Legacy env-cookie 115 bootstrap when PAN115_COOKIE is actually set; otherwise
+    // return a lazy brand-agnostic placeholder so outer callers (runScheduledType3,
+    // runNextQueuedWorkflow) don't crash on "PAN115_COOKIE is required" before
+    // per-account resolveAccountContext runs (issue #186).
+    if ((process.env.PAN115_COOKIE ?? "").trim().length > 0) {
+      return createProtectedPan115CookieStorageExecutorFromEnv({ env: process.env });
+    }
+    return createUnconfiguredStorageExecutor();
   }
   if (adapter !== "fake") {
     throw new Error(`MEDIA_TRACK_STORAGE_ADAPTER_UNSUPPORTED: ${adapter}`);
