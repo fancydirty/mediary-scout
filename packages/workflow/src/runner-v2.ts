@@ -282,28 +282,29 @@ async function scanTouchedSeasonDrives(
   touched: NonNullable<BridgedV2Result["touchedTargetDrives"]>,
   seasonNumber: number,
 ): Promise<TouchedSeasonDriveScan[]> {
-  const scans: TouchedSeasonDriveScan[] = [];
-  for (const drive of touched) {
-    const seasonDirId = drive.seasonDirectoryIds[seasonNumber];
-    if (!seasonDirId) continue;
-    let videoFiles: Array<{ id: string; name?: string; sizeBytes: number; episodeCode: string | null }> = [];
-    try {
-      videoFiles = await drive.executor.listVideoFiles(seasonDirId);
-    } catch {
-      videoFiles = [];
-    }
-    const byEp = new Map<string, { fileIds: string[]; sizeBytes: number }>();
-    for (const vf of videoFiles) {
-      const code = inferSeasonFileEpisodeCode(vf.name, seasonNumber, vf.episodeCode);
-      if (!code) continue;
-      const cur = byEp.get(code) ?? { fileIds: [], sizeBytes: 0 };
-      cur.fileIds.push(vf.id);
-      cur.sizeBytes += vf.sizeBytes;
-      byEp.set(code, cur);
-    }
-    scans.push({ drive, seasonDirId, videoFiles, byEp });
-  }
-  return scans;
+  const results = await Promise.all(
+    touched.map(async (drive): Promise<TouchedSeasonDriveScan | null> => {
+      const seasonDirId = drive.seasonDirectoryIds[seasonNumber];
+      if (!seasonDirId) return null;
+      let videoFiles: Array<{ id: string; name?: string; sizeBytes: number; episodeCode: string | null }> = [];
+      try {
+        videoFiles = await drive.executor.listVideoFiles(seasonDirId);
+      } catch {
+        videoFiles = [];
+      }
+      const byEp = new Map<string, { fileIds: string[]; sizeBytes: number }>();
+      for (const vf of videoFiles) {
+        const code = inferSeasonFileEpisodeCode(vf.name, seasonNumber, vf.episodeCode);
+        if (!code) continue;
+        const cur = byEp.get(code) ?? { fileIds: [], sizeBytes: 0 };
+        cur.fileIds.push(vf.id);
+        cur.sizeBytes += vf.sizeBytes;
+        byEp.set(code, cur);
+      }
+      return { drive, seasonDirId, videoFiles, byEp };
+    }),
+  );
+  return results.filter((s): s is TouchedSeasonDriveScan => s !== null);
 }
 
 async function resolvePrimaryDriveSeasonEpisodes(input: {
@@ -312,12 +313,14 @@ async function resolvePrimaryDriveSeasonEpisodes(input: {
   primaryStorageId: string | null;
   seasonResult: BridgedV2Result["seasons"][number];
   touchedTargetDrives: BridgedV2Result["touchedTargetDrives"];
+  scans?: TouchedSeasonDriveScan[];
 }): Promise<EpisodeState[]> {
   const touched = input.touchedTargetDrives ?? [];
   if (touched.length === 0 || !input.primaryStorageId) {
     return input.seasonResult.episodes;
   }
-  const scans = await scanTouchedSeasonDrives(touched, input.seasonResult.season.seasonNumber);
+  const scans =
+    input.scans ?? (await scanTouchedSeasonDrives(touched, input.seasonResult.season.seasonNumber));
   const nonEmptyScans = scans.filter((s) => s.videoFiles.length > 0);
   const primaryScan = scans.find((s) => s.drive.storageId === input.primaryStorageId);
   if (
@@ -360,6 +363,7 @@ async function recordTouchedSeasonCopies(input: {
   touchedTargetDrives: BridgedV2Result["touchedTargetDrives"];
   runId: string;
   recordedAt: string;
+  scans?: TouchedSeasonDriveScan[];
 }): Promise<EpisodeCopy[]> {
   if (!input.repository.upsertEpisodeCopies) {
     return [];
@@ -392,14 +396,15 @@ async function recordTouchedSeasonCopies(input: {
   // to the exact storageId where they landed (C8 single source of truth).
   // An empty directory created during a read-only probe on another drive (0 videoFiles)
   // must not prevent single-drive attribution when only one drive actually holds files.
-  const scans = await scanTouchedSeasonDrives(touched, input.seasonResult.season.seasonNumber);
+  const scans =
+    input.scans ?? (await scanTouchedSeasonDrives(touched, input.seasonResult.season.seasonNumber));
   const nonEmptyScans = scans.filter((s) => s.videoFiles.length > 0);
-  const singleNonEmptyDriveId =
-    nonEmptyScans.length === 1
-      ? nonEmptyScans[0]!.drive.storageId
-      : scans.length === 1
-        ? scans[0]!.drive.storageId
-        : null;
+  let singleNonEmptyDriveId: string | null = null;
+  if (nonEmptyScans.length === 1) {
+    singleNonEmptyDriveId = nonEmptyScans[0]!.drive.storageId;
+  } else if (scans.length === 1) {
+    singleNonEmptyDriveId = scans[0]!.drive.storageId;
+  }
 
   const copies: EpisodeCopy[] = [];
   const verifiedByCode = new Map(
@@ -411,9 +416,9 @@ async function recordTouchedSeasonCopies(input: {
     if (singleNonEmptyDriveId === drive.storageId) {
       // Only this drive received video files for the season → all agent-marked
       // obtained episodes belong to this drive (even if filenames are opaque).
-      driveCodes = [...new Set([...obtainedEpisodes.map((e) => e.episodeCode), ...byEp.keys()])];
+      driveCodes = obtainedEpisodes.map((e) => e.episodeCode);
     } else if (byEp.size > 0) {
-      driveCodes = [...byEp.keys()];
+      driveCodes = [...byEp.keys()].filter((code) => verifiedByCode.has(code));
     }
     const perFileFallbackBytes =
       byEp.size === 0 && videoFiles.length > 0 && driveCodes.length > 0
@@ -559,12 +564,18 @@ async function persistSingleSeason(input: {
   const accountId = input.accountId ?? DEFAULT_ACCOUNT_ID;
   const primaryStorageId =
     input.connectedStorageId ?? input.bridged.touchedTargetDrives?.[0]?.storageId ?? null;
+  const touched = input.bridged.touchedTargetDrives ?? [];
+  const scans =
+    touched.length > 0
+      ? await scanTouchedSeasonDrives(touched, seasonResult.season.seasonNumber)
+      : undefined;
   const primaryEpisodes = await resolvePrimaryDriveSeasonEpisodes({
     repository: input.repository,
     accountId,
     primaryStorageId,
     seasonResult,
     touchedTargetDrives: input.bridged.touchedTargetDrives,
+    ...(scans ? { scans } : {}),
   });
   const copies = await recordTouchedSeasonCopies({
     repository: input.repository,
@@ -575,6 +586,7 @@ async function persistSingleSeason(input: {
     touchedTargetDrives: input.bridged.touchedTargetDrives,
     runId: input.workflowRun.id,
     recordedAt: input.workflowRun.finishedAt ?? input.workflowRun.startedAt,
+    ...(scans ? { scans } : {}),
   });
   const notifications = appendMultiDriveBreakdownToNotifications(
     input.bridged.notifications,
@@ -758,12 +770,18 @@ export async function runSeriesInitializationV2AndPersist(
   }> = [];
   for (const seasonResult of bridged.seasons) {
     const seasonRunId = `${input.workflowRun.id}_s${seasonResult.season.seasonNumber}`;
+    const touched = bridged.touchedTargetDrives ?? [];
+    const scans =
+      touched.length > 0
+        ? await scanTouchedSeasonDrives(touched, seasonResult.season.seasonNumber)
+        : undefined;
     const primaryEpisodes = await resolvePrimaryDriveSeasonEpisodes({
       repository: input.repository,
       accountId,
       primaryStorageId,
       seasonResult,
       touchedTargetDrives: bridged.touchedTargetDrives,
+      ...(scans ? { scans } : {}),
     });
     const copies = await recordTouchedSeasonCopies({
       repository: input.repository,
@@ -774,6 +792,7 @@ export async function runSeriesInitializationV2AndPersist(
       touchedTargetDrives: bridged.touchedTargetDrives,
       runId: seasonRunId,
       recordedAt: finishedAt,
+      ...(scans ? { scans } : {}),
     });
     allCopies.push(...copies);
     preparedSeasons.push({ seasonResult, seasonRunId, primaryEpisodes });
@@ -900,12 +919,18 @@ export async function runReplaceRequestV2AndPersist(
   for (const seasonResult of bridged.seasons) {
     if (seasonResult === lock) continue;
     const runId = `${input.workflowRun.id}_s${seasonResult.season.seasonNumber}`;
+    const touched = bridged.touchedTargetDrives ?? [];
+    const scans =
+      touched.length > 0
+        ? await scanTouchedSeasonDrives(touched, seasonResult.season.seasonNumber)
+        : undefined;
     const primaryEpisodes = await resolvePrimaryDriveSeasonEpisodes({
       repository: input.repository,
       accountId,
       primaryStorageId,
       seasonResult,
       touchedTargetDrives: bridged.touchedTargetDrives,
+      ...(scans ? { scans } : {}),
     });
     await input.repository.saveWorkflowRunSnapshot({
       ...owner,
@@ -935,15 +960,22 @@ export async function runReplaceRequestV2AndPersist(
       touchedTargetDrives: bridged.touchedTargetDrives,
       runId,
       recordedAt: finishedAt,
+      ...(scans ? { scans } : {}),
     });
     allReplaceCopies.push(...copies);
   }
+  const lockTouched = bridged.touchedTargetDrives ?? [];
+  const lockScans =
+    lockTouched.length > 0
+      ? await scanTouchedSeasonDrives(lockTouched, lock.season.seasonNumber)
+      : undefined;
   const lockPrimaryEpisodes = await resolvePrimaryDriveSeasonEpisodes({
     repository: input.repository,
     accountId,
     primaryStorageId,
     seasonResult: lock,
     touchedTargetDrives: bridged.touchedTargetDrives,
+    ...(lockScans ? { scans: lockScans } : {}),
   });
   const lockCopies = await recordTouchedSeasonCopies({
     repository: input.repository,
@@ -954,6 +986,7 @@ export async function runReplaceRequestV2AndPersist(
     touchedTargetDrives: bridged.touchedTargetDrives,
     runId: input.workflowRun.id,
     recordedAt: finishedAt,
+    ...(lockScans ? { scans: lockScans } : {}),
   });
   allReplaceCopies.push(...lockCopies);
   const enrichedReplaceNotifications = appendMultiDriveBreakdownToNotifications(
