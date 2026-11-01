@@ -167,4 +167,153 @@ describe("runner-v2 persist wrappers — V2 engine results persisted in the exis
     const snapshot = await repository.getWorkflowRunSnapshot("run-x");
     expect(snapshot!.workflowRun.kind).toBe("movie_init");
   });
+
+  it("multi-drive TV: persists obtained episodes and copies on a secondary drive even when filenames are bare digits (1.mp4..7.mp4) and primary drive holds an empty season dir (假面骑士麦斯 regression)", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const ucVideoFiles = Array.from({ length: 7 }, (_, idx) => ({
+      id: `uc_file_${idx + 1}`,
+      storageDirectoryId: "uc_s1_dir",
+      name: `${idx + 1}.mp4`,
+      sizeBytes: 1_000_000_000,
+      // Bare digit filenames ("1.mp4".."7.mp4") return episodeCode: null from episodeCodeFromFileName
+      episodeCode: null,
+      providerFileId: `uc_file_${idx + 1}`,
+    }));
+
+    const exec115 = new FakeStorageExecutor();
+    exec115.listVideoFiles = async () => [];
+
+    const execUc = new FakeStorageExecutor();
+    execUc.listVideoFiles = async () => ucVideoFiles;
+    execUc.listTree = async () =>
+      ucVideoFiles.map((f) => ({ path: f.name, providerFileId: f.id, sizeBytes: f.sizeBytes }));
+    execUc.transfer = async (input) => ({
+      id: `${input.workflowRunId}_t1`,
+      workflowRunId: input.workflowRunId,
+      candidateId: input.candidate.id,
+      status: "succeeded",
+      providerMessage: "",
+      materializedFileIds: ucVideoFiles.map((f) => f.id),
+    });
+
+    const provider: ResourceProvider = {
+      search: async ({ keyword }): Promise<ResourceSnapshot> => ({
+        id: "snap_uc",
+        provider: "pansou",
+        keyword,
+        createdAt: "2026-10-31T06:00:00.000Z",
+        candidates: [
+          {
+            id: "cand_uc_1",
+            snapshotId: "snap_uc",
+            index: 0,
+            title: "假面骑士麦斯 1-7 台配",
+            type: "uc" as never,
+            source: "pansou",
+            providerPayload: { url: "https://drive.uc.cn/s/abc123def456" },
+          },
+        ],
+      }),
+    };
+
+    let step = 0;
+    const tool = (name: string, input: unknown) => ({
+      content: [{ type: "tool-call" as const, toolCallId: `call_${step}`, toolName: name, input: JSON.stringify(input) }],
+      finishReason: { unified: "tool-calls" as const, raw: "tool-calls" as const },
+      usage: USAGE,
+      warnings: [],
+    });
+
+    const model = new MockLanguageModelV3({
+      doGenerate: async () => {
+        step += 1;
+        // Step 1: view pre-warmed raw snapshot
+        if (step === 1) return tool("viewResourceSnapshot", {});
+        // Step 2: transfer onto UC drive
+        if (step === 2) return tool("transferCandidate", { snapshotId: "s1", candidateId: "s1-1", storageId: "cs_uc" });
+        // Step 3: move to Season 1 on UC
+        if (step === 3) {
+          return tool("moveToSeason", {
+            moves: [
+              {
+                season: 1,
+                fileIds: ucVideoFiles.map((f) => `cs_uc::${f.id}`),
+              },
+            ],
+          });
+        }
+        if (step === 4) {
+          return tool("markObtained", {
+            codes: ["S01E01", "S01E02", "S01E03", "S01E04", "S01E05", "S01E06", "S01E07"],
+          });
+        }
+        if (step === 5) return tool("discardStaging", {});
+        if (step === 6) return tool("finish", {});
+        return { content: [{ type: "text" as const, text: "done" }], finishReason: { unified: "stop" as const, raw: "stop" as const }, usage: USAGE, warnings: [] };
+      },
+    });
+
+    const season8: TrackedSeason = {
+      id: "tmdb_tv_318445_s1",
+      mediaTitleId: "tmdb_tv_318445",
+      seasonNumber: 1,
+      status: "active",
+      qualityPreference: "4K",
+      storageDirectoryId: "",
+      totalEpisodes: 9,
+      latestAiredEpisode: 8,
+      latestAiredSource: "metadata",
+    };
+
+    const result = await runType2InitializationV2AndPersist({
+      title: {
+        id: "tmdb_tv_318445",
+        tmdbId: 318445,
+        type: "tv",
+        title: "假面骑士麦斯",
+        year: 2026,
+        aliases: [],
+      } as unknown as MediaTitle,
+      season: season8,
+      categoryParentId: "115_tv_root",
+      resourceProvider: provider,
+      storage: exec115,
+      model,
+      repository,
+      accountId: "acct_default",
+      connectedStorageId: "cs_115",
+      drives: [
+        {
+          storageId: "cs_115",
+          provider: "pan115",
+          label: "115 网盘",
+          storage: exec115,
+          parents: { tv: "115_tv_root", anime: "115_anime_root", movies: "115_movies_root" },
+          space: { totalBytes: 10 * 1024 ** 4, usedBytes: 1 * 1024 ** 4 },
+        },
+        {
+          storageId: "cs_uc",
+          provider: "uc",
+          label: "UC网盘",
+          storage: execUc,
+          parents: { tv: "uc_tv_root", anime: "uc_anime_root", movies: "uc_movies_root" },
+          space: { totalBytes: 6 * 1024 ** 4, usedBytes: 1 * 1024 ** 4 },
+        },
+      ],
+      workflowRun: { id: "run_myth", startedAt: "2026-10-31T06:42:00.000Z", finishedAt: null },
+    });
+
+    expect(result.status).toBe("partial");
+    const crossDrive = await repository.obtainedEpisodesForSeason!("tmdb_tv_318445_s1", "acct_default");
+    const obtainedCodes = crossDrive.filter((c) => c.obtained).map((c) => c.episodeCode);
+    expect(obtainedCodes).toEqual(["S01E01", "S01E02", "S01E03", "S01E04", "S01E05", "S01E06", "S01E07"]);
+    expect(crossDrive.find((c) => c.episodeCode === "S01E01")?.drives).toEqual([
+      {
+        storageId: "cs_uc",
+        fileIds: ["uc_file_1"],
+        sizeBytes: 1_000_000_000,
+        quality: null,
+      },
+    ]);
+  });
 });
