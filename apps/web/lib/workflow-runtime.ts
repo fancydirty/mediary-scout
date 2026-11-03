@@ -2701,16 +2701,21 @@ async function defaultDriveIdOf(accountId: string): Promise<string | null> {
 async function getAccountStorageCredentials(
   accountId: string,
   connectedStorageId?: string | null,
+  options?: { strictId?: boolean },
 ): Promise<AccountStorageCredentials | null> {
   try {
     const storages = await getWorkflowRepository().listConnectedStorages(accountId);
     // Tree model: when a specific drive is pinned (the run's connected_storage_id),
-    // resolve THAT drive; otherwise pick the account's first active drive with a
-    // valid credential (falling back to any drive with a valid credential). A stale
-    // or incomplete first row must never hide a working second drive.
-    const drive = connectedStorageId
+    // resolve THAT drive if it is still bound; if that drive was later unbound or
+    // re-bound under a new storageId, fall back to the account's default active
+    // drive unless the caller requested strictId (e.g. testConnection on a card).
+    const explicit = connectedStorageId
       ? storages.find((storage) => storage.id === connectedStorageId && isRegisteredStorageProvider(storage.provider))
-      : pickDefaultConnectedStorage(storages);
+      : undefined;
+    const drive =
+      connectedStorageId && options?.strictId
+        ? explicit
+        : (explicit ?? pickDefaultConnectedStorage(storages));
     if (!drive) {
       return null;
     }
@@ -2841,7 +2846,7 @@ export async function testConnection(
   accountId: string,
   connectedStorageId: string,
 ): Promise<{ ok: boolean; status: "active" | "frozen"; message: string }> {
-  const creds = await getAccountStorageCredentials(accountId, connectedStorageId);
+  const creds = await getAccountStorageCredentials(accountId, connectedStorageId, { strictId: true });
   if (!creds) {
     return { ok: false, status: "frozen", message: "找不到该网盘的凭证。" };
   }
@@ -3033,11 +3038,16 @@ async function getWorkerStorageExecutor(
         env: process.env,
       });
     }
-    // Legacy env-cookie 115 bootstrap when PAN115_COOKIE is actually set; otherwise
-    // return a lazy brand-agnostic placeholder so outer callers (runScheduledType3,
-    // runNextQueuedWorkflow) don't crash on "PAN115_COOKIE is required" before
-    // per-account resolveAccountContext runs (issue #186).
-    if ((process.env.PAN115_COOKIE ?? "").trim().length > 0) {
+    // Legacy env-cookie 115 bootstrap when PAN115_COOKIE AND explicit 115 write
+    // scope CIDs are configured in env; otherwise return a lazy brand-agnostic
+    // placeholder so outer callers (runScheduledType3, runNextQueuedWorkflow) don't
+    // crash on "PAN115_COOKIE is required" or "MEDIA_TRACK_115_WRITE_SCOPE_REQUIRED"
+    // when a DB-hydrated pan115.cookie mirror exists without env write-scope CIDs.
+    const hasEnv115Cookie = (process.env.PAN115_COOKIE ?? "").trim().length > 0;
+    const hasEnv115WriteScope =
+      (process.env.MEDIA_TRACK_115_TEST_ROOT_CID ?? "").trim().length > 0 ||
+      (process.env.MEDIA_TRACK_115_WRITE_SCOPE_CIDS ?? "").trim().length > 0;
+    if (hasEnv115Cookie && hasEnv115WriteScope) {
       return createProtectedPan115CookieStorageExecutorFromEnv({ env: process.env });
     }
     return createUnconfiguredStorageExecutor();
