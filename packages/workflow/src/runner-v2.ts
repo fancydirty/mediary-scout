@@ -25,6 +25,7 @@ import type { AcquisitionDriveContext, ResourceProvider, StorageExecutor } from 
 import type { PersistWorkflowRunSnapshotInput, WorkflowRepository } from "./repository.js";
 import { userMessageDrive } from "./user-requests.js";
 import { formatReportPushText, stampReplaceNotification } from "./notification-report.js";
+import { shortDriveLabel } from "./storage-brands.js";
 
 /**
  * Phase 7d — production persist wrappers on the V2 engine. These mirror the old
@@ -514,10 +515,6 @@ async function recordTouchedSeasonCopies(input: {
     await input.repository.upsertEpisodeCopies(copies);
   }
   return copies;
-}
-
-function shortDriveLabel(label: string): string {
-  return label.replace(/\s*(?:网盘|云盘)$/, "");
 }
 
 function appendMultiDriveBreakdownToNotifications(
@@ -1306,12 +1303,56 @@ export async function runMovieAcquisitionV2AndPersist(input: {
   const accountId = input.accountId ?? DEFAULT_ACCOUNT_ID;
   const effectiveStorageId =
     input.connectedStorageId ?? result.touchedTargetDrives?.[0]?.storageId ?? null;
-  const movieDrive = result.touchedTargetDrives?.[0];
+  const touchedMovieDrives = result.touchedTargetDrives ?? [];
+  const movieDriveScans = await Promise.all(
+    touchedMovieDrives.map(async (drive) => {
+      const movieDirId = drive.directoryIds[0];
+      if (!movieDirId) {
+        return { drive, movieDirId: undefined, scanOk: false, videoFiles: [] as Array<{ id: string; sizeBytes: number }> };
+      }
+      try {
+        const videoFiles = await drive.executor.listVideoFiles(movieDirId);
+        return { drive, movieDirId, scanOk: true, videoFiles };
+      } catch {
+        return { drive, movieDirId, scanOk: false, videoFiles: [] as Array<{ id: string; sizeBytes: number }> };
+      }
+    }),
+  );
+  const isReplaceRun = Boolean(input.userRequest || result.replacement);
+  const replacedMovieResult = (result.replacement?.results ?? []).find(
+    (r) => r.outcome === "replaced" && r.episode === "MOVIE",
+  );
+  const replacedMovieDriveIds = new Set(
+    (result.replacement?.results ?? [])
+      .filter((r) => r.outcome === "replaced" && r.driveId)
+      .map((r) => r.driveId!),
+  );
+  let activeMovieScans = movieDriveScans;
+  if (replacedMovieDriveIds.size > 0) {
+    activeMovieScans = movieDriveScans.filter((s) => replacedMovieDriveIds.has(s.drive.storageId));
+  } else if (isReplaceRun && !replacedMovieResult) {
+    activeMovieScans = [];
+  } else {
+    const nonEmpty = movieDriveScans.filter((s) => s.videoFiles.length > 0);
+    activeMovieScans = nonEmpty.length > 0 ? nonEmpty : movieDriveScans.slice(0, 1);
+  }
+  let movieDrive = activeMovieScans[0]?.drive;
+  if (!movieDrive && replacedMovieDriveIds.size === 0 && !(isReplaceRun && !replacedMovieResult)) {
+    movieDrive = touchedMovieDrives[0];
+  }
+  const primaryScan = input.connectedStorageId
+    ? movieDriveScans.find((s) => s.drive.storageId === input.connectedStorageId)
+    : undefined;
+  const primaryGotNewMovie =
+    input.connectedStorageId !== null &&
+    input.connectedStorageId !== undefined &&
+    (activeMovieScans.some((s) => s.drive.storageId === input.connectedStorageId && s.videoFiles.length > 0) ||
+      (touchedMovieDrives.length === 1 && movieDrive?.storageId === input.connectedStorageId));
   let primaryMovieEpisodes = result.episodes;
   if (
-    movieDrive &&
     input.connectedStorageId &&
-    movieDrive.storageId !== input.connectedStorageId
+    !primaryGotNewMovie &&
+    (movieDrive || replacedMovieDriveIds.size > 0 || isReplaceRun)
   ) {
     const existingPrimary = await input.repository.getTrackedSeasonState(result.season.id, {
       accountId,
@@ -1320,80 +1361,69 @@ export async function runMovieAcquisitionV2AndPersist(input: {
     const priorByCode = new Map(
       (existingPrimary?.episodes ?? []).filter((e) => e.obtained).map((e) => [e.episodeCode, e.verifiedFileIds]),
     );
+    const primaryDiskFiles = primaryScan && primaryScan.scanOk ? primaryScan.videoFiles.map((f) => f.id) : undefined;
     primaryMovieEpisodes = result.episodes.map((ep) => {
       const priorFiles = priorByCode.get(ep.episodeCode);
-      const hadPriorOnPrimary = priorFiles !== undefined;
+      const effectiveFiles = primaryDiskFiles !== undefined && primaryDiskFiles.length > 0 ? primaryDiskFiles : priorFiles;
+      const hadPriorOnPrimary = (primaryDiskFiles !== undefined && primaryDiskFiles.length > 0) || priorFiles !== undefined;
       return {
         ...ep,
         obtained: hadPriorOnPrimary,
-        verifiedFileIds: priorFiles ?? [],
+        verifiedFileIds: effectiveFiles ?? [],
       };
     });
   }
   const obtainedMovie = result.episodes.filter((ep) => ep.obtained);
-  const movieDriveLabels =
-    obtainedMovie.length > 0
-      ? (result.touchedTargetDrives ?? []).map((d) => shortDriveLabel(d.label))
-      : [];
+  let movieDriveLabels: string[] = [];
+  if (obtainedMovie.length > 0) {
+    if (activeMovieScans.length > 0) {
+      movieDriveLabels = activeMovieScans.map((s) => shortDriveLabel(s.drive.label));
+    } else if (replacedMovieResult?.driveLabel) {
+      movieDriveLabels = [replacedMovieResult.driveLabel];
+    }
+  }
   const movieNotifications = stampNotifications(result.notifications, input.notice).map((n) => {
-    if (!n.report || movieDriveLabels.length === 0) return n;
+    if (!n.report) return n;
+    const nextLines =
+      n.report.status === "replaced" && replacedMovieResult?.label
+        ? ["已换成新版本", replacedMovieResult.label]
+        : n.report.lines;
+    const nextSize =
+      n.report.status === "replaced" &&
+      typeof replacedMovieResult?.sizeBytes === "number" &&
+      replacedMovieResult.sizeBytes > 0
+        ? { fileCount: 1, totalBytes: replacedMovieResult.sizeBytes }
+        : {};
+    const nextReport = {
+      ...n.report,
+      lines: nextLines,
+      ...nextSize,
+      ...(movieDriveLabels.length > 0 ? { driveLabels: [...new Set(movieDriveLabels)] } : {}),
+    };
     return {
       ...n,
-      report: {
-        ...n.report,
-        driveLabels: [...new Set(movieDriveLabels)],
-      },
+      report: nextReport,
+      body: n.report.status === "replaced" ? formatReportPushText(nextReport) : n.body,
     };
   });
-  const held = await saveRunRecord({ ...input, now }, result.status, movieNotifications, (run, notifications) => ({
-    ...(input.accountId ? { accountId: input.accountId } : {}),
-    ...(input.connectedStorageId !== undefined ? { connectedStorageId: input.connectedStorageId } : {}),
-    title: input.title,
-    season: result.season,
-    workflowRun: {
-      ...run,
-      id: input.workflowRun.id,
-      kind: input.userRequest ? "replace_request" : "movie_init",
-      trackedSeasonId: result.season.id,
-      startedAt: input.workflowRun.startedAt,
-      auditEvents: result.auditEvents,
-    },
-    episodes: primaryMovieEpisodes,
-    resourceSnapshots: result.resourceSnapshots,
-    decisions: result.decisions,
-    transferAttempts: result.transferAttempts,
-    notifications,
-  }));
-  if (input.repository.upsertEpisodeCopies && effectiveStorageId) {
-    const obtainedMovie = result.episodes.filter((ep) => ep.obtained);
-    if (obtainedMovie.length > 0) {
-      const finishedAt = now();
-      const movieDirId = movieDrive?.directoryIds[0];
-      let fileIds: string[] = [];
-      let sizeBytes: number | null = null;
-      if (movieDrive && movieDirId) {
-        try {
-          const vfs = await movieDrive.executor.listVideoFiles(movieDirId);
-          fileIds = vfs.map((f) => f.id);
-          sizeBytes = vfs.reduce((sum, f) => sum + f.sizeBytes, 0) || null;
-        } catch {
-          fileIds = [];
-        }
-      }
-      if (
-        movieDrive &&
-        input.connectedStorageId &&
-        movieDrive.storageId !== input.connectedStorageId
-      ) {
-        const sideRunId = `${input.workflowRun.id}_drv_${movieDrive.storageId.slice(-8)}`;
+  const persistSecondaryMovieAndCopies = async () => {
+    if (!input.repository.upsertEpisodeCopies || !effectiveStorageId) return;
+    if (obtainedMovie.length === 0) return;
+    if (isReplaceRun && replacedMovieDriveIds.size === 0 && !replacedMovieResult) return;
+    const finishedAt = now();
+    let targetScans = activeMovieScans;
+    if (targetScans.length === 0 && movieDrive) {
+      targetScans = [{ drive: movieDrive, movieDirId: movieDrive.directoryIds[0], scanOk: false, videoFiles: [] as Array<{ id: string; sizeBytes: number }> }];
+    }
+    if (targetScans.length === 0) {
+      const fallbackStorageId = replacedMovieResult?.driveId ?? effectiveStorageId;
+      if (input.connectedStorageId && fallbackStorageId !== input.connectedStorageId) {
+        const sideRunId = `${input.workflowRun.id}_drv_${fallbackStorageId.slice(-8)}`;
         await input.repository.saveWorkflowRunSnapshot({
           accountId,
-          connectedStorageId: movieDrive.storageId,
+          connectedStorageId: fallbackStorageId,
           title: input.title,
-          season: {
-            ...result.season,
-            ...(movieDirId ? { storageDirectoryId: movieDirId } : {}),
-          },
+          season: result.season,
           workflowRun: {
             id: sideRunId,
             kind: input.userRequest ? "replace_request" : "movie_init",
@@ -1414,15 +1444,91 @@ export async function runMovieAcquisitionV2AndPersist(input: {
         obtainedMovie.map((ep) => ({
           trackedSeasonId: result.season.id,
           episodeCode: ep.episodeCode,
-          storageId: movieDrive?.storageId ?? effectiveStorageId,
-          fileIds: fileIds.length > 0 ? fileIds : [...ep.verifiedFileIds],
-          sizeBytes,
+          storageId: fallbackStorageId,
+          fileIds: [...ep.verifiedFileIds],
+          sizeBytes: replacedMovieResult?.sizeBytes ?? null,
           quality: null,
           runId: input.workflowRun.id,
           recordedAt: finishedAt,
         })),
       );
+      return;
     }
-  }
+    const copiesToUpsert: EpisodeCopy[] = [];
+    const secondaryWrites: Array<Promise<void>> = [];
+    for (const scan of targetScans) {
+      const { drive, movieDirId, videoFiles } = scan;
+      const fileIds = videoFiles.map((f) => f.id);
+      const sizeBytes =
+        videoFiles.reduce((sum, f) => sum + f.sizeBytes, 0) ||
+        (replacedMovieDriveIds.has(drive.storageId) && typeof replacedMovieResult?.sizeBytes === "number"
+          ? replacedMovieResult.sizeBytes
+          : null);
+      if (input.connectedStorageId && drive.storageId !== input.connectedStorageId) {
+        const sideRunId = `${input.workflowRun.id}_drv_${drive.storageId.slice(-8)}`;
+        secondaryWrites.push(
+          input.repository.saveWorkflowRunSnapshot({
+            accountId,
+            connectedStorageId: drive.storageId,
+            title: input.title,
+            season: {
+              ...result.season,
+              ...(movieDirId ? { storageDirectoryId: movieDirId } : {}),
+            },
+            workflowRun: {
+              id: sideRunId,
+              kind: input.userRequest ? "replace_request" : "movie_init",
+              status: "succeeded",
+              trackedSeasonId: result.season.id,
+              startedAt: finishedAt,
+              finishedAt,
+              auditEvents: [],
+            },
+            episodes: result.episodes,
+            resourceSnapshots: [],
+            decisions: [],
+            transferAttempts: [],
+            notifications: [],
+          }),
+        );
+      }
+      for (const ep of obtainedMovie) {
+        copiesToUpsert.push({
+          trackedSeasonId: result.season.id,
+          episodeCode: ep.episodeCode,
+          storageId: drive.storageId,
+          fileIds: fileIds.length > 0 ? fileIds : [...ep.verifiedFileIds],
+          sizeBytes,
+          quality: null,
+          runId: input.workflowRun.id,
+          recordedAt: finishedAt,
+        });
+      }
+    }
+    await Promise.all(secondaryWrites);
+    if (copiesToUpsert.length > 0) {
+      await input.repository.upsertEpisodeCopies(copiesToUpsert);
+    }
+  };
+  await persistSecondaryMovieAndCopies();
+  const held = await saveRunRecord({ ...input, now }, result.status, movieNotifications, (run, notifications) => ({
+    ...(input.accountId ? { accountId: input.accountId } : {}),
+    ...(input.connectedStorageId !== undefined ? { connectedStorageId: input.connectedStorageId } : {}),
+    title: input.title,
+    season: result.season,
+    workflowRun: {
+      ...run,
+      id: input.workflowRun.id,
+      kind: input.userRequest ? "replace_request" : "movie_init",
+      trackedSeasonId: result.season.id,
+      startedAt: input.workflowRun.startedAt,
+      auditEvents: result.auditEvents,
+    },
+    episodes: primaryMovieEpisodes,
+    resourceSnapshots: result.resourceSnapshots,
+    decisions: result.decisions,
+    transferAttempts: result.transferAttempts,
+    notifications,
+  }));
   return { ...result, ...held };
 }

@@ -138,6 +138,7 @@ export interface ReplyRow {
   resource: string;
   note: string;
   size: string;
+  driveLabel?: string;
   state: "replaced" | "looking" | "replacedLater" | "stopped";
 }
 
@@ -160,19 +161,23 @@ export function replyView(
     .sort((a, b) => compareEpisodeCodes(a.episode, b.episode))
     .map((r): ReplyRow => {
       const replaced = r.outcome === "replaced";
+      const driveLabel = replaced && r.driveLabel?.trim() ? r.driveLabel.trim() : undefined;
+      let state: ReplyRow["state"] = "stopped";
+      if (replaced) {
+        state = "replaced";
+      } else if (ctx.pending.has(r.episode)) {
+        state = "looking";
+      } else if (ctx.replacedLater?.has(r.episode)) {
+        state = "replacedLater";
+      }
       return {
         episode: r.episode,
         label: episodeLabel(r.episode, ctx.multiSeason),
         resource: replaced ? r.label?.trim() || "没记下资源名" : "没有找到别的版本",
         note: r.note,
         size: replaced && typeof r.sizeBytes === "number" && r.sizeBytes > 0 ? formatSize(r.sizeBytes) : "—",
-        state: replaced
-          ? "replaced"
-          : ctx.pending.has(r.episode)
-            ? "looking"
-            : ctx.replacedLater?.has(r.episode)
-              ? "replacedLater"
-              : "stopped",
+        ...(driveLabel ? { driveLabel } : {}),
+        state,
       };
     });
   const replaced = rows.filter((r) => r.state === "replaced");

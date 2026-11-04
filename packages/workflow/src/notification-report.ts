@@ -443,7 +443,7 @@ export function landedSize(report: NotificationReport): { label: string; value: 
   if (fileCount === undefined || totalBytes === undefined || fileCount <= 0 || totalBytes <= 0) {
     return undefined;
   }
-  if (report.status === "acquired") {
+  if (report.status === "acquired" || report.mediaType === "movie") {
     return { label: "体积", value: formatBytes(totalBytes) };
   }
   return { label: "每集", value: `约 ${formatBytes(totalBytes / fileCount)}` };

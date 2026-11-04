@@ -163,6 +163,34 @@ describe("UserMessageThread — the states of the mockup", () => {
     expect(html).not.toContain("<textarea");
   });
 
+  it("⑤+ answered with driveLabel: renders '换好了 · 夸克' in the track outcome column", () => {
+    const html = render({
+      mediaType: "movie",
+      messages: [
+        done(
+          "run_hathaway",
+          {
+            results: [
+              {
+                episode: "MOVIE",
+                outcome: "replaced",
+                label: "机动战士高达 闪光的哈萨维 喀耳刻的魔女 (臻彩) 4K HDR 杜比视界",
+                sizeBytes: 9_610_380_966,
+                driveLabel: "夸克",
+                note: "已用画质更高的新版本替换（约9.0GB，4K/2160p H.265）",
+              },
+            ],
+            oldFiles: ["[Prejudice-Studio] 机动战士高达 闪光的哈萨维 [1080P].mp4"],
+          },
+          { id: "m_hathaway", body: "画质太差，请尽量找个质量最高的", episodeTags: [] },
+        ),
+      ],
+    });
+    expect(html).toContain("机动战士高达 闪光的哈萨维 喀耳刻的魔女 (臻彩) 4K HDR 杜比视界");
+    expect(html).toContain("9.0 GB");
+    expect(html).toContain("换好了 · 夸克");
+  });
+
   it("⑥ a film still 待换: the red bar with 不换了, and no 不换了 in the track row", () => {
     const html = render({
       mediaType: "movie",

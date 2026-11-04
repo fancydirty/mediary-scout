@@ -18,6 +18,54 @@ import type { PendingRow, ThreadMessage } from "./user-message-state";
 export { swapBadgeLabel } from "./user-message-state";
 
 /**
+ * All drive-scoped message works of a title inside `scope`. In unified workspace
+ * mode (`scope.connectedStorageId === null`) a title may have tracked season rows
+ * across multiple drives (e.g. an initial run on 123 and a cross-drive replacement
+ * on Quark). Returning all of them in deterministic drive order (drives with
+ * obtained episodes first, then lexicographical drive ID) lets the detail page
+ * merge messages and 待换 across drives and keeps `resolveMessageWork`'s primary
+ * work stable.
+ */
+export async function resolveMessageWorksWithStates(input: {
+  repo: Pick<WorkflowRepository, "listTrackedSeasonStates">;
+  scope: WorkflowScope;
+  tmdbId: number;
+  mediaType: "movie" | "tv";
+}): Promise<{ works: UserMessageScope[]; states: Awaited<ReturnType<WorkflowRepository["listTrackedSeasonStates"]>> }> {
+  if (input.mediaType !== "movie" && input.mediaType !== "tv") return { works: [], states: [] };
+  if (!Number.isInteger(input.tmdbId) || input.tmdbId <= 0) return { works: [], states: [] };
+  const titleKey = input.mediaType === "movie" ? `tmdb_movie_${input.tmdbId}` : `tmdb_tv_${input.tmdbId}`;
+  const states = (await input.repo.listTrackedSeasonStates(input.scope)).filter((s) => s.title.id === titleKey);
+  if (states.length === 0) return { works: [], states: [] };
+  const obtainedCountByDrive = new Map<string, number>();
+  for (const s of states) {
+    const drive = userMessageDrive(s.connectedStorageId);
+    const count = s.episodes.filter((e) => e.obtained).length;
+    obtainedCountByDrive.set(drive, (obtainedCountByDrive.get(drive) ?? 0) + count);
+  }
+  const drives = [...new Set(states.map((s) => userMessageDrive(s.connectedStorageId)))].sort((a, b) => {
+    const hasA = (obtainedCountByDrive.get(a) ?? 0) > 0 ? 1 : 0;
+    const hasB = (obtainedCountByDrive.get(b) ?? 0) > 0 ? 1 : 0;
+    if (hasA !== hasB) return hasB - hasA;
+    return a.localeCompare(b);
+  });
+  return {
+    works: drives.map((drive) => ({ accountId: input.scope.accountId, drive, titleKey })),
+    states,
+  };
+}
+
+export async function resolveMessageWorks(input: {
+  repo: Pick<WorkflowRepository, "listTrackedSeasonStates">;
+  scope: WorkflowScope;
+  tmdbId: number;
+  mediaType: "movie" | "tv";
+}): Promise<UserMessageScope[]> {
+  const { works } = await resolveMessageWorksWithStates(input);
+  return works;
+}
+
+/**
  * The work a message is filed under — the one the engine looks up: the page's own
  * workspace scope, and the drive key taken from the title's tracked seasons there
  * (userMessageDrive of their connected storage, "" when unbound). The page and every
@@ -31,14 +79,8 @@ export async function resolveMessageWork(input: {
   tmdbId: number;
   mediaType: "movie" | "tv";
 }): Promise<UserMessageScope | null> {
-  // Server actions receive whatever the client sent — the type alone guarantees nothing.
-  if (input.mediaType !== "movie" && input.mediaType !== "tv") return null;
-  if (!Number.isInteger(input.tmdbId) || input.tmdbId <= 0) return null;
-  const titleKey = input.mediaType === "movie" ? `tmdb_movie_${input.tmdbId}` : `tmdb_tv_${input.tmdbId}`;
-  const states = (await input.repo.listTrackedSeasonStates(input.scope)).filter((s) => s.title.id === titleKey);
-  const first = states[0];
-  if (!first) return null;
-  return { accountId: input.scope.accountId, drive: userMessageDrive(first.connectedStorageId), titleKey };
+  const works = await resolveMessageWorks(input);
+  return works[0] ?? null;
 }
 
 export interface MessageThreadView {
@@ -55,14 +97,46 @@ export interface MessageThreadView {
 
 export async function loadMessageThread(
   repo: Pick<UserRequestStore, "listUserMessages" | "listPendingReplacements">,
-  work: UserMessageScope,
+  workOrWorks: UserMessageScope | readonly UserMessageScope[],
 ): Promise<MessageThreadView> {
-  const [messages, pending] = await Promise.all([repo.listUserMessages(work), repo.listPendingReplacements(work)]);
-  const pendingRows = pending
-    .map(({ episode, messageId, requestedAt }) => ({ episode, messageId, requestedAt }))
-    .sort((a, b) => (a.episode < b.episode ? -1 : a.episode > b.episode ? 1 : 0));
+  const works = Array.isArray(workOrWorks) ? workOrWorks : [workOrWorks as UserMessageScope];
+  if (works.length === 0) {
+    return { messages: [], pendingReplacements: [], pendingRows: [], busy: false };
+  }
+  const perWork = await Promise.all(
+    works.map(async (w) => {
+      const [messages, pending] = await Promise.all([repo.listUserMessages(w), repo.listPendingReplacements(w)]);
+      return { messages, pending };
+    }),
+  );
+  const seenMessageIds = new Set<string>();
+  const allMessages = perWork
+    .flatMap((p) => p.messages)
+    .filter((m) => {
+      if (seenMessageIds.has(m.id)) return false;
+      seenMessageIds.add(m.id);
+      return true;
+    })
+    .sort((a, b) => {
+      if (b.createdAt !== a.createdAt) return b.createdAt < a.createdAt ? -1 : 1;
+      if (b.id !== a.id) return b.id < a.id ? -1 : 1;
+      return 0;
+    });
+  const pendingByEpisode = new Map<string, PendingRow>();
+  for (const p of perWork) {
+    for (const { episode, messageId, requestedAt } of p.pending) {
+      const existing = pendingByEpisode.get(episode);
+      if (!existing || requestedAt > existing.requestedAt) {
+        pendingByEpisode.set(episode, { episode, messageId, requestedAt });
+      }
+    }
+  }
+  const pendingRows = [...pendingByEpisode.values()].sort((a, b) => {
+    if (a.episode === b.episode) return 0;
+    return a.episode < b.episode ? -1 : 1;
+  });
   return {
-    messages: messages.map(({ id, body, episodeTags, status, urgent, createdAt, processedAt, reply }) => ({
+    messages: allMessages.map(({ id, body, episodeTags, status, urgent, createdAt, processedAt, reply }) => ({
       id,
       body,
       episodeTags,
@@ -74,7 +148,7 @@ export async function loadMessageThread(
     })),
     pendingReplacements: pendingRows.map((p) => p.episode),
     pendingRows,
-    busy: holdsMessage(messages),
+    busy: holdsMessage(allMessages),
   };
 }
 
@@ -99,13 +173,19 @@ export interface MessageRunView {
 /** `runs`: active runs of the page's scope (listActiveWorkflowRuns). */
 export function messageRunView(
   runs: ReadonlyArray<Pick<PersistedWorkflowRunSnapshot, "title" | "connectedStorageId" | "workflowRun">>,
-  work: UserMessageScope,
+  workOrWorks: UserMessageScope | readonly UserMessageScope[],
 ): MessageRunView {
+  const works = Array.isArray(workOrWorks) ? workOrWorks : [workOrWorks as UserMessageScope];
+  const titleKey = works[0]?.titleKey;
+  if (!titleKey) {
+    return { running: false, activity: null, waitsForRun: false };
+  }
+  const drives = new Set(works.map((w) => w.drive));
   const mine = runs.filter(
     (r) =>
       r.workflowRun.kind !== "staging_recovery" &&
-      r.title.id === work.titleKey &&
-      userMessageDrive(r.connectedStorageId) === work.drive,
+      r.title.id === titleKey &&
+      drives.has(userMessageDrive(r.connectedStorageId)),
   );
   const replaceRunning = mine.find((r) => r.workflowRun.kind === "replace_request" && r.workflowRun.status === "running");
   return {
@@ -127,9 +207,14 @@ export async function keepMustWait(input: {
   /** The page's workspace scope, as for readTitleMessages. */
   scope: WorkflowScope;
   work: UserMessageScope;
+  works?: readonly UserMessageScope[];
 }): Promise<boolean> {
-  const [messages, runs] = await Promise.all([input.repo.listUserMessages(input.work), input.repo.listActiveWorkflowRuns(input.scope)]);
-  return holdsMessage(messages) || messageRunView(runs, input.work).running;
+  const targetWorks = input.works && input.works.length > 0 ? input.works : [input.work];
+  const [messageLists, runs] = await Promise.all([
+    Promise.all(targetWorks.map((w) => input.repo.listUserMessages(w))),
+    input.repo.listActiveWorkflowRuns(input.scope),
+  ]);
+  return holdsMessage(messageLists.flat()) || messageRunView(runs, targetWorks).running;
 }
 
 // The 待换 rows 撤销 sends back (restoreEpisodesToPendingAction). The page handed them to the
@@ -158,6 +243,60 @@ export function parsePendingRows(input: unknown, mediaType: "movie" | "tv", max:
   return rows;
 }
 
+/** Pick the drive work to file a new user message under when the title has tracked
+ *  seasons across multiple drives in unified workspace mode: prefer the drive that
+ *  tracks all (or most) of the tagged episodes, falling back to `works[0]` (which
+ *  already prefers drives with obtained episodes). */
+export async function pickWorkForMessage(input: {
+  repo: Pick<WorkflowRepository, "listTrackedSeasonStates">;
+  scope: WorkflowScope;
+  works: readonly UserMessageScope[];
+  episodeTags: readonly string[];
+  states?: Awaited<ReturnType<WorkflowRepository["listTrackedSeasonStates"]>>;
+}): Promise<UserMessageScope | null> {
+  const first = input.works[0] ?? null;
+  if (!first || input.works.length <= 1 || input.episodeTags.length === 0) {
+    return first;
+  }
+  const states = (input.states ?? (await input.repo.listTrackedSeasonStates(input.scope))).filter(
+    (s) => s.title.id === first.titleKey,
+  );
+  const obtainedByDrive = new Map<string, Set<string>>();
+  const trackedByDrive = new Map<string, Set<string>>();
+  for (const s of states) {
+    const drive = userMessageDrive(s.connectedStorageId);
+    let obtainedSet = obtainedByDrive.get(drive);
+    if (!obtainedSet) {
+      obtainedSet = new Set<string>();
+      obtainedByDrive.set(drive, obtainedSet);
+    }
+    let trackedSet = trackedByDrive.get(drive);
+    if (!trackedSet) {
+      trackedSet = new Set<string>();
+      trackedByDrive.set(drive, trackedSet);
+    }
+    for (const e of s.episodes) {
+      trackedSet.add(e.episodeCode);
+      if (e.obtained) obtainedSet.add(e.episodeCode);
+    }
+  }
+  let best = first;
+  let bestObtainedHits = -1;
+  let bestTrackedHits = -1;
+  for (const w of input.works) {
+    const obtainedSet = obtainedByDrive.get(w.drive);
+    const trackedSet = trackedByDrive.get(w.drive);
+    const obtainedHits = obtainedSet ? input.episodeTags.filter((tag) => obtainedSet.has(tag)).length : 0;
+    const trackedHits = trackedSet ? input.episodeTags.filter((tag) => trackedSet.has(tag)).length : 0;
+    if (obtainedHits > bestObtainedHits || (obtainedHits === bestObtainedHits && trackedHits > bestTrackedHits)) {
+      bestObtainedHits = obtainedHits;
+      bestTrackedHits = trackedHits;
+      best = w;
+    }
+  }
+  return best;
+}
+
 /** Whether every row could be one of this work's own 待换 rows: filed under one of its
  *  messages, for an episode it has (a show: a season tracked here, on this drive — the
  *  engine's rule), at a time not later than now. */
@@ -166,25 +305,52 @@ export async function pendingRowsFitWork(input: {
   /** The page's workspace scope, as for resolveMessageWork. */
   scope: WorkflowScope;
   work: UserMessageScope;
+  works?: readonly UserMessageScope[];
+  states?: Awaited<ReturnType<WorkflowRepository["listTrackedSeasonStates"]>>;
+  workByMessageId?: Map<string, UserMessageScope>;
   mediaType: "movie" | "tv";
   rows: readonly PendingRow[];
   now: Date;
 }): Promise<boolean> {
-  const { work } = input;
-  const [messages, states] = await Promise.all([input.repo.listUserMessages(work), input.repo.listTrackedSeasonStates(input.scope)]);
-  const messageIds = new Set(messages.map((m) => m.id));
-  // The episodes that exist in this work's seasons tracked on this drive — a season number
+  const targetWorks = input.works && input.works.length > 0 ? input.works : [input.work];
+  const titleKey = targetWorks[0]!.titleKey;
+  const drives = new Set(targetWorks.map((w) => w.drive));
+  const [messageLists, states] = await Promise.all([
+    Promise.all(targetWorks.map((w) => input.repo.listUserMessages(w))),
+    input.states ? Promise.resolve(input.states) : input.repo.listTrackedSeasonStates(input.scope),
+  ]);
+  const driveByMessageId = new Map<string, string>();
+  for (const [index, messages] of messageLists.entries()) {
+    const w = targetWorks[index]!;
+    for (const m of messages) {
+      driveByMessageId.set(m.id, w.drive);
+      input.workByMessageId?.set(m.id, w);
+    }
+  }
+  // The episodes that exist in this work's seasons tracked on each drive — a season number
   // alone would let a forged code (S01E9999 in a two-episode season) through.
-  const episodes = new Set(
-    states
-      .filter((s) => s.title.id === work.titleKey && userMessageDrive(s.connectedStorageId) === work.drive)
-      .flatMap((s) => s.episodes.map((e) => e.episodeCode)),
-  );
+  const episodesByDrive = new Map<string, Set<string>>();
+  for (const s of states) {
+    const drive = userMessageDrive(s.connectedStorageId);
+    if (s.title.id !== titleKey || !drives.has(drive)) continue;
+    let driveEpisodes = episodesByDrive.get(drive);
+    if (!driveEpisodes) {
+      driveEpisodes = new Set<string>();
+      episodesByDrive.set(drive, driveEpisodes);
+    }
+    for (const e of s.episodes) {
+      driveEpisodes.add(e.episodeCode);
+    }
+  }
   // The rows come back from this same server (web and worker share its clock), written
   // in the past — a time later than now is forged.
   const latest = input.now.getTime();
-  const isEpisode = (episode: string) => (input.mediaType === "movie" ? episode === "MOVIE" : episodes.has(episode));
-  return input.rows.every((row) => messageIds.has(row.messageId) && isEpisode(row.episode) && Date.parse(row.requestedAt) <= latest);
+  return input.rows.every((row) => {
+    const drive = driveByMessageId.get(row.messageId);
+    if (drive === undefined) return false;
+    const validEpisode = input.mediaType === "movie" ? row.episode === "MOVIE" : (episodesByDrive.get(drive)?.has(row.episode) ?? false);
+    return validEpisode && Date.parse(row.requestedAt) <= latest;
+  });
 }
 
 export interface TitleMessages {
@@ -212,14 +378,14 @@ export async function readTitleMessages(input: {
 }): Promise<TitleMessages | null> {
   try {
     const scope = await input.scope();
-    const work = await resolveMessageWork({ repo: input.repo, scope, tmdbId: input.tmdbId, mediaType: input.mediaType });
-    if (!work) return null;
+    const works = await resolveMessageWorks({ repo: input.repo, scope, tmdbId: input.tmdbId, mediaType: input.mediaType });
+    if (works.length === 0) return null;
     const [thread, runs, sweepTimes] = await Promise.all([
-      loadMessageThread(input.repo, work),
+      loadMessageThread(input.repo, works),
       input.repo.listActiveWorkflowRuns(scope),
       input.sweepTimes(),
     ]);
-    return { thread, run: messageRunView(runs, work), sweepTimes };
+    return { thread, run: messageRunView(runs, works), sweepTimes };
   } catch (error) {
     (input.log ?? console.error)(
       `[user-message] tmdb ${input.mediaType} ${input.tmdbId}: messages read failed, page shown without the 待换 badge/cells and the message card: ${shortError(error)}`,
