@@ -498,6 +498,7 @@ export async function runQueuedReplaceRequest(
           // Only a replaced episode names a resource.
           ...(r.outcome === "replaced" && r.label !== undefined ? { label: r.label } : {}),
           ...(r.outcome === "replaced" && r.sizeBytes !== null ? { sizeBytes: r.sizeBytes } : {}),
+          ...(r.outcome === "replaced" && r.driveLabel !== undefined ? { driveLabel: r.driveLabel } : {}),
           note: r.note,
         })),
         oldFiles: replacement?.oldFiles ?? [],

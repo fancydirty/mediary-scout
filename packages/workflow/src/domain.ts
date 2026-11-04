@@ -706,6 +706,14 @@ export function buildCrossDriveEpisodeOwnership(input: {
   for (const c of input.copies) {
     copyByEpisodeAndDrive.set(`${c.episodeCode}::${c.storageId}`, c);
   }
+  const latestRecordedAtByDrive = new Map<string, string>();
+  for (const c of input.copies) {
+    if (!c.recordedAt) continue;
+    const prev = latestRecordedAtByDrive.get(c.storageId);
+    if (!prev || c.recordedAt > prev) {
+      latestRecordedAtByDrive.set(c.storageId, c.recordedAt);
+    }
+  }
 
   const byEpisode = new Map<string, CrossDriveEpisodeOwnership>();
   const bucketsSeen = new Set<string>();
@@ -779,6 +787,27 @@ export function buildCrossDriveEpisodeOwnership(input: {
     }
   }
 
-  return [...byEpisode.values()].sort((a, b) => compareEpisodeCodes(a.episodeCode, b.episodeCode));
+  return [...byEpisode.values()]
+    .map((entry) => {
+      if (entry.drives.length <= 1 || latestRecordedAtByDrive.size === 0) {
+        return entry;
+      }
+      const sortedDrives = [...entry.drives].sort((a, b) => {
+        const recA =
+          copyByEpisodeAndDrive.get(`${entry.episodeCode}::${a.storageId}`)?.recordedAt ??
+          (byEpisode.size === 1 ? latestRecordedAtByDrive.get(a.storageId) : undefined) ??
+          "";
+        const recB =
+          copyByEpisodeAndDrive.get(`${entry.episodeCode}::${b.storageId}`)?.recordedAt ??
+          (byEpisode.size === 1 ? latestRecordedAtByDrive.get(b.storageId) : undefined) ??
+          "";
+        if (recA !== recB) {
+          return recB.localeCompare(recA);
+        }
+        return 0;
+      });
+      return { ...entry, drives: sortedDrives };
+    })
+    .sort((a, b) => compareEpisodeCodes(a.episodeCode, b.episodeCode));
 }
 

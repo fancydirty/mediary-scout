@@ -24,6 +24,8 @@ export interface ReplacementResult {
   outcome: "replaced" | "not_found";
   label?: string;
   sizeBytes?: number;
+  /** Short display name of the drive where the replacement landed (e.g. "夸克"). */
+  driveLabel?: string;
   note: string;
 }
 

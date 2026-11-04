@@ -2024,6 +2024,18 @@ export class TaskSandbox {
     return this.memoryChanges;
   }
 
+  /** Override the bound memory drive (and optional brand) before post-run reflection
+   *  when a multi-drive run actually transferred onto a secondary drive. */
+  setMemoryDrive(provider: string, legacyProvider?: string): void {
+    if (!this.memory) return;
+    this.memory.provider = provider;
+    if (legacyProvider !== undefined) {
+      this.memory.legacyProvider = legacyProvider;
+    } else {
+      delete this.memory.legacyProvider;
+    }
+  }
+
   private requireMemory(): NonNullable<TaskSandboxOptions["memory"]> {
     if (!this.memory) throw new Error("MEMORY_UNAVAILABLE: agent memory is not enabled for this run");
     return this.memory;

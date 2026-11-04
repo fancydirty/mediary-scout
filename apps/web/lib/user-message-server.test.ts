@@ -273,6 +273,26 @@ describe("readTitleMessages — the detail page's message decorations", () => {
     expect(read?.sweepTimes).toEqual(["06:00", "21:00"]);
   });
 
+  it("unified workspace (connectedStorageId: null): keeps thread messages and 待换 visible even when the title is tracked across multiple drives", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    const s = movieAnchorSeason({ titleId: film.id, qualityPreference: "4K", storageDirectoryId: "dir_movie" });
+    await track(repo, { drive: "cs_pan123", title: film, s });
+    // Message was filed while only cs_pan123 tracked the film
+    const m = await repo.createUserMessage({ accountId: "acct_1", drive: "cs_pan123", titleKey: film.id, body: "画质太差", episodeTags: [], now: NOW });
+    // Later a side-run tracked the film on cs_103164004 too (which sorts before cs_pan123)
+    await track(repo, { drive: "cs_103164004", title: film, s });
+
+    const read = await readTitleMessages({
+      repo,
+      scope: async () => ({ accountId: "acct_1", connectedStorageId: null }),
+      tmdbId: 42,
+      mediaType: "movie",
+      sweepTimes: async () => ["06:00"],
+    });
+
+    expect(read?.thread.messages.map((x) => x.id)).toEqual([m.id]);
+  });
+
   it("null when the title is not tracked on this drive", async () => {
     const repo = new InMemoryWorkflowRepository();
 

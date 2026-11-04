@@ -1177,11 +1177,12 @@ interface MessageWorkInput {
  *  action's catch). */
 async function messageWorkFor(input: MessageWorkInput) {
   const { getActiveWorkspaceScope, getWorkflowRepository, requireAuthenticatedAccountId } = await import("../lib/workflow-runtime");
-  const { resolveMessageWork } = await import("../lib/user-message-server");
+  const { resolveMessageWorksWithStates } = await import("../lib/user-message-server");
   await requireAuthenticatedAccountId();
   const repo = getWorkflowRepository();
   const scope = await getActiveWorkspaceScope(input.storageId);
-  return { repo, scope, work: await resolveMessageWork({ repo, scope, tmdbId: input.tmdbId, mediaType: input.mediaType }) };
+  const { works, states } = await resolveMessageWorksWithStates({ repo, scope, tmdbId: input.tmdbId, mediaType: input.mediaType });
+  return { repo, scope, work: works[0] ?? null, works, states };
 }
 
 /** The message as it will be stored (body trimmed), checked before any lookup: the
@@ -1201,9 +1202,11 @@ export async function postUserMessageAction(
   try {
     const checked = await checkMessageInput(input);
     if (checked.message) return { success: false, message: checked.message };
-    const { repo, work } = await messageWorkFor(input);
+    const { repo, scope, work, works, states } = await messageWorkFor(input);
     if (!work) return { success: false, message: MESSAGE_NOT_TRACKED };
-    await repo.createUserMessage({ ...work, body: checked.body, episodeTags: input.episodeTags, now: new Date().toISOString() });
+    const { pickWorkForMessage } = await import("../lib/user-message-server");
+    const targetWork = (await pickWorkForMessage({ repo, scope, works, states, episodeTags: input.episodeTags })) ?? work;
+    await repo.createUserMessage({ ...targetWork, body: checked.body, episodeTags: input.episodeTags, now: new Date().toISOString() });
     return { success: true };
   } catch (error) {
     return { success: false, message: `留言没发出去：${String(error)}` };
@@ -1256,20 +1259,40 @@ export async function processMessagesNowAction(
 ): Promise<PushSettingsActionResult & { status?: ProcessMessagesNowStatus }> {
   assertNotDemo();
   try {
-    const { repo, work } = await messageWorkFor(input);
+    const { repo, work, works } = await messageWorkFor(input);
     if (!work) return { success: false, message: MESSAGE_NOT_TRACKED };
     // Like every acquire entry point: never queue a run that can only fail in the worker.
     const preflight = await acquireLlmNotConfigured();
     if (preflight) return { success: false, message: preflight.message };
-    const drive = (await repo.listConnectedStorages(work.accountId)).find((s) => s.id === work.drive);
-    if (drive?.status === "frozen") return { success: false, message: "这块网盘登录已失效，重新绑定后再处理" };
+    const [storages, messageLists] = await Promise.all([
+      repo.listConnectedStorages(work.accountId),
+      Promise.all(works.map((candidateWork) => repo.listUserMessages(candidateWork))),
+    ]);
+    const worksWithPending = works.filter((_, index) =>
+      messageLists[index]?.some((m) => m.status === "pending"),
+    );
+    const checkWorks = worksWithPending.length > 0 ? worksWithPending : [work];
+    for (const candidateWork of checkWorks) {
+      const drive = storages.find((s) => s.id === candidateWork.drive);
+      if (drive?.status === "frozen") return { success: false, message: "这块网盘登录已失效，重新绑定后再处理" };
+    }
     const { queueReplaceRequest } = await import("@media-track/workflow");
-    if ((await repo.markUserMessagesUrgent({ ...work, now: new Date().toISOString() })) === 0) {
+    const nowIso = new Date().toISOString();
+    const markedCounts = await Promise.all(
+      checkWorks.map((candidateWork) => repo.markUserMessagesUrgent({ ...candidateWork, now: nowIso })),
+    );
+    const targetWorks = checkWorks.filter((_, index) => (markedCounts[index] ?? 0) > 0);
+    if (targetWorks.length === 0) {
       return { success: true, status: "nothing_waiting" };
     }
-    const result = await queueReplaceRequest({ repository: repo, work, origin: "user" });
-    if (result.status === "not_tracked") return { success: false, message: MESSAGE_NOT_TRACKED };
-    return { success: true, status: result.status };
+    const results = await Promise.all(
+      targetWorks.map((targetWork) => queueReplaceRequest({ repository: repo, work: targetWork, origin: "user" })),
+    );
+    if (results.every((r) => r.status === "not_tracked")) {
+      return { success: false, message: MESSAGE_NOT_TRACKED };
+    }
+    const status = results.some((r) => r.status === "queued") ? "queued" : "already_running";
+    return { success: true, status };
   } catch (error) {
     return { success: false, message: `没能开始处理：${String(error)}` };
   }
@@ -1285,18 +1308,18 @@ export async function keepEpisodesAsIsAction(
   assertNotDemo();
   try {
     const { USER_MESSAGE_LIMITS } = await import("@media-track/workflow");
-    const { repo, scope, work } = await messageWorkFor(input);
+    const { repo, scope, work, works } = await messageWorkFor(input);
     if (!work) return { success: false, message: MESSAGE_NOT_TRACKED };
     const { episodes } = input;
     if (!Array.isArray(episodes) || episodes.length > USER_MESSAGE_LIMITS.tagsMax || episodes.some((e) => typeof e !== "string")) {
       return { success: false, message: "集数不对" };
     }
     const { keepMustWait } = await import("../lib/user-message-server");
-    if (await keepMustWait({ repo, scope, work })) {
+    if (await keepMustWait({ repo, scope, work, works })) {
       const { KEEP_BUSY_HINT } = await import("../lib/user-message-state");
       return { success: false, message: KEEP_BUSY_HINT };
     }
-    await repo.removePendingReplacements({ ...work, episodes });
+    await Promise.all(works.map((w) => repo.removePendingReplacements({ ...w, episodes })));
     return { success: true };
   } catch (error) {
     return { success: false, message: `没能保存：${String(error)}` };
@@ -1323,22 +1346,31 @@ export async function restoreEpisodesToPendingAction(
     const { parsePendingRows, pendingRowsFitWork } = await import("../lib/user-message-server");
     const rows = parsePendingRows(input.episodes, input.mediaType, USER_MESSAGE_LIMITS.tagsMax);
     if (!rows) return { success: false, message: "集数不对" };
-    const { repo, scope, work } = await messageWorkFor(input);
+    const { repo, scope, work, works, states } = await messageWorkFor(input);
     if (!work) return { success: false, message: MESSAGE_NOT_TRACKED };
-    if (!(await pendingRowsFitWork({ repo, scope, work, mediaType: input.mediaType, rows, now: new Date() }))) {
+    const workByMessageId = new Map<string, typeof work>();
+    if (!(await pendingRowsFitWork({ repo, scope, work, works, states, workByMessageId, mediaType: input.mediaType, rows, now: new Date() }))) {
       return { success: false, message: "要恢复的集对不上这部作品" };
     }
     // addPendingReplacements takes one message and one time per call.
-    const groups = new Map<string, { messageId: string; requestedAt: string; episodes: string[] }>();
+    const groups = new Map<string, { targetWork: typeof work; messageId: string; requestedAt: string; episodes: string[] }>();
     for (const row of rows) {
-      const key = `${row.messageId} ${row.requestedAt}`;
-      const group = groups.get(key) ?? { messageId: row.messageId, requestedAt: row.requestedAt, episodes: [] };
+      const targetWork = workByMessageId.get(row.messageId) ?? work;
+      const key = `${targetWork.drive} ${row.messageId} ${row.requestedAt}`;
+      const group = groups.get(key) ?? { targetWork, messageId: row.messageId, requestedAt: row.requestedAt, episodes: [] };
       group.episodes.push(row.episode);
       groups.set(key, group);
     }
-    for (const group of groups.values()) {
-      await repo.addPendingReplacements({ ...work, episodes: group.episodes, messageId: group.messageId, now: group.requestedAt });
-    }
+    await Promise.all(
+      [...groups.values()].map((group) =>
+        repo.addPendingReplacements({
+          ...group.targetWork,
+          episodes: group.episodes,
+          messageId: group.messageId,
+          now: group.requestedAt,
+        }),
+      ),
+    );
     return { success: true };
   } catch (error) {
     return { success: false, message: `没能撤销：${String(error)}` };

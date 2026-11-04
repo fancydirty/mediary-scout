@@ -264,3 +264,9 @@ export function brandsSupportingProwlarr(): string[] {
     (brand) => brand.label,
   );
 }
+
+/** Strip trailing "网盘" / "云盘" from a drive display label ("夸克网盘" → "夸克"). */
+export function shortDriveLabel(label: string): string {
+  return label.replace(/\s*(?:网盘|云盘)$/, "");
+}
+

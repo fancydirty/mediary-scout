@@ -1,5 +1,6 @@
 import { memoryTitleKey, type AgentMemory, type AgentMemoryStore } from "../agent-memory.js";
 import { buildReflectionDigest, runMemoryReflection } from "./agent-loop.js";
+import { getStorageBrand, isRegisteredStorageProvider, shortDriveLabel } from "../storage-brands.js";
 import type { LanguageModel } from "ai";
 import type { AgentDecision, AuditEvent, ResourceSnapshot, TransferAttempt } from "../domain.js";
 import type { AcquisitionDriveContext, ResourceProvider, StorageExecutor } from "../ports.js";
@@ -206,6 +207,8 @@ export interface RunAcquisitionV2Result extends AcquisitionAgentResult {
       label?: string;
       linkKey?: string | null;
       sizeBytes?: number;
+      driveId?: string;
+      driveLabel?: string;
       note: string;
     }>;
     /** The copies this run rejected that were not on the list yet (by episode, name and size) —
@@ -523,12 +526,38 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
               }
             },
             onReport: async (results) => {
+              const driveLabelById = new Map<string, string>();
+              for (const d of request.drives ?? []) {
+                driveLabelById.set(d.storageId, shortDriveLabel(d.label));
+              }
+              if (memoryDrive && !driveLabelById.has(memoryDrive)) {
+                const brand =
+                  request.storageProvider && isRegisteredStorageProvider(request.storageProvider)
+                    ? shortDriveLabel(getStorageBrand(request.storageProvider).label)
+                    : undefined;
+                if (brand) driveLabelById.set(memoryDrive, brand);
+              }
               for (const r of results) {
                 // The agent speaks in short aliases (s2-14); persistence needs the real
                 // candidate, its title and its link identity (for episode_sources and a
                 // future rejection of this same resource).
                 // Only a replaced result names what landed; a not_found never carries one.
                 const candidate = r.outcome === "replaced" && r.candidateId ? registry.get(r.candidateId) : undefined;
+                let driveId: string | undefined;
+                if (r.outcome === "replaced" && r.fileIds && r.fileIds.length > 0) {
+                  if (storage instanceof MultiDriveStorageV2) {
+                    for (const fid of r.fileIds) {
+                      const dId = storage.driveOfFile(fid);
+                      if (dId) {
+                        driveId = dId;
+                        break;
+                      }
+                    }
+                  } else if (memoryDrive) {
+                    driveId = memoryDrive;
+                  }
+                }
+                const driveLabel = driveId ? driveLabelById.get(driveId) : undefined;
                 // A not_found may be upgraded to replaced later in the run: the last report wins.
                 replaceResults.set(r.episode, {
                   episode: r.episode,
@@ -542,6 +571,8 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
                       }
                     : {}),
                   ...(r.outcome === "replaced" && r.sizeBytes !== undefined ? { sizeBytes: r.sizeBytes } : {}),
+                  ...(driveId ? { driveId } : {}),
+                  ...(driveLabel ? { driveLabel } : {}),
                 });
               }
             },
@@ -723,6 +754,34 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
   // Post-run reflection: best-effort, never changes the outcome.
   // A staging recovery is not an acquisition the next run should learn from.
   if (memoryBinding && !request.stagingRecovery) {
+    let effectiveReflectionDrive = memoryDrive;
+    let effectiveReflectionBrand = request.storageProvider;
+    if (storage instanceof MultiDriveStorageV2) {
+      const keptStorageIds = new Set<string>();
+      for (const attempt of transferAttempts) {
+        const hasKeptFiles =
+          attempt.fate !== undefined
+            ? attempt.fate.kept > 0
+            : attempt.status === "succeeded" && attempt.materializedFileIds.length > 0;
+        if (hasKeptFiles) {
+          for (const fid of attempt.materializedFileIds) {
+            const dId = storage.driveOfFile(fid);
+            if (dId) keptStorageIds.add(dId);
+          }
+        }
+      }
+      if (keptStorageIds.size === 1) {
+        const landedId = [...keptStorageIds][0]!;
+        effectiveReflectionDrive = landedId;
+        const matchedDrive = request.drives?.find((d) => d.storageId === landedId);
+        if (matchedDrive) {
+          effectiveReflectionBrand = matchedDrive.provider;
+        } else if (landedId !== memoryDrive) {
+          effectiveReflectionBrand = undefined;
+        }
+        sandbox.setMemoryDrive(landedId, effectiveReflectionBrand);
+      }
+    }
     // Built from outside data (candidate titles, provider messages) — inside the
     // best-effort boundary: a digest that cannot be built falls back to the coverage
     // line; it never turns a finished acquisition into a failed run.
@@ -730,8 +789,8 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     try {
       digest = buildReflectionDigest({
         searches: sandbox.searchHistory(),
-        ...(memoryDrive ? { drive: memoryDrive } : {}),
-        ...(request.storageProvider ? { driveBrand: request.storageProvider } : {}),
+        ...(effectiveReflectionDrive ? { drive: effectiveReflectionDrive } : {}),
+        ...(effectiveReflectionBrand ? { driveBrand: effectiveReflectionBrand } : {}),
         // Attempts store the provider's real candidate id; the sandbox tracked each
         // file under the alias the agent passed. The file ids are the same on both.
         attempts: transferAttempts.map((attempt) =>

@@ -789,8 +789,11 @@ describe("runQueuedReplaceRequest", () => {
     expect(run?.workflowRun).toMatchObject({ kind: "replace_request", status: "succeeded" });
     expect(run?.episodes[0]?.obtained).toBe(true);
     expect(run?.notifications[0]).toMatchObject({ kind: "replacement_done", trigger: "user" });
-    expect(run?.notifications[0]?.report).toMatchObject({ status: "replaced", lines: expect.arrayContaining(["已换成新版本"]) });
-    expect(run?.notifications[0]?.report?.totalBytes).toBeUndefined();
+    expect(run?.notifications[0]?.report).toMatchObject({
+      status: "replaced",
+      lines: ["已换成新版本", "Film 2010 Real [8.4G]"],
+      totalBytes: 9_000_000_000,
+    });
     const [message] = await repository.listUserMessages(work);
     expect(message?.status).toBe("done");
     // The new film's real size, not the "[8.4G]" in the candidate title.
@@ -800,6 +803,298 @@ describe("runQueuedReplaceRequest", () => {
       expect.objectContaining({ episode: "MOVIE", label: "Film 2010 Real [8.4G]", sizeBytes: filmSize }),
     ]);
     expect(await repository.listPendingReplacements(work)).toEqual([]);
+  });
+
+  it("multi-drive movie replace (机动战士高达 闪光的哈萨维 regression): when old copies sit on 115 + 123 and the replacement lands on 夸克, preserves old drive episodes, records the new 夸克 copy + side-run, tags reflection memory with cs_quark, and stamps only 夸克 + resource title + size on the notification and reply", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const title: MediaTitle = {
+      id: "tmdb_movie_910850",
+      tmdbId: 910850,
+      type: "movie",
+      title: "机动战士高达 闪光的哈萨维 喀耳刻的魔女",
+      originalTitle: "機動戦士ガンダム 閃光のハサウェイ キルケーの魔女",
+      year: 2026,
+      aliases: [],
+    };
+    const season = movieAnchorSeason({ titleId: title.id, qualityPreference: "4K", storageDirectoryId: "dir_123" });
+    const oldSize = 1_474_480_550;
+    const newSize = 9_610_380_966;
+
+    await repository.upsertConnectedStorage({
+      id: "cs_115",
+      accountId: "acct_default",
+      provider: "pan115",
+      providerUid: "103164004",
+      payload: { cookie: "UID=103164004" },
+      createdAt: "2026-06-21T00:00:00.000Z",
+    });
+    await repository.upsertConnectedStorage({
+      id: "cs_pan123",
+      accountId: "acct_default",
+      provider: "pan123",
+      providerUid: "1843112717",
+      payload: { token: "t123" },
+      createdAt: "2026-07-17T00:00:00.000Z",
+    });
+    await repository.upsertConnectedStorage({
+      id: "cs_quark",
+      accountId: "acct_default",
+      provider: "quark",
+      providerUid: "AASgARB6zswQjr51Kkil1l11",
+      payload: { cookie: "__pus=q" },
+      createdAt: "2026-11-02T00:00:00.000Z",
+    });
+
+    // Seed old tracking on 115 and 123
+    for (const [sid, fid, dir] of [
+      ["cs_115", "file_115_old", "dir_115"],
+      ["cs_pan123", "file_123_old", "dir_123"],
+    ] as const) {
+      await repository.saveWorkflowRunSnapshot({
+        accountId: "acct_default",
+        connectedStorageId: sid,
+        title,
+        season: { ...season, storageDirectoryId: dir },
+        workflowRun: {
+          id: `seed_${sid}`,
+          kind: "movie_init",
+          status: "succeeded",
+          trackedSeasonId: season.id,
+          startedAt: "2026-09-01T00:00:00.000Z",
+          finishedAt: "2026-09-01T00:01:00.000Z",
+          auditEvents: [],
+        },
+        episodes: createEpisodeStates({ trackedSeasonId: season.id, seasonNumber: 1, totalEpisodes: 1, latestAiredEpisode: 1 }).map((e) => ({
+          ...e,
+          obtained: true,
+          verifiedFileIds: [fid],
+        })),
+        resourceSnapshots: [],
+        decisions: [],
+        transferAttempts: [],
+        notifications: [],
+      });
+    }
+    await repository.upsertEpisodeCopies([
+      {
+        trackedSeasonId: season.id,
+        episodeCode: "S01E01",
+        storageId: "cs_115",
+        fileIds: ["file_115_old"],
+        sizeBytes: oldSize,
+        quality: null,
+        runId: "seed_cs_115",
+        recordedAt: "2026-09-01T00:01:00.000Z",
+      },
+    ]);
+
+    const exec115 = new FakeStorageExecutor();
+    const dir115 = await exec115.createDirectory({ name: "机动战士高达 闪光的哈萨维 喀耳刻的魔女 (2026) {tmdb-910850}", parentId: "115_movies" });
+    exec115.seedDirectoryFiles(dir115, [
+      { id: "file_115_old", storageDirectoryId: dir115, name: "Hathaway.1080P.mp4", sizeBytes: oldSize, episodeCode: null, providerFileId: "file_115_old" },
+    ]);
+
+    const exec123 = new FakeStorageExecutor();
+    const dir123 = await exec123.createDirectory({ name: "机动战士高达 闪光的哈萨维 喀耳刻的魔女 (2026) {tmdb-910850}", parentId: "123_movies" });
+    exec123.seedDirectoryFiles(dir123, [
+      { id: "file_123_old", storageDirectoryId: dir123, name: "Hathaway.1080P.mp4", sizeBytes: oldSize, episodeCode: null, providerFileId: "file_123_old" },
+    ]);
+
+    const execQuark = new FakeStorageExecutor();
+    execQuark.transfer = async ({ candidate, directoryId, workflowRunId }) => {
+      execQuark.seedDirectoryFiles(directoryId, [
+        {
+          id: "quark_new_4k",
+          storageDirectoryId: directoryId,
+          name: "MOBILE.SUIT.GUNDAM.HATHAWAY.2026.2160p.AMZN.WEBRip.H.265.mkv",
+          sizeBytes: newSize,
+          episodeCode: null,
+          providerFileId: "quark_new_4k",
+        },
+      ]);
+      return {
+        id: `${workflowRunId}_t_quark`,
+        workflowRunId,
+        candidateId: candidate.id,
+        status: "succeeded",
+        providerMessage: "transferred",
+        materializedFileIds: ["quark_new_4k"],
+      };
+    };
+
+    const work = { accountId: "acct_default", drive: "cs_pan123", titleKey: title.id };
+    await repository.createUserMessage({ ...work, body: "画质太差，请尽量找个质量最高的", episodeTags: [], now: NOW });
+    await queueReplaceRequest({ repository, work, now: fixedNow, createWorkflowRunId: () => "run_hathaway_rr" });
+
+    const filmProvider: ResourceProvider = {
+      search: async ({ keyword }) => ({
+        id: `snap_${keyword}`,
+        provider: "pansou",
+        keyword,
+        candidates: [
+          {
+            id: "cand_quark_4k",
+            snapshotId: `snap_${keyword}`,
+            index: 0,
+            title: "机动战士高达 闪光的哈萨维 喀耳刻的魔女 (臻彩) 4K HDR 杜比视界",
+            type: "quark",
+            source: "pansou",
+            providerPayload: { url: "https://pan.quark.cn/s/33bd460a39c2" },
+          },
+        ],
+        createdAt: NOW,
+      }),
+    };
+
+    let step = 0;
+    const model = new MockLanguageModelV3({
+      doGenerate: async (options) => {
+        step += 1;
+        if (step === 1) return tool("inspectTargetDir", {}, step);
+        if (step === 2) {
+          return tool(
+            "rejectCurrentSource",
+            {
+              rejections: [{ fileIds: ["cs_115::file_115_old", "cs_pan123::file_123_old"] }],
+              reason: "1080P 1.4GB 画质太差",
+            },
+            step,
+          );
+        }
+        if (step === 3) return tool("viewResourceSnapshot", {}, step);
+        if (step === 4) {
+          return tool("transferUntilLanded", { candidateIds: ["s1-1"] }, step);
+        }
+        if (step === 5) return tool("flattenMovie", {}, step);
+        if (step === 6) return tool("markObtained", { codes: ["MOVIE"] }, step);
+        if (step === 7) {
+          return tool(
+            "reportReplacement",
+            {
+              results: [
+                {
+                  episode: "MOVIE",
+                  outcome: "replaced",
+                  candidateId: "s1-1",
+                  fileIds: ["cs_quark::quark_new_4k"],
+                  note: "已用 4K HDR 杜比视界替换",
+                },
+              ],
+            },
+            step,
+          );
+        }
+        if (step === 8) return tool("finish", {}, step);
+        // Step 9: post-run memory reflection turn
+        if (step === 9) {
+          return tool(
+            "writeMemory",
+            {
+              scope: "title",
+              name: "kirke-majo-zhencai-4k-works",
+              description: "搜全名能找到 2026 电影正片 4K HDR 杜比视界",
+              kind: "works",
+              body: "夸克源 4K HDR 杜比视界转存成功",
+            },
+            step,
+          );
+        }
+        return text("done");
+      },
+    });
+
+    const drives = [
+      {
+        storageId: "cs_115",
+        provider: "pan115",
+        label: "115 网盘",
+        storage: exec115,
+        parents: { tv: "115_tv", anime: "115_anime", movies: "115_movies" },
+        space: null,
+      },
+      {
+        storageId: "cs_pan123",
+        provider: "pan123",
+        label: "123网盘",
+        storage: exec123,
+        parents: { tv: "123_tv", anime: "123_anime", movies: "123_movies" },
+        space: null,
+      },
+      {
+        storageId: "cs_quark",
+        provider: "quark",
+        label: "夸克网盘",
+        storage: execQuark,
+        parents: { tv: "quark_tv", anime: "quark_anime", movies: "quark_movies" },
+        space: null,
+      },
+    ];
+
+    const result = await runQueuedReplaceRequest({
+      repository,
+      resourceProvider: filmProvider,
+      storage: exec123,
+      model,
+      storageParentDirectoryId: "123_tv",
+      moviesParentDirectoryId: "123_movies",
+      now: fixedNow,
+      resolveAccountContext: async () => ({
+        storage: exec123,
+        storageProvider: "pan123",
+        storageParentDirectoryId: "123_tv",
+        moviesParentDirectoryId: "123_movies",
+        agentMemory: true,
+        drives,
+      }),
+    });
+
+    expect(result).toMatchObject({ status: "ran", workflowRunId: "run_hathaway_rr", workflowStatus: "succeeded" });
+
+    // 1. Notification only attributes the drive where the replacement landed ("夸克"), plus the new version title and 9.0 GB size
+    const lockRun = await repository.getWorkflowRunSnapshot("run_hathaway_rr", {
+      accountId: "acct_default",
+      connectedStorageId: "cs_pan123",
+    });
+    expect(lockRun?.notifications[0]?.report).toMatchObject({
+      status: "replaced",
+      lines: ["已换成新版本", "机动战士高达 闪光的哈萨维 喀耳刻的魔女 (臻彩) 4K HDR 杜比视界"],
+      driveLabels: ["夸克"],
+      fileCount: 1,
+      totalBytes: newSize,
+    });
+
+    // 2. User message reply includes driveLabel: "夸克" and sizeBytes: newSize
+    const [doneMsg] = await repository.listUserMessages(work);
+    expect(doneMsg?.reply?.results).toEqual([
+      {
+        episode: "MOVIE",
+        outcome: "replaced",
+        label: "机动战士高达 闪光的哈萨维 喀耳刻的魔女 (臻彩) 4K HDR 杜比视界",
+        sizeBytes: newSize,
+        driveLabel: "夸克",
+        note: "已用 4K HDR 杜比视界替换",
+      },
+    ]);
+
+    // 3. Cross-drive ownership has 夸克 first (most recent recordedAt), with its 9.6 GB size, and preserves 115 + 123
+    const ownership = await repository.obtainedEpisodesForSeason(season.id, "acct_default");
+    expect(ownership).toHaveLength(1);
+    expect(ownership[0]?.obtained).toBe(true);
+    expect(ownership[0]?.drives.map((d) => d.storageId)).toEqual(["cs_quark", "cs_115", "cs_pan123"]);
+    expect(ownership[0]?.drives[0]).toMatchObject({
+      storageId: "cs_quark",
+      fileIds: ["quark_new_4k"],
+      sizeBytes: newSize,
+    });
+
+    // 4. Reflection memory is tagged with cs_quark (where the transfer actually happened), not cs_pan123
+    const memories = await repository.listAgentMemories({
+      accountId: "acct_default",
+      scope: "title",
+      titleKey: title.id,
+    });
+    expect(memories).toHaveLength(1);
+    expect(memories[0]?.provider).toBe("cs_quark");
   });
 
   it("a movie replace run cut off by the content filter before any transfer fails loud like TV: no reply, no 还没找到 push, no 待换", async () => {

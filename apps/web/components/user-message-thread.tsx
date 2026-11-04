@@ -762,7 +762,7 @@ function Tracks({
             {row.state === "replaced" ? (
               <>
                 <CheckIcon />
-                换好了
+                {row.driveLabel ? `换好了 · ${row.driveLabel}` : "换好了"}
               </>
             ) : row.state === "looking" ? (
               <>
