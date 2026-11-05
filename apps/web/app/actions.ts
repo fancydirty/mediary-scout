@@ -748,6 +748,13 @@ export async function clearAssrtTokenAction(): Promise<PushSettingsActionResult>
 export async function savePanSouBaseUrlAction(baseURL: string): Promise<PushSettingsActionResult> {
   assertNotDemo();
   try {
+    // 探活是服务端向调用者给的任意地址发请求（issue #366 SSRF）。这个设置影响
+    // 整个实例的资源搜索走向，属于站主级配置：多用户下非站主账号不得写。单用户
+    // (含匿名访客) 走 resolveCurrentIsOwner 的既有判定（哨兵账号非站主，一律拒绝）。
+    const { resolveCurrentIsOwner } = await import("../lib/settings-attention-server");
+    if (!(await resolveCurrentIsOwner())) {
+      return { success: false, message: "只有站主可以修改网盘搜索源。" };
+    }
     const { getWorkflowRepository, getCurrentAccountId, PANSOU_BASE_URL_SETTING_KEY, PANSOU_HEALTH_SETTING_KEY } = await import("../lib/workflow-runtime");
     const repository = getWorkflowRepository();
     const accountId = await getCurrentAccountId();
