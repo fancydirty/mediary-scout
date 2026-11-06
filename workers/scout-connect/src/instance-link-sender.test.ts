@@ -51,4 +51,45 @@ describe("createInstanceLinkSender", () => {
     error.mockRestore();
     vi.unstubAllGlobals();
   });
+
+  it("sends through Cloudflare Email Service binding when provided", async () => {
+    const send = vi.fn(async () => ({ messageId: "msg_1" }));
+    await createInstanceLinkSender({ send })("alice@example.com", {
+      url: "https://mediaryconnect.app/link?t=\"><script>",
+      verifyCode: "7K3P",
+      requestIp: "192.0.2.8",
+      requestedAt: "2026-10-03T00:00:00.000Z",
+    });
+    expect(send).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        from: { email: "noreply@mediaryconnect.app", name: "Mediary Connect" },
+        to: "alice@example.com",
+        subject: "确认连接你的 Mediary Scout 实例",
+        text: expect.stringContaining("核对码：7K3P"),
+        html: expect.stringContaining("&lt;script&gt;"),
+      }),
+    );
+  });
+
+  it("logs and throws when Cloudflare Email Service binding rejects", async () => {
+    const err = Object.assign(new Error("domain not verified"), { code: "E_SENDER_NOT_VERIFIED" });
+    const send = vi.fn(async () => {
+      throw err;
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await expect(
+      createInstanceLinkSender({ send })("a@example.com", {
+        url: "https://mediaryconnect.app/link?t=x",
+        verifyCode: "7K3P",
+        requestIp: "",
+        requestedAt: "now",
+      }),
+    ).rejects.toThrow("cf email failed: E_SENDER_NOT_VERIFIED (domain not verified)");
+    expect(error).toHaveBeenCalledWith(
+      "cf instance link failed, code:",
+      "E_SENDER_NOT_VERIFIED (domain not verified)",
+    );
+    error.mockRestore();
+  });
 });

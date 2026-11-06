@@ -1,7 +1,34 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createMemoryConnectDb } from "./db.js";
 import type { RouteDeps } from "./routes.js";
-import { runScheduledMaintenance } from "./index.js";
+import { resolveEmailTransport, runScheduledMaintenance } from "./index.js";
+import { createMagicLinkSender } from "./magic-link-sender.js";
+
+describe("resolveEmailTransport & createMagicLinkSender", () => {
+  it("prefers EMAIL binding over RESEND_API_KEY and sends via binding", async () => {
+    const send = vi.fn(async () => ({ messageId: "msg_magic_1" }));
+    const transport = resolveEmailTransport({
+      EMAIL: { send },
+      RESEND_API_KEY: "resend-key",
+    });
+    expect(typeof transport).toBe("object");
+    await createMagicLinkSender(transport)("bob@example.com", "https://mediaryconnect.app/auth/callback?t=123&x=\"bad\"");
+    expect(send).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        from: { email: "noreply@mediaryconnect.app", name: "Mediary Connect" },
+        to: "bob@example.com",
+        subject: "Mediary Connect 登录链接",
+        html: expect.stringContaining("&quot;bad&quot;"),
+      }),
+    );
+  });
+
+  it("falls back to RESEND_API_KEY when EMAIL binding is absent, and throws if both are missing", () => {
+    expect(resolveEmailTransport({ RESEND_API_KEY: "re_123" })).toBe("re_123");
+    expect(() => resolveEmailTransport({})).toThrow("EMAIL binding or RESEND_API_KEY is required");
+  });
+});
 
 describe("scheduled maintenance", () => {
   it("runs expired instance-link retention with a seven-day cutoff and bounded batch", async () => {
