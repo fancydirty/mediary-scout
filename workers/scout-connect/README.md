@@ -167,7 +167,7 @@ sha256. After `token_shown_at` is set, the plaintext is unrecoverable.
 | `CF_ZONE_ID` | mediaryconnect.app zone |
 | `TOKEN_WRAP_KEY` | `openssl rand -hex 32` — AES-256-GCM key for token-at-rest |
 | `SESSION_SECRET` | `openssl rand -hex 32` — HMAC key for magic-link + session cookies (P3) |
-| `RESEND_API_KEY` | Resend API key for magic-link emails (P3) |
+| `RESEND_API_KEY` | Optional fallback Resend API key when `EMAIL` (`send_email` binding) is not bound |
 | `WAFFO_PRIVATE_KEY` | Waffo private key used by the SDK to sign API calls (PEM) |
 
 Vars (wrangler.jsonc, non-secret): `CONNECT_ROOT_DOMAIN=mediaryconnect.app`, `WAFFO_MERCHANT_ID`, `WAFFO_STORE_ID`, `WAFFO_ENVIRONMENT`, `WAFFO_PRODUCT_QUARTER`, `WAFFO_PRODUCT_YEAR`, and `WAFFO_PRODUCT_TWO_YEARS`.

@@ -1,39 +1,89 @@
 /**
- * Resend 通用发信器(到期提醒等非登录邮件)。
+ * 通用发信器：支持 Cloudflare Email Service (`env.EMAIL`) 与 Resend。
  *
- * 与 magic-link-sender 分开:那个是为登录链接定做的(硬编码 subject/文案/按钮),
- * 到期提醒的文案完全不同,硬塞会让两边都不像样。复用的是**同一个 Resend 端点
- * 与超时/错误纪律**,不是同一个文案。
+ * 承载底层发送协议（`send_email` binding vs Resend HTTP API）、5s 超时与诊断日志纪律，
+ * 供到期提醒 (`createEmailSender`)、登录魔法链接 (`magic-link-sender`) 与实例绑定确认
+ * (`instance-link-sender`) 共同复用。
  */
+import type { SendEmailBinding } from "./env.js";
+
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
-const FROM = "Mediary Connect <noreply@mediaryconnect.app>";
+const FROM_STRING = "Mediary Connect <noreply@mediaryconnect.app>";
+const FROM_ADDRESS = { email: "noreply@mediaryconnect.app", name: "Mediary Connect" };
 
-export type EmailSender = (input: { to: string; subject: string; text: string }) => Promise<void>;
+export type EmailTransport = string | SendEmailBinding;
 
-export function createEmailSender(apiKey: string): EmailSender {
-  return async ({ to, subject, text }) => {
-    const res = await fetch(RESEND_ENDPOINT, {
-      method: "POST",
-      // 外部 HTTP 一律带超时(同仓所有外部调用的硬纪律),否则上游抖动挂住 Worker。
-      signal: AbortSignal.timeout(5_000),
-      headers: {
-        authorization: `Bearer ${apiKey}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        from: FROM,
-        to: [to],
-        // 到期提醒是**事务性**邮件,不该退订也不能带营销样式 —— 纯文本最稳,
-        // 也能躲开 spam 过滤器对重 HTML 事务邮件的判罚。
+export interface TransactionalEmailInput {
+  to: string;
+  subject: string;
+  text: string;
+  html?: string;
+}
+
+export type EmailSender = (input: TransactionalEmailInput) => Promise<void>;
+
+function extractBindingErrorDetail(err: unknown): string {
+  if (err && typeof err === "object") {
+    const code = "code" in err && typeof (err as { code?: unknown }).code === "string"
+      ? (err as { code: string }).code.trim()
+      : "";
+    const message = err instanceof Error && err.message.trim() !== "" ? err.message.trim() : "";
+    if (code && message) return `${code} (${message})`;
+    if (code) return code;
+    if (message) return message;
+  }
+  return "unknown";
+}
+
+export async function dispatchTransactionalEmail(
+  transport: EmailTransport,
+  input: TransactionalEmailInput,
+  logContext = "email",
+): Promise<void> {
+  const { to, subject, text, html } = input;
+  if (typeof transport !== "string") {
+    try {
+      await transport.send({
+        from: FROM_ADDRESS,
+        to,
         subject,
         text,
-      }),
-    });
-    if (!res.ok) {
-      // 沿用 magic-link-sender 的纪律:异常留可诊断日志,不含密钥/正文。
-      console.error("resend email failed, status:", res.status);
-      throw new Error(`resend failed: ${res.status}`);
+        ...(html !== undefined ? { html } : {}),
+      });
+      return;
+    } catch (err) {
+      const detail = extractBindingErrorDetail(err);
+      console.error(`cf ${logContext} failed, code:`, detail);
+      throw new Error(`cf email failed: ${detail}`);
     }
+  }
+
+  const res = await fetch(RESEND_ENDPOINT, {
+    method: "POST",
+    // 外部 HTTP 一律带超时(同仓所有外部调用的硬纪律),否则上游抖动挂住 Worker。
+    signal: AbortSignal.timeout(5_000),
+    headers: {
+      authorization: `Bearer ${transport}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      from: FROM_STRING,
+      to: [to],
+      subject,
+      text,
+      ...(html !== undefined ? { html } : {}),
+    }),
+  });
+  if (!res.ok) {
+    // 沿用 PR #184 的分类记录法:异常留可诊断日志,不含密钥/正文。
+    console.error(`resend ${logContext} failed, status:`, res.status);
+    throw new Error(`resend failed: ${res.status}`);
+  }
+}
+
+export function createEmailSender(transport: EmailTransport): EmailSender {
+  return async (input) => {
+    await dispatchTransactionalEmail(transport, input, "email");
   };
 }
 

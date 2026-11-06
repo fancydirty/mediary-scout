@@ -1,7 +1,32 @@
 import type { D1Database } from "./db.js";
 
+/** Cloudflare Email Service `send_email` binding 的最小类型声明（与 Workers 运行时签名一致）。 */
+export interface EmailAddress {
+  email: string;
+  name?: string;
+}
+
+export interface EmailMessageBuilder {
+  to: string | EmailAddress | Array<string | EmailAddress>;
+  from: string | EmailAddress;
+  subject: string;
+  html?: string;
+  text?: string;
+  cc?: string | EmailAddress | Array<string | EmailAddress>;
+  bcc?: string | EmailAddress | Array<string | EmailAddress>;
+  replyTo?: string | EmailAddress;
+  headers?: Record<string, string>;
+}
+
+export interface SendEmailBinding {
+  send(message: EmailMessageBuilder): Promise<{ messageId: string }>;
+}
+
 export interface Env {
   DB: D1Database;
+  // Cloudflare Email Sending 原生绑定（wrangler.jsonc send_email: [{ name: "EMAIL" }]）。
+  // 优先使用原生绑定发信（0 额外月费）；未绑定时回退 RESEND_API_KEY。
+  EMAIL?: SendEmailBinding;
   ADMIN_TOKEN: string;
   CF_API_TOKEN: string;
   CF_ACCOUNT_ID: string;

@@ -4,19 +4,33 @@ import { newId, newInviteCode } from "./ids.js";
 import { handleRequest, reconcileWaffoOrders, type RouteDeps } from "./routes.js";
 import { createMagicLinkSender } from "./magic-link-sender.js";
 import { createInstanceLinkSender } from "./instance-link-sender.js";
-import type { Env } from "./env.js";
+import type { Env, SendEmailBinding } from "./env.js";
 import { createWaffoApi, type WaffoApi } from "./waffo-api.js";
 import { sweepExpiredEndpoints } from "./expiry-sweep.js";
 import { createEmailSender } from "./email-sender.js";
 
-/** 取值或显式抛错。某些 env(如 RESEND_API_KEY)对**部分**路径可选(到期提醒),
- *  但对其它路径(登录)是必需的 —— 在必需处显式断言,比让 undefined 流到下游
- *  变成隐晦失败好。 */
-function requireEnv(value: string | undefined, name: string): string {
-  if (value === undefined || value.trim() === "") {
-    throw new Error(name + " is required but not configured");
+/** 解析邮件传输通道：优先使用 Cloudflare Email Service 绑定 (`env.EMAIL`)，
+ *  未绑定时回退 `RESEND_API_KEY`。两者均未配置时返回 `undefined`。 */
+export function resolveOptionalEmailTransport(
+  env: { EMAIL?: SendEmailBinding | undefined; RESEND_API_KEY?: string | undefined },
+): string | SendEmailBinding | undefined {
+  if (env.EMAIL !== undefined) {
+    return env.EMAIL;
   }
-  return value;
+  if (env.RESEND_API_KEY !== undefined && env.RESEND_API_KEY.trim() !== "") {
+    return env.RESEND_API_KEY;
+  }
+  return undefined;
+}
+
+export function resolveEmailTransport(
+  env: { EMAIL?: SendEmailBinding | undefined; RESEND_API_KEY?: string | undefined },
+): string | SendEmailBinding {
+  const transport = resolveOptionalEmailTransport(env);
+  if (transport === undefined) {
+    throw new Error("EMAIL binding or RESEND_API_KEY is required but not configured");
+  }
+  return transport;
 }
 
 // Workers 运行时注入的类型。本仓不引 @cloudflare/workers-types(只为这一个
@@ -88,15 +102,14 @@ function routeDeps(env: Env, waffoApi: WaffoApi | undefined, scheduled = false):
     newAccountId: () => newId("act"),
     newEntitlementId: () => newId("ent"),
     sessionSecret: env.SESSION_SECRET,
-    // 登录魔法链接**必需** key —— 缺失时显式抛错(而不是让 Bearer undefined
-    // 流到 fetch 里变成隐晦的上游 401)。到期提醒可无(上面 sendEmail 的条件),
-    // 但登录是核心功能,没 key 就该 fail fast。
+    // 登录与实例绑定邮件通道：优先走 Cloudflare Email Service 绑定 (env.EMAIL)，
+    // 未绑定时回退 RESEND_API_KEY；两者均缺失则显式 fail fast。
     sendMagicLink: scheduled
       ? async () => {}
-      : createMagicLinkSender(requireEnv(env.RESEND_API_KEY, "RESEND_API_KEY")),
+      : createMagicLinkSender(resolveEmailTransport(env)),
     sendInstanceLinkEmail: scheduled
       ? async () => {}
-      : createInstanceLinkSender(requireEnv(env.RESEND_API_KEY, "RESEND_API_KEY")),
+      : createInstanceLinkSender(resolveEmailTransport(env)),
   };
 }
 
@@ -115,7 +128,7 @@ async function deleteExpiredInstanceLinkRequests(deps: RouteDeps, cutoffIso: str
 
 export async function runScheduledMaintenance(
   deps: RouteDeps,
-  options: { live: boolean; resendApiKey?: string | undefined },
+  options: { live: boolean; emailBinding?: SendEmailBinding | undefined; resendApiKey?: string | undefined },
 ): Promise<void> {
   const nowMs = Date.parse(deps.now());
   const retention = Number.isFinite(nowMs)
@@ -124,6 +137,10 @@ export async function runScheduledMaintenance(
           console.error("instance-link retention failed:", error instanceof Error ? error.message : String(error));
         })
     : Promise.resolve(console.error("instance-link retention skipped: invalid time"));
+  const emailTransport = resolveOptionalEmailTransport({
+    EMAIL: options.emailBinding,
+    RESEND_API_KEY: options.resendApiKey,
+  });
   await Promise.all([
     retention,
     sweepExpiredEndpoints({
@@ -132,11 +149,8 @@ export async function runScheduledMaintenance(
       now: deps.now,
       newAuditId: deps.newAuditId,
       // dry-run 时不需要发信器(sweep 只在 live 且配置了时才调它)。
-      // 没配 RESEND key 时即便 live 也只是邮件发不出去,回收照走。
-      sendEmail:
-        options.resendApiKey === undefined || options.resendApiKey.trim() === ""
-          ? undefined
-          : createEmailSender(options.resendApiKey),
+      // 没配发信通道时即便 live 也只是邮件发不出去,回收照走。
+      sendEmail: emailTransport === undefined ? undefined : createEmailSender(emailTransport),
       live: options.live,
     }).catch((error) => {
       // 顶层兜底:任一轮失败不能让 cron 静默消失 —— 记录日志,下一轮再试。
@@ -159,6 +173,7 @@ export default {
     ctx.waitUntil(
       runScheduledMaintenance(deps, {
         live: env.EXPIRY_SWEEP_LIVE === "true",
+        emailBinding: env.EMAIL,
         resendApiKey: env.RESEND_API_KEY,
       }),
     );

@@ -1,5 +1,39 @@
-import { describe, expect, it } from "vitest";
-import { expiryReminderText } from "./email-sender.js";
+import { describe, expect, it, vi } from "vitest";
+import { createEmailSender, expiryReminderText } from "./email-sender.js";
+
+describe("createEmailSender", () => {
+  it("uses Cloudflare Email Service binding when provided", async () => {
+    const send = vi.fn(async () => ({ messageId: "msg_exp_1" }));
+    await createEmailSender({ send })({
+      to: "user@example.com",
+      subject: "到期提醒",
+      text: "即将到期",
+    });
+    expect(send).toHaveBeenCalledWith({
+      from: { email: "noreply@mediaryconnect.app", name: "Mediary Connect" },
+      to: "user@example.com",
+      subject: "到期提醒",
+      text: "即将到期",
+    });
+  });
+
+  it("logs and throws when Cloudflare Email Service binding fails", async () => {
+    const err = Object.assign(new Error("daily limit"), { code: "E_DAILY_LIMIT_EXCEEDED" });
+    const send = vi.fn(async () => {
+      throw err;
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await expect(
+      createEmailSender({ send })({
+        to: "user@example.com",
+        subject: "到期提醒",
+        text: "即将到期",
+      }),
+    ).rejects.toThrow("cf email failed: E_DAILY_LIMIT_EXCEEDED (daily limit)");
+    expect(error).toHaveBeenCalledWith("cf email failed, code:", "E_DAILY_LIMIT_EXCEEDED (daily limit)");
+    error.mockRestore();
+  });
+});
 
 describe("expiryReminderText", () => {
   it("包含到期日、剩余天数、宽限语义、续期入口", () => {
