@@ -393,6 +393,7 @@ async function recordTouchedSeasonCopies(input: {
   }
   const prior = input.priorObtained ?? new Set<string>();
   const landedThisRun = obtainedEpisodes.filter((ep) => !prior.has(ep.episodeCode));
+  const landedCodes = new Set(landedThisRun.map((ep) => ep.episodeCode));
 
   // If no multi-drive coordinator ran (or only the primary drive was touched),
   // record episode_copies against the primary drive when known — only for what
@@ -441,7 +442,9 @@ async function recordTouchedSeasonCopies(input: {
       // primary's earlier episodes were recorded when they landed.
       driveCodes = landedThisRun.map((e) => e.episodeCode);
     } else if (byEp.size > 0) {
-      driveCodes = [...byEp.keys()].filter((code) => verifiedByCode.has(code));
+      // A read-only inspection also counts a drive as touched: its directory shows the
+      // earlier episodes too, which were recorded when they landed.
+      driveCodes = [...byEp.keys()].filter((code) => landedCodes.has(code));
     }
     // What a secondary drive already held: kept in its snapshot below, and a reason
     // not to share its directory's bytes among this run's episodes.

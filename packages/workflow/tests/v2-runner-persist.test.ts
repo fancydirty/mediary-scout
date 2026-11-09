@@ -601,4 +601,78 @@ describe("runner-v2 persist wrappers — V2 engine results persisted in the exis
       ["S01E03", "cs_115", "run_patrol_p", null],
     ]);
   });
+
+  it("multi-drive type3 patrol that only inspects both drives' season dirs re-records nothing", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const season3: TrackedSeason = { ...trackedSeason(), totalEpisodes: 3, latestAiredEpisode: 3 };
+    const statesWith = (codes: string[], prefix: string) =>
+      createEpisodeStates({ trackedSeasonId: season3.id, seasonNumber: 1, totalEpisodes: 3, latestAiredEpisode: 3 }).map((ep) =>
+        codes.includes(ep.episodeCode) ? { ...ep, obtained: true, verifiedFileIds: [`${prefix}_${ep.episodeCode}`] } : ep,
+      );
+    const execs: Record<string, FakeStorageExecutor> = { cs_115: new FakeStorageExecutor(), cs_uc: new FakeStorageExecutor() };
+    // Each drive already has the show's Season 01 dir with its own episode in it.
+    for (const [drive, code, parent] of [["cs_115", "S01E01", "115_tv_root"], ["cs_uc", "S01E02", "uc_tv_root"]] as const) {
+      const exec = execs[drive]!;
+      const showId = await exec.createDirectory({ name: "示例剧 (2024) {tmdb-100}", parentId: parent });
+      const seasonDir = await exec.createDirectory({ name: "Season 01", parentId: showId });
+      const prefix = drive === "cs_115" ? "f115" : "fuc";
+      exec.listVideoFiles = async (dirId: string) =>
+        dirId === seasonDir ? [{ id: `${prefix}_${code}`, storageDirectoryId: seasonDir, name: `示例剧.${code}.mkv`, sizeBytes: 1_000, episodeCode: code, providerFileId: `${prefix}_${code}` }] : [];
+      await repository.saveWorkflowRunSnapshot({
+        accountId: "acct_default",
+        connectedStorageId: drive,
+        title: tvTitle,
+        season: { ...season3, storageDirectoryId: seasonDir },
+        workflowRun: { id: `run_seed_${drive}`, kind: "type2_init", status: "partial", trackedSeasonId: season3.id, startedAt: "2026-11-01T00:00:00.000Z", finishedAt: "2026-11-01T00:00:00.000Z", auditEvents: [] },
+        episodes: statesWith([code], prefix),
+        resourceSnapshots: [],
+        decisions: [],
+        transferAttempts: [],
+        notifications: [],
+      });
+      await repository.upsertEpisodeCopies([
+        { trackedSeasonId: season3.id, episodeCode: code, storageId: drive, fileIds: [`${prefix}_${code}`], sizeBytes: 1_000, quality: null, runId: `run_seed_${drive}`, recordedAt: "2026-11-01T00:00:00.000Z" },
+      ]);
+    }
+    const copiesBefore = await repository.listEpisodeCopies(season3.id);
+    let step = 0;
+    const tool = (name: string, input: unknown) => ({
+      content: [{ type: "tool-call" as const, toolCallId: `call_${step}`, toolName: name, input: JSON.stringify(input) }],
+      finishReason: { unified: "tool-calls" as const, raw: "tool-calls" as const }, usage: USAGE, warnings: [],
+    });
+    const model = new MockLanguageModelV3({
+      doGenerate: async () => {
+        step += 1;
+        if (step === 1) return tool("inspectTargetDir", { season: 1 });
+        if (step === 2) return tool("reportNoCoverage", { reason: "E03 not found" });
+        return { content: [{ type: "text" as const, text: "done" }], finishReason: { unified: "stop" as const, raw: "stop" as const }, usage: USAGE, warnings: [] };
+      },
+    });
+
+    const result = await runType3MonitoringV2AndPersist({
+      title: tvTitle,
+      season: season3,
+      episodes: statesWith(["S01E01"], "f115"),
+      crossDriveObtained: ["S01E01", "S01E02"],
+      categoryParentId: "115_tv_root",
+      resourceProvider: emptyProvider(),
+      storage: execs.cs_115!,
+      model,
+      repository,
+      accountId: "acct_default",
+      connectedStorageId: "cs_115",
+      drives: [
+        { storageId: "cs_115", provider: "pan115", label: "115 网盘", storage: execs.cs_115!, parents: { tv: "115_tv_root", anime: "115_anime_root", movies: "115_movies_root" }, space: { totalBytes: 10 * 1024 ** 4, usedBytes: 1 * 1024 ** 4 } },
+        { storageId: "cs_uc", provider: "uc", label: "UC网盘", storage: execs.cs_uc!, parents: { tv: "uc_tv_root", anime: "uc_anime_root", movies: "uc_movies_root" }, space: { totalBytes: 6 * 1024 ** 4, usedBytes: 1 * 1024 ** 4 } },
+      ],
+      workflowRun: { id: "run_inspect_only", startedAt: "2026-11-07T00:11:00.000Z", finishedAt: null },
+      now: () => "2026-11-07T00:12:00.000Z",
+    });
+
+    expect(result.status).toBe("no_coverage");
+    // Both drives were counted as touched by the inspection…
+    expect(result.touchedTargetDrives?.map((d) => d.storageId).sort()).toEqual(["cs_115", "cs_uc"]);
+    // …yet no earlier copy was re-recorded under this run.
+    expect(await repository.listEpisodeCopies(season3.id)).toEqual(copiesBefore);
+  });
 });
