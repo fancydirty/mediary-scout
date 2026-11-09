@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MockLanguageModelV3 } from "ai/test";
-import { inferSeasonFileEpisodeCode, runType3MonitoringV2AndPersist } from "../src/runner-v2.js";
+import { inferSeasonFileEpisodeCode, runReplaceRequestV2AndPersist, runType3MonitoringV2AndPersist } from "../src/runner-v2.js";
 import { FakeStorageExecutor } from "../src/fakes.js";
 import { InMemoryWorkflowRepository } from "../src/repository.js";
 import { createEpisodeStates, type MediaTitle, type ResourceSnapshot, type TrackedSeason } from "../src/domain.js";
@@ -27,6 +27,9 @@ describe("inferSeasonFileEpisodeCode — attribution-only reading of a file name
     ["高清版.mkv", null],
     ["伟大的长征 2026 4K.mkv", null],
     ["三体2 38.mkv", null],
+    // A dotted title number is not an audio layout: still two numbers, no guess.
+    ["三体2.38.mkv", null],
+    ["Show AAC2.0 12.mkv", "S01E12"],
   ])("%s → %s", (name, expected) => {
     expect(inferSeasonFileEpisodeCode(name, 1, null)).toBe(expected);
   });
@@ -51,8 +54,9 @@ function emptyProvider(): ResourceProvider {
   };
 }
 
-/** Three drives, each already holding the show's Season 01 dir with the given file names. */
-async function threeDrives(filesByDrive: Record<"cs_115" | "cs_uc" | "cs_quark", string[]>): Promise<AcquisitionDriveContext[]> {
+/** Three drives, each already holding the show's Season 01 dir with the given file names
+ *  (`null`: the drive has no folder for the show at all). */
+async function threeDrives(filesByDrive: Record<"cs_115" | "cs_uc" | "cs_quark", string[] | null>): Promise<AcquisitionDriveContext[]> {
   const meta = {
     cs_115: { provider: "pan115", label: "115 网盘", root: "115_tv" },
     cs_uc: { provider: "uc", label: "UC网盘", root: "uc_tv" },
@@ -61,9 +65,19 @@ async function threeDrives(filesByDrive: Record<"cs_115" | "cs_uc" | "cs_quark",
   const drives: AcquisitionDriveContext[] = [];
   for (const id of ["cs_115", "cs_uc", "cs_quark"] as const) {
     const exec = new FakeStorageExecutor();
+    const names = filesByDrive[id];
+    if (names === null) {
+      exec.listVideoFiles = async () => [];
+      drives.push({
+        storageId: id, provider: meta[id].provider, label: meta[id].label, storage: exec,
+        parents: { tv: meta[id].root, anime: `${meta[id].root}_anime`, movies: `${meta[id].root}_movies` },
+        space: { totalBytes: 10 * 1024 ** 4, usedBytes: 1 * 1024 ** 4 },
+      });
+      continue;
+    }
     const show = await exec.createDirectory({ name: "伟大的长征 (2026) {tmdb-297253}", parentId: meta[id].root });
     const dir = await exec.createDirectory({ name: "Season 01", parentId: show });
-    const files = filesByDrive[id].map((name, i) => ({ id: `${id}_f${i}`, storageDirectoryId: dir, name, sizeBytes: 1_000, episodeCode: null, providerFileId: `${id}_f${i}` }));
+    const files = names.map((name, i) => ({ id: `${id}_f${i}`, storageDirectoryId: dir, name, sizeBytes: 1_000, episodeCode: null, providerFileId: `${id}_f${i}` }));
     exec.listVideoFiles = async (dirId: string) => (dirId === dir ? files : []);
     drives.push({
       storageId: id,
@@ -183,5 +197,62 @@ describe("a mark on an opaquely named file is kept on the drive that has it (伟
     expect(await obtainedOn(repository, "cs_115")).toEqual(["S01E01"]);
     const union = (await repository.obtainedEpisodesForSeason(season.id, "acct_default")).filter((c) => c.obtained).map((c) => c.episodeCode);
     expect(union).toEqual(["S01E01", "S01E38", "S01E40"]);
+  });
+
+  it("an episode no drive's files account for still lands on the primary — state and copy alike", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    await seed115(repository);
+    // 115 has no folder for the show this run; the other two hold only what their names say.
+    const drives = await threeDrives({ cs_115: null, cs_uc: ["38~4K.mp4"], cs_quark: ["CZZLZDWS-45.mkv"] });
+
+    await patrol(repository, drives, ["S01E38", "S01E40"], "run_primary_fallback");
+
+    expect(await obtainedOn(repository, "cs_uc")).toEqual(["S01E38"]);
+    expect(await obtainedOn(repository, "cs_115")).toEqual(["S01E01", "S01E40"]);
+    const copies = await repository.listEpisodeCopies(season.id);
+    expect(copies.map((c) => [c.episodeCode, c.storageId])).toEqual([
+      ["S01E38", "cs_uc"],
+      ["S01E40", "cs_115"],
+    ]);
+  });
+
+  it("a replace run that lands nothing hands none of the drive's earlier episodes to another drive", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const held = createEpisodeStates({ trackedSeasonId: season.id, seasonNumber: 1, totalEpisodes: 60, latestAiredEpisode: 53 }).map((ep) =>
+      ["S01E01", "S01E02", "S01E03"].includes(ep.episodeCode) ? { ...ep, obtained: true, verifiedFileIds: [`old_${ep.episodeCode}`] } : ep,
+    );
+    await repository.saveWorkflowRunSnapshot({
+      accountId: "acct_default", connectedStorageId: "cs_115", title: tvTitle, season,
+      workflowRun: { id: "run_seed", kind: "type2_init", status: "partial", trackedSeasonId: season.id, startedAt: "2026-11-01T00:00:00.000Z", finishedAt: "2026-11-01T00:00:00.000Z", auditEvents: [] },
+      episodes: held, resourceSnapshots: [], decisions: [], transferAttempts: [], notifications: [],
+    });
+    // Opaque names everywhere; UC has the most files whose names name nothing.
+    const drives = await threeDrives({ cs_115: ["a.mkv", "b.mkv", "c.mkv"], cs_uc: ["w.mkv", "x.mkv", "y.mkv", "z.mkv"], cs_quark: null });
+
+    await runReplaceRequestV2AndPersist({
+      title: tvTitle,
+      seasons: [{ season, episodes: held }],
+      categoryParentId: "115_tv",
+      resourceProvider: emptyProvider(),
+      storage: drives[0]!.storage,
+      model: inspectThenMark([]),
+      repository,
+      accountId: "acct_default",
+      connectedStorageId: "cs_115",
+      drives,
+      workflowRun: { id: "run_replace", startedAt: "2026-11-08T22:00:00.000Z", finishedAt: null },
+      now: () => "2026-11-08T22:02:00.000Z",
+      lockSeasonNumber: 1,
+      lockAuditEvents: [],
+      userRequest: {
+        requestedEpisodes: ["S01E01"],
+        prompt: { messages: [{ body: "E01 换一版", episodeTags: ["S01E01"], createdAt: "2026-11-08T21:00:00.000Z" }], rejected: [], pending: [] },
+        rejectedStore: { list: async () => [], add: async () => undefined },
+      },
+    });
+
+    expect(await obtainedOn(repository, "cs_uc") ?? []).toEqual([]);
+    expect(await obtainedOn(repository, "cs_115")).toEqual(["S01E01", "S01E02", "S01E03"]);
+    expect((await repository.listEpisodeCopies(season.id)).filter((c) => c.storageId === "cs_uc")).toEqual([]);
   });
 });

@@ -280,7 +280,7 @@ export function inferSeasonFileEpisodeCode(
     .replace(/[hx]\.?26[45]/gi, " ")
     .replace(/\d+(?:\.\d+)?\s*(?:fps|帧|bit)/gi, " ")
     .replace(/\d+\s*audios?/gi, " ")
-    .replace(/\d\.\d/g, " ")
+    .replace(/(?:ddp?|e?ac3|aac|dts(?:-?hd)?(?:\s*ma)?|truehd|atmos|flac|opus)[\s.]*\d\.\d/gi, " ")
     .replace(/(?:19|20)\d{2}/g, " ")
     .replace(/s\d{1,2}(?!\d)/gi, " ")
     .match(/\d+/g);
@@ -611,6 +611,24 @@ async function recordTouchedSeasonCopies(input: {
         decisions: [],
         transferAttempts: [],
         notifications: [],
+      });
+    }
+  }
+  // The primary can be given episodes without a scan of its own (no season dir was
+  // touched there): record them like its episode_states do.
+  const scanned = new Set(scans.map((scan) => scan.drive.storageId));
+  for (const [storageId, codes] of attribution) {
+    if (scanned.has(storageId)) continue;
+    for (const code of codes) {
+      copies.push({
+        trackedSeasonId: input.seasonResult.season.id,
+        episodeCode: code,
+        storageId,
+        fileIds: [...(verifiedByCode.get(code) ?? [])],
+        sizeBytes: null,
+        quality: null,
+        runId: input.runId,
+        recordedAt: input.recordedAt,
       });
     }
   }
@@ -1080,6 +1098,17 @@ export async function runReplaceRequestV2AndPersist(
     ...(input.connectedStorageId !== undefined ? { connectedStorageId: input.connectedStorageId } : {}),
   };
   const finishedAt = now();
+  // What each season held before the run: those episodes did not land now. One the
+  // agent reported replaced did — its new file is attributed like any landing.
+  const replaced = new Set(
+    (bridged.replacement?.results ?? []).filter((r) => r.outcome === "replaced").map((r) => r.episode),
+  );
+  const heldBefore = (seasonNumber: number): ReadonlySet<string> =>
+    new Set(
+      (input.seasons.find((entry) => entry.season.seasonNumber === seasonNumber)?.episodes ?? [])
+        .filter((episode) => episode.obtained && !replaced.has(episode.episodeCode))
+        .map((episode) => episode.episodeCode),
+    );
   const allReplaceCopies: EpisodeCopy[] = [];
   for (const seasonResult of bridged.seasons) {
     if (seasonResult === lock) continue;
@@ -1095,6 +1124,7 @@ export async function runReplaceRequestV2AndPersist(
       seasonResult,
       touchedTargetDrives: bridged.touchedTargetDrives,
       getScans,
+      priorObtained: heldBefore(seasonResult.season.seasonNumber),
     });
     await input.repository.saveWorkflowRunSnapshot({
       ...owner,
@@ -1125,6 +1155,7 @@ export async function runReplaceRequestV2AndPersist(
       runId,
       recordedAt: finishedAt,
       getScans,
+      priorObtained: heldBefore(seasonResult.season.seasonNumber),
     });
     allReplaceCopies.push(...copies);
   }
@@ -1139,6 +1170,7 @@ export async function runReplaceRequestV2AndPersist(
     seasonResult: lock,
     touchedTargetDrives: bridged.touchedTargetDrives,
     getScans: getLockScans,
+    priorObtained: heldBefore(lock.season.seasonNumber),
   });
   const lockCopies = await recordTouchedSeasonCopies({
     repository: input.repository,
@@ -1150,6 +1182,7 @@ export async function runReplaceRequestV2AndPersist(
     runId: input.workflowRun.id,
     recordedAt: finishedAt,
     getScans: getLockScans,
+    priorObtained: heldBefore(lock.season.seasonNumber),
   });
   allReplaceCopies.push(...lockCopies);
   const enrichedReplaceNotifications = appendMultiDriveBreakdownToNotifications(
@@ -1242,6 +1275,13 @@ export async function runStagingRecoveryV2AndPersist(
   const accountId = input.accountId ?? DEFAULT_ACCOUNT_ID;
   const primaryStorageId =
     input.connectedStorageId ?? bridged.touchedTargetDrives?.[0]?.storageId ?? null;
+  // What each season held before the recovery: only what the leftover added landed now.
+  const heldBefore = (seasonNumber: number): ReadonlySet<string> =>
+    new Set(
+      (input.seasons.find((entry) => entry.season.seasonNumber === seasonNumber)?.episodes ?? [])
+        .filter((episode) => episode.obtained)
+        .map((episode) => episode.episodeCode),
+    );
   for (const seasonResult of bridged.seasons) {
     if (seasonResult === lock) continue;
     const runId = `${input.workflowRun.id}_s${seasonResult.season.seasonNumber}`;
@@ -1274,6 +1314,7 @@ export async function runStagingRecoveryV2AndPersist(
       touchedTargetDrives: bridged.touchedTargetDrives,
       runId,
       recordedAt: finishedAt,
+      priorObtained: heldBefore(seasonResult.season.seasonNumber),
     });
   }
   await input.repository.saveWorkflowRunSnapshot({
@@ -1305,6 +1346,7 @@ export async function runStagingRecoveryV2AndPersist(
     touchedTargetDrives: bridged.touchedTargetDrives,
     runId: input.workflowRun.id,
     recordedAt: finishedAt,
+    priorObtained: heldBefore(lock.season.seasonNumber),
   });
   return { ...bridged, notifications: [] };
 }
