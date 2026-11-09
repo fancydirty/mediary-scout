@@ -253,12 +253,13 @@ export function inferSeasonFileEpisodeCode(
   explicitCode: string | null,
 ): string | null {
   const seasonPrefix = `S${String(seasonNumber).padStart(2, "0")}`;
-  // The file sits in this season's directory. A season-less name (`第3集`) reads as
-  // S01 and belongs to this season; one that names another season is misfiled.
+  // The file sits in this season's directory. The parser reports a season-less name
+  // (`第3集`) as S01; it is this season's episode. A code naming another season — or
+  // one with no file name to show it was season-less — is misfiled: nothing.
   const inThisSeason = (code: string): string | null => {
     const parts = /^S(\d+)E(\d+)$/.exec(code);
     if (!parts || Number(parts[1]) === seasonNumber) return code;
-    return /[Ss]\d{1,2}[Ee]\d/.test(fileName ?? "") ? null : `${seasonPrefix}E${parts[2]}`;
+    return fileName === undefined || /[Ss]\d{1,2}[Ee]\d/.test(fileName) ? null : `${seasonPrefix}E${parts[2]}`;
   };
   if (explicitCode) return inThisSeason(explicitCode);
   if (!fileName) return null;
@@ -328,7 +329,9 @@ async function scanTouchedSeasonDrives(
       for (const vf of videoFiles) {
         const code = inferSeasonFileEpisodeCode(vf.name, seasonNumber, vf.episodeCode);
         if (!code) {
-          unmappedFileCount += 1;
+          // Only a name that says nothing counts; a misfiled episode of another season
+          // says plenty and must not draw the fallback to its drive.
+          if (!vf.episodeCode && !episodeCodeFromFileName(vf.name ?? "")) unmappedFileCount += 1;
           continue;
         }
         const cur = byEp.get(code) ?? { fileIds: [], sizeBytes: 0 };

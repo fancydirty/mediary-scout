@@ -41,6 +41,8 @@ describe("inferSeasonFileEpisodeCode — attribution-only reading of a file name
     ["Show.S02E07.mkv", "S02E07", "S02E07"],
     // …a name that says another season is misfiled: no attribution.
     ["Show.S01E03.mkv", "S01E03", null],
+    // No name to show the executor's code was season-less: nothing.
+    [undefined, "S01E03", null],
   ] as const)("in Season 02: %s (executor read %s) → %s", (name, explicit, expected) => {
     expect(inferSeasonFileEpisodeCode(name, 2, explicit)).toBe(expected);
   });
@@ -208,6 +210,21 @@ describe("a mark on an opaquely named file is kept on the drive that has it (伟
     expect(await obtainedOn(repository, "cs_115")).toEqual(["S01E01"]);
     const union = (await repository.obtainedEpisodesForSeason(season.id, "acct_default")).filter((c) => c.obtained).map((c) => c.episodeCode);
     expect(union).toEqual(["S01E01", "S01E38", "S01E40"]);
+  });
+
+  it("misfiled episodes of another season do not draw the fallback to their drive", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    await seed115(repository);
+    const drives = await threeDrives({
+      cs_115: ["伟大的长征.S01E01.第01集.2160p.mkv"],
+      cs_uc: ["Show.S02E01.mkv", "Show.S02E02.mkv"],
+      cs_quark: ["高清版.mkv"],
+    });
+
+    await patrol(repository, drives, ["S01E40"], "run_misfiled");
+
+    expect(await obtainedOn(repository, "cs_quark")).toEqual(["S01E40"]);
+    expect((await obtainedOn(repository, "cs_uc")) ?? []).toEqual([]);
   });
 
   it("an episode no drive's files account for still lands on the primary — state and copy alike", async () => {
