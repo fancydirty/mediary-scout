@@ -1040,6 +1040,31 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
       });
     });
 
+    describe("episode_copies", () => {
+      // issue #369: a later write that knows less (an already-current patrol carries no
+      // file ids, size or quality) must never erase what an earlier write recorded.
+      it("upsert keeps known file ids, size and quality when a later write lacks them, and takes them when it has them", async () => {
+        const repo = await fresh();
+        if (!repo.upsertEpisodeCopies || !repo.listEpisodeCopies) return;
+        const base = { trackedSeasonId: "tmdb_tv_9_s1", episodeCode: "S01E01", storageId: "cs_1" };
+        await repo.upsertEpisodeCopies([
+          { ...base, fileIds: ["f1"], sizeBytes: 1_000, quality: "4K", runId: "run_land", recordedAt: "2026-11-06T00:00:00.000Z" },
+        ]);
+        await repo.upsertEpisodeCopies([
+          { ...base, fileIds: [], sizeBytes: null, quality: null, runId: "run_patrol", recordedAt: "2026-11-07T00:00:00.000Z" },
+        ]);
+        expect(await repo.listEpisodeCopies("tmdb_tv_9_s1")).toEqual([
+          { ...base, fileIds: ["f1"], sizeBytes: 1_000, quality: "4K", runId: "run_patrol", recordedAt: "2026-11-07T00:00:00.000Z" },
+        ]);
+        await repo.upsertEpisodeCopies([
+          { ...base, fileIds: ["f2"], sizeBytes: 2_000, quality: "1080P", runId: "run_replace", recordedAt: "2026-11-08T00:00:00.000Z" },
+        ]);
+        expect(await repo.listEpisodeCopies("tmdb_tv_9_s1")).toEqual([
+          { ...base, fileIds: ["f2"], sizeBytes: 2_000, quality: "1080P", runId: "run_replace", recordedAt: "2026-11-08T00:00:00.000Z" },
+        ]);
+      });
+    });
+
     describe("dead_links", () => {
       it("records idempotently and hides expired non-permanent links but keeps permanent ones", async () => {
         const repo = await fresh();

@@ -378,6 +378,10 @@ async function recordTouchedSeasonCopies(input: {
   runId: string;
   recordedAt: string;
   getScans?: () => Promise<TouchedSeasonDriveScan[]>;
+  /** Episodes the primary drive already held before this run. Their copies were
+   *  recorded when they landed; this run carries no file ids for them, so it must not
+   *  record them again, nor hand them to another drive. */
+  priorObtained?: ReadonlySet<string>;
 }): Promise<EpisodeCopy[]> {
   if (!input.repository.upsertEpisodeCopies) {
     return [];
@@ -387,12 +391,15 @@ async function recordTouchedSeasonCopies(input: {
   if (obtainedEpisodes.length === 0) {
     return [];
   }
+  const prior = input.priorObtained ?? new Set<string>();
+  const landedThisRun = obtainedEpisodes.filter((ep) => !prior.has(ep.episodeCode));
 
   // If no multi-drive coordinator ran (or only the primary drive was touched),
-  // record episode_copies against the primary drive when known.
+  // record episode_copies against the primary drive when known — only for what
+  // landed this run: an already-current patrol has nothing to record (issue #369).
   if (touched.length === 0) {
-    if (!input.primaryStorageId) return [];
-    const copies: EpisodeCopy[] = obtainedEpisodes.map((ep) => ({
+    if (!input.primaryStorageId || landedThisRun.length === 0) return [];
+    const copies: EpisodeCopy[] = landedThisRun.map((ep) => ({
       trackedSeasonId: input.seasonResult.season.id,
       episodeCode: ep.episodeCode,
       storageId: input.primaryStorageId!,
@@ -429,14 +436,18 @@ async function recordTouchedSeasonCopies(input: {
     const { drive, seasonDirId, videoFiles, byEp } = scan;
     let driveCodes: string[] = [];
     if (singleNonEmptyDriveId === drive.storageId) {
-      // Only this drive received video files for the season → all agent-marked
-      // obtained episodes belong to this drive (even if filenames are opaque).
-      driveCodes = obtainedEpisodes.map((e) => e.episodeCode);
+      // Only this drive received video files for the season → what the agent marked
+      // obtained this run belongs to this drive (even if filenames are opaque). The
+      // primary's earlier episodes were recorded when they landed.
+      driveCodes = landedThisRun.map((e) => e.episodeCode);
     } else if (byEp.size > 0) {
       driveCodes = [...byEp.keys()].filter((code) => verifiedByCode.has(code));
     }
+    // Opaque names: share the directory's bytes among the episodes — only when the
+    // directory holds nothing but this run's files (not the primary's earlier ones).
+    const dirHoldsOnlyThisRun = !(drive.storageId === input.primaryStorageId && prior.size > 0);
     const perFileFallbackBytes =
-      byEp.size === 0 && videoFiles.length > 0 && driveCodes.length > 0
+      byEp.size === 0 && videoFiles.length > 0 && driveCodes.length > 0 && dirHoldsOnlyThisRun
         ? Math.round(videoFiles.reduce((sum, vf) => sum + vf.sizeBytes, 0) / driveCodes.length)
         : null;
     for (const code of driveCodes) {
@@ -576,6 +587,8 @@ async function persistSingleSeason(input: {
   repository: WorkflowRepository;
   accountId?: string;
   connectedStorageId?: string | null;
+  /** See recordTouchedSeasonCopies. */
+  priorObtained?: ReadonlySet<string>;
 }): Promise<void> {
   const seasonResult = input.bridged.seasons[0]!;
   const accountId = input.accountId ?? DEFAULT_ACCOUNT_ID;
@@ -603,6 +616,7 @@ async function persistSingleSeason(input: {
     runId: input.workflowRun.id,
     recordedAt: input.workflowRun.finishedAt ?? input.workflowRun.startedAt,
     getScans,
+    ...(input.priorObtained ? { priorObtained: input.priorObtained } : {}),
   });
   const notifications = appendMultiDriveBreakdownToNotifications(
     input.bridged.notifications,
@@ -681,9 +695,18 @@ export async function runType2InitializationV2AndPersist(
 }
 
 export async function runType3MonitoringV2AndPersist(
-  input: TvV2Common & { season: TrackedSeason; episodes: EpisodeState[] },
+  input: TvV2Common & {
+    season: TrackedSeason;
+    /** This drive's own episode records. */
+    episodes: EpisodeState[];
+    /** Episodes obtained on any of the account's drives. They count as had when the
+     *  need is worked out, but are never written into this drive's records. */
+    crossDriveObtained?: string[];
+  },
 ): Promise<BridgedV2Result> {
   const now = resolveNow(input);
+  const localObtained = new Set(input.episodes.filter((episode) => episode.obtained).map((episode) => episode.episodeCode));
+  const obtainedAnywhere = new Set([...localObtained, ...(input.crossDriveObtained ?? [])]);
   const bridged = await runTvAcquisitionV2({
     title: input.title,
     mode: "type3",
@@ -703,12 +726,12 @@ export async function runType3MonitoringV2AndPersist(
     model: input.model,
     workflowRunId: input.workflowRun.id,
     // 实有 = the DB obtained marks; the need is aired − these (NOT a 115 scan).
-    priorObtained: input.episodes.filter((episode) => episode.obtained).map((episode) => episode.episodeCode),
+    priorObtained: [...obtainedAnywhere],
     now,
     onProgress: progressAndTraceSink({
       repository: input.repository,
       workflowRunId: input.workflowRun.id,
-      neededHint: input.episodes.filter((episode) => episode.airStatus === "aired" && !episode.obtained).length,
+      neededHint: input.episodes.filter((episode) => episode.airStatus === "aired" && !obtainedAnywhere.has(episode.episodeCode)).length,
       storage: input.storage,
     }),
     ...passthrough(input),
@@ -717,16 +740,50 @@ export async function runType3MonitoringV2AndPersist(
     ...linkHistoryOption({ ...input, workflowRunId: input.workflowRun.id, now }),
   });
 
+  const elsewhereOnly = new Set([...obtainedAnywhere].filter((code) => !localObtained.has(code)));
   await persistSingleSeason({
     kind: "type3_monitor",
     title: input.title,
-    bridged,
+    bridged: {
+      ...bridged,
+      seasons: bridged.seasons.map((seasonResult) => keepDriveLocalRecords(seasonResult, input.episodes, elsewhereOnly)),
+    },
     workflowRun: { ...input.workflowRun, finishedAt: now() },
     repository: input.repository,
     ...(input.accountId ? { accountId: input.accountId } : {}),
     ...(input.connectedStorageId != null ? { connectedStorageId: input.connectedStorageId } : {}),
+    priorObtained: localObtained,
   });
   return bridged;
+}
+
+/**
+ * The engine's season result as THIS drive's records (issue #369). The engine sees
+ * every episode obtained on any drive as had and returns them obtained with no file
+ * ids. Written as-is, a patrol would mark another drive's episodes obtained on this
+ * one and empty the file ids this drive recorded. So an episode only another drive
+ * has stays as this drive had it, and one this drive had keeps its file ids.
+ */
+function keepDriveLocalRecords(
+  seasonResult: BridgedV2Result["seasons"][number],
+  localEpisodes: readonly EpisodeState[],
+  elsewhereOnly: ReadonlySet<string>,
+): BridgedV2Result["seasons"][number] {
+  const local = new Map(localEpisodes.map((episode) => [episode.episodeCode, episode]));
+  const episodes: EpisodeState[] = [];
+  for (const episode of seasonResult.episodes) {
+    const mine = local.get(episode.episodeCode);
+    if (episode.obtained && elsewhereOnly.has(episode.episodeCode)) {
+      // A provider-ahead row past the season's range exists only because it was had.
+      if (!mine && episode.metadataStatus === "provider_ahead") continue;
+      episodes.push({ ...episode, obtained: false, metadataStatus: mine?.metadataStatus ?? "confirmed", verifiedFileIds: [] });
+    } else if (episode.obtained && mine?.obtained && episode.verifiedFileIds.length === 0) {
+      episodes.push({ ...episode, verifiedFileIds: [...mine.verifiedFileIds] });
+    } else {
+      episodes.push(episode);
+    }
+  }
+  return { ...seasonResult, episodes };
 }
 
 export async function runSeriesInitializationV2AndPersist(

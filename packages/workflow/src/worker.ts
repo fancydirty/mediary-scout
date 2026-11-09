@@ -699,8 +699,12 @@ export async function runScheduledType3Monitoring(input: {
     const key = workKey({ accountId: s.accountId, drive: userMessageDrive(s.connectedStorageId), titleKey: s.title.id });
     if (requestKeys.has(key) || busyKeys.has(key)) continue;
     if (await onFrozenDrive(s.accountId, s.connectedStorageId)) continue;
+    // One patrol per season across the account's drives. It runs on the drive that
+    // holds the most of it (ties: listAllTrackedSeasonStates' order, stable by drive),
+    // not on whichever row the database happened to return first (issue #369).
     const seasonKey = `${s.accountId}::${s.season.id}`;
-    if (!patrolStatesBySeasonKey.has(seasonKey)) {
+    const picked = patrolStatesBySeasonKey.get(seasonKey);
+    if (!picked || obtainedCount(s) > obtainedCount(picked)) {
       patrolStatesBySeasonKey.set(seasonKey, s);
     }
   }
@@ -738,6 +742,10 @@ export async function runScheduledType3Monitoring(input: {
 }
 
 type ScheduledType3Input = Parameters<typeof runScheduledType3Monitoring>[0];
+
+function obtainedCount(state: { episodes: readonly EpisodeState[] }): number {
+  return state.episodes.filter((episode) => episode.obtained).length;
+}
 
 /** One tracked state's patrol; null when there is nothing to do for it. */
 async function patrolTrackedState(args: {
@@ -791,21 +799,15 @@ async function patrolTrackedState(args: {
       }
     }
 
-    let patrolEpisodes = episodes;
+    // What the account's other drives already hold counts as had for the need, but
+    // stays out of this drive's records: the runner gets it separately.
+    let crossDriveObtained: string[] = [];
     if (input.repository.obtainedEpisodesForSeason) {
       const crossDrive = await input.repository.obtainedEpisodesForSeason(
         season.id,
         state.accountId,
       );
-      if (crossDrive.length > 0) {
-        const obtainedCodes = new Set(
-          crossDrive.filter((c) => c.obtained).map((c) => c.episodeCode),
-        );
-        patrolEpisodes = episodes.map((ep) => ({
-          ...ep,
-          obtained: ep.obtained || obtainedCodes.has(ep.episodeCode),
-        }));
-      }
+      crossDriveObtained = crossDrive.filter((c) => c.obtained).map((c) => c.episodeCode);
     }
 
     const workflowRunId = input.createWorkflowRunId?.() ?? crypto.randomUUID();
@@ -865,7 +867,8 @@ async function patrolTrackedState(args: {
       runType3MonitoringV2AndPersist({
         title: state.title,
         season,
-        episodes: patrolEpisodes,
+        episodes,
+        crossDriveObtained,
         categoryParentId: requireCategoryParent(
           storageParentForTitle(
             state.title,

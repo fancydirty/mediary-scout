@@ -1759,7 +1759,11 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
       "INSERT INTO episode_copies (tracked_season_id, episode_code, storage_id, file_ids, size_bytes, quality, run_id, recorded_at) " +
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?) " +
         "ON CONFLICT (tracked_season_id, episode_code, storage_id) DO UPDATE SET " +
-        "file_ids = excluded.file_ids, size_bytes = excluded.size_bytes, quality = excluded.quality, run_id = excluded.run_id, recorded_at = excluded.recorded_at",
+        // Unknown facts (no file ids, no size, no quality) never erase known ones.
+        "file_ids = CASE WHEN json_array_length(excluded.file_ids) > 0 THEN excluded.file_ids ELSE episode_copies.file_ids END, " +
+        "size_bytes = COALESCE(excluded.size_bytes, episode_copies.size_bytes), " +
+        "quality = COALESCE(excluded.quality, episode_copies.quality), " +
+        "run_id = excluded.run_id, recorded_at = excluded.recorded_at",
     );
     const tx = this.db.transaction(() => {
       for (const copy of copies) {
