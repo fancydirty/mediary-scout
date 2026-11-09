@@ -252,11 +252,18 @@ export function inferSeasonFileEpisodeCode(
   seasonNumber: number,
   explicitCode: string | null,
 ): string | null {
-  if (explicitCode) return explicitCode;
+  const seasonPrefix = `S${String(seasonNumber).padStart(2, "0")}`;
+  // The file sits in this season's directory. A season-less name (`第3集`) reads as
+  // S01 and belongs to this season; one that names another season is misfiled.
+  const inThisSeason = (code: string): string | null => {
+    const parts = /^S(\d+)E(\d+)$/.exec(code);
+    if (!parts || Number(parts[1]) === seasonNumber) return code;
+    return /[Ss]\d{1,2}[Ee]\d/.test(fileName ?? "") ? null : `${seasonPrefix}E${parts[2]}`;
+  };
+  if (explicitCode) return inThisSeason(explicitCode);
   if (!fileName) return null;
   const named = episodeCodeFromFileName(fileName);
-  if (named) return named;
-  const seasonPrefix = `S${String(seasonNumber).padStart(2, "0")}`;
+  if (named) return inThisSeason(named);
   const stem = fileName.replace(/\.[A-Za-z0-9]+$/, "").trim();
   const bareDigits = /^0*(\d{1,4})$/.exec(stem);
   if (bareDigits?.[1]) {

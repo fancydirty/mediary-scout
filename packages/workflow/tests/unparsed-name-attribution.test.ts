@@ -33,6 +33,17 @@ describe("inferSeasonFileEpisodeCode — attribution-only reading of a file name
   ])("%s → %s", (name, expected) => {
     expect(inferSeasonFileEpisodeCode(name, 1, null)).toBe(expected);
   });
+
+  it.each([
+    // In the Season 02 directory: a season-less 第N集 is this season's episode…
+    ["第3集.mkv", null, "S02E03"],
+    ["第3集.mkv", "S01E03", "S02E03"],
+    ["Show.S02E07.mkv", "S02E07", "S02E07"],
+    // …a name that says another season is misfiled: no attribution.
+    ["Show.S01E03.mkv", "S01E03", null],
+  ] as const)("in Season 02: %s (executor read %s) → %s", (name, explicit, expected) => {
+    expect(inferSeasonFileEpisodeCode(name, 2, explicit)).toBe(expected);
+  });
 });
 
 const tvTitle = { id: "tmdb_tv_297253", tmdbId: 297253, type: "tv", title: "伟大的长征", year: 2026, aliases: [] } as unknown as MediaTitle;
