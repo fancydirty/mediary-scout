@@ -402,7 +402,7 @@ describe("runner-v2 persist wrappers — V2 engine results persisted in the exis
     ]);
   });
 
-  it("multi-drive type3 patrol landing on a secondary drive attributes only the new episode there, not the primary's earlier ones", async () => {
+  it("multi-drive type3 patrol landing on a secondary drive attributes only the new episode there, keeps what that drive held, and leaves a mixed directory's size unknown", async () => {
     const repository = new InMemoryWorkflowRepository();
     const season3: TrackedSeason = { ...trackedSeason(), totalEpisodes: 3, latestAiredEpisode: 3 };
     const local = createEpisodeStates({ trackedSeasonId: season3.id, seasonNumber: 1, totalEpisodes: 3, latestAiredEpisode: 3 }).map((ep) =>
@@ -421,11 +421,32 @@ describe("runner-v2 persist wrappers — V2 engine results persisted in the exis
       notifications: [],
     });
 
+    // UC already holds E04, ahead of TMDB's three episodes.
+    const ucHeld = createEpisodeStates({ trackedSeasonId: season3.id, seasonNumber: 1, totalEpisodes: 3, latestAiredEpisode: 3 });
+    ucHeld.push({ trackedSeasonId: season3.id, episodeCode: "S01E04", airDate: null, title: "S01E04", airStatus: "unknown", obtained: true, metadataStatus: "provider_ahead", verifiedFileIds: ["uc_e4"] });
+    await repository.saveWorkflowRunSnapshot({
+      accountId: "acct_default",
+      connectedStorageId: "cs_uc",
+      title: tvTitle,
+      season: season3,
+      workflowRun: { id: "run_seed_uc", kind: "type2_init", status: "partial", trackedSeasonId: season3.id, startedAt: "2026-11-02T00:00:00.000Z", finishedAt: "2026-11-02T00:00:00.000Z", auditEvents: [] },
+      episodes: ucHeld,
+      resourceSnapshots: [],
+      decisions: [],
+      transferAttempts: [],
+      notifications: [],
+    });
+    await repository.upsertEpisodeCopies([
+      { trackedSeasonId: season3.id, episodeCode: "S01E04", storageId: "cs_uc", fileIds: ["uc_e4"], sizeBytes: 4_000, quality: null, runId: "run_seed_uc", recordedAt: "2026-11-02T00:00:00.000Z" },
+    ]);
+
     const exec115 = new FakeStorageExecutor();
     exec115.listVideoFiles = async () => [];
-    const ucFile = { id: "uc_e3", storageDirectoryId: "uc_s1_dir", name: "3.mp4", sizeBytes: 3_000, episodeCode: null, providerFileId: "uc_e3" };
+    // Opaque names: nothing tells the earlier E04 file from the new E03 one.
+    const ucFile = { id: "uc_e3", storageDirectoryId: "uc_s1_dir", name: "第三集.mkv", sizeBytes: 3_000, episodeCode: null, providerFileId: "uc_e3" };
+    const ucOld = { id: "uc_e4", storageDirectoryId: "uc_s1_dir", name: "x.mkv", sizeBytes: 4_000, episodeCode: null, providerFileId: "uc_e4" };
     const execUc = new FakeStorageExecutor();
-    execUc.listVideoFiles = async () => [ucFile];
+    execUc.listVideoFiles = async () => [ucOld, ucFile];
     execUc.listTree = async () => [{ path: ucFile.name, providerFileId: ucFile.id, sizeBytes: ucFile.sizeBytes }];
     execUc.transfer = async (input) => ({
       id: `${input.workflowRunId}_t1`, workflowRunId: input.workflowRunId, candidateId: input.candidate.id, status: "succeeded", providerMessage: "", materializedFileIds: [ucFile.id],
@@ -458,7 +479,7 @@ describe("runner-v2 persist wrappers — V2 engine results persisted in the exis
       title: tvTitle,
       season: season3,
       episodes: local,
-      crossDriveObtained: ["S01E01", "S01E02"],
+      crossDriveObtained: ["S01E01", "S01E02", "S01E04"],
       categoryParentId: "115_tv_root",
       resourceProvider: provider,
       storage: exec115,
@@ -476,11 +497,17 @@ describe("runner-v2 persist wrappers — V2 engine results persisted in the exis
 
     expect(result.status).toBe("succeeded");
     const copies = await repository.listEpisodeCopies(season3.id);
-    expect(copies.map((c) => [c.episodeCode, c.storageId, c.fileIds])).toEqual([["S01E03", "cs_uc", ["uc_e3"]]]);
+    expect(copies.map((c) => [c.episodeCode, c.storageId, c.runId, c.sizeBytes])).toEqual([
+      // E03 shares a directory with E04's file: its size is unknown, not 7000.
+      ["S01E03", "cs_uc", "run_patrol_md", null],
+      ["S01E04", "cs_uc", "run_seed_uc", 4_000],
+    ]);
     const uc = await repository.getTrackedSeasonState(season3.id, { accountId: "acct_default", connectedStorageId: "cs_uc" });
-    expect(uc!.episodes.filter((e) => e.obtained).map((e) => e.episodeCode)).toEqual(["S01E03"]);
+    expect(uc!.episodes.filter((e) => e.obtained).map((e) => e.episodeCode)).toEqual(["S01E03", "S01E04"]);
+    expect(uc!.episodes.find((e) => e.episodeCode === "S01E04")?.verifiedFileIds).toEqual(["uc_e4"]);
     const primary = await repository.getTrackedSeasonState(season3.id, { accountId: "acct_default", connectedStorageId: "cs_115" });
     expect(primary!.episodes.filter((e) => e.obtained).map((e) => e.episodeCode)).toEqual(["S01E01", "S01E02"]);
+    expect(primary!.episodes.some((e) => e.episodeCode === "S01E04")).toBe(false);
     expect(primary!.episodes.find((e) => e.episodeCode === "S01E01")?.verifiedFileIds).toEqual(["f115_S01E01"]);
   });
 

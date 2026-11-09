@@ -699,12 +699,13 @@ export async function runScheduledType3Monitoring(input: {
     const key = workKey({ accountId: s.accountId, drive: userMessageDrive(s.connectedStorageId), titleKey: s.title.id });
     if (requestKeys.has(key) || busyKeys.has(key)) continue;
     if (await onFrozenDrive(s.accountId, s.connectedStorageId)) continue;
-    // One patrol per season across the account's drives. It runs on the drive that
-    // holds the most of it (ties: listAllTrackedSeasonStates' order, stable by drive),
+    // One patrol per season across the account's drives, on a row the patrol will act
+    // on (patrolTrackedState skips a completed or empty TV row), then on the drive that
+    // holds the most of it (ties: listAllTrackedSeasonStates' order, stable by drive) —
     // not on whichever row the database happened to return first (issue #369).
     const seasonKey = `${s.accountId}::${s.season.id}`;
     const picked = patrolStatesBySeasonKey.get(seasonKey);
-    if (!picked || obtainedCount(s) > obtainedCount(picked)) {
+    if (!picked || patrolRank(s) > patrolRank(picked)) {
       patrolStatesBySeasonKey.set(seasonKey, s);
     }
   }
@@ -743,8 +744,16 @@ export async function runScheduledType3Monitoring(input: {
 
 type ScheduledType3Input = Parameters<typeof runScheduledType3Monitoring>[0];
 
-function obtainedCount(state: { episodes: readonly EpisodeState[] }): number {
-  return state.episodes.filter((episode) => episode.obtained).length;
+/** Which of a season's per-drive rows the patrol runs on: first one it acts on, then
+ *  the one holding the most episodes. Higher wins. */
+function patrolRank(state: {
+  title: { type: string };
+  season: { status: string };
+  episodes: readonly EpisodeState[];
+}): number {
+  const actionable =
+    state.title.type === "movie" || (state.season.status === "active" && state.episodes.length > 0);
+  return (actionable ? 1_000_000 : 0) + state.episodes.filter((episode) => episode.obtained).length;
 }
 
 /** One tracked state's patrol; null when there is nothing to do for it. */

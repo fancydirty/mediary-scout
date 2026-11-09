@@ -443,9 +443,22 @@ async function recordTouchedSeasonCopies(input: {
     } else if (byEp.size > 0) {
       driveCodes = [...byEp.keys()].filter((code) => verifiedByCode.has(code));
     }
+    // What a secondary drive already held: kept in its snapshot below, and a reason
+    // not to share its directory's bytes among this run's episodes.
+    const existingDriveState =
+      drive.storageId !== input.primaryStorageId && driveCodes.length > 0
+        ? await input.repository.getTrackedSeasonState(input.seasonResult.season.id, {
+            accountId: input.accountId,
+            connectedStorageId: drive.storageId,
+          })
+        : null;
+    const driveHeldBefore =
+      drive.storageId === input.primaryStorageId
+        ? prior.size > 0
+        : (existingDriveState?.episodes ?? []).some((e) => e.obtained);
     // Opaque names: share the directory's bytes among the episodes — only when the
-    // directory holds nothing but this run's files (not the primary's earlier ones).
-    const dirHoldsOnlyThisRun = !(drive.storageId === input.primaryStorageId && prior.size > 0);
+    // directory holds nothing but this run's files (no episode the drive held before).
+    const dirHoldsOnlyThisRun = !driveHeldBefore;
     const perFileFallbackBytes =
       byEp.size === 0 && videoFiles.length > 0 && driveCodes.length > 0 && dirHoldsOnlyThisRun
         ? Math.round(videoFiles.reduce((sum, vf) => sum + vf.sizeBytes, 0) / driveCodes.length)
@@ -470,10 +483,6 @@ async function recordTouchedSeasonCopies(input: {
     // so `episode_states` and `episode_copies` stay 100% consistent across all drives.
     if (drive.storageId !== input.primaryStorageId && driveCodes.length > 0) {
       const driveCodeSet = new Set(driveCodes);
-      const existingDriveState = await input.repository.getTrackedSeasonState(
-        input.seasonResult.season.id,
-        { accountId: input.accountId, connectedStorageId: drive.storageId },
-      );
       const priorByCode = new Map(
         (existingDriveState?.episodes ?? []).filter((e) => e.obtained).map((e) => [e.episodeCode, e.verifiedFileIds]),
       );
@@ -496,6 +505,12 @@ async function recordTouchedSeasonCopies(input: {
           verifiedFileIds,
         };
       });
+      // The snapshot replaces this drive's records: an episode it held that the run's
+      // result has no row for (a provider-ahead episode past the season's range) stays.
+      const resultCodes = new Set(input.seasonResult.episodes.map((ep) => ep.episodeCode));
+      for (const held of existingDriveState?.episodes ?? []) {
+        if (held.obtained && !resultCodes.has(held.episodeCode)) driveEpisodes.push(held);
+      }
       const sideRunId = `${input.runId}_drv_${drive.storageId.slice(-8)}`;
       await input.repository.saveWorkflowRunSnapshot({
         accountId: input.accountId,
