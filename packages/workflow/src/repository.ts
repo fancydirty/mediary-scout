@@ -747,13 +747,15 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
   async upsertEpisodeCopies(copies: readonly EpisodeCopy[]): Promise<void> {
     for (const copy of copies) {
       const key = `${copy.trackedSeasonId}::${copy.episodeCode}::${copy.storageId}`;
+      const existing = this.episodeCopies.get(key);
+      const sizeBytes =
+        copy.sizeBytes !== null && Number.isFinite(copy.sizeBytes) ? Math.trunc(copy.sizeBytes) : null;
+      // Unknown facts never erase known ones (mirrors the SQL engines).
       this.episodeCopies.set(key, {
         ...copy,
-        fileIds: [...copy.fileIds],
-        sizeBytes:
-          copy.sizeBytes !== null && Number.isFinite(copy.sizeBytes)
-            ? Math.trunc(copy.sizeBytes)
-            : null,
+        fileIds: copy.fileIds.length > 0 || !existing ? [...copy.fileIds] : [...existing.fileIds],
+        sizeBytes: sizeBytes ?? existing?.sizeBytes ?? null,
+        quality: copy.quality ?? existing?.quality ?? null,
       });
     }
   }
@@ -2249,10 +2251,14 @@ export function claimableQueuedRuns(
 }
 
 export function compareTrackedSeasonStates(a: TrackedSeasonState, b: TrackedSeasonState): number {
+  // The same season on two drives ties on the first three keys; account and drive
+  // make the order total, so it never depends on the order rows were read in.
   return (
     a.title.title.localeCompare(b.title.title) ||
     a.season.seasonNumber - b.season.seasonNumber ||
-    a.season.id.localeCompare(b.season.id)
+    a.season.id.localeCompare(b.season.id) ||
+    a.accountId.localeCompare(b.accountId) ||
+    (a.connectedStorageId ?? "").localeCompare(b.connectedStorageId ?? "")
   );
 }
 

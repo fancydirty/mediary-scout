@@ -1581,7 +1581,11 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
           "INSERT INTO episode_copies (tracked_season_id, episode_code, storage_id, file_ids, size_bytes, quality, run_id, recorded_at) " +
             "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8) " +
             "ON CONFLICT (tracked_season_id, episode_code, storage_id) DO UPDATE SET " +
-            "file_ids = EXCLUDED.file_ids, size_bytes = EXCLUDED.size_bytes, quality = EXCLUDED.quality, run_id = EXCLUDED.run_id, recorded_at = EXCLUDED.recorded_at",
+            // Unknown facts (no file ids, no size, no quality) never erase known ones.
+            "file_ids = CASE WHEN jsonb_array_length(EXCLUDED.file_ids) > 0 THEN EXCLUDED.file_ids ELSE episode_copies.file_ids END, " +
+            "size_bytes = COALESCE(EXCLUDED.size_bytes, episode_copies.size_bytes), " +
+            "quality = COALESCE(EXCLUDED.quality, episode_copies.quality), " +
+            "run_id = EXCLUDED.run_id, recorded_at = EXCLUDED.recorded_at",
           [
             copy.trackedSeasonId,
             copy.episodeCode,
