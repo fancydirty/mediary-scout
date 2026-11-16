@@ -49,6 +49,8 @@ export interface RunMovieAcquisitionV2Request {
   preferredLanguage?: string;
   /** Global quality preference ("high"/"medium"); undefined = 不限 (no guidance). */
   qualityPreference?: "high" | "medium";
+  /** User-authored standing selection preference (supersedes qualityPreference when non-empty). */
+  selectionPreference?: string;
   /** The run's drive brand ("pan115" | "quark") — selects brand-specific skill. */
   storageProvider?: string;
   /** assrt token (Settings → 字幕来源). Undefined = 字幕流程不触发。 */
@@ -123,9 +125,11 @@ export async function runMovieAcquisitionV2(
     targetMovieDirectoryId: movieDirectoryId,
     searchHints: getSearchRecipe("movie"), // movie search is origin-independent
     searchProfile: "movie",
-    ...(getQualityGuidance("movie", request.qualityPreference) === ""
-      ? {}
-      : { qualityGuidance: getQualityGuidance("movie", request.qualityPreference) }),
+    ...(request.selectionPreference?.trim()
+      ? { selectionPreference: request.selectionPreference.trim() }
+      : getQualityGuidance("movie", request.qualityPreference) === ""
+        ? {}
+        : { qualityGuidance: getQualityGuidance("movie", request.qualityPreference) }),
     ...(request.searchBudget === undefined ? {} : { searchBudget: request.searchBudget }),
     ...(request.maxSteps === undefined ? {} : { maxSteps: request.maxSteps }),
     ...(request.preferredLanguage === undefined ? {} : { preferredLanguage: request.preferredLanguage }),
@@ -221,7 +225,15 @@ function buildResult(input: {
   }).map((episode) => ({ ...episode, obtained: input.obtained }));
 
   const t = input.request.title;
-  const meta = { posterPath: t.posterPath ?? null, tmdbId: t.tmdbId, mediaType: t.type, year: t.year };
+  const appliedPref = input.auditEvents.find((e) => e.type === "selection_preference_applied")?.data?.["preference"];
+  const selectionPreference = typeof appliedPref === "string" && appliedPref.trim() ? appliedPref.trim() : undefined;
+  const meta = {
+    posterPath: t.posterPath ?? null,
+    tmdbId: t.tmdbId,
+    mediaType: t.type,
+    year: t.year,
+    ...(selectionPreference ? { selectionPreference } : {}),
+  };
   if (input.request.userRequest) {
     const report = buildReplacementReport({
       titleName: t.title,

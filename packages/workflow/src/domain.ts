@@ -343,6 +343,8 @@ export interface NotificationReport {
   landingDir?: string;
   /** Short drive labels where files landed during this run (e.g. ["115"] or ["115", "123"]). */
   driveLabels?: string[];
+  /** Standing selection preference text that was active when the agent searched/picked for this run. */
+  selectionPreference?: string;
 }
 
 export interface NotificationEvent {

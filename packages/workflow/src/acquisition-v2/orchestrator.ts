@@ -85,6 +85,8 @@ export interface RunAcquisitionV2Request {
   searchHints?: string;
   /** Rendered quality-preference guidance (召回后选片优先级), injected into the prompt. */
   qualityGuidance?: string;
+  /** User-authored standing selection preference (Settings → 获取偏好 → 选源要求). */
+  selectionPreference?: string;
   /** The task's fine-grained search profile — enables the anime taboo-keyword
    *  validator (warnings only, never blocking). 病2b。 */
   searchProfile?: SearchProfile;
@@ -656,6 +658,15 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     }
   }
 
+  if (!request.stagingRecovery && request.selectionPreference?.trim()) {
+    const trimmedPref = request.selectionPreference.trim();
+    sandbox.recordExternalAuditEvent({
+      type: "selection_preference_applied",
+      message: `Applied user selection preference (${trimmedPref.length} chars)`,
+      data: { preference: trimmedPref },
+    });
+  }
+
   const common = {
     sandbox,
     model: request.model,
@@ -664,6 +675,7 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     ...(request.originCountries === undefined ? {} : { originCountries: request.originCountries }),
     ...(request.searchHints === undefined ? {} : { searchHints: request.searchHints }),
     ...(request.qualityGuidance === undefined ? {} : { qualityGuidance: request.qualityGuidance }),
+    ...(request.selectionPreference === undefined ? {} : { selectionPreference: request.selectionPreference }),
     ...(request.storageProvider === undefined ? {} : { storageProvider: request.storageProvider }),
     ...(request.drives && request.drives.length > 0 ? { drives: request.drives } : {}),
     ...(request.memory?.drive ? { primaryStorageId: request.memory.drive } : {}),

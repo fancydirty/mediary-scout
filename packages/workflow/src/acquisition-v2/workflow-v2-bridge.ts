@@ -113,6 +113,9 @@ export function bridgeV2WorkflowToResult(input: {
   const sourceFault = classifySearchSourceFault(v2.auditEvents);
   const searchSourceFaultReason = nothingLanded && sourceFault ? sourceFault.reason : null;
 
+  const appliedPref = v2.auditEvents.find((e) => e.type === "selection_preference_applied")?.data?.["preference"];
+  const selectionPreference = typeof appliedPref === "string" && appliedPref.trim() ? appliedPref.trim() : undefined;
+
   const notification = buildNotification({
     title,
     mode: input.mode,
@@ -123,6 +126,7 @@ export function bridgeV2WorkflowToResult(input: {
     newlyObtainedCodes,
     workflowRunId,
     now: input.now,
+    ...(selectionPreference ? { selectionPreference } : {}),
     ...(v2.replacement ? { replacementResults: v2.replacement.results } : {}),
     // A replace run's directories hold old + new files: a landed size would double-count.
     ...(input.mode !== "replace" && v2.landedFileCount !== undefined && v2.landedBytes !== undefined
@@ -254,12 +258,19 @@ function buildNotification(input: {
   now: () => string;
   fileCount?: number;
   totalBytes?: number;
+  selectionPreference?: string;
   /** replace mode: the per-episode outcome of the user's request. */
   replacementResults?: Array<{ episode: string; outcome: "replaced" | "not_found" }>;
 }): NotificationEvent {
   const { title, mode, seasons, status, workflowRunId } = input;
   const noCoverage = status === "no_coverage";
-  const titleMeta = { posterPath: title.posterPath ?? null, tmdbId: title.tmdbId, mediaType: title.type, year: title.year };
+  const titleMeta = {
+    posterPath: title.posterPath ?? null,
+    tmdbId: title.tmdbId,
+    mediaType: title.type,
+    year: title.year,
+    ...(input.selectionPreference ? { selectionPreference: input.selectionPreference } : {}),
+  };
 
   if (mode === "replace") {
     const report = buildReplacementReport({

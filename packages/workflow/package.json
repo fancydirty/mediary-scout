@@ -20,6 +20,10 @@
     "./user-requests": {
       "types": "./dist/user-requests.d.ts",
       "default": "./dist/user-requests.js"
+    },
+    "./selection-preference": {
+      "types": "./dist/selection-preference.d.ts",
+      "default": "./dist/selection-preference.js"
     }
   },
   "dependencies": {

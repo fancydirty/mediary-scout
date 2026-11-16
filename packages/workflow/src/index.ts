@@ -56,6 +56,8 @@ export * from "./web-search.js";
 export * from "./natural-language-search.js";
 export * from "./runtime-policy.js";
 export * from "./notify.js";
+export * from "./media-server-refresh.js";
+export * from "./selection-preference.js";
 export * from "./pan115-qrcode-login.js";
 export * from "./acquisition-v2/storage-115-simulator.js";
 export * from "./acquisition-v2/fake-provider.js";

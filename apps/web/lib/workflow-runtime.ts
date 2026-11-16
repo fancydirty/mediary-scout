@@ -32,6 +32,7 @@ import {
   isFreeLlmPreset,
   isBlankEnvValue,
   llmConfigError,
+  resolveRuntimeSelectionPreference,
   formatDailyDigestPushText,
   scheduledDigestItems,
   getTrackedSeasonStatusView,
@@ -54,6 +55,8 @@ import {
   runScheduledType3Monitoring,
   sweepOrphanStagingDirs,
   sendPushNotifications,
+  extractLandedMediaEvents,
+  refreshConfiguredMediaServers,
   createPostgresWorkflowRepositorySync,
   createSqliteWorkflowRepository,
   migrateLegacyCookieToDefaultAccount,
@@ -992,7 +995,7 @@ export function buildAccountContextResolver(): ResolveAccountWorkerContext {
     // specific drive it was queued onto.
     const scoped = getAccountScopedSettings(accountId);
     const parents = await getWorkerStorageParents(accountId, connectedStorageId);
-    const { model, llmConfig, preferredLanguage, qualityPreference } = await getAgentModel(scoped);
+    const { model, llmConfig, preferredLanguage, qualityPreference, selectionPreference } = await getAgentModel(scoped);
     // The run's drive brand selects its resource sources (quark→PanSou quark-only;
     // 115→PanSou+Prowlarr). null when no drive resolves → default 115 fallback.
     const driveProvider =
@@ -1030,6 +1033,7 @@ export function buildAccountContextResolver(): ResolveAccountWorkerContext {
       agentMemory,
       ...(preferredLanguage === undefined ? {} : { preferredLanguage }),
       ...(qualityPreference === undefined ? {} : { qualityPreference }),
+      ...(selectionPreference === undefined ? {} : { selectionPreference }),
       storageParentDirectoryId: parents.tv,
       animeStorageParentDirectoryId: parents.anime,
       moviesParentDirectoryId: parents.movies,
@@ -1188,9 +1192,10 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
   // The user's language preference is standing context baked into the agent
   // instance (one global preference), so every workflow — movie, series, type2,
   // anime — searches with it. No per-workflow plumbing.
-  const { model, llmConfig, preferredLanguage, qualityPreference } = await getAgentModel(getAccountScopedSettings(accountId));
+  const { model, llmConfig, preferredLanguage, qualityPreference, selectionPreference } = await getAgentModel(getAccountScopedSettings(accountId));
   const language = preferredLanguage === undefined ? {} : { preferredLanguage };
   const quality = qualityPreference === undefined ? {} : { qualityPreference };
+  const selection = selectionPreference === undefined ? {} : { selectionPreference };
   const storage = await getWorkerStorageExecutor(accountId);
   const parents = await getWorkerStorageParents(accountId);
   const resolveAccountContext = buildAccountContextResolver();
@@ -1215,6 +1220,7 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
     llmConfig,
     ...language,
     ...quality,
+    ...selection,
     storageParentDirectoryId: parents.tv,
     animeStorageParentDirectoryId: parents.anime,
     resolveAccountContext,
@@ -1237,6 +1243,7 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
     llmConfig,
     ...language,
     ...quality,
+    ...selection,
     storageParentDirectoryId: parents.tv,
     animeStorageParentDirectoryId: parents.anime,
     resolveAccountContext,
@@ -1259,6 +1266,7 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
     llmConfig,
     ...language,
     ...quality,
+    ...selection,
     moviesParentDirectoryId: parents.movies,
     resolveAccountContext,
     onAuthErrorFreeze,
@@ -1280,6 +1288,7 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
     llmConfig,
     ...language,
     ...quality,
+    ...selection,
     storageParentDirectoryId: parents.tv,
     animeStorageParentDirectoryId: parents.anime,
     moviesParentDirectoryId: parents.movies,
@@ -1305,6 +1314,7 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
     llmConfig,
     ...language,
     ...quality,
+    ...selection,
     resolveAccountContext,
     onAuthErrorFreeze,
     mayStartRun,
@@ -1330,6 +1340,35 @@ export async function getPreferredLanguage(
 export const PREFERRED_LANGUAGE_SETTING_KEY = "preferred_language";
 
 export const QUALITY_PREFERENCE_SETTING_KEY = "quality_preference";
+
+export const SELECTION_PREFERENCE_SETTING_KEY = "selection_preference";
+
+/** Read this account's raw saved selection_preference (own row first so an explicit ""
+ *  is preserved and does not fall through to global settings; global app_settings is
+ *  only consulted when the account has never written `selection_preference`). */
+export async function readRawSelectionPreference(repository: {
+  getSetting(key: string): Promise<string | null>;
+  getOwnSetting?: (key: string) => Promise<string | null>;
+}): Promise<string | null> {
+  if (repository.getOwnSetting) {
+    const own = await repository.getOwnSetting(SELECTION_PREFERENCE_SETTING_KEY);
+    if (own !== null) return own;
+  }
+  return repository.getSetting(SELECTION_PREFERENCE_SETTING_KEY);
+}
+
+/** Effective runtime selection preference for an account, honoring explicit clear (""),
+ *  legacy `quality_preference` ("high"/"medium"), and the shipped default template. */
+export async function getSelectionPreference(repository: {
+  getSetting(key: string): Promise<string | null>;
+  getOwnSetting?: (key: string) => Promise<string | null>;
+}): Promise<string | undefined> {
+  const [savedSelection, legacyQuality] = await Promise.all([
+    readRawSelectionPreference(repository),
+    repository.getSetting(QUALITY_PREFERENCE_SETTING_KEY),
+  ]);
+  return resolveRuntimeSelectionPreference({ savedSelection, legacyQuality });
+}
 
 /** The user's acquisition quality preference, or undefined when 不限/unset
  *  (the default). undefined → inject NO quality guidance (coverage-only, current
@@ -1879,6 +1918,31 @@ async function pushNotificationsSince(
           );
         }
       }
+
+      // Issue #373: trigger library scan on configured media servers (Emby / Jellyfin /
+      // Plex / custom webhook) ONLY when real files landed this run/sweep, coalesced
+      // once per account. Best-effort: never throws into the caller.
+      const landedItems = extractLandedMediaEvents(notifications);
+      if (landedItems.length > 0) {
+        try {
+          const refreshSummary = await refreshConfiguredMediaServers({
+            repository: settings,
+            items: landedItems,
+          });
+          if (refreshSummary.refreshed.length > 0) {
+            console.log(
+              `[media-server] refreshed ${refreshSummary.refreshed.join(", ")} for ${landedItems.length} landed item(s)`,
+            );
+          }
+          for (const fail of refreshSummary.failures) {
+            console.error(`[media-server] refresh ${fail.server} failed: ${fail.error}`);
+          }
+        } catch (error) {
+          console.error(
+            `[media-server] refresh dispatch failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
     }
   } catch (error) {
     console.error(`[media-track] notification push batch failed: ${String(error)}`);
@@ -2188,7 +2252,7 @@ async function runScheduledType3Now(options?: { force?: boolean }): Promise<Sche
     await hydratePan115CookieFromDb();
     const sync = tmdbSeasonMetadataSync();
     const accountId = await getCurrentAccountId();
-    const { model, llmConfig, preferredLanguage, qualityPreference } = await getAgentModel(getAccountScopedSettings(accountId));
+    const { model, llmConfig, preferredLanguage, qualityPreference, selectionPreference } = await getAgentModel(getAccountScopedSettings(accountId));
     const parents = await getWorkerStorageParents(accountId);
     result = await runScheduledType3Monitoring({
       repository,
@@ -2198,6 +2262,7 @@ async function runScheduledType3Now(options?: { force?: boolean }): Promise<Sche
       llmConfig,
       ...(preferredLanguage === undefined ? {} : { preferredLanguage }),
       ...(qualityPreference === undefined ? {} : { qualityPreference }),
+      ...(selectionPreference === undefined ? {} : { selectionPreference }),
       storageParentDirectoryId: parents.tv,
       animeStorageParentDirectoryId: parents.anime,
       moviesParentDirectoryId: parents.movies,
@@ -3183,6 +3248,7 @@ export async function acquireLlmPreflightError(
 
 async function getAgentModel(repository: {
   getSetting(key: string): Promise<string | null>;
+  getOwnSetting?: (key: string) => Promise<string | null>;
 }): Promise<{
   model: ReturnType<typeof createAgentModelFromEnv>;
   /** The config that built `model` (baseURL/modelId only — NEVER the apiKey: the
@@ -3191,12 +3257,14 @@ async function getAgentModel(repository: {
   llmConfig: { baseURL?: string; modelId?: string };
   preferredLanguage: string | undefined;
   qualityPreference: "high" | "medium" | undefined;
+  selectionPreference: string | undefined;
 }> {
   assertWorkflowAgentAdapterPolicy(process.env);
   const env = process.env;
   const adapter = env.MEDIA_TRACK_AGENT_ADAPTER === "vercel-ai" ? "vercel-ai" : "fake";
   const preferredLanguage = await getPreferredLanguage(repository);
   const qualityPreference = await getQualityPreference(repository);
+  const selectionPreference = await getSelectionPreference(repository);
 
   // Resolve the live model config the SAME way the test action does (shared
   // resolver) — DB-first, then .env, then the shipped free preset
@@ -3231,7 +3299,7 @@ async function getAgentModel(repository: {
     ...(baseURL === undefined ? {} : { baseURL }),
     ...(modelId === undefined ? {} : { modelId }),
   };
-  return { model, llmConfig, preferredLanguage, qualityPreference };
+  return { model, llmConfig, preferredLanguage, qualityPreference, selectionPreference };
 }
 
 function fakeTransferOutcomes() {

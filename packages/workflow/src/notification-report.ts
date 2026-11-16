@@ -360,6 +360,7 @@ export interface NotificationTitleMeta {
   tmdbId?: number;
   mediaType?: MediaType;
   year?: number;
+  selectionPreference?: string;
 }
 
 /** Movie / one-off: nothing to track, just acquired. */

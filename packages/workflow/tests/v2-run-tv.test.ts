@@ -195,6 +195,29 @@ describe("runTvAcquisitionV2 — single TV entry over the V2 engine", () => {
       now: () => "2026-06-15T00:00:00.000Z",
     });
     expect(none.system).not.toContain("画质偏好");
+
+    // selectionPreference threads end-to-end into system prompt AND records audit event;
+    // when selectionPreference is present, it supersedes legacy qualityPreference block.
+    const custom = { system: "" };
+    const customResult = await runTvAcquisitionV2({
+      title: usTvTitle,
+      mode: "type2",
+      seasons: [{ seasonNumber: 1, totalEpisodes: 3, latestAiredEpisode: 3, qualityPreference: "4K" }],
+      categoryParentId: "tv_root",
+      resourceProvider: emptyProvider(),
+      storage: new FakeStorageExecutor(),
+      model: capturingModel(custom),
+      qualityPreference: "high",
+      selectionPreference: "优先 HDR10，不要杜比视界，单集不超过 4GB",
+      workflowRunId: "run-tv-q4",
+      now: () => "2026-06-15T00:00:00.000Z",
+    });
+    expect(custom.system).toContain("<selection_preference>");
+    expect(custom.system).toContain("优先 HDR10，不要杜比视界，单集不超过 4GB");
+    expect(custom.system).not.toContain("画质偏好:高");
+    const prefAudit = customResult.auditEvents.find((e) => e.type === "selection_preference_applied");
+    expect(prefAudit).toBeDefined();
+    expect(prefAudit?.data?.["preference"]).toBe("优先 HDR10，不要杜比视界，单集不超过 4GB");
   });
 
   it("multi-season series → builds a season intent per season, distinct verify-or-created dirs", async () => {

@@ -557,14 +557,49 @@ export async function saveQualityPreferenceAction(
 ): Promise<PushSettingsActionResult> {
   assertNotDemo();
   try {
-    const { getWorkflowRepository, getCurrentAccountId, QUALITY_PREFERENCE_SETTING_KEY } = await import(
+    const { getWorkflowRepository, requireAuthenticatedAccountId, QUALITY_PREFERENCE_SETTING_KEY } = await import(
       "../lib/workflow-runtime"
     );
     const repository = getWorkflowRepository();
-    await repository.setAccountSetting(await getCurrentAccountId(), QUALITY_PREFERENCE_SETTING_KEY, quality.trim());
+    await repository.setAccountSetting(await requireAuthenticatedAccountId(), QUALITY_PREFERENCE_SETTING_KEY, quality.trim());
     return { success: true };
   } catch (error) {
     return { success: false, message: `保存失败：${String(error)}` };
+  }
+}
+
+export async function saveSelectionPreferenceAction(
+  preference: string,
+): Promise<PushSettingsActionResult> {
+  assertNotDemo();
+  try {
+    const { normalizeSelectionPreference, SELECTION_PREFERENCE_MAX_LENGTH } = await import(
+      "@media-track/workflow"
+    );
+    const normalized = normalizeSelectionPreference(preference);
+    if (normalized.length > SELECTION_PREFERENCE_MAX_LENGTH) {
+      return {
+        success: false,
+        message: `选源要求最多 ${SELECTION_PREFERENCE_MAX_LENGTH} 字（当前 ${normalized.length} 字）`,
+      };
+    }
+    const {
+      getWorkflowRepository,
+      requireAuthenticatedAccountId,
+      SELECTION_PREFERENCE_SETTING_KEY,
+    } = await import("../lib/workflow-runtime");
+    const accountId = await requireAuthenticatedAccountId();
+    await getWorkflowRepository().setAccountSetting(
+      accountId,
+      SELECTION_PREFERENCE_SETTING_KEY,
+      normalized,
+    );
+    return { success: true };
+  } catch (error) {
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : `保存失败：${String(error)}`,
+    };
   }
 }
 
@@ -1381,6 +1416,210 @@ export async function restoreEpisodesToPendingAction(
     return { success: true };
   } catch (error) {
     return { success: false, message: `没能撤销：${String(error)}` };
+  }
+}
+
+export interface MediaServerFormInput {
+  embyUrl?: string;
+  embyApiKey?: string;
+  jellyfinUrl?: string;
+  jellyfinApiKey?: string;
+  plexUrl?: string;
+  plexToken?: string;
+  webhookUrl?: string;
+  delaySeconds?: number;
+}
+
+export async function saveMediaServerSettingsAction(
+  input: MediaServerFormInput,
+): Promise<PushSettingsActionResult> {
+  assertNotDemo();
+  try {
+    const { resolveCurrentIsOwner } = await import("../lib/settings-attention-server");
+    if (!(await resolveCurrentIsOwner())) {
+      return { success: false, message: "只有站主可以配置媒体服务器刷新。" };
+    }
+    const {
+      MEDIA_SERVER_SETTING_KEYS,
+      MAX_MEDIA_SERVER_DELAY_SECONDS,
+      parseMediaServerDelaySeconds,
+      validateMediaServerUrl,
+    } = await import("@media-track/workflow");
+    const { getWorkflowRepository, requireAuthenticatedAccountId } = await import("../lib/workflow-runtime");
+    const repository = getWorkflowRepository();
+    const accountId = await requireAuthenticatedAccountId();
+
+    const urlEntries: Array<[string | undefined, string, string, boolean]> = [
+      [input.embyUrl, MEDIA_SERVER_SETTING_KEYS.embyUrl, "Emby 地址", false],
+      [input.jellyfinUrl, MEDIA_SERVER_SETTING_KEYS.jellyfinUrl, "Jellyfin 地址", false],
+      [input.plexUrl, MEDIA_SERVER_SETTING_KEYS.plexUrl, "Plex 地址", false],
+    ];
+    const normalizedUrls: Array<[string, string]> = [];
+    for (const [raw, settingKey, label, allowQuery] of urlEntries) {
+      if (raw === undefined) continue;
+      const trimmed = raw.trim();
+      if (!trimmed) {
+        normalizedUrls.push([settingKey, ""]);
+        continue;
+      }
+      const checked = validateMediaServerUrl(trimmed, { allowQuery });
+      if (!checked.ok) {
+        return { success: false, message: `${label}：${checked.message}` };
+      }
+      normalizedUrls.push([settingKey, checked.url]);
+    }
+
+    const typedWebhook = input.webhookUrl?.trim();
+    if (typedWebhook) {
+      const checked = validateMediaServerUrl(typedWebhook, { allowQuery: true });
+      if (!checked.ok) {
+        return { success: false, message: `入库 Webhook：${checked.message}` };
+      }
+    }
+
+    // Check completeness when a server URL is provided without an existing or newly typed secret
+    const checkPair = async (
+      nextUrl: string | undefined,
+      typedSecret: string | undefined,
+      secretKey: string,
+      serverLabel: string,
+    ): Promise<string | null> => {
+      if (nextUrl === undefined) return null;
+      const cleanUrl = nextUrl.trim();
+      if (!cleanUrl) return null;
+      if (typedSecret?.trim()) return null;
+      const existingSecret = (await repository.getAccountSetting(accountId, secretKey))?.trim();
+      if (!existingSecret) {
+        return `${serverLabel} 需要同时填写密钥 / Token`;
+      }
+      return null;
+    };
+
+    const pairError =
+      (await checkPair(input.embyUrl, input.embyApiKey, MEDIA_SERVER_SETTING_KEYS.embyApiKey, "Emby")) ??
+      (await checkPair(input.jellyfinUrl, input.jellyfinApiKey, MEDIA_SERVER_SETTING_KEYS.jellyfinApiKey, "Jellyfin")) ??
+      (await checkPair(input.plexUrl, input.plexToken, MEDIA_SERVER_SETTING_KEYS.plexToken, "Plex"));
+    if (pairError) {
+      return { success: false, message: pairError };
+    }
+
+    if (
+      input.delaySeconds !== undefined &&
+      (!Number.isFinite(input.delaySeconds) ||
+        input.delaySeconds < 0 ||
+        input.delaySeconds > MAX_MEDIA_SERVER_DELAY_SECONDS)
+    ) {
+      return { success: false, message: `刷新延迟需在 0 到 ${MAX_MEDIA_SERVER_DELAY_SECONDS} 秒之间` };
+    }
+
+    for (const [settingKey, val] of normalizedUrls) {
+      await repository.setAccountSetting(accountId, settingKey, val);
+    }
+    if (input.embyUrl !== undefined && !input.embyUrl.trim()) {
+      await repository.setAccountSetting(accountId, MEDIA_SERVER_SETTING_KEYS.embyApiKey, "");
+    } else if (input.embyApiKey?.trim()) {
+      await repository.setAccountSetting(accountId, MEDIA_SERVER_SETTING_KEYS.embyApiKey, input.embyApiKey.trim());
+    }
+    if (input.jellyfinUrl !== undefined && !input.jellyfinUrl.trim()) {
+      await repository.setAccountSetting(accountId, MEDIA_SERVER_SETTING_KEYS.jellyfinApiKey, "");
+    } else if (input.jellyfinApiKey?.trim()) {
+      await repository.setAccountSetting(
+        accountId,
+        MEDIA_SERVER_SETTING_KEYS.jellyfinApiKey,
+        input.jellyfinApiKey.trim(),
+      );
+    }
+    if (input.plexUrl !== undefined && !input.plexUrl.trim()) {
+      await repository.setAccountSetting(accountId, MEDIA_SERVER_SETTING_KEYS.plexToken, "");
+    } else if (input.plexToken?.trim()) {
+      await repository.setAccountSetting(accountId, MEDIA_SERVER_SETTING_KEYS.plexToken, input.plexToken.trim());
+    }
+    if (typedWebhook) {
+      const checked = validateMediaServerUrl(typedWebhook, { allowQuery: true });
+      if (checked.ok) {
+        await repository.setAccountSetting(accountId, MEDIA_SERVER_SETTING_KEYS.webhookUrl, checked.url);
+      }
+    }
+    if (input.delaySeconds !== undefined) {
+      const sec = parseMediaServerDelaySeconds(String(input.delaySeconds));
+      await repository.setAccountSetting(accountId, MEDIA_SERVER_SETTING_KEYS.delaySeconds, String(sec));
+    }
+
+    return { success: true };
+  } catch (error) {
+    return { success: false, message: `保存失败：${String(error)}` };
+  }
+}
+
+export async function clearMediaServerChannelAction(
+  channel: string,
+): Promise<PushSettingsActionResult> {
+  assertNotDemo();
+  try {
+    const { resolveCurrentIsOwner } = await import("../lib/settings-attention-server");
+    if (!(await resolveCurrentIsOwner())) {
+      return { success: false, message: "只有站主可以配置媒体服务器刷新。" };
+    }
+    const { MEDIA_SERVER_CHANNEL_KEYS, MEDIA_SERVER_SETTING_KEYS } = await import("@media-track/workflow");
+    if (!(MEDIA_SERVER_CHANNEL_KEYS as readonly string[]).includes(channel)) {
+      return { success: false, message: "未知的媒体服务器类型" };
+    }
+    const { getWorkflowRepository, requireAuthenticatedAccountId } = await import("../lib/workflow-runtime");
+    const repository = getWorkflowRepository();
+    const accountId = await requireAuthenticatedAccountId();
+
+    if (channel === "emby") {
+      await repository.setAccountSetting(accountId, MEDIA_SERVER_SETTING_KEYS.embyUrl, "");
+      await repository.setAccountSetting(accountId, MEDIA_SERVER_SETTING_KEYS.embyApiKey, "");
+    } else if (channel === "jellyfin") {
+      await repository.setAccountSetting(accountId, MEDIA_SERVER_SETTING_KEYS.jellyfinUrl, "");
+      await repository.setAccountSetting(accountId, MEDIA_SERVER_SETTING_KEYS.jellyfinApiKey, "");
+    } else if (channel === "plex") {
+      await repository.setAccountSetting(accountId, MEDIA_SERVER_SETTING_KEYS.plexUrl, "");
+      await repository.setAccountSetting(accountId, MEDIA_SERVER_SETTING_KEYS.plexToken, "");
+    } else if (channel === "webhook") {
+      await repository.setAccountSetting(accountId, MEDIA_SERVER_SETTING_KEYS.webhookUrl, "");
+    }
+    return { success: true };
+  } catch (error) {
+    return { success: false, message: `清除失败：${String(error)}` };
+  }
+}
+
+export async function testMediaServerRefreshAction(
+  draft?: MediaServerFormInput,
+): Promise<PushSettingsActionResult & { refreshed?: string[] }> {
+  assertNotDemo();
+  try {
+    const { resolveCurrentIsOwner } = await import("../lib/settings-attention-server");
+    if (!(await resolveCurrentIsOwner())) {
+      return { success: false, message: "只有站主可以测试媒体服务器刷新。" };
+    }
+    const { refreshConfiguredMediaServers } = await import("@media-track/workflow");
+    const { getAccountScopedSettings, requireAuthenticatedAccountId } = await import("../lib/workflow-runtime");
+    const accountId = await requireAuthenticatedAccountId();
+    const scoped = getAccountScopedSettings(accountId);
+    const summary = await refreshConfiguredMediaServers({
+      repository: scoped,
+      items: [{ titleName: "巡影测试入库刷新", mediaType: "movie", year: 2026 }],
+      test: true,
+      delayMs: 0,
+      ...(draft ? { overrides: draft } : {}),
+    });
+    if (summary.refreshed.length === 0 && summary.failures.length === 0) {
+      return { success: false, message: "尚未配置任何媒体服务器或入库 Webhook" };
+    }
+    if (summary.failures.length > 0) {
+      const detail = summary.failures.map((f) => `${f.server}（${f.error}）`).join("；");
+      return {
+        success: false,
+        message: `刷新失败：${detail}`,
+        ...(summary.refreshed.length > 0 ? { refreshed: summary.refreshed } : {}),
+      };
+    }
+    return { success: true, refreshed: summary.refreshed };
+  } catch (error) {
+    return { success: false, message: `测试失败：${String(error)}` };
   }
 }
 

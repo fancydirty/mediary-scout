@@ -7,6 +7,7 @@ import { getStorageBrand } from "../storage-brands.js";
 import { stripMemoryFence, type AgentMemory } from "../agent-memory.js";
 import { LINK_HISTORY_PROMPT } from "./link-history.js";
 import { hasUserRequests, userRequestBlock, type UserRequestPromptInput } from "./user-request-block.js";
+import { buildSelectionPreferenceBlock } from "../selection-preference.js";
 
 export { userRequestBlock, type UserRequestPromptInput } from "./user-request-block.js";
 
@@ -99,6 +100,9 @@ export interface TaskAgentPromptOptions {
   /** Rendered quality-preference guidance (召回后选片优先级, from getQualityGuidance);
    *  "" / undefined = 不限 → no quality block injected. */
   qualityGuidance?: string;
+  /** User-authored standing selection preference (Settings → 获取偏好 → 选源要求).
+   *  Rendered inside a fenced `<selection_preference>` soft-priority block. */
+  selectionPreference?: string;
   /** The run's drive brand ("pan115" | "quark" | "guangya" | "tianyi" | "pan123") —
    *  selects the brand transfer model in the prompt and the brand-specific
    *  dead-links skill section (transferModelLine / getStorageSkill). Default 115. */
@@ -360,6 +364,7 @@ ${languageLine(options)}
 ${transferModelLine(options)}
 ${searchHintsBlock(options)}
 ${qualityGuidanceBlock(options)}
+${buildSelectionPreferenceBlock(options.selectionPreference)}
 ${fanSeasonBlock(options)}
 ${tvLoopGuidance(options)}`;
 }
@@ -382,6 +387,7 @@ ${languageLine({ ...options, subtitleFallback: true })}
 ${transferModelLine(options)}
 ${searchHintsBlock(options)}
 ${qualityGuidanceBlock(options)}
+${buildSelectionPreferenceBlock(options.selectionPreference)}
 ${movieWebBlock(options)}
 Your loop (you drive it; the system only orchestrates the tool calls). A MOVIE is simple — there is NO season distribution and NO separate staging to discard (the film lands in the movie directory and flattenMovie cleans the wrapper in place). At EVERY decision point lay out Evidence → Facts → Decision (read your skill's "protocol" section); once a transfer has LANDED, do NOT keep searching/transferring — verify and finish.
 ${loopEnds.first}1. searchResources — bare title first; re-keyword (add the original/English name or "全集") only if weak. Stop the moment you can identify the one correct film.
