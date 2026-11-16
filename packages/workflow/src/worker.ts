@@ -86,8 +86,14 @@ export function storageParentForTitle(
 
 /**
  * Merge the per-account worker context (resolved from the run's owner) over the
- * globally-passed deps. Per-account fields (115 storage + landing CIDs) win;
- * everything else falls through to the base. No resolver → base unchanged.
+ * globally-passed deps.
+ *
+ * Resolver-authoritative when a resolver is present — the account's OWN answer
+ * wins even when empty, so one account can never inherit another's choice:
+ * `jevJudge`, `titleResearch`, `selectionPreference`.
+ * Otherwise the resolved value wins, else the base falls through (storage,
+ * resource provider, model, language, quality, brand, assrt token, memory flag,
+ * landing CIDs, drives). No resolver → base unchanged.
  */
 export async function resolveWorkerDeps(
   resolve: ResolveAccountWorkerContext | undefined,
@@ -105,6 +111,7 @@ export async function resolveWorkerDeps(
   llmConfig: { baseURL?: string; modelId?: string } | undefined;
   preferredLanguage: string | undefined;
   qualityPreference: "high" | "medium" | undefined;
+  selectionPreference: string | undefined;
   storageProvider: string | undefined;
   assrtToken: string | undefined;
   jevJudge: JevJudge | undefined;
@@ -127,6 +134,9 @@ export async function resolveWorkerDeps(
     llmConfig: ctx.model !== undefined ? ctx.llmConfig : base.llmConfig,
     preferredLanguage: ctx.preferredLanguage ?? base.preferredLanguage,
     qualityPreference: ctx.qualityPreference ?? base.qualityPreference,
+    // Per-account: with a resolver, its answer is authoritative so an account that
+    // cleared its selection preference does not inherit acct_default's text.
+    selectionPreference: resolve ? ctx.selectionPreference : base.selectionPreference,
     storageProvider: ctx.storageProvider ?? base.storageProvider,
     assrtToken: ctx.assrtToken ?? base.assrtToken,
     // Jev is per-account opt-in: with a resolver, its answer is authoritative even
@@ -183,6 +193,7 @@ export interface AccountWorkerContext {
   llmConfig?: { baseURL?: string; modelId?: string };
   preferredLanguage?: string;
   qualityPreference?: "high" | "medium";
+  selectionPreference?: string;
   /** The run's drive brand ("pan115" | "quark") — selects brand-specific skill. */
   storageProvider?: string;
   /** assrt token (Settings → 字幕来源). Undefined = 字幕流程不触发。 */
@@ -456,6 +467,7 @@ export async function runQueuedType2Workflow(input: {
   llmConfig?: { baseURL?: string; modelId?: string };
   preferredLanguage?: string;
   qualityPreference?: "high" | "medium";
+  selectionPreference?: string;
   /** Web-reference tools for the agent (see TitleResearchOptions). */
   titleResearch?: TitleResearchOptions;
   now?: () => string;
@@ -512,6 +524,9 @@ export async function runQueuedType2Workflow(input: {
       ...(deps.qualityPreference === undefined
         ? {}
         : { qualityPreference: deps.qualityPreference }),
+      ...(deps.selectionPreference === undefined
+        ? {}
+        : { selectionPreference: deps.selectionPreference }),
       ...(deps.storageProvider === undefined
         ? {}
         : { storageProvider: deps.storageProvider }),
@@ -599,6 +614,7 @@ export async function runScheduledType3Monitoring(input: {
   llmConfig?: { baseURL?: string; modelId?: string };
   preferredLanguage?: string;
   qualityPreference?: "high" | "medium";
+  selectionPreference?: string;
   /** Web-reference tools for the agent (see TitleResearchOptions). */
   titleResearch?: TitleResearchOptions;
   storageParentDirectoryId: string;
@@ -897,6 +913,9 @@ async function patrolTrackedState(args: {
         ...(deps.qualityPreference === undefined
           ? {}
           : { qualityPreference: deps.qualityPreference }),
+        ...(deps.selectionPreference === undefined
+          ? {}
+          : { selectionPreference: deps.selectionPreference }),
         ...(deps.storageProvider === undefined
           ? {}
           : { storageProvider: deps.storageProvider }),
@@ -1009,6 +1028,7 @@ async function patrolMovie(args: {
     llmConfig: { baseURL?: string; modelId?: string } | undefined;
     preferredLanguage: string | undefined;
     qualityPreference: "high" | "medium" | undefined;
+    selectionPreference: string | undefined;
     storageProvider: string | undefined;
     assrtToken: string | undefined;
     jevJudge: JevJudge | undefined;
@@ -1113,6 +1133,9 @@ async function patrolMovie(args: {
       ...(deps.qualityPreference === undefined
         ? {}
         : { qualityPreference: deps.qualityPreference }),
+      ...(deps.selectionPreference === undefined
+        ? {}
+        : { selectionPreference: deps.selectionPreference }),
       ...(deps.storageProvider === undefined
         ? {}
         : { storageProvider: deps.storageProvider }),
@@ -1246,6 +1269,7 @@ export async function runQueuedMovieAcquisition(input: {
   llmConfig?: { baseURL?: string; modelId?: string };
   preferredLanguage?: string;
   qualityPreference?: "high" | "medium";
+  selectionPreference?: string;
   /** Web-reference tools for the agent (see TitleResearchOptions). */
   titleResearch?: TitleResearchOptions;
   moviesParentDirectoryId: string;
@@ -1293,6 +1317,9 @@ export async function runQueuedMovieAcquisition(input: {
       ...(deps.qualityPreference === undefined
         ? {}
         : { qualityPreference: deps.qualityPreference }),
+      ...(deps.selectionPreference === undefined
+        ? {}
+        : { selectionPreference: deps.selectionPreference }),
       ...(deps.storageProvider === undefined
         ? {}
         : { storageProvider: deps.storageProvider }),
@@ -1348,6 +1375,7 @@ export async function runQueuedSeriesInitialization(input: {
   llmConfig?: { baseURL?: string; modelId?: string };
   preferredLanguage?: string;
   qualityPreference?: "high" | "medium";
+  selectionPreference?: string;
   /** Web-reference tools for the agent (see TitleResearchOptions). */
   titleResearch?: TitleResearchOptions;
   storageParentDirectoryId: string;
@@ -1415,6 +1443,9 @@ export async function runQueuedSeriesInitialization(input: {
       ...(deps.qualityPreference === undefined
         ? {}
         : { qualityPreference: deps.qualityPreference }),
+      ...(deps.selectionPreference === undefined
+        ? {}
+        : { selectionPreference: deps.selectionPreference }),
       ...(deps.storageProvider === undefined
         ? {}
         : { storageProvider: deps.storageProvider }),

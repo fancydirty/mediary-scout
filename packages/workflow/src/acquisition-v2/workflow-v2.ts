@@ -59,6 +59,7 @@ export interface RunAcquisitionV2WorkflowRequest {
   originCountries?: string[];
   searchHints?: string;
   qualityGuidance?: string;
+  selectionPreference?: string;
   /** The task's fine-grained search profile — enables the anime taboo-keyword
    *  validator (warnings only, never blocking). 病2b。 */
   searchProfile?: SearchProfile;
@@ -214,6 +215,7 @@ export async function runAcquisitionV2Workflow(
     ...(request.originCountries === undefined ? {} : { originCountries: request.originCountries }),
     ...(request.searchHints === undefined ? {} : { searchHints: request.searchHints }),
     ...(request.qualityGuidance === undefined ? {} : { qualityGuidance: request.qualityGuidance }),
+    ...(request.selectionPreference === undefined ? {} : { selectionPreference: request.selectionPreference }),
     ...(request.searchProfile === undefined ? {} : { searchProfile: request.searchProfile }),
     ...(request.storageProvider === undefined ? {} : { storageProvider: request.storageProvider }),
     ...(request.assrtToken === undefined ? {} : { assrtToken: request.assrtToken }),

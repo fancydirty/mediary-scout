@@ -1,8 +1,13 @@
 import {
+  normalizeSelectionPreference,
+  SELECTION_PREFERENCE_MAX_LENGTH,
+} from "@media-track/workflow";
+import {
   getWorkflowRepository,
   getAccountScopedSettings,
   getLlmConfig,
   getQualityPreference,
+  getSelectionPreference,
   getPreferredLanguage,
   getDailySweepTime,
   getProwlarrConfig,
@@ -10,6 +15,7 @@ import {
   LLM_API_KEY_SETTING_KEY,
   LLM_MODEL_ID_SETTING_KEY,
   QUALITY_PREFERENCE_SETTING_KEY,
+  SELECTION_PREFERENCE_SETTING_KEY,
   PREFERRED_LANGUAGE_SETTING_KEY,
   DAILY_SWEEP_TIME_SETTING_KEY,
   PANSOU_BASE_URL_SETTING_KEY,
@@ -25,6 +31,7 @@ type PushChannelKey = (typeof PUSH_CHANNEL_KEYS)[number];
 export interface AgentConfigView {
   llm: { baseURL: string | null; modelId: string | null; apiKey: string | null };
   qualityPreference: string | undefined;
+  selectionPreference: string | undefined;
   preferredLanguage: string | undefined;
   dailySweepTime: string;
   pansouBaseUrl: string | null;
@@ -51,9 +58,10 @@ export function isMaskedPlaceholder(value: string): boolean {
 export async function readAgentConfig(accountId: string): Promise<AgentConfigView> {
   const settings = getAccountScopedSettings(accountId);
   const repository = getWorkflowRepository();
-  const [llm, quality, language, sweepTime, prowlarr, storageRows] = await Promise.all([
+  const [llm, quality, selectionPreference, language, sweepTime, prowlarr, storageRows] = await Promise.all([
     getLlmConfig(settings),
     getQualityPreference(settings),
+    getSelectionPreference(settings),
     getPreferredLanguage(settings),
     getDailySweepTime(repository),
     getProwlarrConfig(settings),
@@ -80,6 +88,7 @@ export async function readAgentConfig(accountId: string): Promise<AgentConfigVie
       apiKey: maskSecret(llm.apiKey),
     },
     qualityPreference: quality,
+    selectionPreference,
     preferredLanguage: language,
     dailySweepTime: sweepTime,
     pansouBaseUrl: pansou,
@@ -99,6 +108,7 @@ export async function readAgentConfig(accountId: string): Promise<AgentConfigVie
 export interface AgentConfigWriteInput {
   llm?: { baseURL?: string; modelId?: string; apiKey?: string };
   qualityPreference?: string;
+  selectionPreference?: string;
   preferredLanguage?: string;
   dailySweepTime?: string;
   pansouBaseUrl?: string;
@@ -156,6 +166,19 @@ export async function writeAgentConfig(
     }
     await setAccount(QUALITY_PREFERENCE_SETTING_KEY, input.qualityPreference);
     updated.push("qualityPreference");
+  }
+
+  if (input.selectionPreference !== undefined) {
+    const normalized = normalizeSelectionPreference(input.selectionPreference);
+    if (normalized.length > SELECTION_PREFERENCE_MAX_LENGTH) {
+      return {
+        ok: false,
+        field: "selectionPreference",
+        message: `选源要求最多 ${SELECTION_PREFERENCE_MAX_LENGTH} 字`,
+      };
+    }
+    await setAccount(SELECTION_PREFERENCE_SETTING_KEY, normalized);
+    updated.push("selectionPreference");
   }
 
   if (input.preferredLanguage !== undefined) {

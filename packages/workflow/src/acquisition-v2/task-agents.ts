@@ -7,6 +7,7 @@ import { getStorageBrand } from "../storage-brands.js";
 import { stripMemoryFence, type AgentMemory } from "../agent-memory.js";
 import { LINK_HISTORY_PROMPT } from "./link-history.js";
 import { hasUserRequests, userRequestBlock, type UserRequestPromptInput } from "./user-request-block.js";
+import { buildSelectionPreferenceBlock } from "../selection-preference.js";
 
 export { userRequestBlock, type UserRequestPromptInput } from "./user-request-block.js";
 
@@ -45,7 +46,7 @@ const LOOP_GUIDANCE = `Your loop (you drive it; the system only orchestrates the
 3. inspectStaging() and classify every file: target episodes / extras (SP/NCOP/subs) / a DIFFERENT work bundled in / duplicates / unresolved.
 4. Plan the FULL distribution FIRST (Evidence → Facts → Decision): for each still-missing episode decide its staging file id, that video's subtitle id(s), and its season — confirm the plan covers EXACTLY the missing episodes. THEN submit it as ONE call: moveToSeason({moves:[{season,fileIds}]}) — each move names its season, each video's subtitles ride in the SAME season's fileIds. A multi-season / complete-series pack is distributed in a single plan with one move per season; episodes a season ALREADY has are NOT recopied (check inspectTargetDir(season) first). THEN verify the returned {seasons,staging} and fix any misplacement with another call (moves are cheap, not transfer-budget).
 5. moveToSeason lands each file FLAT in its Season dir (extracted OUT of its resource wrapper) — media must NOT stay nested in its own wrapper directory, or scrapers read the nesting as different versions of the same episode. The wrappers and anything you didn't move stay in staging and get wiped wholesale in step 8 — you do NOT peel each wrapper.
-6. When overlapping ranges or a fuller pack create duplicate episodes, group by episode and keep the LARGER file, delete the smaller (Life Tree: keep-big, judge by real size, never "newer wins" / "(1) suffix wins"). deleteFiles executes your grouping.
+6. When overlapping ranges or a fuller pack create duplicate episodes, group by episode and keep ONE file — a USER SELECTION PREFERENCE below, when present, decides which of the duplicates to keep; otherwise keep the LARGER file (Life Tree: keep-big, judge by real size, never "newer wins" / "(1) suffix wins"). deleteFiles executes your grouping.
 7. markObtained(codes) — declare the episode codes you obtained (e.g. ["S01E13","S02E07"]). Do it ONLY after you have moved the files in, deduped, and your inspectTargetDir shows the real episodes in place. The system does NOT re-read to second-guess you and there is no fileId — mark from your own judgment, and never mark before the files are actually placed. If moveToSeason fails, those files did NOT move — do not markObtained their episodes this run. discardStaging is refused while files whose move failed are still in staging.
 8. discardStaging wipes the WHOLE staging directory in one shot — leftover episodes / duplicate packs / a bundled different work / wrappers / covers are discarded wholesale; keep ONLY what you moved into the seasons (do NOT isolate or hand-classify residue). Then finish() when the need is covered. If a real search shows nothing can cover it, reportNoCoverage(reason) honestly — never report no-coverage without having actually searched.
 
@@ -99,6 +100,9 @@ export interface TaskAgentPromptOptions {
   /** Rendered quality-preference guidance (召回后选片优先级, from getQualityGuidance);
    *  "" / undefined = 不限 → no quality block injected. */
   qualityGuidance?: string;
+  /** User-authored standing selection preference (Settings → 获取偏好 → 选源要求).
+   *  Rendered inside a fenced `<selection_preference>` soft-priority block. */
+  selectionPreference?: string;
   /** The run's drive brand ("pan115" | "quark" | "guangya" | "tianyi" | "pan123") —
    *  selects the brand transfer model in the prompt and the brand-specific
    *  dead-links skill section (transferModelLine / getStorageSkill). Default 115. */
@@ -360,6 +364,7 @@ ${languageLine(options)}
 ${transferModelLine(options)}
 ${searchHintsBlock(options)}
 ${qualityGuidanceBlock(options)}
+${buildSelectionPreferenceBlock(options.selectionPreference)}
 ${fanSeasonBlock(options)}
 ${tvLoopGuidance(options)}`;
 }
@@ -373,7 +378,7 @@ ${memoryBlock(options)}${userRequestBlock(options)}${protectExistingLine(options
 You own the COMPLETE acquisition judgment for ONE movie: target正片 identification (guard against remakes/wrong films — cross-check BOTH title AND year), main-file selection, quality tradeoff, rejection of extras/trailers/foreign works, import cleanup, and marking. A movie is a SINGLE video file — there are no seasons or episodes; its one synthetic coverage token is "MOVIE".
 
 Identity (the hard part): the candidate must be THIS film, not a remake, sequel, prequel, or same-IP different film. Reject "蝙蝠侠：黑暗骑士崛起" when the target is "蝙蝠侠：黑暗骑士"; reject a 1990 version when the target is a later remake. When identity is unclear, do not transfer speculatively.
-Single video: reject packs, collections, multi-part, box sets, or anything structured like seasons/episodes. ALSO reject disc images — a 蓝光原盘 / ISO / BDMV full-disc dump (often 50–100GB+, isVideo=false) is NOT a usable film: you need ONE playable video file (mkv/mp4/ts). Prefer a 4K REMUX or 4K video over a 原盘/ISO even when the disc image is nominally higher quality; if the only candidate is a disc image, take a lower-quality VIDEO version instead. Among confirmed identity matches prefer the highest quality VIDEO stated transparently (4K REMUX/video > 1080p > 720p). If a single transferred share folder bundles multiple quality/resolution copies of the SAME movie (e.g. 1080p + 4K WEB-DL + 4K REMUX in one folder), after flattenMovie() keep ONLY the single best playable video matching the user's quality preference (with its matching subtitles) and deleteFiles the redundant versions — only one copy of the film may remain (except protected pre-existing files on a replace run). Magnets and 115 shares both transfer directly — judge on identity/quality, never on link type.
+Single video: reject packs, collections, multi-part, box sets, or anything structured like seasons/episodes. ALSO reject disc images — a 蓝光原盘 / ISO / BDMV full-disc dump (often 50–100GB+, isVideo=false) is NOT a usable film: you need ONE playable video file (mkv/mp4/ts). Prefer a 4K REMUX or 4K video over a 原盘/ISO even when the disc image is nominally higher quality; if the only candidate is a disc image, take a lower-quality VIDEO version instead. Among confirmed identity matches prefer the highest quality VIDEO stated transparently (4K REMUX/video > 1080p > 720p) — unless a USER SELECTION PREFERENCE below ranks the versions differently. If a single transferred share folder bundles multiple quality/resolution copies of the SAME movie (e.g. 1080p + 4K WEB-DL + 4K REMUX in one folder), after flattenMovie() keep ONLY the single best playable video matching the user's quality preference (with its matching subtitles) and deleteFiles the redundant versions — only one copy of the film may remain (except protected pre-existing files on a replace run). Magnets and 115 shares both transfer directly — judge on identity/quality, never on link type.
 
 Dead links are the norm — many shares are expired/cancelled (链接已过期 / 分享已取消 / 错误的链接). When you have RANKED several share candidates that are all the SAME target film (best resource first), hand that ORDERED list to transferUntilLanded({candidateIds:[...]}): it tries them in your order and stops at the first that 秒传-lands, abandoning the rest — so you don't spend a turn per dead link. It takes fail-loud SHARE links ONLY (115/夸克/天翼/123/光鸭 转存分享 — never magnets) and the SET must be your vetted choice (a keyword search mixes in same-named DIFFERENT works — e.g. a variety show or an unrelated cartoon — which you must exclude FIRST). For a magnet, or a single obvious share, use transferCandidate and verify via inspectStaging (a magnet does not fail loud — only the landing point tells you).
 
@@ -382,6 +387,7 @@ ${languageLine({ ...options, subtitleFallback: true })}
 ${transferModelLine(options)}
 ${searchHintsBlock(options)}
 ${qualityGuidanceBlock(options)}
+${buildSelectionPreferenceBlock(options.selectionPreference)}
 ${movieWebBlock(options)}
 Your loop (you drive it; the system only orchestrates the tool calls). A MOVIE is simple — there is NO season distribution and NO separate staging to discard (the film lands in the movie directory and flattenMovie cleans the wrapper in place). At EVERY decision point lay out Evidence → Facts → Decision (read your skill's "protocol" section); once a transfer has LANDED, do NOT keep searching/transferring — verify and finish.
 ${loopEnds.first}1. searchResources — bare title first; re-keyword (add the original/English name or "全集") only if weak. Stop the moment you can identify the one correct film.

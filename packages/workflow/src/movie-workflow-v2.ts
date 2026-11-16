@@ -24,6 +24,7 @@ import type { AgentToolEvent } from "./acquisition-v2/activity.js";
 import { runAcquisitionV2, type RunAcquisitionV2Request, type RunAcquisitionV2Result } from "./acquisition-v2/orchestrator.js";
 import type { JevJudge } from "./jev-judge.js";
 import { getQualityGuidance, getSearchRecipe } from "./acquisition-v2/search-profile.js";
+import { cleanSelectionPreferenceForPrompt, appliedSelectionPreference } from "./selection-preference.js";
 import { ensureMediaLibraryDirectory } from "./media-library-folder.js";
 
 function defaultNowIso(): string {
@@ -49,6 +50,8 @@ export interface RunMovieAcquisitionV2Request {
   preferredLanguage?: string;
   /** Global quality preference ("high"/"medium"); undefined = 不限 (no guidance). */
   qualityPreference?: "high" | "medium";
+  /** User-authored standing selection preference (supersedes qualityPreference when non-empty). */
+  selectionPreference?: string;
   /** The run's drive brand ("pan115" | "quark") — selects brand-specific skill. */
   storageProvider?: string;
   /** assrt token (Settings → 字幕来源). Undefined = 字幕流程不触发。 */
@@ -106,6 +109,9 @@ export async function runMovieAcquisitionV2(
         tmdbId: request.title.tmdbId,
       });
 
+  const cleanSelectionPref = cleanSelectionPreferenceForPrompt(request.selectionPreference);
+  const movieQualityGuidance = getQualityGuidance("movie", request.qualityPreference);
+
   const v2 = await runAcquisitionV2({
     provider: request.resourceProvider,
     executor: request.storage,
@@ -123,9 +129,8 @@ export async function runMovieAcquisitionV2(
     targetMovieDirectoryId: movieDirectoryId,
     searchHints: getSearchRecipe("movie"), // movie search is origin-independent
     searchProfile: "movie",
-    ...(getQualityGuidance("movie", request.qualityPreference) === ""
-      ? {}
-      : { qualityGuidance: getQualityGuidance("movie", request.qualityPreference) }),
+    ...(cleanSelectionPref === "" ? {} : { selectionPreference: cleanSelectionPref }),
+    ...(movieQualityGuidance === "" ? {} : { qualityGuidance: movieQualityGuidance }),
     ...(request.searchBudget === undefined ? {} : { searchBudget: request.searchBudget }),
     ...(request.maxSteps === undefined ? {} : { maxSteps: request.maxSteps }),
     ...(request.preferredLanguage === undefined ? {} : { preferredLanguage: request.preferredLanguage }),
@@ -221,7 +226,14 @@ function buildResult(input: {
   }).map((episode) => ({ ...episode, obtained: input.obtained }));
 
   const t = input.request.title;
-  const meta = { posterPath: t.posterPath ?? null, tmdbId: t.tmdbId, mediaType: t.type, year: t.year };
+  const selectionPreference = appliedSelectionPreference(input.auditEvents);
+  const meta = {
+    posterPath: t.posterPath ?? null,
+    tmdbId: t.tmdbId,
+    mediaType: t.type,
+    year: t.year,
+    ...(selectionPreference ? { selectionPreference } : {}),
+  };
   if (input.request.userRequest) {
     const report = buildReplacementReport({
       titleName: t.title,

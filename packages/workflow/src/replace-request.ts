@@ -639,6 +639,7 @@ function messageFor(messages: UserMessage[], episode: string): UserMessage | und
 function optionalDeps(deps: Awaited<ReturnType<typeof resolveWorkerDeps>>): {
   preferredLanguage?: string;
   qualityPreference?: "high" | "medium";
+  selectionPreference?: string;
   storageProvider?: string;
   assrtToken?: string;
   jevJudge?: JevJudge;
@@ -649,6 +650,7 @@ function optionalDeps(deps: Awaited<ReturnType<typeof resolveWorkerDeps>>): {
   return {
     ...(deps.preferredLanguage === undefined ? {} : { preferredLanguage: deps.preferredLanguage }),
     ...(deps.qualityPreference === undefined ? {} : { qualityPreference: deps.qualityPreference }),
+    ...(deps.selectionPreference ? { selectionPreference: deps.selectionPreference } : {}),
     ...(deps.storageProvider === undefined ? {} : { storageProvider: deps.storageProvider }),
     ...(deps.assrtToken === undefined ? {} : { assrtToken: deps.assrtToken }),
     ...(deps.jevJudge === undefined ? {} : { jevJudge: deps.jevJudge }),

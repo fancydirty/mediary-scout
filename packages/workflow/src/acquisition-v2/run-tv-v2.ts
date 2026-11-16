@@ -12,6 +12,7 @@ import type { DeadLinkStore } from "./dead-links.js";
 import type { JevJudge } from "../jev-judge.js";
 import { runAcquisitionV2Workflow, type RunAcquisitionV2WorkflowRequest } from "./workflow-v2.js";
 import { getQualityGuidance, getSearchRecipe, searchProfile } from "./search-profile.js";
+import { cleanSelectionPreferenceForPrompt } from "../selection-preference.js";
 import type { AgentToolEvent } from "./activity.js";
 
 function defaultNowIso(): string {
@@ -43,6 +44,8 @@ export interface RunTvAcquisitionV2Request {
   preferredLanguage?: string;
   /** Global quality preference ("high"/"medium"); undefined = 不限 (no guidance). */
   qualityPreference?: "high" | "medium";
+  /** User-authored standing selection preference (supersedes qualityPreference when non-empty). */
+  selectionPreference?: string;
   /** The run's drive brand ("pan115" | "quark") — selects brand-specific skill. */
   storageProvider?: string;
   /** assrt token (Settings → 字幕来源). Undefined = 字幕流程不触发。 */
@@ -80,6 +83,10 @@ export async function runTvAcquisitionV2(request: RunTvAcquisitionV2Request): Pr
     type: request.title.type,
     originCountries: request.title.originCountries ?? [],
   });
+  // The built-in per-profile guidance and a user preference are mutually exclusive;
+  // that precedence is enforced in the orchestrator (single choke point) so every
+  // caller — TV, movie, replace, patrol — behaves identically.
+  const cleanSelectionPref = cleanSelectionPreferenceForPrompt(request.selectionPreference);
   const qualityGuidance = getQualityGuidance(profile, request.qualityPreference);
   const v2 = await runAcquisitionV2Workflow({
     provider: request.resourceProvider,
@@ -101,6 +108,7 @@ export async function runTvAcquisitionV2(request: RunTvAcquisitionV2Request): Pr
     searchHints: getSearchRecipe(profile),
     searchProfile: profile,
     ...(qualityGuidance === "" ? {} : { qualityGuidance }),
+    ...(cleanSelectionPref === "" ? {} : { selectionPreference: cleanSelectionPref }),
     ...(request.priorObtained === undefined ? {} : { priorObtained: request.priorObtained }),
     ...(request.searchBudget === undefined ? {} : { searchBudget: request.searchBudget }),
     ...(request.maxSteps === undefined ? {} : { maxSteps: request.maxSteps }),

@@ -39,6 +39,7 @@ import { AssrtSubtitleProvider, type AssrtProviderPort } from "../subtitle-provi
 import { JevPrefilterProvider } from "../jev-prefilter-provider.js";
 import type { JevJudge, JevJudgeTarget } from "../jev-judge.js";
 import type { SearchProfile } from "./search-profile.js";
+import { cleanSelectionPreferenceForPrompt } from "../selection-preference.js";
 import {
   needForMovie,
   needForTvTarget,
@@ -85,6 +86,8 @@ export interface RunAcquisitionV2Request {
   searchHints?: string;
   /** Rendered quality-preference guidance (召回后选片优先级), injected into the prompt. */
   qualityGuidance?: string;
+  /** User-authored standing selection preference (Settings → 获取偏好 → 选源要求). */
+  selectionPreference?: string;
   /** The task's fine-grained search profile — enables the anime taboo-keyword
    *  validator (warnings only, never blocking). 病2b。 */
   searchProfile?: SearchProfile;
@@ -656,6 +659,15 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     }
   }
 
+  const sanitizedSelectionPref = cleanSelectionPreferenceForPrompt(request.selectionPreference);
+  if (!request.stagingRecovery && sanitizedSelectionPref !== "") {
+    sandbox.recordExternalAuditEvent({
+      type: "selection_preference_applied",
+      message: `Selection preference in effect for this run (${sanitizedSelectionPref.length} chars)`,
+      data: { preference: sanitizedSelectionPref },
+    });
+  }
+
   const common = {
     sandbox,
     model: request.model,
@@ -663,7 +675,15 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     ...(request.preferredLanguage === undefined ? {} : { preferredLanguage: request.preferredLanguage }),
     ...(request.originCountries === undefined ? {} : { originCountries: request.originCountries }),
     ...(request.searchHints === undefined ? {} : { searchHints: request.searchHints }),
-    ...(request.qualityGuidance === undefined ? {} : { qualityGuidance: request.qualityGuidance }),
+    // A user-authored preference supersedes the built-in quality guidance: sending both
+    // would give the model two competing ranking rules. Enforced HERE (the single choke
+    // point) so no caller can reintroduce the conflict. Staging recovery reads/sorts only.
+    ...(sanitizedSelectionPref !== "" || request.qualityGuidance === undefined
+      ? {}
+      : { qualityGuidance: request.qualityGuidance }),
+    ...(sanitizedSelectionPref === "" || request.stagingRecovery
+      ? {}
+      : { selectionPreference: sanitizedSelectionPref }),
     ...(request.storageProvider === undefined ? {} : { storageProvider: request.storageProvider }),
     ...(request.drives && request.drives.length > 0 ? { drives: request.drives } : {}),
     ...(request.memory?.drive ? { primaryStorageId: request.memory.drive } : {}),

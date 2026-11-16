@@ -20,6 +20,14 @@
     "./user-requests": {
       "types": "./dist/user-requests.d.ts",
       "default": "./dist/user-requests.js"
+    },
+    "./selection-preference": {
+      "types": "./dist/selection-preference.d.ts",
+      "default": "./dist/selection-preference.js"
+    },
+    "./media-server-refresh": {
+      "types": "./dist/media-server-refresh.d.ts",
+      "default": "./dist/media-server-refresh.js"
     }
   },
   "dependencies": {

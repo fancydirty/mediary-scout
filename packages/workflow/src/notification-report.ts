@@ -354,12 +354,16 @@ export function scheduledDigestItems(
   return scheduled;
 }
 
-/** Title metadata for richer pushes (poster image + tap-through link). */
+/** Extra facts spread verbatim into every `NotificationReport` (poster image,
+ *  tap-through ids, and run-behaviour facts such as the applied selection
+ *  preference). MUST stay a subset of `NotificationReport` — anything added here
+ *  is copied onto the report as-is. */
 export interface NotificationTitleMeta {
   posterPath?: string | null;
   tmdbId?: number;
   mediaType?: MediaType;
   year?: number;
+  selectionPreference?: string;
 }
 
 /** Movie / one-off: nothing to track, just acquired. */

@@ -329,6 +329,13 @@ function NotificationCard({
           ) : null}
         </div>
       ) : null}
+
+      {report.selectionPreference ? (
+        <details className="feed-pref-details">
+          <summary>选源要求</summary>
+          <p className="feed-pref-body">{report.selectionPreference}</p>
+        </details>
+      ) : null}
       </div>
     </article>
   );
