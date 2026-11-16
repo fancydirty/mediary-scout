@@ -24,6 +24,7 @@ import type { AgentToolEvent } from "./acquisition-v2/activity.js";
 import { runAcquisitionV2, type RunAcquisitionV2Request, type RunAcquisitionV2Result } from "./acquisition-v2/orchestrator.js";
 import type { JevJudge } from "./jev-judge.js";
 import { getQualityGuidance, getSearchRecipe } from "./acquisition-v2/search-profile.js";
+import { cleanSelectionPreferenceForPrompt } from "./selection-preference.js";
 import { ensureMediaLibraryDirectory } from "./media-library-folder.js";
 
 function defaultNowIso(): string {
@@ -108,6 +109,10 @@ export async function runMovieAcquisitionV2(
         tmdbId: request.title.tmdbId,
       });
 
+  const cleanSelectionPref = cleanSelectionPreferenceForPrompt(request.selectionPreference);
+  const movieQualityGuidance =
+    cleanSelectionPref !== "" ? "" : getQualityGuidance("movie", request.qualityPreference);
+
   const v2 = await runAcquisitionV2({
     provider: request.resourceProvider,
     executor: request.storage,
@@ -125,11 +130,8 @@ export async function runMovieAcquisitionV2(
     targetMovieDirectoryId: movieDirectoryId,
     searchHints: getSearchRecipe("movie"), // movie search is origin-independent
     searchProfile: "movie",
-    ...(request.selectionPreference?.trim()
-      ? { selectionPreference: request.selectionPreference.trim() }
-      : getQualityGuidance("movie", request.qualityPreference) === ""
-        ? {}
-        : { qualityGuidance: getQualityGuidance("movie", request.qualityPreference) }),
+    ...(cleanSelectionPref === "" ? {} : { selectionPreference: cleanSelectionPref }),
+    ...(movieQualityGuidance === "" ? {} : { qualityGuidance: movieQualityGuidance }),
     ...(request.searchBudget === undefined ? {} : { searchBudget: request.searchBudget }),
     ...(request.maxSteps === undefined ? {} : { maxSteps: request.maxSteps }),
     ...(request.preferredLanguage === undefined ? {} : { preferredLanguage: request.preferredLanguage }),

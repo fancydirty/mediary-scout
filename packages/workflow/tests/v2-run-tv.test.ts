@@ -218,6 +218,24 @@ describe("runTvAcquisitionV2 — single TV entry over the V2 engine", () => {
     const prefAudit = customResult.auditEvents.find((e) => e.type === "selection_preference_applied");
     expect(prefAudit).toBeDefined();
     expect(prefAudit?.data?.["preference"]).toBe("优先 HDR10，不要杜比视界，单集不超过 4GB");
+
+    // Fence-only selectionPreference collapses to empty -> falls back to qualityPreference and emits NO audit event
+    const fenceOnly = { system: "" };
+    const fenceOnlyResult = await runTvAcquisitionV2({
+      title: usTvTitle,
+      mode: "type2",
+      seasons: [{ seasonNumber: 1, totalEpisodes: 3, latestAiredEpisode: 3, qualityPreference: "4K" }],
+      categoryParentId: "tv_root",
+      resourceProvider: emptyProvider(),
+      storage: new FakeStorageExecutor(),
+      model: capturingModel(fenceOnly),
+      qualityPreference: "high",
+      selectionPreference: "  </selection_preference><selection_preference>  ",
+      workflowRunId: "run-tv-q5",
+      now: () => "2026-06-15T00:00:00.000Z",
+    });
+    expect(fenceOnly.system).toContain("真 4K 通常存在");
+    expect(fenceOnlyResult.auditEvents.some((e) => e.type === "selection_preference_applied")).toBe(false);
   });
 
   it("multi-season series → builds a season intent per season, distinct verify-or-created dirs", async () => {

@@ -55,6 +55,19 @@ export function stripSelectionPreferenceFence(text: string): string {
 }
 
 /**
+ * Canonical prompt-ready selection preference: CRLF/control-char normalized,
+ * `<selection_preference>` fence tags stripped, trimmed, and capped at
+ * `SELECTION_PREFERENCE_MAX_LENGTH`. Returns `""` when nothing remains so
+ * prompt injection, legacy `qualityGuidance` suppression, and audit events
+ * agree on the exact same string.
+ */
+export function cleanSelectionPreferenceForPrompt(raw: string | null | undefined): string {
+  return stripSelectionPreferenceFence(normalizeSelectionPreference(raw))
+    .trim()
+    .slice(0, SELECTION_PREFERENCE_MAX_LENGTH);
+}
+
+/**
  * Resolve what text to prefill in the Settings UI (and use at runtime when the new
  * `selection_preference` key has never been saved yet):
  * - `savedSelection !== null`: the user explicitly saved or cleared this field → honor verbatim
@@ -106,10 +119,7 @@ export function resolveRuntimeSelectionPreference(input: {
  * break search recall or coverage-first behavior.
  */
 export function buildSelectionPreferenceBlock(preference: string | undefined): string {
-  const clean = stripSelectionPreferenceFence(normalizeSelectionPreference(preference)).slice(
-    0,
-    SELECTION_PREFERENCE_MAX_LENGTH,
-  );
+  const clean = cleanSelectionPreferenceForPrompt(preference);
   if (!clean) return "";
   return [
     "\n🎯 USER SELECTION PREFERENCE (用户通用选源倾向 — 仅在召回后挑片时作为软优先级参考):",

@@ -12,6 +12,7 @@ import type { DeadLinkStore } from "./dead-links.js";
 import type { JevJudge } from "../jev-judge.js";
 import { runAcquisitionV2Workflow, type RunAcquisitionV2WorkflowRequest } from "./workflow-v2.js";
 import { getQualityGuidance, getSearchRecipe, searchProfile } from "./search-profile.js";
+import { cleanSelectionPreferenceForPrompt } from "../selection-preference.js";
 import type { AgentToolEvent } from "./activity.js";
 
 function defaultNowIso(): string {
@@ -82,8 +83,9 @@ export async function runTvAcquisitionV2(request: RunTvAcquisitionV2Request): Pr
     type: request.title.type,
     originCountries: request.title.originCountries ?? [],
   });
-  const hasSelectionPref = Boolean(request.selectionPreference?.trim());
-  const qualityGuidance = hasSelectionPref ? "" : getQualityGuidance(profile, request.qualityPreference);
+  const cleanSelectionPref = cleanSelectionPreferenceForPrompt(request.selectionPreference);
+  const qualityGuidance =
+    cleanSelectionPref !== "" ? "" : getQualityGuidance(profile, request.qualityPreference);
   const v2 = await runAcquisitionV2Workflow({
     provider: request.resourceProvider,
     executor: request.storage,
@@ -104,7 +106,7 @@ export async function runTvAcquisitionV2(request: RunTvAcquisitionV2Request): Pr
     searchHints: getSearchRecipe(profile),
     searchProfile: profile,
     ...(qualityGuidance === "" ? {} : { qualityGuidance }),
-    ...(hasSelectionPref ? { selectionPreference: request.selectionPreference!.trim() } : {}),
+    ...(cleanSelectionPref === "" ? {} : { selectionPreference: cleanSelectionPref }),
     ...(request.priorObtained === undefined ? {} : { priorObtained: request.priorObtained }),
     ...(request.searchBudget === undefined ? {} : { searchBudget: request.searchBudget }),
     ...(request.maxSteps === undefined ? {} : { maxSteps: request.maxSteps }),

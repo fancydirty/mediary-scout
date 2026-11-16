@@ -39,6 +39,7 @@ import { AssrtSubtitleProvider, type AssrtProviderPort } from "../subtitle-provi
 import { JevPrefilterProvider } from "../jev-prefilter-provider.js";
 import type { JevJudge, JevJudgeTarget } from "../jev-judge.js";
 import type { SearchProfile } from "./search-profile.js";
+import { cleanSelectionPreferenceForPrompt } from "../selection-preference.js";
 import {
   needForMovie,
   needForTvTarget,
@@ -658,12 +659,12 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     }
   }
 
-  if (!request.stagingRecovery && request.selectionPreference?.trim()) {
-    const trimmedPref = request.selectionPreference.trim();
+  const sanitizedSelectionPref = cleanSelectionPreferenceForPrompt(request.selectionPreference);
+  if (!request.stagingRecovery && sanitizedSelectionPref !== "") {
     sandbox.recordExternalAuditEvent({
       type: "selection_preference_applied",
-      message: `Applied user selection preference (${trimmedPref.length} chars)`,
-      data: { preference: trimmedPref },
+      message: `Applied user selection preference (${sanitizedSelectionPref.length} chars)`,
+      data: { preference: sanitizedSelectionPref },
     });
   }
 
@@ -675,7 +676,7 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     ...(request.originCountries === undefined ? {} : { originCountries: request.originCountries }),
     ...(request.searchHints === undefined ? {} : { searchHints: request.searchHints }),
     ...(request.qualityGuidance === undefined ? {} : { qualityGuidance: request.qualityGuidance }),
-    ...(request.selectionPreference === undefined ? {} : { selectionPreference: request.selectionPreference }),
+    ...(sanitizedSelectionPref === "" ? {} : { selectionPreference: sanitizedSelectionPref }),
     ...(request.storageProvider === undefined ? {} : { storageProvider: request.storageProvider }),
     ...(request.drives && request.drives.length > 0 ? { drives: request.drives } : {}),
     ...(request.memory?.drive ? { primaryStorageId: request.memory.drive } : {}),
