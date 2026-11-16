@@ -12,11 +12,12 @@ import { runAction } from "../lib/run-action";
 
 const PRESET_TEXTS = new Set(SELECTION_PREFERENCE_PRESETS.map((p) => p.text));
 
-export function SelectionPreferenceForm({ initial }: { initial: string }) {
+export function SelectionPreferenceForm({ initial, saved }: { initial: string; saved: boolean }) {
   const [isPending, startTransition] = useTransition();
   const [value, setValue] = useState(initial);
   const [focused, setFocused] = useState(false);
   const [result, setResult] = useState<string | null>(null);
+  const [isSaved, setIsSaved] = useState(saved);
 
   const trimmed = value.trim();
   const isCustomEdited = trimmed.length > 0 && !PRESET_TEXTS.has(trimmed);
@@ -34,6 +35,9 @@ export function SelectionPreferenceForm({ initial }: { initial: string }) {
       );
       if (!r.ok) return;
       const res = r.value;
+      if (res.success) {
+        setIsSaved(true);
+      }
       setResult(res.success ? "✅ 已保存" : `❌ ${res.message ?? "保存失败"}`);
       setTimeout(() => setResult(null), 3500);
     });
@@ -46,6 +50,11 @@ export function SelectionPreferenceForm({ initial }: { initial: string }) {
 
   return (
     <div className="push-form selection-pref-form">
+      {!isSaved ? (
+        <p className="panel-note selection-pref-unsaved">
+          这段模板已填好但还没生效 —— 点「保存」后，之后所有的获取、补缺和换源都会按它挑片。
+        </p>
+      ) : null}
       <div className="selection-pref-presets" role="group" aria-label="选源预设模板">
         {SELECTION_PREFERENCE_PRESETS.map((preset) => {
           const active = trimmed === preset.text;

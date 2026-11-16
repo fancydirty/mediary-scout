@@ -5691,6 +5691,10 @@ select.setting-control {
 .selection-pref-form {
   gap: 12px;
 }
+.selection-pref-unsaved {
+  margin: 0;
+  color: var(--text-muted);
+}
 .selection-pref-presets {
   display: flex;
   flex-wrap: wrap;

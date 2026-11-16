@@ -325,7 +325,7 @@ async function QualityPreferenceSection() {
           <p className="panel-note">电影、剧集、巡检补缺与换源共用的挑片倾向（覆盖优先，找不到理想版本时不留缺）</p>
         </div>
       </div>
-      <SelectionPreferenceForm initial={initial} />
+      <SelectionPreferenceForm initial={initial} saved={savedSelection !== null && savedSelection !== undefined} />
     </section>
   );
 }
