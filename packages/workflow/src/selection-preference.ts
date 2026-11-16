@@ -114,6 +114,22 @@ export function resolveRuntimeSelectionPreference(input: {
 }
 
 /**
+ * The preference text actually applied by a run, read back from its audit trail.
+ * Both the TV/anime bridge and the movie workflow attach this to the notification
+ * report so the feed can show what the agent was told to prefer. Single reader:
+ * the event type + payload key live here, not copied into each bridge.
+ */
+export function appliedSelectionPreference(
+  auditEvents: readonly { type: string; data?: Record<string, unknown> }[] | undefined,
+): string | undefined {
+  const data = auditEvents?.find((e) => e.type === "selection_preference_applied")?.data;
+  const value = data?.["preference"];
+  if (typeof value !== "string") return undefined;
+  const clean = cleanSelectionPreferenceForPrompt(value);
+  return clean === "" ? undefined : clean;
+}
+
+/**
  * Render the fenced system-prompt block for a user's standing selection preference.
  * Enforces hard system invariants outside the fence so user phrasing cannot accidentally
  * break search recall or coverage-first behavior.

@@ -15,6 +15,7 @@ import {
   type WorkflowStatus,
 } from "../domain.js";
 import { buildReplacementReport, buildSeasonReport, buildSeriesReport, formatReportPushText } from "../notification-report.js";
+import { appliedSelectionPreference } from "../selection-preference.js";
 import { classifyTransferBlock } from "./transfer-block.js";
 import { classifySearchSourceFault } from "./search-source-fault.js";
 import type { RunAcquisitionV2WorkflowResult } from "./workflow-v2.js";
@@ -113,8 +114,7 @@ export function bridgeV2WorkflowToResult(input: {
   const sourceFault = classifySearchSourceFault(v2.auditEvents);
   const searchSourceFaultReason = nothingLanded && sourceFault ? sourceFault.reason : null;
 
-  const appliedPref = v2.auditEvents.find((e) => e.type === "selection_preference_applied")?.data?.["preference"];
-  const selectionPreference = typeof appliedPref === "string" && appliedPref.trim() ? appliedPref.trim() : undefined;
+  const selectionPreference = appliedSelectionPreference(v2.auditEvents);
 
   const notification = buildNotification({
     title,

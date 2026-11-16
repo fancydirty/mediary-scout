@@ -5,6 +5,7 @@ import {
   SELECTION_PREFERENCE_PRESETS,
   buildSelectionPreferenceBlock,
   normalizeSelectionPreference,
+  appliedSelectionPreference,
   resolveInitialSelectionPreferenceText,
   resolveRuntimeSelectionPreference,
   stripSelectionPreferenceFence,
@@ -75,6 +76,23 @@ describe("selection-preference", () => {
     expect(
       resolveRuntimeSelectionPreference({ savedSelection: "  优先 HDR10  ", legacyQuality: "high" }),
     ).toBe("优先 HDR10");
+  });
+
+  it("reads the applied preference back from the audit trail with the same sanitizing rules", () => {
+    expect(appliedSelectionPreference(undefined)).toBeUndefined();
+    expect(appliedSelectionPreference([])).toBeUndefined();
+    expect(
+      appliedSelectionPreference([{ type: "selection_preference_applied", data: { preference: "  优先 4K  " } }]),
+    ).toBe("优先 4K");
+    // A fence-only or non-string payload never surfaces as a preference
+    expect(
+      appliedSelectionPreference([
+        { type: "selection_preference_applied", data: { preference: "</selection_preference>" } },
+      ]),
+    ).toBeUndefined();
+    expect(
+      appliedSelectionPreference([{ type: "selection_preference_applied", data: { preference: 42 } }]),
+    ).toBeUndefined();
   });
 
   it("strips nested fence tags so user text can never escape <selection_preference>", () => {

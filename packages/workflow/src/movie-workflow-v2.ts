@@ -24,7 +24,7 @@ import type { AgentToolEvent } from "./acquisition-v2/activity.js";
 import { runAcquisitionV2, type RunAcquisitionV2Request, type RunAcquisitionV2Result } from "./acquisition-v2/orchestrator.js";
 import type { JevJudge } from "./jev-judge.js";
 import { getQualityGuidance, getSearchRecipe } from "./acquisition-v2/search-profile.js";
-import { cleanSelectionPreferenceForPrompt } from "./selection-preference.js";
+import { cleanSelectionPreferenceForPrompt, appliedSelectionPreference } from "./selection-preference.js";
 import { ensureMediaLibraryDirectory } from "./media-library-folder.js";
 
 function defaultNowIso(): string {
@@ -227,8 +227,7 @@ function buildResult(input: {
   }).map((episode) => ({ ...episode, obtained: input.obtained }));
 
   const t = input.request.title;
-  const appliedPref = input.auditEvents.find((e) => e.type === "selection_preference_applied")?.data?.["preference"];
-  const selectionPreference = typeof appliedPref === "string" && appliedPref.trim() ? appliedPref.trim() : undefined;
+  const selectionPreference = appliedSelectionPreference(input.auditEvents);
   const meta = {
     posterPath: t.posterPath ?? null,
     tmdbId: t.tmdbId,
