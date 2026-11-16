@@ -89,28 +89,26 @@ export function resolveInitialSelectionPreferenceText(input: {
 }
 
 /**
- * Resolve the effective runtime selection preference to pass to the agent:
- * - `savedSelection !== null && savedSelection !== undefined`: normalized string, or `undefined`
- *   when the user intentionally cleared the box (`""`).
- * - `savedSelection` unset (`null` / `undefined`):
- *   - if legacy `quality_preference` is `"high"` or `"medium"`, return `undefined` so the battle-tested
- *     per-profile `getQualityGuidance` runs unchanged until the user saves a new preference;
- *   - otherwise (fresh install or legacy `"any"`), return `DEFAULT_SELECTION_PREFERENCE` so what the
- *     Settings page shows prefilled is already active out of the box.
+ * Resolve the effective runtime selection preference to pass to the agent.
+ *
+ * Only an EXPLICITLY SAVED value takes effect:
+ * - saved (non-null, non-blank) → normalized text;
+ * - saved but blank (`""`)        → `undefined` (the user deliberately wants no extra rule);
+ * - never saved (`null`)          → `undefined`, so an existing/new account keeps today's
+ *   exact behaviour (legacy `quality_preference` guidance or none at all) until the user
+ *   presses 保存 in the new box. The Settings page still PREFILLS a template
+ *   (resolveInitialSelectionPreferenceText) — showing a starting point must not silently
+ *   change how existing libraries are acquired.
  */
 export function resolveRuntimeSelectionPreference(input: {
   savedSelection: string | null | undefined;
   legacyQuality?: string | null | undefined;
 }): string | undefined {
-  if (input.savedSelection !== null && input.savedSelection !== undefined) {
-    const normalized = normalizeSelectionPreference(input.savedSelection).slice(0, SELECTION_PREFERENCE_MAX_LENGTH);
-    return normalized.length > 0 ? normalized : undefined;
-  }
-  const legacy = input.legacyQuality?.trim();
-  if (legacy === "high" || legacy === "medium") {
+  if (input.savedSelection === null || input.savedSelection === undefined) {
     return undefined;
   }
-  return DEFAULT_SELECTION_PREFERENCE;
+  const clean = cleanSelectionPreferenceForPrompt(input.savedSelection);
+  return clean === "" ? undefined : clean;
 }
 
 /**

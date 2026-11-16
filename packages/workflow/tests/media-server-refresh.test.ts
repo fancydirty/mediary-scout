@@ -125,16 +125,55 @@ describe("media-server-refresh", () => {
           mediaType: "movie",
         },
       });
+      // A routine patrol of an already-complete season also reports `complete` — no file changed.
+      const routineComplete = mkNotif({
+        id: "n_complete_routine",
+        kind: "tracking_completed",
+        trigger: "scheduled",
+        report: {
+          titleName: "已完结剧",
+          seasonLabel: "第 1 季",
+          status: "complete",
+          lines: ["全 1 季已完整获取"],
+          newlyObtained: [],
+          realMissing: [],
+          tmdbId: 300,
+          mediaType: "tv",
+        },
+      });
 
       const landed = extractLandedMediaEvents([
         movieLanded,
         routinePatrol,
+        routineComplete,
         patrolNewEp,
         noCov,
         failed,
         replaced,
       ]);
       expect(landed.map((item) => item.titleName)).toEqual(["沙丘2", "怪奇物语", "奥德赛"]);
+    });
+
+    it("coalesces the same title+season appearing twice (per-season records of one run)", () => {
+      const mk = (id: string): NotificationEvent => ({
+        id,
+        workflowRunId: "run_same",
+        kind: "episodes_restored",
+        title: "某剧",
+        body: "",
+        createdAt: "2026-11-16T01:00:00.000Z",
+        trigger: "scheduled",
+        report: {
+          titleName: "某剧",
+          seasonLabel: "第 1 季",
+          status: "airing",
+          lines: [],
+          newlyObtained: ["E02"],
+          realMissing: [],
+          mediaType: "tv",
+        },
+      });
+      expect(extractLandedMediaEvents([mk("a"), mk("a_copy")])).toHaveLength(1);
     });
   });
 

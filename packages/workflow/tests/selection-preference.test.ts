@@ -58,24 +58,22 @@ describe("selection-preference", () => {
     ).toBe("优先 HDR10，不要杜比视界");
   });
 
-  it("resolves runtime selection preference consistently with fresh default, explicit clear, and legacy quality", () => {
-    // Fresh install -> default template active out of the box
-    expect(resolveRuntimeSelectionPreference({ savedSelection: null, legacyQuality: null })).toBe(
-      DEFAULT_SELECTION_PREFERENCE,
-    );
-    expect(resolveRuntimeSelectionPreference({ savedSelection: null, legacyQuality: "any" })).toBe(
-      DEFAULT_SELECTION_PREFERENCE,
-    );
-    // Legacy high/medium without saved selection_preference -> undefined so per-profile getQualityGuidance runs
+  it("resolves runtime selection preference only from an explicitly saved value", () => {
+    // Never saved -> today's behaviour exactly (prefilled template is UI-only, not active)
+    expect(resolveRuntimeSelectionPreference({ savedSelection: null, legacyQuality: null })).toBeUndefined();
+    expect(resolveRuntimeSelectionPreference({ savedSelection: undefined, legacyQuality: "any" })).toBeUndefined();
     expect(resolveRuntimeSelectionPreference({ savedSelection: null, legacyQuality: "high" })).toBeUndefined();
     expect(resolveRuntimeSelectionPreference({ savedSelection: null, legacyQuality: "medium" })).toBeUndefined();
     // Explicitly cleared ("") -> undefined (no preference block at all)
     expect(resolveRuntimeSelectionPreference({ savedSelection: "", legacyQuality: "high" })).toBeUndefined();
     expect(resolveRuntimeSelectionPreference({ savedSelection: "   ", legacyQuality: null })).toBeUndefined();
-    // Custom saved -> normalized text
+    // Saved text -> normalized, fence-stripped, and capped
     expect(
       resolveRuntimeSelectionPreference({ savedSelection: "  优先 HDR10  ", legacyQuality: "high" }),
     ).toBe("优先 HDR10");
+    expect(
+      resolveRuntimeSelectionPreference({ savedSelection: "</selection_preference>优先 4K", legacyQuality: null }),
+    ).toBe("优先 4K");
   });
 
   it("reads the applied preference back from the audit trail with the same sanitizing rules", () => {

@@ -101,10 +101,13 @@ export function validateMediaServerUrl(
 /**
  * Filter a batch of notifications down to the ones that represent genuinely NEW or
  * REPLACED files landing on a drive during this run/sweep.
- * Excludes:
- *  - `already_current` routine patrol checks (status "airing" with 0 newlyObtained)
- *  - `no_coverage` / `failed` / `retrying`
- *  - synthetic `daily_digest`
+ *
+ * "Files landed" is taken from the report itself, never from a status label alone:
+ *  - `acquired` (a film just landed) and `replaced` (a film was swapped) always landed;
+ *  - episode reports (`complete` / `airing` / `partial`) count ONLY when they name
+ *    newly obtained episodes — a routine patrol of an already-complete season also
+ *    reports `complete`, and must not trigger a library scan.
+ * Synthetic digests and routine `already_current` checks never trigger anything.
  */
 export function extractLandedMediaEvents(notifications: readonly NotificationEvent[]): LandedMediaItem[] {
   const out: LandedMediaItem[] = [];
@@ -114,15 +117,12 @@ export function extractLandedMediaEvents(notifications: readonly NotificationEve
     if (!r) continue;
     const landed =
       r.status === "acquired" ||
-      r.status === "complete" ||
       r.status === "replaced" ||
-      r.status === "airing" ||
-      r.status === "partial";
+      ((r.status === "complete" || r.status === "airing" || r.status === "partial") &&
+        r.newlyObtained.length > 0);
     if (!landed) continue;
-    // Extra safety: a scheduled airing/partial report that somehow landed 0 episodes is not a file change
-    if (n.trigger === "scheduled" && (r.status === "airing" || r.status === "partial") && r.newlyObtained.length === 0) {
-      continue;
-    }
+    const seen = new Set(out.map((item) => `${item.titleName}|${item.seasonLabel ?? ""}`));
+    if (seen.has(`${r.titleName}|${r.seasonLabel ?? ""}`)) continue;
     out.push({
       titleName: r.titleName,
       ...(r.seasonLabel !== undefined ? { seasonLabel: r.seasonLabel } : {}),
