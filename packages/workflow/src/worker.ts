@@ -86,8 +86,14 @@ export function storageParentForTitle(
 
 /**
  * Merge the per-account worker context (resolved from the run's owner) over the
- * globally-passed deps. Per-account fields (115 storage + landing CIDs) win;
- * everything else falls through to the base. No resolver → base unchanged.
+ * globally-passed deps.
+ *
+ * Resolver-authoritative when a resolver is present — the account's OWN answer
+ * wins even when empty, so one account can never inherit another's choice:
+ * `jevJudge`, `titleResearch`, `selectionPreference`.
+ * Otherwise the resolved value wins, else the base falls through (storage,
+ * resource provider, model, language, quality, brand, assrt token, memory flag,
+ * landing CIDs, drives). No resolver → base unchanged.
  */
 export async function resolveWorkerDeps(
   resolve: ResolveAccountWorkerContext | undefined,

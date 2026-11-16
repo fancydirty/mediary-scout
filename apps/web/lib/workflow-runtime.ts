@@ -1921,27 +1921,26 @@ async function pushNotificationsSince(
 
       // Issue #373: trigger library scan on configured media servers (Emby / Jellyfin /
       // Plex / custom webhook) ONLY when real files landed this run/sweep, coalesced
-      // once per account. Best-effort: never throws into the caller.
+      // once per account. DETACHED on purpose: the configured settle delay (up to
+      // 120 s) plus HTTP timeouts must never stall run finalization or the sweep.
       const landedItems = extractLandedMediaEvents(notifications);
       if (landedItems.length > 0) {
-        try {
-          const refreshSummary = await refreshConfiguredMediaServers({
-            repository: settings,
-            items: landedItems,
-          });
-          if (refreshSummary.refreshed.length > 0) {
-            console.log(
-              `[media-server] refreshed ${refreshSummary.refreshed.join(", ")} for ${landedItems.length} landed item(s)`,
+        void refreshConfiguredMediaServers({ repository: settings, items: landedItems })
+          .then((refreshSummary) => {
+            if (refreshSummary.refreshed.length > 0) {
+              console.log(
+                `[media-server] refreshed ${refreshSummary.refreshed.join(", ")} for ${landedItems.length} landed item(s)`,
+              );
+            }
+            for (const fail of refreshSummary.failures) {
+              console.error(`[media-server] refresh ${fail.server} failed: ${fail.error}`);
+            }
+          })
+          .catch((error: unknown) => {
+            console.error(
+              `[media-server] refresh dispatch failed: ${error instanceof Error ? error.message : String(error)}`,
             );
-          }
-          for (const fail of refreshSummary.failures) {
-            console.error(`[media-server] refresh ${fail.server} failed: ${fail.error}`);
-          }
-        } catch (error) {
-          console.error(
-            `[media-server] refresh dispatch failed: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
+          });
       }
     }
   } catch (error) {

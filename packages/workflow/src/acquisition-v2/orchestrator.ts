@@ -663,7 +663,7 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
   if (!request.stagingRecovery && sanitizedSelectionPref !== "") {
     sandbox.recordExternalAuditEvent({
       type: "selection_preference_applied",
-      message: `Applied user selection preference (${sanitizedSelectionPref.length} chars)`,
+      message: `Selection preference in effect for this run (${sanitizedSelectionPref.length} chars)`,
       data: { preference: sanitizedSelectionPref },
     });
   }
@@ -675,8 +675,15 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     ...(request.preferredLanguage === undefined ? {} : { preferredLanguage: request.preferredLanguage }),
     ...(request.originCountries === undefined ? {} : { originCountries: request.originCountries }),
     ...(request.searchHints === undefined ? {} : { searchHints: request.searchHints }),
-    ...(request.qualityGuidance === undefined ? {} : { qualityGuidance: request.qualityGuidance }),
-    ...(sanitizedSelectionPref === "" ? {} : { selectionPreference: sanitizedSelectionPref }),
+    // A user-authored preference supersedes the built-in quality guidance: sending both
+    // would give the model two competing ranking rules. Enforced HERE (the single choke
+    // point) so no caller can reintroduce the conflict. Staging recovery reads/sorts only.
+    ...(sanitizedSelectionPref !== "" || request.qualityGuidance === undefined
+      ? {}
+      : { qualityGuidance: request.qualityGuidance }),
+    ...(sanitizedSelectionPref === "" || request.stagingRecovery
+      ? {}
+      : { selectionPreference: sanitizedSelectionPref }),
     ...(request.storageProvider === undefined ? {} : { storageProvider: request.storageProvider }),
     ...(request.drives && request.drives.length > 0 ? { drives: request.drives } : {}),
     ...(request.memory?.drive ? { primaryStorageId: request.memory.drive } : {}),

@@ -83,9 +83,11 @@ export async function runTvAcquisitionV2(request: RunTvAcquisitionV2Request): Pr
     type: request.title.type,
     originCountries: request.title.originCountries ?? [],
   });
+  // The built-in per-profile guidance and a user preference are mutually exclusive;
+  // that precedence is enforced in the orchestrator (single choke point) so every
+  // caller — TV, movie, replace, patrol — behaves identically.
   const cleanSelectionPref = cleanSelectionPreferenceForPrompt(request.selectionPreference);
-  const qualityGuidance =
-    cleanSelectionPref !== "" ? "" : getQualityGuidance(profile, request.qualityPreference);
+  const qualityGuidance = getQualityGuidance(profile, request.qualityPreference);
   const v2 = await runAcquisitionV2Workflow({
     provider: request.resourceProvider,
     executor: request.storage,

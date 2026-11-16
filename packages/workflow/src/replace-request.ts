@@ -650,7 +650,7 @@ function optionalDeps(deps: Awaited<ReturnType<typeof resolveWorkerDeps>>): {
   return {
     ...(deps.preferredLanguage === undefined ? {} : { preferredLanguage: deps.preferredLanguage }),
     ...(deps.qualityPreference === undefined ? {} : { qualityPreference: deps.qualityPreference }),
-    ...(deps.selectionPreference === undefined ? {} : { selectionPreference: deps.selectionPreference }),
+    ...(deps.selectionPreference ? { selectionPreference: deps.selectionPreference } : {}),
     ...(deps.storageProvider === undefined ? {} : { storageProvider: deps.storageProvider }),
     ...(deps.assrtToken === undefined ? {} : { assrtToken: deps.assrtToken }),
     ...(deps.jevJudge === undefined ? {} : { jevJudge: deps.jevJudge }),

@@ -55,13 +55,15 @@ export interface MediaServerFetchResponse {
 
 export type MediaServerFetch = (
   url: string,
-  init: { method: string; headers?: Record<string, string>; body?: string },
+  init: { method: string; headers?: Record<string, string>; body?: string; redirect?: "error" | "follow" | "manual" },
 ) => Promise<MediaServerFetchResponse>;
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 
 const defaultMediaServerFetch: MediaServerFetch = async (url, init) => {
-  const res = await fetchWithTimeout(url, init, DEFAULT_TIMEOUT_MS);
+  // Never follow a redirect with an API key/token attached: a misconfigured or
+  // compromised reverse proxy could bounce the credentialed request elsewhere.
+  const res = await fetchWithTimeout(url, { ...init, redirect: "error" }, DEFAULT_TIMEOUT_MS);
   return {
     ok: res.ok,
     status: res.status,
@@ -111,25 +113,37 @@ export function validateMediaServerUrl(
  */
 export function extractLandedMediaEvents(notifications: readonly NotificationEvent[]): LandedMediaItem[] {
   const out: LandedMediaItem[] = [];
+  // Persisted reports are rehydrated JSON: a legacy/hand-edited row can lack
+  // `newlyObtained`. This module must never throw inside the acquisition pipeline.
+  const seen = new Set<string>();
   for (const n of notifications) {
     if (n.kind === "already_current" || n.kind === "daily_digest") continue;
     const r = n.report;
     if (!r) continue;
+    const newlyObtained = Array.isArray(r.newlyObtained) ? r.newlyObtained : [];
     const landed =
       r.status === "acquired" ||
       r.status === "replaced" ||
       ((r.status === "complete" || r.status === "airing" || r.status === "partial") &&
-        r.newlyObtained.length > 0);
+        newlyObtained.length > 0);
     if (!landed) continue;
-    const seen = new Set(out.map((item) => `${item.titleName}|${item.seasonLabel ?? ""}`));
-    if (seen.has(`${r.titleName}|${r.seasonLabel ?? ""}`)) continue;
+    // Identity key: TMDB id (when known) separates a film from a same-named series
+    // and from remakes; the display fields are the fallback for report-less rows.
+    const key = [
+      r.tmdbId !== undefined ? `tmdb:${r.tmdbId}` : r.titleName,
+      r.year ?? "",
+      r.mediaType ?? "",
+      r.seasonLabel ?? "",
+    ].join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
     out.push({
       titleName: r.titleName,
       ...(r.seasonLabel !== undefined ? { seasonLabel: r.seasonLabel } : {}),
       ...(r.mediaType !== undefined ? { mediaType: r.mediaType } : {}),
       ...(r.tmdbId !== undefined ? { tmdbId: r.tmdbId } : {}),
       ...(r.year !== undefined ? { year: r.year } : {}),
-      ...(r.newlyObtained.length > 0 ? { newlyObtained: r.newlyObtained } : {}),
+      ...(newlyObtained.length > 0 ? { newlyObtained } : {}),
       ...(r.landingDir ? { landingDir: r.landingDir } : {}),
       ...(r.driveLabels && r.driveLabels.length > 0 ? { driveLabels: r.driveLabels } : {}),
     });
@@ -203,14 +217,24 @@ export async function refreshPlexLibrary(input: {
     throw new Error(`Plex 获取媒体库列表返回 HTTP ${listRes.status}`);
   }
   const keys = parsePlexSectionKeys(await listRes.text());
+  if (keys.length === 0) {
+    // A wrong path / login page behind a reverse proxy answers 200 with no sections.
+    // Reporting success there made the Settings "test" pass while nothing was scanned.
+    throw new Error("Plex 未返回任何媒体库（检查地址是否指向 Plex 服务器）");
+  }
+  const failedKeys: string[] = [];
   for (const key of keys) {
     const scanRes = await fetchImpl(`${valid.url}/library/sections/${encodeURIComponent(key)}/refresh`, {
       method: "GET",
       headers,
     });
     if (!scanRes.ok) {
-      throw new Error(`Plex 刷新分库 ${key} 返回 HTTP ${scanRes.status}`);
+      // Sections are independent scans: one broken/locked library must not stop the rest.
+      failedKeys.push(`${key} (HTTP ${scanRes.status})`);
     }
+  }
+  if (failedKeys.length > 0) {
+    throw new Error(`Plex 刷新分库失败：${failedKeys.join("、")}`);
   }
   return { refreshedSections: keys.length };
 }
@@ -271,7 +295,9 @@ export async function readMediaServerConfig(
   env: Record<string, string | undefined> = process.env,
 ): Promise<ResolvedMediaServerConfig> {
   const pick = async (overrideVal: string | undefined, settingKey: string, envKey: string): Promise<string> => {
-    if (overrideVal !== undefined && overrideVal.trim() !== "") return overrideVal.trim();
+    // `""` is an EXPLICIT clear (the settings form sends every field it shows),
+    // distinct from `undefined` = not provided → fall back to DB/env.
+    if (overrideVal !== undefined) return overrideVal.trim();
     const dbVal = (await repository.getSetting(settingKey))?.trim();
     if (dbVal) return dbVal;
     return (env[envKey] ?? "").trim();
@@ -307,8 +333,12 @@ function scrubSecrets(message: string, secrets: readonly string[]): string {
   let out = message;
   for (const s of secrets) {
     const clean = s.trim();
-    if (clean.length >= 4) {
-      out = out.split(clean).join("***");
+    if (clean.length < 4) continue;
+    out = out.split(clean).join("***");
+    // A secret embedded in a webhook URL query reaches errors percent-encoded.
+    const encoded = encodeURIComponent(clean);
+    if (encoded !== clean) {
+      out = out.split(encoded).join("***");
     }
   }
   return out;
@@ -347,46 +377,58 @@ export async function refreshConfiguredMediaServers(input: {
     cfg.plex?.token ?? "",
     cfg.webhookUrl ?? "",
   ].filter(Boolean);
-
   const refreshed: string[] = [];
   const failures: Array<{ server: string; error: string }> = [];
 
-  const runTarget = async (label: string, fn: () => Promise<void>) => {
+  const runTarget = async (
+    label: string,
+    fn: () => Promise<void>,
+  ): Promise<{ ok: true; label: string } | { ok: false; label: string; error: string }> => {
     try {
       await fn();
-      refreshed.push(label);
+      return { ok: true, label };
     } catch (error) {
       const raw = error instanceof Error ? error.message : String(error);
-      failures.push({ server: label, error: scrubSecrets(raw, secrets).slice(0, 200) });
+      return { ok: false, label, error: scrubSecrets(raw, secrets).slice(0, 200) };
     }
   };
 
   const shared = input.fetchImpl ? { fetchImpl: input.fetchImpl } : {};
 
-  if (cfg.emby) {
-    await runTarget("Emby", () =>
-      refreshEmbyOrJellyfin({ kind: "emby", baseUrl: cfg.emby!.url, apiKey: cfg.emby!.apiKey, ...shared }),
-    );
-  }
-  if (cfg.jellyfin) {
-    await runTarget("Jellyfin", () =>
-      refreshEmbyOrJellyfin({ kind: "jellyfin", baseUrl: cfg.jellyfin!.url, apiKey: cfg.jellyfin!.apiKey, ...shared }),
-    );
-  }
-  if (cfg.plex) {
-    await runTarget("Plex", async () => {
-      await refreshPlexLibrary({ baseUrl: cfg.plex!.url, token: cfg.plex!.token, ...shared });
-    });
-  }
-  if (cfg.webhookUrl) {
-    await runTarget("入库 Webhook", () =>
-      triggerMediaServerWebhook({
-        webhookUrl: cfg.webhookUrl!,
-        items: input.items,
-        test: Boolean(input.test),
-        ...shared,
-      }),
-    );
+  // Independent HTTP targets: run them concurrently so one dead server does not
+  // stack its 15 s timeout in front of the others (refresh runs inline after a run).
+  // `runTarget` isolates each failure, and the pushes stay in a fixed label order.
+  const results = await Promise.all([
+    cfg.emby
+      ? runTarget("Emby", () =>
+          refreshEmbyOrJellyfin({ kind: "emby", baseUrl: cfg.emby!.url, apiKey: cfg.emby!.apiKey, ...shared }),
+        )
+      : null,
+    cfg.jellyfin
+      ? runTarget("Jellyfin", () =>
+          refreshEmbyOrJellyfin({ kind: "jellyfin", baseUrl: cfg.jellyfin!.url, apiKey: cfg.jellyfin!.apiKey, ...shared }),
+        )
+      : null,
+    cfg.plex
+      ? runTarget("Plex", async () => {
+          await refreshPlexLibrary({ baseUrl: cfg.plex!.url, token: cfg.plex!.token, ...shared });
+        })
+      : null,
+    cfg.webhookUrl
+      ? runTarget("入库 Webhook", () =>
+          triggerMediaServerWebhook({
+            webhookUrl: cfg.webhookUrl!,
+            items: input.items,
+            test: Boolean(input.test),
+            ...shared,
+          }),
+        )
+      : null,
+  ]);
+  for (const result of results) {
+    if (!result) continue;
+    if (result.ok) refreshed.push(result.label);
+    else failures.push({ server: result.label, error: result.error });
   }
 
   return { refreshed, failures };

@@ -110,8 +110,7 @@ export async function runMovieAcquisitionV2(
       });
 
   const cleanSelectionPref = cleanSelectionPreferenceForPrompt(request.selectionPreference);
-  const movieQualityGuidance =
-    cleanSelectionPref !== "" ? "" : getQualityGuidance("movie", request.qualityPreference);
+  const movieQualityGuidance = getQualityGuidance("movie", request.qualityPreference);
 
   const v2 = await runAcquisitionV2({
     provider: request.resourceProvider,

@@ -284,6 +284,73 @@ describe("media-server-refresh", () => {
       });
     });
 
+
+    it("treats zero Plex sections as a real failure (wrong path / proxy login page)", async () => {
+      const fakeFetch: MediaServerFetch = async (url) => ({
+        ok: true,
+        status: 200,
+        text: async () => (url.endsWith("/library/sections") ? "<html>login</html>" : ""),
+      });
+      const settingsMap = new Map<string, string>([
+        ["media_server_plex_url", "http://127.0.0.1:32400"],
+        ["media_server_plex_token", "tok"],
+      ]);
+      const out = await refreshConfiguredMediaServers({
+        repository: { getSetting: async (k) => settingsMap.get(k) ?? null },
+        items: [{ titleName: "x" }],
+        delayMs: 0,
+        fetchImpl: fakeFetch,
+      });
+      expect(out.refreshed).toEqual([]);
+      expect(out.failures[0]?.server).toBe("Plex");
+    });
+
+    it("keeps scanning the remaining Plex sections when one section fails", async () => {
+      const refreshed: string[] = [];
+      const fakeFetch: MediaServerFetch = async (url) => {
+        if (url.endsWith("/library/sections")) {
+          return {
+            ok: true,
+            status: 200,
+            text: async () =>
+              JSON.stringify({ MediaContainer: { Directory: [{ key: "1" }, { key: "2" }, { key: "3" }] } }),
+          };
+        }
+        refreshed.push(url);
+        return { ok: !url.includes("/sections/2/"), status: url.includes("/sections/2/") ? 500 : 200, text: async () => "" };
+      };
+      await expect(
+        refreshPlexLibrary({ baseUrl: "http://127.0.0.1:32400", token: "tok", fetchImpl: fakeFetch }),
+      ).rejects.toThrow(/2/);
+      expect(refreshed).toEqual([
+        "http://127.0.0.1:32400/library/sections/1/refresh",
+        "http://127.0.0.1:32400/library/sections/2/refresh",
+        "http://127.0.0.1:32400/library/sections/3/refresh",
+      ]);
+    });
+
+    it("honours an explicitly cleared URL override instead of falling back to the saved one", async () => {
+      const hit: string[] = [];
+      const fakeFetch: MediaServerFetch = async (url) => {
+        hit.push(url);
+        return { ok: true, status: 204, text: async () => "" };
+      };
+      const settingsMap = new Map<string, string>([
+        ["media_server_emby_url", "http://saved.local:8096"],
+        ["media_server_emby_api_key", "ekey"],
+      ]);
+      const out = await refreshConfiguredMediaServers({
+        repository: { getSetting: async (k) => settingsMap.get(k) ?? null },
+        items: [],
+        test: true,
+        delayMs: 0,
+        overrides: { embyUrl: "" },
+        fetchImpl: fakeFetch,
+      });
+      expect(hit).toEqual([]);
+      expect(out.refreshed).toEqual([]);
+    });
+
     it("never leaks tokens/keys in failure messages", async () => {
       const fakeFetch: MediaServerFetch = async () => {
         throw new Error("connect ECONNREFUSED 192.168.100.99:8096 secret_key_leak");

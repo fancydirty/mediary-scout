@@ -24,6 +24,10 @@
     "./selection-preference": {
       "types": "./dist/selection-preference.d.ts",
       "default": "./dist/selection-preference.js"
+    },
+    "./media-server-refresh": {
+      "types": "./dist/media-server-refresh.d.ts",
+      "default": "./dist/media-server-refresh.js"
     }
   },
   "dependencies": {
