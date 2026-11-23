@@ -85,6 +85,8 @@ export function bridgeV2WorkflowToResult(input: {
   v2: RunAcquisitionV2WorkflowResult;
   workflowRunId: string;
   now: () => string;
+  /** Persisted proof that this season's 追完 was already published on a drive. */
+  completionAlreadyNotified?: boolean;
 }): BridgedV2Result {
   const { title, v2, workflowRunId } = input;
   const obtainedSet = new Set(v2.obtained);
@@ -133,6 +135,21 @@ export function bridgeV2WorkflowToResult(input: {
       ? { fileCount: v2.landedFileCount, totalBytes: v2.landedBytes }
       : {}),
   });
+  // Completion is graded from the account-wide obtained union, but each drive has
+  // its own season row. After one drive announces 追完, lagging active rows on the
+  // other drives can be reconciled to completed on later sweeps with no episode
+  // delta at all. Persist that state transition, but do not publish the same
+  // milestone again (走马上任: 115 on 11-19, then empty 追完 on 123 and UC).
+  // A finale that lands this sweep always has newlyObtained entries and notifies.
+  // A zero-delta completion (provider-ahead, a silent recovery, or a lagging
+  // drive row) is silenced only when persisted history proves this season's
+  // milestone was already published; otherwise even the first zero-delta
+  // completion remains visible.
+  const redundantCompletion =
+    input.mode === "type3" &&
+    input.completionAlreadyNotified === true &&
+    notification.kind === "tracking_completed" &&
+    notification.report?.newlyObtained.length === 0;
 
   return {
     status,
@@ -141,8 +158,8 @@ export function bridgeV2WorkflowToResult(input: {
     decisions: v2.outcome.decisions,
     transferAttempts: v2.outcome.transferAttempts,
     notification,
-    // A leftover recovery is invisible: the run still reconciles, it does not tell anyone.
-    notifications: input.mode === "staging_recovery" ? [] : [notification],
+    // Leftover recovery and redundant per-drive graduations reconcile silently.
+    notifications: input.mode === "staging_recovery" || redundantCompletion ? [] : [notification],
     auditEvents: v2.auditEvents,
     ...(v2.touchedTargetDrives ? { touchedTargetDrives: v2.touchedTargetDrives } : {}),
   };

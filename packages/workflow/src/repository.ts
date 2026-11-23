@@ -376,6 +376,12 @@ export interface WorkflowRepository extends DeadLinkStore, AgentMemoryStore, Use
    *  each under its owner's credentials. */
   listAllTrackedSeasonStates(): Promise<TrackedSeasonState[]>;
   listEpisodeStates(trackedSeasonId: string, scope?: ScopeArg): Promise<EpisodeState[]>;
+  /**
+   * Whether this account has ever published 追完 for the season, on any drive.
+   * Used to reconcile lagging per-drive completed rows silently. Optional for
+   * lightweight repository fakes; absence must fail open (keep the notification).
+   */
+  hasSeasonCompletionNotification?(trackedSeasonId: string, accountId: string): Promise<boolean>;
   /** Most-recent-first notification feed for the (account, storage) scope. */
   listNotifications(input?: {
     limit?: number;
@@ -1737,6 +1743,15 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
       out.push(...(this.episodesBySeason.get(seasonScopeKey(trackedSeasonId, storage)) ?? []));
     }
     return cloneWorkflowValue(out);
+  }
+
+  async hasSeasonCompletionNotification(trackedSeasonId: string, accountId: string): Promise<boolean> {
+    return [...this.workflowRuns.values()].some(
+      (snapshot) =>
+        snapshot.workflowRun.trackedSeasonId === trackedSeasonId &&
+        (snapshot.accountId ?? DEFAULT_ACCOUNT_ID) === accountId &&
+        snapshot.notifications.some((notification) => notification.kind === "tracking_completed"),
+    );
   }
 
   async listNotifications(input?: {

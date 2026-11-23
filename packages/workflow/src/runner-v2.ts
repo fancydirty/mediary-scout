@@ -827,6 +827,8 @@ export async function runType3MonitoringV2AndPersist(
     /** Episodes obtained on any of the account's drives. They count as had when the
      *  need is worked out, but are never written into this drive's records. */
     crossDriveObtained?: string[];
+    /** This account already published tracking_completed for the season. */
+    completionAlreadyNotified?: boolean;
   },
 ): Promise<BridgedV2Result> {
   const now = resolveNow(input);
@@ -852,6 +854,9 @@ export async function runType3MonitoringV2AndPersist(
     workflowRunId: input.workflowRun.id,
     // 实有 = the DB obtained marks; the need is aired − these (NOT a 115 scan).
     priorObtained: [...obtainedAnywhere],
+    ...(input.completionAlreadyNotified === undefined
+      ? {}
+      : { completionAlreadyNotified: input.completionAlreadyNotified }),
     now,
     onProgress: progressAndTraceSink({
       repository: input.repository,

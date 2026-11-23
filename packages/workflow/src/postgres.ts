@@ -284,6 +284,8 @@ const SCHEMA = `
   );
   ALTER TABLE tracked_seasons ADD COLUMN IF NOT EXISTS account_id text NOT NULL DEFAULT 'acct_default';
   ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS account_id text NOT NULL DEFAULT 'acct_default';
+  CREATE INDEX IF NOT EXISTS workflow_runs_season_account ON workflow_runs (tracked_season_id, account_id);
+  CREATE INDEX IF NOT EXISTS notifications_workflow_run ON notifications (workflow_run_id);
   ALTER TABLE tracked_seasons ADD COLUMN IF NOT EXISTS connected_storage_id text;
   ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS connected_storage_id text;
   ALTER TABLE connected_storages ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active';
@@ -1188,6 +1190,19 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
       [trackedSeasonId, scope.accountId, scope.connectedStorageId],
     );
     return episodes.sort((a, b) => episodeNumberFromCode(a.episodeCode) - episodeNumberFromCode(b.episodeCode));
+  }
+
+  async hasSeasonCompletionNotification(trackedSeasonId: string, accountId: string): Promise<boolean> {
+    await this.ensureSchema();
+    const result = await this.pool.query<{ found: boolean }>(
+      "SELECT EXISTS(" +
+        "SELECT 1 FROM notifications n JOIN workflow_runs wr ON n.workflow_run_id = wr.id " +
+        "WHERE wr.tracked_season_id = $1 AND wr.account_id = $2 " +
+        "AND n.payload->>'kind' = 'tracking_completed'" +
+        ") AS found",
+      [trackedSeasonId, accountId],
+    );
+    return result.rows[0]?.found === true;
   }
 
   async listNotifications(input?: {
