@@ -189,6 +189,30 @@ describe("runScheduledType3Monitoring (V2 engine)", () => {
     expect(saved?.workflowRun.kind).toBe("type3_monitor");
   });
 
+  it("keeps a first zero-delta completion notice when the optional history lookup is unavailable", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    Object.assign(repository, { hasSeasonCompletionNotification: undefined });
+    const { title, season } = trackedFixture("first-completion");
+    await seedTrackedSeason({ repository, title, season, obtainedCodes: ["S01E01", "S01E02"] });
+    const storage = new FakeStorageExecutor();
+    await seedV2Season(storage, title, season, ["S01E01", "S01E02"]);
+
+    const outcomes = await runScheduledType3Monitoring({
+      repository,
+      resourceProvider: emptyProvider(),
+      storage,
+      model: throwingModel(),
+      storageParentDirectoryId: "library_root",
+      now: fixedNow,
+      createWorkflowRunId: () => "run_first_completion",
+    });
+
+    expect(outcomes).toHaveLength(1);
+    const saved = await repository.getWorkflowRunSnapshot("run_first_completion");
+    expect(saved?.season.status).toBe("completed");
+    expect(saved?.notifications.map((notification) => notification.kind)).toEqual(["tracking_completed"]);
+  });
+
   it("reserves nothing once mayStartRun says no, even if it said yes when the sweep began", async () => {
     const repository = new InMemoryWorkflowRepository();
     const { title, season } = trackedFixture();

@@ -888,12 +888,20 @@ async function patrolTrackedState(args: {
       return { trackedSeasonId: season.id, status: "skipped_active" };
     }
 
+    // A lagging per-drive row may reach completed with zero new episodes after
+    // another drive already announced the finale. Read that persisted proof only
+    // after the reservation wins; a repository without the optional lookup fails
+    // open and keeps the notice.
+    const completionAlreadyNotified =
+      (await input.repository.hasSeasonCompletionNotification?.(season.id, state.accountId)) ?? false;
+
     const runOnce = () =>
       runType3MonitoringV2AndPersist({
         title: state.title,
         season,
         episodes,
         crossDriveObtained,
+        completionAlreadyNotified,
         categoryParentId: requireCategoryParent(
           storageParentForTitle(
             state.title,

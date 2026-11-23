@@ -221,6 +221,8 @@ export const SQLITE_SCHEMA = `
   CREATE INDEX IF NOT EXISTS user_messages_work ON user_messages (account_id, drive, title_key, status);
   CREATE INDEX IF NOT EXISTS user_messages_pending ON user_messages (status, urgent);
   CREATE INDEX IF NOT EXISTS user_messages_run ON user_messages (run_id);
+  CREATE INDEX IF NOT EXISTS workflow_runs_season_account ON workflow_runs (tracked_season_id, account_id);
+  CREATE INDEX IF NOT EXISTS notifications_workflow_run ON notifications (workflow_run_id);
   CREATE TABLE IF NOT EXISTS pending_replacements (
     account_id text NOT NULL,
     drive text NOT NULL DEFAULT '',
@@ -1308,6 +1310,17 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
       season,
       episodes: this.selectEpisodeStates(season.id, storageValue),
     });
+  }
+
+  async hasSeasonCompletionNotification(trackedSeasonId: string, accountId: string): Promise<boolean> {
+    const row = this.db
+      .prepare(
+        "SELECT 1 AS found FROM notifications n JOIN workflow_runs wr ON n.workflow_run_id = wr.id " +
+          "WHERE wr.tracked_season_id = ? AND wr.account_id = ? " +
+          "AND json_extract(n.payload, '$.kind') = 'tracking_completed' LIMIT 1",
+      )
+      .get(trackedSeasonId, accountId);
+    return row !== undefined;
   }
 
   async listNotifications(input?: {

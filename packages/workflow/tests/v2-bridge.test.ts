@@ -124,6 +124,29 @@ describe("bridgeV2WorkflowToResult — V2 facts → per-season WorkflowResult sh
     expect(result.seasons[0]!.episodes.every((episode) => episode.obtained)).toBe(true);
     expect(result.transferAttempts).toEqual([]);
     expect(result.notification.trigger).toBe("scheduled");
+    expect(result.notification.kind).toBe("tracking_completed");
+    // No prior notice exists: even a zero-delta first completion must announce.
+    expect(result.notifications).toEqual([result.notification]);
+  });
+
+  it("type3 patrol: already-published completion + zero delta → silent reconciliation", () => {
+    const result = bridgeV2WorkflowToResult({
+      title,
+      mode: "type3",
+      seasons: [{ seasonNumber: 1, totalEpisodes: 3, latestAiredEpisode: 3, qualityPreference: "4K", status: "active" }],
+      v2: v2Result({
+        missingBefore: [],
+        obtained: ["S01E01", "S01E02", "S01E03"],
+        stillMissing: [],
+      }),
+      workflowRunId: "run-lagging-drive",
+      now: () => "2026-06-15T00:00:00.000Z",
+      completionAlreadyNotified: true,
+    });
+
+    expect(result.seasons[0]!.season.status).toBe("completed");
+    expect(result.notification.kind).toBe("tracking_completed");
+    expect(result.notifications).toEqual([]);
   });
 
   it("type3 patrol no-op: airing 且本次无新增 → kind already_current（例行巡检折叠降噪）", () => {
@@ -205,6 +228,25 @@ describe("bridgeV2WorkflowToResult — V2 facts → per-season WorkflowResult sh
     expect(result.seasons[0]!.season.status).toBe("completed");
     // The user-facing report agrees — persisted state and 不再追踪 wording can't diverge.
     expect(result.notification.report?.status).toBe("complete");
+  });
+
+  it("type3 patrol: the last episode actually landed → the real 追完 notification is kept", () => {
+    const result = bridgeV2WorkflowToResult({
+      title,
+      mode: "type3",
+      seasons: [{ seasonNumber: 1, totalEpisodes: 3, latestAiredEpisode: 3, qualityPreference: "4K", status: "active" }],
+      v2: v2Result({
+        missingBefore: ["S01E03"],
+        obtained: ["S01E01", "S01E02", "S01E03"],
+        stillMissing: [],
+      }),
+      workflowRunId: "run-finale",
+      now: () => "2026-06-15T00:00:00.000Z",
+    });
+
+    expect(result.notification.kind).toBe("tracking_completed");
+    expect(result.notification.report?.newlyObtained).toEqual(["E03"]);
+    expect(result.notifications).toEqual([result.notification]);
   });
 
   it("type3 patrol: fully aired but a real gap remains → stays active so the sweep keeps filling", () => {

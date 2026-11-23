@@ -69,6 +69,8 @@ export interface RunTvAcquisitionV2Request {
   titleResearch?: RunAcquisitionV2WorkflowRequest["titleResearch"];
   /** Ordered active drives for this account in unified multi-drive mode. */
   drives?: AcquisitionDriveContext[];
+  /** Persisted proof that this season's 追完 was already published on a drive. */
+  completionAlreadyNotified?: boolean;
   onProgress?: (event: AgentToolEvent) => void;
   now?: () => string;
 }
@@ -136,6 +138,9 @@ export async function runTvAcquisitionV2(request: RunTvAcquisitionV2Request): Pr
     v2,
     workflowRunId: request.workflowRunId,
     now: request.now ?? defaultNowIso,
+    ...(request.completionAlreadyNotified === undefined
+      ? {}
+      : { completionAlreadyNotified: request.completionAlreadyNotified }),
   });
   return v2.replacement ? { ...bridged, replacement: v2.replacement } : bridged;
 }

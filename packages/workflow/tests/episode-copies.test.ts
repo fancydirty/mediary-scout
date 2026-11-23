@@ -308,6 +308,86 @@ function runSuite(label: string, createRepo: () => Promise<{ repo: WorkflowRepos
       }
     });
 
+    it("reconciles lagging drive rows to completed without publishing 追完 again", async () => {
+      const { repo, close } = await createRepo();
+      try {
+        const realSeason: TrackedSeason = { ...season, id: `${title.id}_s1` };
+        const make = (codes: string[]) =>
+          makeEpisodes(codes).map((ep) => ({ ...ep, trackedSeasonId: realSeason.id }));
+        // Production 走马上任: the 115 row graduated when the cross-drive union
+        // reached 40/40, while the 123 and UC rows stayed active. The next two
+        // sweeps emitted the same tracking_completed with newlyObtained: [].
+        for (const [drive, status, codes] of [
+          ["cs_115", "completed", ["S01E01", "S01E02"]],
+          ["cs_123", "active", ["S01E03"]],
+          ["cs_uc", "active", ["S01E04"]],
+        ] as const) {
+          await repo.saveWorkflowRunSnapshot({
+            accountId: DEFAULT_ACCOUNT_ID,
+            connectedStorageId: drive,
+            title,
+            season: { ...realSeason, status },
+            workflowRun: {
+              id: `seed_${drive}`,
+              kind: "type2_init",
+              status: "partial",
+              trackedSeasonId: realSeason.id,
+              startedAt: "2026-11-19T22:04:23.000Z",
+              finishedAt: "2026-11-19T22:04:23.000Z",
+              auditEvents: [],
+            },
+            episodes: make([...codes]),
+            resourceSnapshots: [],
+            decisions: [],
+            transferAttempts: [],
+            notifications: status === "completed"
+              ? [{
+                  id: `notification_seed_${drive}`,
+                  workflowRunId: `seed_${drive}`,
+                  kind: "tracking_completed" as const,
+                  title: `${title.title} 第 1 季`,
+                  body: "全部获取，不再追踪",
+                  createdAt: "2026-11-19T22:04:23.000Z",
+                  trigger: "scheduled" as const,
+                }]
+              : [],
+          });
+        }
+        expect(await repo.hasSeasonCompletionNotification!(realSeason.id, DEFAULT_ACCOUNT_ID)).toBe(true);
+        expect(await repo.hasSeasonCompletionNotification!(realSeason.id, "acct_other")).toBe(false);
+        const { runScheduledType3Monitoring, FakeStorageExecutor } = await import("../src/index.js");
+        let generatedRuns = 0;
+        const outcomeCounts: number[] = [];
+        // Two lagging rows reconcile on two sweeps; once every row is completed the
+        // third sweep creates no run. None of the reconciliations may notify.
+        for (const day of [20, 21, 22]) {
+          const outcomes = await runScheduledType3Monitoring({
+            repository: repo,
+            resourceProvider: {
+              search: async () => ({ id: "snap_empty", provider: "fake", keyword: "test", candidates: [], createdAt: `2026-11-${day}T22:00:00.000Z` }),
+            },
+            storage: new FakeStorageExecutor(),
+            model: new MockLanguageModelV3({
+              doGenerate: async () => { throw new Error("a globally complete season must not reach the agent"); },
+            }),
+            storageParentDirectoryId: "root",
+            now: () => `2026-11-${day}T22:00:00.000Z`,
+            createWorkflowRunId: () => `silent_graduation_${++generatedRuns}`,
+          });
+          outcomeCounts.push(outcomes.length);
+        }
+
+        expect(outcomeCounts).toEqual([1, 1, 0]);
+        for (const id of ["silent_graduation_1", "silent_graduation_2"]) {
+          expect((await repo.getWorkflowRunSnapshot(id))?.notifications).toEqual([]);
+        }
+        const states = await repo.listAllTrackedSeasonStates();
+        expect(states.every((state) => state.season.status === "completed")).toBe(true);
+      } finally {
+        close?.();
+      }
+    });
+
     // issue #369: an already-current patrol must not write the cross-drive union into
     // the patrolled drive — no phantom copies on a drive with no files, no wiping of
     // the file ids a drive really holds — whichever drive the dedup picks.
