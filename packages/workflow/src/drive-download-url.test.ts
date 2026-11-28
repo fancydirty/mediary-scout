@@ -519,6 +519,41 @@ describe("DriveDownloadLinkCache", () => {
     expect(link2.url).toBe("https://dl.quark.example/ok.mkv");
     expect(cache.get(key)?.url).toBe("https://dl.quark.example/ok.mkv");
 
+    // 2b. Unabortable old resolver that fulfills AFTER a replacement starts must NOT
+    //     poison the cache or evict the replacement's in-flight entry (so a 3rd caller joins replacement).
+    const keyRace = buildDriveDownloadCacheKey({ storageId: "cs_qk", provider: "quark", fileId: "f_race" });
+    let finishOld!: (link: { url: string; headers: Record<string, string>; supportsRedirect: boolean }) => void;
+    let finishReplacement!: (link: { url: string; headers: Record<string, string>; supportsRedirect: boolean }) => void;
+    const acOld = new AbortController();
+    const pOld = cache.getOrResolve(
+      keyRace,
+      () => new Promise((resolve) => { finishOld = resolve; }),
+      acOld.signal,
+    );
+    acOld.abort(new Error("old waiter timed out"));
+    await expect(pOld).rejects.toThrow(/old waiter timed out/);
+
+    const replacementResolver = vi.fn(
+      () => new Promise<{ url: string; headers: Record<string, string>; supportsRedirect: boolean }>((resolve) => {
+        finishReplacement = resolve;
+      }),
+    );
+    const pRep1 = cache.getOrResolve(keyRace, replacementResolver);
+    // Old resolver ignores abort and resolves late: must not populate cache or clobber replacement entry
+    finishOld({ url: "https://dl.quark.example/stale-aborted.mkv", headers: {}, supportsRedirect: false });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(cache.get(keyRace)).toBeNull();
+
+    // A third caller must join the still-running replacement rather than starting a 3rd fetch
+    const pRep2 = cache.getOrResolve(keyRace, replacementResolver);
+    expect(replacementResolver).toHaveBeenCalledTimes(1);
+
+    finishReplacement({ url: "https://dl.quark.example/fresh-replacement.mkv", headers: {}, supportsRedirect: false });
+    expect((await pRep1).url).toBe("https://dl.quark.example/fresh-replacement.mkv");
+    expect((await pRep2).url).toBe("https://dl.quark.example/fresh-replacement.mkv");
+    expect(cache.get(keyRace)?.url).toBe("https://dl.quark.example/fresh-replacement.mkv");
+
     // 3. QuarkStorageExecutor -> QuarkCookieClient forwards AbortSignal to fetchDownloadResponse
     let capturedSignal: AbortSignal | undefined;
     const acProvider = new AbortController();

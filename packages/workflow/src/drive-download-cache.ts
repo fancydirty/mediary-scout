@@ -106,17 +106,13 @@ export class DriveDownloadLinkCache {
     }
     if (!entry) {
       const controller = new AbortController();
-      const created: InFlightEntry = {
-        controller,
-        waiters: 0,
-        promise: Promise.resolve() as unknown as Promise<DriveDownloadLink>,
-      };
       let rawPending: Promise<DriveDownloadLink>;
       try {
         rawPending = resolve(controller.signal);
       } catch (error) {
         return Promise.reject(error);
       }
+      let created: InFlightEntry | undefined;
       const pending = rawPending
         .then((link) => {
           if (!controller.signal.aborted) {
@@ -125,13 +121,13 @@ export class DriveDownloadLinkCache {
           return link;
         })
         .finally(() => {
-          if (this.inFlight.get(key) === created) {
+          if (created && this.inFlight.get(key) === created) {
             this.inFlight.delete(key);
           }
         });
       // Prevent unhandled rejection if every waiter aborted before `pending` settles.
       pending.catch(() => undefined);
-      created.promise = pending;
+      created = { controller, waiters: 0, promise: pending };
       this.inFlight.set(key, created);
       entry = created;
     }
