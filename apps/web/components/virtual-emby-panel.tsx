@@ -40,10 +40,19 @@ export function VirtualEmbyPanel({
   const [clientOrigin, setClientOrigin] = useState<string | null>(null);
 
   useEffect(() => {
+    setEnabled(initialEnabled);
+  }, [initialEnabled]);
+
+  useEffect(() => {
+    setToken(initialToken);
+  }, [initialToken]);
+
+  useEffect(() => {
     setClientOrigin(window.location.origin);
   }, []);
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showStatus = useCallback((msg: string, ms = 3500) => {
     if (timerRef.current) clearTimeout(timerRef.current);
     setStatusMessage(msg);
@@ -55,6 +64,7 @@ export function VirtualEmbyPanel({
   useEffect(
     () => () => {
       if (timerRef.current) clearTimeout(timerRef.current);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
     },
     [],
   );
@@ -65,7 +75,11 @@ export function VirtualEmbyPanel({
     try {
       await navigator.clipboard.writeText(value);
       setCopiedField(field);
-      setTimeout(() => setCopiedField((prev) => (prev === field ? null : prev)), 2000);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => {
+        copyTimerRef.current = null;
+        setCopiedField((prev) => (prev === field ? null : prev));
+      }, 2000);
     } catch {
       showStatus("❌ 无法访问剪贴板，请手动复制");
     }

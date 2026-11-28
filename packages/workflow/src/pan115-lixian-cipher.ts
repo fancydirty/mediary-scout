@@ -150,23 +150,34 @@ function m115RsaEncrypt(data: Uint8Array): Uint8Array {
 }
 
 function m115RsaDecrypt(data: Uint8Array): Uint8Array {
+  if (data.length === 0 || data.length % 128 !== 0) {
+    throw new Error(`m115Decode failed: ciphertext length must be a non-zero multiple of 128, got ${data.length}`);
+  }
   const out: number[] = [];
   for (let offset = 0; offset < data.length; offset += 128) {
     const chunk = data.subarray(offset, offset + 128);
-    if (chunk.length === 0) break;
     const plain = bigIntToBytes(modPow(bytesToBigInt(chunk), RSA_E, RSA_N), 128);
     // Strip leading zeros to match Go big.Int.Bytes(), then locate first 0x00 delimiter after index 0.
     let start = 0;
     while (start < plain.length && plain[start] === 0) {
       start += 1;
     }
+    const blockType = plain[start];
+    if (start >= plain.length - 1 || (blockType !== 0x01 && blockType !== 0x02)) {
+      throw new Error("m115Decode failed: invalid PKCS#1 block header");
+    }
+    let delim = -1;
     for (let i = start + 1; i < plain.length; i += 1) {
       if (plain[i] === 0) {
-        for (let j = i + 1; j < plain.length; j += 1) {
-          out.push(plain[j]!);
-        }
+        delim = i;
         break;
       }
+    }
+    if (delim < 0 || delim >= plain.length - 1) {
+      throw new Error("m115Decode failed: missing PKCS#1 padding delimiter or empty block payload");
+    }
+    for (let j = delim + 1; j < plain.length; j += 1) {
+      out.push(plain[j]!);
     }
   }
   return Uint8Array.from(out);

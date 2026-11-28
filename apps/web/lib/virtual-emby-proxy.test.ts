@@ -135,4 +135,73 @@ describe("streamProxiedDownload (zero-buffering Range proxy)", () => {
     await expect(promise).rejects.toThrow(/aborted/);
     expect(upstreamAborted).toBe(true);
   });
+
+  it("blocks active HTML/SVG responses (XSS isolation) and aborts upstream on downstream stream cancel", async () => {
+    // 1. Upstream 500 returning HTML error page -> replaced with plain text + nosniff + sandbox CSP
+    const htmlErrRes = await streamProxiedDownload({
+      method: "GET",
+      rangeHeader: null,
+      link: { url: "https://dl.quark.example/err.mkv", headers: {}, supportsRedirect: false, fileName: "a.mkv" },
+      storageId: "cs_qk",
+      fileId: "fid_err",
+      resolveFreshLink: vi.fn(),
+      cache: new DriveDownloadLinkCache(),
+      fetchImpl: vi.fn(async () =>
+        new Response("<script>alert(1)</script>", {
+          status: 500,
+          headers: { "Content-Type": "text/html" },
+        }),
+      ),
+    });
+    expect(htmlErrRes.status).toBe(500);
+    expect(htmlErrRes.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    expect(htmlErrRes.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(htmlErrRes.headers.get("content-security-policy")).toBe("sandbox");
+    expect(await htmlErrRes.text()).not.toContain("<script>");
+
+    // 2. Upstream 200 falsely tagged text/html -> rewritten to safe video MIME + nosniff + sandbox
+    const htmlMediaRes = await streamProxiedDownload({
+      method: "GET",
+      rangeHeader: null,
+      link: { url: "https://dl.quark.example/vid.mp4", headers: {}, supportsRedirect: false, fileName: "vid.mp4" },
+      storageId: "cs_qk",
+      fileId: "fid_media",
+      resolveFreshLink: vi.fn(),
+      cache: new DriveDownloadLinkCache(),
+      fetchImpl: vi.fn(async () =>
+        new Response("mp4bytes", {
+          status: 200,
+          headers: { "Content-Type": "text/html; charset=utf-8" },
+        }),
+      ),
+    });
+    expect(htmlMediaRes.headers.get("content-type")).toBe("video/mp4");
+    expect(htmlMediaRes.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(htmlMediaRes.headers.get("content-security-policy")).toBe("sandbox");
+
+    // 3. Downstream body.cancel() aborts upstream controller immediately
+    let aborted = false;
+    const cancelRes = await streamProxiedDownload({
+      method: "GET",
+      rangeHeader: "bytes=0-",
+      link: { url: "https://dl.quark.example/stream.mkv", headers: {}, supportsRedirect: false },
+      storageId: "cs_qk",
+      fileId: "fid_cancel",
+      resolveFreshLink: vi.fn(),
+      cache: new DriveDownloadLinkCache(),
+      fetchImpl: vi.fn(async (_u: string, init: RequestInit) => {
+        init.signal?.addEventListener("abort", () => {
+          aborted = true;
+        });
+        const stream = new ReadableStream<Uint8Array>({
+          start(c) {
+            c.enqueue(new Uint8Array([1, 2, 3]));
+          },
+        });
+        return new Response(stream, { status: 206 });
+      }),
+    });
+    await cancelRes.body?.cancel("player seeked");
+    expect(aborted).toBe(true);
+  });
 });

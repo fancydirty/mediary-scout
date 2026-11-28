@@ -15,6 +15,7 @@ import {
   QUARK_PROFILE,
   QuarkAuthError,
   QuarkCookieClient,
+  splitSetCookieHeader,
   UC_PROFILE,
 } from "./quark-cookie-client.js";
 import { QuarkStorageExecutor } from "./quark-storage-executor.js";
@@ -459,5 +460,93 @@ describe("DriveDownloadLinkCache", () => {
     cache.invalidateFile("cs_1", "f1");
     expect(cache.get(k115A)).toBeNull();
     expect(cache.get(k115B)).toBeNull();
+
+    // Provider disambiguates identical (storageId, fileId) keys, and maxEntries<=0 never inserts
+    const kSameIdQuark = buildDriveDownloadCacheKey({ storageId: "s_shared", provider: "quark", fileId: "f1" });
+    const kSameIdUc = buildDriveDownloadCacheKey({ storageId: "s_shared", provider: "uc", fileId: "f1" });
+    expect(kSameIdQuark).not.toBe(kSameIdUc);
+
+    const zeroCache = new DriveDownloadLinkCache({ maxEntries: 0 });
+    zeroCache.set(kSameIdQuark, { url: "https://cdn.example/a", headers: {}, supportsRedirect: false });
+    expect(zeroCache.size()).toBe(0);
+  });
+});
+
+describe("OCR hardening regressions (cipher, SSRF, transport errors, Set-Cookie)", () => {
+  it("rejects truncated RSA ciphertext in m115Decode", () => {
+    const key = m115GenerateKey();
+    expect(() => m115Decode(Buffer.alloc(64, 1).toString("base64"), key)).toThrow(/multiple of 128/);
+  });
+
+  it("Pan115CookieClient.getFileInfo throws transient error (never null) on malformed state:true payload", async () => {
+    const client = new Pan115CookieClient({
+      cookie: "UID=1_A_1",
+      fetchJson: async () => ({ state: true, data: [] }),
+    });
+    await expect(client.getFileInfo({ fileId: "999" })).rejects.toThrow(/PAN115_FILE_INFO_FAILED/);
+  });
+
+  it("Pan123Client preserves literal + in base64 params, ignores ENOTFOUND DNS errors, and blocks SSRF targets", async () => {
+    // Standard base64 with '+' in query string:
+    const target = "https://cdn.123pan.example/dl?sig=a+b&x=1";
+    const b64WithPlus = Buffer.from(target, "utf8").toString("base64");
+    expect(unwrapPan123DownloadParams(`https://dl.123pan.cn/x?params=${b64WithPlus}`)).toBe(target);
+
+    // DNS ENOTFOUND must NOT become DriveFileNotFoundError
+    const dnsFailClient = new Pan123Client({
+      token: "tok",
+      fetchImpl: async () => {
+        throw new Error("getaddrinfo ENOTFOUND www.123pan.com");
+      },
+    });
+    const err = await dnsFailClient.getDownloadUrl({ fileId: "42" }).catch((e) => e);
+    expect(isDriveFileNotFoundError(err)).toBe(false);
+
+    // Private/loopback redirect Location is blocked (SSRF guard)
+    const ssrfClient = new Pan123Client({
+      token: "tok",
+      fetchImpl: async (url) => {
+        if (url.includes("/file/info")) {
+          return {
+            status: 200,
+            text: JSON.stringify({
+              code: 0,
+              data: { infoList: [{ FileId: 42, FileName: "a.mkv", Size: 100, Etag: "e", S3KeyFlag: "s", Type: 0 }] },
+            }),
+          };
+        }
+        if (url.includes("/file/download_info")) {
+          return {
+            status: 200,
+            text: JSON.stringify({ code: 0, data: { DownloadUrl: "https://cdn.123pan.cn/dispatch" } }),
+          };
+        }
+        return { status: 302, text: "", location: "http://169.254.169.254/latest/meta-data" };
+      },
+    });
+    await expect(ssrfClient.getDownloadUrl({ fileId: "42" })).rejects.toThrow(/private\/internal/);
+  });
+
+  it("splitSetCookieHeader splits multiple cookies while preserving commas inside Expires dates", () => {
+    const combined =
+      "__puus=abc123; Expires=Wed, 21 Oct 2026 07:28:00 GMT; Path=/, other=val; Max-Age=3600";
+    expect(splitSetCookieHeader(combined)).toEqual([
+      "__puus=abc123; Expires=Wed, 21 Oct 2026 07:28:00 GMT; Path=/",
+      "other=val; Max-Age=3600",
+    ]);
+  });
+
+  it("TianyiClient blocks loopback/private download URLs", async () => {
+    const client = new TianyiClient({
+      sessionKey: "SK",
+      sessionSecret: "SS",
+      accessToken: "AT",
+      refreshToken: "RT",
+      fetchImpl: async () => ({
+        status: 200,
+        text: JSON.stringify({ res_code: 0, fileDownloadUrl: "http://127.0.0.1:8080/internal" }),
+      }),
+    });
+    await expect(client.getDownloadUrl({ fileId: "123" })).rejects.toThrow(/private\/internal/);
   });
 });

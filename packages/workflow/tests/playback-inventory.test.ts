@@ -153,7 +153,26 @@ function runSuite(label: string, createRepo: () => Promise<{ repo: WorkflowRepos
         expect(outcomes).toHaveLength(1);
         expect(modelCalled).toBe(false);
 
-        // Explicit re-acquisition upserts the copy again → fileStatus heals back to "present".
+        // Re-upserting the SAME fileIds without fileStatus MUST preserve missing_on_drive tombstone!
+        await repo.upsertEpisodeCopies!([
+          {
+            trackedSeasonId: season.id,
+            episodeCode: "S01E01",
+            storageId: "cs_115",
+            fileIds: ["f1"],
+            sizeBytes: 1_000_000_000,
+            quality: "4K",
+            runId: "run_refresh",
+            recordedAt: "2026-11-28T10:30:00.000Z",
+          },
+        ]);
+        const stillMissing = await repo.listEpisodeCopies!(season.id);
+        expect(stillMissing.find((c) => c.episodeCode === "S01E01")?.fileStatus).toBe("missing_on_drive");
+        expect(stillMissing.find((c) => c.episodeCode === "S01E01")?.verifiedAt).toBe(
+          "2026-11-28T10:00:00.000Z",
+        );
+
+        // Explicit re-acquisition upserts NEW fileIds → fileStatus heals back to "present".
         await repo.upsertEpisodeCopies!([
           {
             trackedSeasonId: season.id,
@@ -169,6 +188,41 @@ function runSuite(label: string, createRepo: () => Promise<{ repo: WorkflowRepos
         const healed = await repo.listEpisodeCopies!(season.id);
         expect(healed.find((c) => c.episodeCode === "S01E01")?.fileStatus ?? "present").toBe("present");
         expect(healed.find((c) => c.episodeCode === "S01E01")?.fileIds).toEqual(["f1_new"]);
+
+        // Multi-file copy: markEpisodeCopyFileMissing prunes ONLY the dead fileId while keeping sibling live!
+        await repo.upsertEpisodeCopies!([
+          {
+            trackedSeasonId: season.id,
+            episodeCode: "S01E02",
+            storageId: "cs_115",
+            fileIds: ["f2_a", "f2_b"],
+            sizeBytes: 1_500_000_000,
+            quality: "4K",
+            runId: "run_init",
+            recordedAt: "2026-11-28T00:00:00.000Z",
+          },
+        ]);
+        await repo.markEpisodeCopyFileMissing!({
+          trackedSeasonId: season.id,
+          episodeCode: "S01E02",
+          storageId: "cs_115",
+          fileId: "f2_a",
+          verifiedAt: "2026-11-28T11:30:00.000Z",
+        });
+        const afterFirstPrune = (await repo.listEpisodeCopies!(season.id)).find((c) => c.episodeCode === "S01E02");
+        expect(afterFirstPrune?.fileIds).toEqual(["f2_b"]);
+        expect(afterFirstPrune?.fileStatus ?? "present").toBe("present");
+
+        // Marking the LAST remaining fileId tombstones the whole row.
+        await repo.markEpisodeCopyFileMissing!({
+          trackedSeasonId: season.id,
+          episodeCode: "S01E02",
+          storageId: "cs_115",
+          fileId: "f2_b",
+          verifiedAt: "2026-11-28T11:45:00.000Z",
+        });
+        const afterLastPrune = (await repo.listEpisodeCopies!(season.id)).find((c) => c.episodeCode === "S01E02");
+        expect(afterLastPrune?.fileStatus).toBe("missing_on_drive");
       } finally {
         close?.();
       }
@@ -240,9 +294,29 @@ function runSuite(label: string, createRepo: () => Promise<{ repo: WorkflowRepos
         const listA = await repo.listPlaybackProgress!("acct_a");
         expect(listA.map((r) => r.tmdbId)).toEqual([88001, 550]); // newest first
 
+        const filteredA = await repo.listPlaybackProgress!("acct_a", { tmdbId: 88001, mediaType: "tv" });
+        expect(filteredA.map((r) => r.tmdbId)).toEqual([88001]);
+
         const listB = await repo.listPlaybackProgress!("acct_b");
         expect(listB).toHaveLength(1);
         expect(listB[0]?.positionTicks).toBe(10_000_000);
+
+        // Atomic insert-if-absent settings + indexed account lookup
+        expect(await repo.setSettingIfAbsent!("virtual_emby_server_id", "first_winner")).toBe("first_winner");
+        expect(await repo.setSettingIfAbsent!("virtual_emby_server_id", "second_loser")).toBe("first_winner");
+        await repo.createAccount({
+          id: "acct_lookup",
+          username: "lookup_user",
+          passwordHash: "",
+          groupId: null,
+          isOwner: false,
+          createdAt: "2026-11-28T00:00:00.000Z",
+        });
+        expect(await repo.setAccountSettingIfAbsent!("acct_lookup", "virtual_emby_token", "tok_win")).toBe("tok_win");
+        expect(await repo.setAccountSettingIfAbsent!("acct_lookup", "virtual_emby_token", "tok_lose")).toBe("tok_win");
+        const foundAcct = await repo.findAccountBySetting!("virtual_emby_token", "tok_win");
+        expect(foundAcct?.id).toBe("acct_lookup");
+        expect(await repo.findAccountBySetting!("virtual_emby_token", "missing")).toBeNull();
       } finally {
         close?.();
       }

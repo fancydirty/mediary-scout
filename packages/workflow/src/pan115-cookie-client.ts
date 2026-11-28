@@ -349,15 +349,15 @@ export class Pan115CookieClient implements Pan115StorageApi {
       }
       throwResponseFailure(response, `PAN115_FILE_INFO_FAILED: ${responseMessage(response)}`);
     }
-    const items = arrayValue(recordValue(response, "data")).filter(isRecord);
-    const first = items[0];
-    if (!first) {
-      return null;
+    const rawData = recordValue(response, "data");
+    if (!Array.isArray(rawData) || rawData.length === 0 || !isRecord(rawData[0])) {
+      throw new Error("PAN115_FILE_INFO_FAILED: unexpected empty or malformed data payload");
     }
+    const first = rawData[0];
     // Live-verified 2026-11-28: /files/get_info returns pickcode in `data[0].pc`.
     const pickcode = stringValue(recordValue(first, "pc") ?? recordValue(first, "pick_code"));
     if (!pickcode) {
-      return null;
+      throw new Error("PAN115_FILE_INFO_FAILED: file info payload missing pickcode");
     }
     const info: Pan115FileInfo = {
       fileId: input.fileId,
@@ -374,34 +374,62 @@ export class Pan115CookieClient implements Pan115StorageApi {
    * Resolve a UA-bound 115 CDN direct download URL via `proapi.115.com/app/chrome/downurl`.
    * The caller's exact `userAgent` is forwarded so the returned CDN URL can be served as a
    * pure HTTP 302 redirect to the player without server-side traffic proxying.
+   * When no caller `userAgent` is supplied, `supportsRedirect` is set to `false` so the
+   * caller proxies with our bound UA header rather than redirecting to a UA-mismatched URL.
    */
   async getDownloadUrl(input: { fileId: string; userAgent?: string }): Promise<DriveDownloadLink> {
     const cached = this.pickcodeCache.get(input.fileId);
-    const info = cached ?? (await this.getFileInfo({ fileId: input.fileId }));
+    let info = cached ?? (await this.getFileInfo({ fileId: input.fileId }));
     if (!info) {
       throw new DriveFileNotFoundError("pan115", input.fileId);
     }
-    const effectiveUA = input.userAgent?.trim() || this.userAgent;
-    const key = m115GenerateKey();
-    const encodedData = m115Encode(new TextEncoder().encode(JSON.stringify({ pickcode: info.pickcode })), key);
-    const url = `${PAN115_PROAPI_DOWNURL_URL}?t=${Math.floor(Date.now() / 1000)}`;
-    const response = await this.postForm(
-      url,
-      [["data", encodedData]],
-      {
-        "User-Agent": effectiveUA,
-        Referer: "https://115.com/",
-      },
-    );
+    const callerUA = input.userAgent?.trim() ?? "";
+    const hasCallerUA = callerUA.length > 0;
+    const effectiveUA = hasCallerUA ? callerUA : this.userAgent;
+
+    const requestDownUrl = async (targetInfo: Pan115FileInfo): Promise<{ response: unknown; key: Uint8Array }> => {
+      const key = m115GenerateKey();
+      const encodedData = m115Encode(new TextEncoder().encode(JSON.stringify({ pickcode: targetInfo.pickcode })), key);
+      const url = `${PAN115_PROAPI_DOWNURL_URL}?t=${Math.floor(Date.now() / 1000)}`;
+      const response = await this.postForm(
+        url,
+        [["data", encodedData]],
+        {
+          "User-Agent": effectiveUA,
+          Referer: "https://115.com/",
+        },
+      );
+      return { response, key };
+    };
+
+    let { response, key } = await requestDownUrl(info);
     if (!responseState(response)) {
       if (isAuthFailure(response)) {
         throwResponseFailure(response, `PAN115_DOWNURL_FAILED: ${responseMessage(response)}`);
       }
       if (isPan115NotFoundResponse(response)) {
+        // Never trust a potentially stale cached pickcode or endpoint-specific error:
+        // evict cache and re-confirm existence via live /files/get_info.
         this.pickcodeCache.delete(input.fileId);
-        throw new DriveFileNotFoundError("pan115", input.fileId, responseMessage(response));
+        const rechecked = await this.getFileInfo({ fileId: input.fileId });
+        if (!rechecked) {
+          throw new DriveFileNotFoundError("pan115", input.fileId, responseMessage(response));
+        }
+        if (rechecked.pickcode !== info.pickcode) {
+          info = rechecked;
+          ({ response, key } = await requestDownUrl(info));
+          if (!responseState(response)) {
+            if (isAuthFailure(response)) {
+              throwResponseFailure(response, `PAN115_DOWNURL_FAILED: ${responseMessage(response)}`);
+            }
+            throwResponseFailure(response, `PAN115_DOWNURL_FAILED: ${responseMessage(response)}`);
+          }
+        } else {
+          throwResponseFailure(response, `PAN115_DOWNURL_FAILED: ${responseMessage(response)}`);
+        }
+      } else {
+        throwResponseFailure(response, `PAN115_DOWNURL_FAILED: ${responseMessage(response)}`);
       }
-      throwResponseFailure(response, `PAN115_DOWNURL_FAILED: ${responseMessage(response)}`);
     }
     const encryptedData = stringValue(recordValue(response, "data"));
     if (!encryptedData) {
@@ -417,8 +445,28 @@ export class Pan115CookieClient implements Pan115StorageApi {
     if (!isRecord(decoded)) {
       throw new Error("PAN115_DOWNURL_FAILED: decrypted payload is not an object");
     }
-    const entry = recordValue(decoded, input.fileId) ?? Object.values(decoded).find(isRecord);
-    const urlContainer = isRecord(entry) ? recordValue(entry, "url") : undefined;
+    let entry: Record<string, unknown> | undefined;
+    const directEntry = recordValue(decoded, input.fileId);
+    if (isRecord(directEntry)) {
+      entry = directEntry;
+    } else {
+      const entries = Object.values(decoded).filter(isRecord);
+      if (entries.length === 1) {
+        const candidate = entries[0]!;
+        const candidateFid = stringValue(recordValue(candidate, "fid") ?? recordValue(candidate, "file_id"));
+        const candidatePc = stringValue(recordValue(candidate, "pick_code") ?? recordValue(candidate, "pc"));
+        if (
+          (candidateFid && candidateFid === input.fileId) ||
+          (candidatePc && candidatePc === info.pickcode)
+        ) {
+          entry = candidate;
+        }
+      }
+    }
+    if (!entry) {
+      throw new Error(`PAN115_DOWNURL_FAILED: decrypted payload missing entry for fileId=${input.fileId}`);
+    }
+    const urlContainer = recordValue(entry, "url");
     const downloadUrl =
       typeof urlContainer === "string"
         ? urlContainer
@@ -435,14 +483,12 @@ export class Pan115CookieClient implements Pan115StorageApi {
       }
       throw new Error("PAN115_DOWNURL_FAILED: 115 returned empty download URL");
     }
-    const fileName =
-      (isRecord(entry) ? stringValue(recordValue(entry, "file_name")) : "") || info.fileName;
-    const fileSize =
-      (isRecord(entry) ? numberValue(recordValue(entry, "file_size")) : 0) || info.fileSize;
+    const fileName = stringValue(recordValue(entry, "file_name")) || info.fileName;
+    const fileSize = numberValue(recordValue(entry, "file_size")) || info.fileSize;
     return {
       url: downloadUrl,
       headers: { "User-Agent": effectiveUA },
-      supportsRedirect: true,
+      supportsRedirect: hasCallerUA,
       userAgentBound: true,
       ...(fileName ? { fileName } : {}),
       ...(fileSize > 0 ? { fileSize } : {}),

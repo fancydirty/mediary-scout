@@ -3,6 +3,7 @@ import { connection } from "next/server";
 import { Suspense, cache, type ReactNode } from "react";
 import { TriangleAlert } from "lucide-react";
 import {
+  createVirtualEmbyPlaybackToken,
   ensureVirtualEmbyToken,
   formatByteSize,
   isMovieUnreleased,
@@ -136,13 +137,15 @@ async function ShowContent({
     ? await getDetailView(tmdbId, workspace.connectedStorageId ?? undefined, typeHint)
     : null;
 
-  let virtualEmbyToken: string | null = null;
+  type VirtualEmbyAuth = { accountId: string; masterToken: string };
+  let virtualEmbyAuth: VirtualEmbyAuth | null = null;
   if (!isDemoMode() && view) {
     const repo = getWorkflowRepository();
     if (await isVirtualEmbyEnabled(repo)) {
       const accountId = await getCurrentAccountId();
       if (accountId && accountId !== "acct_unauthenticated") {
-        virtualEmbyToken = await ensureVirtualEmbyToken(repo, accountId);
+        const masterToken = await ensureVirtualEmbyToken(repo, accountId);
+        virtualEmbyAuth = { accountId, masterToken };
       }
     }
   }
@@ -165,7 +168,7 @@ async function ShowContent({
             basePath={workspace.basePath}
             backLabel={backLabel}
             backHref={backHref}
-            virtualEmbyToken={virtualEmbyToken}
+            virtualEmbyAuth={virtualEmbyAuth}
           />
         ) : (
           <TvHub
@@ -174,7 +177,7 @@ async function ShowContent({
             basePath={workspace.basePath}
             backLabel={backLabel}
             backHref={backHref}
-            virtualEmbyToken={virtualEmbyToken}
+            virtualEmbyAuth={virtualEmbyAuth}
           />
         )
       ) : (
@@ -196,14 +199,14 @@ function TvHub({
   basePath,
   backLabel,
   backHref,
-  virtualEmbyToken,
+  virtualEmbyAuth,
 }: {
   view: TitleHubView;
   storageId: string | undefined;
   basePath: string;
   backLabel: string;
   backHref: string;
-  virtualEmbyToken: string | null;
+  virtualEmbyAuth: { accountId: string; masterToken: string } | null;
 }) {
   const badge = aggregateBadge[view.aggregate];
   // The message card's episode picker: every episode of a tracked season in the library.
@@ -298,7 +301,7 @@ function TvHub({
             view={view}
             storageId={storageId}
             basePath={basePath}
-            virtualEmbyToken={virtualEmbyToken}
+            virtualEmbyAuth={virtualEmbyAuth}
           />
         </ul>
       </section>
@@ -333,14 +336,14 @@ function MovieHub({
   basePath,
   backLabel,
   backHref,
-  virtualEmbyToken,
+  virtualEmbyAuth,
 }: {
   view: MovieHubView;
   storageId: string | undefined;
   basePath: string;
   backLabel: string;
   backHref: string;
-  virtualEmbyToken: string | null;
+  virtualEmbyAuth: { accountId: string; masterToken: string } | null;
 }) {
   const meta = movieStateMeta[view.state];
   const activityHref = storageId ? `/activity?w=${encodeURIComponent(storageId)}` : "/activity";
@@ -415,8 +418,16 @@ function MovieHub({
               </h1>
               <p className="hub-attributes">电影</p>
               <div className="hub-actions">
-                {view.embyItemId && virtualEmbyToken ? (
-                  <DirectPlayButton embyItemId={view.embyItemId} embyToken={virtualEmbyToken} label="播放" />
+                {view.embyItemId && virtualEmbyAuth ? (
+                  <DirectPlayButton
+                    embyItemId={view.embyItemId}
+                    playbackToken={createVirtualEmbyPlaybackToken({
+                      accountId: virtualEmbyAuth.accountId,
+                      itemId: view.embyItemId,
+                      masterToken: virtualEmbyAuth.masterToken,
+                    })}
+                    label="播放"
+                  />
                 ) : null}
                 {view.state === "untracked" ? (
                   <RequestTrackButton
@@ -514,7 +525,7 @@ function SeasonRow({
   acquiring,
   swap,
   demoEntry,
-  virtualEmbyToken,
+  virtualEmbyAuth,
 }: {
   season: TitleHubSeason;
   tmdbId: number;
@@ -526,7 +537,7 @@ function SeasonRow({
   /** Episodes a user asked to replace that are still 待换 (their old file stays). */
   swap: ReadonlySet<string>;
   demoEntry?: DemoAcquisitionEntry | undefined;
-  virtualEmbyToken: string | null;
+  virtualEmbyAuth: { accountId: string; masterToken: string } | null;
 }) {
   const total = season.totalEpisodes;
   const aired = Math.min(season.latestAiredEpisode, total);
@@ -625,10 +636,14 @@ function SeasonRow({
               <div className={`episode-cell ${stateClass}`} key={episode.episodeCode} title={tooltip}>
                 <div className="episode-cell-head">
                   <strong>{episode.episodeCode.replace(/^S\d+/, "")}</strong>
-                  {episode.embyItemId && virtualEmbyToken ? (
+                  {episode.embyItemId && virtualEmbyAuth ? (
                     <DirectPlayButton
                       embyItemId={episode.embyItemId}
-                      embyToken={virtualEmbyToken}
+                      playbackToken={createVirtualEmbyPlaybackToken({
+                        accountId: virtualEmbyAuth.accountId,
+                        itemId: episode.embyItemId,
+                        masterToken: virtualEmbyAuth.masterToken,
+                      })}
                       compact
                     />
                   ) : null}
@@ -728,12 +743,12 @@ async function SeasonRowsWithSwap({
   view,
   storageId,
   basePath,
-  virtualEmbyToken,
+  virtualEmbyAuth,
 }: {
   view: TitleHubView;
   storageId: string | undefined;
   basePath: string;
-  virtualEmbyToken: string | null;
+  virtualEmbyAuth: { accountId: string; masterToken: string } | null;
 }) {
   const messages = view.aggregate === "untracked" ? null : await loadTitleMessages(view.tmdbId, "tv", storageId);
   const swap = new Set(messages?.thread.pendingReplacements ?? []);
@@ -748,7 +763,7 @@ async function SeasonRowsWithSwap({
           basePath={basePath}
           acquiring={view.acquiring}
           swap={swap}
-          virtualEmbyToken={virtualEmbyToken}
+          virtualEmbyAuth={virtualEmbyAuth}
           demoEntry={{
             tmdbId: view.tmdbId,
             title: view.title,

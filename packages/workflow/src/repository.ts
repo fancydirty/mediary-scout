@@ -467,6 +467,12 @@ export interface WorkflowRepository extends DeadLinkStore, AgentMemoryStore, Use
   upsertDriveSpaceCache?(entry: DriveSpaceCacheEntry): Promise<void>;
   /** Read cached space for one drive, or null if never probed. */
   getDriveSpaceCache?(storageId: string): Promise<DriveSpaceCacheEntry | null>;
+  /** Atomically set an app-level setting only if absent, returning the winning stored value. */
+  setSettingIfAbsent?(key: string, value: string): Promise<string>;
+  /** Atomically set an account-scoped setting only if absent, returning the winning stored value. */
+  setAccountSettingIfAbsent?(accountId: string, key: string, value: string): Promise<string>;
+  /** Look up an account by exact `(key, value)` in `account_settings` via a single indexed query. */
+  findAccountBySetting?(key: string, value: string): Promise<Account | null>;
   /** Record or update physical episode copies landed on a drive (`episode_copies`, C8). */
   upsertEpisodeCopies?(copies: readonly EpisodeCopy[]): Promise<void>;
   /** Lazily update physical file status of one drive copy (e.g. `missing_on_drive` on 404)
@@ -476,6 +482,16 @@ export interface WorkflowRepository extends DeadLinkStore, AgentMemoryStore, Use
     episodeCode: string;
     storageId: string;
     fileStatus: EpisodeCopyFileStatus;
+    verifiedAt: string;
+  }): Promise<void>;
+  /** Lazily record that a specific `fileId` on a drive copy is missing. If sibling fileIds
+   *  remain on the same `(trackedSeasonId, episodeCode, storageId)` row, only the dead fileId
+   *  is pruned; once no live fileIds remain, the row is tombstoned `missing_on_drive`. */
+  markEpisodeCopyFileMissing?(input: {
+    trackedSeasonId: string;
+    episodeCode: string;
+    storageId: string;
+    fileId: string;
     verifiedAt: string;
   }): Promise<void>;
   /** List recorded episode copies for a tracked season (`episode_copies`, C8). */
@@ -497,8 +513,11 @@ export interface WorkflowRepository extends DeadLinkStore, AgentMemoryStore, Use
     seasonNumber: number;
     episodeNumber: number;
   }): Promise<PlaybackProgress | null>;
-  /** List all playback progress rows for an account (most recently played first). */
-  listPlaybackProgress?(accountId: string): Promise<PlaybackProgress[]>;
+  /** List playback progress rows for an account (most recently played first), optionally filtered by title. */
+  listPlaybackProgress?(
+    accountId: string,
+    filter?: { tmdbId?: number; mediaType?: MediaType },
+  ): Promise<PlaybackProgress[]>;
   // recordDeadLink + listDeadLinkKeys come from DeadLinkStore.
 }
 
@@ -537,6 +556,15 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     this.settings.set(key, value);
   }
 
+  async setSettingIfAbsent(key: string, value: string): Promise<string> {
+    const existing = this.settings.get(key);
+    if (existing !== undefined && existing.trim().length > 0) {
+      return existing;
+    }
+    this.settings.set(key, value);
+    return value;
+  }
+
   async deleteSetting(key: string): Promise<void> {
     this.settings.delete(key);
   }
@@ -552,6 +580,30 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
       this.accountSettings.set(accountId, bucket);
     }
     bucket.set(key, value);
+  }
+
+  async setAccountSettingIfAbsent(accountId: string, key: string, value: string): Promise<string> {
+    let bucket = this.accountSettings.get(accountId);
+    const existing = bucket?.get(key);
+    if (existing !== undefined && existing.trim().length > 0) {
+      return existing;
+    }
+    if (!bucket) {
+      bucket = new Map<string, string>();
+      this.accountSettings.set(accountId, bucket);
+    }
+    bucket.set(key, value);
+    return value;
+  }
+
+  async findAccountBySetting(key: string, value: string): Promise<Account | null> {
+    for (const [accountId, bucket] of this.accountSettings) {
+      if (bucket.get(key) === value) {
+        const account = this.accounts.get(accountId);
+        if (account) return { ...account };
+      }
+    }
+    return null;
   }
 
   async backfillConnectedStorageId(): Promise<number> {
@@ -783,26 +835,82 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
       const existing = this.episodeCopies.get(key);
       const sizeBytes =
         copy.sizeBytes !== null && Number.isFinite(copy.sizeBytes) ? Math.trunc(copy.sizeBytes) : null;
+      const mergedFileIds = copy.fileIds.length > 0 || !existing ? [...copy.fileIds] : [...existing.fileIds];
+      const samePhysicalFiles =
+        existing !== undefined &&
+        (copy.fileIds.length === 0 ||
+          (existing.fileIds.length === mergedFileIds.length &&
+            existing.fileIds.every((id, idx) => id === mergedFileIds[idx])));
       // Unknown facts never erase known ones (mirrors the SQL engines).
-      // Re-acquiring / upserting a copy resets physical status to present unless specified.
+      // Preserve an existing `missing_on_drive` tombstone when an inventory refresh
+      // re-upserts the same physical fileIds without an explicit `fileStatus`; only
+      // reset when explicitly specified or when genuinely new fileIds are landed.
       const next: EpisodeCopy = {
         trackedSeasonId: copy.trackedSeasonId,
         episodeCode: copy.episodeCode,
         storageId: copy.storageId,
-        fileIds: copy.fileIds.length > 0 || !existing ? [...copy.fileIds] : [...existing.fileIds],
+        fileIds: mergedFileIds,
         sizeBytes: sizeBytes ?? existing?.sizeBytes ?? null,
         quality: copy.quality ?? existing?.quality ?? null,
         runId: copy.runId,
         recordedAt: copy.recordedAt,
       };
-      if (copy.fileStatus === "missing_on_drive") {
+      const resolvedStatus =
+        copy.fileStatus !== undefined
+          ? copy.fileStatus
+          : samePhysicalFiles
+            ? existing?.fileStatus
+            : undefined;
+      const resolvedVerifiedAt =
+        copy.verifiedAt !== undefined
+          ? copy.verifiedAt
+          : copy.fileStatus === undefined && samePhysicalFiles
+            ? existing?.verifiedAt
+            : undefined;
+      if (resolvedStatus === "missing_on_drive") {
         next.fileStatus = "missing_on_drive";
       }
-      if (copy.verifiedAt) {
-        next.verifiedAt = copy.verifiedAt;
+      if (resolvedVerifiedAt) {
+        next.verifiedAt = resolvedVerifiedAt;
       }
       this.episodeCopies.set(key, next);
     }
+  }
+
+  async markEpisodeCopyFileMissing(input: {
+    trackedSeasonId: string;
+    episodeCode: string;
+    storageId: string;
+    fileId: string;
+    verifiedAt: string;
+  }): Promise<void> {
+    const key = `${input.trackedSeasonId}::${input.episodeCode}::${input.storageId}`;
+    const existing = this.episodeCopies.get(key);
+    if (existing && existing.fileIds.length > 1) {
+      const remaining = existing.fileIds.filter((id) => id !== input.fileId);
+      if (remaining.length > 0) {
+        this.episodeCopies.set(key, {
+          trackedSeasonId: existing.trackedSeasonId,
+          episodeCode: existing.episodeCode,
+          storageId: existing.storageId,
+          fileIds: remaining,
+          sizeBytes: existing.sizeBytes,
+          quality: existing.quality,
+          runId: existing.runId,
+          recordedAt: existing.recordedAt,
+          ...(existing.fileStatus ? { fileStatus: existing.fileStatus } : {}),
+          verifiedAt: input.verifiedAt,
+        });
+        return;
+      }
+    }
+    await this.setEpisodeCopyFileStatus({
+      trackedSeasonId: input.trackedSeasonId,
+      episodeCode: input.episodeCode,
+      storageId: input.storageId,
+      fileStatus: "missing_on_drive",
+      verifiedAt: input.verifiedAt,
+    });
   }
 
   async setEpisodeCopyFileStatus(input: {
@@ -905,9 +1013,17 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     return found ? { ...found } : null;
   }
 
-  async listPlaybackProgress(accountId: string): Promise<PlaybackProgress[]> {
+  async listPlaybackProgress(
+    accountId: string,
+    filter?: { tmdbId?: number; mediaType?: MediaType },
+  ): Promise<PlaybackProgress[]> {
     return [...this.playbackProgress.values()]
-      .filter((entry) => entry.accountId === accountId)
+      .filter((entry) => {
+        if (entry.accountId !== accountId) return false;
+        if (filter?.tmdbId !== undefined && entry.tmdbId !== Math.trunc(filter.tmdbId)) return false;
+        if (filter?.mediaType !== undefined && entry.mediaType !== filter.mediaType) return false;
+        return true;
+      })
       .sort((a, b) => b.lastPlayedAt.localeCompare(a.lastPlayedAt))
       .map((entry) => ({ ...entry }));
   }

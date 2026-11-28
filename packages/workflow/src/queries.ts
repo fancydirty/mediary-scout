@@ -117,6 +117,8 @@ export async function getTrackedSeasonStatusView(input: {
             fileIds: copy && copy.fileIds.length > 0 ? [...copy.fileIds] : [...ep.verifiedFileIds],
             sizeBytes: copy?.sizeBytes ?? null,
             quality: copy?.quality ?? null,
+            ...(copy?.fileStatus ? { fileStatus: copy.fileStatus } : {}),
+            ...(copy?.verifiedAt ? { verifiedAt: copy.verifiedAt } : {}),
           },
         ]);
       }

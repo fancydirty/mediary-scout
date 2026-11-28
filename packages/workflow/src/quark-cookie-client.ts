@@ -33,8 +33,9 @@ export interface CloudDriveProfile {
   query: string;
   userAgent: string;
   /** Desktop client UA required by `/1/clouddrive/file/download` (Quark rejects
-   *  plain Chrome/124 UA with code=23018 — live-verified 2026-11-28). */
-  downloadUserAgent: string;
+   *  plain Chrome/124 UA with code=23018 — live-verified 2026-11-28).
+   *  Optional for custom profiles; defaults to `userAgent`. */
+  downloadUserAgent?: string;
   referer: string;
   origin: string;
   /** Uppercase prefix for thrown error codes (QUARK_… / UC_…). */
@@ -389,13 +390,14 @@ export class QuarkCookieClient {
    *    bare players get 403/412, so `supportsRedirect` is `false` (served via Range proxy).
    */
   async getDownloadUrl(input: { fileId: string }): Promise<DriveDownloadLink> {
+    const downloadUserAgent = this.profile.downloadUserAgent ?? this.profile.userAgent;
     const { body, setCookies } = await this.fetchDownloadResponse(
       `${this.profile.baseUrl}/1/clouddrive/file/download?${this.profile.query}`,
       {
         method: "POST",
         headers: {
           ...this.headers(),
-          "User-Agent": this.profile.downloadUserAgent,
+          "User-Agent": downloadUserAgent,
         },
         body: JSON.stringify({ fids: [input.fileId] }),
       },
@@ -433,7 +435,7 @@ export class QuarkCookieClient {
       headers: {
         Cookie: effectiveCookie,
         Referer: this.profile.referer,
-        "User-Agent": this.profile.downloadUserAgent,
+        "User-Agent": downloadUserAgent,
       },
       supportsRedirect: false,
       ...(fileName ? { fileName } : {}),
@@ -507,7 +509,7 @@ async function defaultFetchDownloadResponse(
       ? response.headers.getSetCookie()
       : (() => {
           const single = response.headers.get("set-cookie");
-          return single ? [single] : [];
+          return single ? splitSetCookieHeader(single) : [];
         })();
   const text = await response.text();
   try {
@@ -515,6 +517,31 @@ async function defaultFetchDownloadResponse(
   } catch {
     throw new Error(`QUARK_HTTP_FAILED: ${response.status}`);
   }
+}
+
+/** Split a comma-joined `Set-Cookie` header without breaking commas inside `Expires=Day, DD Mon YYYY...`. */
+export function splitSetCookieHeader(header: string): string[] {
+  const result: string[] = [];
+  let start = 0;
+  let inExpires = false;
+  for (let i = 0; i < header.length; i += 1) {
+    const ch = header[i];
+    if (ch === ";" && inExpires) {
+      inExpires = false;
+    } else if (!inExpires && ch === "=") {
+      const attr = header.slice(Math.max(start, i - 16), i).toLowerCase();
+      if (/(?:^|;\s*)expires$/.test(attr)) {
+        inExpires = true;
+      }
+    } else if (ch === "," && !inExpires) {
+      const piece = header.slice(start, i).trim();
+      if (piece) result.push(piece);
+      start = i + 1;
+    }
+  }
+  const tail = header.slice(start).trim();
+  if (tail) result.push(tail);
+  return result;
 }
 
 /** Merge response `Set-Cookie` headers onto an existing cookie string without losing

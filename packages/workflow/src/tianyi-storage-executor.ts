@@ -105,6 +105,7 @@ export class TianyiStorageExecutor implements StorageExecutor {
   }
 
   async getDownloadUrl(input: { fileId: string; userAgent?: string }): Promise<DriveDownloadLink> {
+    // Tianyi CDN links are UA-agnostic (supportsRedirect=true); PC HMAC API requires Tianyi's fixed UA.
     return this.client.getDownloadUrl({ fileId: input.fileId });
   }
 

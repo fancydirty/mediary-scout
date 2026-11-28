@@ -5,23 +5,37 @@ import { Check, Copy, ExternalLink, Play } from "lucide-react";
 
 export interface DirectPlayButtonProps {
   embyItemId: string;
-  embyToken: string;
+  /** Short-lived, item-scoped playback token (`pt_...`). */
+  playbackToken: string;
   label?: string;
   compact?: boolean;
 }
 
 export function DirectPlayButton({
   embyItemId,
-  embyToken,
+  playbackToken,
   label = "播放",
   compact = false,
 }: DirectPlayButtonProps) {
   const [open, setOpen] = useState(false);
+  const [alignLeft, setAlignLeft] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [manualCopyUrl, setManualCopyUrl] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    },
+    [],
+  );
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setManualCopyUrl(null);
+      return;
+    }
     const onPointerDown = (event: MouseEvent) => {
       if (wrapRef.current && !wrapRef.current.contains(event.target as Node)) {
         setOpen(false);
@@ -40,7 +54,17 @@ export function DirectPlayButton({
 
   const buildStreamUrl = (): string => {
     const origin = typeof window !== "undefined" ? window.location.origin : "";
-    return `${origin}/emby/Videos/${encodeURIComponent(embyItemId)}/stream?Static=true&api_key=${encodeURIComponent(embyToken)}`;
+    return `${origin}/emby/Videos/${encodeURIComponent(embyItemId)}/stream?Static=true&api_key=${encodeURIComponent(playbackToken)}`;
+  };
+
+  const toggleMenu = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    if (!open && wrapRef.current && typeof window !== "undefined") {
+      const rect = wrapRef.current.getBoundingClientRect();
+      // Right-aligned menu needs ~192px to the left of rect.right; flip left-aligned when near left edge.
+      setAlignLeft(rect.right < 200 && window.innerWidth - rect.left >= 180);
+    }
+    setOpen((v) => !v);
   };
 
   const openScheme = (schemeBuilder: (streamUrl: string) => string) => {
@@ -50,15 +74,43 @@ export function DirectPlayButton({
   };
 
   const copyStreamUrl = async () => {
+    const url = buildStreamUrl();
+    let ok = false;
     try {
-      await navigator.clipboard.writeText(buildStreamUrl());
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+        ok = true;
+      }
+    } catch {
+      ok = false;
+    }
+    if (!ok && typeof document !== "undefined") {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = url;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+      } catch {
+        ok = false;
+      }
+    }
+    if (ok) {
+      setManualCopyUrl(null);
       setCopied(true);
-      setTimeout(() => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => {
+        copyTimerRef.current = null;
         setCopied(false);
         setOpen(false);
       }, 1200);
-    } catch {
-      setOpen(false);
+    } else {
+      // Plain HTTP LAN context without clipboard access: keep menu open with selectable URL input.
+      setManualCopyUrl(url);
     }
   };
 
@@ -67,10 +119,7 @@ export function DirectPlayButton({
       <button
         type="button"
         className={compact ? "direct-play-compact-btn" : "primary-button"}
-        onClick={(event) => {
-          event.stopPropagation();
-          setOpen((v) => !v);
-        }}
+        onClick={toggleMenu}
         aria-expanded={open}
         aria-haspopup="menu"
         title={compact ? "选择外部播放器播放" : undefined}
@@ -79,7 +128,11 @@ export function DirectPlayButton({
         {compact ? null : label}
       </button>
       {open ? (
-        <div className="direct-play-menu" role="menu">
+        <div
+          className={`direct-play-menu${alignLeft ? " is-align-left" : ""}`}
+          role="menu"
+          onClick={(e) => e.stopPropagation()}
+        >
           <button
             type="button"
             role="menuitem"
@@ -116,6 +169,19 @@ export function DirectPlayButton({
             {copied ? <Check size={13} aria-hidden /> : <Copy size={13} aria-hidden />}
             {copied ? "已复制直链" : "复制播放直链"}
           </button>
+          {manualCopyUrl ? (
+            <div className="direct-play-manual-copy">
+              <span>当前环境不支持自动剪贴板，请手动复制：</span>
+              <input
+                type="text"
+                readOnly
+                value={manualCopyUrl}
+                onFocus={(e) => e.currentTarget.select()}
+                onClick={(e) => e.currentTarget.select()}
+                aria-label="播放直链地址"
+              />
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

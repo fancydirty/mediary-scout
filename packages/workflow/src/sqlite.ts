@@ -182,6 +182,7 @@ export const SQLITE_SCHEMA = `
     value text NOT NULL,
     PRIMARY KEY (account_id, key)
   );
+  CREATE INDEX IF NOT EXISTS account_settings_key_value ON account_settings (key, value);
   CREATE TABLE IF NOT EXISTS dead_links (
     key text PRIMARY KEY,
     kind text NOT NULL,
@@ -324,6 +325,7 @@ export const SQLITE_SCHEMA = `
     PRIMARY KEY (account_id, tmdb_id, media_type, season_number, episode_number)
   );
   CREATE INDEX IF NOT EXISTS playback_progress_account ON playback_progress (account_id, last_played_at DESC);
+  CREATE INDEX IF NOT EXISTS playback_progress_account_title ON playback_progress (account_id, media_type, tmdb_id);
   INSERT INTO accounts (id, username, password_hash, is_owner, created_at)
     VALUES ('acct_default', 'default', '', 1, '1970-01-01T00:00:00.000Z')
     ON CONFLICT (id) DO NOTHING;
@@ -1448,6 +1450,24 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
       .run(key, value);
   }
 
+  async setSettingIfAbsent(key: string, value: string): Promise<string> {
+    return this.db.transaction(() => {
+      this.db
+        .prepare("INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO NOTHING")
+        .run(key, value);
+      const row = this.db.prepare("SELECT value FROM app_settings WHERE key = ?").get(key) as
+        | { value: string }
+        | undefined;
+      if (row && row.value.trim().length > 0) {
+        return row.value;
+      }
+      this.db
+        .prepare("INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value")
+        .run(key, value);
+      return value;
+    })();
+  }
+
   async deleteSetting(key: string): Promise<void> {
     this.db.prepare("DELETE FROM app_settings WHERE key = ?").run(key);
   }
@@ -1465,6 +1485,54 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
         "INSERT INTO account_settings (account_id, key, value) VALUES (?, ?, ?) ON CONFLICT (account_id, key) DO UPDATE SET value = excluded.value",
       )
       .run(accountId, key, value);
+  }
+
+  async setAccountSettingIfAbsent(accountId: string, key: string, value: string): Promise<string> {
+    return this.db.transaction(() => {
+      this.db
+        .prepare("INSERT INTO account_settings (account_id, key, value) VALUES (?, ?, ?) ON CONFLICT (account_id, key) DO NOTHING")
+        .run(accountId, key, value);
+      const row = this.db
+        .prepare("SELECT value FROM account_settings WHERE account_id = ? AND key = ?")
+        .get(accountId, key) as { value: string } | undefined;
+      if (row && row.value.trim().length > 0) {
+        return row.value;
+      }
+      this.db
+        .prepare(
+          "INSERT INTO account_settings (account_id, key, value) VALUES (?, ?, ?) ON CONFLICT (account_id, key) DO UPDATE SET value = excluded.value",
+        )
+        .run(accountId, key, value);
+      return value;
+    })();
+  }
+
+  async findAccountBySetting(key: string, value: string): Promise<Account | null> {
+    const row = this.db
+      .prepare(
+        "SELECT a.id, a.username, a.password_hash, a.group_id, a.is_owner, a.created_at " +
+          "FROM accounts a JOIN account_settings s ON s.account_id = a.id " +
+          "WHERE s.key = ? AND s.value = ? LIMIT 1",
+      )
+      .get(key, value) as
+      | {
+          id: string;
+          username: string;
+          password_hash: string;
+          group_id: string | null;
+          is_owner: number;
+          created_at: string;
+        }
+      | undefined;
+    if (!row) return null;
+    return {
+      id: String(row.id),
+      username: String(row.username),
+      passwordHash: String(row.password_hash),
+      groupId: row.group_id ?? null,
+      isOwner: Boolean(row.is_owner),
+      createdAt: String(row.created_at),
+    };
   }
 
   async backfillConnectedStorageId(): Promise<number> {
@@ -1805,17 +1873,29 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     if (copies.length === 0) return;
     const stmt = this.db.prepare(
       "INSERT INTO episode_copies (tracked_season_id, episode_code, storage_id, file_ids, size_bytes, quality, run_id, recorded_at, file_status, verified_at) " +
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 'present'), ?) " +
         "ON CONFLICT (tracked_season_id, episode_code, storage_id) DO UPDATE SET " +
         // Unknown facts (no file ids, no size, no quality) never erase known ones.
         "file_ids = CASE WHEN json_array_length(excluded.file_ids) > 0 THEN excluded.file_ids ELSE episode_copies.file_ids END, " +
         "size_bytes = COALESCE(excluded.size_bytes, episode_copies.size_bytes), " +
         "quality = COALESCE(excluded.quality, episode_copies.quality), " +
         "run_id = excluded.run_id, recorded_at = excluded.recorded_at, " +
-        "file_status = excluded.file_status, verified_at = excluded.verified_at",
+        // Preserve existing missing_on_drive tombstone when an inventory refresh omits fileStatus
+        // for the same physical fileIds; reset only when explicit or when genuinely new fileIds land.
+        "file_status = CASE " +
+        "  WHEN ? IS NOT NULL THEN ? " +
+        "  WHEN json_array_length(excluded.file_ids) = 0 OR episode_copies.file_ids = excluded.file_ids THEN episode_copies.file_status " +
+        "  ELSE 'present' END, " +
+        "verified_at = CASE " +
+        "  WHEN ? IS NOT NULL THEN ? " +
+        "  WHEN ? IS NOT NULL THEN NULL " +
+        "  WHEN json_array_length(excluded.file_ids) = 0 OR episode_copies.file_ids = excluded.file_ids THEN episode_copies.verified_at " +
+        "  ELSE NULL END",
     );
     const tx = this.db.transaction(() => {
       for (const copy of copies) {
+        const explicitStatus = copy.fileStatus ?? null;
+        const explicitVerifiedAt = copy.verifiedAt ?? null;
         stmt.run(
           copy.trackedSeasonId,
           copy.episodeCode,
@@ -1825,12 +1905,73 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
           copy.quality,
           copy.runId,
           copy.recordedAt,
-          copy.fileStatus ?? "present",
-          copy.verifiedAt ?? null,
+          explicitStatus,
+          explicitVerifiedAt,
+          explicitStatus,
+          explicitStatus,
+          explicitVerifiedAt,
+          explicitVerifiedAt,
+          explicitStatus,
         );
       }
     });
     tx();
+  }
+
+  async markEpisodeCopyFileMissing(input: {
+    trackedSeasonId: string;
+    episodeCode: string;
+    storageId: string;
+    fileId: string;
+    verifiedAt: string;
+  }): Promise<void> {
+    this.db.transaction(() => {
+      const row = this.db
+        .prepare(
+          "SELECT file_ids FROM episode_copies WHERE tracked_season_id = ? AND episode_code = ? AND storage_id = ?",
+        )
+        .get(input.trackedSeasonId, input.episodeCode, input.storageId) as { file_ids: string } | undefined;
+      if (row) {
+        let fileIds: string[] = [];
+        try {
+          const parsed: unknown = JSON.parse(row.file_ids);
+          if (Array.isArray(parsed)) fileIds = parsed.map(String);
+        } catch {
+          fileIds = [];
+        }
+        if (fileIds.length > 1) {
+          const remaining = fileIds.filter((id) => id !== input.fileId);
+          if (remaining.length > 0) {
+            this.db
+              .prepare(
+                "UPDATE episode_copies SET file_ids = ?, verified_at = ? WHERE tracked_season_id = ? AND episode_code = ? AND storage_id = ?",
+              )
+              .run(
+                JSON.stringify(remaining),
+                input.verifiedAt,
+                input.trackedSeasonId,
+                input.episodeCode,
+                input.storageId,
+              );
+            return;
+          }
+        }
+      }
+      this.db
+        .prepare(
+          "INSERT INTO episode_copies (tracked_season_id, episode_code, storage_id, file_ids, size_bytes, quality, run_id, recorded_at, file_status, verified_at) " +
+            "VALUES (?, ?, ?, '[]', NULL, NULL, '', ?, 'missing_on_drive', ?) " +
+            "ON CONFLICT (tracked_season_id, episode_code, storage_id) DO UPDATE SET " +
+            "file_status = 'missing_on_drive', verified_at = excluded.verified_at",
+        )
+        .run(
+          input.trackedSeasonId,
+          input.episodeCode,
+          input.storageId,
+          input.verifiedAt,
+          input.verifiedAt,
+        );
+    })();
   }
 
   async setEpisodeCopyFileStatus(input: {
@@ -1946,13 +2087,26 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     return row ? mapSqlitePlaybackProgressRow(row) : null;
   }
 
-  async listPlaybackProgress(accountId: string): Promise<PlaybackProgress[]> {
+  async listPlaybackProgress(
+    accountId: string,
+    filter?: { tmdbId?: number; mediaType?: MediaType },
+  ): Promise<PlaybackProgress[]> {
+    const clauses = ["account_id = ?"];
+    const params: Array<string | number> = [accountId];
+    if (filter?.mediaType !== undefined) {
+      clauses.push("media_type = ?");
+      params.push(filter.mediaType);
+    }
+    if (filter?.tmdbId !== undefined) {
+      clauses.push("tmdb_id = ?");
+      params.push(Math.trunc(filter.tmdbId));
+    }
     const rows = this.db
       .prepare(
         "SELECT account_id, tmdb_id, media_type, season_number, episode_number, position_ticks, duration_ticks, played, play_count, last_played_at " +
-          "FROM playback_progress WHERE account_id = ? ORDER BY last_played_at DESC",
+          `FROM playback_progress WHERE ${clauses.join(" AND ")} ORDER BY last_played_at DESC`,
       )
-      .all(accountId) as SqlitePlaybackProgressRow[];
+      .all(...params) as SqlitePlaybackProgressRow[];
     return rows.map((row) => mapSqlitePlaybackProgressRow(row));
   }
 

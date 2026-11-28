@@ -2,14 +2,17 @@
  * Zero-buffering HTTP Range proxy + singleton download-link cache for Virtual Emby.
  *
  * Design invariants (verified against live Quark/UC CDNs + peach-study §5):
- *  1. NEVER buffer video bytes in memory (pipe `upstream.body` directly).
- *  2. Propagate incoming `request.signal` into an upstream `AbortController` so
- *     seeking or closing the player cancels upstream TCP downloads immediately.
+ *  1. NEVER buffer video bytes in memory (stream chunks directly from upstream reader).
+ *  2. Propagate incoming `request.signal` AND downstream body cancellation into an
+ *     upstream `AbortController` so seeking or closing the player cancels upstream TCP
+ *     downloads immediately and detaches listeners cleanly.
  *  3. Forward exact `Range` headers and preserve upstream `200` / `206` / `416`
  *     responses and `Content-Range` / `Content-Length` / `Accept-Ranges` headers.
  *  4. Self-heal on stale signed CDN links / rotated `__puus` cookies: if upstream
  *     answers `403` or `412`, cancel its body, invalidate the link cache, resolve
  *     a fresh download link ONCE, and retry.
+ *  5. Isolate active web content: never serve upstream HTML/SVG/JS error pages inline
+ *     on the application origin (`nosniff` + `sandbox` CSP + safe media Content-Type).
  */
 import {
   buildDriveDownloadCacheKey,
@@ -20,6 +23,9 @@ import {
 import { createPlaybackExecutorForStorage } from "./workflow-runtime";
 
 const PROXY_CONNECT_TIMEOUT_MS = 25_000;
+
+const UNSAFE_INLINE_CONTENT_TYPE_RE =
+  /^(?:text\/html|application\/xhtml\+xml|image\/svg\+xml|text\/javascript|application\/javascript|application\/ecmascript|text\/xml|application\/xml)\b/i;
 
 const globalForVirtualEmby = globalThis as typeof globalThis & {
   __mediaryDownloadLinkCache?: DriveDownloadLinkCache;
@@ -79,10 +85,13 @@ export async function streamProxiedDownload(input: {
 
   const attemptFetch = async (
     targetLink: DriveDownloadLink,
-  ): Promise<{ upstream: Response; cleanup: () => void }> => {
+  ): Promise<{ upstream: Response; controller: AbortController; cleanup: () => void }> => {
     const controller = new AbortController();
     const onClientAbort = () => controller.abort(input.signal?.reason);
+    let cleaned = false;
     const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
       if (input.signal) {
         input.signal.removeEventListener("abort", onClientAbort);
       }
@@ -112,7 +121,7 @@ export async function streamProxiedDownload(input: {
         signal: controller.signal,
       });
       clearTimeout(connectTimer);
-      return { upstream, cleanup };
+      return { upstream, controller, cleanup };
     } catch (error) {
       clearTimeout(connectTimer);
       cleanup();
@@ -126,19 +135,33 @@ export async function streamProxiedDownload(input: {
   // Self-heal once on expired signed CDN URL / rotated __puus cookie (403 / 412).
   if (attempt.upstream.status === 403 || attempt.upstream.status === 412) {
     await attempt.upstream.body?.cancel().catch(() => undefined);
+    attempt.controller.abort();
     attempt.cleanup();
     cache.invalidateFile(input.storageId, input.fileId);
     activeLink = await input.resolveFreshLink();
     attempt = await attemptFetch(activeLink);
   }
-  const { upstream, cleanup } = attempt;
+  const { upstream, controller, cleanup } = attempt;
 
   const outHeaders = new Headers(input.corsHeaders);
   outHeaders.set("Accept-Ranges", upstream.headers.get("accept-ranges") ?? "bytes");
   outHeaders.set("Cache-Control", "no-store");
+  outHeaders.set("X-Content-Type-Options", "nosniff");
+  outHeaders.set("Content-Security-Policy", "sandbox");
+
+  // Never relay upstream error HTML/SVG/JS bodies inline on the application origin.
+  if (upstream.status >= 400 && upstream.status !== 416) {
+    await upstream.body?.cancel().catch(() => undefined);
+    controller.abort();
+    cleanup();
+    outHeaders.set("Content-Type", "text/plain; charset=utf-8");
+    return new Response(isHead ? null : `Upstream media server returned HTTP ${upstream.status}`, {
+      status: upstream.status,
+      headers: outHeaders,
+    });
+  }
 
   const passthroughHeaders = [
-    "content-type",
     "content-length",
     "content-range",
     "etag",
@@ -150,21 +173,51 @@ export async function streamProxiedDownload(input: {
       outHeaders.set(name, val);
     }
   }
-  if (!outHeaders.has("content-type")) {
+
+  const upstreamContentType = upstream.headers.get("content-type")?.trim() ?? "";
+  if (upstreamContentType && !UNSAFE_INLINE_CONTENT_TYPE_RE.test(upstreamContentType)) {
+    outHeaders.set("content-type", upstreamContentType);
+  } else {
     outHeaders.set("content-type", inferMimeType(activeLink.fileName));
   }
+
   if (activeLink.fileName && !outHeaders.has("content-disposition")) {
     const encoded = encodeURIComponent(activeLink.fileName);
     outHeaders.set("content-disposition", `inline; filename*=UTF-8''${encoded}`);
   }
 
-  if (isHead) {
+  if (isHead || !upstream.body) {
     await upstream.body?.cancel().catch(() => undefined);
+    controller.abort();
     cleanup();
     return new Response(null, { status: upstream.status, headers: outHeaders });
   }
 
-  return new Response(upstream.body, {
+  // Zero-buffering passthrough stream that connects downstream cancel/EOF to upstream abort + listener cleanup.
+  const reader = upstream.body.getReader();
+  const passthrough = new ReadableStream<Uint8Array>({
+    async pull(streamController) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          cleanup();
+          streamController.close();
+          return;
+        }
+        streamController.enqueue(value);
+      } catch (error) {
+        cleanup();
+        streamController.error(error);
+      }
+    },
+    async cancel(reason) {
+      controller.abort(reason);
+      cleanup();
+      await reader.cancel(reason).catch(() => undefined);
+    },
+  });
+
+  return new Response(passthrough, {
     status: upstream.status,
     headers: outHeaders,
   });

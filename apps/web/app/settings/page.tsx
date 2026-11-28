@@ -1,5 +1,6 @@
 import { driveConnectionBadge } from "../../lib/settings-badge";
 import { maskProviderUid } from "../../lib/mask-provider-uid";
+import { resolveRequestOrigin } from "../../lib/request-origin";
 import { connection } from "next/server";
 import { headers } from "next/headers";
 import { Suspense } from "react";
@@ -93,6 +94,7 @@ import {
   ensureVirtualEmbyToken,
   formatDriveSpaceSummary,
   FREE_LLM_PRESET,
+  loadVirtualEmbyPlayableCounts,
   getStorageBrand,
   isFreeLlmPreset,
   isRegisteredStorageProvider,
@@ -935,39 +937,13 @@ async function VirtualEmbySection() {
   ]);
   if (!accountId || accountId === "acct_unauthenticated") return null;
   const repository = getWorkflowRepository();
-  const [enabled, account, trackedStates] = await Promise.all([
+  const [enabled, account, counts] = await Promise.all([
     isVirtualEmbyEnabled(repository),
     repository.getAccountById(accountId),
-    repository.listTrackedSeasonStates({ accountId, connectedStorageId: null }),
+    loadVirtualEmbyPlayableCounts(repository, accountId),
   ]);
   const token = enabled ? await ensureVirtualEmbyToken(repository, accountId) : "";
-
-  const proto = hdrs.get("x-forwarded-proto") ?? "http";
-  const host = hdrs.get("x-forwarded-host") ?? hdrs.get("host") ?? "localhost:3000";
-  const initialServerUrl = `${proto}://${host}/emby`;
-
-  // Count distinct playable titles/episodes across connected drives.
-  const movieTmdbIds = new Set<number>();
-  const seriesKeys = new Set<string>();
-  const episodeKeys = new Set<string>();
-  for (const st of trackedStates) {
-    if (st.title.type === "movie") {
-      if (st.episodes.some((e) => e.obtained)) {
-        movieTmdbIds.add(st.title.tmdbId);
-      }
-    } else {
-      let anyObtained = false;
-      for (const ep of st.episodes) {
-        if (ep.obtained) {
-          anyObtained = true;
-          episodeKeys.add(`${st.title.type}:${st.title.tmdbId}:${st.season.seasonNumber}:${ep.episodeCode}`);
-        }
-      }
-      if (anyObtained) {
-        seriesKeys.add(`${st.title.type}:${st.title.tmdbId}`);
-      }
-    }
-  }
+  const initialServerUrl = `${resolveRequestOrigin(hdrs)}/emby`;
 
   return (
     <section id="virtual-emby" className="panel" style={{ maxWidth: 720 }}>
@@ -988,11 +964,7 @@ async function VirtualEmbySection() {
         username={account?.username ?? "default"}
         initialToken={token}
         isOwner={isOwner}
-        counts={{
-          movies: movieTmdbIds.size,
-          series: seriesKeys.size,
-          episodes: episodeKeys.size,
-        }}
+        counts={counts}
       />
     </section>
   );

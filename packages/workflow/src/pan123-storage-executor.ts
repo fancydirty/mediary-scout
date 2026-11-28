@@ -230,6 +230,7 @@ export class Pan123StorageExecutor implements StorageExecutor {
   }
 
   async getDownloadUrl(input: { fileId: string; userAgent?: string }): Promise<DriveDownloadLink> {
+    // 123Pan CDN links are UA-agnostic (supportsRedirect=true); API/dispatch uses fixed browser UA.
     return this.client.getDownloadUrl({ fileId: input.fileId });
   }
 

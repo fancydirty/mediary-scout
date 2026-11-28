@@ -17,7 +17,7 @@
  *    automatically fails over to any healthy sibling drive copy. Daily patrol
  *    NEVER resurrects deleted files because `episode_states.obtained` stays true.
  */
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import type { Account, ConnectedStorage } from "./account-credentials.js";
 import { verifyPassword } from "./auth/password.js";
 import {
@@ -67,19 +67,22 @@ export async function setVirtualEmbyEnabled(
 }
 
 export async function ensureVirtualEmbyServerId(
-  repo: Pick<WorkflowRepository, "getSetting" | "setSetting">,
+  repo: Pick<WorkflowRepository, "getSetting" | "setSetting" | "setSettingIfAbsent">,
 ): Promise<string> {
   const existing = (await repo.getSetting(VIRTUAL_EMBY_SETTING_KEYS.serverId))?.trim();
   if (existing && /^[0-9a-f]{32}$/i.test(existing)) {
     return existing;
   }
   const generated = randomBytes(16).toString("hex");
+  if (repo.setSettingIfAbsent) {
+    return repo.setSettingIfAbsent(VIRTUAL_EMBY_SETTING_KEYS.serverId, generated);
+  }
   await repo.setSetting(VIRTUAL_EMBY_SETTING_KEYS.serverId, generated);
   return generated;
 }
 
 export async function ensureVirtualEmbyToken(
-  repo: Pick<WorkflowRepository, "getAccountSetting" | "setAccountSetting">,
+  repo: Pick<WorkflowRepository, "getAccountSetting" | "setAccountSetting" | "setAccountSettingIfAbsent">,
   accountId: string,
 ): Promise<string> {
   const existing = (await repo.getAccountSetting(accountId, VIRTUAL_EMBY_SETTING_KEYS.token))?.trim();
@@ -87,8 +90,68 @@ export async function ensureVirtualEmbyToken(
     return existing;
   }
   const generated = randomBytes(24).toString("hex");
+  if (repo.setAccountSettingIfAbsent) {
+    return repo.setAccountSettingIfAbsent(accountId, VIRTUAL_EMBY_SETTING_KEYS.token, generated);
+  }
   await repo.setAccountSetting(accountId, VIRTUAL_EMBY_SETTING_KEYS.token, generated);
   return generated;
+}
+
+const SCOPED_PLAYBACK_TOKEN_PREFIX = "pt_";
+const DEFAULT_PLAYBACK_TOKEN_TTL_SECONDS = 6 * 60 * 60; // 6 hours
+
+/** Mint a short-lived, item-scoped playback token signed with the account's Emby master token.
+ *  Accepted ONLY on stream/download routes for that exact `itemId`, and automatically revoked
+ *  whenever the account's master Emby token is regenerated. */
+export function createVirtualEmbyPlaybackToken(input: {
+  accountId: string;
+  itemId: string;
+  masterToken: string;
+  nowMs?: number;
+  ttlSeconds?: number;
+}): string {
+  const nowSec = Math.floor((input.nowMs ?? Date.now()) / 1000);
+  const exp = nowSec + (input.ttlSeconds ?? DEFAULT_PLAYBACK_TOKEN_TTL_SECONDS);
+  const payloadB64 = Buffer.from(
+    JSON.stringify({ a: input.accountId, i: input.itemId, e: exp }),
+    "utf8",
+  ).toString("base64url");
+  const sig = createHmac("sha256", input.masterToken).update(payloadB64).digest("base64url");
+  return `${SCOPED_PLAYBACK_TOKEN_PREFIX}${payloadB64}.${sig}`;
+}
+
+export async function verifyVirtualEmbyPlaybackToken(input: {
+  repo: WorkflowRepository;
+  token: string;
+  itemId: string;
+  nowMs?: number;
+}): Promise<Account | null> {
+  if (!input.token.startsWith(SCOPED_PLAYBACK_TOKEN_PREFIX)) return null;
+  const body = input.token.slice(SCOPED_PLAYBACK_TOKEN_PREFIX.length);
+  const dot = body.indexOf(".");
+  if (dot <= 0 || dot >= body.length - 1) return null;
+  const payloadB64 = body.slice(0, dot);
+  const sig = body.slice(dot + 1);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(payloadB64, "base64url").toString("utf8"));
+  } catch {
+    return null;
+  }
+  if (!isRecord(parsed)) return null;
+  const accountId = typeof parsed["a"] === "string" ? parsed["a"] : "";
+  const scopedItemId = typeof parsed["i"] === "string" ? parsed["i"] : "";
+  const exp = typeof parsed["e"] === "number" ? parsed["e"] : 0;
+  if (!accountId || scopedItemId !== input.itemId) return null;
+  const nowSec = Math.floor((input.nowMs ?? Date.now()) / 1000);
+  if (exp <= nowSec) return null;
+  const storedMasterToken = (
+    await input.repo.getAccountSetting(accountId, VIRTUAL_EMBY_SETTING_KEYS.token)
+  )?.trim();
+  if (!storedMasterToken) return null;
+  const expectedSig = createHmac("sha256", storedMasterToken).update(payloadB64).digest("base64url");
+  if (!safeTokenEquals(sig, expectedSig)) return null;
+  return input.repo.getAccountById(accountId);
 }
 
 export async function regenerateVirtualEmbyToken(
@@ -201,6 +264,8 @@ export interface VirtualEmbyRequest {
   body?: unknown;
   /** Base origin (e.g. "http://localhost:3000") used for LocalAddress in System/Info. */
   origin?: string;
+  /** Optional copy keys (`${storageId}::${fileId}`) already found missing during a proxy retry. */
+  excludeCopyKeys?: ReadonlySet<string>;
 }
 
 export interface VirtualEmbyDownloadResolverInput {
@@ -209,11 +274,18 @@ export interface VirtualEmbyDownloadResolverInput {
   userAgent?: string;
 }
 
+export interface VirtualEmbyLoginThrottle {
+  check(headers: Headers, username: string): { allowed: true } | { allowed: false; retryAfterSec: number };
+  recordFailure(headers: Headers, username: string): void;
+  recordSuccess(headers: Headers, username: string): void;
+}
+
 export interface VirtualEmbyContext {
   repository: WorkflowRepository;
   resolveDownloadLink: (input: VirtualEmbyDownloadResolverInput) => Promise<DriveDownloadLink>;
   tmdbImageBaseUrl?: string;
   now?: () => string;
+  loginThrottle?: VirtualEmbyLoginThrottle;
 }
 
 export type VirtualEmbyResult =
@@ -335,6 +407,15 @@ function safeTokenEquals(a: string, b: string): boolean {
 }
 
 async function authenticateByToken(repo: WorkflowRepository, token: string): Promise<Account | null> {
+  if (token.startsWith(SCOPED_PLAYBACK_TOKEN_PREFIX)) {
+    return null;
+  }
+  if (repo.findAccountBySetting) {
+    const candidate = await repo.findAccountBySetting(VIRTUAL_EMBY_SETTING_KEYS.token, token);
+    if (!candidate) return null;
+    const stored = (await repo.getAccountSetting(candidate.id, VIRTUAL_EMBY_SETTING_KEYS.token))?.trim();
+    return stored && safeTokenEquals(token, stored) ? candidate : null;
+  }
   const accounts = await repo.listAccounts();
   for (const account of accounts) {
     const stored = (await repo.getAccountSetting(account.id, VIRTUAL_EMBY_SETTING_KEYS.token))?.trim();
@@ -449,38 +530,47 @@ async function loadAccountCatalog(repo: WorkflowRepository, accountId: string): 
     episodeCode: string,
   ): PlayableCopy[] => {
     const seen = new Set<string>();
-    const tombstonedStorages = new Set<string>();
+    const tombstoned = new Set<string>();
     const out: PlayableCopy[] = [];
-    const trackedSeasonId = seasonStates[0]!.season.id;
+    const distinctSeasonIds = [...new Set(seasonStates.map((st) => st.season.id))];
 
-    // 1. Explicit episode_copies rows (authoritative physical inventory)
-    for (const c of copiesBySeasonEp.get(`${trackedSeasonId}::${episodeCode}`) ?? []) {
-      if (c.fileStatus === "missing_on_drive") {
-        tombstonedStorages.add(c.storageId);
-        continue;
-      }
-      const storage = storagesById.get(c.storageId);
-      if (!storage) continue;
-      for (const fileId of c.fileIds) {
-        if (!fileId) continue;
-        const dedupKey = `${storage.id}::${fileId}`;
-        if (seen.has(dedupKey)) continue;
-        seen.add(dedupKey);
-        out.push({
-          storage,
-          trackedSeasonId,
-          episodeCode,
-          fileId,
-          sizeBytes: c.sizeBytes,
-          quality: c.quality,
-          recordedAt: c.recordedAt,
-        });
+    // 1. Explicit episode_copies rows across ALL tracked-season rows in the group
+    for (const seasonIdKey of distinctSeasonIds) {
+      for (const c of copiesBySeasonEp.get(`${seasonIdKey}::${episodeCode}`) ?? []) {
+        if (c.fileStatus === "missing_on_drive") {
+          tombstoned.add(`${seasonIdKey}::${c.storageId}`);
+          tombstoned.add(`*::${c.storageId}`);
+          continue;
+        }
+        const storage = storagesById.get(c.storageId);
+        if (!storage) continue;
+        for (const fileId of c.fileIds) {
+          if (!fileId) continue;
+          const dedupKey = `${storage.id}::${fileId}`;
+          if (seen.has(dedupKey)) continue;
+          seen.add(dedupKey);
+          out.push({
+            storage,
+            trackedSeasonId: seasonIdKey,
+            episodeCode,
+            fileId,
+            sizeBytes: c.sizeBytes,
+            quality: c.quality,
+            recordedAt: c.recordedAt,
+          });
+        }
       }
     }
 
     // 2. Fallback to episode_states.verifiedFileIds for pre-C8 legacy rows
     for (const st of seasonStates) {
-      if (!st.connectedStorageId || tombstonedStorages.has(st.connectedStorageId)) continue;
+      if (!st.connectedStorageId) continue;
+      if (
+        tombstoned.has(`${st.season.id}::${st.connectedStorageId}`) ||
+        tombstoned.has(`*::${st.connectedStorageId}`)
+      ) {
+        continue;
+      }
       const storage = storagesById.get(st.connectedStorageId);
       if (!storage) continue;
       const ep = st.episodes.find((e) => e.episodeCode === episodeCode);
@@ -589,10 +679,11 @@ async function loadAccountCatalog(repo: WorkflowRepository, accountId: string): 
           }
         }
       }
-      const seasonKeyPrefix = `${seasonStates[0]!.season.id}::`;
+      const seasonIdSet = new Set(seasonStates.map((st) => st.season.id));
       for (const [key, copies] of copiesBySeasonEp) {
-        if (!key.startsWith(seasonKeyPrefix)) continue;
-        const code = key.slice(seasonKeyPrefix.length);
+        const sep = key.indexOf("::");
+        if (sep < 0 || !seasonIdSet.has(key.slice(0, sep))) continue;
+        const code = key.slice(sep + 2);
         if (!episodeMetaByCode.has(code) && copies.some((c) => c.fileStatus !== "missing_on_drive" && c.fileIds.length > 0)) {
           episodeMetaByCode.set(code, { title: code, airDate: null });
         }
@@ -692,6 +783,182 @@ async function loadAccountCatalog(repo: WorkflowRepository, accountId: string): 
   };
 }
 
+/** Count actually playable movies, series, and episodes using the exact same inventory
+ *  and tombstoning rules as the Virtual Emby catalog (for Settings UI accuracy). */
+export async function loadVirtualEmbyPlayableCounts(
+  repo: WorkflowRepository,
+  accountId: string,
+): Promise<{ movies: number; series: number; episodes: number }> {
+  const catalog = await loadAccountCatalog(repo, accountId);
+  return {
+    movies: catalog.movies.length,
+    series: catalog.tvSeries.length + catalog.animeSeries.length,
+    episodes: catalog.episodeById.size,
+  };
+}
+
+/** Targeted playable-copy loader for stream/download requests — avoids scanning the entire
+ *  account's episode_copies and playback_progress tables on every HTTP Range request. */
+async function loadPlayableCopiesForItem(
+  repo: WorkflowRepository,
+  accountId: string,
+  itemId: string,
+): Promise<PlayableCopy[]> {
+  const ref = parseEmbyItemId(itemId);
+  if (!ref || (ref.kind !== "movie" && ref.kind !== "episode")) {
+    return [];
+  }
+  const targetType: MediaType = ref.kind === "movie" ? "movie" : ref.mediaType;
+  const [allStates, storages, driveOrderRaw] = await Promise.all([
+    repo.listTrackedSeasonStates({ accountId, connectedStorageId: null }),
+    repo.listConnectedStorages(accountId),
+    repo.getAccountSetting(accountId, DRIVE_ORDER_SETTING_KEY),
+  ]);
+  const matchingStates = allStates.filter((st) => {
+    if (st.title.tmdbId !== ref.tmdbId || st.title.type !== targetType) return false;
+    if (ref.kind === "episode" && st.season.seasonNumber !== ref.seasonNumber) return false;
+    return true;
+  });
+  if (matchingStates.length === 0) return [];
+
+  let driveOrder: string[] = [];
+  if (driveOrderRaw) {
+    try {
+      const parsed: unknown = JSON.parse(driveOrderRaw);
+      if (Array.isArray(parsed)) driveOrder = parsed.filter((v): v is string => typeof v === "string");
+    } catch {
+      driveOrder = [];
+    }
+  }
+  const orderedStorages = sortDrivesByOrder(storages, driveOrder);
+  const driveRank = new Map<string, number>();
+  orderedStorages.forEach((s, idx) => driveRank.set(s.id, idx));
+  const storagesById = new Map<string, ConnectedStorage>(orderedStorages.map((s) => [s.id, s]));
+
+  const distinctSeasonIds = [...new Set(matchingStates.map((st) => st.season.id))];
+  const rawCopies: EpisodeCopy[] =
+    distinctSeasonIds.length > 0 && repo.listEpisodeCopiesForSeasons
+      ? await repo.listEpisodeCopiesForSeasons(distinctSeasonIds)
+      : distinctSeasonIds.length > 0 && repo.listEpisodeCopies
+        ? (await Promise.all(distinctSeasonIds.map((id) => repo.listEpisodeCopies!(id)))).flat()
+        : [];
+
+  const targetCodes = new Set<string>();
+  if (ref.kind === "movie") {
+    targetCodes.add("S01E01");
+    for (const st of matchingStates) {
+      for (const ep of st.episodes) {
+        if (ep.obtained) targetCodes.add(ep.episodeCode);
+      }
+    }
+    for (const c of rawCopies) {
+      if (c.fileStatus !== "missing_on_drive" && c.fileIds.length > 0) targetCodes.add(c.episodeCode);
+    }
+  } else {
+    for (const st of matchingStates) {
+      for (const ep of st.episodes) {
+        if (!ep.obtained) continue;
+        try {
+          if (episodePartsFromCode(ep.episodeCode).episodeNumber === ref.episodeNumber) {
+            targetCodes.add(ep.episodeCode);
+          }
+        } catch {
+          // ignore unparseable episode codes
+        }
+      }
+    }
+    for (const c of rawCopies) {
+      try {
+        if (episodePartsFromCode(c.episodeCode).episodeNumber === ref.episodeNumber) {
+          targetCodes.add(c.episodeCode);
+        }
+      } catch {
+        // ignore unparseable episode codes
+      }
+    }
+  }
+
+  const seen = new Set<string>();
+  const tombstoned = new Set<string>();
+  const out: PlayableCopy[] = [];
+  for (const c of rawCopies) {
+    if (!targetCodes.has(c.episodeCode)) continue;
+    if (c.fileStatus === "missing_on_drive") {
+      tombstoned.add(`${c.trackedSeasonId}::${c.episodeCode}::${c.storageId}`);
+      tombstoned.add(`*::${c.episodeCode}::${c.storageId}`);
+      continue;
+    }
+    const storage = storagesById.get(c.storageId);
+    if (!storage) continue;
+    for (const fileId of c.fileIds) {
+      if (!fileId) continue;
+      const dedupKey = `${storage.id}::${fileId}`;
+      if (seen.has(dedupKey)) continue;
+      seen.add(dedupKey);
+      out.push({
+        storage,
+        trackedSeasonId: c.trackedSeasonId,
+        episodeCode: c.episodeCode,
+        fileId,
+        sizeBytes: c.sizeBytes,
+        quality: c.quality,
+        recordedAt: c.recordedAt,
+      });
+    }
+  }
+  for (const st of matchingStates) {
+    if (!st.connectedStorageId) continue;
+    const storage = storagesById.get(st.connectedStorageId);
+    if (!storage) continue;
+    for (const ep of st.episodes) {
+      if (!ep.obtained || !targetCodes.has(ep.episodeCode)) continue;
+      if (
+        tombstoned.has(`${st.season.id}::${ep.episodeCode}::${st.connectedStorageId}`) ||
+        tombstoned.has(`*::${ep.episodeCode}::${st.connectedStorageId}`)
+      ) {
+        continue;
+      }
+      for (const fileId of ep.verifiedFileIds) {
+        if (!fileId) continue;
+        const dedupKey = `${storage.id}::${fileId}`;
+        if (seen.has(dedupKey)) continue;
+        seen.add(dedupKey);
+        out.push({
+          storage,
+          trackedSeasonId: st.season.id,
+          episodeCode: ep.episodeCode,
+          fileId,
+          sizeBytes: null,
+          quality: st.season.qualityPreference || null,
+          recordedAt: storage.createdAt,
+        });
+      }
+    }
+  }
+  const hasCustomOrder = driveOrder.length > 0;
+  return out.sort((a, b) => {
+    const activeA = a.storage.status === "active" ? 0 : 1;
+    const activeB = b.storage.status === "active" ? 0 : 1;
+    if (activeA !== activeB) return activeA - activeB;
+    if (hasCustomOrder) {
+      const rankA = driveRank.get(a.storage.id) ?? 9999;
+      const rankB = driveRank.get(b.storage.id) ?? 9999;
+      if (rankA !== rankB) return rankA - rankB;
+    } else {
+      const redirA = REDIRECT_PRIORITY_PROVIDERS.has(a.storage.provider) ? 0 : 1;
+      const redirB = REDIRECT_PRIORITY_PROVIDERS.has(b.storage.provider) ? 0 : 1;
+      if (redirA !== redirB) return redirA - redirB;
+      const rankA = driveRank.get(a.storage.id) ?? 9999;
+      const rankB = driveRank.get(b.storage.id) ?? 9999;
+      if (rankA !== rankB) return rankA - rankB;
+    }
+    const sizeA = a.sizeBytes ?? 0;
+    const sizeB = b.sizeBytes ?? 0;
+    if (sizeA !== sizeB) return sizeB - sizeA;
+    return b.recordedAt.localeCompare(a.recordedAt);
+  });
+}
+
 // ── Emby DTO Builders ────────────────────────────────────────────────────────
 
 function shortBrandLabel(storage: ConnectedStorage): string {
@@ -702,7 +969,14 @@ function shortBrandLabel(storage: ConnectedStorage): string {
   return storage.provider;
 }
 
-function buildMediaSourceDto(itemId: string, copy: PlayableCopy, token: string, durationTicks: number): Record<string, unknown> {
+function buildMediaSourceDto(
+  itemId: string,
+  copy: PlayableCopy,
+  accountId: string,
+  masterToken: string,
+  durationTicks: number,
+  nowMs?: number,
+): Record<string, unknown> {
   const msId = encodeEmbyMediaSourceId(copy.storage.id, copy.fileId);
   const labelParts = [`[${shortBrandLabel(copy.storage)}]`];
   if (copy.quality) labelParts.push(copy.quality);
@@ -710,13 +984,21 @@ function buildMediaSourceDto(itemId: string, copy: PlayableCopy, token: string, 
   const deliveryHint = REDIRECT_PRIORITY_PROVIDERS.has(copy.storage.provider) ? "直链" : "代理";
   labelParts.push(deliveryHint);
   const name = labelParts.join(" · ");
+  // Issue a short-lived, item-scoped playback token so stream URLs in DTOs or player history
+  // cannot be reused to access other items or browse the account's full library.
+  const playbackToken = createVirtualEmbyPlaybackToken({
+    accountId,
+    itemId,
+    masterToken,
+    ...(nowMs !== undefined ? { nowMs } : {}),
+  });
+  const streamPath = `/emby/Videos/${itemId}/stream?Static=true&MediaSourceId=${encodeURIComponent(msId)}&api_key=${encodeURIComponent(playbackToken)}`;
 
   return {
     Protocol: "Http",
     Id: msId,
-    Path: `/emby/Videos/${itemId}/stream?Static=true&MediaSourceId=${encodeURIComponent(msId)}&api_key=${encodeURIComponent(token)}`,
+    Path: streamPath,
     Type: "Default",
-    Container: "mkv",
     Size: copy.sizeBytes ?? undefined,
     Name: name,
     IsRemote: false,
@@ -728,24 +1010,10 @@ function buildMediaSourceDto(itemId: string, copy: PlayableCopy, token: string, 
     RequiresOpening: false,
     RequiresClosing: false,
     SupportsProbing: true,
-    DirectStreamUrl: `/emby/Videos/${itemId}/stream?Static=true&MediaSourceId=${encodeURIComponent(msId)}&api_key=${encodeURIComponent(token)}`,
-    MediaStreams: [
-      {
-        Codec: "h264",
-        Type: "Video",
-        Index: 0,
-        IsDefault: true,
-        DisplayTitle: copy.quality ? `${copy.quality} Video` : "Video",
-      },
-      {
-        Codec: "aac",
-        Type: "Audio",
-        Index: 1,
-        Channels: 2,
-        IsDefault: true,
-        DisplayTitle: "Audio",
-      },
-    ],
+    DirectStreamUrl: streamPath,
+    // Leave MediaStreams empty rather than fabricating H.264/AAC codec metadata;
+    // native players probe actual tracks via Range requests when SupportsProbing=true.
+    MediaStreams: [],
     Formats: [],
     RequiredHttpHeaders: {},
     ReadAtNativeFramerate: false,
@@ -810,14 +1078,21 @@ function buildLibraryDto(
   };
 }
 
-function buildMovieDto(movie: CatalogMovie, serverId: string, token: string): Record<string, unknown> {
+interface DtoContext {
+  serverId: string;
+  accountId: string;
+  token: string;
+  nowMs: number;
+}
+
+function buildMovieDto(movie: CatalogMovie, dtoCtx: DtoContext): Record<string, unknown> {
   const durationTicks = movie.progress?.durationTicks ?? 0;
   const images = imageTagsFor(movie.title.posterPath, movie.title.backdropPath);
   return {
     Name: movie.title.title,
     OriginalTitle: movie.title.originalTitle || movie.title.title,
     SortName: movie.title.title,
-    ServerId: serverId,
+    ServerId: dtoCtx.serverId,
     Id: movie.id,
     ParentId: EMBY_LIBRARY_IDS.movies,
     Type: "Movie",
@@ -829,10 +1104,11 @@ function buildMovieDto(movie: CatalogMovie, serverId: string, token: string): Re
     Overview: movie.title.overview || undefined,
     ProviderIds: { Tmdb: String(movie.tmdbId) },
     RunTimeTicks: durationTicks > 0 ? durationTicks : undefined,
-    Container: "mkv",
     CanDownload: true,
     ...images,
-    MediaSources: movie.copies.map((c) => buildMediaSourceDto(movie.id, c, token, durationTicks)),
+    MediaSources: movie.copies.map((c) =>
+      buildMediaSourceDto(movie.id, c, dtoCtx.accountId, dtoCtx.token, durationTicks, dtoCtx.nowMs),
+    ),
     UserData: buildUserDataDto(movie.progress),
   };
 }
@@ -893,12 +1169,12 @@ function buildSeasonDto(season: CatalogSeason, serverId: string): Record<string,
   };
 }
 
-function buildEpisodeDto(episode: CatalogEpisode, serverId: string, token: string): Record<string, unknown> {
+function buildEpisodeDto(episode: CatalogEpisode, dtoCtx: DtoContext): Record<string, unknown> {
   const durationTicks = episode.progress?.durationTicks ?? 0;
   const images = imageTagsFor(episode.posterPath, episode.backdropPath);
   return {
     Name: episode.name,
-    ServerId: serverId,
+    ServerId: dtoCtx.serverId,
     Id: episode.id,
     SeriesId: episode.seriesId,
     SeriesName: episode.seriesName,
@@ -913,10 +1189,11 @@ function buildEpisodeDto(episode: CatalogEpisode, serverId: string, token: strin
     PremiereDate: episode.airDate ? `${episode.airDate.slice(0, 10)}T00:00:00.000Z` : undefined,
     DateCreated: episode.recordedAt || undefined,
     RunTimeTicks: durationTicks > 0 ? durationTicks : undefined,
-    Container: "mkv",
     CanDownload: true,
     ...images,
-    MediaSources: episode.copies.map((c) => buildMediaSourceDto(episode.id, c, token, durationTicks)),
+    MediaSources: episode.copies.map((c) =>
+      buildMediaSourceDto(episode.id, c, dtoCtx.accountId, dtoCtx.token, durationTicks, dtoCtx.nowMs),
+    ),
     UserData: buildUserDataDto(episode.progress),
   };
 }
@@ -986,6 +1263,7 @@ export async function handleVirtualEmbyRequest(
   const lower = segments.map((s) => s.toLowerCase());
   const serverId = await ensureVirtualEmbyServerId(ctx.repository);
   const nowIso = (ctx.now ?? (() => new Date().toISOString()))();
+  const nowMs = Date.parse(nowIso) || Date.now();
   const origin = req.origin ?? "http://localhost:3000";
 
   // ── 1. Public unauthenticated endpoints ──────────────────────────────────
@@ -1016,7 +1294,7 @@ export async function handleVirtualEmbyRequest(
   }
 
   if (method === "POST" && lower[0] === "users" && lower[1] === "authenticatebyname") {
-    return handleAuthenticateByName(req, ctx.repository, serverId);
+    return handleAuthenticateByName(req, ctx.repository, serverId, ctx.loginThrottle);
   }
 
   // Image redirects (Emby clients frequently fetch posters without sending auth headers)
@@ -1037,6 +1315,17 @@ export async function handleVirtualEmbyRequest(
 
   // ── 2. Authenticate all remaining endpoints via Emby token ───────────────
 
+  const isStreamRoute =
+    (method === "GET" || method === "HEAD") &&
+    Boolean(segments[1]) &&
+    ((lower[0] === "videos" &&
+      Boolean(lower[2]) &&
+      (lower[2] === "stream" ||
+        lower[2]!.startsWith("stream.") ||
+        lower[2] === "original" ||
+        lower[2]!.startsWith("original."))) ||
+      (lower[0] === "items" && lower[2] === "download"));
+
   const token = extractEmbyToken(req.headers, req.query);
   if (!token) {
     return {
@@ -1046,7 +1335,23 @@ export async function handleVirtualEmbyRequest(
       headers: { "WWW-Authenticate": 'MediaBrowser realm="Mediary Scout"' },
     };
   }
-  const account = await authenticateByToken(ctx.repository, token);
+
+  // Short-lived, item-scoped playback tokens (`pt_...`) are ONLY accepted on the matching
+  // stream/download route; all other endpoints require the account's master Emby token.
+  let account: Account | null = null;
+  if (token.startsWith(SCOPED_PLAYBACK_TOKEN_PREFIX)) {
+    if (isStreamRoute && segments[1]) {
+      account = await verifyVirtualEmbyPlaybackToken({
+        repo: ctx.repository,
+        token,
+        itemId: segments[1],
+        nowMs,
+      });
+    }
+  } else {
+    account = await authenticateByToken(ctx.repository, token);
+  }
+
   if (!account) {
     return {
       kind: "json",
@@ -1054,6 +1359,16 @@ export async function handleVirtualEmbyRequest(
       body: { error: "Invalid Emby access token" },
       headers: { "WWW-Authenticate": 'MediaBrowser realm="Mediary Scout"' },
     };
+  }
+
+  // Fast path for media stream/download requests: resolve only the requested item's
+  // playable copies instead of rebuilding the full account catalog on every Range request.
+  if (isStreamRoute && segments[1]) {
+    const itemId = segments[1];
+    const mediaSourceId = req.query.get("MediaSourceId") ?? req.query.get("mediaSourceId") ?? undefined;
+    const userAgent = req.headers.get("user-agent") ?? undefined;
+    const copies = await loadPlayableCopiesForItem(ctx.repository, account.id, itemId);
+    return handleVideoStream(copies, itemId, mediaSourceId, userAgent, ctx, nowIso, req.excludeCopyKeys);
   }
 
   // ── 3. Authenticated System / User / Session endpoints ───────────────────
@@ -1149,6 +1464,7 @@ export async function handleVirtualEmbyRequest(
   // ── 4. Catalog-backed endpoints ──────────────────────────────────────────
 
   const catalog = await loadAccountCatalog(ctx.repository, account.id);
+  const dtoCtx: DtoContext = { serverId, accountId: account.id, token, nowMs };
 
   // Views / MediaFolders / VirtualFolders
   if (
@@ -1205,7 +1521,7 @@ export async function handleVirtualEmbyRequest(
   if (method === "GET" && lower[0] === "users" && lower[2] === "items" && lower[3] === "latest") {
     const parentId = req.query.get("ParentId") ?? req.query.get("parentId") ?? "";
     const limit = clampLimit(req.query.get("Limit") ?? req.query.get("limit"), 20);
-    const items = queryItems(catalog, serverId, token, {
+    const items = queryItems(catalog, dtoCtx, {
       ...(parentId ? { parentId } : {}),
       includeItemTypes: parseCsvSet(req.query.get("IncludeItemTypes") ?? req.query.get("includeItemTypes")),
       recursive: false,
@@ -1219,7 +1535,7 @@ export async function handleVirtualEmbyRequest(
   if (method === "GET" && lower[0] === "users" && lower[2] === "items" && lower[3] === "resume") {
     const startIndex = parseNonNegInt(req.query.get("StartIndex") ?? req.query.get("startIndex"), 0);
     const limit = clampLimit(req.query.get("Limit") ?? req.query.get("limit"), 20);
-    const resumable = collectResumableItems(catalog, serverId, token);
+    const resumable = collectResumableItems(catalog, dtoCtx);
     const paged = resumable.slice(startIndex, startIndex + limit);
     return {
       kind: "json",
@@ -1235,7 +1551,7 @@ export async function handleVirtualEmbyRequest(
       (lower[0] === "items" && lower.length === 2 && lower[1] !== "counts"))
   ) {
     const itemId = lower[0] === "users" ? segments[3]! : segments[1]!;
-    const dto = findSingleItemDto(catalog, itemId, serverId, token);
+    const dto = findSingleItemDto(catalog, itemId, dtoCtx);
     if (!dto) {
       return { kind: "json", status: 404, body: { error: `Item not found: ${itemId}` } };
     }
@@ -1249,7 +1565,7 @@ export async function handleVirtualEmbyRequest(
 
   // PlaybackInfo: GET|POST /Items/{itemId}/PlaybackInfo
   if ((method === "GET" || method === "POST") && lower[0] === "items" && segments[1] && lower[2] === "playbackinfo") {
-    return handlePlaybackInfo(catalog, segments[1], token);
+    return handlePlaybackInfo(catalog, segments[1], dtoCtx);
   }
 
   // Items query: GET /Users/{uid}/Items OR GET /Items
@@ -1271,7 +1587,7 @@ export async function handleVirtualEmbyRequest(
     const limitParam = req.query.get("Limit") ?? req.query.get("limit");
     const limit = limitParam ? clampLimit(limitParam, 200) : undefined;
 
-    const all = queryItems(catalog, serverId, token, {
+    const all = queryItems(catalog, dtoCtx, {
       ...(parentId ? { parentId } : {}),
       ...(ids.size > 0 ? { ids } : {}),
       ...(includeItemTypes.size > 0 ? { includeItemTypes } : {}),
@@ -1326,7 +1642,7 @@ export async function handleVirtualEmbyRequest(
         return true;
       })
       .flatMap((s) => s.episodes)
-      .map((ep) => buildEpisodeDto(ep, serverId, token));
+      .map((ep) => buildEpisodeDto(ep, dtoCtx));
 
     const paged =
       limit !== undefined ? matchingEpisodes.slice(startIndex, startIndex + limit) : matchingEpisodes.slice(startIndex);
@@ -1342,7 +1658,7 @@ export async function handleVirtualEmbyRequest(
     const seriesIdFilter = req.query.get("SeriesId") ?? req.query.get("seriesId") ?? "";
     const startIndex = parseNonNegInt(req.query.get("StartIndex") ?? req.query.get("startIndex"), 0);
     const limit = clampLimit(req.query.get("Limit") ?? req.query.get("limit"), 20);
-    const nextUp = collectNextUpEpisodes(catalog, serverId, token, seriesIdFilter || undefined);
+    const nextUp = collectNextUpEpisodes(catalog, dtoCtx, seriesIdFilter || undefined);
     const paged = nextUp.slice(startIndex, startIndex + limit);
     return {
       kind: "json",
@@ -1355,7 +1671,7 @@ export async function handleVirtualEmbyRequest(
   if (method === "GET" && lower[0] === "search" && lower[1] === "hints") {
     const term = (req.query.get("SearchTerm") ?? req.query.get("searchTerm") ?? "").trim().toLowerCase();
     const limit = clampLimit(req.query.get("Limit") ?? req.query.get("limit"), 30);
-    const matches = queryItems(catalog, serverId, token, {
+    const matches = queryItems(catalog, dtoCtx, {
       recursive: true,
       includeItemTypes: new Set(["movie", "series"]),
       ...(term ? { searchTerm: term } : {}),
@@ -1388,21 +1704,6 @@ export async function handleVirtualEmbyRequest(
     return { kind: "json", status: 200, body: { Items: [], TotalRecordCount: 0 } };
   }
 
-  // Stream / Download: GET|HEAD /Videos/{itemId}/stream[.{ext}] | /Videos/{itemId}/original[.{ext}] | /Items/{itemId}/Download
-  if (
-    (method === "GET" || method === "HEAD") &&
-    ((lower[0] === "videos" &&
-      segments[1] &&
-      lower[2] &&
-      (lower[2] === "stream" || lower[2].startsWith("stream.") || lower[2] === "original" || lower[2].startsWith("original."))) ||
-      (lower[0] === "items" && segments[1] && lower[2] === "download"))
-  ) {
-    const itemId = segments[1]!;
-    const mediaSourceId = req.query.get("MediaSourceId") ?? req.query.get("mediaSourceId") ?? undefined;
-    const userAgent = req.headers.get("user-agent") ?? undefined;
-    return handleVideoStream(catalog, itemId, mediaSourceId, userAgent, ctx, nowIso);
-  }
-
   return {
     kind: "json",
     status: 404,
@@ -1416,6 +1717,7 @@ async function handleAuthenticateByName(
   req: VirtualEmbyRequest,
   repo: WorkflowRepository,
   serverId: string,
+  loginThrottle?: VirtualEmbyLoginThrottle,
 ): Promise<VirtualEmbyResult> {
   const body = isRecord(req.body) ? req.body : {};
   const username = String(body["Username"] ?? body["username"] ?? "").trim();
@@ -1425,6 +1727,20 @@ async function handleAuthenticateByName(
   }
 
   const accounts = await repo.listAccounts();
+  const throttleIdentity =
+    accounts.length === 1 && accounts[0]?.id === DEFAULT_ACCOUNT_ID ? "" : username;
+  if (loginThrottle) {
+    const verdict = loginThrottle.check(req.headers, throttleIdentity);
+    if (!verdict.allowed) {
+      return {
+        kind: "json",
+        status: 429,
+        body: { error: "Too many login attempts, please try again later" },
+        headers: { "Retry-After": String(verdict.retryAfterSec) },
+      };
+    }
+  }
+
   let account: Account | null = null;
   if (username) {
     account = accounts.find((a) => a.username.toLowerCase() === username.toLowerCase()) ?? null;
@@ -1433,6 +1749,7 @@ async function handleAuthenticateByName(
   }
 
   if (!account) {
+    loginThrottle?.recordFailure(req.headers, throttleIdentity);
     return { kind: "json", status: 401, body: { error: "Invalid username or password" } };
   }
 
@@ -1442,9 +1759,11 @@ async function handleAuthenticateByName(
     authenticated = await verifyPassword(pw, account.passwordHash);
   }
   if (!authenticated) {
+    loginThrottle?.recordFailure(req.headers, throttleIdentity);
     return { kind: "json", status: 401, body: { error: "Invalid username or password" } };
   }
 
+  loginThrottle?.recordSuccess(req.headers, throttleIdentity);
   const accessToken = await ensureVirtualEmbyToken(repo, account.id);
   const clientInfo = parseClientHeader(req.headers);
   const userDto = buildUserDto(account, serverId);
@@ -1509,7 +1828,7 @@ async function handleItemImageRequest(
 function handlePlaybackInfo(
   catalog: AccountCatalog,
   itemId: string,
-  token: string,
+  dtoCtx: DtoContext,
 ): VirtualEmbyResult {
   const movie = catalog.movieById.get(itemId);
   const episode = catalog.episodeById.get(itemId);
@@ -1522,29 +1841,32 @@ function handlePlaybackInfo(
     kind: "json",
     status: 200,
     body: {
-      MediaSources: copies.map((c) => buildMediaSourceDto(itemId, c, token, durationTicks)),
+      MediaSources: copies.map((c) =>
+        buildMediaSourceDto(itemId, c, dtoCtx.accountId, dtoCtx.token, durationTicks, dtoCtx.nowMs),
+      ),
       PlaySessionId: randomUUID().replace(/-/g, ""),
     },
   };
 }
 
 async function handleVideoStream(
-  catalog: AccountCatalog,
+  baseCopies: readonly PlayableCopy[],
   itemId: string,
   mediaSourceId: string | undefined,
   userAgent: string | undefined,
   ctx: VirtualEmbyContext,
   nowIso: string,
+  excludeCopyKeys?: ReadonlySet<string>,
 ): Promise<VirtualEmbyResult> {
-  const movie = catalog.movieById.get(itemId);
-  const episode = catalog.episodeById.get(itemId);
-  const baseCopies = movie?.copies ?? episode?.copies;
-  if (!baseCopies || baseCopies.length === 0) {
+  const filteredCopies = excludeCopyKeys?.size
+    ? baseCopies.filter((c) => !excludeCopyKeys.has(`${c.storage.id}::${c.fileId}`))
+    : [...baseCopies];
+  if (filteredCopies.length === 0) {
     return { kind: "json", status: 404, body: { error: `Playable item not found: ${itemId}` } };
   }
 
   // Order candidates: requested MediaSourceId first (if valid), then remaining healthy copies for automatic failover.
-  let candidates = [...baseCopies];
+  let candidates = [...filteredCopies];
   if (mediaSourceId) {
     const decoded = decodeEmbyMediaSourceId(mediaSourceId);
     if (decoded) {
@@ -1587,10 +1909,18 @@ async function handleVideoStream(
     } catch (error) {
       lastError = error;
       if (isDriveFileNotFoundError(error)) {
-        // Lazy invalidation: mark ONLY this drive copy as missing_on_drive (never
-        // flips episode_states.obtained, so patrol won't re-download user-deleted files),
-        // then automatically fail over to the next sibling drive copy!
-        if (ctx.repository.setEpisodeCopyFileStatus) {
+        // Lazy invalidation: prune ONLY this missing fileId (or tombstone the row if it
+        // was the last fileId on this drive; never flips episode_states.obtained so patrol
+        // won't re-download user-deleted files), then automatically fail over to sibling copies!
+        if (ctx.repository.markEpisodeCopyFileMissing) {
+          await ctx.repository.markEpisodeCopyFileMissing({
+            trackedSeasonId: copy.trackedSeasonId,
+            episodeCode: copy.episodeCode,
+            storageId: copy.storage.id,
+            fileId: copy.fileId,
+            verifiedAt: nowIso,
+          });
+        } else if (ctx.repository.setEpisodeCopyFileStatus) {
           await ctx.repository.setEpisodeCopyFileStatus({
             trackedSeasonId: copy.trackedSeasonId,
             episodeCode: copy.episodeCode,
@@ -1655,8 +1985,11 @@ async function handlePlaybackReport(
   const durationTicks =
     Number.isFinite(rawDur) && rawDur > 0 ? Math.trunc(rawDur) : (existing?.durationTicks ?? 0);
 
+  const clientCompleted =
+    body["Played"] === true || body["played"] === true || body["PlaybackCompleted"] === true;
   const reachedEnd =
-    durationTicks > 0 && positionTicks / durationTicks >= COMPLETION_RATIO_THRESHOLD;
+    clientCompleted ||
+    (durationTicks > 0 && positionTicks / durationTicks >= COMPLETION_RATIO_THRESHOLD);
   const played = Boolean(existing?.played || reachedEnd);
   const playCount = reachedEnd && !existing?.played
     ? (existing?.playCount ?? 0) + 1
@@ -1746,24 +2079,23 @@ function buildLibraryViews(catalog: AccountCatalog, serverId: string): Record<st
 function findSingleItemDto(
   catalog: AccountCatalog,
   itemId: string,
-  serverId: string,
-  token: string,
+  dtoCtx: DtoContext,
 ): Record<string, unknown> | null {
-  if (itemId === EMBY_LIBRARY_IDS.movies) return buildLibraryDto("movies", serverId, catalog.movies.length);
-  if (itemId === EMBY_LIBRARY_IDS.tv) return buildLibraryDto("tv", serverId, catalog.tvSeries.length);
-  if (itemId === EMBY_LIBRARY_IDS.anime) return buildLibraryDto("anime", serverId, catalog.animeSeries.length);
+  if (itemId === EMBY_LIBRARY_IDS.movies) return buildLibraryDto("movies", dtoCtx.serverId, catalog.movies.length);
+  if (itemId === EMBY_LIBRARY_IDS.tv) return buildLibraryDto("tv", dtoCtx.serverId, catalog.tvSeries.length);
+  if (itemId === EMBY_LIBRARY_IDS.anime) return buildLibraryDto("anime", dtoCtx.serverId, catalog.animeSeries.length);
 
   const movie = catalog.movieById.get(itemId);
-  if (movie) return buildMovieDto(movie, serverId, token);
+  if (movie) return buildMovieDto(movie, dtoCtx);
 
   const series = catalog.seriesById.get(itemId);
-  if (series) return buildSeriesDto(series, serverId);
+  if (series) return buildSeriesDto(series, dtoCtx.serverId);
 
   const season = catalog.seasonById.get(itemId);
-  if (season) return buildSeasonDto(season, serverId);
+  if (season) return buildSeasonDto(season, dtoCtx.serverId);
 
   const episode = catalog.episodeById.get(itemId);
-  if (episode) return buildEpisodeDto(episode, serverId, token);
+  if (episode) return buildEpisodeDto(episode, dtoCtx);
 
   return null;
 }
@@ -1782,36 +2114,35 @@ interface ItemQueryOptions {
 
 function queryItems(
   catalog: AccountCatalog,
-  serverId: string,
-  token: string,
+  dtoCtx: DtoContext,
   opts: ItemQueryOptions,
 ): Record<string, unknown>[] {
   let dtos: Record<string, unknown>[] = [];
 
   if (opts.ids && opts.ids.size > 0) {
     for (const id of opts.ids) {
-      const dto = findSingleItemDto(catalog, id, serverId, token);
+      const dto = findSingleItemDto(catalog, id, dtoCtx);
       if (dto) dtos.push(dto);
     }
   } else if (opts.parentId) {
     const parent = parseEmbyItemId(opts.parentId);
     if (parent?.kind === "library") {
       if (parent.library === "movies") {
-        dtos = catalog.movies.map((m) => buildMovieDto(m, serverId, token));
+        dtos = catalog.movies.map((m) => buildMovieDto(m, dtoCtx));
       } else {
         const list = parent.library === "anime" ? catalog.animeSeries : catalog.tvSeries;
         if (opts.recursive) {
           for (const s of list) {
-            dtos.push(buildSeriesDto(s, serverId));
+            dtos.push(buildSeriesDto(s, dtoCtx.serverId));
             for (const sea of s.seasons) {
-              dtos.push(buildSeasonDto(sea, serverId));
+              dtos.push(buildSeasonDto(sea, dtoCtx.serverId));
               for (const ep of sea.episodes) {
-                dtos.push(buildEpisodeDto(ep, serverId, token));
+                dtos.push(buildEpisodeDto(ep, dtoCtx));
               }
             }
           }
         } else {
-          dtos = list.map((s) => buildSeriesDto(s, serverId));
+          dtos = list.map((s) => buildSeriesDto(s, dtoCtx.serverId));
         }
       }
     } else if (parent?.kind === "series") {
@@ -1819,32 +2150,32 @@ function queryItems(
       if (s) {
         if (opts.recursive) {
           for (const sea of s.seasons) {
-            dtos.push(buildSeasonDto(sea, serverId));
-            for (const ep of sea.episodes) dtos.push(buildEpisodeDto(ep, serverId, token));
+            dtos.push(buildSeasonDto(sea, dtoCtx.serverId));
+            for (const ep of sea.episodes) dtos.push(buildEpisodeDto(ep, dtoCtx));
           }
         } else {
-          dtos = s.seasons.map((sea) => buildSeasonDto(sea, serverId));
+          dtos = s.seasons.map((sea) => buildSeasonDto(sea, dtoCtx.serverId));
         }
       }
     } else if (parent?.kind === "season") {
       const sea = catalog.seasonById.get(opts.parentId);
       if (sea) {
-        dtos = sea.episodes.map((ep) => buildEpisodeDto(ep, serverId, token));
+        dtos = sea.episodes.map((ep) => buildEpisodeDto(ep, dtoCtx));
       }
     }
   } else if (opts.recursive || (opts.includeItemTypes && opts.includeItemTypes.size > 0)) {
-    for (const m of catalog.movies) dtos.push(buildMovieDto(m, serverId, token));
+    for (const m of catalog.movies) dtos.push(buildMovieDto(m, dtoCtx));
     for (const s of [...catalog.tvSeries, ...catalog.animeSeries]) {
-      dtos.push(buildSeriesDto(s, serverId));
+      dtos.push(buildSeriesDto(s, dtoCtx.serverId));
       for (const sea of s.seasons) {
-        dtos.push(buildSeasonDto(sea, serverId));
-        for (const ep of sea.episodes) dtos.push(buildEpisodeDto(ep, serverId, token));
+        dtos.push(buildSeasonDto(sea, dtoCtx.serverId));
+        for (const ep of sea.episodes) dtos.push(buildEpisodeDto(ep, dtoCtx));
       }
     }
   } else {
     // Non-recursive root query returns top-level movies + series
-    for (const m of catalog.movies) dtos.push(buildMovieDto(m, serverId, token));
-    for (const s of [...catalog.tvSeries, ...catalog.animeSeries]) dtos.push(buildSeriesDto(s, serverId));
+    for (const m of catalog.movies) dtos.push(buildMovieDto(m, dtoCtx));
+    for (const s of [...catalog.tvSeries, ...catalog.animeSeries]) dtos.push(buildSeriesDto(s, dtoCtx.serverId));
   }
 
   // Apply type filters
@@ -1922,18 +2253,17 @@ function queryItems(
 
 function collectResumableItems(
   catalog: AccountCatalog,
-  serverId: string,
-  token: string,
+  dtoCtx: DtoContext,
 ): Record<string, unknown>[] {
   const items: Array<{ lastPlayedAt: string; dto: Record<string, unknown> }> = [];
   for (const m of catalog.movies) {
     if (m.progress && m.progress.positionTicks > 0 && !m.progress.played) {
-      items.push({ lastPlayedAt: m.progress.lastPlayedAt, dto: buildMovieDto(m, serverId, token) });
+      items.push({ lastPlayedAt: m.progress.lastPlayedAt, dto: buildMovieDto(m, dtoCtx) });
     }
   }
   for (const ep of catalog.episodeById.values()) {
     if (ep.progress && ep.progress.positionTicks > 0 && !ep.progress.played) {
-      items.push({ lastPlayedAt: ep.progress.lastPlayedAt, dto: buildEpisodeDto(ep, serverId, token) });
+      items.push({ lastPlayedAt: ep.progress.lastPlayedAt, dto: buildEpisodeDto(ep, dtoCtx) });
     }
   }
   items.sort((a, b) => b.lastPlayedAt.localeCompare(a.lastPlayedAt));
@@ -1942,8 +2272,7 @@ function collectResumableItems(
 
 function collectNextUpEpisodes(
   catalog: AccountCatalog,
-  serverId: string,
-  token: string,
+  dtoCtx: DtoContext,
   seriesIdFilter?: string,
 ): Record<string, unknown>[] {
   const results: Array<{ lastPlayedAt: string; dto: Record<string, unknown> }> = [];
@@ -1969,12 +2298,12 @@ function collectNextUpEpisodes(
     if (lastInteractedIdx === -1) continue;
     const current = flat[lastInteractedIdx]!;
     if (!current.progress?.played) {
-      results.push({ lastPlayedAt: latestPlayedAt, dto: buildEpisodeDto(current, serverId, token) });
+      results.push({ lastPlayedAt: latestPlayedAt, dto: buildEpisodeDto(current, dtoCtx) });
       continue;
     }
     const next = flat.slice(lastInteractedIdx + 1).find((ep) => !ep.progress?.played);
     if (next) {
-      results.push({ lastPlayedAt: latestPlayedAt, dto: buildEpisodeDto(next, serverId, token) });
+      results.push({ lastPlayedAt: latestPlayedAt, dto: buildEpisodeDto(next, dtoCtx) });
     }
   }
   results.sort((a, b) => b.lastPlayedAt.localeCompare(a.lastPlayedAt));

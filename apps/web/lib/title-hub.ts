@@ -256,7 +256,7 @@ export async function getTitleHubView(tmdbId: number, storageId?: string): Promi
   const dbTitle = trackedStates[0]?.title;
   const resolvedMediaType: "tv" | "anime" = dbTitle?.type === "anime" ? "anime" : "tv";
   const progressRows: PlaybackProgress[] = repository.listPlaybackProgress
-    ? await repository.listPlaybackProgress(scope.accountId)
+    ? await repository.listPlaybackProgress(scope.accountId, { tmdbId, mediaType: resolvedMediaType })
     : [];
   const progressBySeasonEp = new Map<string, PlaybackProgress>();
   for (const row of progressRows) {
@@ -306,7 +306,8 @@ export async function getTitleHubView(tmdbId: number, storageId?: string): Promi
         scope,
       });
       const episodesWithBadges: TitleHubEpisode[] = (view?.episodes ?? []).map((ep) => {
-        const driveBadges: EpisodeDriveBadge[] = (ep.drives ?? []).map((d) => {
+        const rawDrives = ep.drives ?? [];
+        const driveBadges: EpisodeDriveBadge[] = rawDrives.map((d) => {
           const metaInfo = storageMetaById.get(d.storageId);
           return {
             storageId: d.storageId,
@@ -320,6 +321,14 @@ export async function getTitleHubView(tmdbId: number, storageId?: string): Promi
           ep.obtained &&
           driveBadges.length > 0 &&
           driveBadges.every((d) => d.fileStatus === "missing_on_drive");
+        const hasUsableFile =
+          rawDrives.some(
+            (d) =>
+              d.fileStatus !== "missing_on_drive" &&
+              d.fileIds.some((id) => Boolean(id)) &&
+              storageMetaById.has(d.storageId),
+          ) ||
+          (rawDrives.length === 0 && ep.verifiedFileCount > 0 && storageMetaById.size > 0);
         let episodeNumber = 0;
         try {
           episodeNumber = episodePartsFromCode(ep.episodeCode).episodeNumber;
@@ -331,7 +340,7 @@ export async function getTitleHubView(tmdbId: number, storageId?: string): Promi
             ? formatPlaybackProgressLabel(progressBySeasonEp.get(`${seasonNumber}::${episodeNumber}`))
             : null;
         const embyItemId =
-          ep.obtained && !allMissingOnDrive && episodeNumber > 0
+          ep.obtained && !allMissingOnDrive && hasUsableFile && episodeNumber > 0
             ? buildEmbyItemId({
                 kind: "episode",
                 mediaType: resolvedMediaType,
@@ -431,11 +440,12 @@ export async function getDetailView(
     );
     let obtained = movieStates.some((s) => s.episodes.some((episode) => episode.obtained));
     const driveBadges: EpisodeDriveBadge[] = [];
+    let hasUsableMovieFile = false;
+    const storages = await repository.listConnectedStorages(scope.accountId);
+    const storageMetaById = new Map(
+      storages.map((s) => [s.id, { provider: s.provider, label: s.label }]),
+    );
     if (repository.obtainedEpisodesForSeason) {
-      const storages = await repository.listConnectedStorages(scope.accountId);
-      const storageMetaById = new Map(
-        storages.map((s) => [s.id, { provider: s.provider, label: s.label }]),
-      );
       const union = await repository.obtainedEpisodesForSeason(movieState.season.id, scope.accountId);
       if (scope.connectedStorageId === null && union.some((c) => c.obtained)) {
         obtained = true;
@@ -444,6 +454,13 @@ export async function getDetailView(
         if (!row.obtained) continue;
         for (const d of row.drives) {
           if (scope.connectedStorageId !== null && d.storageId !== scope.connectedStorageId) continue;
+          if (
+            d.fileStatus !== "missing_on_drive" &&
+            d.fileIds.some((id) => Boolean(id)) &&
+            storageMetaById.has(d.storageId)
+          ) {
+            hasUsableMovieFile = true;
+          }
           if (driveBadges.some((b) => b.storageId === d.storageId)) continue;
           const metaInfo = storageMetaById.get(d.storageId);
           driveBadges.push({
@@ -455,6 +472,13 @@ export async function getDetailView(
           });
         }
       }
+    }
+    if (!hasUsableMovieFile && driveBadges.length === 0) {
+      hasUsableMovieFile = movieStates.some(
+        (s) =>
+          Boolean(s.connectedStorageId && storageMetaById.has(s.connectedStorageId)) &&
+          s.episodes.some((ep) => ep.obtained && ep.verifiedFileIds.some((id) => Boolean(id))),
+      );
     }
     const allMissingOnDrive =
       obtained &&
@@ -471,7 +495,9 @@ export async function getDetailView(
       : null;
     const progressLabel = formatPlaybackProgressLabel(movieProgress);
     const embyItemId =
-      obtained && !allMissingOnDrive ? buildEmbyItemId({ kind: "movie", tmdbId }) : undefined;
+      obtained && !allMissingOnDrive && hasUsableMovieFile
+        ? buildEmbyItemId({ kind: "movie", tmdbId })
+        : undefined;
     const reserved = isMovieUnreleased(movieState.title.releaseDate, now);
     const state = acquiring ? "acquiring" : reserved ? "reserved" : obtained ? "acquired" : "missing";
     return movieHubViewFromTitle(movieState.title, state, acquiring, obtained, driveBadges, {

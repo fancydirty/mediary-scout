@@ -290,11 +290,9 @@ export class TianyiClient {
     if (!session) {
       throw new TianyiAuthError("TIANYI_SESSION_RENEW_FAILED: 会话续期失败,需重新登录天翼");
     }
-    // 3) 更新全套凭证并回写
+    // 3) 更新全套凭证并回写（sessionKey 换新时绝不留用旧 sessionSecret）
     this.sessionKey = session.sessionKey;
-    if (session.sessionSecret) {
-      this.sessionSecret = session.sessionSecret;
-    }
+    this.sessionSecret = session.sessionSecret || "";
     if (session.accessToken) {
       this.accessToken = session.accessToken;
     }
@@ -465,8 +463,14 @@ export class TianyiClient {
     if (!rawUrl) {
       throw new Error("TIANYI_DOWNLOAD_FAILED: response missing fileDownloadUrl");
     }
-    const normalizedUrl = rawUrl.startsWith("http://") ? `https://${rawUrl.slice("http://".length)}` : rawUrl;
-    const finalUrl = await this.resolveRedirect(normalizedUrl, { "User-Agent": USER_AGENT });
+    const normalizedUrl = assertSafeExternalHttpUrl(
+      rawUrl.startsWith("http://") ? `https://${rawUrl.slice("http://".length)}` : rawUrl,
+      "TIANYI_DOWNLOAD_FAILED",
+    );
+    const finalUrl = assertSafeExternalHttpUrl(
+      await this.resolveRedirect(normalizedUrl, { "User-Agent": USER_AGENT }),
+      "TIANYI_DOWNLOAD_FAILED",
+    );
     return {
       url: finalUrl,
       headers: {},
@@ -480,8 +484,11 @@ export class TianyiClient {
     params: Array<[string, string]>,
     retried = false,
   ): Promise<Record<string, unknown>> {
-    const date = new Date().toUTCString();
     const secret = this.sessionSecret ?? "";
+    if (!secret) {
+      throw new TianyiAuthError("TIANYI_DOWNLOAD_FAILED: sessionSecret missing for PC HMAC signing");
+    }
+    const date = new Date().toUTCString();
     const signStr = `SessionKey=${this.sessionKey}&Operate=GET&RequestURI=${requestUri}&Date=${date}`;
     const signature = createHmac("sha1", secret).update(signStr).digest("hex").toUpperCase();
     const q = new URLSearchParams(params);
@@ -772,19 +779,68 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+const MAX_REDIRECT_HOPS = 5;
+
+function assertSafeExternalHttpUrl(rawUrl: string, errorPrefix: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error(`${errorPrefix}: invalid download URL`);
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    throw new Error(`${errorPrefix}: disallowed download URL scheme ${parsed.protocol}`);
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error(`${errorPrefix}: download URL must not contain embedded credentials`);
+  }
+  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host.endsWith(".local") ||
+    host === "::1" ||
+    host === "::" ||
+    host.startsWith("fe80:") ||
+    host.startsWith("fc") ||
+    host.startsWith("fd") ||
+    /^0\./.test(host) ||
+    /^127\./.test(host) ||
+    /^10\./.test(host) ||
+    /^169\.254\./.test(host) ||
+    /^192\.168\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(host) ||
+    /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(host)
+  ) {
+    throw new Error(`${errorPrefix}: disallowed private/internal download host ${host}`);
+  }
+  return parsed.toString();
+}
+
 async function defaultTianyiResolveRedirect(
   url: string,
   headers: Record<string, string>,
 ): Promise<string> {
-  const res = await fetch(url, {
-    method: "GET",
-    headers,
-    redirect: "manual",
-    signal: AbortSignal.timeout(20_000),
-  });
-  const location = res.status >= 300 && res.status < 400 ? res.headers.get("location") : null;
-  await res.body?.cancel().catch(() => undefined);
-  return location ? new URL(location, url).toString() : url;
+  let current = assertSafeExternalHttpUrl(url, "TIANYI_DOWNLOAD_FAILED");
+  for (let hop = 0; hop < MAX_REDIRECT_HOPS; hop += 1) {
+    const res = await fetch(current, {
+      method: "GET",
+      headers: { ...headers, Range: "bytes=0-0" },
+      redirect: "manual",
+      signal: AbortSignal.timeout(20_000),
+    });
+    const location = res.status >= 300 && res.status < 400 ? res.headers.get("location") : null;
+    await res.body?.cancel().catch(() => undefined);
+    if (location) {
+      current = assertSafeExternalHttpUrl(new URL(location, current).toString(), "TIANYI_DOWNLOAD_FAILED");
+      continue;
+    }
+    if (res.status >= 200 && res.status < 300) {
+      return current;
+    }
+    throw new Error(`TIANYI_DOWNLOAD_FAILED: redirect resolution returned HTTP ${res.status}`);
+  }
+  throw new Error("TIANYI_DOWNLOAD_FAILED: too many redirects while resolving download URL");
 }
 
 async function defaultTianyiFetch(url: string, init: TianyiHttpInit): Promise<{ status: number; text: string }> {

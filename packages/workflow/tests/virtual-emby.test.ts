@@ -6,10 +6,12 @@ import {
   InMemoryWorkflowRepository,
   buildEmbyItemId,
   createEpisodeStates,
+  createVirtualEmbyPlaybackToken,
   encodeEmbyMediaSourceId,
   ensureVirtualEmbyToken,
   handleVirtualEmbyRequest,
   hashPassword,
+  loadVirtualEmbyPlayableCounts,
   regenerateVirtualEmbyToken,
   setVirtualEmbyEnabled,
   type MediaTitle,
@@ -507,5 +509,117 @@ describe("Virtual Emby Server", () => {
       const items = (nextUp.body as { Items: Array<{ Id: string }> }).Items;
       expect(items.map((i) => i.Id)).toEqual(["ep_tv_1399_1_2"]);
     }
+
+    // Stopped report with explicit Played: true (no RunTimeTicks) marks played and clears position
+    const stopDone = await handleVirtualEmbyRequest(
+      makeReq("POST", "/Sessions/Playing/Stopped", {
+        token: ownerToken,
+        body: { ItemId: "ep_tv_1399_1_2", PositionTicks: 500_000, Played: true },
+      }),
+      ctx,
+    );
+    expect(statusOf(stopDone)).toBe(204);
+    const saved = await repo.getPlaybackProgress({
+      accountId: DEFAULT_ACCOUNT_ID,
+      tmdbId: 1399,
+      mediaType: "tv",
+      seasonNumber: 1,
+      episodeNumber: 2,
+    });
+    expect(saved?.played).toBe(true);
+    expect(saved?.positionTicks).toBe(0);
+  });
+
+  it("enforces item-scoped playback tokens, login throttle 429, and accurate playable counts", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    const { ownerToken } = await seedCatalog(repo);
+    const nowIso = "2026-11-28T12:00:00.000Z";
+    const nowMs = Date.parse(nowIso);
+
+    const resolveLink = vi.fn(async () => ({
+      url: "https://cdn.115.example/movie.mkv",
+      headers: {},
+      supportsRedirect: true,
+    }));
+
+    const scopedTok = createVirtualEmbyPlaybackToken({
+      accountId: DEFAULT_ACCOUNT_ID,
+      itemId: "mov_550",
+      masterToken: ownerToken,
+      nowMs,
+    });
+
+    // Scoped token works for its exact item stream...
+    const okStream = await handleVirtualEmbyRequest(
+      makeReq("GET", "/Videos/mov_550/stream", { query: { api_key: scopedTok } }),
+      { repository: repo, resolveDownloadLink: resolveLink, now: () => nowIso },
+    );
+    expect(okStream.kind).toBe("redirect");
+
+    // ...is REJECTED on another item stream...
+    const wrongItem = await handleVirtualEmbyRequest(
+      makeReq("GET", "/Videos/ep_tv_1399_1_1/stream", { query: { api_key: scopedTok } }),
+      { repository: repo, resolveDownloadLink: resolveLink, now: () => nowIso },
+    );
+    expect(statusOf(wrongItem)).toBe(401);
+
+    // ...is REJECTED on catalog/Views endpoints...
+    const wrongRoute = await handleVirtualEmbyRequest(
+      makeReq("GET", "/Users/u1/Views", { query: { api_key: scopedTok } }),
+      { repository: repo, resolveDownloadLink: resolveLink, now: () => nowIso },
+    );
+    expect(statusOf(wrongRoute)).toBe(401);
+
+    // ...and is immediately invalidated when master token rotates!
+    await regenerateVirtualEmbyToken(repo, DEFAULT_ACCOUNT_ID);
+    const afterRotate = await handleVirtualEmbyRequest(
+      makeReq("GET", "/Videos/mov_550/stream", { query: { api_key: scopedTok } }),
+      { repository: repo, resolveDownloadLink: resolveLink, now: () => nowIso },
+    );
+    expect(statusOf(afterRotate)).toBe(401);
+
+    // Login throttle blocks with 429 + Retry-After before verifying password
+    const throttled = await handleVirtualEmbyRequest(
+      makeReq("POST", "/Users/AuthenticateByName", { body: { Username: "owner", Pw: "bad" } }),
+      {
+        repository: repo,
+        resolveDownloadLink: resolveLink,
+        loginThrottle: {
+          check: () => ({ allowed: false, retryAfterSec: 45 }),
+          recordFailure: vi.fn(),
+          recordSuccess: vi.fn(),
+        },
+      },
+    );
+    expect(statusOf(throttled)).toBe(429);
+    if (throttled.kind === "json") {
+      expect(throttled.headers?.["Retry-After"]).toBe("45");
+    }
+
+    // Playable counts exclude tombstoned copies
+    expect(await loadVirtualEmbyPlayableCounts(repo, DEFAULT_ACCOUNT_ID)).toEqual({
+      movies: 1,
+      series: 1,
+      episodes: 2,
+    });
+    await repo.setEpisodeCopyFileStatus({
+      trackedSeasonId: "tmdb_movie_550_movie",
+      episodeCode: "S01E01",
+      storageId: "cs_115",
+      fileStatus: "missing_on_drive",
+      verifiedAt: nowIso,
+    });
+    await repo.setEpisodeCopyFileStatus({
+      trackedSeasonId: "tmdb_movie_550_movie",
+      episodeCode: "S01E01",
+      storageId: "cs_quark",
+      fileStatus: "missing_on_drive",
+      verifiedAt: nowIso,
+    });
+    expect(await loadVirtualEmbyPlayableCounts(repo, DEFAULT_ACCOUNT_ID)).toEqual({
+      movies: 0,
+      series: 1,
+      episodes: 2,
+    });
   });
 });

@@ -24,10 +24,10 @@ export interface DriveDownloadCacheKeyInput {
 }
 
 /** Build a cache key: 115 CDN links are strictly User-Agent-bound, so they key on
- *  `(storageId, fileId, userAgent)`; all other 5 drives share across UAs. */
+ *  `(storageId, fileId, provider, userAgent)`; all other 5 drives share across UAs. */
 export function buildDriveDownloadCacheKey(input: DriveDownloadCacheKeyInput): string {
   const uaKey = input.provider === "pan115" ? (input.userAgent?.trim() ?? "") : "*";
-  return `${input.storageId}\u0000${input.fileId}\u0000${uaKey}`;
+  return `${input.storageId}\u0000${input.fileId}\u0000${input.provider}\u0000${uaKey}`;
 }
 
 export class DriveDownloadLinkCache {
@@ -64,7 +64,7 @@ export class DriveDownloadLinkCache {
 
   set(key: string, link: DriveDownloadLink, ttlMs?: number): void {
     const effectiveTtl = ttlMs ?? link.ttlMs ?? this.defaultTtlMs;
-    if (effectiveTtl <= 0) {
+    if (effectiveTtl <= 0 || this.maxEntries <= 0) {
       return;
     }
     if (this.entries.has(key)) {

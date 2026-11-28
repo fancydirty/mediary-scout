@@ -1645,12 +1645,14 @@ export async function setVirtualEmbyEnabledAction(enabled: boolean): Promise<Vir
     const { getWorkflowRepository, requireAuthenticatedAccountId } = await import("../lib/workflow-runtime");
     const accountId = await requireAuthenticatedAccountId();
     const repository = getWorkflowRepository();
-    await setVirtualEmbyEnabled(repository, enabled);
     let token: string | undefined;
     if (enabled) {
+      // Provision serverId + token BEFORE publishing the enabled switch so /emby
+      // never turns on while prerequisites failed to persist.
       await ensureVirtualEmbyServerId(repository);
       token = await ensureVirtualEmbyToken(repository, accountId);
     }
+    await setVirtualEmbyEnabled(repository, enabled);
     revalidatePath("/settings");
     revalidatePath("/show/[tmdbId]", "page");
     return { ok: true, ...(token ? { token } : {}) };

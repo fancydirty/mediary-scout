@@ -268,6 +268,7 @@ const SCHEMA = `
     value text NOT NULL,
     PRIMARY KEY (account_id, key)
   );
+  CREATE INDEX IF NOT EXISTS account_settings_key_value ON account_settings (key, value);
   CREATE TABLE IF NOT EXISTS drive_space_cache (
     storage_id text PRIMARY KEY,
     total_bytes bigint NOT NULL,
@@ -303,6 +304,7 @@ const SCHEMA = `
     PRIMARY KEY (account_id, tmdb_id, media_type, season_number, episode_number)
   );
   CREATE INDEX IF NOT EXISTS playback_progress_account ON playback_progress (account_id, last_played_at DESC);
+  CREATE INDEX IF NOT EXISTS playback_progress_account_title ON playback_progress (account_id, media_type, tmdb_id);
   ALTER TABLE tracked_seasons ADD COLUMN IF NOT EXISTS account_id text NOT NULL DEFAULT 'acct_default';
   ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS account_id text NOT NULL DEFAULT 'acct_default';
   CREATE INDEX IF NOT EXISTS workflow_runs_season_account ON workflow_runs (tracked_season_id, account_id);
@@ -1301,6 +1303,29 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     );
   }
 
+  async setSettingIfAbsent(key: string, value: string): Promise<string> {
+    await this.ensureSchema();
+    return this.withTransaction(async (client) => {
+      await client.query(
+        "INSERT INTO app_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING",
+        [key, value],
+      );
+      const row = await client.query<{ value: string }>(
+        "SELECT value FROM app_settings WHERE key = $1 FOR UPDATE",
+        [key],
+      );
+      const existing = row.rows[0]?.value;
+      if (existing && existing.trim().length > 0) {
+        return existing;
+      }
+      await client.query(
+        "INSERT INTO app_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+        [key, value],
+      );
+      return value;
+    });
+  }
+
   async deleteSetting(key: string): Promise<void> {
     await this.ensureSchema();
     await this.pool.query("DELETE FROM app_settings WHERE key = $1", [key]);
@@ -1322,6 +1347,57 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
         "ON CONFLICT (account_id, key) DO UPDATE SET value = EXCLUDED.value",
       [accountId, key, value],
     );
+  }
+
+  async setAccountSettingIfAbsent(accountId: string, key: string, value: string): Promise<string> {
+    await this.ensureSchema();
+    return this.withTransaction(async (client) => {
+      await client.query(
+        "INSERT INTO account_settings (account_id, key, value) VALUES ($1, $2, $3) ON CONFLICT (account_id, key) DO NOTHING",
+        [accountId, key, value],
+      );
+      const row = await client.query<{ value: string }>(
+        "SELECT value FROM account_settings WHERE account_id = $1 AND key = $2 FOR UPDATE",
+        [accountId, key],
+      );
+      const existing = row.rows[0]?.value;
+      if (existing && existing.trim().length > 0) {
+        return existing;
+      }
+      await client.query(
+        "INSERT INTO account_settings (account_id, key, value) VALUES ($1, $2, $3) " +
+          "ON CONFLICT (account_id, key) DO UPDATE SET value = EXCLUDED.value",
+        [accountId, key, value],
+      );
+      return value;
+    });
+  }
+
+  async findAccountBySetting(key: string, value: string): Promise<Account | null> {
+    await this.ensureSchema();
+    const result = await this.pool.query<{
+      id: string;
+      username: string;
+      password_hash: string;
+      group_id: string | null;
+      is_owner: boolean;
+      created_at: string;
+    }>(
+      "SELECT a.id, a.username, a.password_hash, a.group_id, a.is_owner, a.created_at " +
+        "FROM accounts a JOIN account_settings s ON s.account_id = a.id " +
+        "WHERE s.key = $1 AND s.value = $2 LIMIT 1",
+      [key, value],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    return {
+      id: String(row.id),
+      username: String(row.username),
+      passwordHash: String(row.password_hash),
+      groupId: row.group_id ?? null,
+      isOwner: Boolean(row.is_owner),
+      createdAt: String(row.created_at),
+    };
   }
 
   async backfillConnectedStorageId(): Promise<number> {
@@ -1613,16 +1689,28 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     await this.ensureSchema();
     await this.withTransaction(async (client) => {
       for (const copy of copies) {
+        const explicitStatus = copy.fileStatus ?? null;
+        const explicitVerifiedAt = copy.verifiedAt ?? null;
         await client.query(
           "INSERT INTO episode_copies (tracked_season_id, episode_code, storage_id, file_ids, size_bytes, quality, run_id, recorded_at, file_status, verified_at) " +
-            "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10) " +
+            "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, COALESCE($9::text, 'present'), $10::text) " +
             "ON CONFLICT (tracked_season_id, episode_code, storage_id) DO UPDATE SET " +
             // Unknown facts (no file ids, no size, no quality) never erase known ones.
             "file_ids = CASE WHEN jsonb_array_length(EXCLUDED.file_ids) > 0 THEN EXCLUDED.file_ids ELSE episode_copies.file_ids END, " +
             "size_bytes = COALESCE(EXCLUDED.size_bytes, episode_copies.size_bytes), " +
             "quality = COALESCE(EXCLUDED.quality, episode_copies.quality), " +
             "run_id = EXCLUDED.run_id, recorded_at = EXCLUDED.recorded_at, " +
-            "file_status = EXCLUDED.file_status, verified_at = EXCLUDED.verified_at",
+            // Preserve existing missing_on_drive tombstone when an inventory refresh omits fileStatus
+            // for the same physical fileIds; reset only when explicit or when genuinely new fileIds land.
+            "file_status = CASE " +
+            "  WHEN $9::text IS NOT NULL THEN $9::text " +
+            "  WHEN jsonb_array_length(EXCLUDED.file_ids) = 0 OR episode_copies.file_ids = EXCLUDED.file_ids THEN episode_copies.file_status " +
+            "  ELSE 'present' END, " +
+            "verified_at = CASE " +
+            "  WHEN $10::text IS NOT NULL THEN $10::text " +
+            "  WHEN $9::text IS NOT NULL THEN NULL " +
+            "  WHEN jsonb_array_length(EXCLUDED.file_ids) = 0 OR episode_copies.file_ids = EXCLUDED.file_ids THEN episode_copies.verified_at " +
+            "  ELSE NULL END",
           [
             copy.trackedSeasonId,
             copy.episodeCode,
@@ -1632,11 +1720,48 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
             copy.quality,
             copy.runId,
             copy.recordedAt,
-            copy.fileStatus ?? "present",
-            copy.verifiedAt ?? null,
+            explicitStatus,
+            explicitVerifiedAt,
           ],
         );
       }
+    });
+  }
+
+  async markEpisodeCopyFileMissing(input: {
+    trackedSeasonId: string;
+    episodeCode: string;
+    storageId: string;
+    fileId: string;
+    verifiedAt: string;
+  }): Promise<void> {
+    await this.ensureSchema();
+    await this.withTransaction(async (client) => {
+      const existing = await client.query<{ file_ids: unknown }>(
+        "SELECT file_ids FROM episode_copies WHERE tracked_season_id = $1 AND episode_code = $2 AND storage_id = $3 FOR UPDATE",
+        [input.trackedSeasonId, input.episodeCode, input.storageId],
+      );
+      const row = existing.rows[0];
+      if (row) {
+        const fileIds = Array.isArray(row.file_ids) ? row.file_ids.map(String) : [];
+        if (fileIds.length > 1) {
+          const remaining = fileIds.filter((id) => id !== input.fileId);
+          if (remaining.length > 0) {
+            await client.query(
+              "UPDATE episode_copies SET file_ids = $1::jsonb, verified_at = $2 WHERE tracked_season_id = $3 AND episode_code = $4 AND storage_id = $5",
+              [JSON.stringify(remaining), input.verifiedAt, input.trackedSeasonId, input.episodeCode, input.storageId],
+            );
+            return;
+          }
+        }
+      }
+      await client.query(
+        "INSERT INTO episode_copies (tracked_season_id, episode_code, storage_id, file_ids, size_bytes, quality, run_id, recorded_at, file_status, verified_at) " +
+          "VALUES ($1, $2, $3, '[]'::jsonb, NULL, NULL, '', $4, 'missing_on_drive', $5) " +
+          "ON CONFLICT (tracked_season_id, episode_code, storage_id) DO UPDATE SET " +
+          "file_status = 'missing_on_drive', verified_at = EXCLUDED.verified_at",
+        [input.trackedSeasonId, input.episodeCode, input.storageId, input.verifiedAt, input.verifiedAt],
+      );
     });
   }
 
@@ -1731,12 +1856,25 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     return row ? mapPgPlaybackProgressRow(row) : null;
   }
 
-  async listPlaybackProgress(accountId: string): Promise<PlaybackProgress[]> {
+  async listPlaybackProgress(
+    accountId: string,
+    filter?: { tmdbId?: number; mediaType?: MediaType },
+  ): Promise<PlaybackProgress[]> {
     await this.ensureSchema();
+    const clauses = ["account_id = $1"];
+    const params: Array<string | number> = [accountId];
+    if (filter?.mediaType !== undefined) {
+      params.push(filter.mediaType);
+      clauses.push(`media_type = $${params.length}`);
+    }
+    if (filter?.tmdbId !== undefined) {
+      params.push(Math.trunc(filter.tmdbId));
+      clauses.push(`tmdb_id = $${params.length}`);
+    }
     const result = await this.pool.query<PgPlaybackProgressRow>(
       "SELECT account_id, tmdb_id, media_type, season_number, episode_number, position_ticks, duration_ticks, played, play_count, last_played_at " +
-        "FROM playback_progress WHERE account_id = $1 ORDER BY last_played_at DESC",
-      [accountId],
+        `FROM playback_progress WHERE ${clauses.join(" AND ")} ORDER BY last_played_at DESC`,
+      params,
     );
     return result.rows.map((row) => mapPgPlaybackProgressRow(row));
   }

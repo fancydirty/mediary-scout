@@ -5939,6 +5939,33 @@ select.setting-control {
   left: auto;
   right: 0;
 }
+.direct-play-wrap.is-compact .direct-play-menu.is-align-left {
+  left: 0;
+  right: auto;
+}
+.direct-play-manual-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 6px 8px 4px;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
+.direct-play-manual-copy span {
+  font-size: 11px;
+  color: var(--text-soft);
+}
+.direct-play-manual-copy input {
+  width: 220px;
+  max-width: 72vw;
+  padding: 4px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  color: var(--text);
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
 .direct-play-menu-item {
   display: flex;
   align-items: center;
