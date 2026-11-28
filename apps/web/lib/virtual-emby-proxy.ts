@@ -108,7 +108,7 @@ export async function streamProxiedDownload(input: {
   link: DriveDownloadLink;
   storageId: string;
   fileId: string;
-  resolveFreshLink: () => Promise<DriveDownloadLink>;
+  resolveFreshLink: (signal: AbortSignal) => Promise<DriveDownloadLink>;
   cache?: DriveDownloadLinkCache;
   fetchImpl?: ProxyFetchFn;
   corsHeaders?: Record<string, string>;
@@ -236,19 +236,39 @@ export async function streamProxiedDownload(input: {
     if (refreshBudgetMs <= 0) {
       throw new Error("Upstream CDN response headers timed out");
     }
+    const refreshController = new AbortController();
+    const onRefreshClientAbort = () => refreshController.abort(input.signal?.reason);
+    if (input.signal) {
+      if (input.signal.aborted) {
+        refreshController.abort(input.signal.reason);
+      } else {
+        input.signal.addEventListener("abort", onRefreshClientAbort, { once: true });
+      }
+    }
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
     try {
+      const refreshPromise = input.resolveFreshLink(refreshController.signal);
+      // Prevent unhandled rejections if timeout/abort wins the race while the resolver finishes later.
+      refreshPromise.catch(() => undefined);
       activeLink = await Promise.race([
-        input.resolveFreshLink(),
+        refreshPromise,
         new Promise<never>((_resolve, reject) => {
-          refreshTimer = setTimeout(
-            () => reject(new Error("Upstream CDN link refresh timed out")),
-            refreshBudgetMs,
-          );
+          const onAbort = () => reject(refreshController.signal.reason ?? new Error("Upstream CDN link refresh aborted"));
+          if (refreshController.signal.aborted) {
+            onAbort();
+            return;
+          }
+          refreshController.signal.addEventListener("abort", onAbort, { once: true });
+          refreshTimer = setTimeout(() => {
+            refreshController.abort(new Error("Upstream CDN link refresh timed out"));
+          }, refreshBudgetMs);
         }),
       ]);
     } finally {
       if (refreshTimer !== null) clearTimeout(refreshTimer);
+      if (input.signal) {
+        input.signal.removeEventListener("abort", onRefreshClientAbort);
+      }
     }
     attempt = await attemptFetch(activeLink, startupDeadline);
   }

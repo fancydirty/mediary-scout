@@ -553,6 +553,9 @@ describe("OCR hardening regressions (cipher, SSRF, transport errors, Set-Cookie)
     expect(isPrivateOrReservedIp("203.0.113.1")).toBe(true);
     expect(isPrivateOrReservedIp("2001:2::1")).toBe(true);
     expect(isPrivateOrReservedIp("2001:db8::1")).toBe(true);
+    expect(isPrivateOrReservedIp("64:ff9b::1")).toBe(true);
+    expect(isPrivateOrReservedIp("64:ff9b:1::1")).toBe(true);
+    expect(isPrivateOrReservedIp("64:ff9b:0:1::1")).toBe(false);
     expect(isPrivateOrReservedIp("8.8.8.8")).toBe(false);
   });
 

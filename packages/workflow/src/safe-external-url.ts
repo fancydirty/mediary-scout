@@ -120,10 +120,16 @@ export function isPrivateOrReservedIp(rawIp: string): boolean {
     if ((first & 0xfe00) === 0xfc00) return true;
     if ((first & 0xffc0) === 0xfe80) return true;
     if ((first & 0xff00) === 0xff00) return true;
-    // Discard-only 100::/64, NAT64 64:ff9b::/96 & 64:ff9b:1::/48,
-    // benchmarking 2001:2::/48 (RFC 5180), documentation 2001:db8::/32,
-    // and non-routable IETF special blocks 2001::/23 (includes 2001:0::/32, 2001:2::/48, 2001:10::/28, 2001:20::/28)
-    if (first === 0x0064 && v6[1] === 0xff9b && (v6[2] === 0 || v6[2] === 1)) return true;
+    // NAT64 well-known 64:ff9b::/96 (RFC 6052) and local-use 64:ff9b:1::/48 (RFC 8215),
+    // discard-only 100::/64, benchmarking/IETF special 2001::/23 (includes 2001:2::/48),
+    // and documentation 2001:db8::/32.
+    if (
+      first === 0x0064 &&
+      v6[1] === 0xff9b &&
+      (v6[2] === 1 || (v6[2] === 0 && v6[3] === 0 && v6[4] === 0 && v6[5] === 0))
+    ) {
+      return true;
+    }
     if (first === 0x0100 && v6[1] === 0 && v6[2] === 0 && v6[3] === 0) return true;
     if (first === 0x2001 && v6[1]! <= 0x01ff) return true;
     if (first === 0x2001 && v6[1] === 0x0db8) return true;
