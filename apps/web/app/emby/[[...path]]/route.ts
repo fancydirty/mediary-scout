@@ -187,7 +187,8 @@ async function dispatch(
       },
       {
         repository,
-        resolveDownloadLink: (input) => resolveCachedDriveDownloadLink({ ...input, cache }),
+        resolveDownloadLink: (input) =>
+          resolveCachedDriveDownloadLink({ ...input, cache, signal: request.signal }),
         loginThrottle: embyLoginThrottle,
       },
     );
@@ -225,12 +226,13 @@ async function dispatch(
             fileId: result.fileId,
             cache,
             corsHeaders,
-            resolveFreshLink: () =>
+            resolveFreshLink: (signal) =>
               resolveCachedDriveDownloadLink({
                 storage: result.storage,
                 fileId: result.fileId,
                 ...(userAgent ? { userAgent } : {}),
                 cache,
+                signal,
               }),
           });
         } catch (error) {

@@ -260,4 +260,42 @@ describe("streamProxiedDownload (zero-buffering Range proxy)", () => {
     });
     expect(notModifiedRes.status).toBe(304);
   });
+
+  it("propagates client AbortSignal into resolveFreshLink during 403/412/404 link refresh", async () => {
+    const clientAbort = new AbortController();
+    let refreshSignalAborted = false;
+    let notifyRefreshStarted!: () => void;
+    const refreshStarted = new Promise<void>((resolve) => {
+      notifyRefreshStarted = resolve;
+    });
+
+    const promise = streamProxiedDownload({
+      method: "GET",
+      rangeHeader: "bytes=0-10",
+      signal: clientAbort.signal,
+      link: { url: "https://dl.quark.example/expired.mkv", headers: {}, supportsRedirect: false },
+      storageId: "cs_qk",
+      fileId: "fid_refresh_abort",
+      cache: new DriveDownloadLinkCache(),
+      fetchImpl: vi.fn(async () => new Response("Forbidden", { status: 403 })),
+      resolveFreshLink: (signal) => {
+        notifyRefreshStarted();
+        return new Promise((_resolve, reject) => {
+          signal.addEventListener(
+            "abort",
+            () => {
+              refreshSignalAborted = true;
+              reject(new Error("refresh aborted"));
+            },
+            { once: true },
+          );
+        });
+      },
+    });
+
+    await refreshStarted;
+    clientAbort.abort(new Error("client closed tab"));
+    await expect(promise).rejects.toThrow(/client closed tab|refresh aborted/);
+    expect(refreshSignalAborted).toBe(true);
+  });
 });

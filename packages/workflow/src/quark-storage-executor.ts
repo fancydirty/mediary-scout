@@ -111,10 +111,13 @@ export class QuarkStorageExecutor implements StorageExecutor {
     return this.client.getSpace();
   }
 
-  async getDownloadUrl(input: { fileId: string; userAgent?: string }): Promise<DriveDownloadLink> {
+  async getDownloadUrl(input: { fileId: string; userAgent?: string; signal?: AbortSignal }): Promise<DriveDownloadLink> {
     // Caller UA is intentionally ignored: Quark/UC API rejects non-desktop player UAs
     // (code=23018) and playback always goes through the Range proxy with profile.downloadUserAgent.
-    return this.client.getDownloadUrl({ fileId: input.fileId });
+    return this.client.getDownloadUrl({
+      fileId: input.fileId,
+      ...(input.signal ? { signal: input.signal } : {}),
+    });
   }
 
   async createDirectory(input: { name: string; parentId: string }): Promise<string> {

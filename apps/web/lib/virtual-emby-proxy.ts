@@ -69,6 +69,7 @@ export async function resolveCachedDriveDownloadLink(input: {
   fileId: string;
   userAgent?: string;
   cache?: DriveDownloadLinkCache;
+  signal?: AbortSignal;
 }): Promise<DriveDownloadLink> {
   const cache = input.cache ?? getDownloadLinkCache();
   const key = buildDriveDownloadCacheKey({
@@ -77,16 +78,21 @@ export async function resolveCachedDriveDownloadLink(input: {
     fileId: input.fileId,
     ...(input.userAgent ? { userAgent: input.userAgent } : {}),
   });
-  return cache.getOrResolve(key, async () => {
-    const executor = createPlaybackExecutorForStorage(input.storage);
-    if (!executor.getDownloadUrl) {
-      throw new Error(`Storage provider ${input.storage.provider} does not support direct playback`);
-    }
-    return executor.getDownloadUrl({
-      fileId: input.fileId,
-      ...(input.userAgent ? { userAgent: input.userAgent } : {}),
-    });
-  });
+  return cache.getOrResolve(
+    key,
+    async (sharedSignal) => {
+      const executor = createPlaybackExecutorForStorage(input.storage);
+      if (!executor.getDownloadUrl) {
+        throw new Error(`Storage provider ${input.storage.provider} does not support direct playback`);
+      }
+      return executor.getDownloadUrl({
+        fileId: input.fileId,
+        ...(input.userAgent ? { userAgent: input.userAgent } : {}),
+        signal: sharedSignal,
+      });
+    },
+    input.signal,
+  );
 }
 
 export type ProxyFetchFn = (url: string, init: RequestInit) => Promise<Response>;

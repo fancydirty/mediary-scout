@@ -30,9 +30,15 @@ export function buildDriveDownloadCacheKey(input: DriveDownloadCacheKeyInput): s
   return `${input.storageId}\u0000${input.fileId}\u0000${input.provider}\u0000${uaKey}`;
 }
 
+interface InFlightEntry {
+  promise: Promise<DriveDownloadLink>;
+  controller: AbortController;
+  waiters: number;
+}
+
 export class DriveDownloadLinkCache {
   private readonly entries = new Map<string, CacheEntry>();
-  private readonly inFlight = new Map<string, Promise<DriveDownloadLink>>();
+  private readonly inFlight = new Map<string, InFlightEntry>();
   private readonly maxEntries: number;
   private readonly defaultTtlMs: number;
   private readonly now: () => number;
@@ -79,31 +85,98 @@ export class DriveDownloadLinkCache {
   }
 
   /** Return a fresh cached link, join an already in-flight resolution for `key`, or
-   *  call `resolve()` once and cache its result. Rejections are never cached. */
+   *  call `resolve(sharedSignal)` once and cache its result. Rejections are never cached.
+   *  When callers pass `signal`, the underlying `sharedSignal` is aborted ONLY when EVERY
+   *  concurrent waiter sharing the in-flight entry has aborted — never disrupting sibling callers. */
   async getOrResolve(
     key: string,
-    resolve: () => Promise<DriveDownloadLink>,
+    resolve: (signal: AbortSignal) => Promise<DriveDownloadLink>,
+    signal?: AbortSignal,
   ): Promise<DriveDownloadLink> {
+    if (signal?.aborted) {
+      throw signal.reason ?? new Error("Download link resolution aborted");
+    }
     const cached = this.get(key);
     if (cached) {
       return cached;
     }
-    const existing = this.inFlight.get(key);
-    if (existing) {
-      return existing;
+    let entry = this.inFlight.get(key);
+    if (entry?.controller.signal.aborted) {
+      entry = undefined;
     }
-    const pending = resolve()
-      .then((link) => {
-        this.set(key, link);
-        return link;
-      })
-      .finally(() => {
-        if (this.inFlight.get(key) === pending) {
-          this.inFlight.delete(key);
-        }
+    if (!entry) {
+      const controller = new AbortController();
+      const created: InFlightEntry = {
+        controller,
+        waiters: 0,
+        promise: Promise.resolve() as unknown as Promise<DriveDownloadLink>,
+      };
+      let rawPending: Promise<DriveDownloadLink>;
+      try {
+        rawPending = resolve(controller.signal);
+      } catch (error) {
+        return Promise.reject(error);
+      }
+      const pending = rawPending
+        .then((link) => {
+          if (!controller.signal.aborted) {
+            this.set(key, link);
+          }
+          return link;
+        })
+        .finally(() => {
+          if (this.inFlight.get(key) === created) {
+            this.inFlight.delete(key);
+          }
+        });
+      // Prevent unhandled rejection if every waiter aborted before `pending` settles.
+      pending.catch(() => undefined);
+      created.promise = pending;
+      this.inFlight.set(key, created);
+      entry = created;
+    }
+
+    entry.waiters += 1;
+    if (!signal) {
+      return entry.promise.finally(() => {
+        entry!.waiters = Math.max(0, entry!.waiters - 1);
       });
-    this.inFlight.set(key, pending);
-    return pending;
+    }
+
+    return new Promise<DriveDownloadLink>((resolveWaiter, rejectWaiter) => {
+      let settled = false;
+      const releaseWaiter = (aborted: boolean) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        entry!.waiters = Math.max(0, entry!.waiters - 1);
+        if (aborted && entry!.waiters === 0) {
+          if (this.inFlight.get(key) === entry) {
+            this.inFlight.delete(key);
+          }
+          entry!.controller.abort(signal.reason);
+        }
+      };
+      const onAbort = () => {
+        releaseWaiter(true);
+        rejectWaiter(signal.reason ?? new Error("Download link resolution aborted"));
+      };
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
+      signal.addEventListener("abort", onAbort, { once: true });
+      entry!.promise.then(
+        (link) => {
+          releaseWaiter(false);
+          resolveWaiter(link);
+        },
+        (err) => {
+          releaseWaiter(false);
+          rejectWaiter(err);
+        },
+      );
+    });
   }
 
   invalidate(key: string): void {
@@ -122,7 +195,11 @@ export class DriveDownloadLinkCache {
 
   clear(): void {
     this.entries.clear();
+    const pendingEntries = [...this.inFlight.values()];
     this.inFlight.clear();
+    for (const entry of pendingEntries) {
+      entry.controller.abort(new Error("Download link cache cleared"));
+    }
   }
 
   size(): number {

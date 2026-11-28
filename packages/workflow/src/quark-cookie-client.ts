@@ -111,6 +111,7 @@ export interface QuarkHttpInit {
   method: "GET" | "POST";
   headers: Record<string, string>;
   body?: string;
+  signal?: AbortSignal;
 }
 
 export type QuarkFetchJson = (url: string, init: QuarkHttpInit) => Promise<unknown>;
@@ -389,7 +390,7 @@ export class QuarkCookieClient {
    *    merged into the Cookie header sent to the CDN (alongside Referer + desktop UA);
    *    bare players get 403/412, so `supportsRedirect` is `false` (served via Range proxy).
    */
-  async getDownloadUrl(input: { fileId: string }): Promise<DriveDownloadLink> {
+  async getDownloadUrl(input: { fileId: string; signal?: AbortSignal }): Promise<DriveDownloadLink> {
     const downloadUserAgent = this.profile.downloadUserAgent ?? this.profile.userAgent;
     const { body, setCookies } = await this.fetchDownloadResponse(
       `${this.profile.baseUrl}/1/clouddrive/file/download?${this.profile.query}`,
@@ -400,6 +401,7 @@ export class QuarkCookieClient {
           "User-Agent": downloadUserAgent,
         },
         body: JSON.stringify({ fids: [input.fileId] }),
+        ...(input.signal ? { signal: input.signal } : {}),
       },
     );
     let data: unknown;
@@ -503,6 +505,9 @@ async function defaultFetchDownloadResponse(
   if (init.body !== undefined) {
     requestInit.body = init.body;
   }
+  if (init.signal !== undefined) {
+    requestInit.signal = init.signal;
+  }
   const response = await fetchWithTimeout(url, requestInit, DEFAULT_HTTP_TIMEOUT_MS);
   const setCookies =
     typeof response.headers.getSetCookie === "function"
@@ -590,6 +595,9 @@ async function defaultFetchJson(url: string, init: QuarkHttpInit): Promise<unkno
   const requestInit: RequestInit = { method: init.method, headers: init.headers };
   if (init.body !== undefined) {
     requestInit.body = init.body;
+  }
+  if (init.signal !== undefined) {
+    requestInit.signal = init.signal;
   }
   const response = await fetchWithTimeout(url, requestInit, DEFAULT_HTTP_TIMEOUT_MS);
   // Quark returns its {code:31001} auth body WITH HTTP 401, so parse the JSON

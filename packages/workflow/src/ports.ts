@@ -159,5 +159,9 @@ export interface StorageExecutor {
   /** Resolve a playable direct download URL for a single file id on this drive.
    *  Throws DriveFileNotFoundError if the file was deleted/trashed on the drive,
    *  and the brand's auth error if the credential expired. */
-  getDownloadUrl?(input: { fileId: string; userAgent?: string }): Promise<DriveDownloadLink>;
+  getDownloadUrl?(input: {
+    fileId: string;
+    userAgent?: string;
+    signal?: AbortSignal;
+  }): Promise<DriveDownloadLink>;
 }

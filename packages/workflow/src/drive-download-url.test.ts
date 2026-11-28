@@ -471,6 +471,72 @@ describe("DriveDownloadLinkCache", () => {
     zeroCache.set(kSameIdQuark, { url: "https://cdn.example/a", headers: {}, supportsRedirect: false });
     expect(zeroCache.size()).toBe(0);
   });
+
+  it("ref-counts singleflight AbortSignals: aborts provider only when all waiters cancel and forwards signal through QuarkStorageExecutor", async () => {
+    const cache = new DriveDownloadLinkCache();
+    const key = buildDriveDownloadCacheKey({ storageId: "cs_qk", provider: "quark", fileId: "f_cancel" });
+
+    // 1. Single waiter aborts -> underlying provider signal aborts AND in-flight entry is evicted
+    let firstProviderSignal: AbortSignal | undefined;
+    const acSingle = new AbortController();
+    const pSingle = cache.getOrResolve(
+      key,
+      (sig) => {
+        firstProviderSignal = sig;
+        return new Promise((_resolve, reject) => {
+          sig.addEventListener("abort", () => reject(new Error("provider aborted")), { once: true });
+        });
+      },
+      acSingle.signal,
+    );
+    acSingle.abort(new Error("client disconnected"));
+    await expect(pSingle).rejects.toThrow(/client disconnected/);
+    expect(firstProviderSignal?.aborted).toBe(true);
+
+    // 2. Next caller gets a fresh in-flight entry; two concurrent waiters share it,
+    //    and aborting waiter #1 must NOT abort the shared provider signal for waiter #2.
+    let sharedSignal: AbortSignal | undefined;
+    let finishShared!: (link: { url: string; headers: Record<string, string>; supportsRedirect: boolean }) => void;
+    const ac1 = new AbortController();
+    const ac2 = new AbortController();
+    const resolver = vi.fn((sig: AbortSignal) => {
+      sharedSignal = sig;
+      return new Promise<{ url: string; headers: Record<string, string>; supportsRedirect: boolean }>((resolve) => {
+        finishShared = resolve;
+      });
+    });
+
+    const w1 = cache.getOrResolve(key, resolver, ac1.signal);
+    const w2 = cache.getOrResolve(key, resolver, ac2.signal);
+    expect(resolver).toHaveBeenCalledTimes(1);
+
+    ac1.abort(new Error("waiter 1 timed out"));
+    await expect(w1).rejects.toThrow(/waiter 1 timed out/);
+    expect(sharedSignal?.aborted).toBe(false);
+
+    finishShared({ url: "https://dl.quark.example/ok.mkv", headers: {}, supportsRedirect: false });
+    const link2 = await w2;
+    expect(link2.url).toBe("https://dl.quark.example/ok.mkv");
+    expect(cache.get(key)?.url).toBe("https://dl.quark.example/ok.mkv");
+
+    // 3. QuarkStorageExecutor -> QuarkCookieClient forwards AbortSignal to fetchDownloadResponse
+    let capturedSignal: AbortSignal | undefined;
+    const acProvider = new AbortController();
+    const client = new QuarkCookieClient({
+      cookie: "__uid=u1; __puus=p1",
+      fetchDownloadResponse: async (_url, init) => {
+        capturedSignal = init.signal;
+        return new Promise((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () => reject(new Error("quark download aborted")), { once: true });
+        });
+      },
+    });
+    const executor = new QuarkStorageExecutor({ client });
+    const dlPromise = executor.getDownloadUrl({ fileId: "fid-abort", signal: acProvider.signal });
+    expect(capturedSignal).toBe(acProvider.signal);
+    acProvider.abort();
+    await expect(dlPromise).rejects.toThrow(/quark download aborted/);
+  });
 });
 
 describe("OCR hardening regressions (cipher, SSRF, transport errors, Set-Cookie)", () => {
