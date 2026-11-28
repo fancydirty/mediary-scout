@@ -442,9 +442,13 @@ export class Pan115CookieClient implements Pan115StorageApi {
     if (!isRecord(decoded)) {
       throw new Error("PAN115_DOWNURL_FAILED: decrypted payload is not an object");
     }
+    const idValue = (v: unknown): string => {
+      if (typeof v === "number" && Number.isFinite(v)) return String(v);
+      return stringValue(v);
+    };
     const matchesRequestedFile = (candidate: Record<string, unknown>, requireExplicit: boolean): boolean => {
-      const candidateFid = stringValue(recordValue(candidate, "fid") ?? recordValue(candidate, "file_id"));
-      const candidatePc = stringValue(recordValue(candidate, "pick_code") ?? recordValue(candidate, "pc"));
+      const candidateFid = idValue(recordValue(candidate, "fid") ?? recordValue(candidate, "file_id"));
+      const candidatePc = idValue(recordValue(candidate, "pick_code") ?? recordValue(candidate, "pc"));
       if (candidateFid && candidateFid !== input.fileId) return false;
       if (candidatePc && candidatePc !== info.pickcode) return false;
       return requireExplicit ? Boolean(candidateFid || candidatePc) : true;

@@ -120,8 +120,12 @@ export function isPrivateOrReservedIp(rawIp: string): boolean {
     if ((first & 0xfe00) === 0xfc00) return true;
     if ((first & 0xffc0) === 0xfe80) return true;
     if ((first & 0xff00) === 0xff00) return true;
-    // Discard-only 100::/64 and documentation 2001:db8::/32
+    // Discard-only 100::/64, NAT64 64:ff9b::/96 & 64:ff9b:1::/48,
+    // benchmarking 2001:2::/48 (RFC 5180), documentation 2001:db8::/32,
+    // and non-routable IETF special blocks 2001::/23 (includes 2001:0::/32, 2001:2::/48, 2001:10::/28, 2001:20::/28)
+    if (first === 0x0064 && v6[1] === 0xff9b && (v6[2] === 0 || v6[2] === 1)) return true;
     if (first === 0x0100 && v6[1] === 0 && v6[2] === 0 && v6[3] === 0) return true;
+    if (first === 0x2001 && v6[1]! <= 0x01ff) return true;
     if (first === 0x2001 && v6[1] === 0x0db8) return true;
     return false;
   }
@@ -281,15 +285,23 @@ export async function guardedManualGet(input: {
 
         const chunks: Buffer[] = [];
         let total = 0;
+        let untypedVerifiedJsonStart = !isUntyped;
         res.on("data", (chunk: Buffer) => {
-          // For untyped responses, sniff the very first non-whitespace byte: if it is NOT `{`,
-          // treat as binary media stream and abort reading immediately (no buffering).
-          if (isUntyped && total === 0) {
-            const firstNonWs = chunk.toString("utf8", 0, Math.min(chunk.length, 32)).trimStart()[0];
-            if (firstNonWs !== "{") {
-              res.destroy();
-              finish(() => resolve({ status, location, contentType, text: "" }));
-              return;
+          // For untyped responses, sniff across chunks until the first non-whitespace byte:
+          // if it is NOT `{` (0x7b), treat as binary media stream and abort without buffering.
+          if (!untypedVerifiedJsonStart) {
+            for (let i = 0; i < chunk.length; i += 1) {
+              const b = chunk[i]!;
+              if (b === 0x20 || b === 0x09 || b === 0x0a || b === 0x0d) {
+                continue;
+              }
+              if (b !== 0x7b) {
+                res.destroy();
+                finish(() => resolve({ status, location, contentType, text: "" }));
+                return;
+              }
+              untypedVerifiedJsonStart = true;
+              break;
             }
           }
           total += chunk.byteLength;

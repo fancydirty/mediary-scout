@@ -117,9 +117,30 @@ export async function streamProxiedDownload(input: {
   const cache = input.cache ?? getDownloadLinkCache();
   const isHead = input.method.toUpperCase() === "HEAD";
 
+  const startupDeadline = Date.now() + PROXY_CONNECT_TIMEOUT_MS;
+
+  const stripCredentialsOnCrossOrigin = (
+    headers: Record<string, string>,
+  ): Record<string, string> => {
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(headers)) {
+      const lower = k.toLowerCase();
+      if (lower === "cookie" || lower === "authorization" || lower === "proxy-authorization") {
+        continue;
+      }
+      out[k] = v;
+    }
+    return out;
+  };
+
   const attemptFetch = async (
     targetLink: DriveDownloadLink,
+    deadlineMs: number,
   ): Promise<{ upstream: Response; controller: AbortController; cleanup: () => void }> => {
+    const remainingMs = deadlineMs - Date.now();
+    if (remainingMs <= 0) {
+      throw new Error("Upstream CDN response headers timed out");
+    }
     const controller = new AbortController();
     const onClientAbort = () => controller.abort(input.signal?.reason);
     let cleaned = false;
@@ -139,17 +160,19 @@ export async function streamProxiedDownload(input: {
     }
     const connectTimer = setTimeout(() => {
       controller.abort(new Error("Upstream CDN response headers timed out"));
-    }, PROXY_CONNECT_TIMEOUT_MS);
+    }, remainingMs);
 
     try {
-      const headers: Record<string, string> = { ...targetLink.headers };
+      let headers: Record<string, string> = { ...targetLink.headers };
       if (input.rangeHeader) {
         headers["Range"] = input.rangeHeader;
       }
-      // Follow redirects manually so every intermediate Location is validated by SSRF rules.
+      // Follow redirects manually so every intermediate Location is validated by SSRF rules,
+      // and strip Cookie/Authorization headers on cross-origin redirects.
       // Always GET upstream (some Chinese cloud CDNs reject HEAD with 403/405);
       // for client HEAD requests we read headers and immediately cancel the body.
       let currentUrl = assertSafeExternalHttpUrl(targetLink.url, "VIRTUAL_EMBY_PROXY");
+      let currentOrigin = new URL(currentUrl).origin;
       let upstream: Response | null = null;
       for (let hop = 0; hop <= MAX_PROXY_REDIRECT_HOPS; hop += 1) {
         const res = await fetchImpl(currentUrl, {
@@ -158,13 +181,25 @@ export async function streamProxiedDownload(input: {
           redirect: "manual",
           signal: controller.signal,
         });
-        if (res.status >= 300 && res.status < 400) {
+        const isRedirect =
+          res.status === 301 ||
+          res.status === 302 ||
+          res.status === 303 ||
+          res.status === 307 ||
+          res.status === 308;
+        if (isRedirect) {
           const location = res.headers.get("location")?.trim();
           await res.body?.cancel().catch(() => undefined);
           if (!location || hop === MAX_PROXY_REDIRECT_HOPS) {
             throw new Error("VIRTUAL_EMBY_PROXY: invalid or excessive redirects from upstream CDN");
           }
-          currentUrl = assertSafeExternalHttpUrl(new URL(location, currentUrl).toString(), "VIRTUAL_EMBY_PROXY");
+          const nextUrl = assertSafeExternalHttpUrl(new URL(location, currentUrl).toString(), "VIRTUAL_EMBY_PROXY");
+          const nextOrigin = new URL(nextUrl).origin;
+          if (nextOrigin !== currentOrigin) {
+            headers = stripCredentialsOnCrossOrigin(headers);
+            currentOrigin = nextOrigin;
+          }
+          currentUrl = nextUrl;
           continue;
         }
         upstream = res;
@@ -183,7 +218,7 @@ export async function streamProxiedDownload(input: {
   };
 
   let activeLink = input.link;
-  let attempt = await attemptFetch(activeLink);
+  let attempt = await attemptFetch(activeLink, startupDeadline);
 
   // Self-heal once on expired signed CDN URL / rotated __puus cookie (403 / 412),
   // or CDN 404 (so resolveFreshLink() re-checks the drive API and throws
@@ -197,8 +232,25 @@ export async function streamProxiedDownload(input: {
     attempt.controller.abort();
     attempt.cleanup();
     cache.invalidateFile(input.storageId, input.fileId);
-    activeLink = await input.resolveFreshLink();
-    attempt = await attemptFetch(activeLink);
+    const refreshBudgetMs = startupDeadline - Date.now();
+    if (refreshBudgetMs <= 0) {
+      throw new Error("Upstream CDN response headers timed out");
+    }
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+    try {
+      activeLink = await Promise.race([
+        input.resolveFreshLink(),
+        new Promise<never>((_resolve, reject) => {
+          refreshTimer = setTimeout(
+            () => reject(new Error("Upstream CDN link refresh timed out")),
+            refreshBudgetMs,
+          );
+        }),
+      ]);
+    } finally {
+      if (refreshTimer !== null) clearTimeout(refreshTimer);
+    }
+    attempt = await attemptFetch(activeLink, startupDeadline);
   }
   const { upstream, controller, cleanup } = attempt;
 

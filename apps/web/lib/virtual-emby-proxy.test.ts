@@ -219,5 +219,45 @@ describe("streamProxiedDownload (zero-buffering Range proxy)", () => {
         ),
       }),
     ).rejects.toThrow(/private\/internal/);
+
+    // 5. Cross-origin redirect strips Cookie/Authorization headers, and 304 is terminal (not treated as redirect error)
+    const seenHeaders: Array<Record<string, string>> = [];
+    const crossOriginRes = await streamProxiedDownload({
+      method: "GET",
+      rangeHeader: "bytes=0-3",
+      link: {
+        url: "https://origin-a.example/file.mkv",
+        headers: { Cookie: "__puus=secret", Authorization: "Bearer tok", "User-Agent": "Quark" },
+        supportsRedirect: false,
+      },
+      storageId: "cs_qk",
+      fileId: "fid_xorigin",
+      resolveFreshLink: vi.fn(),
+      cache: new DriveDownloadLinkCache(),
+      fetchImpl: vi.fn(async (url: string, init: RequestInit) => {
+        seenHeaders.push({ ...((init.headers ?? {}) as Record<string, string>) });
+        if (url.startsWith("https://origin-a.example")) {
+          return new Response(null, { status: 302, headers: { Location: "https://origin-b.example/cdn.mkv" } });
+        }
+        return new Response("abcd", { status: 206, headers: { "Content-Range": "bytes 0-3/10" } });
+      }),
+    });
+    expect(crossOriginRes.status).toBe(206);
+    expect(seenHeaders[0]?.["Cookie"]).toBe("__puus=secret");
+    expect(seenHeaders[1]?.["Cookie"]).toBeUndefined();
+    expect(seenHeaders[1]?.["Authorization"]).toBeUndefined();
+    expect(seenHeaders[1]?.["User-Agent"]).toBe("Quark");
+
+    const notModifiedRes = await streamProxiedDownload({
+      method: "GET",
+      rangeHeader: null,
+      link: { url: "https://dl.quark.example/cached.mkv", headers: {}, supportsRedirect: false },
+      storageId: "cs_qk",
+      fileId: "fid_304",
+      resolveFreshLink: vi.fn(),
+      cache: new DriveDownloadLinkCache(),
+      fetchImpl: vi.fn(async () => new Response(null, { status: 304 })),
+    });
+    expect(notModifiedRes.status).toBe(304);
   });
 });
