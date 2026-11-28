@@ -9,13 +9,20 @@
  *  3. Forward exact `Range` headers and preserve upstream `200` / `206` / `416`
  *     responses and `Content-Range` / `Content-Length` / `Accept-Ranges` headers.
  *  4. Self-heal on stale signed CDN links / rotated `__puus` cookies: if upstream
- *     answers `403` or `412`, cancel its body, invalidate the link cache, resolve
- *     a fresh download link ONCE, and retry.
- *  5. Isolate active web content: never serve upstream HTML/SVG/JS error pages inline
+ *     answers `403`, `412`, or `404`, cancel its body, invalidate the link cache,
+ *     resolve a fresh download link ONCE, and retry (or let `DriveFileNotFoundError`
+ *     bubble to the route for tombstoning + sibling-drive failover).
+ *  5. Connection-time SSRF enforcement: validate initial URL and every manual redirect
+ *     hop via `assertSafeExternalHttpUrl` AND connect through a dedicated non-keepalive
+ *     undici Agent using `createGuardedDnsLookup` so DNS rebinding cannot reach private IPs.
+ *  6. Isolate active web content: never serve upstream HTML/SVG/JS error pages inline
  *     on the application origin (`nosniff` + `sandbox` CSP + safe media Content-Type).
  */
+import { Agent, fetch as undiciFetch, type RequestInit as UndiciRequestInit } from "undici";
 import {
+  assertSafeExternalHttpUrl,
   buildDriveDownloadCacheKey,
+  createGuardedDnsLookup,
   DriveDownloadLinkCache,
   type ConnectedStorage,
   type DriveDownloadLink,
@@ -23,12 +30,14 @@ import {
 import { createPlaybackExecutorForStorage } from "./workflow-runtime";
 
 const PROXY_CONNECT_TIMEOUT_MS = 25_000;
+const MAX_PROXY_REDIRECT_HOPS = 5;
 
 const UNSAFE_INLINE_CONTENT_TYPE_RE =
   /^(?:text\/html|application\/xhtml\+xml|image\/svg\+xml|text\/javascript|application\/javascript|application\/ecmascript|text\/xml|application\/xml)\b/i;
 
 const globalForVirtualEmby = globalThis as typeof globalThis & {
   __mediaryDownloadLinkCache?: DriveDownloadLinkCache;
+  __mediaryGuardedProxyAgent?: Agent;
 };
 
 export function getDownloadLinkCache(): DriveDownloadLinkCache {
@@ -36,6 +45,22 @@ export function getDownloadLinkCache(): DriveDownloadLinkCache {
     globalForVirtualEmby.__mediaryDownloadLinkCache = new DriveDownloadLinkCache();
   }
   return globalForVirtualEmby.__mediaryDownloadLinkCache;
+}
+
+function getGuardedProxyAgent(): Agent {
+  if (!globalForVirtualEmby.__mediaryGuardedProxyAgent) {
+    // Dedicated non-keepalive agent: every upstream media connection passes through
+    // `createGuardedDnsLookup`, closing both pooled-socket bypass and DNS-rebinding windows.
+    globalForVirtualEmby.__mediaryGuardedProxyAgent = new Agent({
+      keepAliveTimeout: 1,
+      keepAliveMaxTimeout: 1,
+      pipelining: 0,
+      connect: {
+        lookup: createGuardedDnsLookup("VIRTUAL_EMBY_PROXY"),
+      },
+    });
+  }
+  return globalForVirtualEmby.__mediaryGuardedProxyAgent;
 }
 
 /** Resolve a drive download link through the shared singleflight TTL cache. */
@@ -66,6 +91,15 @@ export async function resolveCachedDriveDownloadLink(input: {
 
 export type ProxyFetchFn = (url: string, init: RequestInit) => Promise<Response>;
 
+async function defaultGuardedProxyFetch(url: string, init: RequestInit): Promise<Response> {
+  const dispatcher = getGuardedProxyAgent();
+  const res = await undiciFetch(url, {
+    ...(init as unknown as UndiciRequestInit),
+    dispatcher,
+  });
+  return res as unknown as Response;
+}
+
 /** Stream a non-redirectable cloud CDN file (Quark / UC) with full Range + HEAD + Abort propagation. */
 export async function streamProxiedDownload(input: {
   method: string;
@@ -79,7 +113,7 @@ export async function streamProxiedDownload(input: {
   fetchImpl?: ProxyFetchFn;
   corsHeaders?: Record<string, string>;
 }): Promise<Response> {
-  const fetchImpl = input.fetchImpl ?? fetch;
+  const fetchImpl = input.fetchImpl ?? defaultGuardedProxyFetch;
   const cache = input.cache ?? getDownloadLinkCache();
   const isHead = input.method.toUpperCase() === "HEAD";
 
@@ -112,15 +146,34 @@ export async function streamProxiedDownload(input: {
       if (input.rangeHeader) {
         headers["Range"] = input.rangeHeader;
       }
+      // Follow redirects manually so every intermediate Location is validated by SSRF rules.
       // Always GET upstream (some Chinese cloud CDNs reject HEAD with 403/405);
       // for client HEAD requests we read headers and immediately cancel the body.
-      const upstream = await fetchImpl(targetLink.url, {
-        method: "GET",
-        headers,
-        redirect: "follow",
-        signal: controller.signal,
-      });
+      let currentUrl = assertSafeExternalHttpUrl(targetLink.url, "VIRTUAL_EMBY_PROXY");
+      let upstream: Response | null = null;
+      for (let hop = 0; hop <= MAX_PROXY_REDIRECT_HOPS; hop += 1) {
+        const res = await fetchImpl(currentUrl, {
+          method: "GET",
+          headers,
+          redirect: "manual",
+          signal: controller.signal,
+        });
+        if (res.status >= 300 && res.status < 400) {
+          const location = res.headers.get("location")?.trim();
+          await res.body?.cancel().catch(() => undefined);
+          if (!location || hop === MAX_PROXY_REDIRECT_HOPS) {
+            throw new Error("VIRTUAL_EMBY_PROXY: invalid or excessive redirects from upstream CDN");
+          }
+          currentUrl = assertSafeExternalHttpUrl(new URL(location, currentUrl).toString(), "VIRTUAL_EMBY_PROXY");
+          continue;
+        }
+        upstream = res;
+        break;
+      }
       clearTimeout(connectTimer);
+      if (!upstream) {
+        throw new Error("VIRTUAL_EMBY_PROXY: upstream CDN did not return a terminal response");
+      }
       return { upstream, controller, cleanup };
     } catch (error) {
       clearTimeout(connectTimer);
@@ -199,7 +252,7 @@ export async function streamProxiedDownload(input: {
     return new Response(null, { status: upstream.status, headers: outHeaders });
   }
 
-  // Zero-buffering passthrough stream that connects downstream cancel/EOF to upstream abort + listener cleanup.
+  // Zero-buffering passthrough stream that connects downstream cancel/EOF/error to upstream abort + listener cleanup.
   const reader = upstream.body.getReader();
   const passthrough = new ReadableStream<Uint8Array>({
     async pull(streamController) {

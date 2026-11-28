@@ -1,14 +1,17 @@
 /**
- * Connection-time SSRF guard for external cloud-drive download/redirect resolution.
+ * Connection-time SSRF guard for external cloud-drive download/redirect resolution
+ * and server-side media proxying.
  *
  * Design invariants:
  *  1. NEVER run IPv6 prefix checks (`fc`/`fd`) against DNS hostnames — parse IPv4/IPv6
  *     literals explicitly so legitimate public hostnames like `fcdn.189.cn` or
  *     `fd.123pan.cn` are never blocked.
- *  2. Enforce private/loopback/link-local/CGNAT rejection BOTH on literal URL hosts AND
- *     at TCP connect time via a guarded `dns.lookup` callback so public DNS names cannot
- *     rebind or resolve to internal/metadata addresses (`127.0.0.0/8`, `169.254.169.254`, etc.).
- *  3. Keep module-level imports free of `node:dns`/`node:http`/`node:https`/`node:net` so
+ *  2. Block all RFC 6890 non-publicly-routable IPv4/IPv6 ranges (loopback, RFC1918,
+ *     link-local/metadata, CGNAT, benchmarking, documentation, ULA, multicast, reserved)
+ *     BOTH syntactically on literal hosts AND at TCP connect time via a guarded
+ *     `dns.lookup` callback with `agent: false` (no shared keep-alive socket bypass).
+ *  3. Enforce a hard total deadline timer covering DNS + headers + body reading.
+ *  4. Keep module-level imports free of `node:dns`/`node:http`/`node:https`/`node:net` so
  *     Turbopack client bundling of `@media-track/workflow` stays clean; Node built-ins are
  *     loaded lazily at server call time via `process.getBuiltinModule`.
  */
@@ -28,15 +31,20 @@ function parseIpv4Octets(ip: string): [number, number, number, number] | null {
   return nums as [number, number, number, number];
 }
 
-function isPrivateIpv4Octets([a, b]: [number, number, number, number]): boolean {
-  if (a === 0) return true; // 0.0.0.0/8
-  if (a === 10) return true; // 10.0.0.0/8
-  if (a === 127) return true; // 127.0.0.0/8
-  if (a === 169 && b === 254) return true; // 169.254.0.0/16 link-local / cloud metadata
-  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
-  if (a === 192 && b === 168) return true; // 192.168.0.0/16
-  if (a === 100 && b >= 64 && b <= 127) return true; // 100.64.0.0/10 CGNAT
-  if (a >= 224) return true; // multicast / reserved
+function isPrivateIpv4Octets([a, b, c]: [number, number, number, number]): boolean {
+  if (a === 0) return true; // 0.0.0.0/8 ("this" network)
+  if (a === 10) return true; // 10.0.0.0/8 (RFC1918)
+  if (a === 100 && b >= 64 && b <= 127) return true; // 100.64.0.0/10 (CGNAT)
+  if (a === 127) return true; // 127.0.0.0/8 (loopback)
+  if (a === 169 && b === 254) return true; // 169.254.0.0/16 (link-local / cloud metadata)
+  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12 (RFC1918)
+  if (a === 192 && b === 0 && c === 0) return true; // 192.0.0.0/24 (IETF protocol assignments)
+  if (a === 192 && b === 0 && c === 2) return true; // 192.0.2.0/24 (TEST-NET-1 documentation)
+  if (a === 192 && b === 168) return true; // 192.168.0.0/16 (RFC1918)
+  if (a === 198 && (b === 18 || b === 19)) return true; // 198.18.0.0/15 (benchmarking)
+  if (a === 198 && b === 51 && c === 100) return true; // 198.51.100.0/24 (TEST-NET-2)
+  if (a === 203 && b === 0 && c === 113) return true; // 203.0.113.0/24 (TEST-NET-3)
+  if (a >= 224) return true; // 224.0.0.0/4 multicast + 240.0.0.0/4 reserved
   return false;
 }
 
@@ -44,7 +52,6 @@ function isPrivateIpv4Octets([a, b]: [number, number, number, number]): boolean 
 function parseIpv6Hextets(raw: string): number[] | null {
   if (!raw.includes(":")) return null;
   let ip = raw;
-  // Convert trailing dotted-quad IPv4 (e.g. ::ffff:127.0.0.1) to two hex groups.
   const lastColon = ip.lastIndexOf(":");
   const tail = ip.slice(lastColon + 1);
   if (tail.includes(".")) {
@@ -85,7 +92,7 @@ function detectIpVersion(rawIp: string): 0 | 4 | 6 {
   return 0;
 }
 
-/** True when `rawIp` is a loopback, link-local, RFC1918, ULA, CGNAT, or reserved IP literal. */
+/** True when `rawIp` is a loopback, link-local, RFC1918, ULA, CGNAT, documentation, or reserved IP literal. */
 export function isPrivateOrReservedIp(rawIp: string): boolean {
   const ip = rawIp.trim().toLowerCase().replace(/^\[|\]$/g, "").split("%")[0] ?? "";
   const v4 = parseIpv4Octets(ip);
@@ -113,6 +120,9 @@ export function isPrivateOrReservedIp(rawIp: string): boolean {
     if ((first & 0xfe00) === 0xfc00) return true;
     if ((first & 0xffc0) === 0xfe80) return true;
     if ((first & 0xff00) === 0xff00) return true;
+    // Discard-only 100::/64 and documentation 2001:db8::/32
+    if (first === 0x0100 && v6[1] === 0 && v6[2] === 0 && v6[3] === 0) return true;
+    if (first === 0x2001 && v6[1] === 0x0db8) return true;
     return false;
   }
   return false;
@@ -160,10 +170,59 @@ function loadNodeBuiltin<T>(id: string, errorPrefix: string): T {
   return mod as T;
 }
 
+/** Build a Node `dns.lookup`-compatible callback that validates every resolved IP address
+ *  against `isPrivateOrReservedIp` before allowing any TCP connection. */
+export function createGuardedDnsLookup(errorPrefix: string): typeof DnsModule.lookup {
+  const dns = loadNodeBuiltin<typeof DnsModule>("node:dns", errorPrefix);
+  return ((
+    hostname: string,
+    options: unknown,
+    callback?: unknown,
+  ) => {
+    const cb = (typeof options === "function" ? options : callback) as (
+      err: NodeJS.ErrnoException | null,
+      address: string | DnsModule.LookupAddress[],
+      family?: number,
+    ) => void;
+    const opts = typeof options === "object" && options !== null ? (options as DnsModule.LookupOptions) : {};
+    dns.lookup(hostname, { ...opts, all: true }, (err, addresses) => {
+      if (err) {
+        cb(err, "");
+        return;
+      }
+      const list = Array.isArray(addresses) ? addresses : [];
+      if (list.length === 0) {
+        cb(new Error(`${errorPrefix}: DNS lookup returned no addresses for ${hostname}`), "");
+        return;
+      }
+      for (const entry of list) {
+        if (isPrivateOrReservedIp(entry.address)) {
+          cb(
+            new Error(
+              `${errorPrefix}: disallowed private/internal resolved address ${entry.address} for ${hostname}`,
+            ),
+            "",
+          );
+          return;
+        }
+      }
+      if (opts.all) {
+        cb(null, list);
+      } else {
+        const first = list[0]!;
+        cb(null, first.address, first.family);
+      }
+    });
+  }) as typeof DnsModule.lookup;
+}
+
 /**
- * Perform a single manual-redirect HTTP(S) GET with connection-time DNS/IP SSRF enforcement.
- * Validates EVERY resolved IP address inside the socket's `lookup` callback before TCP connect,
- * and caps response text reading to `maxBodyBytes` (cancelling non-text/binary bodies immediately).
+ * Perform a single manual-redirect HTTP(S) GET with connection-time DNS/IP SSRF enforcement:
+ *  - Uses `agent: false` so every request opens a fresh connection through `createGuardedDnsLookup`
+ *    (never reusing pooled sockets from Node's global HTTP(S) agent).
+ *  - Enforces a total wall-clock deadline covering DNS lookup + headers + body read.
+ *  - Caps text/JSON body reads to `maxBodyBytes`, and handles untyped (`contentType === null`)
+ *    small JSON dispatch bodies safely while destroying non-JSON binary streams immediately.
  */
 export async function guardedManualGet(input: {
   url: string;
@@ -175,7 +234,7 @@ export async function guardedManualGet(input: {
 }): Promise<GuardedHttpResponse> {
   const safeUrl = assertSafeExternalHttpUrl(input.url, input.errorPrefix);
   const parsed = new URL(safeUrl);
-  const dns = loadNodeBuiltin<typeof DnsModule>("node:dns", input.errorPrefix);
+  const guardedLookup = createGuardedDnsLookup(input.errorPrefix);
   const transport =
     parsed.protocol === "https:"
       ? loadNodeBuiltin<typeof HttpsModule>("node:https", input.errorPrefix)
@@ -184,58 +243,23 @@ export async function guardedManualGet(input: {
 
   return new Promise<GuardedHttpResponse>((resolve, reject) => {
     let settled = false;
+    let deadlineTimer: ReturnType<typeof setTimeout> | null = null;
     const finish = (fn: () => void) => {
       if (settled) return;
       settled = true;
+      if (deadlineTimer !== null) {
+        clearTimeout(deadlineTimer);
+        deadlineTimer = null;
+      }
       fn();
     };
-
-    const guardedLookup: typeof DnsModule.lookup = ((
-      hostname: string,
-      options: unknown,
-      callback?: unknown,
-    ) => {
-      const cb = (typeof options === "function" ? options : callback) as (
-        err: NodeJS.ErrnoException | null,
-        address: string | DnsModule.LookupAddress[],
-        family?: number,
-      ) => void;
-      const opts = typeof options === "object" && options !== null ? (options as DnsModule.LookupOptions) : {};
-      dns.lookup(hostname, { ...opts, all: true }, (err, addresses) => {
-        if (err) {
-          cb(err, "");
-          return;
-        }
-        const list = Array.isArray(addresses) ? addresses : [];
-        if (list.length === 0) {
-          cb(new Error(`${input.errorPrefix}: DNS lookup returned no addresses for ${hostname}`), "");
-          return;
-        }
-        for (const entry of list) {
-          if (isPrivateOrReservedIp(entry.address)) {
-            cb(
-              new Error(
-                `${input.errorPrefix}: disallowed private/internal resolved address ${entry.address} for ${hostname}`,
-              ),
-              "",
-            );
-            return;
-          }
-        }
-        if (opts.all) {
-          cb(null, list);
-        } else {
-          const first = list[0]!;
-          cb(null, first.address, first.family);
-        }
-      });
-    }) as typeof DnsModule.lookup;
 
     const req = transport.request(
       parsed,
       {
         method: "GET",
         headers: input.headers,
+        agent: false,
         lookup: guardedLookup,
         timeout: input.timeoutMs,
       },
@@ -246,9 +270,10 @@ export async function guardedManualGet(input: {
         const rawCt = res.headers["content-type"];
         const contentType = Array.isArray(rawCt) ? (rawCt[0] ?? null) : (rawCt ?? null);
         const ctLower = (contentType ?? "").toLowerCase();
-        const isTextOrJson = ctLower.includes("json") || ctLower.includes("text");
+        const isExplicitTextOrJson = ctLower.includes("json") || ctLower.includes("text");
+        const isUntyped = contentType === null;
 
-        if (!input.readTextBody || (status >= 300 && status < 400) || !isTextOrJson) {
+        if (!input.readTextBody || (status >= 300 && status < 400) || (!isExplicitTextOrJson && !isUntyped)) {
           res.destroy();
           finish(() => resolve({ status, location, contentType, text: "" }));
           return;
@@ -257,6 +282,16 @@ export async function guardedManualGet(input: {
         const chunks: Buffer[] = [];
         let total = 0;
         res.on("data", (chunk: Buffer) => {
+          // For untyped responses, sniff the very first non-whitespace byte: if it is NOT `{`,
+          // treat as binary media stream and abort reading immediately (no buffering).
+          if (isUntyped && total === 0) {
+            const firstNonWs = chunk.toString("utf8", 0, Math.min(chunk.length, 32)).trimStart()[0];
+            if (firstNonWs !== "{") {
+              res.destroy();
+              finish(() => resolve({ status, location, contentType, text: "" }));
+              return;
+            }
+          }
           total += chunk.byteLength;
           if (total > maxBytes) {
             res.destroy();
@@ -276,6 +311,10 @@ export async function guardedManualGet(input: {
         });
       },
     );
+
+    deadlineTimer = setTimeout(() => {
+      req.destroy(new Error(`${input.errorPrefix}: redirect resolution timed out`));
+    }, input.timeoutMs);
 
     req.on("timeout", () => {
       req.destroy(new Error(`${input.errorPrefix}: redirect resolution timed out`));

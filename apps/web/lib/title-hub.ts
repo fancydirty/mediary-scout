@@ -489,6 +489,7 @@ export async function getDetailView(
     }
     const allMissingOnDrive =
       obtained &&
+      !hasUsableMovieFile &&
       driveBadges.length > 0 &&
       driveBadges.every((d) => d.fileStatus === "missing_on_drive");
     const movieProgress = repository.getPlaybackProgress

@@ -442,22 +442,21 @@ export class Pan115CookieClient implements Pan115StorageApi {
     if (!isRecord(decoded)) {
       throw new Error("PAN115_DOWNURL_FAILED: decrypted payload is not an object");
     }
+    const matchesRequestedFile = (candidate: Record<string, unknown>, requireExplicit: boolean): boolean => {
+      const candidateFid = stringValue(recordValue(candidate, "fid") ?? recordValue(candidate, "file_id"));
+      const candidatePc = stringValue(recordValue(candidate, "pick_code") ?? recordValue(candidate, "pc"));
+      if (candidateFid && candidateFid !== input.fileId) return false;
+      if (candidatePc && candidatePc !== info.pickcode) return false;
+      return requireExplicit ? Boolean(candidateFid || candidatePc) : true;
+    };
     let entry: Record<string, unknown> | undefined;
     const directEntry = recordValue(decoded, input.fileId);
-    if (isRecord(directEntry)) {
+    if (isRecord(directEntry) && matchesRequestedFile(directEntry, false)) {
       entry = directEntry;
     } else {
       const entries = Object.values(decoded).filter(isRecord);
-      if (entries.length === 1) {
-        const candidate = entries[0]!;
-        const candidateFid = stringValue(recordValue(candidate, "fid") ?? recordValue(candidate, "file_id"));
-        const candidatePc = stringValue(recordValue(candidate, "pick_code") ?? recordValue(candidate, "pc"));
-        const identifiersMatch =
-          (!candidateFid || candidateFid === input.fileId) &&
-          (!candidatePc || candidatePc === info.pickcode);
-        if ((candidateFid || candidatePc) && identifiersMatch) {
-          entry = candidate;
-        }
+      if (entries.length === 1 && matchesRequestedFile(entries[0]!, true)) {
+        entry = entries[0]!;
       }
     }
     if (!entry) {

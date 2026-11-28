@@ -527,7 +527,7 @@ export function splitSetCookieHeader(header: string): string[] {
   for (let i = 0; i < header.length; i += 1) {
     if (header[i] !== ",") continue;
     const rest = header.slice(i + 1);
-    if (/^\s*[^;,\s=]+=/i.test(rest)) {
+    if (/^\s*[^;,\s=]+\s*=/.test(rest)) {
       const piece = header.slice(start, i).trim();
       if (piece) result.push(piece);
       start = i + 1;

@@ -503,7 +503,7 @@ describe("OCR hardening regressions (cipher, SSRF, transport errors, Set-Cookie)
     const err = await dnsFailClient.getDownloadUrl({ fileId: "42" }).catch((e) => e);
     expect(isDriveFileNotFoundError(err)).toBe(false);
 
-    // Private/loopback redirect Location is blocked (SSRF guard)
+    // Private/loopback redirect target returned by resolver is blocked (SSRF guard)
     const ssrfClient = new Pan123Client({
       token: "tok",
       fetchImpl: async (url) => {
@@ -516,19 +516,17 @@ describe("OCR hardening regressions (cipher, SSRF, transport errors, Set-Cookie)
             }),
           };
         }
-        if (url.includes("/file/download_info")) {
-          return {
-            status: 200,
-            text: JSON.stringify({ code: 0, data: { DownloadUrl: "https://cdn.123pan.cn/dispatch" } }),
-          };
-        }
-        return { status: 302, text: "", location: "http://169.254.169.254/latest/meta-data" };
+        return {
+          status: 200,
+          text: JSON.stringify({ code: 0, data: { DownloadUrl: "https://cdn.123pan.cn/dispatch" } }),
+        };
       },
+      resolveRedirect: async () => "http://169.254.169.254/latest/meta-data",
     });
     await expect(ssrfClient.getDownloadUrl({ fileId: "42" })).rejects.toThrow(/private\/internal/);
   });
 
-  it("splitSetCookieHeader splits multiple cookies while preserving commas inside Expires dates (including terminal Expires)", () => {
+  it("splitSetCookieHeader splits multiple cookies while preserving commas inside Expires dates (including terminal Expires and space before =)", () => {
     const combined =
       "__puus=abc123; Expires=Wed, 21 Oct 2026 07:28:00 GMT; Path=/, other=val; Max-Age=3600";
     expect(splitSetCookieHeader(combined)).toEqual([
@@ -536,19 +534,24 @@ describe("OCR hardening regressions (cipher, SSRF, transport errors, Set-Cookie)
       "other=val; Max-Age=3600",
     ]);
     const terminalExpires =
-      "a=1; Expires=Wed, 21 Oct 2026 07:28:00 GMT, __puus=rotated; Path=/";
+      "a=1; Expires=Wed, 21 Oct 2026 07:28:00 GMT, __puus =rotated; Path=/";
     expect(splitSetCookieHeader(terminalExpires)).toEqual([
       "a=1; Expires=Wed, 21 Oct 2026 07:28:00 GMT",
-      "__puus=rotated; Path=/",
+      "__puus =rotated; Path=/",
     ]);
   });
 
-  it("safe-external-url allows fc/fd public DNS names while blocking IPv6 ULA and IPv4-mapped loopback literals", () => {
+  it("safe-external-url allows fc/fd public DNS names while blocking RFC 6890 special-use IPv4/IPv6 ranges", () => {
     expect(assertSafeExternalHttpUrl("https://fcdn.189.cn/video.mkv", "TEST")).toBe("https://fcdn.189.cn/video.mkv");
     expect(assertSafeExternalHttpUrl("https://fd.123pan.cn/video.mkv", "TEST")).toBe("https://fd.123pan.cn/video.mkv");
     expect(() => assertSafeExternalHttpUrl("http://[fc00::1]/secret", "TEST")).toThrow(/private\/internal/);
     expect(() => assertSafeExternalHttpUrl("http://[::ffff:127.0.0.1]/secret", "TEST")).toThrow(/private\/internal/);
     expect(isPrivateOrReservedIp("::ffff:169.254.169.254")).toBe(true);
+    expect(isPrivateOrReservedIp("198.18.0.1")).toBe(true);
+    expect(isPrivateOrReservedIp("192.0.2.1")).toBe(true);
+    expect(isPrivateOrReservedIp("198.51.100.1")).toBe(true);
+    expect(isPrivateOrReservedIp("203.0.113.1")).toBe(true);
+    expect(isPrivateOrReservedIp("2001:db8::1")).toBe(true);
     expect(isPrivateOrReservedIp("8.8.8.8")).toBe(false);
   });
 

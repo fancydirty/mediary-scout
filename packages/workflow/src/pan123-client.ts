@@ -209,14 +209,10 @@ export class Pan123Client {
     // never a TypeError inside .trim().
     this.token = typeof opts.token === "string" ? opts.token.trim() : "";
     this.fetchImpl = opts.fetchImpl ?? defaultPan123Fetch;
-    this.resolveRedirect =
-      opts.resolveRedirect ??
-      ((url, headers) =>
-        defaultPan123ResolveRedirect(
-          url,
-          headers,
-          opts.fetchImpl,
-        ));
+    // Always default redirect resolution to the connection-time SSRF-guarded resolver,
+    // even when a caller supplies a custom `fetchImpl` wrapper. Callers that need to
+    // stub redirect resolution in tests pass `opts.resolveRedirect` explicitly.
+    this.resolveRedirect = opts.resolveRedirect ?? defaultPan123ResolveRedirect;
   }
 
   // ── 传输(signPath 签名 + envelope 判定) ──────────────────────────────────
@@ -929,25 +925,15 @@ export function unwrapPan123DownloadParams(rawUrl: string): string {
 async function defaultPan123ResolveRedirect(
   url: string,
   headers: Record<string, string>,
-  customFetchImpl?: Pan123Fetch,
 ): Promise<string> {
   const safeUrl = assertSafeExternalHttpUrl(url, "PAN123_DOWNLOAD_FAILED");
-  // Production transport uses connection-time DNS/IP SSRF enforcement (`guardedManualGet`).
-  // Custom injected `fetchImpl` (unit tests) still stays isolated from real network I/O.
-  const res = customFetchImpl
-    ? await customFetchImpl(safeUrl, {
-        method: "GET",
-        headers: { ...headers, Range: "bytes=0-0" },
-        redirect: "manual",
-        timeoutMs: DEFAULT_TIMEOUT_MS,
-      })
-    : await guardedManualGet({
-        url: safeUrl,
-        headers: { ...headers, Range: "bytes=0-0" },
-        timeoutMs: DEFAULT_TIMEOUT_MS,
-        errorPrefix: "PAN123_DOWNLOAD_FAILED",
-        readTextBody: true,
-      });
+  const res = await guardedManualGet({
+    url: safeUrl,
+    headers: { ...headers, Range: "bytes=0-0" },
+    timeoutMs: DEFAULT_TIMEOUT_MS,
+    errorPrefix: "PAN123_DOWNLOAD_FAILED",
+    readTextBody: true,
+  });
   if (res.status >= 300 && res.status < 400) {
     const location = res.location?.trim();
     if (!location) {

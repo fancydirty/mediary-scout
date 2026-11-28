@@ -203,5 +203,21 @@ describe("streamProxiedDownload (zero-buffering Range proxy)", () => {
     });
     await cancelRes.body?.cancel("player seeked");
     expect(aborted).toBe(true);
+
+    // 4. Redirect to internal/private host is blocked by SSRF guard
+    await expect(
+      streamProxiedDownload({
+        method: "GET",
+        rangeHeader: null,
+        link: { url: "https://dl.quark.example/redir.mkv", headers: {}, supportsRedirect: false },
+        storageId: "cs_qk",
+        fileId: "fid_ssrf",
+        resolveFreshLink: vi.fn(),
+        cache: new DriveDownloadLinkCache(),
+        fetchImpl: vi.fn(async () =>
+          new Response(null, { status: 302, headers: { Location: "http://127.0.0.1:8080/admin" } }),
+        ),
+      }),
+    ).rejects.toThrow(/private\/internal/);
   });
 });
