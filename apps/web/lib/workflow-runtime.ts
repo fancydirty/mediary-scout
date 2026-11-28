@@ -21,6 +21,7 @@ import {
   createTmdbMetadataProvider,
   TMDB_DIRECT_BASE_URL,
   type TmdbAccess,
+  type ConnectedStorage,
   episodeCode,
   FakeResourceProvider,
   FakeStorageExecutor,
@@ -2626,6 +2627,27 @@ function extractStorageCredential(
   return { cookie, credential: null };
 }
 
+/** Build a fresh StorageExecutor for interactive playback URL resolution (`getDownloadUrl`).
+ *  Reuses the canonical credential extraction and token-refresh persister (Guangya / Tianyi)
+ *  while zeroing 115's acquisition pacing delay so clicking Play starts instantaneously. */
+export function createPlaybackExecutorForStorage(storage: ConnectedStorage): StorageExecutor {
+  const { cookie, credential } = extractStorageCredential(storage.provider, storage.payload);
+  const scopeCids = [storage.rootCid, storage.moviesCid, storage.tvCid, storage.animeCid].filter(
+    (cid): cid is string => Boolean(cid),
+  );
+  const brand = isRegisteredStorageProvider(storage.provider) ? getStorageBrand(storage.provider) : null;
+  return createExecutorForBrand({
+    provider: storage.provider,
+    cookie,
+    ...(credential !== null ? { credential } : {}),
+    scopeCids,
+    env: { ...process.env, MEDIA_TRACK_115_MIN_DELAY_MS: "1" },
+    ...(brand?.authKind === "token"
+      ? { onCredentialRefresh: makeTokenPersister(storage.accountId, storage.id, storage.provider) }
+      : {}),
+  });
+}
+
 /**
  * Provision a drive's media tree (Mediary Scout/{Movies,TV,Anime}) under the
  * account root and return the CIDs. Uses an UNRESTRICTED bootstrap executor — a
@@ -2972,6 +2994,7 @@ async function probeStorageConnection(
   if (provider === "tianyi") {
     const blob = (credential ?? {}) as {
       sessionKey?: string;
+      sessionSecret?: string;
       accessToken?: string;
       refreshToken?: string;
       familySessionKey?: string;
@@ -2983,6 +3006,7 @@ async function probeStorageConnection(
     // failing throws TianyiAuthError (caller freezes). rootCid unused.
     await new TianyiClient({
       sessionKey: blob.sessionKey ?? "",
+      ...(blob.sessionSecret === undefined ? {} : { sessionSecret: blob.sessionSecret }),
       accessToken: blob.accessToken ?? "",
       refreshToken: blob.refreshToken ?? "",
       ...(blob.familySessionKey === undefined ? {} : { familySessionKey: blob.familySessionKey }),
@@ -4106,6 +4130,7 @@ async function bindTianyiConnectedStorage(session: TianyiSession): Promise<{ pro
   // top-level blob on every renewal). familySessionKey rides along only when present.
   const credentialBlob: Record<string, unknown> = {
     sessionKey: session.sessionKey,
+    ...(session.sessionSecret ? { sessionSecret: session.sessionSecret } : {}),
     accessToken: session.accessToken,
     refreshToken: session.refreshToken,
     ...(session.familySessionKey ? { familySessionKey: session.familySessionKey } : {}),

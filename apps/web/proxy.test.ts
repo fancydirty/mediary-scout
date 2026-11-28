@@ -101,9 +101,19 @@ describe("proxy gate — single-user mode (multi-user off)", () => {
   });
 
   it("handler 自守的 API 前缀不被重定向（否则会把 JSON 端点变成 HTML 跳转）", () => {
-    for (const path of ["/api/health", "/api/workflows/run", "/api/agent/step"]) {
+    for (const path of [
+      "/api/health",
+      "/api/workflows/run",
+      "/api/agent/step",
+      "/emby",
+      "/emby/System/Info/Public",
+      "/emby/Users/AuthenticateByName",
+      "/emby/Videos/mov_550/stream",
+    ]) {
       expect(redirectsToLogin(makeRequest({ cf: true, path }))).toBe(false);
     }
+    // Path boundary check: /emby-unrelated must still be gated.
+    expect(redirectsToLogin(makeRequest({ cf: true, path: "/emby-other" }))).toBe(true);
   });
 });
 

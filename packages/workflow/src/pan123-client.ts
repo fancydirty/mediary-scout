@@ -21,6 +21,8 @@
  */
 
 import { parseFiniteMetric } from "./domain.js";
+import { DriveFileNotFoundError, type DriveDownloadLink } from "./ports.js";
+import { assertSafeExternalHttpUrl, guardedManualGet } from "./safe-external-url.js";
 
 const API_BASE = "https://yun.123pan.com/b/api";
 const DEFAULT_TIMEOUT_MS = 20_000;
@@ -156,8 +158,14 @@ export type Pan123Fetch = (
     headers: Record<string, string>;
     body?: string;
     timeoutMs?: number;
+    redirect?: "follow" | "manual";
   },
-) => Promise<{ status: number; text: string }>;
+) => Promise<{
+  status: number;
+  text: string;
+  location?: string | null;
+  contentType?: string | null;
+}>;
 
 /** 统一 item:file/list/new 与 share/get 的 InfoList 条目共用此形状。 */
 export interface Pan123Item {
@@ -168,14 +176,31 @@ export interface Pan123Item {
   isFolder: boolean;
 }
 
+export type Pan123ResolveRedirect = (
+  url: string,
+  headers: Record<string, string>,
+) => Promise<string>;
+
+export interface Pan123FileInfo {
+  fileId: string;
+  fileName: string;
+  size: number;
+  etag: string;
+  s3keyFlag: string;
+  type: number;
+}
+
 export interface Pan123ClientOptions {
   token: string;
   fetchImpl?: Pan123Fetch;
+  /** Injectable single-hop redirect resolver for download URLs (tests pass a stub). */
+  resolveRedirect?: Pan123ResolveRedirect;
 }
 
 export class Pan123Client {
   private readonly token: string;
   private readonly fetchImpl: Pan123Fetch;
+  private readonly resolveRedirect: Pan123ResolveRedirect;
 
   constructor(opts: Pan123ClientOptions) {
     // Defensive coercion at the single choke point: callers cast `credential`
@@ -184,6 +209,10 @@ export class Pan123Client {
     // never a TypeError inside .trim().
     this.token = typeof opts.token === "string" ? opts.token.trim() : "";
     this.fetchImpl = opts.fetchImpl ?? defaultPan123Fetch;
+    // Always default redirect resolution to the connection-time SSRF-guarded resolver,
+    // even when a caller supplies a custom `fetchImpl` wrapper. Callers that need to
+    // stub redirect resolution in tests pass `opts.resolveRedirect` explicitly.
+    this.resolveRedirect = opts.resolveRedirect ?? defaultPan123ResolveRedirect;
   }
 
   // ── 传输(signPath 签名 + envelope 判定) ──────────────────────────────────
@@ -658,6 +687,129 @@ export class Pan123Client {
     }
     return { totalBytes, usedBytes };
   }
+
+  /** Fetch file metadata (`POST /b/api/file/info`) with bigint-safe numeric FileId.
+   *  Returns null when the file does not exist or is in the recycle bin (`Trashed === 1`). */
+  async getFileInfo(fileId: string): Promise<Pan123FileInfo | null> {
+    let resp: Record<string, unknown>;
+    try {
+      resp = await this.signed("/file/info", {
+        method: "POST",
+        rawBody: rawJsonWithNumericIds(
+          { fileIdList: [{ FileId: numericIdPlaceholder(fileId) }] },
+          [fileId],
+        ),
+      });
+    } catch (error) {
+      if (isPan123AuthError(error)) {
+        throw error;
+      }
+      if (isPan123NotFoundError(error)) {
+        return null;
+      }
+      throw error;
+    }
+    const data = resp["data"];
+    if (!isPlainRecord(data)) {
+      throw new Error("PAN123_FILE_INFO_FAILED: unexpected data object");
+    }
+    const rawList = data["infoList"] ?? data["InfoList"];
+    if (!Array.isArray(rawList)) {
+      throw new Error("PAN123_FILE_INFO_FAILED: response missing infoList array");
+    }
+    if (rawList.length === 0) {
+      return null;
+    }
+    const first = rawList[0];
+    if (!isPlainRecord(first)) {
+      throw new Error("PAN123_FILE_INFO_FAILED: malformed infoList entry");
+    }
+    const returnedId = strId(first["FileId"] ?? first["fileId"]);
+    if (!returnedId || returnedId !== String(fileId)) {
+      throw new Error(
+        `PAN123_FILE_INFO_FAILED: response FileId mismatch (expected ${fileId}, got ${returnedId || "empty"})`,
+      );
+    }
+    const trashed = numOf(first["Trashed"] ?? first["trashed"]);
+    if (trashed === 1) {
+      return null;
+    }
+    return {
+      fileId: returnedId,
+      fileName: strOf(first["FileName"] ?? first["fileName"]),
+      size: numOf(first["Size"] ?? first["size"]),
+      etag: strOf(first["Etag"] ?? first["etag"]),
+      s3keyFlag: strOf(first["S3KeyFlag"] ?? first["s3keyFlag"]),
+      type: numOf(first["Type"] ?? first["type"]),
+    };
+  }
+
+  /**
+   * Resolve a direct CDN download URL for a 123Pan file id.
+   * Live-verified 2026-11-28: `file/info` → `file/download_info` → base64-unwrap `?params=`
+   * → single manual-redirect GET yields a clean CDN URL playable via bare HTTP 302 (no cookies,
+   * any player User-Agent).
+   */
+  async getDownloadUrl(input: { fileId: string }): Promise<DriveDownloadLink> {
+    const info = await this.getFileInfo(input.fileId);
+    if (!info) {
+      throw new DriveFileNotFoundError("pan123", input.fileId);
+    }
+    let resp: Record<string, unknown>;
+    try {
+      resp = await this.signed("/file/download_info", {
+        method: "POST",
+        rawBody: rawJsonWithNumericIds(
+          {
+            driveId: 0,
+            etag: info.etag,
+            fileId: numericIdPlaceholder(info.fileId),
+            fileName: info.fileName,
+            s3keyFlag: info.s3keyFlag,
+            size: info.size,
+            type: info.type,
+          },
+          [info.fileId],
+        ),
+      });
+    } catch (error) {
+      if (isPan123AuthError(error)) {
+        throw error;
+      }
+      if (isPan123NotFoundError(error)) {
+        throw new DriveFileNotFoundError(
+          "pan123",
+          input.fileId,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+      throw error;
+    }
+    const data = (resp["data"] ?? {}) as Record<string, unknown>;
+    const rawUrl = strOf(data["DownloadUrl"] ?? data["downloadUrl"]);
+    if (!rawUrl) {
+      throw new Error("PAN123_DOWNLOAD_FAILED: response missing DownloadUrl");
+    }
+    const unwrappedUrl = assertSafeExternalHttpUrl(
+      unwrapPan123DownloadParams(rawUrl),
+      "PAN123_DOWNLOAD_FAILED",
+    );
+    const finalUrl = assertSafeExternalHttpUrl(
+      await this.resolveRedirect(unwrappedUrl, {
+        Referer: "https://yun.123pan.com/",
+        "User-Agent": "Mozilla/5.0",
+      }),
+      "PAN123_DOWNLOAD_FAILED",
+    );
+    return {
+      url: finalUrl,
+      headers: {},
+      supportsRedirect: true,
+      ...(info.fileName ? { fileName: info.fileName } : {}),
+      ...(info.size > 0 ? { fileSize: info.size } : {}),
+      ttlMs: 15 * 60 * 1000,
+    };
+  }
 }
 
 /** Offline-task row from /offline_download/task/list.
@@ -731,6 +883,80 @@ function strOf(v: unknown): string {
   return v == null ? "" : String(v);
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isPan123NotFoundError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  // Only classify explicit 123Pan API envelope errors — NEVER match DNS ENOTFOUND or transport failures.
+  if (!error.message.startsWith("PAN123_FAILED(")) return false;
+  return /文件不存在|已删除|\bcode=(?:5113|5050|404)\b/i.test(error.message);
+}
+
+/** 123Pan's DownloadUrl sometimes wraps the real dispatch URL inside a base64 `params` query arg.
+ *  Reads the raw query substring so unescaped `+` in standard base64 is NOT turned into spaces. */
+export function unwrapPan123DownloadParams(rawUrl: string): string {
+  try {
+    const u = new URL(rawUrl);
+    const rawSearch = u.search.startsWith("?") ? u.search.slice(1) : "";
+    let rawParams: string | null = null;
+    for (const part of rawSearch.split("&")) {
+      const eq = part.indexOf("=");
+      if (eq < 0) continue;
+      if (part.slice(0, eq) === "params") {
+        rawParams = decodeURIComponent(part.slice(eq + 1));
+        break;
+      }
+    }
+    if (rawParams) {
+      const normalizedB64 = rawParams.replace(/ /g, "+");
+      const decoded = Buffer.from(normalizedB64, "base64").toString("utf8").trim();
+      if (/^https?:\/\//i.test(decoded)) {
+        return decoded;
+      }
+    }
+  } catch {
+    // Fall through to rawUrl.
+  }
+  return rawUrl;
+}
+
+async function defaultPan123ResolveRedirect(
+  url: string,
+  headers: Record<string, string>,
+): Promise<string> {
+  const safeUrl = assertSafeExternalHttpUrl(url, "PAN123_DOWNLOAD_FAILED");
+  const res = await guardedManualGet({
+    url: safeUrl,
+    headers: { ...headers, Range: "bytes=0-0" },
+    timeoutMs: DEFAULT_TIMEOUT_MS,
+    errorPrefix: "PAN123_DOWNLOAD_FAILED",
+    readTextBody: true,
+  });
+  if (res.status >= 300 && res.status < 400) {
+    const location = res.location?.trim();
+    if (!location) {
+      throw new Error(`PAN123_DOWNLOAD_FAILED: redirect status ${res.status} missing Location header`);
+    }
+    return assertSafeExternalHttpUrl(new URL(location, safeUrl).toString(), "PAN123_DOWNLOAD_FAILED");
+  }
+  const contentType = (res.contentType ?? "").toLowerCase();
+  if (res.status >= 200 && res.status < 300) {
+    if (contentType.includes("application/json") || res.text.trimStart().startsWith("{")) {
+      const parsed = parsePan123Json(res.text) as Record<string, unknown> | null;
+      const nested = isPlainRecord(parsed?.["data"]) ? parsed["data"] : {};
+      const redirectUrl = strOf(nested["redirect_url"] ?? parsed?.["redirect_url"]).trim();
+      if (redirectUrl) {
+        return assertSafeExternalHttpUrl(new URL(redirectUrl, safeUrl).toString(), "PAN123_DOWNLOAD_FAILED");
+      }
+      throw new Error("PAN123_DOWNLOAD_FAILED: dispatch JSON response missing redirect_url");
+    }
+    return safeUrl;
+  }
+  throw new Error(`PAN123_DOWNLOAD_FAILED: dispatch resolution returned HTTP ${res.status}`);
+}
+
 async function defaultPan123Fetch(
   url: string,
   init: {
@@ -738,8 +964,14 @@ async function defaultPan123Fetch(
     headers: Record<string, string>;
     body?: string;
     timeoutMs?: number;
+    redirect?: "follow" | "manual";
   },
-): Promise<{ status: number; text: string }> {
+): Promise<{
+  status: number;
+  text: string;
+  location?: string | null;
+  contentType?: string | null;
+}> {
   // HARD project rule "新外部HTTP一律带超时": a bare fetch with no AbortController
   // hung the whole app in the PanSou incident.
   const requestInit: RequestInit = {
@@ -750,6 +982,24 @@ async function defaultPan123Fetch(
   if (init.body !== undefined) {
     requestInit.body = init.body;
   }
+  if (init.redirect !== undefined) {
+    requestInit.redirect = init.redirect;
+  }
   const res = await fetch(url, requestInit);
-  return { status: res.status, text: await res.text() };
+  const location = res.headers.get("location");
+  const contentType = res.headers.get("content-type");
+  if (init.redirect === "manual" && res.status >= 300 && res.status < 400) {
+    await res.body?.cancel().catch(() => undefined);
+    return { status: res.status, text: "", location, contentType };
+  }
+  if (
+    init.redirect === "manual" &&
+    (!contentType ||
+      (!contentType.toLowerCase().includes("json") &&
+        !contentType.toLowerCase().includes("text")))
+  ) {
+    await res.body?.cancel().catch(() => undefined);
+    return { status: res.status, text: "", location, contentType };
+  }
+  return { status: res.status, text: await res.text(), location, contentType };
 }

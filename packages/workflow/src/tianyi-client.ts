@@ -18,7 +18,10 @@
  * response is ever handed to raw JSON.parse.
  */
 
+import { createHmac } from "node:crypto";
 import { parseFiniteMetric } from "./domain.js";
+import { DriveFileNotFoundError, type DriveDownloadLink } from "./ports.js";
+import { assertSafeExternalHttpUrl, guardedManualGet } from "./safe-external-url.js";
 
 const WEB_BASE = "https://cloud.189.cn";
 const API_BASE = "https://api.cloud.189.cn"; // OPEN face — getSessionForPC (token exchange)
@@ -88,11 +91,17 @@ export function parseTianyiUid(loginNameOrBlob: string): string | null {
 /** The credential blob persisted in connected_storages.payload (light 光鸭 先例). */
 export interface TianyiCredential {
   sessionKey: string;
+  sessionSecret?: string;
   accessToken: string;
   refreshToken: string;
   familySessionKey?: string;
   loginName?: string;
 }
+
+export type TianyiResolveRedirect = (
+  url: string,
+  headers: Record<string, string>,
+) => Promise<string>;
 
 export interface TianyiHttpInit {
   method: "GET" | "POST";
@@ -128,10 +137,13 @@ export interface TianyiSaveResult {
 
 export interface TianyiClientOptions {
   sessionKey: string;
+  sessionSecret?: string;
   accessToken: string;
   refreshToken: string;
   familySessionKey?: string;
   fetchImpl?: TianyiFetch;
+  /** Injectable single-hop redirect resolver for download URLs (tests pass a stub). */
+  resolveRedirect?: TianyiResolveRedirect;
   /** Injectable sleep between poll attempts (tests pass a no-op). */
   sleepImpl?: (ms: number) => Promise<void>;
   /** 会话/token 自愈后回写 DB(credential blob),复用光鸭 onCredentialRefresh 模式。 */
@@ -140,20 +152,24 @@ export interface TianyiClientOptions {
 
 export class TianyiClient {
   private sessionKey: string;
+  private sessionSecret: string | undefined;
   private accessToken: string;
   private refreshToken: string;
   private familySessionKey: string | undefined;
   private readonly fetchImpl: TianyiFetch;
+  private readonly resolveRedirect: TianyiResolveRedirect;
   private readonly sleepFn: (ms: number) => Promise<void>;
   private readonly onCredentialRefresh: ((creds: TianyiCredential) => void | Promise<void>) | undefined;
   private noCachSeq = 0;
 
   constructor(opts: TianyiClientOptions) {
     this.sessionKey = opts.sessionKey?.trim() ?? "";
+    this.sessionSecret = opts.sessionSecret?.trim() || undefined;
     this.accessToken = opts.accessToken?.trim() ?? "";
     this.refreshToken = opts.refreshToken?.trim() ?? "";
     this.familySessionKey = opts.familySessionKey?.trim() || undefined;
     this.fetchImpl = opts.fetchImpl ?? defaultTianyiFetch;
+    this.resolveRedirect = opts.resolveRedirect ?? defaultTianyiResolveRedirect;
     this.sleepFn = opts.sleepImpl ?? sleep;
     this.onCredentialRefresh = opts.onCredentialRefresh;
   }
@@ -275,8 +291,14 @@ export class TianyiClient {
     if (!session) {
       throw new TianyiAuthError("TIANYI_SESSION_RENEW_FAILED: 会话续期失败,需重新登录天翼");
     }
-    // 3) 更新全套凭证并回写
+    // 3) 更新全套凭证并回写（sessionKey 换新时绝不留用旧 sessionSecret；同 key 续期时保留已有 secret）
+    const keyChanged = session.sessionKey !== this.sessionKey;
     this.sessionKey = session.sessionKey;
+    if (session.sessionSecret) {
+      this.sessionSecret = session.sessionSecret;
+    } else if (keyChanged) {
+      this.sessionSecret = "";
+    }
     if (session.accessToken) {
       this.accessToken = session.accessToken;
     }
@@ -292,6 +314,9 @@ export class TianyiClient {
         accessToken: this.accessToken,
         refreshToken: this.refreshToken,
       };
+      if (this.sessionSecret) {
+        creds.sessionSecret = this.sessionSecret;
+      }
       if (this.familySessionKey) {
         creds.familySessionKey = this.familySessionKey;
       }
@@ -308,6 +333,7 @@ export class TianyiClient {
    *  (只跑过 redirectURL 变体)。若 T10 live-e2e 会话续期失败,第一件事就是去掉这里的 appId 再试。 */
   private async exchangeAccessTokenForSession(accessToken: string): Promise<{
     sessionKey: string;
+    sessionSecret: string;
     accessToken: string;
     refreshToken: string;
     familySessionKey: string;
@@ -338,6 +364,7 @@ export class TianyiClient {
     }
     return {
       sessionKey,
+      sessionSecret: strId(data["sessionSecret"]),
       accessToken: strId(data["accessToken"]),
       refreshToken: strId(data["refreshToken"]),
       familySessionKey: strId(data["familySessionKey"]),
@@ -403,6 +430,86 @@ export class TianyiClient {
       totalBytes,
       usedBytes: totalBytes - availableBytes,
     };
+  }
+
+  /**
+   * Resolve a direct CDN download URL via Tianyi's PC HMAC API (`api.cloud.189.cn/getFileDownloadUrl.action`).
+   * Live-verified 2026-11-28: the web endpoint `cloud.189.cn/api/open/file/getFileDownloadUrl.action`
+   * rejects large video files with `res_code: 'FileTooLarge'`, whereas the PC HMAC endpoint supports
+   * arbitrary video sizes. Lazily fetches and persists `sessionSecret` via `renewSession()` when an
+   * older stored credential lacks it.
+   */
+  async getDownloadUrl(input: { fileId: string }): Promise<DriveDownloadLink> {
+    if (!this.sessionSecret) {
+      await this.renewSession();
+    }
+    if (!this.sessionSecret) {
+      throw new TianyiAuthError("TIANYI_DOWNLOAD_FAILED: sessionSecret unavailable after session renewal");
+    }
+    let data: Record<string, unknown>;
+    try {
+      data = await this.pcSignedGet("/getFileDownloadUrl.action", [
+        ["fileId", input.fileId],
+        ["dt", "3"],
+        ["flag", "1"],
+      ]);
+    } catch (error) {
+      if (isTianyiAuthError(error)) {
+        throw error;
+      }
+      if (
+        error instanceof Error &&
+        /FileNotFound|文件不存在|不存在|已删除|not\s*found/i.test(error.message)
+      ) {
+        throw new DriveFileNotFoundError("tianyi", input.fileId, error.message);
+      }
+      throw error;
+    }
+    const rawUrl = String(data["fileDownloadUrl"] ?? "").replace(/&amp;/g, "&").trim();
+    if (!rawUrl) {
+      throw new Error("TIANYI_DOWNLOAD_FAILED: response missing fileDownloadUrl");
+    }
+    const normalizedUrl = assertSafeExternalHttpUrl(
+      rawUrl.startsWith("http://") ? `https://${rawUrl.slice("http://".length)}` : rawUrl,
+      "TIANYI_DOWNLOAD_FAILED",
+    );
+    const finalUrl = assertSafeExternalHttpUrl(
+      await this.resolveRedirect(normalizedUrl, { "User-Agent": USER_AGENT }),
+      "TIANYI_DOWNLOAD_FAILED",
+    );
+    return {
+      url: finalUrl,
+      headers: {},
+      supportsRedirect: true,
+      ttlMs: 10 * 60 * 1000,
+    };
+  }
+
+  private async pcSignedGet(
+    requestUri: string,
+    params: Array<[string, string]>,
+    retried = false,
+  ): Promise<Record<string, unknown>> {
+    const secret = this.sessionSecret ?? "";
+    if (!secret) {
+      throw new TianyiAuthError("TIANYI_DOWNLOAD_FAILED: sessionSecret missing for PC HMAC signing");
+    }
+    const date = new Date().toUTCString();
+    const signStr = `SessionKey=${this.sessionKey}&Operate=GET&RequestURI=${requestUri}&Date=${date}`;
+    const signature = createHmac("sha1", secret).update(signStr).digest("hex").toUpperCase();
+    const q = new URLSearchParams(params);
+    const res = await this.fetchImpl(`${API_BASE}${requestUri}?${q.toString()}`, {
+      method: "GET",
+      headers: {
+        Date: date,
+        SessionKey: this.sessionKey,
+        Signature: signature,
+        "X-Request-ID": globalThis.crypto.randomUUID(),
+        Accept: "application/json;charset=UTF-8",
+        "User-Agent": USER_AGENT,
+      },
+    });
+    return this.unwrap(res, requestUri, () => this.pcSignedGet(requestUri, params, true), retried);
   }
 
   // ── 转存链(SHARE_SAVE) ───────────────────────────────────────────────────
@@ -676,6 +783,34 @@ function numOf(v: unknown): number {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+const MAX_REDIRECT_HOPS = 5;
+
+async function defaultTianyiResolveRedirect(
+  url: string,
+  headers: Record<string, string>,
+): Promise<string> {
+  let current = assertSafeExternalHttpUrl(url, "TIANYI_DOWNLOAD_FAILED");
+  for (let hop = 0; hop < MAX_REDIRECT_HOPS; hop += 1) {
+    const res = await guardedManualGet({
+      url: current,
+      headers: { ...headers, Range: "bytes=0-0" },
+      timeoutMs: 20_000,
+      errorPrefix: "TIANYI_DOWNLOAD_FAILED",
+      readTextBody: false,
+    });
+    const location = res.status >= 300 && res.status < 400 ? res.location : null;
+    if (location) {
+      current = assertSafeExternalHttpUrl(new URL(location, current).toString(), "TIANYI_DOWNLOAD_FAILED");
+      continue;
+    }
+    if (res.status >= 200 && res.status < 300) {
+      return current;
+    }
+    throw new Error(`TIANYI_DOWNLOAD_FAILED: redirect resolution returned HTTP ${res.status}`);
+  }
+  throw new Error("TIANYI_DOWNLOAD_FAILED: too many redirects while resolving download URL");
 }
 
 async function defaultTianyiFetch(url: string, init: TianyiHttpInit): Promise<{ status: number; text: string }> {

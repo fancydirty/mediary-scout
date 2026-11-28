@@ -24,12 +24,15 @@ const SESSION_COOKIE_NAME = "mt_session";
 // /api/update/busy and /api/update/hold are called by the updater. It has no session
 // cookie; those routes check the updater token themselves. Redirecting them to /login
 // would break the busy wait and the hold before a swap.
+// /emby is the built-in Virtual Emby server — native players (网易爆米花/Infuse/VidHub)
+// authenticate with Emby tokens or AuthenticateByName inside the route handler itself.
 const HANDLER_GUARDED_API_PREFIXES = [
   "/api/health",
   "/api/workflows/",
   "/api/agent/",
   "/api/update/busy",
   "/api/update/hold",
+  "/emby/",
 ];
 
 /** 经隧道的远程请求判定。与 workflow-runtime.isRemoteRequest() 保持一致：
@@ -48,7 +51,10 @@ export function proxy(request: NextRequest): NextResponse {
   if (!gated) {
     return NextResponse.next();
   }
-  if (HANDLER_GUARDED_API_PREFIXES.some((prefix) => request.nextUrl.pathname.startsWith(prefix))) {
+  if (
+    request.nextUrl.pathname === "/emby" ||
+    HANDLER_GUARDED_API_PREFIXES.some((prefix) => request.nextUrl.pathname.startsWith(prefix))
+  ) {
     return NextResponse.next();
   }
   const hasSession = Boolean(request.cookies.get(SESSION_COOKIE_NAME)?.value);

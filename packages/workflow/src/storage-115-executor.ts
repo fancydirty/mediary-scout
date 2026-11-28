@@ -7,7 +7,7 @@ import type {
 } from "./domain.js";
 import { episodeCodeFromFileName } from "./episode-code.js";
 import { isPan115AuthError } from "./pan115-cookie-client.js";
-import type { StorageExecutor, UnparsedVideoFile } from "./ports.js";
+import type { DriveDownloadLink, StorageExecutor, UnparsedVideoFile } from "./ports.js";
 
 /**
  * Depth bound for the recursive video collectors, matching listTree's default.
@@ -145,6 +145,7 @@ export interface Pan115StorageApi {
   deleteItems(input: { fileIds: string[] }): Promise<Pan115ActionResult>;
   renameFile(input: { fileId: string; newName: string }): Promise<Pan115ActionResult>;
   getSpace?(): Promise<{ totalBytes: number; usedBytes: number } | null>;
+  getDownloadUrl?(input: { fileId: string; userAgent?: string }): Promise<DriveDownloadLink>;
 }
 
 export interface Storage115ExecutorOptions {
@@ -540,6 +541,14 @@ export class Storage115Executor implements StorageExecutor {
       return null;
     }
     return this.callApi("getSpace", () => getSpace.call(this.api));
+  }
+
+  async getDownloadUrl(input: { fileId: string; userAgent?: string }): Promise<DriveDownloadLink> {
+    const getDownloadUrl = this.api.getDownloadUrl;
+    if (!getDownloadUrl) {
+      throw new Error("PAN115_DOWNLOAD_UNSUPPORTED: storage api does not implement getDownloadUrl");
+    }
+    return this.callApi("getDownloadUrl", () => getDownloadUrl.call(this.api, input));
   }
 
   async createDirectory(input: { name: string; parentId: string }): Promise<string> {

@@ -129,12 +129,12 @@ describe("connectTianyiSson (bind)", () => {
 
     // Top-level = the rotating credential blob, refreshed from the new session.
     expect(payload.sessionKey).toBe("SK-web");
+    // sessionSecret is persisted for the PC HMAC download API (web endpoint returns FileTooLarge on videos).
+    expect(payload.sessionSecret).toBe("SS-secret");
     expect(payload.accessToken).toBe("AT-open");
     expect(payload.refreshToken).toBe("RT-open");
     expect(payload.familySessionKey).toBe("FSK-fam");
-    // The *secrets* are intentionally NOT persisted (WEB face needs only sessionKey;
-    // renewal uses accessToken/refreshToken).
-    expect(payload.sessionSecret).toBeUndefined();
+    // familySessionSecret is still not needed and stays omitted.
     expect(payload.familySessionSecret).toBeUndefined();
 
     // Refresh keeps the row's id, resolved CIDs, and createdAt.

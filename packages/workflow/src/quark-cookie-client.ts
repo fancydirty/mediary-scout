@@ -18,6 +18,7 @@
 
 import { parseFiniteMetric } from "./domain.js";
 import { fetchWithTimeout } from "./fetch-with-timeout.js";
+import { DriveFileNotFoundError, type DriveDownloadLink } from "./ports.js";
 
 /** The per-brand half of the family protocol: everything that actually differs. */
 export interface CloudDriveProfile {
@@ -31,6 +32,10 @@ export interface CloudDriveProfile {
    *  returns 403 code=41027 分享不存在 (verified live 2026-10-23). */
   query: string;
   userAgent: string;
+  /** Desktop client UA required by `/1/clouddrive/file/download` (Quark rejects
+   *  plain Chrome/124 UA with code=23018 — live-verified 2026-11-28).
+   *  Optional for custom profiles; defaults to `userAgent`. */
+  downloadUserAgent?: string;
   referer: string;
   origin: string;
   /** Uppercase prefix for thrown error codes (QUARK_… / UC_…). */
@@ -60,6 +65,10 @@ export const QUARK_PROFILE: CloudDriveProfile = {
   userAgent:
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
     "(KHTML, like Gecko) Chrome/124 Safari/537.36",
+  downloadUserAgent:
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) " +
+    "quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 " +
+    "Safari/537.36 Channel/pckk_other_ch",
   referer: "https://pan.quark.cn/",
   origin: "https://pan.quark.cn",
   errorPrefix: "QUARK",
@@ -73,6 +82,10 @@ export const UC_PROFILE: CloudDriveProfile = {
   baseUrl: "https://pc-api.uc.cn",
   query: "pr=UCBrowser&fr=pc&sys=darwin&ve=1.8.6",
   userAgent:
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) " +
+    "uc-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 " +
+    "Safari/537.36 Channel/pckk_other_ch",
+  downloadUserAgent:
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) " +
     "uc-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 " +
     "Safari/537.36 Channel/pckk_other_ch",
@@ -98,9 +111,14 @@ export interface QuarkHttpInit {
   method: "GET" | "POST";
   headers: Record<string, string>;
   body?: string;
+  signal?: AbortSignal;
 }
 
 export type QuarkFetchJson = (url: string, init: QuarkHttpInit) => Promise<unknown>;
+export type QuarkFetchDownloadResponse = (
+  url: string,
+  init: QuarkHttpInit,
+) => Promise<{ body: unknown; setCookies: string[] }>;
 
 export interface QuarkCookieClientOptions {
   cookie: string;
@@ -108,6 +126,9 @@ export interface QuarkCookieClientOptions {
    *  written before UC existed passes only a cookie). */
   profile?: CloudDriveProfile;
   fetchJson?: QuarkFetchJson;
+  /** Optional header-aware transport for `/file/download`, which rotates `__puus`
+   *  via `Set-Cookie`. Defaults to real fetch when `fetchJson` is not injected. */
+  fetchDownloadResponse?: QuarkFetchDownloadResponse;
   userAgent?: string;
   /** Injectable sleep between task-poll attempts (tests pass a no-op). */
   sleep?: (ms: number) => Promise<void>;
@@ -159,6 +180,7 @@ export class QuarkCookieClient {
   private readonly cookie: string;
   private readonly profile: CloudDriveProfile;
   private readonly fetchJson: QuarkFetchJson;
+  private readonly fetchDownloadResponse: QuarkFetchDownloadResponse;
   private readonly userAgent: string;
   private readonly sleepFn: (ms: number) => Promise<void>;
   private readonly pollAttempts: number;
@@ -172,6 +194,11 @@ export class QuarkCookieClient {
     this.cookie = cookie;
     this.profile = options.profile ?? QUARK_PROFILE;
     this.fetchJson = options.fetchJson ?? defaultFetchJson;
+    this.fetchDownloadResponse =
+      options.fetchDownloadResponse ??
+      (options.fetchJson
+        ? async (url, init) => ({ body: await this.fetchJson(url, init), setCookies: [] })
+        : defaultFetchDownloadResponse);
     this.userAgent = options.userAgent ?? this.profile.userAgent;
     this.sleepFn = options.sleep ?? sleep;
     this.pollAttempts = options.pollAttempts ?? DEFAULT_POLL_ATTEMPTS;
@@ -355,6 +382,70 @@ export class QuarkCookieClient {
     return { totalBytes, usedBytes };
   }
 
+  /**
+   * Resolve a CDN download URL for a Quark/UC file id (`POST /1/clouddrive/file/download`).
+   * Live-verified 2026-11-28:
+   *  - Quark requires desktop UA (`profile.downloadUserAgent`, Chrome/124 fails code=23018).
+   *  - Both Quark and UC return a fresh `__puus` via response `Set-Cookie` that MUST be
+   *    merged into the Cookie header sent to the CDN (alongside Referer + desktop UA);
+   *    bare players get 403/412, so `supportsRedirect` is `false` (served via Range proxy).
+   */
+  async getDownloadUrl(input: { fileId: string; signal?: AbortSignal }): Promise<DriveDownloadLink> {
+    const downloadUserAgent = this.profile.downloadUserAgent ?? this.profile.userAgent;
+    const { body, setCookies } = await this.fetchDownloadResponse(
+      `${this.profile.baseUrl}/1/clouddrive/file/download?${this.profile.query}`,
+      {
+        method: "POST",
+        headers: {
+          ...this.headers(),
+          "User-Agent": downloadUserAgent,
+        },
+        body: JSON.stringify({ fids: [input.fileId] }),
+        ...(input.signal ? { signal: input.signal } : {}),
+      },
+    );
+    let data: unknown;
+    try {
+      data = unwrap(body, this.errCode("DOWNLOAD_FAILED"));
+    } catch (error) {
+      if (isQuarkAuthError(error)) {
+        throw error;
+      }
+      if (isFamilyNotFoundError(error)) {
+        throw new DriveFileNotFoundError(
+          this.profile.key,
+          input.fileId,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+      throw error;
+    }
+    const items = Array.isArray(data) ? data.filter(isRecord) : isRecord(data) ? [data] : [];
+    const first = items[0];
+    if (!first) {
+      throw new DriveFileNotFoundError(this.profile.key, input.fileId, "empty download response");
+    }
+    const url = stringValue(recordValue(first, "download_url"));
+    if (!url) {
+      throw new Error(`${this.errCode("DOWNLOAD_FAILED")}: response missing download_url`);
+    }
+    const fileName = stringValue(recordValue(first, "file_name"));
+    const fileSize = numberValue(recordValue(first, "size"));
+    const effectiveCookie = mergeCookies(this.cookie, setCookies);
+    return {
+      url,
+      headers: {
+        Cookie: effectiveCookie,
+        Referer: this.profile.referer,
+        "User-Agent": downloadUserAgent,
+      },
+      supportsRedirect: false,
+      ...(fileName ? { fileName } : {}),
+      ...(Number.isFinite(fileSize) && fileSize > 0 ? { fileSize } : {}),
+      ttlMs: 10 * 60 * 1000,
+    };
+  }
+
   private async getJson(path: string, params: Array<[string, string]>): Promise<unknown> {
     const query = new URLSearchParams(this.profile.query);
     for (const [key, value] of params) {
@@ -406,10 +497,107 @@ export function parseCloudDriveUid(cookie: string): string | null {
 /** Back-compat alias — 夸克 callers predate the family rename. */
 export const parseQuarkUid = parseCloudDriveUid;
 
+async function defaultFetchDownloadResponse(
+  url: string,
+  init: QuarkHttpInit,
+): Promise<{ body: unknown; setCookies: string[] }> {
+  const requestInit: RequestInit = { method: init.method, headers: init.headers };
+  if (init.body !== undefined) {
+    requestInit.body = init.body;
+  }
+  if (init.signal !== undefined) {
+    requestInit.signal = init.signal;
+  }
+  const response = await fetchWithTimeout(url, requestInit, DEFAULT_HTTP_TIMEOUT_MS);
+  const setCookies =
+    typeof response.headers.getSetCookie === "function"
+      ? response.headers.getSetCookie()
+      : (() => {
+          const single = response.headers.get("set-cookie");
+          return single ? splitSetCookieHeader(single) : [];
+        })();
+  const text = await response.text();
+  try {
+    return { body: JSON.parse(text) as unknown, setCookies };
+  } catch {
+    throw new Error(`QUARK_HTTP_FAILED: ${response.status}`);
+  }
+}
+
+/** Split a comma-joined `Set-Cookie` header without breaking commas inside `Expires=Day, DD Mon YYYY...`.
+ *  A comma begins a new cookie iff it is followed by a `name=` pair before any `;` or `,`. */
+export function splitSetCookieHeader(header: string): string[] {
+  const result: string[] = [];
+  let start = 0;
+  for (let i = 0; i < header.length; i += 1) {
+    if (header[i] !== ",") continue;
+    const rest = header.slice(i + 1);
+    if (/^\s*[^;,\s=]+\s*=/.test(rest)) {
+      const piece = header.slice(start, i).trim();
+      if (piece) result.push(piece);
+      start = i + 1;
+    }
+  }
+  const tail = header.slice(start).trim();
+  if (tail) result.push(tail);
+  return result;
+}
+
+/** Merge response `Set-Cookie` headers onto an existing cookie string without losing
+ *  existing auth cookies. Skips expired/deleted cookies cleanly. */
+export function mergeCookies(baseCookie: string, setCookies: readonly string[]): string {
+  const jar = new Map<string, string>();
+  for (const part of baseCookie.split(";")) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq <= 0) continue;
+    jar.set(trimmed.slice(0, eq).trim(), trimmed.slice(eq + 1).trim());
+  }
+  for (const line of setCookies) {
+    const segments = line.split(";").map((s) => s.trim());
+    const pair = segments[0] ?? "";
+    const eq = pair.indexOf("=");
+    if (eq <= 0) continue;
+    const name = pair.slice(0, eq).trim();
+    const value = pair.slice(eq + 1).trim();
+    // Skip deletion directives (Max-Age<=0 or Expires in the past) or empty values
+    // that would wipe a still-valid cookie (UC empty-cookie lesson).
+    const lowerAttrs = segments.slice(1).map((s) => s.toLowerCase());
+    const isDeleted = lowerAttrs.some((attr) => {
+      if (attr.startsWith("max-age=")) {
+        const n = Number(attr.slice("max-age=".length));
+        return Number.isFinite(n) && n <= 0;
+      }
+      if (attr.startsWith("expires=")) {
+        const ts = Date.parse(attr.slice("expires=".length));
+        return Number.isFinite(ts) && ts <= Date.now();
+      }
+      return false;
+    });
+    if (isDeleted) {
+      jar.delete(name);
+      continue;
+    }
+    if (value) {
+      jar.set(name, value);
+    }
+  }
+  return [...jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
+}
+
+function isFamilyNotFoundError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return /\bcode=(?:41008|41002|23000|23001)\b|file\s*not\s*found|文件不存在|已删除/i.test(error.message);
+}
+
 async function defaultFetchJson(url: string, init: QuarkHttpInit): Promise<unknown> {
   const requestInit: RequestInit = { method: init.method, headers: init.headers };
   if (init.body !== undefined) {
     requestInit.body = init.body;
+  }
+  if (init.signal !== undefined) {
+    requestInit.signal = init.signal;
   }
   const response = await fetchWithTimeout(url, requestInit, DEFAULT_HTTP_TIMEOUT_MS);
   // Quark returns its {code:31001} auth body WITH HTTP 401, so parse the JSON

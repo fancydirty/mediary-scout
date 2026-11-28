@@ -5822,3 +5822,179 @@ select.setting-control {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* 设置 → 内置虚拟 Emby 服务 + 详情页外播直链 */
+.virtual-emby-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.virtual-emby-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.virtual-emby-badges {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.virtual-emby-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+}
+.virtual-emby-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.virtual-emby-copy-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.virtual-emby-code {
+  flex: 1;
+  min-width: 180px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12.5px;
+  color: var(--text);
+  overflow-x: auto;
+  white-space: nowrap;
+}
+.virtual-emby-tips {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 7%, var(--bg-raised));
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-soft);
+}
+.virtual-emby-tips p {
+  margin: 0;
+}
+.virtual-emby-tips code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  font-size: 12px;
+}
+
+.direct-play-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.direct-play-wrap.is-compact {
+  margin-left: auto;
+}
+.direct-play-compact-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  cursor: pointer;
+  transition: background 140ms ease, transform 120ms ease;
+}
+.direct-play-compact-btn:hover {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  transform: scale(1.04);
+}
+.direct-play-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  min-width: 168px;
+  padding: 5px;
+  border-radius: 10px;
+  background: var(--bg-surface, var(--bg-raised));
+  border: 1px solid var(--border);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.direct-play-wrap.is-compact .direct-play-menu {
+  left: auto;
+  right: 0;
+}
+.direct-play-wrap.is-compact .direct-play-menu.is-align-left {
+  left: 0;
+  right: auto;
+}
+.direct-play-manual-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 6px 8px 4px;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
+.direct-play-manual-copy span {
+  font-size: 11px;
+  color: var(--text-soft);
+}
+.direct-play-manual-copy input {
+  width: 220px;
+  max-width: 72vw;
+  padding: 4px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  color: var(--text);
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.direct-play-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.direct-play-menu-item:hover {
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+}
+.episode-cell-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  width: 100%;
+}
+.episode-cell.missing-on-drive {
+  border-color: color-mix(in srgb, var(--warning) 50%, transparent);
+  background: color-mix(in srgb, var(--warning) 8%, var(--bg-raised));
+}
+.episode-cell.missing-on-drive span {
+  color: var(--warning);
+}

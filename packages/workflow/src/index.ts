@@ -49,6 +49,8 @@ export * from "./pan123-storage-executor.js";
 export * from "./storage-brands.js";
 export * from "./storage-auth-error.js";
 export * from "./storage-executor-factory.js";
+export * from "./drive-download-cache.js";
+export * from "./virtual-emby.js";
 export * from "./pan115-storage-factory.js";
 export * from "./queries.js";
 export * from "./search-view.js";
@@ -89,3 +91,8 @@ export * from "./acquisition-v2/stub-model.js";
 export * from "./runner-v2.js";
 export * from "./staging-janitor.js";
 export * from "./staging-recovery.js";
+export {
+  assertSafeExternalHttpUrl,
+  createGuardedDnsLookup,
+  isPrivateOrReservedIp,
+} from "./safe-external-url.js";

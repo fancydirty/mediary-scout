@@ -1623,3 +1623,58 @@ export async function testMediaServerRefreshAction(
   }
 }
 
+export interface VirtualEmbyActionResult {
+  ok: boolean;
+  token?: string;
+  message?: string;
+}
+
+/** Enable or disable the built-in Virtual Emby server (owner-only instance switch). */
+export async function setVirtualEmbyEnabledAction(enabled: boolean): Promise<VirtualEmbyActionResult> {
+  assertNotDemo();
+  try {
+    const { resolveCurrentIsOwner } = await import("../lib/settings-attention-server");
+    if (!(await resolveCurrentIsOwner())) {
+      return { ok: false, message: "只有站主可以开关虚拟 Emby 服务。" };
+    }
+    const {
+      ensureVirtualEmbyServerId,
+      ensureVirtualEmbyToken,
+      setVirtualEmbyEnabled,
+    } = await import("@media-track/workflow");
+    const { getWorkflowRepository, requireAuthenticatedAccountId } = await import("../lib/workflow-runtime");
+    const accountId = await requireAuthenticatedAccountId();
+    const repository = getWorkflowRepository();
+    let token: string | undefined;
+    if (enabled) {
+      // Provision serverId + token BEFORE publishing the enabled switch so /emby
+      // never turns on while prerequisites failed to persist.
+      await ensureVirtualEmbyServerId(repository);
+      token = await ensureVirtualEmbyToken(repository, accountId);
+    }
+    await setVirtualEmbyEnabled(repository, enabled);
+    revalidatePath("/settings");
+    revalidatePath("/show/[tmdbId]", "page");
+    return { ok: true, ...(token ? { token } : {}) };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/** Regenerate the current account's Virtual Emby token (immediately revokes prior tokens). */
+export async function regenerateVirtualEmbyTokenAction(): Promise<VirtualEmbyActionResult> {
+  assertNotDemo();
+  try {
+    const { regenerateVirtualEmbyToken } = await import("@media-track/workflow");
+    const { getWorkflowRepository, requireAuthenticatedAccountId } = await import("../lib/workflow-runtime");
+    const accountId = await requireAuthenticatedAccountId();
+    const repository = getWorkflowRepository();
+    const token = await regenerateVirtualEmbyToken(repository, accountId);
+    revalidatePath("/settings");
+    revalidatePath("/show/[tmdbId]", "page");
+    return { ok: true, token };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : String(error) };
+  }
+}
+

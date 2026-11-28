@@ -1,14 +1,17 @@
 import { driveConnectionBadge } from "../../lib/settings-badge";
 import { maskProviderUid } from "../../lib/mask-provider-uid";
+import { resolveRequestOrigin } from "../../lib/request-origin";
 import { connection } from "next/server";
+import { headers } from "next/headers";
 import { Suspense } from "react";
-import { Bell, Bot, Cable, CalendarClock, Clapperboard, ExternalLink, Gauge, KeyRound, Languages, Radio, RefreshCw, ShieldCheck, Subtitles, TriangleAlert, Users } from "lucide-react";
+import { Bell, Bot, Cable, CalendarClock, Clapperboard, ExternalLink, Gauge, KeyRound, Languages, Radio, RefreshCw, ShieldCheck, Subtitles, TriangleAlert, Tv, Users } from "lucide-react";
 import { AppSidebar } from "../../components/app-sidebar";
 import { AddDriveBrandTabs } from "../../components/add-drive-brand-tabs";
 import { TestConnectionButton } from "../../components/test-connection-button";
 import { UnbindStorageButton } from "../../components/unbind-storage-button";
 import { PushNotificationForm } from "../../components/push-notification-form";
 import { MediaServerRefreshForm } from "../../components/media-server-refresh-form";
+import { VirtualEmbyPanel } from "../../components/virtual-emby-panel";
 import { PreferredLanguageForm } from "../../components/preferred-language-form";
 import { SelectionPreferenceForm } from "../../components/selection-preference-form";
 import { LlmConfigForm } from "../../components/llm-config-form";
@@ -88,11 +91,14 @@ import {
 import {
   brandSupportsProwlarr,
   brandsSupportingProwlarr,
+  ensureVirtualEmbyToken,
   formatDriveSpaceSummary,
   FREE_LLM_PRESET,
+  loadVirtualEmbyPlayableCounts,
   getStorageBrand,
   isFreeLlmPreset,
   isRegisteredStorageProvider,
+  isVirtualEmbyEnabled,
   MEDIA_SERVER_SETTING_KEYS,
   parseMediaServerDelaySeconds,
   resolveInitialSelectionPreferenceText,
@@ -170,6 +176,9 @@ export default function SettingsPage({
               }
               patrol={
                 <>
+                  <Suspense fallback={<div className="skeleton skeleton-heading" />}>
+                    <VirtualEmbySection />
+                  </Suspense>
                   <Suspense fallback={<div className="skeleton skeleton-heading" />}>
                     <DailySweepSection />
                   </Suspense>
@@ -915,6 +924,48 @@ async function PushNotificationSection() {
       </div>
 
       <PushNotificationForm configured={configured} />
+    </section>
+  );
+}
+
+async function VirtualEmbySection() {
+  await connection();
+  const [accountId, isOwner, hdrs] = await Promise.all([
+    getCurrentAccountId(),
+    resolveCurrentIsOwner(),
+    headers(),
+  ]);
+  if (!accountId || accountId === "acct_unauthenticated") return null;
+  const repository = getWorkflowRepository();
+  const [enabled, account, counts] = await Promise.all([
+    isVirtualEmbyEnabled(repository),
+    repository.getAccountById(accountId),
+    loadVirtualEmbyPlayableCounts(repository, accountId),
+  ]);
+  const token = enabled ? await ensureVirtualEmbyToken(repository, accountId) : "";
+  const initialServerUrl = `${resolveRequestOrigin(hdrs)}/emby`;
+
+  return (
+    <section id="virtual-emby" className="panel" style={{ maxWidth: 720 }}>
+      <div className="panel-header">
+        <div>
+          <h2 className="panel-title">
+            <Tv size={16} aria-hidden style={{ verticalAlign: "-2px", marginRight: 8 }} />
+            内置虚拟 Emby 服务（零扫库直播）
+          </h2>
+          <p className="panel-note">
+            直接把已连接的六大网盘聚合成一台 Emby 服务器：网易爆米花 / Infuse / VidHub 连上即看，免挂载、免 STRM、免扫库
+          </p>
+        </div>
+      </div>
+      <VirtualEmbyPanel
+        initialEnabled={enabled}
+        initialServerUrl={initialServerUrl}
+        username={account?.username ?? "default"}
+        initialToken={token}
+        isOwner={isOwner}
+        counts={counts}
+      />
     </section>
   );
 }

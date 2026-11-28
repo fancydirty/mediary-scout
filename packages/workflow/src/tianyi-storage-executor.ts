@@ -26,7 +26,7 @@
  */
 import type { PackageTreeFile, ResourceCandidate, TransferAttempt, TransferStatus, VerifiedFile } from "./domain.js";
 import { episodeCodeFromFileName } from "./episode-code.js";
-import type { StorageExecutor, UnparsedVideoFile } from "./ports.js";
+import type { DriveDownloadLink, StorageExecutor, UnparsedVideoFile } from "./ports.js";
 import { isTianyiAuthError } from "./tianyi-client.js";
 import type { TianyiBatchEntry, TianyiClient, TianyiItem } from "./tianyi-client.js";
 
@@ -102,6 +102,11 @@ export class TianyiStorageExecutor implements StorageExecutor {
       return null;
     }
     return this.client.getSpace();
+  }
+
+  async getDownloadUrl(input: { fileId: string; userAgent?: string }): Promise<DriveDownloadLink> {
+    // Tianyi CDN links are UA-agnostic (supportsRedirect=true); PC HMAC API requires Tianyi's fixed UA.
+    return this.client.getDownloadUrl({ fileId: input.fileId });
   }
 
   async createDirectory(input: { name: string; parentId: string }): Promise<string> {
