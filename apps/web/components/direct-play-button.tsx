@@ -92,9 +92,12 @@ export function DirectPlayButton({
         ta.style.position = "fixed";
         ta.style.opacity = "0";
         document.body.appendChild(ta);
-        ta.select();
-        ok = document.execCommand("copy");
-        document.body.removeChild(ta);
+        try {
+          ta.select();
+          ok = document.execCommand("copy");
+        } finally {
+          document.body.removeChild(ta);
+        }
       } catch {
         ok = false;
       }

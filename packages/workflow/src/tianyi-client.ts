@@ -21,6 +21,7 @@
 import { createHmac } from "node:crypto";
 import { parseFiniteMetric } from "./domain.js";
 import { DriveFileNotFoundError, type DriveDownloadLink } from "./ports.js";
+import { assertSafeExternalHttpUrl, guardedManualGet } from "./safe-external-url.js";
 
 const WEB_BASE = "https://cloud.189.cn";
 const API_BASE = "https://api.cloud.189.cn"; // OPEN face — getSessionForPC (token exchange)
@@ -290,9 +291,14 @@ export class TianyiClient {
     if (!session) {
       throw new TianyiAuthError("TIANYI_SESSION_RENEW_FAILED: 会话续期失败,需重新登录天翼");
     }
-    // 3) 更新全套凭证并回写（sessionKey 换新时绝不留用旧 sessionSecret）
+    // 3) 更新全套凭证并回写（sessionKey 换新时绝不留用旧 sessionSecret；同 key 续期时保留已有 secret）
+    const keyChanged = session.sessionKey !== this.sessionKey;
     this.sessionKey = session.sessionKey;
-    this.sessionSecret = session.sessionSecret || "";
+    if (session.sessionSecret) {
+      this.sessionSecret = session.sessionSecret;
+    } else if (keyChanged) {
+      this.sessionSecret = "";
+    }
     if (session.accessToken) {
       this.accessToken = session.accessToken;
     }
@@ -781,56 +787,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 const MAX_REDIRECT_HOPS = 5;
 
-function assertSafeExternalHttpUrl(rawUrl: string, errorPrefix: string): string {
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    throw new Error(`${errorPrefix}: invalid download URL`);
-  }
-  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-    throw new Error(`${errorPrefix}: disallowed download URL scheme ${parsed.protocol}`);
-  }
-  if (parsed.username || parsed.password) {
-    throw new Error(`${errorPrefix}: download URL must not contain embedded credentials`);
-  }
-  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  if (
-    host === "localhost" ||
-    host.endsWith(".localhost") ||
-    host.endsWith(".local") ||
-    host === "::1" ||
-    host === "::" ||
-    host.startsWith("fe80:") ||
-    host.startsWith("fc") ||
-    host.startsWith("fd") ||
-    /^0\./.test(host) ||
-    /^127\./.test(host) ||
-    /^10\./.test(host) ||
-    /^169\.254\./.test(host) ||
-    /^192\.168\./.test(host) ||
-    /^172\.(1[6-9]|2\d|3[0-1])\./.test(host) ||
-    /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(host)
-  ) {
-    throw new Error(`${errorPrefix}: disallowed private/internal download host ${host}`);
-  }
-  return parsed.toString();
-}
-
 async function defaultTianyiResolveRedirect(
   url: string,
   headers: Record<string, string>,
 ): Promise<string> {
   let current = assertSafeExternalHttpUrl(url, "TIANYI_DOWNLOAD_FAILED");
   for (let hop = 0; hop < MAX_REDIRECT_HOPS; hop += 1) {
-    const res = await fetch(current, {
-      method: "GET",
+    const res = await guardedManualGet({
+      url: current,
       headers: { ...headers, Range: "bytes=0-0" },
-      redirect: "manual",
-      signal: AbortSignal.timeout(20_000),
+      timeoutMs: 20_000,
+      errorPrefix: "TIANYI_DOWNLOAD_FAILED",
+      readTextBody: false,
     });
-    const location = res.status >= 300 && res.status < 400 ? res.headers.get("location") : null;
-    await res.body?.cancel().catch(() => undefined);
+    const location = res.status >= 300 && res.status < 400 ? res.location : null;
     if (location) {
       current = assertSafeExternalHttpUrl(new URL(location, current).toString(), "TIANYI_DOWNLOAD_FAILED");
       continue;

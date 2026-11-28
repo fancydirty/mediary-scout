@@ -419,9 +419,6 @@ export class Pan115CookieClient implements Pan115StorageApi {
           info = rechecked;
           ({ response, key } = await requestDownUrl(info));
           if (!responseState(response)) {
-            if (isAuthFailure(response)) {
-              throwResponseFailure(response, `PAN115_DOWNURL_FAILED: ${responseMessage(response)}`);
-            }
             throwResponseFailure(response, `PAN115_DOWNURL_FAILED: ${responseMessage(response)}`);
           }
         } else {
@@ -455,10 +452,10 @@ export class Pan115CookieClient implements Pan115StorageApi {
         const candidate = entries[0]!;
         const candidateFid = stringValue(recordValue(candidate, "fid") ?? recordValue(candidate, "file_id"));
         const candidatePc = stringValue(recordValue(candidate, "pick_code") ?? recordValue(candidate, "pc"));
-        if (
-          (candidateFid && candidateFid === input.fileId) ||
-          (candidatePc && candidatePc === info.pickcode)
-        ) {
+        const identifiersMatch =
+          (!candidateFid || candidateFid === input.fileId) &&
+          (!candidatePc || candidatePc === info.pickcode);
+        if ((candidateFid || candidatePc) && identifiersMatch) {
           entry = candidate;
         }
       }

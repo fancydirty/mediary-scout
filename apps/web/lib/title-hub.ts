@@ -473,10 +473,17 @@ export async function getDetailView(
         }
       }
     }
-    if (!hasUsableMovieFile && driveBadges.length === 0) {
+    const tombstonedStorages = new Set(
+      driveBadges.filter((b) => b.fileStatus === "missing_on_drive").map((b) => b.storageId),
+    );
+    if (!hasUsableMovieFile) {
       hasUsableMovieFile = movieStates.some(
         (s) =>
-          Boolean(s.connectedStorageId && storageMetaById.has(s.connectedStorageId)) &&
+          Boolean(
+            s.connectedStorageId &&
+              storageMetaById.has(s.connectedStorageId) &&
+              !tombstonedStorages.has(s.connectedStorageId),
+          ) &&
           s.episodes.some((ep) => ep.obtained && ep.verifiedFileIds.some((id) => Boolean(id))),
       );
     }

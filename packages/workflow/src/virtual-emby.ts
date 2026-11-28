@@ -1727,8 +1727,19 @@ async function handleAuthenticateByName(
   }
 
   const accounts = await repo.listAccounts();
+  let account: Account | null = null;
+  if (username) {
+    account = accounts.find((a) => a.username.toLowerCase() === username.toLowerCase()) ?? null;
+  } else if (accounts.length === 1 && accounts[0]?.id === DEFAULT_ACCOUNT_ID) {
+    account = accounts[0]!;
+  }
+
+  // Normalize throttle identity case-insensitively to match lookup semantics so casing
+  // variants ("Owner" vs "owner") cannot obtain fresh login-throttle buckets.
   const throttleIdentity =
-    accounts.length === 1 && accounts[0]?.id === DEFAULT_ACCOUNT_ID ? "" : username;
+    accounts.length === 1 && accounts[0]?.id === DEFAULT_ACCOUNT_ID
+      ? ""
+      : (account?.username ?? username).toLowerCase();
   if (loginThrottle) {
     const verdict = loginThrottle.check(req.headers, throttleIdentity);
     if (!verdict.allowed) {
@@ -1739,13 +1750,6 @@ async function handleAuthenticateByName(
         headers: { "Retry-After": String(verdict.retryAfterSec) },
       };
     }
-  }
-
-  let account: Account | null = null;
-  if (username) {
-    account = accounts.find((a) => a.username.toLowerCase() === username.toLowerCase()) ?? null;
-  } else if (accounts.length === 1 && accounts[0]?.id === DEFAULT_ACCOUNT_ID) {
-    account = accounts[0]!;
   }
 
   if (!account) {

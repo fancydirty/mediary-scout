@@ -1385,11 +1385,12 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     }>(
       "SELECT a.id, a.username, a.password_hash, a.group_id, a.is_owner, a.created_at " +
         "FROM accounts a JOIN account_settings s ON s.account_id = a.id " +
-        "WHERE s.key = $1 AND s.value = $2 LIMIT 1",
+        "WHERE s.key = $1 AND s.value = $2 LIMIT 2",
       [key, value],
     );
-    const row = result.rows[0];
-    if (!row) return null;
+    // Fail closed if duplicate setting values match multiple accounts.
+    if (result.rows.length !== 1) return null;
+    const row = result.rows[0]!;
     return {
       id: String(row.id),
       username: String(row.username),
@@ -1744,6 +1745,10 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
       const row = existing.rows[0];
       if (row) {
         const fileIds = Array.isArray(row.file_ids) ? row.file_ids.map(String) : [];
+        if (fileIds.length > 0 && !fileIds.includes(input.fileId)) {
+          // Ignore stale/mismatched 404 after the copy was refreshed with a different fileId.
+          return;
+        }
         if (fileIds.length > 1) {
           const remaining = fileIds.filter((id) => id !== input.fileId);
           if (remaining.length > 0) {

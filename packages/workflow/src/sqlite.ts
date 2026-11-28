@@ -1508,23 +1508,23 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
   }
 
   async findAccountBySetting(key: string, value: string): Promise<Account | null> {
-    const row = this.db
+    const rows = this.db
       .prepare(
         "SELECT a.id, a.username, a.password_hash, a.group_id, a.is_owner, a.created_at " +
           "FROM accounts a JOIN account_settings s ON s.account_id = a.id " +
-          "WHERE s.key = ? AND s.value = ? LIMIT 1",
+          "WHERE s.key = ? AND s.value = ? LIMIT 2",
       )
-      .get(key, value) as
-      | {
-          id: string;
-          username: string;
-          password_hash: string;
-          group_id: string | null;
-          is_owner: number;
-          created_at: string;
-        }
-      | undefined;
-    if (!row) return null;
+      .all(key, value) as Array<{
+      id: string;
+      username: string;
+      password_hash: string;
+      group_id: string | null;
+      is_owner: number;
+      created_at: string;
+    }>;
+    // Fail closed if duplicate setting values match multiple accounts.
+    if (rows.length !== 1) return null;
+    const row = rows[0]!;
     return {
       id: String(row.id),
       username: String(row.username),
@@ -1938,6 +1938,10 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
           if (Array.isArray(parsed)) fileIds = parsed.map(String);
         } catch {
           fileIds = [];
+        }
+        if (fileIds.length > 0 && !fileIds.includes(input.fileId)) {
+          // Ignore stale/mismatched 404 after the copy was refreshed with a different fileId.
+          return;
         }
         if (fileIds.length > 1) {
           const remaining = fileIds.filter((id) => id !== input.fileId);

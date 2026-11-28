@@ -132,8 +132,14 @@ export async function streamProxiedDownload(input: {
   let activeLink = input.link;
   let attempt = await attemptFetch(activeLink);
 
-  // Self-heal once on expired signed CDN URL / rotated __puus cookie (403 / 412).
-  if (attempt.upstream.status === 403 || attempt.upstream.status === 412) {
+  // Self-heal once on expired signed CDN URL / rotated __puus cookie (403 / 412),
+  // or CDN 404 (so resolveFreshLink() re-checks the drive API and throws
+  // DriveFileNotFoundError if deleted, allowing route-level tombstoning + failover).
+  if (
+    attempt.upstream.status === 403 ||
+    attempt.upstream.status === 412 ||
+    attempt.upstream.status === 404
+  ) {
     await attempt.upstream.body?.cancel().catch(() => undefined);
     attempt.controller.abort();
     attempt.cleanup();
@@ -206,6 +212,8 @@ export async function streamProxiedDownload(input: {
         }
         streamController.enqueue(value);
       } catch (error) {
+        controller.abort(error);
+        await reader.cancel(error).catch(() => undefined);
         cleanup();
         streamController.error(error);
       }

@@ -519,21 +519,15 @@ async function defaultFetchDownloadResponse(
   }
 }
 
-/** Split a comma-joined `Set-Cookie` header without breaking commas inside `Expires=Day, DD Mon YYYY...`. */
+/** Split a comma-joined `Set-Cookie` header without breaking commas inside `Expires=Day, DD Mon YYYY...`.
+ *  A comma begins a new cookie iff it is followed by a `name=` pair before any `;` or `,`. */
 export function splitSetCookieHeader(header: string): string[] {
   const result: string[] = [];
   let start = 0;
-  let inExpires = false;
   for (let i = 0; i < header.length; i += 1) {
-    const ch = header[i];
-    if (ch === ";" && inExpires) {
-      inExpires = false;
-    } else if (!inExpires && ch === "=") {
-      const attr = header.slice(Math.max(start, i - 16), i).toLowerCase();
-      if (/(?:^|;\s*)expires$/.test(attr)) {
-        inExpires = true;
-      }
-    } else if (ch === "," && !inExpires) {
+    if (header[i] !== ",") continue;
+    const rest = header.slice(i + 1);
+    if (/^\s*[^;,\s=]+=/i.test(rest)) {
       const piece = header.slice(start, i).trim();
       if (piece) result.push(piece);
       start = i + 1;

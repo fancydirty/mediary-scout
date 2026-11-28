@@ -597,13 +597,17 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
   }
 
   async findAccountBySetting(key: string, value: string): Promise<Account | null> {
+    let matched: Account | null = null;
     for (const [accountId, bucket] of this.accountSettings) {
       if (bucket.get(key) === value) {
         const account = this.accounts.get(accountId);
-        if (account) return { ...account };
+        if (!account) continue;
+        // Fail closed if duplicate setting values match multiple accounts.
+        if (matched) return null;
+        matched = { ...account };
       }
     }
-    return null;
+    return matched;
   }
 
   async backfillConnectedStorageId(): Promise<number> {
@@ -855,18 +859,18 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
         runId: copy.runId,
         recordedAt: copy.recordedAt,
       };
-      const resolvedStatus =
-        copy.fileStatus !== undefined
-          ? copy.fileStatus
-          : samePhysicalFiles
-            ? existing?.fileStatus
-            : undefined;
-      const resolvedVerifiedAt =
-        copy.verifiedAt !== undefined
-          ? copy.verifiedAt
-          : copy.fileStatus === undefined && samePhysicalFiles
-            ? existing?.verifiedAt
-            : undefined;
+      let resolvedStatus: EpisodeCopyFileStatus | undefined;
+      if (copy.fileStatus !== undefined) {
+        resolvedStatus = copy.fileStatus;
+      } else if (samePhysicalFiles) {
+        resolvedStatus = existing?.fileStatus;
+      }
+      let resolvedVerifiedAt: string | null | undefined;
+      if (copy.verifiedAt !== undefined) {
+        resolvedVerifiedAt = copy.verifiedAt;
+      } else if (copy.fileStatus === undefined && samePhysicalFiles) {
+        resolvedVerifiedAt = existing?.verifiedAt;
+      }
       if (resolvedStatus === "missing_on_drive") {
         next.fileStatus = "missing_on_drive";
       }
@@ -886,6 +890,10 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
   }): Promise<void> {
     const key = `${input.trackedSeasonId}::${input.episodeCode}::${input.storageId}`;
     const existing = this.episodeCopies.get(key);
+    if (existing && existing.fileIds.length > 0 && !existing.fileIds.includes(input.fileId)) {
+      // Ignore stale/mismatched 404 after the copy was refreshed with a different fileId.
+      return;
+    }
     if (existing && existing.fileIds.length > 1) {
       const remaining = existing.fileIds.filter((id) => id !== input.fileId);
       if (remaining.length > 0) {

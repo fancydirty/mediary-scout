@@ -189,6 +189,18 @@ function runSuite(label: string, createRepo: () => Promise<{ repo: WorkflowRepos
         expect(healed.find((c) => c.episodeCode === "S01E01")?.fileStatus ?? "present").toBe("present");
         expect(healed.find((c) => c.episodeCode === "S01E01")?.fileIds).toEqual(["f1_new"]);
 
+        // Stale 404 for old fileId ("f1") MUST NOT tombstone the newly-landed single-file copy ("f1_new")!
+        await repo.markEpisodeCopyFileMissing!({
+          trackedSeasonId: season.id,
+          episodeCode: "S01E01",
+          storageId: "cs_115",
+          fileId: "f1",
+          verifiedAt: "2026-11-28T11:15:00.000Z",
+        });
+        const afterStale = (await repo.listEpisodeCopies!(season.id)).find((c) => c.episodeCode === "S01E01");
+        expect(afterStale?.fileStatus ?? "present").toBe("present");
+        expect(afterStale?.fileIds).toEqual(["f1_new"]);
+
         // Multi-file copy: markEpisodeCopyFileMissing prunes ONLY the dead fileId while keeping sibling live!
         await repo.upsertEpisodeCopies!([
           {
@@ -317,6 +329,18 @@ function runSuite(label: string, createRepo: () => Promise<{ repo: WorkflowRepos
         const foundAcct = await repo.findAccountBySetting!("virtual_emby_token", "tok_win");
         expect(foundAcct?.id).toBe("acct_lookup");
         expect(await repo.findAccountBySetting!("virtual_emby_token", "missing")).toBeNull();
+
+        // Duplicate setting across two accounts MUST fail closed (return null, never arbitrarily pick one)
+        await repo.createAccount({
+          id: "acct_dup",
+          username: "dup_user",
+          passwordHash: "",
+          groupId: null,
+          isOwner: false,
+          createdAt: "2026-11-28T00:00:00.000Z",
+        });
+        await repo.setAccountSetting("acct_dup", "virtual_emby_token", "tok_win");
+        expect(await repo.findAccountBySetting!("virtual_emby_token", "tok_win")).toBeNull();
       } finally {
         close?.();
       }

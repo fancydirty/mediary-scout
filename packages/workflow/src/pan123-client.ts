@@ -22,6 +22,7 @@
 
 import { parseFiniteMetric } from "./domain.js";
 import { DriveFileNotFoundError, type DriveDownloadLink } from "./ports.js";
+import { assertSafeExternalHttpUrl, guardedManualGet } from "./safe-external-url.js";
 
 const API_BASE = "https://yun.123pan.com/b/api";
 const DEFAULT_TIMEOUT_MS = 20_000;
@@ -210,7 +211,12 @@ export class Pan123Client {
     this.fetchImpl = opts.fetchImpl ?? defaultPan123Fetch;
     this.resolveRedirect =
       opts.resolveRedirect ??
-      ((url, headers) => defaultPan123ResolveRedirect(url, headers, this.fetchImpl));
+      ((url, headers) =>
+        defaultPan123ResolveRedirect(
+          url,
+          headers,
+          opts.fetchImpl,
+        ));
   }
 
   // ── 传输(signPath 签名 + envelope 判定) ──────────────────────────────────
@@ -788,11 +794,11 @@ export class Pan123Client {
     if (!rawUrl) {
       throw new Error("PAN123_DOWNLOAD_FAILED: response missing DownloadUrl");
     }
-    const unwrappedUrl = assertSafePan123HttpUrl(
+    const unwrappedUrl = assertSafeExternalHttpUrl(
       unwrapPan123DownloadParams(rawUrl),
       "PAN123_DOWNLOAD_FAILED",
     );
-    const finalUrl = assertSafePan123HttpUrl(
+    const finalUrl = assertSafeExternalHttpUrl(
       await this.resolveRedirect(unwrappedUrl, {
         Referer: "https://yun.123pan.com/",
         "User-Agent": "Mozilla/5.0",
@@ -885,42 +891,6 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function assertSafePan123HttpUrl(rawUrl: string, errorPrefix: string): string {
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    throw new Error(`${errorPrefix}: invalid download URL`);
-  }
-  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-    throw new Error(`${errorPrefix}: disallowed download URL scheme ${parsed.protocol}`);
-  }
-  if (parsed.username || parsed.password) {
-    throw new Error(`${errorPrefix}: download URL must not contain embedded credentials`);
-  }
-  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  if (
-    host === "localhost" ||
-    host.endsWith(".localhost") ||
-    host.endsWith(".local") ||
-    host === "::1" ||
-    host === "::" ||
-    host.startsWith("fe80:") ||
-    host.startsWith("fc") ||
-    host.startsWith("fd") ||
-    /^0\./.test(host) ||
-    /^127\./.test(host) ||
-    /^10\./.test(host) ||
-    /^169\.254\./.test(host) ||
-    /^192\.168\./.test(host) ||
-    /^172\.(1[6-9]|2\d|3[0-1])\./.test(host) ||
-    /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(host)
-  ) {
-    throw new Error(`${errorPrefix}: disallowed private/internal download host ${host}`);
-  }
-  return parsed.toString();
-}
-
 function isPan123NotFoundError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   // Only classify explicit 123Pan API envelope errors — NEVER match DNS ENOTFOUND or transport failures.
@@ -959,21 +929,31 @@ export function unwrapPan123DownloadParams(rawUrl: string): string {
 async function defaultPan123ResolveRedirect(
   url: string,
   headers: Record<string, string>,
-  fetchImpl: Pan123Fetch = defaultPan123Fetch,
+  customFetchImpl?: Pan123Fetch,
 ): Promise<string> {
-  const safeUrl = assertSafePan123HttpUrl(url, "PAN123_DOWNLOAD_FAILED");
-  const res = await fetchImpl(safeUrl, {
-    method: "GET",
-    headers: { ...headers, Range: "bytes=0-0" },
-    redirect: "manual",
-    timeoutMs: DEFAULT_TIMEOUT_MS,
-  });
+  const safeUrl = assertSafeExternalHttpUrl(url, "PAN123_DOWNLOAD_FAILED");
+  // Production transport uses connection-time DNS/IP SSRF enforcement (`guardedManualGet`).
+  // Custom injected `fetchImpl` (unit tests) still stays isolated from real network I/O.
+  const res = customFetchImpl
+    ? await customFetchImpl(safeUrl, {
+        method: "GET",
+        headers: { ...headers, Range: "bytes=0-0" },
+        redirect: "manual",
+        timeoutMs: DEFAULT_TIMEOUT_MS,
+      })
+    : await guardedManualGet({
+        url: safeUrl,
+        headers: { ...headers, Range: "bytes=0-0" },
+        timeoutMs: DEFAULT_TIMEOUT_MS,
+        errorPrefix: "PAN123_DOWNLOAD_FAILED",
+        readTextBody: true,
+      });
   if (res.status >= 300 && res.status < 400) {
     const location = res.location?.trim();
     if (!location) {
       throw new Error(`PAN123_DOWNLOAD_FAILED: redirect status ${res.status} missing Location header`);
     }
-    return assertSafePan123HttpUrl(new URL(location, safeUrl).toString(), "PAN123_DOWNLOAD_FAILED");
+    return assertSafeExternalHttpUrl(new URL(location, safeUrl).toString(), "PAN123_DOWNLOAD_FAILED");
   }
   const contentType = (res.contentType ?? "").toLowerCase();
   if (res.status >= 200 && res.status < 300) {
@@ -982,7 +962,7 @@ async function defaultPan123ResolveRedirect(
       const nested = isPlainRecord(parsed?.["data"]) ? parsed["data"] : {};
       const redirectUrl = strOf(nested["redirect_url"] ?? parsed?.["redirect_url"]).trim();
       if (redirectUrl) {
-        return assertSafePan123HttpUrl(new URL(redirectUrl, safeUrl).toString(), "PAN123_DOWNLOAD_FAILED");
+        return assertSafeExternalHttpUrl(new URL(redirectUrl, safeUrl).toString(), "PAN123_DOWNLOAD_FAILED");
       }
       throw new Error("PAN123_DOWNLOAD_FAILED: dispatch JSON response missing redirect_url");
     }
@@ -1028,9 +1008,9 @@ async function defaultPan123Fetch(
   }
   if (
     init.redirect === "manual" &&
-    contentType &&
-    !contentType.toLowerCase().includes("json") &&
-    !contentType.toLowerCase().includes("text")
+    (!contentType ||
+      (!contentType.toLowerCase().includes("json") &&
+        !contentType.toLowerCase().includes("text")))
   ) {
     await res.body?.cancel().catch(() => undefined);
     return { status: res.status, text: "", location, contentType };

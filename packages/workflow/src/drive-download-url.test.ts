@@ -18,6 +18,7 @@ import {
   splitSetCookieHeader,
   UC_PROFILE,
 } from "./quark-cookie-client.js";
+import { assertSafeExternalHttpUrl, isPrivateOrReservedIp } from "./safe-external-url.js";
 import { QuarkStorageExecutor } from "./quark-storage-executor.js";
 import { Pan115ApiGuard, Storage115Executor } from "./storage-115-executor.js";
 import { TianyiAuthError, TianyiClient } from "./tianyi-client.js";
@@ -527,13 +528,28 @@ describe("OCR hardening regressions (cipher, SSRF, transport errors, Set-Cookie)
     await expect(ssrfClient.getDownloadUrl({ fileId: "42" })).rejects.toThrow(/private\/internal/);
   });
 
-  it("splitSetCookieHeader splits multiple cookies while preserving commas inside Expires dates", () => {
+  it("splitSetCookieHeader splits multiple cookies while preserving commas inside Expires dates (including terminal Expires)", () => {
     const combined =
       "__puus=abc123; Expires=Wed, 21 Oct 2026 07:28:00 GMT; Path=/, other=val; Max-Age=3600";
     expect(splitSetCookieHeader(combined)).toEqual([
       "__puus=abc123; Expires=Wed, 21 Oct 2026 07:28:00 GMT; Path=/",
       "other=val; Max-Age=3600",
     ]);
+    const terminalExpires =
+      "a=1; Expires=Wed, 21 Oct 2026 07:28:00 GMT, __puus=rotated; Path=/";
+    expect(splitSetCookieHeader(terminalExpires)).toEqual([
+      "a=1; Expires=Wed, 21 Oct 2026 07:28:00 GMT",
+      "__puus=rotated; Path=/",
+    ]);
+  });
+
+  it("safe-external-url allows fc/fd public DNS names while blocking IPv6 ULA and IPv4-mapped loopback literals", () => {
+    expect(assertSafeExternalHttpUrl("https://fcdn.189.cn/video.mkv", "TEST")).toBe("https://fcdn.189.cn/video.mkv");
+    expect(assertSafeExternalHttpUrl("https://fd.123pan.cn/video.mkv", "TEST")).toBe("https://fd.123pan.cn/video.mkv");
+    expect(() => assertSafeExternalHttpUrl("http://[fc00::1]/secret", "TEST")).toThrow(/private\/internal/);
+    expect(() => assertSafeExternalHttpUrl("http://[::ffff:127.0.0.1]/secret", "TEST")).toThrow(/private\/internal/);
+    expect(isPrivateOrReservedIp("::ffff:169.254.169.254")).toBe(true);
+    expect(isPrivateOrReservedIp("8.8.8.8")).toBe(false);
   });
 
   it("TianyiClient blocks loopback/private download URLs", async () => {
