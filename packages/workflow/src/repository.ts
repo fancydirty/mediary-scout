@@ -10,9 +10,12 @@ import {
   type CrossDriveEpisodeOwnership,
   type DriveSpaceCacheEntry,
   type EpisodeCopy,
+  type EpisodeCopyFileStatus,
   type EpisodeState,
   type MediaTitle,
+  type MediaType,
   type NotificationEvent,
+  type PlaybackProgress,
   type ResourceSnapshot,
   type TrackedSeason,
   type TransferAttempt,
@@ -466,13 +469,36 @@ export interface WorkflowRepository extends DeadLinkStore, AgentMemoryStore, Use
   getDriveSpaceCache?(storageId: string): Promise<DriveSpaceCacheEntry | null>;
   /** Record or update physical episode copies landed on a drive (`episode_copies`, C8). */
   upsertEpisodeCopies?(copies: readonly EpisodeCopy[]): Promise<void>;
+  /** Lazily update physical file status of one drive copy (e.g. `missing_on_drive` on 404)
+   *  WITHOUT mutating `episode_states.obtained`, so patrol never resurrects user-deleted files. */
+  setEpisodeCopyFileStatus?(input: {
+    trackedSeasonId: string;
+    episodeCode: string;
+    storageId: string;
+    fileStatus: EpisodeCopyFileStatus;
+    verifiedAt: string;
+  }): Promise<void>;
   /** List recorded episode copies for a tracked season (`episode_copies`, C8). */
   listEpisodeCopies?(trackedSeasonId: string): Promise<EpisodeCopy[]>;
+  /** Batch-list episode copies for multiple tracked seasons (used by Virtual Emby). */
+  listEpisodeCopiesForSeasons?(trackedSeasonIds: readonly string[]): Promise<EpisodeCopy[]>;
   /** Cross-drive union of obtained episodes + drive ownership for a season (C9). */
   obtainedEpisodesForSeason?(
     trackedSeasonId: string,
     accountId?: string,
   ): Promise<CrossDriveEpisodeOwnership[]>;
+  /** Upsert per-account watch progress / played state (`playback_progress`). */
+  upsertPlaybackProgress?(entry: PlaybackProgress): Promise<void>;
+  /** Read one episode/movie's playback progress for an account, or null if unseen. */
+  getPlaybackProgress?(input: {
+    accountId: string;
+    tmdbId: number;
+    mediaType: MediaType;
+    seasonNumber: number;
+    episodeNumber: number;
+  }): Promise<PlaybackProgress | null>;
+  /** List all playback progress rows for an account (most recently played first). */
+  listPlaybackProgress?(accountId: string): Promise<PlaybackProgress[]>;
   // recordDeadLink + listDeadLinkKeys come from DeadLinkStore.
 }
 
@@ -501,6 +527,7 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
   private readonly episodeSources = new Map<string, EpisodeSource>();
   private readonly driveSpaceCache = new Map<string, DriveSpaceCacheEntry>();
   private readonly episodeCopies = new Map<string, EpisodeCopy>();
+  private readonly playbackProgress = new Map<string, PlaybackProgress>();
 
   async getSetting(key: string): Promise<string | null> {
     return this.settings.get(key) ?? null;
@@ -757,13 +784,73 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
       const sizeBytes =
         copy.sizeBytes !== null && Number.isFinite(copy.sizeBytes) ? Math.trunc(copy.sizeBytes) : null;
       // Unknown facts never erase known ones (mirrors the SQL engines).
-      this.episodeCopies.set(key, {
-        ...copy,
+      // Re-acquiring / upserting a copy resets physical status to present unless specified.
+      const next: EpisodeCopy = {
+        trackedSeasonId: copy.trackedSeasonId,
+        episodeCode: copy.episodeCode,
+        storageId: copy.storageId,
         fileIds: copy.fileIds.length > 0 || !existing ? [...copy.fileIds] : [...existing.fileIds],
         sizeBytes: sizeBytes ?? existing?.sizeBytes ?? null,
         quality: copy.quality ?? existing?.quality ?? null,
-      });
+        runId: copy.runId,
+        recordedAt: copy.recordedAt,
+      };
+      if (copy.fileStatus === "missing_on_drive") {
+        next.fileStatus = "missing_on_drive";
+      }
+      if (copy.verifiedAt) {
+        next.verifiedAt = copy.verifiedAt;
+      }
+      this.episodeCopies.set(key, next);
     }
+  }
+
+  async setEpisodeCopyFileStatus(input: {
+    trackedSeasonId: string;
+    episodeCode: string;
+    storageId: string;
+    fileStatus: EpisodeCopyFileStatus;
+    verifiedAt: string;
+  }): Promise<void> {
+    const key = `${input.trackedSeasonId}::${input.episodeCode}::${input.storageId}`;
+    const existing = this.episodeCopies.get(key);
+    if (existing) {
+      const updated: EpisodeCopy = {
+        trackedSeasonId: existing.trackedSeasonId,
+        episodeCode: existing.episodeCode,
+        storageId: existing.storageId,
+        fileIds: [...existing.fileIds],
+        sizeBytes: existing.sizeBytes,
+        quality: existing.quality,
+        runId: existing.runId,
+        recordedAt: existing.recordedAt,
+      };
+      if (input.fileStatus === "missing_on_drive") {
+        updated.fileStatus = "missing_on_drive";
+      }
+      if (input.verifiedAt) {
+        updated.verifiedAt = input.verifiedAt;
+      }
+      this.episodeCopies.set(key, updated);
+      return;
+    }
+    const created: EpisodeCopy = {
+      trackedSeasonId: input.trackedSeasonId,
+      episodeCode: input.episodeCode,
+      storageId: input.storageId,
+      fileIds: [],
+      sizeBytes: null,
+      quality: null,
+      runId: "",
+      recordedAt: input.verifiedAt,
+    };
+    if (input.fileStatus === "missing_on_drive") {
+      created.fileStatus = "missing_on_drive";
+    }
+    if (input.verifiedAt) {
+      created.verifiedAt = input.verifiedAt;
+    }
+    this.episodeCopies.set(key, created);
   }
 
   async listEpisodeCopies(trackedSeasonId: string): Promise<EpisodeCopy[]> {
@@ -775,6 +862,54 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
           a.storageId.localeCompare(b.storageId),
       )
       .map((c) => ({ ...c, fileIds: [...c.fileIds] }));
+  }
+
+  async listEpisodeCopiesForSeasons(trackedSeasonIds: readonly string[]): Promise<EpisodeCopy[]> {
+    if (trackedSeasonIds.length === 0) return [];
+    const wanted = new Set(trackedSeasonIds);
+    return [...this.episodeCopies.values()]
+      .filter((c) => wanted.has(c.trackedSeasonId))
+      .sort(
+        (a, b) =>
+          a.trackedSeasonId.localeCompare(b.trackedSeasonId) ||
+          compareEpisodeCodes(a.episodeCode, b.episodeCode) ||
+          a.storageId.localeCompare(b.storageId),
+      )
+      .map((c) => ({ ...c, fileIds: [...c.fileIds] }));
+  }
+
+  async upsertPlaybackProgress(entry: PlaybackProgress): Promise<void> {
+    const key = playbackProgressKey(entry);
+    this.playbackProgress.set(key, {
+      accountId: entry.accountId,
+      tmdbId: Math.trunc(entry.tmdbId),
+      mediaType: entry.mediaType,
+      seasonNumber: Math.trunc(entry.seasonNumber),
+      episodeNumber: Math.trunc(entry.episodeNumber),
+      positionTicks: Math.max(0, Math.trunc(entry.positionTicks)),
+      durationTicks: Math.max(0, Math.trunc(entry.durationTicks)),
+      played: Boolean(entry.played),
+      playCount: Math.max(0, Math.trunc(entry.playCount)),
+      lastPlayedAt: entry.lastPlayedAt,
+    });
+  }
+
+  async getPlaybackProgress(input: {
+    accountId: string;
+    tmdbId: number;
+    mediaType: MediaType;
+    seasonNumber: number;
+    episodeNumber: number;
+  }): Promise<PlaybackProgress | null> {
+    const found = this.playbackProgress.get(playbackProgressKey(input));
+    return found ? { ...found } : null;
+  }
+
+  async listPlaybackProgress(accountId: string): Promise<PlaybackProgress[]> {
+    return [...this.playbackProgress.values()]
+      .filter((entry) => entry.accountId === accountId)
+      .sort((a, b) => b.lastPlayedAt.localeCompare(a.lastPlayedAt))
+      .map((entry) => ({ ...entry }));
   }
 
   async obtainedEpisodesForSeason(
@@ -2313,4 +2448,14 @@ function uniqueWorks(rows: UserMessageScope[]): UserMessageScope[] {
   return [...seen.values()].sort(
     (a, b) => a.accountId.localeCompare(b.accountId) || a.drive.localeCompare(b.drive) || a.titleKey.localeCompare(b.titleKey),
   );
+}
+
+function playbackProgressKey(input: {
+  accountId: string;
+  tmdbId: number;
+  mediaType: MediaType;
+  seasonNumber: number;
+  episodeNumber: number;
+}): string {
+  return `${input.accountId}\u0000${Math.trunc(input.tmdbId)}\u0000${input.mediaType}\u0000${Math.trunc(input.seasonNumber)}\u0000${Math.trunc(input.episodeNumber)}`;
 }

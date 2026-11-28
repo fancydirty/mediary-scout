@@ -15,7 +15,7 @@
  */
 import type { PackageTreeFile, ResourceCandidate, TransferAttempt, TransferStatus, VerifiedFile } from "./domain.js";
 import { episodeCodeFromFileName } from "./episode-code.js";
-import type { StorageExecutor, UnparsedVideoFile } from "./ports.js";
+import type { DriveDownloadLink, StorageExecutor, UnparsedVideoFile } from "./ports.js";
 import {
   isQuarkAuthError,
   QUARK_PROFILE,
@@ -109,6 +109,10 @@ export class QuarkStorageExecutor implements StorageExecutor {
       return null;
     }
     return this.client.getSpace();
+  }
+
+  async getDownloadUrl(input: { fileId: string; userAgent?: string }): Promise<DriveDownloadLink> {
+    return this.client.getDownloadUrl({ fileId: input.fileId });
   }
 
   async createDirectory(input: { name: string; parentId: string }): Promise<string> {

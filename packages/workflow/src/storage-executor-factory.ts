@@ -103,6 +103,9 @@ export function createExecutorForBrand(input: {
       accessToken: c.accessToken ?? "",
       refreshToken: c.refreshToken ?? "",
     };
+    if (c.sessionSecret !== undefined) {
+      clientOptions.sessionSecret = c.sessionSecret;
+    }
     if (c.familySessionKey !== undefined) {
       clientOptions.familySessionKey = c.familySessionKey;
     }

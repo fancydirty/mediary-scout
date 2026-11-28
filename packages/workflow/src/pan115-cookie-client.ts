@@ -1,6 +1,7 @@
 import { parseFiniteMetric } from "./domain.js";
-import { lixianRsaEncrypt } from "./pan115-lixian-cipher.js";
+import { lixianRsaEncrypt, m115Decode, m115Encode, m115GenerateKey } from "./pan115-lixian-cipher.js";
 import { fetchWithTimeout } from "./fetch-with-timeout.js";
+import { DriveFileNotFoundError, type DriveDownloadLink } from "./ports.js";
 import type {
   Pan115ActionResult,
   Pan115DirectoryInfo,
@@ -13,8 +14,11 @@ export type { Pan115OfflineTask };
 
 const PAN115_WEBAPI_BASE_URL = "https://webapi.115.com";
 const PAN115_CDN_WEBAPI_BASE_URL = "https://115cdn.com/webapi";
+const PAN115_PROAPI_DOWNURL_URL = "https://proapi.115.com/app/chrome/downurl";
 const PAN115_LIXIAN_SSP_URL = "https://lixian.115.com/lixianssp/";
 const PAN115_LIXIAN_WEB_URL = "https://lixian.115.com/lixian/";
+const PAN115_PICKCODE_CACHE_MAX = 5_000;
+const PAN115_DOWNLOAD_LINK_TTL_MS = 15 * 60 * 1000;
 // 115 requires its android client UA for the lixianssp offline endpoint.
 const PAN115_ANDROID_USER_AGENT =
   "Mozilla/5.0 115disk/99.99.99.99 115Browser/99.99.99.99 115wangpan_android/99.99.99.99";
@@ -45,6 +49,14 @@ export interface Pan115CookieClientOptions {
   userAgent?: string;
 }
 
+export interface Pan115FileInfo {
+  fileId: string;
+  pickcode: string;
+  fileName: string;
+  fileSize: number;
+  durationSeconds: number;
+}
+
 export class Pan115CookieClient implements Pan115StorageApi {
   private readonly cookie: string;
   private readonly fetchJson: Pan115FetchJson;
@@ -52,6 +64,7 @@ export class Pan115CookieClient implements Pan115StorageApi {
   private readonly maxListTotal: number;
   private readonly listPageDelayMs: number;
   private readonly userAgent: string;
+  private readonly pickcodeCache = new Map<string, Pan115FileInfo>();
 
   constructor(options: Pan115CookieClientOptions) {
     const cookie = normalizeCookie(options.cookie);
@@ -313,6 +326,141 @@ export class Pan115CookieClient implements Pan115StorageApi {
     return { totalBytes, usedBytes };
   }
 
+  /** Fetch basic file metadata + pickcode (`pc`) for a 115 `file_id`.
+   *  Returns null when 115 confirms the file does not exist (deleted/trashed);
+   *  throws Pan115AuthError when the cookie expired and plain Error on transient failures. */
+  async getFileInfo(input: { fileId: string }): Promise<Pan115FileInfo | null> {
+    const response = await this.fetchJson(
+      `${PAN115_WEBAPI_BASE_URL}/files/get_info?${new URLSearchParams([["file_id", input.fileId]]).toString()}`,
+      {
+        method: "GET",
+        headers: {
+          ...this.headers(),
+          Referer: "https://115.com/",
+        },
+      },
+    );
+    if (isAuthFailure(response)) {
+      throwResponseFailure(response, `PAN115_FILE_INFO_FAILED: ${responseMessage(response)}`);
+    }
+    if (!responseState(response)) {
+      if (isPan115NotFoundResponse(response)) {
+        return null;
+      }
+      throwResponseFailure(response, `PAN115_FILE_INFO_FAILED: ${responseMessage(response)}`);
+    }
+    const items = arrayValue(recordValue(response, "data")).filter(isRecord);
+    const first = items[0];
+    if (!first) {
+      return null;
+    }
+    // Live-verified 2026-11-28: /files/get_info returns pickcode in `data[0].pc`.
+    const pickcode = stringValue(recordValue(first, "pc") ?? recordValue(first, "pick_code"));
+    if (!pickcode) {
+      return null;
+    }
+    const info: Pan115FileInfo = {
+      fileId: input.fileId,
+      pickcode,
+      fileName: stringValue(recordValue(first, "n") ?? recordValue(first, "file_name")),
+      fileSize: numberValue(recordValue(first, "s") ?? recordValue(first, "file_size")),
+      durationSeconds: numberValue(recordValue(first, "play_long")),
+    };
+    this.cachePickcode(info);
+    return info;
+  }
+
+  /**
+   * Resolve a UA-bound 115 CDN direct download URL via `proapi.115.com/app/chrome/downurl`.
+   * The caller's exact `userAgent` is forwarded so the returned CDN URL can be served as a
+   * pure HTTP 302 redirect to the player without server-side traffic proxying.
+   */
+  async getDownloadUrl(input: { fileId: string; userAgent?: string }): Promise<DriveDownloadLink> {
+    const cached = this.pickcodeCache.get(input.fileId);
+    const info = cached ?? (await this.getFileInfo({ fileId: input.fileId }));
+    if (!info) {
+      throw new DriveFileNotFoundError("pan115", input.fileId);
+    }
+    const effectiveUA = input.userAgent?.trim() || this.userAgent;
+    const key = m115GenerateKey();
+    const encodedData = m115Encode(new TextEncoder().encode(JSON.stringify({ pickcode: info.pickcode })), key);
+    const url = `${PAN115_PROAPI_DOWNURL_URL}?t=${Math.floor(Date.now() / 1000)}`;
+    const response = await this.postForm(
+      url,
+      [["data", encodedData]],
+      {
+        "User-Agent": effectiveUA,
+        Referer: "https://115.com/",
+      },
+    );
+    if (!responseState(response)) {
+      if (isAuthFailure(response)) {
+        throwResponseFailure(response, `PAN115_DOWNURL_FAILED: ${responseMessage(response)}`);
+      }
+      if (isPan115NotFoundResponse(response)) {
+        this.pickcodeCache.delete(input.fileId);
+        throw new DriveFileNotFoundError("pan115", input.fileId, responseMessage(response));
+      }
+      throwResponseFailure(response, `PAN115_DOWNURL_FAILED: ${responseMessage(response)}`);
+    }
+    const encryptedData = stringValue(recordValue(response, "data"));
+    if (!encryptedData) {
+      throw new Error("PAN115_DOWNURL_FAILED: response missing encrypted data");
+    }
+    const decodedText = new TextDecoder().decode(m115Decode(encryptedData, key));
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(decodedText);
+    } catch {
+      throw new Error("PAN115_DOWNURL_FAILED: decrypted payload is not valid JSON");
+    }
+    if (!isRecord(decoded)) {
+      throw new Error("PAN115_DOWNURL_FAILED: decrypted payload is not an object");
+    }
+    const entry = recordValue(decoded, input.fileId) ?? Object.values(decoded).find(isRecord);
+    const urlContainer = isRecord(entry) ? recordValue(entry, "url") : undefined;
+    const downloadUrl =
+      typeof urlContainer === "string"
+        ? urlContainer
+        : isRecord(urlContainer)
+          ? stringValue(recordValue(urlContainer, "url"))
+          : "";
+    if (!downloadUrl) {
+      // Confirm deletion via live /files/get_info before classifying as missing_on_drive
+      // (a cached pickcode or 115 transient empty-url response must not falsely mark missing).
+      this.pickcodeCache.delete(input.fileId);
+      const rechecked = await this.getFileInfo({ fileId: input.fileId });
+      if (!rechecked) {
+        throw new DriveFileNotFoundError("pan115", input.fileId, "file removed from 115 drive");
+      }
+      throw new Error("PAN115_DOWNURL_FAILED: 115 returned empty download URL");
+    }
+    const fileName =
+      (isRecord(entry) ? stringValue(recordValue(entry, "file_name")) : "") || info.fileName;
+    const fileSize =
+      (isRecord(entry) ? numberValue(recordValue(entry, "file_size")) : 0) || info.fileSize;
+    return {
+      url: downloadUrl,
+      headers: { "User-Agent": effectiveUA },
+      supportsRedirect: true,
+      userAgentBound: true,
+      ...(fileName ? { fileName } : {}),
+      ...(fileSize > 0 ? { fileSize } : {}),
+      ...(info.durationSeconds > 0 ? { durationSeconds: info.durationSeconds } : {}),
+      ttlMs: PAN115_DOWNLOAD_LINK_TTL_MS,
+    };
+  }
+
+  private cachePickcode(info: Pan115FileInfo): void {
+    if (this.pickcodeCache.size >= PAN115_PICKCODE_CACHE_MAX) {
+      const oldestKey = this.pickcodeCache.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.pickcodeCache.delete(oldestKey);
+      }
+    }
+    this.pickcodeCache.set(info.fileId, info);
+  }
+
   private async getJson(url: string, params: Array<[string, string]>): Promise<unknown> {
     const query = new URLSearchParams(params);
     return this.fetchJson(`${url}?${query.toString()}`, {
@@ -456,6 +604,17 @@ function isAuthFailure(response: unknown): boolean {
     return true;
   }
   return /登录|登陆|未登录|重新登录|relogin|not.?login/i.test(responseMessage(response));
+}
+
+function isPan115NotFoundResponse(response: unknown): boolean {
+  if (!isRecord(response)) {
+    return false;
+  }
+  const errno = response["errno"] ?? response["errNo"] ?? response["errcode"];
+  if (errno === 50003 || errno === "50003" || errno === 50004 || errno === "50004" || errno === 990009 || errno === "990009") {
+    return true;
+  }
+  return /文件不存在|目录不存在|已删除|找不到文件|pickcode.*不存在|not\s*found/i.test(responseMessage(response));
 }
 
 /** Throw a Pan115AuthError when the failure is a dead cookie, else the generic

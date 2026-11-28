@@ -1,5 +1,6 @@
 import { parseFiniteMetric } from "./domain.js";
 import { fetchWithTimeout } from "./fetch-with-timeout.js";
+import { DriveFileNotFoundError, type DriveDownloadLink } from "./ports.js";
 
 /**
  * 光鸭云盘 (GuangYaPan) HTTP client — the brand-3 analogue of Pan115CookieClient
@@ -357,6 +358,43 @@ export class GuangYaClient {
       return null;
     }
     return { totalBytes, usedBytes };
+  }
+
+  /** Resolve a direct CDN download URL for a 光鸭 file id (`POST /nd.bizuserres.s/v1/get_res_download_url`).
+   *  Rides `postAPI`, so expired access tokens auto-refresh once and persist via `onTokensRefreshed`. */
+  async getDownloadUrl(input: { fileId: string }): Promise<DriveDownloadLink> {
+    let data: unknown;
+    try {
+      data = await this.postAPI("/nd.bizuserres.s/v1/get_res_download_url", { fileId: input.fileId });
+    } catch (error) {
+      if (isGuangYaAuthError(error)) {
+        throw error;
+      }
+      if (
+        error instanceof Error &&
+        /文件不存在|不存在|已删除|not\s*found|deleted|\bcode=(?:203|204|404)\b/i.test(error.message)
+      ) {
+        throw new DriveFileNotFoundError("guangya", input.fileId, error.message);
+      }
+      throw error;
+    }
+    const url =
+      stringValue(recordValue(data, "signedUrl")) ||
+      stringValue(recordValue(data, "downloadUrl")) ||
+      stringValue(recordValue(data, "url"));
+    if (!url) {
+      throw new Error("GUANGYA_DOWNLOAD_FAILED: response missing signedUrl/downloadUrl");
+    }
+    const fileName = stringValue(recordValue(data, "fileName"));
+    const fileSize = numberValue(recordValue(data, "fileSize"));
+    return {
+      url,
+      headers: {},
+      supportsRedirect: true,
+      ...(fileName ? { fileName } : {}),
+      ...(fileSize > 0 ? { fileSize } : {}),
+      ttlMs: 15 * 60 * 1000,
+    };
   }
 
   /**

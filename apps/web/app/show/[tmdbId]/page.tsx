@@ -2,10 +2,17 @@ import Link from "next/link";
 import { connection } from "next/server";
 import { Suspense, cache, type ReactNode } from "react";
 import { TriangleAlert } from "lucide-react";
-import { formatByteSize, isMovieUnreleased, type EpisodeDisplayState } from "@media-track/workflow";
+import {
+  ensureVirtualEmbyToken,
+  formatByteSize,
+  isMovieUnreleased,
+  isVirtualEmbyEnabled,
+  type EpisodeDisplayState,
+} from "@media-track/workflow";
 import { AcquiringPoller } from "../../../components/acquiring-poller";
 import { AcquisitionLockProvider } from "../../../components/acquisition-lock";
 import { AppSidebar } from "../../../components/app-sidebar";
+import { DirectPlayButton } from "../../../components/direct-play-button";
 import { GitHubNameplate } from "../../../components/github-nameplate";
 import { BackLink } from "../../../components/back-link";
 import { MovieSynopsis } from "../../../components/movie-synopsis";
@@ -33,6 +40,7 @@ import { showsMessageCard } from "../../../lib/user-message-state";
 import {
   beijingDateTime,
   getActiveWorkspaceScope,
+  getCurrentAccountId,
   getDailySweepTimes,
   getWorkflowRepository,
   resolveGlobalWorkspace,
@@ -128,6 +136,17 @@ async function ShowContent({
     ? await getDetailView(tmdbId, workspace.connectedStorageId ?? undefined, typeHint)
     : null;
 
+  let virtualEmbyToken: string | null = null;
+  if (!isDemoMode() && view) {
+    const repo = getWorkflowRepository();
+    if (await isVirtualEmbyEnabled(repo)) {
+      const accountId = await getCurrentAccountId();
+      if (accountId && accountId !== "acct_unauthenticated") {
+        virtualEmbyToken = await ensureVirtualEmbyToken(repo, accountId);
+      }
+    }
+  }
+
   const backLabel = from === "search" ? "搜索" : from === "library" ? "媒体库" : "返回";
   const backHref =
     from === "library" ? `${workspace.basePath}?tab=library` : `${workspace.basePath}?tab=search`;
@@ -146,6 +165,7 @@ async function ShowContent({
             basePath={workspace.basePath}
             backLabel={backLabel}
             backHref={backHref}
+            virtualEmbyToken={virtualEmbyToken}
           />
         ) : (
           <TvHub
@@ -154,6 +174,7 @@ async function ShowContent({
             basePath={workspace.basePath}
             backLabel={backLabel}
             backHref={backHref}
+            virtualEmbyToken={virtualEmbyToken}
           />
         )
       ) : (
@@ -175,12 +196,14 @@ function TvHub({
   basePath,
   backLabel,
   backHref,
+  virtualEmbyToken,
 }: {
   view: TitleHubView;
   storageId: string | undefined;
   basePath: string;
   backLabel: string;
   backHref: string;
+  virtualEmbyToken: string | null;
 }) {
   const badge = aggregateBadge[view.aggregate];
   // The message card's episode picker: every episode of a tracked season in the library.
@@ -271,7 +294,12 @@ function TvHub({
 
       <section className="hub-seasons" aria-label="季列表">
         <ul className="hub-season-list">
-          <SeasonRowsWithSwap view={view} storageId={storageId} basePath={basePath} />
+          <SeasonRowsWithSwap
+            view={view}
+            storageId={storageId}
+            basePath={basePath}
+            virtualEmbyToken={virtualEmbyToken}
+          />
         </ul>
       </section>
       {view.aggregate !== "untracked" ? (
@@ -305,12 +333,14 @@ function MovieHub({
   basePath,
   backLabel,
   backHref,
+  virtualEmbyToken,
 }: {
   view: MovieHubView;
   storageId: string | undefined;
   basePath: string;
   backLabel: string;
   backHref: string;
+  virtualEmbyToken: string | null;
 }) {
   const meta = movieStateMeta[view.state];
   const activityHref = storageId ? `/activity?w=${encodeURIComponent(storageId)}` : "/activity";
@@ -368,6 +398,14 @@ function MovieHub({
             <div className="hub-title-block">
               <div className="hub-badges">
                 <span className={`hub-badge tone-${meta.tone}`}>{movieBadgeLabel}</span>
+                {view.allMissingOnDrive ? (
+                  <span className="hub-badge tone-amber" title="网盘内文件已被删除；巡检不会自动重下">
+                    盘内已删除
+                  </span>
+                ) : null}
+                {view.progressLabel ? (
+                  <span className="hub-badge tone-blue">{view.progressLabel}</span>
+                ) : null}
                 {view.state !== "untracked" ? (
                   <SwapBadge tmdbId={view.tmdbId} mediaType="movie" storageId={storageId} />
                 ) : null}
@@ -377,6 +415,9 @@ function MovieHub({
               </h1>
               <p className="hub-attributes">电影</p>
               <div className="hub-actions">
+                {view.embyItemId && virtualEmbyToken ? (
+                  <DirectPlayButton embyItemId={view.embyItemId} embyToken={virtualEmbyToken} label="播放" />
+                ) : null}
                 {view.state === "untracked" ? (
                   <RequestTrackButton
                     candidateId={movieCandidateId}
@@ -473,6 +514,7 @@ function SeasonRow({
   acquiring,
   swap,
   demoEntry,
+  virtualEmbyToken,
 }: {
   season: TitleHubSeason;
   tmdbId: number;
@@ -484,6 +526,7 @@ function SeasonRow({
   /** Episodes a user asked to replace that are still 待换 (their old file stays). */
   swap: ReadonlySet<string>;
   demoEntry?: DemoAcquisitionEntry | undefined;
+  virtualEmbyToken: string | null;
 }) {
   const total = season.totalEpisodes;
   const aired = Math.min(season.latestAiredEpisode, total);
@@ -539,31 +582,57 @@ function SeasonRow({
         <summary className="hub-season-row">{rowBody}</summary>
         <div className="episode-grid hub-episode-grid">
           {season.episodes.map((episode) => {
-            const stateClass = episode.displayState.replace("_", "-");
-            const baseLabel = EPISODE_STATE_LABEL[episode.displayState];
-            const firstDrive = episode.driveBadges?.[0];
+            const stateClass = episode.allMissingOnDrive
+              ? "missing-on-drive"
+              : episode.displayState.replace("_", "-");
+            const baseLabel = episode.allMissingOnDrive
+              ? "盘内已删除"
+              : EPISODE_STATE_LABEL[episode.displayState];
+            const firstDrive = episode.driveBadges?.find((d) => d.fileStatus !== "missing_on_drive") ?? episode.driveBadges?.[0];
             const stateLabel =
-              episode.obtained && firstDrive ? `${baseLabel} · ${firstDrive.label}` : baseLabel;
-            const tooltip =
-              episode.obtained && episode.driveBadges && episode.driveBadges.length > 0
-                ? episode.driveBadges
-                    .map((d) =>
-                      [
-                        d.label,
-                        d.quality ?? null,
-                        d.sizeBytes !== null && d.sizeBytes > 0 ? formatByteSize(d.sizeBytes) : null,
-                      ]
-                        .filter(Boolean)
-                        .join(" · "),
-                    )
-                    .join(" / ")
-                : undefined;
+              episode.allMissingOnDrive
+                ? baseLabel
+                : episode.progressLabel
+                  ? `${episode.progressLabel}${firstDrive ? ` · ${firstDrive.label}` : ""}`
+                  : episode.obtained && firstDrive
+                    ? `${baseLabel} · ${firstDrive.label}`
+                    : baseLabel;
+            const tooltipParts: string[] = [];
+            if (episode.obtained && episode.driveBadges && episode.driveBadges.length > 0) {
+              tooltipParts.push(
+                episode.driveBadges
+                  .map((d) =>
+                    [
+                      d.label,
+                      d.fileStatus === "missing_on_drive" ? "已删除" : null,
+                      d.quality ?? null,
+                      d.sizeBytes !== null && d.sizeBytes > 0 ? formatByteSize(d.sizeBytes) : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · "),
+                  )
+                  .join(" / "),
+              );
+            }
+            if (episode.progressLabel) {
+              tooltipParts.push(episode.progressLabel);
+            }
+            const tooltip = tooltipParts.length > 0 ? tooltipParts.join(" — ") : undefined;
             // A 待换 cell is a client piece: 「不换了」 on the message card restores it at once.
             return swap.has(episode.episodeCode) ? (
               <SwapEpisodeCell key={episode.episodeCode} code={episode.episodeCode} stateClass={stateClass} stateLabel={stateLabel} />
             ) : (
               <div className={`episode-cell ${stateClass}`} key={episode.episodeCode} title={tooltip}>
-                <strong>{episode.episodeCode.replace(/^S\d+/, "")}</strong>
+                <div className="episode-cell-head">
+                  <strong>{episode.episodeCode.replace(/^S\d+/, "")}</strong>
+                  {episode.embyItemId && virtualEmbyToken ? (
+                    <DirectPlayButton
+                      embyItemId={episode.embyItemId}
+                      embyToken={virtualEmbyToken}
+                      compact
+                    />
+                  ) : null}
+                </div>
                 <span>{stateLabel}</span>
               </div>
             );
@@ -659,10 +728,12 @@ async function SeasonRowsWithSwap({
   view,
   storageId,
   basePath,
+  virtualEmbyToken,
 }: {
   view: TitleHubView;
   storageId: string | undefined;
   basePath: string;
+  virtualEmbyToken: string | null;
 }) {
   const messages = view.aggregate === "untracked" ? null : await loadTitleMessages(view.tmdbId, "tv", storageId);
   const swap = new Set(messages?.thread.pendingReplacements ?? []);
@@ -677,6 +748,7 @@ async function SeasonRowsWithSwap({
           basePath={basePath}
           acquiring={view.acquiring}
           swap={swap}
+          virtualEmbyToken={virtualEmbyToken}
           demoEntry={{
             tmdbId: view.tmdbId,
             title: view.title,

@@ -19,7 +19,7 @@ import type { PackageTreeFile, ResourceCandidate, TransferAttempt, TransferStatu
 import { episodeCodeFromFileName } from "./episode-code.js";
 import { isPan123AuthError } from "./pan123-client.js";
 import type { Pan123Client, Pan123Item, Pan123OfflineTask } from "./pan123-client.js";
-import type { StorageExecutor, UnparsedVideoFile } from "./ports.js";
+import type { DriveDownloadLink, StorageExecutor, UnparsedVideoFile } from "./ports.js";
 
 const MAX_RECURSIVE_COLLECT_DEPTH = 6;
 const DEFAULT_MIN_VIDEO_SIZE_BYTES = 10 * 1024 * 1024;
@@ -227,6 +227,10 @@ export class Pan123StorageExecutor implements StorageExecutor {
       return null;
     }
     return this.client.getSpace();
+  }
+
+  async getDownloadUrl(input: { fileId: string; userAgent?: string }): Promise<DriveDownloadLink> {
+    return this.client.getDownloadUrl({ fileId: input.fileId });
   }
 
   async createDirectory(input: { name: string; parentId: string }): Promise<string> {

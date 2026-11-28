@@ -542,6 +542,12 @@ export interface DriveSpaceCacheEntry {
   probedAt: string;
 }
 
+/** Physical availability of one drive copy, decoupled from `EpisodeState.obtained`
+ *  (user intent / acquisition history). Marking a copy `missing_on_drive` hides it
+ *  from Virtual Emby playback and triggers cross-drive failover WITHOUT causing
+ *  daily patrol to re-download user-deleted files. */
+export type EpisodeCopyFileStatus = "present" | "missing_on_drive";
+
 /** One physical copy of an episode on a specific connected drive (`episode_copies`). */
 export interface EpisodeCopy {
   trackedSeasonId: string;
@@ -552,6 +558,28 @@ export interface EpisodeCopy {
   quality: string | null;
   runId: string;
   recordedAt: string;
+  /** Physical availability on this drive; legacy rows without it default to "present". */
+  fileStatus?: EpisodeCopyFileStatus;
+  /** ISO timestamp when physical availability was last verified/updated. */
+  verifiedAt?: string | null;
+}
+
+/** Per-account watch progress & played state, synced by Virtual Emby and shown in the UI. */
+export interface PlaybackProgress {
+  accountId: string;
+  tmdbId: number;
+  mediaType: MediaType;
+  /** 1 for movies, 1..N for tv/anime. */
+  seasonNumber: number;
+  /** 1 for movies, 1..N for tv/anime. */
+  episodeNumber: number;
+  /** Playback position in Emby ticks (10,000,000 ticks = 1 second). */
+  positionTicks: number;
+  /** Total media duration in Emby ticks (0 when unknown). */
+  durationTicks: number;
+  played: boolean;
+  playCount: number;
+  lastPlayedAt: string;
 }
 
 /** Cross-drive union summary for one episode of a tracked season (C9). */
@@ -564,6 +592,8 @@ export interface CrossDriveEpisodeOwnership {
     fileIds: string[];
     sizeBytes: number | null;
     quality: string | null;
+    fileStatus?: EpisodeCopyFileStatus;
+    verifiedAt?: string | null;
   }>;
 }
 
@@ -746,6 +776,12 @@ export function buildCrossDriveEpisodeOwnership(input: {
               fileIds: copy && copy.fileIds.length > 0 ? [...copy.fileIds] : [...ep.verifiedFileIds],
               sizeBytes: copy?.sizeBytes ?? null,
               quality: copy?.quality ?? null,
+              ...(copy?.fileStatus === "missing_on_drive"
+                ? {
+                    fileStatus: copy.fileStatus,
+                    ...(copy.verifiedAt ? { verifiedAt: copy.verifiedAt } : {}),
+                  }
+                : {}),
             });
           }
         }
@@ -784,6 +820,12 @@ export function buildCrossDriveEpisodeOwnership(input: {
           fileIds: [...c.fileIds],
           sizeBytes: c.sizeBytes,
           quality: c.quality,
+          ...(c.fileStatus === "missing_on_drive"
+            ? {
+                fileStatus: c.fileStatus,
+                ...(c.verifiedAt ? { verifiedAt: c.verifiedAt } : {}),
+              }
+            : {}),
         });
       }
     }

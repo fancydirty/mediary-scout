@@ -12,9 +12,12 @@ import {
   type CrossDriveEpisodeOwnership,
   type DriveSpaceCacheEntry,
   type EpisodeCopy,
+  type EpisodeCopyFileStatus,
   type EpisodeState,
   type MediaTitle,
+  type MediaType,
   type NotificationEvent,
+  type PlaybackProgress,
   type ResourceSnapshot,
   type TrackedSeason,
   type TransferAttempt,
@@ -280,8 +283,26 @@ const SCHEMA = `
     quality text,
     run_id text NOT NULL,
     recorded_at text NOT NULL,
+    file_status text NOT NULL DEFAULT 'present',
+    verified_at text,
     PRIMARY KEY (tracked_season_id, episode_code, storage_id)
   );
+  ALTER TABLE episode_copies ADD COLUMN IF NOT EXISTS file_status text NOT NULL DEFAULT 'present';
+  ALTER TABLE episode_copies ADD COLUMN IF NOT EXISTS verified_at text;
+  CREATE TABLE IF NOT EXISTS playback_progress (
+    account_id text NOT NULL,
+    tmdb_id int NOT NULL,
+    media_type text NOT NULL,
+    season_number int NOT NULL,
+    episode_number int NOT NULL,
+    position_ticks bigint NOT NULL DEFAULT 0,
+    duration_ticks bigint NOT NULL DEFAULT 0,
+    played boolean NOT NULL DEFAULT false,
+    play_count int NOT NULL DEFAULT 0,
+    last_played_at text NOT NULL,
+    PRIMARY KEY (account_id, tmdb_id, media_type, season_number, episode_number)
+  );
+  CREATE INDEX IF NOT EXISTS playback_progress_account ON playback_progress (account_id, last_played_at DESC);
   ALTER TABLE tracked_seasons ADD COLUMN IF NOT EXISTS account_id text NOT NULL DEFAULT 'acct_default';
   ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS account_id text NOT NULL DEFAULT 'acct_default';
   CREATE INDEX IF NOT EXISTS workflow_runs_season_account ON workflow_runs (tracked_season_id, account_id);
@@ -1593,14 +1614,15 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     await this.withTransaction(async (client) => {
       for (const copy of copies) {
         await client.query(
-          "INSERT INTO episode_copies (tracked_season_id, episode_code, storage_id, file_ids, size_bytes, quality, run_id, recorded_at) " +
-            "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8) " +
+          "INSERT INTO episode_copies (tracked_season_id, episode_code, storage_id, file_ids, size_bytes, quality, run_id, recorded_at, file_status, verified_at) " +
+            "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10) " +
             "ON CONFLICT (tracked_season_id, episode_code, storage_id) DO UPDATE SET " +
             // Unknown facts (no file ids, no size, no quality) never erase known ones.
             "file_ids = CASE WHEN jsonb_array_length(EXCLUDED.file_ids) > 0 THEN EXCLUDED.file_ids ELSE episode_copies.file_ids END, " +
             "size_bytes = COALESCE(EXCLUDED.size_bytes, episode_copies.size_bytes), " +
             "quality = COALESCE(EXCLUDED.quality, episode_copies.quality), " +
-            "run_id = EXCLUDED.run_id, recorded_at = EXCLUDED.recorded_at",
+            "run_id = EXCLUDED.run_id, recorded_at = EXCLUDED.recorded_at, " +
+            "file_status = EXCLUDED.file_status, verified_at = EXCLUDED.verified_at",
           [
             copy.trackedSeasonId,
             copy.episodeCode,
@@ -1610,38 +1632,113 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
             copy.quality,
             copy.runId,
             copy.recordedAt,
+            copy.fileStatus ?? "present",
+            copy.verifiedAt ?? null,
           ],
         );
       }
     });
   }
 
+  async setEpisodeCopyFileStatus(input: {
+    trackedSeasonId: string;
+    episodeCode: string;
+    storageId: string;
+    fileStatus: EpisodeCopyFileStatus;
+    verifiedAt: string;
+  }): Promise<void> {
+    await this.ensureSchema();
+    await this.pool.query(
+      "INSERT INTO episode_copies (tracked_season_id, episode_code, storage_id, file_ids, size_bytes, quality, run_id, recorded_at, file_status, verified_at) " +
+        "VALUES ($1, $2, $3, '[]'::jsonb, NULL, NULL, '', $4, $5, $6) " +
+        "ON CONFLICT (tracked_season_id, episode_code, storage_id) DO UPDATE SET " +
+        "file_status = EXCLUDED.file_status, verified_at = EXCLUDED.verified_at",
+      [
+        input.trackedSeasonId,
+        input.episodeCode,
+        input.storageId,
+        input.verifiedAt,
+        input.fileStatus,
+        input.verifiedAt,
+      ],
+    );
+  }
+
   async listEpisodeCopies(trackedSeasonId: string): Promise<EpisodeCopy[]> {
     await this.ensureSchema();
-    const result = await this.pool.query<{
-      tracked_season_id: string;
-      episode_code: string;
-      storage_id: string;
-      file_ids: unknown;
-      size_bytes: string | number | null;
-      quality: string | null;
-      run_id: string;
-      recorded_at: string;
-    }>(
-      "SELECT tracked_season_id, episode_code, storage_id, file_ids, size_bytes, quality, run_id, recorded_at " +
+    const result = await this.pool.query<PgEpisodeCopyRow>(
+      "SELECT tracked_season_id, episode_code, storage_id, file_ids, size_bytes, quality, run_id, recorded_at, file_status, verified_at " +
         "FROM episode_copies WHERE tracked_season_id = $1 ORDER BY episode_code, storage_id",
       [trackedSeasonId],
     );
-    return result.rows.map((row) => ({
-      trackedSeasonId: String(row.tracked_season_id),
-      episodeCode: String(row.episode_code),
-      storageId: String(row.storage_id),
-      fileIds: Array.isArray(row.file_ids) ? row.file_ids.map(String) : [],
-      sizeBytes: row.size_bytes === null || row.size_bytes === undefined ? null : Number(row.size_bytes),
-      quality: row.quality ?? null,
-      runId: String(row.run_id),
-      recordedAt: String(row.recorded_at),
-    }));
+    return result.rows.map((row) => mapPgEpisodeCopyRow(row));
+  }
+
+  async listEpisodeCopiesForSeasons(trackedSeasonIds: readonly string[]): Promise<EpisodeCopy[]> {
+    if (trackedSeasonIds.length === 0) return [];
+    await this.ensureSchema();
+    const result = await this.pool.query<PgEpisodeCopyRow>(
+      "SELECT tracked_season_id, episode_code, storage_id, file_ids, size_bytes, quality, run_id, recorded_at, file_status, verified_at " +
+        "FROM episode_copies WHERE tracked_season_id = ANY($1::text[]) ORDER BY tracked_season_id, episode_code, storage_id",
+      [[...trackedSeasonIds]],
+    );
+    return result.rows.map((row) => mapPgEpisodeCopyRow(row));
+  }
+
+  async upsertPlaybackProgress(entry: PlaybackProgress): Promise<void> {
+    await this.ensureSchema();
+    await this.pool.query(
+      "INSERT INTO playback_progress (account_id, tmdb_id, media_type, season_number, episode_number, position_ticks, duration_ticks, played, play_count, last_played_at) " +
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) " +
+        "ON CONFLICT (account_id, tmdb_id, media_type, season_number, episode_number) DO UPDATE SET " +
+        "position_ticks = EXCLUDED.position_ticks, duration_ticks = EXCLUDED.duration_ticks, " +
+        "played = EXCLUDED.played, play_count = EXCLUDED.play_count, last_played_at = EXCLUDED.last_played_at",
+      [
+        entry.accountId,
+        Math.trunc(entry.tmdbId),
+        entry.mediaType,
+        Math.trunc(entry.seasonNumber),
+        Math.trunc(entry.episodeNumber),
+        Math.max(0, Math.trunc(entry.positionTicks)),
+        Math.max(0, Math.trunc(entry.durationTicks)),
+        Boolean(entry.played),
+        Math.max(0, Math.trunc(entry.playCount)),
+        entry.lastPlayedAt,
+      ],
+    );
+  }
+
+  async getPlaybackProgress(input: {
+    accountId: string;
+    tmdbId: number;
+    mediaType: MediaType;
+    seasonNumber: number;
+    episodeNumber: number;
+  }): Promise<PlaybackProgress | null> {
+    await this.ensureSchema();
+    const result = await this.pool.query<PgPlaybackProgressRow>(
+      "SELECT account_id, tmdb_id, media_type, season_number, episode_number, position_ticks, duration_ticks, played, play_count, last_played_at " +
+        "FROM playback_progress WHERE account_id = $1 AND tmdb_id = $2 AND media_type = $3 AND season_number = $4 AND episode_number = $5",
+      [
+        input.accountId,
+        Math.trunc(input.tmdbId),
+        input.mediaType,
+        Math.trunc(input.seasonNumber),
+        Math.trunc(input.episodeNumber),
+      ],
+    );
+    const row = result.rows[0];
+    return row ? mapPgPlaybackProgressRow(row) : null;
+  }
+
+  async listPlaybackProgress(accountId: string): Promise<PlaybackProgress[]> {
+    await this.ensureSchema();
+    const result = await this.pool.query<PgPlaybackProgressRow>(
+      "SELECT account_id, tmdb_id, media_type, season_number, episode_number, position_ticks, duration_ticks, played, play_count, last_played_at " +
+        "FROM playback_progress WHERE account_id = $1 ORDER BY last_played_at DESC",
+      [accountId],
+    );
+    return result.rows.map((row) => mapPgPlaybackProgressRow(row));
   }
 
   async obtainedEpisodesForSeason(
@@ -2433,6 +2530,67 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
 
 function json(value: unknown): string {
   return JSON.stringify(value);
+}
+
+interface PgEpisodeCopyRow {
+  tracked_season_id: string;
+  episode_code: string;
+  storage_id: string;
+  file_ids: unknown;
+  size_bytes: string | number | null;
+  quality: string | null;
+  run_id: string;
+  recorded_at: string;
+  file_status: string | null;
+  verified_at: string | null;
+}
+
+function mapPgEpisodeCopyRow(row: PgEpisodeCopyRow): EpisodeCopy {
+  const out: EpisodeCopy = {
+    trackedSeasonId: String(row.tracked_season_id),
+    episodeCode: String(row.episode_code),
+    storageId: String(row.storage_id),
+    fileIds: Array.isArray(row.file_ids) ? row.file_ids.map(String) : [],
+    sizeBytes: row.size_bytes === null || row.size_bytes === undefined ? null : Number(row.size_bytes),
+    quality: row.quality ?? null,
+    runId: String(row.run_id),
+    recordedAt: String(row.recorded_at),
+  };
+  if (row.file_status === "missing_on_drive") {
+    out.fileStatus = "missing_on_drive";
+  }
+  if (row.verified_at) {
+    out.verifiedAt = String(row.verified_at);
+  }
+  return out;
+}
+
+interface PgPlaybackProgressRow {
+  account_id: string;
+  tmdb_id: number | string;
+  media_type: string;
+  season_number: number | string;
+  episode_number: number | string;
+  position_ticks: number | string;
+  duration_ticks: number | string;
+  played: boolean;
+  play_count: number | string;
+  last_played_at: string;
+}
+
+function mapPgPlaybackProgressRow(row: PgPlaybackProgressRow): PlaybackProgress {
+  return {
+    accountId: String(row.account_id),
+    tmdbId: Number(row.tmdb_id),
+    mediaType: row.media_type as MediaType,
+    seasonNumber: Number(row.season_number),
+    episodeNumber: Number(row.episode_number),
+    positionTicks: Number(row.position_ticks),
+    durationTicks: Number(row.duration_ticks),
+    played: Boolean(row.played),
+    playCount: Number(row.play_count),
+    lastPlayedAt: String(row.last_played_at),
+  };
 }
 
 function accountFromRow(row: Record<string, unknown>): Account {

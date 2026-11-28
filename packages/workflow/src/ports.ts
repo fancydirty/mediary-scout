@@ -29,6 +29,48 @@ export interface DriveSpaceInfo {
   usedBytes: number;
 }
 
+/** Playable direct download link resolved from a cloud drive for a single file id. */
+export interface DriveDownloadLink {
+  /** Final CDN URL (HTTP 302 target when supportsRedirect=true, or upstream proxy URL when false). */
+  url: string;
+  /** HTTP headers required to fetch `url` (e.g. Cookie/Referer/User-Agent for Quark/UC, or User-Agent for 115). */
+  headers: Record<string, string>;
+  /** True when the player can follow an HTTP 302 redirect directly to `url` (115/123/光鸭/天翼).
+   *  False when the CDN requires drive cookies/referer/UA and must be streamed via Range proxy (夸克/UC). */
+  supportsRedirect: boolean;
+  /** True when `url` is cryptographically bound to the caller's User-Agent (115). */
+  userAgentBound?: boolean;
+  /** Optional file name reported by the drive. */
+  fileName?: string;
+  /** Optional file size in bytes reported by the drive. */
+  fileSize?: number;
+  /** Optional media duration in seconds reported by the drive (e.g. 115 play_long). */
+  durationSeconds?: number;
+  /** Recommended cache TTL in milliseconds for this resolved link. */
+  ttlMs?: number;
+}
+
+/**
+ * Thrown when a previously recorded file_id no longer exists on its cloud drive
+ * (deleted or moved to recycle bin by the user). Distinct from transient errors
+ * and brand auth errors so playback can lazily mark ONLY that drive copy as
+ * `missing_on_drive` and automatically fail over to a sibling drive copy.
+ */
+export class DriveFileNotFoundError extends Error {
+  readonly provider: string;
+  readonly fileId: string;
+  constructor(provider: string, fileId: string, detail?: string) {
+    super(`DRIVE_FILE_NOT_FOUND(${provider} fileId=${fileId})${detail ? `: ${detail}` : ""}`);
+    this.name = "DriveFileNotFoundError";
+    this.provider = provider;
+    this.fileId = fileId;
+  }
+}
+
+export function isDriveFileNotFoundError(error: unknown): error is DriveFileNotFoundError {
+  return error instanceof DriveFileNotFoundError;
+}
+
 /** One active drive available to a unified multi-drive acquisition run, ordered by
  *  the user's preference (`drive_order` setting, falling back to `created_at`). */
 export interface AcquisitionDriveContext {
@@ -114,4 +156,8 @@ export interface StorageExecutor {
     directoryId: string;
     workflowRunId: string;
   }): Promise<TransferAttempt[]>;
+  /** Resolve a playable direct download URL for a single file id on this drive.
+   *  Throws DriveFileNotFoundError if the file was deleted/trashed on the drive,
+   *  and the brand's auth error if the credential expired. */
+  getDownloadUrl?(input: { fileId: string; userAgent?: string }): Promise<DriveDownloadLink>;
 }

@@ -27,7 +27,7 @@ import type { PackageTreeFile, ResourceCandidate, TransferAttempt, TransferStatu
 import { episodeCodeFromFileName } from "./episode-code.js";
 import { isGuangYaAuthError, parseGuangYaShareUrl } from "./guangya-client.js";
 import type { GuangYaResolvedRes, GuangYaTaskStatus } from "./guangya-client.js";
-import type { StorageExecutor, UnparsedVideoFile } from "./ports.js";
+import type { DriveDownloadLink, StorageExecutor, UnparsedVideoFile } from "./ports.js";
 
 const MAX_RECURSIVE_COLLECT_DEPTH = 6;
 const DEFAULT_MIN_VIDEO_SIZE_BYTES = 10 * 1024 * 1024;
@@ -84,6 +84,7 @@ export interface GuangYaStorageClient {
   restoreShare?(input: { accessToken: string; fileIds: string[]; parentId: string }): Promise<string>;
   getTaskStatus?(taskId: string): Promise<{ status: number }>;
   getSpace?(): Promise<{ totalBytes: number; usedBytes: number } | null>;
+  getDownloadUrl?(input: { fileId: string }): Promise<DriveDownloadLink>;
 }
 
 export interface GuangYaStorageExecutorOptions {
@@ -152,6 +153,13 @@ export class GuangYaStorageExecutor implements StorageExecutor {
       return null;
     }
     return this.client.getSpace();
+  }
+
+  async getDownloadUrl(input: { fileId: string; userAgent?: string }): Promise<DriveDownloadLink> {
+    if (!this.client.getDownloadUrl) {
+      throw new Error("GUANGYA_DOWNLOAD_UNSUPPORTED: client does not implement getDownloadUrl");
+    }
+    return this.client.getDownloadUrl({ fileId: input.fileId });
   }
 
   async createDirectory(input: { name: string; parentId: string }): Promise<string> {
